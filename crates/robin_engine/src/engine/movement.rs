@@ -3345,20 +3345,6 @@ impl EngineInner {
             crate::element::ActionState,
         )> = Vec::new();
 
-        // Pending TillLastFrame "anim looped, goal not reached" order
-        // rewrites.  When a transition animation has finished its
-        // cycle without reaching its destination, we either splice a
-        // copy of the current order at the position of the next
-        // different-action order (with that order's action), or — if
-        // no different-action order remains — drop every following
-        // order so the AI repaths next tick.  Resolved after the loop
-        // because it mutates the sequence manager.
-        struct TillLastFrameRewrite {
-            seq_id: crate::sequence::SequenceId,
-            elem_idx: usize,
-        }
-        let mut till_last_frame_rewrites: Vec<TillLastFrameRewrite> = Vec::new();
-
         for (idx, slot) in self.entities.iter_mut().enumerate() {
             let entity = match slot {
                 Some(e) => e,
@@ -4023,31 +4009,6 @@ impl EngineInner {
                 }
                 if matches!(motion_state, MotionState::Terminated) {
                     let eid = EntityId(idx as u32);
-                    // TillLastFrame "animation looped, goal not
-                    // reached" path: if the actor failed to close the
-                    // distance to the order's destination during the
-                    // transition's animation cycle, scan the remaining
-                    // orders and either splice a copy of the current
-                    // order in front of the next different-action
-                    // order (with that action) or drop every following
-                    // order outright.  Always returns Terminated, so
-                    // the regular `order_pops` dispatch below is
-                    // preserved.
-                    //
-                    // Goal-reached predicate: post-step distance to
-                    // `goal` is small.  When `speed >= dist` the step
-                    // above clamped position to (goal.x, goal.y) so
-                    // the actor sits exactly on the destination; when
-                    // `speed < dist` the actor is short of the goal.
-                    // The pre-step `dist` was captured before the step
-                    // committed, so use it directly.
-                    let goal_reached = !transition_has_map_target || dist <= speed.max(0.01);
-                    if !goal_reached {
-                        till_last_frame_rewrites.push(TillLastFrameRewrite {
-                            seq_id: move_seq_id,
-                            elem_idx: move_elem_idx,
-                        });
-                    }
                     if is_final_waypoint
                         && is_sword_motion
                         && let Some(human) = entity.human_data_mut()
@@ -4868,63 +4829,6 @@ impl EngineInner {
 
         for (entity_id, seq_id, elem_idx) in post_seek_arrivals {
             self.start_post_seek_sequence(entity_id, Some((seq_id, elem_idx)));
-        }
-
-        // Apply queued TillLastFrame "anim looped, goal not reached"
-        // order rewrites before the order_pops drain — the rewrite
-        // operates on the current front order plus any orders behind
-        // it, so it must run before `do_next_order` pops the front.
-        // Two outcomes per entry:
-        //   1. First following order with `order_type !=
-        //      current.order_type && (target_x, target_y) != (0, 0)`
-        //      found at index `k`: insert a clone of the current
-        //      (front) order at index `k` with `order_type =
-        //      animation_new` (= the different action).  Cloning
-        //      preserves the order's unique id so the sprite pipeline
-        //      keeps treating the new front as a continuation after
-        //      the front pop.
-        //   2. No different-action order found: drop every following
-        //      order so only the current front remains.
-        // (The C++ also had a flight-order early-terminate branch
-        // here, but Rust re-architected jumps and projectiles onto
-        // ActiveJump / ActiveFlight state machines, so Order is
-        // 2D-only and the branch is unreachable.)
-        for rewrite in till_last_frame_rewrites {
-            let Some(elem) = self
-                .sequence_manager
-                .get_element_mut(rewrite.seq_id, rewrite.elem_idx)
-            else {
-                continue;
-            };
-            let Some(current) = elem.orders.front().cloned() else {
-                continue;
-            };
-            let mut animation_new: Option<crate::order::OrderType> = None;
-            let mut insertion_idx: Option<usize> = None;
-            for k in 1..elem.orders.len() {
-                let nxt = &elem.orders[k];
-                let dest_2d_zero = nxt.target_x == 0.0 && nxt.target_y == 0.0;
-                if nxt.order_type != current.order_type && !dest_2d_zero {
-                    animation_new = Some(nxt.order_type);
-                    insertion_idx = Some(k);
-                    break;
-                }
-            }
-            match (animation_new, insertion_idx) {
-                (Some(new_action), Some(idx)) => {
-                    let mut clone = current.clone();
-                    clone.order_type = new_action;
-                    elem.orders.insert(idx, clone);
-                }
-                _ => {
-                    // No different-action order found — drop trailing
-                    // same-action orders so the AI can repath next
-                    // tick.  Keep the front (current) order; the
-                    // subsequent `do_next_order` in `order_pops` will
-                    // pop it.
-                    elem.orders.truncate(1);
-                }
-            }
         }
 
         // Drain collected waypoint pops against each actor's Move
