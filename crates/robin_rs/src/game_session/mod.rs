@@ -1341,6 +1341,8 @@ pub(crate) async fn run_mission(
     let mut manual_pause =
         start_paused || mp_waiting_for_initial_snapshot || mp_waiting_for_begin_sim;
     let mut replay_finished_logged = false;
+    let mut step_forward_repeat_at_ms: Option<u32> = None;
+    let mut step_back_repeat_at_ms: Option<u32> = None;
 
     // Track the ambience-derived shadow key so host-side sprite caches
     // (selection marks + titbits) can be rebound when
@@ -1847,20 +1849,52 @@ pub(crate) async fn run_mission(
         };
 
         // Step-debug keys: `.` (forward), `,` / Backspace (back), Enter
-        // (unpause).  `.` and `,` step on the press edge so a normal
-        // key tap advances exactly one frame; Backspace keeps its
-        // held-state rewind scrub behavior.  Enter uses the release
-        // edge so a held Enter doesn't spam-resume.  All checks read
-        // raw scancodes rather than the bindable `GameAction` keyset.
+        // (unpause).  `.` and `,` step immediately on the press edge,
+        // then repeat after a short hold delay so a normal key tap
+        // advances exactly one frame but holding still scrubs. Backspace
+        // keeps its held-state rewind scrub behavior.  Enter uses the
+        // release edge so a held Enter doesn't spam-resume.  All checks
+        // read raw scancodes rather than the bindable `GameAction` keyset.
+        const STEP_REPEAT_INITIAL_DELAY_MS: u32 = 160;
+        const STEP_REPEAT_INTERVAL_MS: u32 = 40;
         const SDL_SCANCODE_RETURN: u16 = 40;
         const SDL_SCANCODE_BACKSPACE: u16 = 42;
         const SDL_SCANCODE_COMMA: u16 = 54;
         const SDL_SCANCODE_PERIOD: u16 = 55;
         let keys = &threaded_input.keyboard_state().keys;
         let is_down = |sc: u16| keys.get(sc as usize).copied().unwrap_or(0) != 0;
-        let step_forward_pressed = input_translator.was_scancode_pressed(SDL_SCANCODE_PERIOD, keys);
-        let step_back_pressed = input_translator.was_scancode_pressed(SDL_SCANCODE_COMMA, keys)
-            || is_down(SDL_SCANCODE_BACKSPACE);
+        let step_forward_held = is_down(SDL_SCANCODE_PERIOD);
+        let step_back_comma_held = is_down(SDL_SCANCODE_COMMA);
+        let step_backspace_held = is_down(SDL_SCANCODE_BACKSPACE);
+        let step_forward_hit = input_translator.was_scancode_pressed(SDL_SCANCODE_PERIOD, keys);
+        let step_back_comma_hit = input_translator.was_scancode_pressed(SDL_SCANCODE_COMMA, keys);
+        let repeat_step_key = |held: bool, hit: bool, repeat_at_ms: &mut Option<u32>| -> bool {
+            if !held {
+                *repeat_at_ms = None;
+                return false;
+            }
+            if hit {
+                *repeat_at_ms = Some(frame_start.saturating_add(STEP_REPEAT_INITIAL_DELAY_MS));
+                return true;
+            }
+            if let Some(next_ms) = *repeat_at_ms
+                && frame_start >= next_ms
+            {
+                *repeat_at_ms = Some(frame_start.saturating_add(STEP_REPEAT_INTERVAL_MS));
+                return true;
+            }
+            false
+        };
+        let step_forward_pressed = repeat_step_key(
+            step_forward_held,
+            step_forward_hit,
+            &mut step_forward_repeat_at_ms,
+        );
+        let step_back_pressed = repeat_step_key(
+            step_back_comma_held,
+            step_back_comma_hit,
+            &mut step_back_repeat_at_ms,
+        ) || step_backspace_held;
         let step_unpause_pressed =
             input_translator.was_scancode_released(SDL_SCANCODE_RETURN, keys);
         // Suppress these shortcuts when any modal input sink has focus
