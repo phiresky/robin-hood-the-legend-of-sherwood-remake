@@ -2868,7 +2868,7 @@ pub fn tick_arrows(
                     proj.element.set_position(p);
                     let mut m = proj.element.position_map();
                     m.y = p.y - p.z;
-                    proj.element.set_position_map(m);
+                    proj.element.set_position_map_preserving_3d(m);
                 }
                 let impact_pos = proj.element.position_map();
                 proj.projectile.flying = false;
@@ -2904,7 +2904,7 @@ pub fn tick_arrows(
 
         // Update the 2D map position from 3D (project Z onto Y for
         // isometric display: map.y = pos.y - pos.z).
-        proj.element.set_position_map(ElemPoint2D {
+        proj.element.set_position_map_preserving_3d(ElemPoint2D {
             x: proj.element.position().x,
             y: proj.element.position().y - proj.element.position().z,
         });

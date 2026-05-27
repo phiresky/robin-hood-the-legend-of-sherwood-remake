@@ -351,6 +351,13 @@ impl ElementData {
     }
 
     #[inline]
+    pub fn set_position_map_preserving_3d(&mut self, p: Point2D) {
+        self.sprite
+            .position_iface
+            .set_position_map_preserving_3d(crate::geo2d::pt(p.x, p.y));
+    }
+
+    #[inline]
     #[must_use]
     pub fn layer(&self) -> u16 {
         self.sprite.position_iface.get_layer().into()

@@ -1260,9 +1260,8 @@ pub(crate) fn render_entities_gpu(
             let kind = entity.kind();
             // The mask pass is gated on `has_valid_box_for_masking`.
             // FX / target overlays never set the flag, so they render
-            // without building-mask occlusion.  PC in posture Flying
-            // is a runtime override that also clears the flag; we
-            // encode that below by treating flying humans as unmasked.
+            // without building-mask occlusion.  Flying humans use the
+            // original projectile/flying-human mask path.
             let is_flying_human = elem.posture == crate::element::Posture::Flying;
             if !kind.has_valid_box_for_masking() && !is_flying_human {
                 // Nothing more to do: sprite is drawn, no mask pass.

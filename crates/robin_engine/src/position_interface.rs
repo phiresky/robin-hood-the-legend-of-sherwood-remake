@@ -1563,12 +1563,8 @@ impl PositionInterface {
             self.position.z = p.compute_z(map.x, map.y);
             self.position.y = map.y + self.position.z;
         } else {
-            // No plane: elevation is caller-owned.  Preserve the
-            // existing z and reconstruct y so the iso invariant
-            // `map.y = position.y - position.z` still holds.
-            // Zeroing z here would silently drop the elevation of
-            // anything in free flight (projectiles, jumping actors).
-            self.position.y = map.y + self.position.z;
+            self.position.y = map.y;
+            self.position.z = 0.0;
         }
     }
 
@@ -2503,6 +2499,19 @@ mod tests {
         // z = (0.5 * 100 + 0 * 50 + 10) / (1 - 0.5) = 60/0.5 = 120
         assert!((pos.z - 120.0).abs() < 1e-3);
         assert!((pos.y - 220.0).abs() < 1e-3); // map.y + z
+    }
+
+    #[test]
+    fn test_set_position_map_without_plane_zeroes_z() {
+        let mut pi = PositionInterface::new();
+        pi.set_position(p3(100.0, 200.0, 50.0));
+
+        pi.set_position_map(geo2d::pt(75.0, 125.0));
+
+        let pos = pi.get_position();
+        assert!((pos.x - 75.0).abs() < 1e-4);
+        assert!((pos.y - 125.0).abs() < 1e-4);
+        assert!(pos.z.abs() < 1e-4);
     }
 
     #[test]
