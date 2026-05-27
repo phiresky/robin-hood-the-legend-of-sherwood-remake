@@ -5933,29 +5933,31 @@ impl EngineInner {
             return;
         };
 
-        let Some((sector_in, sector_out, point_in, point_mid, point_out)) = self
-            .mission_script
-            .as_ref()
-            .and_then(|s| s.game_host())
-            .and_then(|host| host.doors.get(usize::from(door_index)))
-            .map(|door| {
-                (
-                    door.sector_in,
-                    door.sector_out,
-                    Point2D {
-                        x: door.point_in.0,
-                        y: door.point_in.1,
-                    },
-                    Point2D {
-                        x: door.point_mid.0,
-                        y: door.point_mid.1,
-                    },
-                    Point2D {
-                        x: door.point_out.0,
-                        y: door.point_out.1,
-                    },
-                )
-            })
+        let Some((layer_in, layer_out, sector_in, sector_out, point_in, point_mid, point_out)) =
+            self.mission_script
+                .as_ref()
+                .and_then(|s| s.game_host())
+                .and_then(|host| host.doors.get(usize::from(door_index)))
+                .map(|door| {
+                    (
+                        door.layer_in,
+                        door.layer_out,
+                        door.sector_in,
+                        door.sector_out,
+                        Point2D {
+                            x: door.point_in.0,
+                            y: door.point_in.1,
+                        },
+                        Point2D {
+                            x: door.point_mid.0,
+                            y: door.point_mid.1,
+                        },
+                        Point2D {
+                            x: door.point_out.0,
+                            y: door.point_out.1,
+                        },
+                    )
+                })
         else {
             return;
         };
@@ -5991,16 +5993,23 @@ impl EngineInner {
                 );
             }
             OT::TransitionWaitingCrouchedClimbingWallDownCrenel => {
-                let layer = self
-                    .get_entity(entity_id)
-                    .map(|entity| entity.element_data().layer())
-                    .unwrap_or(0);
                 let obstacle = self.find_projection_area_at(
                     assets,
-                    layer,
+                    layer_in,
                     u16::from(sector_in),
                     crate::geo2d::pt(point_in.x, point_in.y),
                 );
+                if obstacle.is_none() {
+                    tracing::warn!(
+                        ?entity_id,
+                        ?door_index,
+                        layer = layer_in,
+                        sector = u16::from(sector_in),
+                        point_x = point_in.x,
+                        point_y = point_in.y,
+                        "missing door input projection area for crenel climb-down transition"
+                    );
+                }
                 self.set_obstacle_and_material(assets, entity_id, obstacle);
                 if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize) {
                     entity.set_posture(Posture::OnWall);
@@ -6034,16 +6043,23 @@ impl EngineInner {
                 );
             }
             OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
-                let layer = self
-                    .get_entity(entity_id)
-                    .map(|entity| entity.element_data().layer())
-                    .unwrap_or(0);
                 let obstacle = self.find_projection_area_at(
                     assets,
-                    layer,
+                    layer_out,
                     u16::from(sector_out),
                     crate::geo2d::pt(point_out.x, point_out.y),
                 );
+                if obstacle.is_none() {
+                    tracing::warn!(
+                        ?entity_id,
+                        ?door_index,
+                        layer = layer_out,
+                        sector = u16::from(sector_out),
+                        point_x = point_out.x,
+                        point_y = point_out.y,
+                        "missing door output projection area for crenel climb-up transition"
+                    );
+                }
                 self.set_obstacle_and_material(assets, entity_id, obstacle);
                 if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize) {
                     entity.set_posture(Posture::Flying);
