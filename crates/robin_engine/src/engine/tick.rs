@@ -3008,15 +3008,12 @@ impl EngineInner {
                             let ammo = self
                                 .get_entity(owner)
                                 .and_then(|e| match e {
-                                    crate::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
+                                    crate::element::Entity::Pc(pc) => {
+                                        self.pc_description_for_pc_data(&pc.pc)
+                                    }
                                     _ => None,
                                 })
-                                .and_then(|idx| {
-                                    self.campaign
-                                        .as_ref()
-                                        .and_then(|c| c.characters.get(usize::from(idx)))
-                                        .map(|d| d.status.get_ammo(crate::profiles::Action::Eat))
-                                })
+                                .map(|d| d.status.get_ammo(crate::profiles::Action::Eat))
                                 .unwrap_or(0);
                             if ammo == 0 {
                                 self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -3301,17 +3298,18 @@ impl EngineInner {
                             };
                             // Decrement PC ammo, clamped to current
                             // count.
-                            let profile_idx = self.get_entity(owner).and_then(|e| match e {
-                                crate::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
+                            let status_idx = self.get_entity(owner).and_then(|e| match e {
+                                crate::element::Entity::Pc(pc) => {
+                                    self.pc_description_index_for_pc_data(&pc.pc)
+                                }
                                 _ => None,
                             });
-                            let Some(profile_idx) = profile_idx else {
+                            let Some(status_idx) = status_idx else {
                                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let dropped = if let Some(campaign) = self.campaign.as_mut()
-                                && let Some(pc_desc) =
-                                    campaign.characters.get_mut(usize::from(profile_idx))
+                                && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
                             {
                                 let current = pc_desc.status.get_ammo(action);
                                 let take = requested.min(current);
@@ -3331,7 +3329,7 @@ impl EngineInner {
                             let now_empty = self
                                 .campaign
                                 .as_ref()
-                                .and_then(|c| c.characters.get(usize::from(profile_idx)))
+                                .and_then(|c| c.characters.get(status_idx))
                                 .map(|d| d.status.get_ammo(action) == 0)
                                 .unwrap_or(false);
                             if now_empty {
@@ -3528,17 +3526,18 @@ impl EngineInner {
                             };
 
                             // Decrement ammo (clamped to current count).
-                            let profile_idx = self.get_entity(owner).and_then(|e| match e {
-                                crate::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
+                            let status_idx = self.get_entity(owner).and_then(|e| match e {
+                                crate::element::Entity::Pc(pc) => {
+                                    self.pc_description_index_for_pc_data(&pc.pc)
+                                }
                                 _ => None,
                             });
-                            let Some(profile_idx) = profile_idx else {
+                            let Some(status_idx) = status_idx else {
                                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let dropped = if let Some(campaign) = self.campaign.as_mut()
-                                && let Some(pc_desc) =
-                                    campaign.characters.get_mut(usize::from(profile_idx))
+                                && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
                             {
                                 let current = pc_desc.status.get_ammo(action);
                                 let take = 1u16.min(current);
@@ -3555,7 +3554,7 @@ impl EngineInner {
                             let now_empty = self
                                 .campaign
                                 .as_ref()
-                                .and_then(|c| c.characters.get(usize::from(profile_idx)))
+                                .and_then(|c| c.characters.get(status_idx))
                                 .map(|d| d.status.get_ammo(action) == 0)
                                 .unwrap_or(false);
                             if now_empty {

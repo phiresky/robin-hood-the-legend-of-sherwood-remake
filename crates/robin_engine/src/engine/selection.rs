@@ -48,9 +48,7 @@ impl EngineInner {
             crate::element::Posture::Tied | crate::element::Posture::Carried
         );
         let in_coma = self
-            .campaign
-            .as_ref()
-            .and_then(|c| c.characters.get(usize::from(pc.pc.profile_index)))
+            .pc_description_for_pc_data(&pc.pc)
             .map(|desc| desc.status.in_coma)
             .unwrap_or(false);
         if is_dead || pc.human.unconscious || is_stuck_under_net || bad_posture || in_coma {
@@ -357,16 +355,17 @@ impl EngineInner {
     ///
     /// Called when the player clicks the amulet button on a coma portrait.
     pub(crate) fn reset_coma(&mut self, assets: &LevelAssets, pc_id: EntityId) {
-        let profile_idx = match self.get_entity(pc_id) {
-            Some(Entity::Pc(pc)) => pc.pc.profile_index,
+        let status_idx = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
             _ => return,
         };
+        let Some(status_idx) = status_idx else { return };
 
         tracing::info!(entity = ?pc_id, "reset_coma — reviving from coma");
 
         // Clear coma in campaign status
         if let Some(ref mut campaign) = self.campaign
-            && let Some(desc) = campaign.characters.get_mut(usize::from(profile_idx))
+            && let Some(desc) = campaign.characters.get_mut(status_idx)
         {
             desc.status.in_coma = false;
         }

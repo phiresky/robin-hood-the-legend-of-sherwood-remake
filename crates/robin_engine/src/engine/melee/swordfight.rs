@@ -1412,7 +1412,7 @@ impl EngineInner {
         pc_id: EntityId,
         damage: u16,
     ) -> bool {
-        let (is_pc, life_points, is_vip, profile_idx) = {
+        let (is_pc, life_points, is_vip, status_idx) = {
             let entity = match self.get_entity(pc_id) {
                 Some(e) => e,
                 None => return false,
@@ -1424,7 +1424,10 @@ impl EngineInner {
                         .get_character(pc.pc.profile_index)
                         .map(|p| p.vip)
                         .unwrap_or(false);
-                    (true, pc.pc.life_points, vip, pc.pc.profile_index)
+                    let Some(status_idx) = self.pc_description_index_for_pc_data(&pc.pc) else {
+                        return false;
+                    };
+                    (true, pc.pc.life_points, vip, status_idx)
                 }
                 _ => return false,
             }
@@ -1437,7 +1440,7 @@ impl EngineInner {
         let in_coma = self
             .campaign
             .as_ref()
-            .and_then(|c| c.characters.get(usize::from(profile_idx)))
+            .and_then(|c| c.characters.get(status_idx))
             .map(|desc| desc.status.in_coma)
             .unwrap_or(false);
         if in_coma {
@@ -1466,7 +1469,7 @@ impl EngineInner {
             pc.element.set_posture(Posture::Lying);
         }
         if let Some(ref mut campaign) = self.campaign {
-            if let Some(desc) = campaign.characters.get_mut(usize::from(profile_idx)) {
+            if let Some(desc) = campaign.characters.get_mut(status_idx) {
                 desc.status.in_coma = true;
             }
             campaign.values[crate::campaign::CampaignValue::Amulets as usize] -= 1;

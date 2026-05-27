@@ -1442,7 +1442,7 @@ impl EngineInner {
         }
 
         // Read state without holding a borrow on self
-        let (life_points, is_unconscious, is_pc, pc_profile_idx) = {
+        let (life_points, is_unconscious, is_pc, in_coma) = {
             let victim = match self
                 .entities
                 .get(victim_id.0 as usize)
@@ -1455,7 +1455,11 @@ impl EngineInner {
                 get_life_points(victim),
                 victim.human_data().map(|h| h.unconscious).unwrap_or(false),
                 victim.kind().is_pc(),
-                victim.pc_data().map(|pc| pc.profile_index),
+                victim
+                    .pc_data()
+                    .and_then(|pc| self.pc_description_for_pc_data(pc))
+                    .map(|desc| desc.status.in_coma)
+                    .unwrap_or(false),
             )
         };
         let is_dead = life_points <= 0;
@@ -1466,15 +1470,7 @@ impl EngineInner {
         // upstream of this function, so short-circuit the
         // death/knockout branches here to preserve the
         // no-op-on-already-comatose semantics.
-        if is_pc
-            && let Some(profile_idx) = pc_profile_idx
-            && self
-                .campaign
-                .as_ref()
-                .and_then(|c| c.characters.get(usize::from(profile_idx)))
-                .map(|desc| desc.status.in_coma)
-                .unwrap_or(false)
-        {
+        if is_pc && in_coma {
             return;
         }
 

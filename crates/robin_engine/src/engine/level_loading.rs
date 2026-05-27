@@ -1722,6 +1722,53 @@ impl EngineInner {
             // level-authored action.
             let (initial_posture, initial_action_state) = map_pc_initial_action(raw.action);
 
+            // Create or reuse the campaign `PcDescription` before
+            // spawning the entity so PcData can point at the same
+            // dynamic status block the C++ PC's mpStatus referenced.
+            //   * Non-VIP   → always a fresh description with full pockets.
+            //   * VIP, none → same as non-VIP.
+            //   * VIP, dup  → reuse the existing description and heal to
+            //                 `LIFEPOINTS_PC` (guest-star return).
+            // Previously this was deferred to `rescue_pc_by_profile_name`,
+            // which left the reuse + heal branch unreachable for guest
+            // stars and meant rescue PCs were not flagged `instanced` at
+            // spawn.
+            let profile_idx = crate::profiles::CharacterProfileIdx(raw.profile_index);
+            let difficulty = crate::player_profile::DifficultyLevel::current();
+            let char_idx = {
+                let profile = char_profile
+                    .unwrap_or_else(|| panic!("rescue PC profile {} not found", raw.profile_index));
+                let campaign = self
+                    .campaign
+                    .as_mut()
+                    .expect("Campaign must be set before spawning rescue PCs");
+                let existing = campaign.get_character_by_profile(profile_idx);
+                let char_idx = match (profile.vip, existing) {
+                    (true, Some(idx)) => {
+                        if let Some(desc) = campaign.characters.get_mut(idx) {
+                            desc.status.life_points = crate::pc_status::LIFEPOINTS_PC;
+                        }
+                        idx
+                    }
+                    _ => {
+                        let desc = crate::campaign::PcDescription {
+                            character_profile_idx: Some(profile_idx),
+                            instanced: false,
+                            status: crate::pc_status::PcStatus::from_profile(
+                                profile, true, difficulty,
+                            ),
+                        };
+                        campaign.add_to_characters(desc, &profiles)
+                    }
+                };
+                if let Some(desc) = campaign.characters.get_mut(char_idx) {
+                    desc.instanced = true;
+                }
+                char_idx
+            };
+            let list_index = u8::try_from(char_idx)
+                .expect("campaign character index must fit in PcData::list_index");
+
             let entity = Entity::Pc(crate::element::ActorPc {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ActorPc,
@@ -1740,7 +1787,8 @@ impl EngineInner {
                 },
                 pc: crate::element::PcData {
                     robin: is_robin,
-                    profile_index: crate::profiles::CharacterProfileIdx(raw.profile_index),
+                    profile_index: profile_idx,
+                    list_index,
                     kind,
                     has_lockpick,
                     has_climb,
@@ -1756,45 +1804,6 @@ impl EngineInner {
             // The low-priority idle order is enqueued by the post-spawn
             // `ensure_wait_element` loop further below, which iterates
             // every actor (rescue PCs included) before the first tick.
-
-            // Create or reuse the campaign `PcDescription` and flip
-            // `instanced=true` at spawn time.
-            //   * Non-VIP   → always a fresh description with full pockets.
-            //   * VIP, none → same as non-VIP.
-            //   * VIP, dup  → reuse the existing description and heal to
-            //                 `LIFEPOINTS_PC` (guest-star return).
-            // Previously this was deferred to `rescue_pc_by_profile_name`,
-            // which left the reuse + heal branch unreachable for guest
-            // stars and meant rescue PCs were not flagged `instanced` at
-            // spawn.
-            if let Some(profile) = char_profile {
-                let profile_idx = crate::profiles::CharacterProfileIdx(raw.profile_index);
-                let difficulty = crate::player_profile::DifficultyLevel::current();
-                if let Some(campaign) = self.campaign.as_mut() {
-                    let existing = campaign.get_character_by_profile(profile_idx);
-                    let char_idx = match (profile.vip, existing) {
-                        (true, Some(idx)) => {
-                            if let Some(desc) = campaign.characters.get_mut(idx) {
-                                desc.status.life_points = crate::pc_status::LIFEPOINTS_PC;
-                            }
-                            idx
-                        }
-                        _ => {
-                            let desc = crate::campaign::PcDescription {
-                                character_profile_idx: Some(profile_idx),
-                                instanced: false,
-                                status: crate::pc_status::PcStatus::from_profile(
-                                    profile, true, difficulty,
-                                ),
-                            };
-                            campaign.add_to_characters(desc, &profiles)
-                        }
-                    };
-                    if let Some(desc) = campaign.characters.get_mut(char_idx) {
-                        desc.instanced = true;
-                    }
-                }
-            }
         }
 
         progress(1.0);
@@ -2932,6 +2941,8 @@ impl EngineInner {
                 // it sees a hidden posture, so we don't add it manually
                 // here.
                 let (initial_posture, initial_action_state) = map_pc_initial_action(beam_me.action);
+                let list_index = u8::try_from(char_idx)
+                    .expect("campaign character index must fit in PcData::list_index");
 
                 // Set the sprite's move box + pathfinder index from the
                 // character profile right after `LoadFrameInfo` so
@@ -3093,6 +3104,7 @@ impl EngineInner {
                     pc: crate::element::PcData {
                         robin: is_robin,
                         profile_index: profile_idx,
+                        list_index,
                         kind,
                         has_lockpick,
                         has_climb,
