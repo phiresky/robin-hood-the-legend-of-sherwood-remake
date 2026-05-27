@@ -3906,33 +3906,19 @@ impl EngineInner {
             if matches!(motion_state, MotionState::Start) && is_sword_motion {
                 sword_movement_starts.push(EntityId(idx as u32));
             }
-            if door_pass_anim.is_some() {
-                // The original C++ case is labelled `RHMOTION_DONE://START`
-                // for the high-crenel climb-up transition. Applying this
-                // projection snap on START avoids one rendered frame where the
-                // actor is Flying but still queried against the wall-side 3D
-                // point, which makes the original projectile masks erase him.
-                let transition_done_effect = matches!(
-                    (anim, motion_state),
-                    (
-                        OrderType::TransitionWaitingUprightClimbingWallUp
-                            | OrderType::TransitionClimbingWallUpWaitingCrouched
-                            | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
-                            | OrderType::TransitionWaitingCrouchedClimbingWallDown
-                            | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
-                            | OrderType::TransitionClimbingWallDownWaitingUpright,
-                        MotionState::Done
-                    )
-                ) || matches!(
-                    (anim, motion_state),
-                    (
-                        OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel,
-                        MotionState::Start
-                    )
-                );
-                if transition_done_effect {
-                    door_pass_transition_done_effects.push(EntityId(idx as u32));
-                }
+            if door_pass_anim.is_some()
+                && matches!(motion_state, MotionState::Done)
+                && matches!(
+                    anim,
+                    OrderType::TransitionWaitingUprightClimbingWallUp
+                        | OrderType::TransitionClimbingWallUpWaitingCrouched
+                        | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+                        | OrderType::TransitionWaitingCrouchedClimbingWallDown
+                        | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+                        | OrderType::TransitionClimbingWallDownWaitingUpright
+                )
+            {
+                door_pass_transition_done_effects.push(EntityId(idx as u32));
             }
             if matches!(motion_state, MotionState::Terminated) && is_sword_motion {
                 sword_movement_terminations.push(EntityId(idx as u32));
