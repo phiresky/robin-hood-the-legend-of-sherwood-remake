@@ -3391,6 +3391,7 @@ impl EngineInner {
                 move_seq_id,
                 move_elem_idx,
                 active_move_flags,
+                order_tolerance,
                 order_compute_direction,
                 order_reverse,
             ) = {
@@ -3447,6 +3448,7 @@ impl EngineInner {
                 let goal = crate::geo2d::pt(order.target_x, order.target_y);
                 let order_id = Some(order.order_id);
                 let order_action = order.order_type;
+                let order_tolerance = order.tolerance;
                 let order_compute_direction = order.compute_direction;
                 let order_reverse = order.reverse;
                 let active_move_flags = self
@@ -3495,6 +3497,7 @@ impl EngineInner {
                     seq_id,
                     elem_idx,
                     active_move_flags,
+                    order_tolerance,
                     order_compute_direction,
                     order_reverse,
                 )
@@ -4294,9 +4297,32 @@ impl EngineInner {
                 continue;
             }
 
-            if dist <= speed || line_snap_arrival || tolerance_arrival {
+            let order_tolerance_arrival = order_tolerance > 0.0 && dist > speed && {
+                let nx = dx / dist;
+                let ny = dy / dist;
+                let remaining_x = dx - nx * speed;
+                let remaining_y = dy - ny * speed;
+                let remaining_along_heading = if active_move_flags
+                    .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE)
+                {
+                    const INVERSE_ASPECT_RATIO: f32 = 1.743_446_8;
+                    nx * remaining_x + ny * remaining_y * INVERSE_ASPECT_RATIO
+                } else {
+                    nx * remaining_x + ny * remaining_y
+                };
+                remaining_along_heading <= order_tolerance
+            };
+
+            if dist <= speed || line_snap_arrival || tolerance_arrival || order_tolerance_arrival {
                 // Reached waypoint — snap to it and advance
-                if !line_snap_arrival && !tolerance_arrival {
+                if order_tolerance_arrival {
+                    let nx = dx / dist;
+                    let ny = dy / dist;
+                    let mut pm = elem.position_map();
+                    pm.x += nx * speed;
+                    pm.y += ny * speed;
+                    elem.set_position_map(pm);
+                } else if !line_snap_arrival && !tolerance_arrival {
                     elem.set_position_map(crate::element::Point2D {
                         x: goal.x,
                         y: goal.y,
