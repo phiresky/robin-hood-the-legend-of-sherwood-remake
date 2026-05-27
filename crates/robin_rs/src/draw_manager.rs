@@ -368,15 +368,13 @@ impl DrawManager {
 
     /// Draw a filled, semi-transparent polygon.
     ///
-    /// Uses scanline rasterisation to determine pixel coverage, then lets
-    /// a GPU shader sample the background texture and apply the
-    /// RGB565-style alpha blend per fragment.
+    /// Uses scanline rasterisation to determine pixel coverage, then queues
+    /// alpha-blended one-pixel spans on the GPU overlay layer.
     ///
-    /// The blend SOURCE is the pristine background map (`bg`), not the
-    /// current destination. Each polygon pixel is computed as
-    /// `bg * (1-α) + color * α`, overwriting whatever was previously
-    /// drawn at that pixel on the destination (sprites, selection marks,
-    /// etc.).
+    /// C++ blends against `RHEngine::GetMap()`, which already contains
+    /// `BlitToMap` patch mutations. Rust keeps those map patches as GPU
+    /// decals, so blending over the queued frame preserves the same visible
+    /// ordering relative to patched map pixels.
     ///
     /// Scanline even-odd fill with axis-aligned clipping produces the
     /// same pixel set as pre-clipping the polygon, so the output is
@@ -496,23 +494,17 @@ fn build_poly_edge_table(pts: &[[f32; 2]]) -> Vec<PolyEdge> {
     edges
 }
 
-/// GPU path for `DrawManager::draw_alpha_polygon`: queue one
-/// background-sampled rectangle per filled span. The shader samples the
-/// base-map texture and writes the `bg*(1-alpha)+color*alpha` result as
-/// an opaque pixel — destination-overwrite without an ARGB scratch
-/// upload.
+/// GPU path for `DrawManager::draw_alpha_polygon`: queue one alpha-blended
+/// rectangle per filled span.
 #[allow(clippy::too_many_arguments)]
 fn draw_alpha_polygon_gpu(
     renderer: &mut Renderer,
     edges: &[PolyEdge],
     color: u32,
     alpha: u32,
-    view_min: Point2D,
-    zoom: f32,
+    _view_min: Point2D,
+    _zoom: f32,
 ) {
-    let Some((bg_w, bg_h)) = renderer.background_texture_size() else {
-        return;
-    };
     let y_min = edges.iter().map(|e| e.y_min as i32).min().unwrap().max(0);
     let y_max = edges.iter().map(|e| e.y_max.ceil() as i32).max().unwrap();
     let sw = renderer.screen_width() as i32;
@@ -522,9 +514,10 @@ fn draw_alpha_polygon_gpu(
         return;
     }
 
-    let inv_zoom = 1.0 / zoom;
-    let inv_bg_w = 1.0 / bg_w as f32;
-    let inv_bg_h = 1.0 / bg_h as f32;
+    let r = ((color >> 16) & 0xFF) as u8;
+    let g = ((color >> 8) & 0xFF) as u8;
+    let b = (color & 0xFF) as u8;
+    let a = alpha.min(256).saturating_mul(255) / 256;
 
     for y in y_min..y_max {
         let yf = y as f32 + 0.5;
@@ -542,15 +535,7 @@ fn draw_alpha_polygon_gpu(
             let x0 = (crossings[i].ceil() as i32).max(0);
             let x1 = (crossings[i + 1].floor() as i32 + 1).min(sw);
             if x1 > x0 {
-                // Fragment UVs are interpolated at pixel centers. Offset the
-                // vertex UVs by half a screen pixel so the center of pixel
-                // (x,y) samples the world coordinate `view + (x,y) / zoom`.
-                let u0 = (view_min.x + (x0 as f32 - 0.5) * inv_zoom) * inv_bg_w;
-                let u1 = (view_min.x + (x1 as f32 - 0.5) * inv_zoom) * inv_bg_w;
-                let v0 = (view_min.y + (y as f32 - 0.5) * inv_zoom) * inv_bg_h;
-                let v1 = (view_min.y + (y as f32 + 0.5) * inv_zoom) * inv_bg_h;
-                let dst = crate::gfx_types::Rect::new(x0, y, (x1 - x0) as u32, 1);
-                renderer.render_background_alpha_rect(dst, [u0, v0, u1, v1], color, alpha);
+                renderer.render_gpu_rect(x0, y, x1 - x0, 1, r, g, b, a as u8);
             }
             i += 2;
         }
