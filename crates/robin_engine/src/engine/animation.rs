@@ -2650,6 +2650,43 @@ impl EngineInner {
             .iter()
             .map(|slot| slot.as_ref().is_some_and(Entity::is_active))
             .collect();
+        let door_pass_crenel_transition_dirs: Vec<Option<i16>> = self
+            .entities
+            .iter()
+            .map(|slot| {
+                let entity = slot.as_ref()?;
+                let dp = entity.actor_data()?.active_door_pass.as_ref()?;
+                let reverse_direction = match dp.current_action {
+                    OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel => false,
+                    OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel => true,
+                    _ => return None,
+                };
+                let sector_in = self
+                    .mission_script
+                    .as_ref()
+                    .and_then(|script| script.game_host())
+                    .and_then(|host| host.doors.get(usize::from(dp.door_index)))
+                    .map(|door| door.sector_in)?;
+                let direction = self
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&crate::sector::SectorNumber::new(i16::from(sector_in)))
+                    .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                    .and_then(|sector| {
+                        if sector.lift_type == Some(crate::sector::LiftType::Wall) {
+                            Some(sector.lift_direction)
+                        } else {
+                            None
+                        }
+                    })?;
+                Some(if reverse_direction {
+                    (direction + 8) & 15
+                } else {
+                    direction
+                })
+            })
+            .collect();
 
         // Collect patch indices whose transitions completed this tick.
         // Processed after the entity loop to avoid borrowing conflicts.
@@ -2855,6 +2892,20 @@ impl EngineInner {
                     let order_is_initialising = order_id.is_some_and(|oid| {
                         entity.element_data().sprite.last_processed_order_id != oid.get()
                     });
+                    if order_is_initialising
+                        && matches!(
+                            anim_type,
+                            OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+                                | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
+                        )
+                        && let Some(direction) = door_pass_crenel_transition_dirs
+                            .get(entity_idx)
+                            .copied()
+                            .flatten()
+                    {
+                        entity.element_data_mut().set_direction_instantly(direction);
+                        entity.set_posture(crate::element::Posture::Flying);
+                    }
                     let drinking_ale_antagonist_inactive =
                         matches!(anim_type, OrderType::DrinkingAle)
                             && antagonist.is_some_and(|a| {

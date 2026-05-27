@@ -5815,7 +5815,6 @@ impl EngineInner {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
 
-        let transition_start = self.door_pass_wall_transition_start_state(entity_id, action);
         let posture = match action {
             OT::ClimbingWallUp
             | OT::ClimbingWallDown
@@ -5834,14 +5833,6 @@ impl EngineInner {
             _ => None,
         };
         let Some(posture) = posture else {
-            if let Some((direction, posture)) = transition_start
-                && let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
-            {
-                entity.element_data_mut().set_direction_instantly(direction);
-                if let Some(posture) = posture {
-                    entity.set_posture(posture);
-                }
-            }
             return;
         };
 
@@ -5884,56 +5875,6 @@ impl EngineInner {
         if let Some(actor) = entity.actor_data_mut() {
             actor.action_state = action_state;
         }
-    }
-
-    fn door_pass_wall_transition_start_state(
-        &self,
-        entity_id: EntityId,
-        action: crate::order::OrderType,
-    ) -> Option<(i16, Option<crate::element::Posture>)> {
-        use crate::order::OrderType as OT;
-
-        let (reverse_direction, posture) = match action {
-            OT::TransitionWaitingUprightClimbingWallUp
-            | OT::TransitionClimbingWallUpWaitingCrouched
-            | OT::TransitionClimbingWallDownWaitingUpright
-            | OT::TransitionWaitingCrouchedClimbingWallDown => (false, None),
-            OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
-                (false, Some(crate::element::Posture::Flying))
-            }
-            OT::TransitionWaitingCrouchedClimbingWallDownCrenel => {
-                (true, Some(crate::element::Posture::Flying))
-            }
-            _ => return None,
-        };
-
-        let door_index = self
-            .get_entity(entity_id)
-            .and_then(|entity| entity.actor_data())
-            .and_then(|actor| actor.active_door_pass.as_ref())
-            .map(|dp| dp.door_index)?;
-        let sector_in = self
-            .mission_script
-            .as_ref()
-            .and_then(|script| script.game_host())
-            .and_then(|host| host.doors.get(usize::from(door_index)))
-            .map(|door| door.sector_in)?;
-        let direction = self
-            .grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector_in)))
-            .and_then(|sector| {
-                if sector.lift_type == Some(crate::sector::LiftType::Wall) {
-                    Some(sector.lift_direction)
-                } else {
-                    None
-                }
-            })?;
-
-        let direction = if reverse_direction {
-            (direction + 8) & 15
-        } else {
-            direction
-        };
-        Some((direction, posture))
     }
 
     pub(super) fn apply_door_pass_transition_done_side_effects(
