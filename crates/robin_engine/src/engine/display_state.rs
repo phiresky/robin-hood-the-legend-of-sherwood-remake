@@ -7,25 +7,6 @@ use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::shadow_polygon::ViewParameters;
 use std::collections::HashMap;
 
-fn is_door_pass_lift_actor(engine: &EngineInner, entity: &crate::element::Entity) -> bool {
-    use crate::element::Posture;
-
-    if matches!(
-        entity.element_data().posture,
-        Posture::OnWall | Posture::OnLadder | Posture::Flying
-    ) {
-        return entity.actor_data().is_some();
-    }
-
-    let Some(actor) = entity.actor_data() else {
-        return false;
-    };
-    let Some(dp) = actor.active_door_pass.as_ref() else {
-        return false;
-    };
-    engine.door_pass_uses_ladder_or_wall(dp.door_index)
-}
-
 /// Tuple returned by `selected_view_cone_params`: (eye point, view
 /// parameters, optional RGB tint for the darkening overlay).
 pub type ViewConeParams = (Point2D, ViewParameters, Option<(u8, u8, u8)>);
@@ -632,33 +613,6 @@ impl EngineInner {
 
     // ─── Display order sorting ──────────────────────────────────
 
-    fn door_pass_uses_ladder_or_wall(&self, door_index: crate::gate::DoorIndex) -> bool {
-        let Some((sector_in, sector_out)) = self
-            .mission_script
-            .as_ref()
-            .and_then(|script| script.game_host())
-            .and_then(|host| host.doors.get(usize::from(door_index)))
-            .map(|door| (door.sector_in, door.sector_out))
-        else {
-            tracing::warn!(
-                door = %door_index,
-                "DoorPass display-order: active pass references missing door"
-            );
-            return false;
-        };
-
-        [sector_in, sector_out].into_iter().any(|sector| {
-            self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(sector)))
-                .and_then(|sector| sector.lift_type)
-                .is_some_and(|lift| {
-                    matches!(
-                        lift,
-                        crate::sector::LiftType::Wall | crate::sector::LiftType::Ladder
-                    )
-                })
-        })
-    }
-
     /// Compute a back-to-front draw order from the current entity table.
     ///
     /// Pure function of sim state — returns a fresh [`DrawOrder`] rather
@@ -751,20 +705,6 @@ impl EngineInner {
         // a monotonic slot index that's never reused, so it doubles as
         // the creation-order tiebreak.
         non_animations.sort_by(|a, b| {
-            let entity_a = entities.get(a.0 as usize).and_then(|e| e.as_ref());
-            let entity_b = entities.get(b.0 as usize).and_then(|e| e.as_ref());
-            let a_lift_actor = entity_a
-                .is_some_and(|entity| entity.is_human() && is_door_pass_lift_actor(self, entity));
-            let b_lift_actor = entity_b
-                .is_some_and(|entity| entity.is_human() && is_door_pass_lift_actor(self, entity));
-            let a_fx = entity_a.is_some_and(|entity| entity.is_fx());
-            let b_fx = entity_b.is_some_and(|entity| entity.is_fx());
-            if a_lift_actor && b_fx {
-                return std::cmp::Ordering::Greater;
-            }
-            if b_lift_actor && a_fx {
-                return std::cmp::Ordering::Less;
-            }
             let da = depths.get(a).copied().unwrap_or(f32::MAX);
             let db = depths.get(b).copied().unwrap_or(f32::MAX);
             da.partial_cmp(&db)
@@ -826,28 +766,6 @@ impl EngineInner {
                         anim_entity.element_data().position_map(),
                         na_entity.element_data().position_map(),
                     );
-                    if na_entity.is_human() && is_door_pass_lift_actor(self, na_entity) {
-                        if behind {
-                            let posture = na_entity.element_data().posture;
-                            let current_action = na_entity
-                                .actor_data()
-                                .and_then(|actor| actor.active_door_pass.as_ref())
-                                .map(|dp| dp.current_action);
-                            tracing::debug!(
-                                entity = ?na_id,
-                                fx = ?anim_id,
-                                ?posture,
-                                ?current_action,
-                                behind,
-                                human_pos_x = na_entity.element_data().position_map().x,
-                                human_pos_y = na_entity.element_data().position_map().y,
-                                fx_pos_x = anim_entity.element_data().position_map().x,
-                                fx_pos_y = anim_entity.element_data().position_map().y,
-                                "DoorPass display-order: lift actor kept in front of FX"
-                            );
-                        }
-                        continue;
-                    }
                     if behind {
                         merged.push(na_id);
                         consumed[i] = true;
