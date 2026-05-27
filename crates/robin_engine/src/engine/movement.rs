@@ -155,6 +155,9 @@ fn is_in_place_movement_transition(order: OrderType) -> bool {
             | OrderType::TransitionCrouchingDown
             | OrderType::TransitionSittingWaitingUpright
             | OrderType::TransitionLeaningOutWaitingAlerted
+            | OrderType::StandingUp
+            | OrderType::StandingUpSword
+            | OrderType::StandingUpBow
             | OrderType::LoweringShield
     )
 }
@@ -6749,6 +6752,9 @@ mod line_jump_tests {
         assert!(is_in_place_movement_transition(
             OrderType::TransitionLeaningOutWaitingAlerted
         ));
+        assert!(is_in_place_movement_transition(OrderType::StandingUp));
+        assert!(is_in_place_movement_transition(OrderType::StandingUpSword));
+        assert!(is_in_place_movement_transition(OrderType::StandingUpBow));
         assert!(is_in_place_movement_transition(OrderType::LoweringShield));
         assert!(!is_in_place_movement_transition(
             OrderType::TransitionWaitingUprightWalkingUpright

@@ -676,6 +676,16 @@ fn push_anim_order_no_dir(
         .push_order_on(seq_id, elem_idx, order);
 }
 
+fn stand_up_order_for_action_state(action_state: ActionState) -> OrderType {
+    if action_state.is_sword() || action_state == ActionState::Menacing {
+        OrderType::StandingUpSword
+    } else if action_state.is_bow() {
+        OrderType::StandingUpBow
+    } else {
+        OrderType::StandingUp
+    }
+}
+
 fn set_posture_after(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize, p: Posture) {
     if let Some(e) = engine.sequence_manager.get_element_mut(seq_id, elem_idx) {
         e.posture_after_transition = p;
@@ -1192,6 +1202,7 @@ fn make_posture_transition_actor(
     engine: &mut EngineInner,
     seq_id: SequenceId,
     elem_idx: usize,
+    owner: EntityId,
     flags: CP,
 ) -> bool {
     let posture_after = engine
@@ -1231,10 +1242,22 @@ fn make_posture_transition_actor(
             }
             Posture::Lying => {
                 if !flags.contains(CP::CAN_BE_LYING) {
-                    // Stand-up transition: queue the standing-up
-                    // animation so the actor plays the recovery motion
-                    // before the command's own orders run.
-                    push_anim_order(engine, seq_id, elem_idx, OrderType::StandingUp);
+                    // C++ translates RHCOMMAND_STAND_UP as an in-place
+                    // animation (`bComputeDirection = false`) chosen from
+                    // the post-transition action state.
+                    let action_state_after = engine
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .map(|e| e.action_state_after_transition)
+                        .or_else(|| {
+                            engine
+                                .get_entity(owner)
+                                .and_then(|entity| entity.actor_data())
+                                .map(|actor| actor.action_state)
+                        })
+                        .unwrap_or(ActionState::Waiting);
+                    let stand_up = stand_up_order_for_action_state(action_state_after);
+                    push_anim_order_no_dir(engine, seq_id, elem_idx, stand_up);
                     set_posture_after(engine, seq_id, elem_idx, Posture::Upright);
                 }
                 true
@@ -1338,7 +1361,7 @@ fn make_posture_transition_human(
         return true;
     }
 
-    make_posture_transition_actor(engine, seq_id, elem_idx, flags)
+    make_posture_transition_actor(engine, seq_id, elem_idx, owner, flags)
 }
 
 /// Only `SITTING` is handled here; `LYING` / `DODGED` are deferred
@@ -1623,7 +1646,7 @@ fn dispatch_make_posture_transition(
         ElementKind::ActorCivilian => {
             make_posture_transition_npc(engine, seq_id, elem_idx, owner, flags)
         }
-        _ => make_posture_transition_actor(engine, seq_id, elem_idx, flags),
+        _ => make_posture_transition_actor(engine, seq_id, elem_idx, owner, flags),
     }
 }
 
@@ -2125,6 +2148,67 @@ mod tests {
             .get_element(seq, idx)
             .map(|e| e.orders.iter().map(|o| o.order_type).collect())
             .unwrap_or_default()
+    }
+
+    fn order_compute_direction_for(
+        engine: &EngineInner,
+        seq: SequenceId,
+        idx: usize,
+        order_type: OrderType,
+    ) -> Option<bool> {
+        engine.sequence_manager.get_element(seq, idx).and_then(|e| {
+            e.orders
+                .iter()
+                .find(|o| o.order_type == order_type)
+                .map(|o| o.compute_direction)
+        })
+    }
+
+    #[test]
+    fn stand_up_transition_matches_cpp_action_variants() {
+        assert_eq!(
+            stand_up_order_for_action_state(AS::Waiting),
+            OrderType::StandingUp
+        );
+        assert_eq!(
+            stand_up_order_for_action_state(AS::WaitingSword),
+            OrderType::StandingUpSword
+        );
+        assert_eq!(
+            stand_up_order_for_action_state(AS::Menacing),
+            OrderType::StandingUpSword
+        );
+        assert_eq!(
+            stand_up_order_for_action_state(AS::AimingWithBow),
+            OrderType::StandingUpBow
+        );
+    }
+
+    #[test]
+    fn lying_soldier_stand_up_transition_is_in_place_no_direction() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(P::Lying, AS::WaitingSword, false));
+        let (seq, idx) = launch(&mut engine, owner, Command::Turn);
+
+        let ok = engine.generate_transition(owner, seq, idx);
+        assert!(ok);
+
+        let orders = orders_for(&engine, seq, idx);
+        assert!(
+            orders.contains(&OrderType::StandingUpSword),
+            "expected sword stand-up, got {:?}",
+            orders
+        );
+        assert_eq!(
+            order_compute_direction_for(&engine, seq, idx, OrderType::StandingUpSword),
+            Some(false)
+        );
+        let posture_after = engine
+            .sequence_manager
+            .get_element(seq, idx)
+            .unwrap()
+            .posture_after_transition;
+        assert_eq!(posture_after, P::Upright);
     }
 
     /// Soldier with MOVE from LeaningOut queues the unstick transition.
