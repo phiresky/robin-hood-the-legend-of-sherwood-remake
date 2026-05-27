@@ -84,6 +84,26 @@ pub(super) fn pre_render_engine_setup(
     _assets: &robin_engine::engine::LevelAssets,
     _renderer: &mut crate::renderer::Renderer,
 ) {
+    let view = host.viewport.view_position;
+    let screen = host.viewport.screen_size;
+    let zoom = host.viewport.zoom_factor;
+    if zoom > 0.0 {
+        // C++ `RHEngine::PerformRefreshAllElements` refreshes
+        // `RHDrawManager` from the current camera before any world-space
+        // overlay uses it.
+        host.draw_manager.update_drawing_parameters(
+            0,
+            robin_engine::sprite::BBox::new(
+                view,
+                robin_engine::geo2d::pt(
+                    view.x + (screen.x - 1.0) / zoom,
+                    view.y + (screen.y - robin_engine::engine::PANNEL_HEIGHT + 1.0) / zoom,
+                ),
+            ),
+            zoom,
+        );
+    }
+
     crate::blit_to_map::drain_pending_bg_blits(host);
 }
 
