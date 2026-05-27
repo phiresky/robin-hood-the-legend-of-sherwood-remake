@@ -1173,13 +1173,33 @@ impl EngineInner {
         )> = std::collections::HashSet::new();
         for action in &actions {
             if let crate::sequence::SequenceAction::InstructOwner {
+                owner,
                 sequence_id,
                 element_index,
-                ..
             } = action
-                && !self.arbitrate_instruct(*sequence_id, *element_index)
             {
-                abandoned_or_postponed.insert((*sequence_id, *element_index));
+                if !self.arbitrate_instruct(*sequence_id, *element_index) {
+                    abandoned_or_postponed.insert((*sequence_id, *element_index));
+                    continue;
+                }
+
+                let needs_transition = self
+                    .sequence_manager
+                    .get_element(*sequence_id, *element_index)
+                    .is_some_and(|elem| {
+                        matches!(
+                            elem.state,
+                            crate::sequence::SequenceState::Todo
+                                | crate::sequence::SequenceState::Postponed
+                        ) && elem.posture_after_transition == crate::element::Posture::Undefined
+                    });
+                if needs_transition
+                    && !self.generate_transition(*owner, *sequence_id, *element_index)
+                {
+                    self.sequence_manager
+                        .element_impossible(*sequence_id, *element_index);
+                    abandoned_or_postponed.insert((*sequence_id, *element_index));
+                }
             }
         }
 
@@ -1524,9 +1544,11 @@ impl EngineInner {
                         continue;
                     }
                     // Posture transitions (leave-disguise, stand-up, …)
-                    // are handled at launch time by
-                    // `generate_transition` — see `launch_element_for_owner`
-                    // in `engine/mod.rs`.  Nothing to do here.
+                    // are handled before command dispatch: owned
+                    // single-element launches do it in
+                    // `launch_element_for_owner`, and prebuilt
+                    // `launch_sequence` elements do it in the
+                    // InstructOwner admission pass above.
                     //
                     // Re-borrow element for data access.
                     let elem = match self.sequence_manager.get_element(seq_id, elem_idx) {
