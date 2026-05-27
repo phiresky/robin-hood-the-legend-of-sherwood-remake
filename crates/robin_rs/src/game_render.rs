@@ -1268,6 +1268,9 @@ pub(crate) fn render_entities_gpu(
                 continue;
             }
             let use_projectile_path = is_flying_human || kind.is_projectile();
+            let projectile_mask_position =
+                transition_crenel_climb_up_mask_position(entity, engine, assets)
+                    .unwrap_or_else(|| elem.position());
             let mask_indices = if use_projectile_path {
                 // Pass the special layer (not the actor layer) for
                 // projectile masking, since projectile masks live on
@@ -1275,7 +1278,7 @@ pub(crate) fn render_entities_gpu(
                 engine.fast_grid().get_masks_applied_to_projectile(
                     engine.fast_grid().level.special_layer,
                     &sprite_world_bbox,
-                    elem.position().into(),
+                    projectile_mask_position.into(),
                     is_flying_human, // is_human — bottom-plane test
                     engine.sight_obstacles(assets),
                 )
@@ -1368,7 +1371,7 @@ pub(crate) fn render_entities_gpu(
                     renderer,
                     &sprite_world_bbox,
                     actor_position,
-                    elem.position(),
+                    projectile_mask_position,
                     use_projectile_path,
                     &mask_indices,
                 );
@@ -1384,6 +1387,56 @@ pub(crate) fn render_entities_gpu(
             );
         }
     }
+}
+
+fn transition_crenel_climb_up_mask_position(
+    entity: &crate::element::Entity,
+    engine: &Engine,
+    assets: &LevelAssets,
+) -> Option<crate::element::Point3D> {
+    use crate::order::OrderType;
+
+    let elem = entity.element_data();
+    if elem.sprite.last_action != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+        || elem.sprite.current_frame != 0
+    {
+        return None;
+    }
+    let actor = entity.actor_data()?;
+    let door_pass = actor.active_door_pass.as_ref()?;
+    if door_pass.current_action != OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel {
+        return None;
+    }
+    let game_host = engine.mission_script().and_then(|m| m.game_host())?;
+    let door = game_host.doors.get(usize::from(door_pass.door_index))?;
+    let point_mid = crate::geo2d::pt(door.point_mid.0, door.point_mid.1);
+    let point_out = crate::geo2d::pt(door.point_out.0, door.point_out.1);
+
+    // C++ applies the high-crenel transition projection at action-done:
+    // SetPositionMap(point_mid), SetObstacleAndMaterial(point_out projection
+    // area), SetOldPositionMap(point_out), then ComputePositionAll().
+    // Frame 0 is visually still anchored at the pre-snap map point so its
+    // offset lines up with frame 1, but the flying-human mask decision must
+    // already use the far-side projection or the wall projectile masks erase
+    // the whole frame.
+    let mut best_z: Option<f32> = None;
+    for obs in engine.sight_obstacles(assets).iter() {
+        if !obs.is_projection_area()
+            || obs.layer != door.layer_out
+            || obs.sector != u16::from(door.sector_out)
+            || !obs.contains_point_screen(point_out)
+        {
+            continue;
+        }
+        let z = obs.compute_top_z(point_mid.x, point_mid.y);
+        best_z = Some(best_z.map_or(z, |old| old.max(z)));
+    }
+    let z = best_z?;
+    Some(crate::element::Point3D {
+        x: point_mid.x,
+        y: point_mid.y + z,
+        z,
+    })
 }
 
 fn render_sprite_mask_debug_overlay(
