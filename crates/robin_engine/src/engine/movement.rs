@@ -6402,13 +6402,25 @@ impl EngineInner {
             .get_element(seq_id, elem_idx)
             .and_then(|e| e.orders.front())
             .map(|o| o.order_type);
+        let had_launch_transition = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|e| e.num_transition_orders > 0 && e.orders.front().is_some());
         self.post_process_path(seq_id, elem_idx);
         let (orders_after, first_order_after) = self
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| (e.orders.len(), e.orders.front().map(|o| o.order_type)))
             .unwrap_or((orders_before, first_order_before));
-        let have_start_transition =
+        let have_start_transition = had_launch_transition
+            // `post_process_path` can prepend walk/run startup transitions.
+            // `generate_transition` can also have queued posture transitions
+            // already, e.g. PC Spy/Tree uncloaking before a move.
+            //
+            // TODO: Consider tracking start-vs-end transition order spans
+            // explicitly on SequenceElement instead of inferring from the
+            // front order and insertion deltas.
+            ||
             orders_after > orders_before && first_order_after != first_order_before;
 
         // For seek elements with an entity target, snapshot the
