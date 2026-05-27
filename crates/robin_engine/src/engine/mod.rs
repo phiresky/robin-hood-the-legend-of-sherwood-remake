@@ -484,6 +484,42 @@ pub struct PendingBgBlitDecal {
 }
 
 impl EngineInner {
+    pub(crate) fn pc_description_index_for_pc_data(
+        &self,
+        pc_data: &crate::element::PcData,
+    ) -> Option<usize> {
+        let idx = usize::from(pc_data.list_index);
+        let Some(campaign) = self.campaign.as_ref() else {
+            return None;
+        };
+        let Some(desc) = campaign.characters.get(idx) else {
+            tracing::warn!(
+                "PC status index {} out of range for profile {}",
+                idx,
+                pc_data.profile_index
+            );
+            return None;
+        };
+        if desc.character_profile_idx != Some(pc_data.profile_index) {
+            tracing::warn!(
+                "PC status index {} points at profile {:?}, expected {}",
+                idx,
+                desc.character_profile_idx,
+                pc_data.profile_index
+            );
+            return None;
+        }
+        Some(idx)
+    }
+
+    pub(crate) fn pc_description_for_pc_data(
+        &self,
+        pc_data: &crate::element::PcData,
+    ) -> Option<&crate::campaign::PcDescription> {
+        let idx = self.pc_description_index_for_pc_data(pc_data)?;
+        self.campaign.as_ref()?.characters.get(idx)
+    }
+
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
         self.fast_grid.attach_level_grid(assets.level_grid.clone());
         if let Some(script) = self.mission_script.as_mut() {

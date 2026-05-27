@@ -9,7 +9,7 @@ use super::{DevState, EngineInner, LevelAssets};
 use crate::ai::AiLockFlags;
 use crate::campaign::CampaignValue;
 use crate::console::{ConsoleCommand, parse_with_final};
-use crate::element::{Camp, Command, EntityId, ObjectType, Posture};
+use crate::element::{Camp, Command, Entity, EntityId, ObjectType, Posture};
 use crate::natives::EngineCommand;
 use crate::sequence::SequenceElement;
 use md5_crate::{Digest, Md5};
@@ -889,12 +889,17 @@ impl EngineInner {
                     .pc_ids
                     .iter()
                     .filter_map(|&id| {
-                        self.get_entity(id)
-                            .and_then(|e| e.pc_data())
-                            .map(|pc| (id, pc.profile_index))
+                        self.get_entity(id).and_then(|e| match e {
+                            Entity::Pc(pc) => Some((
+                                id,
+                                pc.pc.profile_index,
+                                self.pc_description_index_for_pc_data(&pc.pc)?,
+                            )),
+                            _ => None,
+                        })
                     })
                     .collect();
-                for (id, profile_idx) in pcs {
+                for (id, profile_idx, status_idx) in pcs {
                     let Some(campaign) = self.campaign.as_mut() else {
                         continue;
                     };
@@ -902,7 +907,7 @@ impl EngineInner {
                         Some(p) => p.actions,
                         None => continue,
                     };
-                    if let Some(desc) = campaign.characters.get_mut(usize::from(profile_idx)) {
+                    if let Some(desc) = campaign.characters.get_mut(status_idx) {
                         for action in actions {
                             desc.status.force_set_ammo(action, 999);
                         }

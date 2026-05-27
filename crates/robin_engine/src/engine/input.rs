@@ -461,9 +461,7 @@ impl EngineInner {
                     // In-coma check reads the campaign-level coma
                     // status flag on the PC.
                     let in_coma = self
-                        .campaign
-                        .as_ref()
-                        .and_then(|c| c.characters.get(usize::from(pc_data.profile_index)))
+                        .pc_description_for_pc_data(pc_data)
                         .map(|desc| desc.status.in_coma)
                         .unwrap_or(false);
                     if in_coma {

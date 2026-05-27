@@ -631,21 +631,12 @@ impl EngineInner {
     /// ammo) or if the PC has at least 1 arrow.  Returns `false` only
     /// when a PC has 0 arrows.
     pub fn check_bow_ammo(&self, shooter_id: EntityId) -> bool {
-        let profile_idx = self.get_entity(shooter_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
-            None => return true, // Non-PCs (soldiers) have unlimited ammo
-        };
-
-        match self.campaign.as_ref() {
-            Some(campaign) => match campaign.characters.get(usize::from(profile_idx)) {
-                Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) > 0,
-                None => true, // No campaign data → allow shot
-            },
-            None => true, // No campaign → allow shot (e.g. tests)
+        match self.get_entity(shooter_id) {
+            Some(Entity::Pc(pc)) => self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|pc_desc| pc_desc.status.get_ammo(crate::profiles::Action::Bow) > 0)
+                .unwrap_or(true),
+            _ => true, // Non-PCs (soldiers) have unlimited ammo
         }
     }
 
@@ -653,21 +644,12 @@ impl EngineInner {
     ///
     /// Returns `u32::MAX` for non-PCs (soldiers have unlimited ammo).
     pub fn get_bow_ammo_count(&self, shooter_id: EntityId) -> u32 {
-        let profile_idx = self.get_entity(shooter_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
-            None => return u32::MAX, // Non-PCs (soldiers) have unlimited ammo
-        };
-
-        match self.campaign.as_ref() {
-            Some(campaign) => match campaign.characters.get(usize::from(profile_idx)) {
-                Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) as u32,
-                None => u32::MAX,
-            },
-            None => u32::MAX,
+        match self.get_entity(shooter_id) {
+            Some(Entity::Pc(pc)) => self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|pc_desc| pc_desc.status.get_ammo(crate::profiles::Action::Bow) as u32)
+                .unwrap_or(u32::MAX),
+            _ => u32::MAX, // Non-PCs (soldiers) have unlimited ammo
         }
     }
 
@@ -690,17 +672,16 @@ impl EngineInner {
             return;
         }
 
-        let profile_idx = self.get_entity(shooter_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
+        let status_idx = match self.get_entity(shooter_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
             _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
-            None => return, // Civilians / props don't track ammo
+        };
+        let Some(status_idx) = status_idx else {
+            return; // Civilians / props don't track ammo
         };
 
         let remaining = if let Some(ref mut campaign) = self.campaign
-            && let Some(pc_desc) = campaign.characters.get_mut(usize::from(profile_idx))
+            && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
         {
             let removed = pc_desc
                 .status
@@ -732,19 +713,13 @@ impl EngineInner {
     /// Check if a PC has ammo for a given action (via campaign PcStatus).
     /// Returns `false` for non-PCs or if campaign isn't loaded.
     pub(super) fn has_ammo(&self, actor_id: EntityId, action: crate::profiles::Action) -> bool {
-        let profile_idx = self.get_entity(actor_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let Some(idx) = profile_idx else { return true }; // non-PCs don't track ammo
-        let Some(ref campaign) = self.campaign else {
-            return true;
-        };
-        campaign
-            .characters
-            .get(usize::from(idx))
-            .map(|pc| pc.status.get_ammo(action) > 0)
-            .unwrap_or(true)
+        match self.get_entity(actor_id) {
+            Some(Entity::Pc(pc)) => self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|pc_desc| pc_desc.status.get_ammo(action) > 0)
+                .unwrap_or(true),
+            _ => true, // non-PCs don't track ammo
+        }
     }
 
     /// Decrement ability ammo by 1; disable the action slot when ammo
@@ -755,17 +730,16 @@ impl EngineInner {
         actor_id: EntityId,
         action: crate::profiles::Action,
     ) {
-        let profile_idx = self.get_entity(actor_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
+        let status_idx = match self.get_entity(actor_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
             _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
-            None => return, // Only PCs track ammo
+        };
+        let Some(status_idx) = status_idx else {
+            return; // Only PCs track ammo
         };
 
         let remaining = if let Some(ref mut campaign) = self.campaign {
-            if let Some(pc_desc) = campaign.characters.get_mut(usize::from(profile_idx)) {
+            if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
                 let removed = pc_desc.status.decrease_ammo(action, 1);
                 let remaining = pc_desc.status.get_ammo(action);
                 tracing::debug!(
@@ -1003,20 +977,15 @@ impl EngineInner {
                 continue;
             }
             // Disable if `num_purses == 0` OR ransom below threshold;
-            // enable otherwise.  Purse ammo lives on the campaign's
-            // PcDescription indexed by the world PC's `profile_index`
-            // (see `get_ammo` users above for the same lookup pattern).
-            let profile_idx = self.get_entity(pc_id).and_then(|e| match e {
-                Entity::Pc(pc) => Some(pc.pc.profile_index),
-                _ => None,
-            });
-            let num_purses = profile_idx
-                .and_then(|idx| {
-                    self.campaign
-                        .as_ref()
-                        .and_then(|c| c.characters.get(usize::from(idx)))
-                        .map(|desc| desc.status.get_ammo(Action::Purse))
+            // enable otherwise.  Purse ammo lives on the selected PC's
+            // campaign status block, matching the C++ mpStatus pointer.
+            let num_purses = self
+                .get_entity(pc_id)
+                .and_then(|e| match e {
+                    Entity::Pc(pc) => self.pc_description_for_pc_data(&pc.pc),
+                    _ => None,
                 })
+                .map(|desc| desc.status.get_ammo(Action::Purse))
                 .unwrap_or(0);
             if num_purses == 0 || !ransom_ok {
                 self.disable_pc_action(assets, pc_id, Action::Purse);
@@ -1039,14 +1008,15 @@ impl EngineInner {
         action: crate::profiles::Action,
         amount: u16,
     ) {
-        let profile_idx = self.get_entity(pc_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
+        let (profile_idx, status_idx) = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => (
+                pc.pc.profile_index,
+                self.pc_description_index_for_pc_data(&pc.pc),
+            ),
             None => return,
+            _ => return,
         };
+        let Some(status_idx) = status_idx else { return };
 
         // Look up the profile to get max ammo for clamping.
         let max_ammo = assets
@@ -1060,7 +1030,7 @@ impl EngineInner {
             .unwrap_or(u16::MAX);
 
         let new_ammo = if let Some(ref mut campaign) = self.campaign {
-            if let Some(pc_desc) = campaign.characters.get_mut(usize::from(profile_idx)) {
+            if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
                 let added = pc_desc.status.increase_ammo(action, amount, max_ammo);
                 let new_count = pc_desc.status.get_ammo(action);
                 tracing::debug!(
@@ -1097,11 +1067,13 @@ impl EngineInner {
         action: crate::profiles::Action,
         quantity: u16,
     ) -> Option<crate::inventory::PickupResult> {
-        let profile_idx = self.get_entity(pc_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let profile_idx = profile_idx?;
+        let (profile_idx, status_idx) = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => (
+                pc.pc.profile_index,
+                self.pc_description_index_for_pc_data(&pc.pc)?,
+            ),
+            _ => return None,
+        };
 
         let profile = assets
             .profile_manager
@@ -1113,7 +1085,7 @@ impl EngineInner {
 
         // Use the pure-function pickup logic from inventory module.
         let result = if let Some(ref mut campaign) = self.campaign {
-            if let Some(pc_desc) = campaign.characters.get_mut(usize::from(profile_idx)) {
+            if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
                 crate::inventory::take_object(
                     &mut pc_desc.status,
                     &profile,
@@ -2036,7 +2008,7 @@ impl EngineInner {
             && self.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
 
         for pc_id in self.pc_ids.clone() {
-            let (lp, immortal, swordfighting, profile_idx) = {
+            let (lp, immortal, swordfighting, in_coma) = {
                 let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
                     continue;
                 };
@@ -2050,11 +2022,15 @@ impl EngineInner {
                 {
                     continue;
                 }
+                let in_coma = self
+                    .pc_description_for_pc_data(&pc.pc)
+                    .map(|d| d.status.in_coma)
+                    .unwrap_or(false);
                 (
                     pc.pc.life_points,
                     pc.pc.immortal,
                     !pc.human.opponents.is_empty(),
-                    pc.pc.profile_index,
+                    in_coma,
                 )
             };
 
@@ -2062,12 +2038,6 @@ impl EngineInner {
                 // Snap up to a 75 floor before incrementing.
                 if lp < 75 { 75 } else { lp + 1 }
             } else if tick_easy && !swordfighting {
-                let in_coma = self
-                    .campaign
-                    .as_ref()
-                    .and_then(|c| c.characters.get(usize::from(profile_idx)))
-                    .map(|d| d.status.in_coma)
-                    .unwrap_or(false);
                 if in_coma {
                     continue;
                 }
@@ -2805,24 +2775,22 @@ impl EngineInner {
                     // the Guzzle branch only changes the heal amount
                     // (80 vs 40); both end up decrementing the same
                     // underlying field.
-                    let profile_idx = self.get_entity(actor_id).and_then(|e| match e {
-                        Entity::Pc(pc) => Some(pc.pc.profile_index),
+                    let pc_status = self.get_entity(actor_id).and_then(|e| match e {
+                        Entity::Pc(pc) => {
+                            Some((pc.pc.profile_index, self.pc_description_for_pc_data(&pc.pc)))
+                        }
                         _ => None,
                     });
-                    if let Some(idx) = profile_idx {
-                        let still_has_ammo = self
-                            .campaign
-                            .as_ref()
-                            .and_then(|c| c.characters.get(usize::from(idx)))
-                            .map(|d| d.status.get_ammo(crate::profiles::Action::Eat) > 0)
-                            .unwrap_or(false);
+                    if let Some((profile_idx, Some(pc_desc))) = pc_status {
+                        let still_has_ammo =
+                            pc_desc.status.get_ammo(crate::profiles::Action::Eat) > 0;
                         if still_has_ammo {
                             // Determine heal amount based on whether the
                             // PC has the Guzzle action (gluttons heal
                             // more).
                             let has_guzzle = assets
                                 .profile_manager
-                                .get_character(idx)
+                                .get_character(profile_idx)
                                 .map(|p| p.has_action(crate::profiles::Action::Guzzle))
                                 .unwrap_or(false);
                             let heal_amount: i16 = if has_guzzle { 80 } else { 40 };

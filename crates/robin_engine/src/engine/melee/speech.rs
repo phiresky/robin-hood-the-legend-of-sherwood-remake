@@ -157,15 +157,10 @@ impl EngineInner {
                 let in_coma = self
                     .get_entity(entity_id)
                     .and_then(|e| match e {
-                        Entity::Pc(pc) => Some(pc.pc.profile_index),
+                        Entity::Pc(pc) => self.pc_description_for_pc_data(&pc.pc),
                         _ => None,
                     })
-                    .and_then(|idx| {
-                        self.campaign
-                            .as_ref()
-                            .and_then(|c| c.characters.get(usize::from(idx)))
-                            .map(|d| d.status.in_coma)
-                    })
+                    .map(|d| d.status.in_coma)
                     .unwrap_or(false);
                 if !in_coma {
                     self.hero_speaking_ex(assets, entity_id, HERO_DIE, SPEECH_EMERGENCY);

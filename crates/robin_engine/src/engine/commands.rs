@@ -3244,9 +3244,7 @@ pub(super) fn is_pc_takable(
 
     // Resolve PC status to read current ammo.  Pulled lazily because
     // not every branch needs it (NoAction returns early above).
-    let campaign = engine.campaign.as_ref();
-    let Some(pc_desc) = campaign.and_then(|c| c.characters.get(usize::from(pc_data.profile_index)))
-    else {
+    let Some(pc_desc) = engine.pc_description_for_pc_data(pc_data) else {
         return false;
     };
     let status = &pc_desc.status;
@@ -3673,6 +3671,64 @@ mod tests {
             human: HumanData::default(),
             pc: PcData {
                 profile_index: crate::profiles::CharacterProfileIdx(0),
+                life_points: 50,
+                ..PcData::default()
+            },
+        }));
+
+        (engine, assets, pc_id)
+    }
+
+    fn setup_pc_engine_with_split_profile_and_status(
+        actions: &[(Action, u16)],
+    ) -> (EngineInner, LevelAssets, EntityId) {
+        let mut actions_arr = [Action::NoAction; crate::profiles::NUMBER_OF_PC_ACTIONS];
+        let mut max_ammo_arr = [0u16; crate::profiles::NUMBER_OF_PC_ACTIONS];
+        for (i, (a, m)) in actions.iter().enumerate() {
+            actions_arr[i] = *a;
+            max_ammo_arr[i] = *m;
+        }
+
+        let profile_idx = crate::profiles::CharacterProfileIdx(2);
+        let status_idx = 1u8;
+
+        let mut pm = ProfileManager::new();
+        pm.characters.push(CharacterProfile::default());
+        pm.characters.push(CharacterProfile::default());
+        pm.characters.push(CharacterProfile {
+            actions: actions_arr,
+            action_max_ammo: max_ammo_arr,
+            ..CharacterProfile::default()
+        });
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(pm);
+
+        let mut engine = EngineInner::new();
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.characters.push(crate::campaign::PcDescription {
+            character_profile_idx: Some(crate::profiles::CharacterProfileIdx(0)),
+            instanced: false,
+            ..Default::default()
+        });
+        campaign.characters.push(crate::campaign::PcDescription {
+            character_profile_idx: Some(profile_idx),
+            instanced: true,
+            ..Default::default()
+        });
+        engine.campaign = Some(campaign);
+
+        let pc_id = engine.add_entity(Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                profile_index: profile_idx,
+                list_index: status_idx,
                 life_points: 50,
                 ..PcData::default()
             },
@@ -4167,6 +4223,19 @@ mod tests {
         // PC has Heal action + storage slot open → take.
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Heal, 3)]);
         let id = spawn_bonus(&mut engine, ObjectType::BonusPlants, true, Action::Heal);
+        assert_eq!(
+            object_pickup_command(&engine, &assets, id, pc_id),
+            Some(Command::Take)
+        );
+    }
+
+    #[test]
+    fn pickup_dispatch_uses_pc_status_index_not_profile_index() {
+        // C++ PCs read ammo from their own mpStatus, not from a
+        // campaign array slot equal to the static profile index.
+        let (mut engine, assets, pc_id) =
+            setup_pc_engine_with_split_profile_and_status(&[(Action::Bow, 12)]);
+        let id = spawn_bonus(&mut engine, ObjectType::BonusArrow, true, Action::Bow);
         assert_eq!(
             object_pickup_command(&engine, &assets, id, pc_id),
             Some(Command::Take)
