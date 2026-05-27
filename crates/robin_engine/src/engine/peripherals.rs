@@ -358,4 +358,7 @@ pub struct DebugFlags {
     /// Draw each entity's `EntityId` number centered below its feet.
     /// Dev overlay driven by the `/screenshot?entity_ids` HTTP flag.
     pub entity_ids: bool,
+    /// Draw sprite occlusion-mask debug geometry for masked/flying sprites.
+    /// Rust-only dev overlay for renderer parity investigations.
+    pub sprite_masks_display: bool,
 }

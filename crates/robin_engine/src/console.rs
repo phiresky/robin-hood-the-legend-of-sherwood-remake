@@ -96,6 +96,7 @@ pub enum ConsoleCommand {
     SeekAndDestroy,
     Shadow,
     Sphere,
+    SpriteMasks,
     Surface,
     StatusFramecache,
     StatusHardware,
@@ -268,6 +269,8 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
         "SEEKANDDESTROY" => Some(ConsoleCommand::SeekAndDestroy),
         "SHADOW" => Some(ConsoleCommand::Shadow),
         "SPHERE" => Some(ConsoleCommand::Sphere),
+        "SPRITEMASKS" | "SPRITE_MASKS" => Some(ConsoleCommand::SpriteMasks),
+        "SPRITE" if tokens.get(1) == Some(&"MASKS") => Some(ConsoleCommand::SpriteMasks),
         "SURFACE" => Some(ConsoleCommand::Surface),
         "STATUS" => match tokens.get(1).copied() {
             Some("FRAMECACHE") => Some(ConsoleCommand::StatusFramecache),
@@ -407,6 +410,7 @@ mod tests {
         assert_eq!(parse("I AM THE WINNER"), Some(ConsoleCommand::WinCampaign));
         assert_eq!(parse("ROTER ALARM"), Some(ConsoleCommand::RoterAlarm));
         assert_eq!(parse("SAN PETRUS"), Some(ConsoleCommand::SanPetrus));
+        assert_eq!(parse("SPRITE MASKS"), Some(ConsoleCommand::SpriteMasks));
         assert_eq!(parse("WASP MASTER"), Some(ConsoleCommand::WaspMaster));
         assert_eq!(parse("MISTER SANDMAN"), Some(ConsoleCommand::MisterSandman));
         assert_eq!(

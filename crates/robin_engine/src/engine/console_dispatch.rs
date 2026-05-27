@@ -422,6 +422,11 @@ impl EngineInner {
                 dev.debug.shadow_polygon_sphere = !dev.debug.shadow_polygon_sphere;
                 ConsoleResponse::Ok(String::new())
             }
+            SpriteMasks => toggle_debug(
+                &mut dev.debug.sprite_masks_display,
+                "Sprite masks displayed.",
+                "Sprite masks hidden.",
+            ),
             Surface => toggle_debug(
                 &mut dev.debug.surface_display,
                 "Surface overlay displayed.",
@@ -1394,6 +1399,25 @@ mod tests {
         );
         assert!(!dev.debug.actor_info_display);
         assert!(!dev.debug.entity_ids);
+    }
+
+    #[test]
+    fn sprite_masks_toggles_overlay() {
+        let (mut engine, mut dev) = engine_with_campaign();
+
+        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "SPRITEMASKS");
+        assert_eq!(
+            resp,
+            ConsoleResponse::Ok("Sprite masks displayed.".to_string())
+        );
+        assert!(dev.debug.sprite_masks_display);
+
+        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "SPRITE MASKS");
+        assert_eq!(
+            resp,
+            ConsoleResponse::Ok("Sprite masks hidden.".to_string())
+        );
+        assert!(!dev.debug.sprite_masks_display);
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::campaign::CampaignValue;
 use crate::geo2d;
 use crate::gfx_types::Rect;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
-use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::markers::GroundMark;
 use robin_engine::sprite::BBox;
 
@@ -985,6 +985,7 @@ pub(crate) fn render_entities_gpu(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
+    dev: &DevState,
     renderer: &mut Renderer,
     titbit_renderer: &mut crate::titbit_renderer::TitbitRenderer,
 ) {
@@ -1325,7 +1326,7 @@ pub(crate) fn render_entities_gpu(
             } else {
                 None
             };
-            for mask_idx in mask_indices {
+            for &mask_idx in &mask_indices {
                 let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
                 let mask_screen_x = ((mask.bbox.x_min() - view.x) * zoom).round() as i32;
                 let mask_screen_y = ((mask.bbox.y_min() - view.y) * zoom).round() as i32;
@@ -1361,6 +1362,18 @@ pub(crate) fn render_entities_gpu(
                     );
                 }
             }
+            if dev.debug.sprite_masks_display {
+                render_sprite_mask_debug_overlay(
+                    host,
+                    engine,
+                    renderer,
+                    &sprite_world_bbox,
+                    actor_position,
+                    elem.position(),
+                    use_projectile_path,
+                    &mask_indices,
+                );
+            }
         } else {
             render_entity_fallback(
                 renderer,
@@ -1372,6 +1385,82 @@ pub(crate) fn render_entities_gpu(
             );
         }
     }
+}
+
+fn render_sprite_mask_debug_overlay(
+    host: &Host,
+    engine: &Engine,
+    renderer: &mut Renderer,
+    sprite_world_bbox: &crate::geo2d::BBox2D,
+    actor_position: crate::geo2d::Point2D,
+    position_3d: crate::element::Point3D,
+    use_projectile_path: bool,
+    mask_indices: &[robin_engine::mask::MaskIndex],
+) {
+    if mask_indices.is_empty() && !use_projectile_path {
+        return;
+    }
+
+    let sprite_color = if mask_indices.is_empty() {
+        0x07ff
+    } else {
+        0xf81f
+    };
+    draw_world_bbox_outline(host, renderer, sprite_world_bbox, sprite_color);
+
+    for &mask_idx in mask_indices {
+        let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
+        draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
+    }
+
+    draw_world_cross(host, renderer, actor_position, 0x07e0);
+    if use_projectile_path {
+        let projectile_test_point = crate::geo2d::pt(position_3d.x, position_3d.y);
+        let actor_screen = world_to_screen(host, actor_position);
+        let projectile_screen = world_to_screen(host, projectile_test_point);
+        renderer.draw_line_screen(
+            actor_screen.0,
+            actor_screen.1,
+            projectile_screen.0,
+            projectile_screen.1,
+            0xfd20,
+        );
+        draw_world_cross(host, renderer, projectile_test_point, 0xfd20);
+    }
+}
+
+fn draw_world_bbox_outline(
+    host: &Host,
+    renderer: &mut Renderer,
+    bbox: &crate::geo2d::BBox2D,
+    color: u16,
+) {
+    if !bbox.is_somewhere() {
+        return;
+    }
+    let (x1, y1) = world_to_screen(host, crate::geo2d::pt(bbox.x_min(), bbox.y_min()));
+    let (x2, y2) = world_to_screen(host, crate::geo2d::pt(bbox.x_max(), bbox.y_max()));
+    renderer.draw_rect_outline_screen(x1, y1, x2, y2, color);
+}
+
+fn draw_world_cross(
+    host: &Host,
+    renderer: &mut Renderer,
+    point: crate::geo2d::Point2D,
+    color: u16,
+) {
+    let (x, y) = world_to_screen(host, point);
+    renderer.draw_line_screen(x - 4, y, x + 4, y, color);
+    renderer.draw_line_screen(x, y - 4, x, y + 4, color);
+}
+
+fn world_to_screen(host: &Host, point: crate::geo2d::Point2D) -> (i32, i32) {
+    let view = host.viewport.view_position;
+    let zoom = host.viewport.zoom_factor;
+    (
+        ((point.x - view.x) * zoom).round() as i32,
+        ((point.y - view.y) * zoom).round() as i32,
+    )
 }
 
 // ─── GPU selection outline pass ──────────────────────────────────

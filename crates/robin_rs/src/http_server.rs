@@ -185,6 +185,7 @@ pub struct ScreenshotFlags {
     pub animation_lines: Option<bool>,
     pub seek_points: Option<bool>,
     pub fps: Option<bool>,
+    pub sprite_masks: Option<bool>,
     /// Rust-only dev overlay — draws each entity's numeric ID below its
     /// feet.  Useful for correlating `/state` entries with what is
     /// visible on screen.
@@ -510,6 +511,7 @@ fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
             animation_lines: query_flag(query, "animation_lines"),
             seek_points: query_flag(query, "seek_points"),
             fps: query_flag(query, "fps"),
+            sprite_masks: query_flag(query, "sprite_masks"),
             // Default-on for screenshots: if the caller doesn't mention
             // the flag, force it true so every `/screenshot` labels
             // entities.  Pass `entity_ids=0` to opt out.
@@ -593,7 +595,7 @@ fn info_json() -> serde_json::Value {
             {"method": "POST", "path": "/batch",              "desc": "invoke many natives on one tick: {calls: [{op, args, this?}]}"},
             {"method": "POST", "path": "/console",            "desc": "run a debug-console command: {command: '...'}"},
             {"method": "POST", "path": "/command",            "desc": "apply a PlayerCommand (externally-tagged JSON enum)"},
-            {"method": "GET",  "path": "/screenshot",         "desc": "PNG of next rendered frame. Query: w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, entity_ids (bool flags)"},
+            {"method": "GET",  "path": "/screenshot",         "desc": "PNG of next rendered frame. Query: w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
             {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N} (default 1). Any modal dialog / popup / debriefing / sherwood report / pause-all queued before or during the step is dismissed silently; the reply includes `modals_dismissed`."},
             {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N} (default 1). Fails if target frame is older than the oldest retained snapshot."},
         ],
@@ -1197,6 +1199,7 @@ pub fn apply_screenshot_flags(
     set!(animation_lines, display_animation_lines);
     set!(seek_points, display_seek_points);
     set!(fps, fps_display);
+    set!(sprite_masks, sprite_masks_display);
     set!(entity_ids, entity_ids);
 }
 

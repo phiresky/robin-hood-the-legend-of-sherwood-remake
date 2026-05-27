@@ -760,7 +760,7 @@ pub(super) fn render_frame(
     render_debug_surfaces_fill(host, engine, assets, dev, renderer);
 
     titbit_renderer.begin_frame();
-    render_entities_gpu(host, engine, assets, renderer, titbit_renderer);
+    render_entities_gpu(host, engine, assets, dev, renderer, titbit_renderer);
 
     // ── Host-side Mark() contributions ──
     // Currently the requirements-bar hover (`MarkPCWithAction`) and
