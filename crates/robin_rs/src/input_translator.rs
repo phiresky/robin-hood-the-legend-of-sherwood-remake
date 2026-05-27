@@ -489,6 +489,14 @@ impl InputTranslator {
     }
 
     /// Edge detection helper for scancodes that aren't routed through the
+    /// standard [`GameAction`] translation path. Returns `true` on the
+    /// frame the scancode transitions from up -> down. Must be called
+    /// before [`Self::translate_keyboard`] advances `prev_keys`.
+    pub fn was_scancode_pressed(&self, scancode: u16, current: &[u8]) -> bool {
+        key_hit(current, &self.prev_keys, scancode)
+    }
+
+    /// Edge detection helper for scancodes that aren't routed through the
     /// standard [`GameAction`] translation path — e.g. the minimap
     /// accelerator, which is stored on the widget rather than bound to
     /// a [`GameAction`] variant.  Returns `true` on the frame the
@@ -964,6 +972,16 @@ mod tests {
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
         assert!(actions.contains(&GameAction::ZoomIn));
+    }
+
+    #[test]
+    fn raw_scancode_pressed_is_edge_triggered() {
+        let mut t = make_translator();
+        let frame1 = keys_down(&[55]);
+        assert!(t.was_scancode_pressed(55, &frame1));
+
+        let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
+        assert!(!t.was_scancode_pressed(55, &frame1));
     }
 
     #[test]

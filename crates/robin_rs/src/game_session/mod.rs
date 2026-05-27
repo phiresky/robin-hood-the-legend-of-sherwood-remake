@@ -1847,20 +1847,20 @@ pub(crate) async fn run_mission(
         };
 
         // Step-debug keys: `.` (forward), `,` / Backspace (back), Enter
-        // (unpause).  Stepping uses held state — every frame the key is
-        // down fires another step, so holding `.` scrubs forward and
-        // holding `,` / Backspace scrubs back.  Enter still uses the
-        // release edge so a held Enter doesn't spam-resume.  All three
-        // checks read the raw scancode state rather than going through
-        // the bindable `GameAction` keyset.
+        // (unpause).  `.` and `,` step on the press edge so a normal
+        // key tap advances exactly one frame; Backspace keeps its
+        // held-state rewind scrub behavior.  Enter uses the release
+        // edge so a held Enter doesn't spam-resume.  All checks read
+        // raw scancodes rather than the bindable `GameAction` keyset.
         const SDL_SCANCODE_RETURN: u16 = 40;
         const SDL_SCANCODE_BACKSPACE: u16 = 42;
         const SDL_SCANCODE_COMMA: u16 = 54;
         const SDL_SCANCODE_PERIOD: u16 = 55;
         let keys = &threaded_input.keyboard_state().keys;
         let is_down = |sc: u16| keys.get(sc as usize).copied().unwrap_or(0) != 0;
-        let step_forward_pressed = is_down(SDL_SCANCODE_PERIOD);
-        let step_back_pressed = is_down(SDL_SCANCODE_COMMA) || is_down(SDL_SCANCODE_BACKSPACE);
+        let step_forward_pressed = input_translator.was_scancode_pressed(SDL_SCANCODE_PERIOD, keys);
+        let step_back_pressed = input_translator.was_scancode_pressed(SDL_SCANCODE_COMMA, keys)
+            || is_down(SDL_SCANCODE_BACKSPACE);
         let step_unpause_pressed =
             input_translator.was_scancode_released(SDL_SCANCODE_RETURN, keys);
         // Suppress these shortcuts when any modal input sink has focus
