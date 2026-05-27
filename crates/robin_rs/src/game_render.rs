@@ -8,6 +8,7 @@
 use crate::Host;
 use crate::campaign::CampaignValue;
 use crate::geo2d;
+use crate::gfx_types::Rect;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::markers::GroundMark;
@@ -920,6 +921,55 @@ fn render_ground_mark_set(
             shadow_level,
             BLIT_SOURCE_TRANSPARENT,
         );
+
+        let mark_world_bbox = crate::geo2d::BBox2D::from_coords(
+            mark.x + ox as f32,
+            mark.y + oy as f32,
+            mark.x + ox as f32 + fw as f32,
+            mark.y + oy as f32 + fh as f32,
+        );
+        let mark_position = crate::geo2d::pt(
+            mark.x + ox as f32 + fw as f32 * 0.5,
+            mark.y + oy as f32 + fh as f32 * 0.5,
+        );
+        let mark_rect = Rect::new(dst_x, dst_y, scaled_w as u32, scaled_h as u32);
+        render_character_masks_clipped(
+            engine,
+            renderer,
+            mark.layer,
+            &mark_world_bbox,
+            mark_position,
+            mark_rect,
+            view_pos,
+            zoom,
+        );
+    }
+}
+
+fn render_character_masks_clipped(
+    engine: &Engine,
+    renderer: &mut Renderer,
+    layer: u16,
+    world_bbox: &crate::geo2d::BBox2D,
+    position: crate::geo2d::Point2D,
+    clip_rect: Rect,
+    view: crate::geo2d::Point2D,
+    zoom: f32,
+) {
+    for mask_idx in engine
+        .fast_grid()
+        .get_masks_applied_to_character(layer, world_bbox, position)
+    {
+        let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
+        let mask_screen_x = ((mask.bbox.x_min() - view.x) * zoom).round() as i32;
+        let mask_screen_y = ((mask.bbox.y_min() - view.y) * zoom).round() as i32;
+        let mask_screen_w = (mask.width as f32 * zoom).round() as u32;
+        let mask_screen_h = (mask.height as f32 * zoom).round() as u32;
+        if mask_screen_w == 0 || mask_screen_h == 0 {
+            continue;
+        }
+        let mask_rect = Rect::new(mask_screen_x, mask_screen_y, mask_screen_w, mask_screen_h);
+        renderer.render_cached_mask_clipped(u32::from(mask_idx), mask_rect, clip_rect);
     }
 }
 
@@ -1290,7 +1340,7 @@ pub(crate) fn render_entities_gpu(
                     mask_screen_w,
                     mask_screen_h,
                 );
-                renderer.render_cached_mask(u32::from(mask_idx), mask_rect);
+                renderer.render_cached_mask_clipped(u32::from(mask_idx), mask_rect, dst_rect);
 
                 if let Some((ow, oh, rgb)) = outline_prepped {
                     let outline_rect = crate::gfx_types::Rect::new(
