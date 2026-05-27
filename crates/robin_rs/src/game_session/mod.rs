@@ -51,7 +51,7 @@ use crate::game_operation::GameCode;
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::host::PrintScreenRequest;
-use crate::ingame_menu::widget_bridge::ModalCursor;
+use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::main_entry::{
     RustCallbacks, current_mission_id, detect_demo_mode, flush_pending_callbacks,
@@ -603,9 +603,10 @@ async fn confirm_quickload_cross_mission(
     callbacks: &mut RustCallbacks,
     engine: &Engine,
     profiles: &robin_engine::profiles::ProfileManager,
-    host: &Host,
+    _host: &Host,
     event_pump: &mut GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
 ) {
@@ -651,18 +652,9 @@ async fn confirm_quickload_cross_mission(
     let msg = resources
         .menu_text
         .get(crate::ingame_menu::resources::MT_MSG_REALLY_LOAD_QUICKSAVE);
-    let confirmed = crate::ingame_menu::show_yesno(
-        event_pump,
-        renderer,
-        resources,
-        Some(ModalCursor::new(
-            cursor_renderer,
-            host.input.mouse_opacity,
-            host.input.mouse_shadow_color,
-        )),
-        &msg,
-    )
-    .await;
+    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+    let confirmed =
+        crate::ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
     if confirmed {
         // Route through the regular `Load` arm so its existing
         // `PendingLevelLoad` cross-mission plumbing handles the mission
@@ -1140,15 +1132,16 @@ pub(crate) async fn run_mission(
             });
             // Single-button Lost panel — no restart, no load, no
             // stat follow-up.
+            let cursor = Some(default_modal_cursor(
+                &mut cursor_renderer,
+                &mut cursor_res,
+                &mut renderer,
+            ));
             let _ = crate::ingame_menu::show_debriefing(
                 &mut *window,
                 &mut renderer,
                 resources,
-                Some(ModalCursor::new(
-                    &mut cursor_renderer,
-                    host.input.mouse_opacity,
-                    host.input.mouse_shadow_color,
-                )),
+                cursor,
                 &text,
                 None,
                 0,
@@ -1561,6 +1554,7 @@ pub(crate) async fn run_mission(
             campaign_ref,
             &mut *window,
             &mut renderer,
+            &mut cursor_res,
             &mut cursor_renderer,
             &mut text_res,
             &mut sherwood_campaign_map,
@@ -1717,6 +1711,7 @@ pub(crate) async fn run_mission(
             campaign_ref,
             &mut *window,
             &mut renderer,
+            &mut cursor_res,
             &mut cursor_renderer,
             &menu_resources,
             &events,
@@ -2425,6 +2420,7 @@ pub(crate) async fn run_mission(
                 campaign_ref,
                 &mut *window,
                 &mut renderer,
+                &mut cursor_res,
                 &mut cursor_renderer,
                 &menu_resources,
                 &mut audio_backend,
@@ -2474,6 +2470,7 @@ pub(crate) async fn run_mission(
             &host,
             &mut *window,
             &mut renderer,
+            &mut cursor_res,
             &mut cursor_renderer,
             &menu_resources,
         )
@@ -3126,6 +3123,7 @@ pub(crate) async fn run_mission(
                 &mut host,
                 &mut *window,
                 &mut renderer,
+                &mut cursor_res,
                 &mut cursor_renderer,
                 &mut audio_backend,
                 &mut text_res,
@@ -3155,6 +3153,7 @@ pub(crate) async fn run_mission(
                     &mut host,
                     &mut *window,
                     &mut renderer,
+                    &mut cursor_res,
                     &mut cursor_renderer,
                     &mut audio_backend,
                     &sample_loader,
@@ -3171,6 +3170,7 @@ pub(crate) async fn run_mission(
                 &mut host,
                 &mut *window,
                 &mut renderer,
+                &mut cursor_res,
                 &mut cursor_renderer,
                 &mut audio_backend,
                 &sample_loader,
@@ -3186,6 +3186,7 @@ pub(crate) async fn run_mission(
                 &mut host,
                 &mut *window,
                 &mut renderer,
+                &mut cursor_res,
                 &mut cursor_renderer,
                 &manager.engine,
                 profiles,
@@ -3227,6 +3228,7 @@ pub(crate) async fn run_mission(
                     &mut host,
                     &mut *window,
                     &mut renderer,
+                    &mut cursor_res,
                     &mut cursor_renderer,
                     &mut audio_backend,
                     &sample_loader,
@@ -3243,6 +3245,7 @@ pub(crate) async fn run_mission(
                 &mut host,
                 &mut *window,
                 &mut renderer,
+                &mut cursor_res,
                 &mut cursor_renderer,
                 &mut text_res,
                 &level_descriptors,
@@ -3269,6 +3272,7 @@ pub(crate) async fn run_mission(
                     &mut host,
                     &mut *window,
                     &mut renderer,
+                    &mut cursor_res,
                     &mut cursor_renderer,
                     &mut audio_backend,
                     &sample_loader,
@@ -3336,6 +3340,7 @@ pub(crate) async fn run_mission(
                     &mut host,
                     &mut *window,
                     &mut renderer,
+                    &mut cursor_res,
                     &mut cursor_renderer,
                     &mut audio_backend,
                     &sample_loader,
@@ -3453,15 +3458,16 @@ pub(crate) async fn run_mission(
                         robin_engine::player_command::DialogResult::Aborted
                     }
                     None => {
+                        let cursor = Some(default_modal_cursor(
+                            &mut cursor_renderer,
+                            &mut cursor_res,
+                            &mut renderer,
+                        ));
                         let confirmed = crate::ingame_menu::show_mission_state_popup(
                             &mut *window,
                             &mut renderer,
                             resources,
-                            Some(ModalCursor::new(
-                                &mut cursor_renderer,
-                                host.input.mouse_opacity,
-                                host.input.mouse_shadow_color,
-                            )),
+                            cursor,
                             popup_title,
                             won,
                             None,
@@ -3565,15 +3571,16 @@ pub(crate) async fn run_mission(
                     let mut current_body = debriefing_body.clone();
                     let mut start_at_stat = false;
                     loop {
+                        let cursor = Some(default_modal_cursor(
+                            &mut cursor_renderer,
+                            &mut cursor_res,
+                            &mut renderer,
+                        ));
                         let outcome = crate::ingame_menu::show_debriefing(
                             &mut *window,
                             &mut renderer,
                             resources,
-                            Some(ModalCursor::new(
-                                &mut cursor_renderer,
-                                host.input.mouse_opacity,
-                                host.input.mouse_shadow_color,
-                            )),
+                            cursor,
                             &current_body,
                             Some(manager.engine.mission_stat()),
                             mission_length,
@@ -3593,15 +3600,16 @@ pub(crate) async fn run_mission(
                                 // selected we'll re-enter the loop with a
                                 // synthetic outcome below; otherwise we
                                 // re-show the same page (body or stat).
+                                let cursor = Some(default_modal_cursor(
+                                    &mut cursor_renderer,
+                                    &mut cursor_res,
+                                    &mut renderer,
+                                ));
                                 let picker_outcome = crate::ingame_menu::show_save_load(
                                     &mut *window,
                                     &mut renderer,
                                     resources,
-                                    Some(ModalCursor::new(
-                                        &mut cursor_renderer,
-                                        host.input.mouse_opacity,
-                                        host.input.mouse_shadow_color,
-                                    )),
+                                    cursor,
                                     &mut callbacks.save_manager,
                                     mission_id,
                                     crate::ingame_menu::SaveLoadMode::Load,

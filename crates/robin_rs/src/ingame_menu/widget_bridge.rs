@@ -13,6 +13,7 @@ use crate::gfx_types::GameEvent;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use crate::resource_ids;
+use crate::resource_manager::ResourceManager;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiEvent, UiKeyboard, UiMsg, UiState};
 use crate::widget::{
@@ -287,6 +288,21 @@ impl<'a> ModalCursor<'a> {
             self.shadow_color,
         );
     }
+}
+
+pub fn default_modal_cursor<'a>(
+    cursor: &'a mut CursorRenderer,
+    cursor_res: &mut ResourceManager,
+    renderer: &mut Renderer,
+) -> ModalCursor<'a> {
+    if cursor.current_cursor_id() != resource_ids::RHMOUSE_DEFAULT {
+        cursor.load_cursor(resource_ids::RHMOUSE_DEFAULT, cursor_res, renderer);
+    }
+    ModalCursor::new(
+        cursor,
+        robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
+        0,
+    )
 }
 
 impl ModalInputState {

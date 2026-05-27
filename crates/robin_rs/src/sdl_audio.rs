@@ -197,12 +197,47 @@ impl SdlMixerBackend {
     }
 
     fn resolve_music_path(path: &str) -> PathBuf {
-        let raw = PathBuf::from(path);
-        if raw.exists() {
-            raw
-        } else {
-            crate::sbfile::resolve_case_insensitive(&raw).unwrap_or(raw)
+        fn resolve_one(path: &str) -> Option<PathBuf> {
+            let raw = PathBuf::from(path);
+            if raw.exists() {
+                return Some(raw);
+            }
+            if let Some(p) = crate::sbfile::resolve_case_insensitive(&raw)
+                && p.is_file()
+            {
+                return Some(p);
+            }
+            crate::sbfile::resolve_data_path(path)
         }
+
+        if let Some(resolved) = resolve_one(path) {
+            return resolved;
+        }
+
+        let raw = PathBuf::from(path);
+        if raw
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("wav"))
+        {
+            let ogg_path = raw.with_extension("ogg");
+            if let Some(ogg_path) = ogg_path.to_str()
+                && let Some(resolved) = resolve_one(ogg_path)
+            {
+                return resolved;
+            }
+        } else if raw
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ogg"))
+        {
+            let wav_path = raw.with_extension("wav");
+            if let Some(wav_path) = wav_path.to_str()
+                && let Some(resolved) = resolve_one(wav_path)
+            {
+                return resolved;
+            }
+        }
+
+        raw
     }
 }
 
@@ -660,6 +695,20 @@ pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "audio")]
+    #[test]
+    fn music_path_falls_back_from_wav_to_ogg() {
+        let temp = tempfile::tempdir().unwrap();
+        let ogg = temp.path().join("Lincoln_D.ogg");
+        std::fs::write(&ogg, []).unwrap();
+
+        let wav = temp.path().join("Lincoln_D.wav");
+        assert_eq!(
+            SdlMixerBackend::resolve_music_path(wav.to_str().unwrap()),
+            ogg
+        );
+    }
 
     #[test]
     fn wav_duration_basic() {

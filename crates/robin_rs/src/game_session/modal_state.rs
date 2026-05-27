@@ -5,7 +5,7 @@
 use crate::Host;
 use crate::game::Game;
 use crate::ingame_menu::IngameMenuResources;
-use crate::ingame_menu::widget_bridge::ModalCursor;
+use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::sdl_audio::SdlMixerBackend;
 use robin_engine::engine::Engine;
 use std::collections::VecDeque;
@@ -247,6 +247,7 @@ fn tick_active_dialogue_batch(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
     menu_resources: &mut Option<IngameMenuResources>,
@@ -290,11 +291,7 @@ fn tick_active_dialogue_batch(
         .net
         .as_ref()
         .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
-    let cursor = ModalCursor::new(
-        cursor_renderer,
-        host.input.mouse_opacity,
-        host.input.mouse_shadow_color,
-    );
+    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(result) = state.tick(
         event_pump,
         renderer,
@@ -325,6 +322,7 @@ pub(super) async fn drain_pending_dialogues(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
     text_res: &mut crate::resource_manager::ResourceManager,
@@ -408,11 +406,7 @@ pub(super) async fn drain_pending_dialogues(
                 })
                 .collect();
 
-            let cursor = Some(ModalCursor::new(
-                cursor_renderer,
-                host.input.mouse_opacity,
-                host.input.mouse_shadow_color,
-            ));
+            let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
             let results = crate::ingame_menu::show_dialogue_batch(
                 event_pump,
                 renderer,
@@ -650,6 +644,7 @@ fn tick_active_popup_scroll_batch(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
     sample_loader: &crate::sound_cache::SampleLoader,
@@ -697,11 +692,7 @@ fn tick_active_popup_scroll_batch(
         .net
         .as_ref()
         .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
-    let cursor = ModalCursor::new(
-        cursor_renderer,
-        host.input.mouse_opacity,
-        host.input.mouse_shadow_color,
-    );
+    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(result) = state.tick(
         event_pump,
         renderer,
@@ -728,8 +719,9 @@ fn tick_active_debriefing_batch(
     batch: &mut ActiveDebriefingBatch,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
-    host: &Host,
+    _host: &Host,
     menu_resources: &Option<IngameMenuResources>,
     replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
 ) {
@@ -763,11 +755,7 @@ fn tick_active_debriefing_batch(
     let Some((kind, state)) = batch.current.as_mut() else {
         return;
     };
-    let cursor = ModalCursor::new(
-        cursor_renderer,
-        host.input.mouse_opacity,
-        host.input.mouse_shadow_color,
-    );
+    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(outcome) = state.tick(event_pump, renderer, resources, Some(cursor)) {
         let result = if matches!(outcome, crate::ingame_menu::DebriefingOutcome::EmergencyEnd) {
             robin_engine::player_command::DialogResult::Aborted
@@ -796,6 +784,7 @@ pub(super) fn tick_active_modal(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
     sample_loader: &crate::sound_cache::SampleLoader,
@@ -813,6 +802,7 @@ pub(super) fn tick_active_modal(
                 host,
                 event_pump,
                 renderer,
+                cursor_res,
                 cursor_renderer,
                 audio_backend,
                 menu_resources,
@@ -829,6 +819,7 @@ pub(super) fn tick_active_modal(
                 host,
                 event_pump,
                 renderer,
+                cursor_res,
                 cursor_renderer,
                 audio_backend,
                 sample_loader,
@@ -845,6 +836,7 @@ pub(super) fn tick_active_modal(
                 batch,
                 event_pump,
                 renderer,
+                cursor_res,
                 cursor_renderer,
                 host,
                 menu_resources,
@@ -888,11 +880,7 @@ pub(super) fn tick_active_modal(
                 *active_modal = None;
                 return ActiveModalOutcome::None;
             };
-            let cursor = ModalCursor::new(
-                cursor_renderer,
-                host.input.mouse_opacity,
-                host.input.mouse_shadow_color,
-            );
+            let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
             if let Some(confirmed) = state.tick(event_pump, renderer, resources, Some(cursor)) {
                 if let Some(recorder) = replay_recorder.as_mut() {
                     let result = if confirmed {
@@ -927,6 +915,7 @@ pub(super) async fn drain_pending_popup_scroll(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
     sample_loader: &crate::sound_cache::SampleLoader,
@@ -1006,6 +995,7 @@ pub(super) async fn drain_pending_popup_scroll(
                 .net
                 .as_ref()
                 .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
+            let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
             let result = crate::ingame_menu::show_popup_scroll(
                 event_pump,
                 renderer,
@@ -1017,11 +1007,7 @@ pub(super) async fn drain_pending_popup_scroll(
                     .map(|b| b as &mut dyn crate::sound::AudioBackend),
                 sound_enabled,
                 sample_loader,
-                Some(ModalCursor::new(
-                    cursor_renderer,
-                    host.input.mouse_opacity,
-                    host.input.mouse_shadow_color,
-                )),
+                cursor,
                 None,
                 picture,
                 &text,
@@ -1050,6 +1036,7 @@ pub(super) async fn drain_pending_sherwood_stat(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     engine: &Engine,
     profiles: &robin_engine::profiles::ProfileManager,
@@ -1101,6 +1088,7 @@ pub(super) async fn drain_pending_sherwood_stat(
                 .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
             // The Sherwood report uses the "Debrief" font and is
             // left-aligned (not the popup-scroll default).
+            let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
             let result = crate::ingame_menu::show_popup_scroll(
                 event_pump,
                 renderer,
@@ -1112,11 +1100,7 @@ pub(super) async fn drain_pending_sherwood_stat(
                     .map(|b| b as &mut dyn crate::sound::AudioBackend),
                 sound_enabled,
                 sample_loader,
-                Some(ModalCursor::new(
-                    cursor_renderer,
-                    host.input.mouse_opacity,
-                    host.input.mouse_shadow_color,
-                )),
+                cursor,
                 None,
                 None,
                 &text,
@@ -1151,6 +1135,7 @@ pub(super) async fn drain_pending_debriefings(
     host: &mut Host,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     text_res: &mut crate::resource_manager::ResourceManager,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
@@ -1199,25 +1184,12 @@ pub(super) async fn drain_pending_debriefings(
                     // debriefing texts but never invokes the stat
                     // overload — stats don't appear in this flow, so
                     // pass `None`.
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     crate::ingame_menu::show_debriefing(
-                        event_pump,
-                        renderer,
-                        resources,
-                        Some(ModalCursor::new(
-                            cursor_renderer,
-                            host.input.mouse_opacity,
-                            host.input.mouse_shadow_color,
-                        )),
-                        &text,
-                        None,
-                        0,
-                        false,
-                        false,
+                        event_pump, renderer, resources, cursor, &text, None, 0, false, false,
                         // Cheat path passes `bRestartAllowed=false`, so
                         // the quick-load translator is never enabled.
-                        None,
-                        false,
-                        false,
+                        None, false, false,
                     )
                     .await
                 };
@@ -1264,23 +1236,10 @@ pub(super) async fn drain_pending_debriefings(
                 let debrief_outcome = if let Some(result) = replay_result {
                     debriefing_replay_result(result)
                 } else {
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     crate::ingame_menu::show_debriefing(
-                        event_pump,
-                        renderer,
-                        resources,
-                        Some(ModalCursor::new(
-                            cursor_renderer,
-                            host.input.mouse_opacity,
-                            host.input.mouse_shadow_color,
-                        )),
-                        &text,
-                        None,
-                        0,
-                        true,
-                        false,
-                        None,
-                        false,
-                        false,
+                        event_pump, renderer, resources, cursor, &text, None, 0, true, false, None,
+                        false, false,
                     )
                     .await
                 };

@@ -15,7 +15,7 @@ use crate::game::{Game, GameCallbacks};
 use crate::game_operation::GameCode;
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
-use crate::ingame_menu::widget_bridge::ModalCursor;
+use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu, PauseMenuOutcome};
 use crate::main_entry::{RustCallbacks, current_mission_id};
 use crate::player_command::{FrameCommands, PlayerCommand};
@@ -1140,6 +1140,7 @@ pub(super) async fn handle_pause_menu_events(
     campaign_ref: &mut Campaign,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
     audio_backend: &mut Option<SdlMixerBackend>,
@@ -1195,15 +1196,13 @@ pub(super) async fn handle_pause_menu_events(
                     let (options_outcome, new_resolution) = if let Some(profile) =
                         guard.as_mut().and_then(|mgr| mgr.get_active_mut())
                     {
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let outcome = crate::ingame_menu::show_options(
                             event_pump,
                             renderer,
                             resources,
-                            Some(ModalCursor::new(
-                                cursor_renderer,
-                                host.input.mouse_opacity,
-                                host.input.mouse_shadow_color,
-                            )),
+                            cursor,
                             &mut profile.graphic_config,
                             &mut profile.sound_config,
                             &mut host.key_config,
@@ -1227,15 +1226,13 @@ pub(super) async fn handle_pause_menu_events(
                         let mut sound_cfg = crate::sound_config::SoundConfig::default();
                         let mut key_cfg = robin_assets::keyconfig::KeyConfig::default_preset();
                         let mut custom_key_cfg = key_cfg.clone();
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let outcome = crate::ingame_menu::show_options(
                             event_pump,
                             renderer,
                             resources,
-                            Some(ModalCursor::new(
-                                cursor_renderer,
-                                host.input.mouse_opacity,
-                                host.input.mouse_shadow_color,
-                            )),
+                            cursor,
                             &mut graphic,
                             &mut sound_cfg,
                             &mut key_cfg,
@@ -1361,15 +1358,12 @@ pub(super) async fn handle_pause_menu_events(
                         .campaign()
                         .map(|c| current_mission_id(c, &assets.profile_manager))
                         .unwrap_or(0);
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     let picker_outcome = crate::ingame_menu::show_save_load(
                         event_pump,
                         renderer,
                         resources,
-                        Some(ModalCursor::new(
-                            cursor_renderer,
-                            host.input.mouse_opacity,
-                            host.input.mouse_shadow_color,
-                        )),
+                        cursor,
                         &mut callbacks.save_manager,
                         mission_id,
                         mode,
@@ -1429,18 +1423,9 @@ pub(super) async fn handle_pause_menu_events(
                     let msg = resources
                         .menu_text
                         .get(crate::ingame_menu::resources::MT_MSG_REALLY_QUIT);
-                    crate::ingame_menu::show_yesno(
-                        event_pump,
-                        renderer,
-                        resources,
-                        Some(ModalCursor::new(
-                            cursor_renderer,
-                            host.input.mouse_opacity,
-                            host.input.mouse_shadow_color,
-                        )),
-                        &msg,
-                    )
-                    .await
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    crate::ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg)
+                        .await
                 } else {
                     true
                 };
@@ -1579,6 +1564,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
     campaign_ref: &mut Campaign,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
     events: &[GameEvent],
@@ -1686,16 +1672,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         let msg = resources
                             .menu_text
                             .get(crate::ingame_menu::resources::MT_MSG_REALLY_RETURN_TO_MAP);
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         crate::ingame_menu::show_yesno(
-                            event_pump,
-                            renderer,
-                            resources,
-                            Some(ModalCursor::new(
-                                cursor_renderer,
-                                host.input.mouse_opacity,
-                                host.input.mouse_shadow_color,
-                            )),
-                            &msg,
+                            event_pump, renderer, resources, cursor, &msg,
                         )
                         .await
                     } else {
@@ -1731,16 +1711,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         true
                     } else if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources.menu_text.get(prompt_id);
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         crate::ingame_menu::show_yesno(
-                            event_pump,
-                            renderer,
-                            resources,
-                            Some(ModalCursor::new(
-                                cursor_renderer,
-                                host.input.mouse_opacity,
-                                host.input.mouse_shadow_color,
-                            )),
-                            &msg,
+                            event_pump, renderer, resources, cursor, &msg,
                         )
                         .await
                     } else {
@@ -1851,6 +1825,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     campaign_ref: &mut Campaign,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut crate::renderer::Renderer,
+    cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     text_res: &mut crate::resource_manager::ResourceManager,
     sherwood_campaign_map: &mut crate::menu::CampaignMapState,
@@ -1900,6 +1875,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             };
         sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
 
+        let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
         let choice = crate::campaign_map::show_campaign_map(
             event_pump,
             renderer,
@@ -1910,11 +1886,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             menu_resources.as_mut(),
             text_res,
             host.shipping.as_deref(),
-            Some(ModalCursor::new(
-                cursor_renderer,
-                host.input.mouse_opacity,
-                host.input.mouse_shadow_color,
-            )),
+            cursor,
             pseudo_debrief_pending,
         )
         .await?;
@@ -2007,23 +1979,10 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         };
                         resources.menu_text.get(id)
                     });
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     let _outcome = crate::ingame_menu::show_debriefing(
-                        event_pump,
-                        renderer,
-                        resources,
-                        Some(ModalCursor::new(
-                            cursor_renderer,
-                            host.input.mouse_opacity,
-                            host.input.mouse_shadow_color,
-                        )),
-                        &text,
-                        None,
-                        0,
-                        won,
-                        false,
-                        None,
-                        false,
-                        false,
+                        event_pump, renderer, resources, cursor, &text, None, 0, won, false, None,
+                        false, false,
                     )
                     .await;
                 } else {
@@ -2062,12 +2021,13 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                                 robin_assets::res_descr::load(&path).ok()
                             })
                     };
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                     let (choice, men_to_blazon) =
                         crate::ingame_menu::mission_description::show_mission_description(
                             event_pump,
                             renderer,
                             resources,
-                            None,
+                            cursor,
                             idx,
                             engine,
                             &assets.profile_manager,
