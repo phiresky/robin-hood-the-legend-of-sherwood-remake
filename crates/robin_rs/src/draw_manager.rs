@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::geo2d::Point2D;
-use crate::renderer::Renderer;
+use crate::{gfx_types::Rect, renderer::Renderer};
 use robin_engine::sprite::BBox;
 
 // ---------------------------------------------------------------------------
@@ -494,8 +494,10 @@ fn build_poly_edge_table(pts: &[[f32; 2]]) -> Vec<PolyEdge> {
     edges
 }
 
-/// GPU path for `DrawManager::draw_alpha_polygon`: queue one alpha-blended
-/// rectangle per filled span.
+/// GPU path for `DrawManager::draw_alpha_polygon`: queue one span per
+/// filled scanline. The renderer snapshots the composited frame before
+/// these spans and uses the C++-matching RGB565 alpha shader, so patches
+/// already drawn on the GPU are included in the source pixels.
 #[allow(clippy::too_many_arguments)]
 fn draw_alpha_polygon_gpu(
     renderer: &mut Renderer,
@@ -514,11 +516,6 @@ fn draw_alpha_polygon_gpu(
         return;
     }
 
-    let r = ((color >> 16) & 0xFF) as u8;
-    let g = ((color >> 8) & 0xFF) as u8;
-    let b = (color & 0xFF) as u8;
-    let a = alpha.min(256).saturating_mul(255) / 256;
-
     for y in y_min..y_max {
         let yf = y as f32 + 0.5;
         let mut crossings: Vec<f32> = Vec::new();
@@ -535,7 +532,23 @@ fn draw_alpha_polygon_gpu(
             let x0 = (crossings[i].ceil() as i32).max(0);
             let x1 = (crossings[i + 1].floor() as i32 + 1).min(sw);
             if x1 > x0 {
-                renderer.render_gpu_rect(x0, y, x1 - x0, 1, r, g, b, a as u8);
+                let uv = [
+                    x0 as f32 / sw as f32,
+                    y as f32 / sh as f32,
+                    x1 as f32 / sw as f32,
+                    (y + 1) as f32 / sh as f32,
+                ];
+                renderer.render_framebuffer_alpha_rect(
+                    Rect {
+                        x: x0,
+                        y,
+                        w: x1 - x0,
+                        h: 1,
+                    },
+                    uv,
+                    color,
+                    alpha,
+                );
             }
             i += 2;
         }

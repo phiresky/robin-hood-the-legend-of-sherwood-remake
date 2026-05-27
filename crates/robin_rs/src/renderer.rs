@@ -194,6 +194,11 @@ enum TextureRef {
     /// background texture at per-vertex UVs and applies the old RGB565
     /// alpha blend in the fragment shader.
     BackgroundAlpha,
+    /// Door/patch hover alpha polygon over the current composited
+    /// frame. `present()` snapshots the render target before drawing
+    /// this queue run, then feeds that snapshot to the same RGB565
+    /// alpha shader as `BackgroundAlpha`.
+    FramebufferAlpha,
     /// View-cone overlay span. Uses the white texture bind group only to
     /// satisfy the shared quad layout; `fs_view_cone_gradient` reads the
     /// interpolated alpha from `uv.x` and the alert colour from `tint.rgb`.
@@ -289,6 +294,13 @@ pub struct Renderer {
     /// Bind group for sampling `render_target_view` in the second
     /// pass (blit to swapchain). Rebuilt on `resize`.
     render_target_bg: wgpu::BindGroup,
+    /// Scratch copy of the composited render target used as the source
+    /// for C++-style alpha polygons. The original C++ draws these against
+    /// the map surface after map-patch mutations have landed there; in
+    /// Rust map patches are GPU draws, so we snapshot the current RT.
+    alpha_source_texture: wgpu::Texture,
+    alpha_source_view: wgpu::TextureView,
+    alpha_source_bg: wgpu::BindGroup,
     /// Sampler used by the textured-quad pipeline.
     sampler: wgpu::Sampler,
     /// 1×1 white texture view — held alive for `white_bg`'s lifetime;
@@ -395,6 +407,32 @@ fn make_tex_bg(
             },
         ],
     })
+}
+
+fn make_alpha_source(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    width: u16,
+    height: u16,
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::BindGroup) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("cxx alpha source"),
+        size: wgpu::Extent3d {
+            width: width as u32,
+            height: height as u32,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let bind_group = make_tex_bg(device, layout, &view, sampler, "cxx alpha source bg");
+    (texture, view, bind_group)
 }
 
 fn make_mask_overlay_bg(
@@ -1030,6 +1068,8 @@ impl Renderer {
             &sampler,
             "rt bg",
         );
+        let (alpha_source_texture, alpha_source_view, alpha_source_bg) =
+            make_alpha_source(&gpu.device, &bgl_tex, &sampler, width, height);
 
         let upscale = GpuUpscale::new(gpu.clone(), gpu.surface_format);
 
@@ -1054,6 +1094,9 @@ impl Renderer {
             render_target_texture,
             render_target_view,
             render_target_bg,
+            alpha_source_texture,
+            alpha_source_view,
+            alpha_source_bg,
             blit_pipeline,
             colorize_pipeline,
             bg_alpha_pipeline,
@@ -1654,11 +1697,72 @@ impl Renderer {
             .write_buffer(&self.screen_uniform, 0, bytemuck::bytes_of(&screen_logical));
     }
 
+    fn copy_rt_to_alpha_source(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.render_target_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.alpha_source_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: self.width as u32,
+                height: self.height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     /// Encode pass 1: queued draws → offscreen render target. Caller
     /// owns the encoder so it can either follow up with pass 2
     /// (`present`) or with a `copy_texture_to_buffer` (screenshot
     /// readback).
     fn encode_pass1_to_rt(&self, encoder: &mut wgpu::CommandEncoder) {
+        let first_framebuffer_alpha = self
+            .queued
+            .iter()
+            .position(|d| matches!(d.tex, TextureRef::FramebufferAlpha));
+        let Some(first_framebuffer_alpha) = first_framebuffer_alpha else {
+            self.encode_pass1_range_to_rt(
+                encoder,
+                0,
+                self.queued.len(),
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            );
+            return;
+        };
+
+        self.encode_pass1_range_to_rt(
+            encoder,
+            0,
+            first_framebuffer_alpha,
+            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        );
+        self.copy_rt_to_alpha_source(encoder);
+        self.encode_pass1_range_to_rt(
+            encoder,
+            first_framebuffer_alpha,
+            self.queued.len(),
+            wgpu::LoadOp::Load,
+        );
+    }
+
+    fn encode_pass1_range_to_rt(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        start: usize,
+        end: usize,
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) {
+        if start >= end && !matches!(load, wgpu::LoadOp::Clear(_)) {
+            return;
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("present quads → RT"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1666,7 +1770,7 @@ impl Renderer {
                 resolve_target: None,
                 depth_slice: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -1688,7 +1792,7 @@ impl Renderer {
         let mut last_blend: Option<usize> = None;
         let mut last_tex: Option<&'static str> = None;
         let mut last_frame_idx: Option<u32> = None;
-        for (i, d) in self.queued.iter().enumerate() {
+        for (i, d) in self.queued.iter().enumerate().take(end).skip(start) {
             match d.tex {
                 TextureRef::ColorizeFromFrozen => {
                     if last_pipeline_kind != Some("colorize") {
@@ -1697,7 +1801,7 @@ impl Renderer {
                         last_blend = None;
                     }
                 }
-                TextureRef::BackgroundAlpha => {
+                TextureRef::BackgroundAlpha | TextureRef::FramebufferAlpha => {
                     if last_pipeline_kind != Some("bg_alpha") {
                         pass.set_pipeline(&self.bg_alpha_pipeline);
                         last_pipeline_kind = Some("bg_alpha");
@@ -1745,6 +1849,7 @@ impl Renderer {
                 TextureRef::FrozenScene => last_tex != Some("frozen"),
                 TextureRef::ColorizeFromFrozen => last_tex != Some("frozen"),
                 TextureRef::BackgroundAlpha => last_tex != Some("background"),
+                TextureRef::FramebufferAlpha => last_tex != Some("alpha_source"),
                 TextureRef::ViewConeGradient => last_tex != Some("white"),
                 TextureRef::Frame(idx) => last_tex != Some("frame") || last_frame_idx != Some(idx),
                 TextureRef::MaskOverlayFrame(idx) => {
@@ -1778,6 +1883,11 @@ impl Renderer {
                         } else {
                             continue;
                         }
+                    }
+                    TextureRef::FramebufferAlpha => {
+                        pass.set_bind_group(1, &self.alpha_source_bg, &[]);
+                        last_tex = Some("alpha_source");
+                        last_frame_idx = None;
                     }
                     TextureRef::ViewConeGradient => {
                         pass.set_bind_group(1, &self.white_bg, &[]);
@@ -2128,6 +2238,16 @@ impl Renderer {
             &self.sampler,
             "rt bg",
         );
+        let (alpha_source_texture, alpha_source_view, alpha_source_bg) = make_alpha_source(
+            &self.gpu.device,
+            &self.bgl_tex,
+            &self.sampler,
+            width,
+            height,
+        );
+        self.alpha_source_texture = alpha_source_texture;
+        self.alpha_source_view = alpha_source_view;
+        self.alpha_source_bg = alpha_source_bg;
         // Resizing the logical viewport invalidates any modal scene
         // snapshot — the captured pixels are the wrong size now.
         self.frozen_scene = None;
@@ -3103,6 +3223,31 @@ impl Renderer {
             uv: bg_uv,
             tint: [r, g, b, a],
             tex: TextureRef::BackgroundAlpha,
+            blend: BlendMode::None,
+        });
+        true
+    }
+
+    pub fn render_framebuffer_alpha_rect(
+        &mut self,
+        dst_rect: Rect,
+        uv: [f32; 4],
+        color: u32,
+        alpha_256: u32,
+    ) -> bool {
+        if dst_rect.w <= 0 || dst_rect.h <= 0 {
+            return false;
+        }
+        let r = ((color >> 16) & 0xFF) as f32 / 255.0;
+        let g = ((color >> 8) & 0xFF) as f32 / 255.0;
+        let b = (color & 0xFF) as f32 / 255.0;
+        let a = alpha_256.min(256) as f32 / 256.0;
+        self.queued.push(QueuedDraw {
+            dst: dst_rect,
+            corners: None,
+            uv,
+            tint: [r, g, b, a],
+            tex: TextureRef::FramebufferAlpha,
             blend: BlendMode::None,
         });
         true
