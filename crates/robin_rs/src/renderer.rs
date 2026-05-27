@@ -2805,6 +2805,46 @@ impl Renderer {
         true
     }
 
+    /// Queue an occlusion mask clipped to the sprite/marker rectangle
+    /// currently being masked. This mirrors the legacy sprite path, where
+    /// building masks were composited into the sprite's temporary surface
+    /// rather than painted over the whole screen.
+    pub fn render_cached_mask_clipped(
+        &mut self,
+        mask_index: u32,
+        mask_rect: Rect,
+        clip_rect: Rect,
+    ) -> bool {
+        let Some((vis_dst, vis_uv)) = clip_dst_to_uv(mask_rect, clip_rect) else {
+            return true;
+        };
+        let (mask_view, bg_uv_tint) = match self.mask_alpha_cache.get(&mask_index) {
+            Some(e) => (e.view.clone(), e.bg_uv_tint),
+            None => return false,
+        };
+        let bg_view = match self.background_texture.as_ref() {
+            Some(bg) => bg.view.clone(),
+            None => return false,
+        };
+        let bind_group = make_mask_overlay_bg(
+            &self.gpu.device,
+            &self.bgl_mask_overlay,
+            &mask_view,
+            &bg_view,
+            &self.sampler,
+        );
+        let tex_idx = self.queue_cached_bg(bind_group);
+        self.queued.push(QueuedDraw {
+            dst: vis_dst,
+            corners: None,
+            uv: vis_uv,
+            tint: bg_uv_tint,
+            tex: TextureRef::MaskOverlayFrame(tex_idx),
+            blend: BlendMode::Blend,
+        });
+        true
+    }
+
     /// Queue a cached sprite as an alpha-blended GPU overlay quad.
     /// `pub(crate)` to match the original visibility so game_render
     /// can still reach it.
