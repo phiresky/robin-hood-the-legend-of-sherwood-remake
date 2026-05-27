@@ -3869,6 +3869,19 @@ impl EngineInner {
             // facing already matches the goal it is a no-op.
             let still_turning = elem.sprite.position_iface.turn();
             let direction = elem.direction() as u16;
+            let new_motion_order =
+                order_id.is_some_and(|oid| elem.sprite.last_processed_order_id != oid.get());
+            if is_transition_anim && new_motion_order {
+                let pi = &mut elem.sprite.position_iface;
+                pi.set_position_goal_map(geo2d::pt(goal.x, goal.y));
+                pi.set_reversed_movement(order_reverse);
+                pi.set_tolerance(
+                    order_tolerance,
+                    active_move_flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
+                );
+                pi.set_goal_next_valid(false);
+                pi.compute_increment_all(order_compute_direction);
+            }
             // The "already at destination" short-circuit needs the
             // predicate routed into `perform_motion`.  Keep a 0.01
             // epsilon to absorb any prior anti-collision jitter that
@@ -3982,6 +3995,12 @@ impl EngineInner {
             // to trigger begin_swordfight).  We skip the full walk
             // body below (anti-collision, arrival-pop, line-crossing)
             // since those apply to waypoint-driven walks.
+            //
+            // C++ seeds `PositionInterface` at the start of every new
+            // sprite motion order and moves transition animations via
+            // `UpdatePositionMap(fDistance)`, so this branch uses the
+            // same precomputed map increment instead of a separate
+            // dx/dy step.
             if is_transition_anim {
                 let transition_has_map_target = goal.x != 0.0 || goal.y != 0.0;
                 if !transition_has_map_target && !is_in_place_movement_transition(order_action) {
@@ -3992,20 +4011,9 @@ impl EngineInner {
                     );
                 }
                 if transition_has_map_target && speed > 0.0 && dist > 0.01 {
-                    let nx = dx / dist;
-                    let ny = dy / dist;
-                    let mut step_x = nx * speed;
-                    let mut step_y = ny * speed;
-                    // Don't overshoot the goal — clamp to dest on final step.
-                    if speed >= dist {
-                        step_x = dx;
-                        step_y = dy;
-                    }
                     let elem = entity.element_data_mut();
-                    let mut pm = elem.position_map();
-                    pm.x += step_x;
-                    pm.y += step_y;
-                    elem.set_position_map(pm);
+                    elem.sprite.position_iface.update_position_map_scaled(speed);
+                    elem.update_grid_cell();
                 }
                 if matches!(motion_state, MotionState::Terminated) {
                     let eid = EntityId(idx as u32);
