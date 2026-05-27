@@ -638,3 +638,41 @@ fn game_host_add_campaign_value_score_credits_added_score_silently() {
     assert_eq!(host.mission_stat.added_score, 750);
     assert!(host.commands.is_empty());
 }
+
+fn native_test_soldier() -> Entity {
+    Entity::Soldier(crate::element::ActorSoldier {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorSoldier,
+            ..Default::default()
+        },
+        actor: crate::element::ActorData::default(),
+        human: crate::element::HumanData::default(),
+        npc: crate::element::NpcData {
+            ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(0))),
+            ..Default::default()
+        },
+        soldier: crate::element::SoldierData::default(),
+    })
+}
+
+#[test]
+fn add_as_subordinate_requests_patrol_reinit() {
+    let mut host = GameHost::new();
+    host.entities = vec![Some(native_test_soldier()), Some(native_test_soldier())];
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(1);
+    stack.push_i32(2);
+    let ret =
+        <GameHost as HostFunctions>::call(&mut host, NativeFn::AddAsSubordinate as u32, &mut stack);
+    assert_eq!(ret, 0);
+
+    let chief_ai = host.entities[0]
+        .as_ref()
+        .and_then(|entity| entity.ai_controller())
+        .expect("chief has AI");
+    assert_eq!(chief_ai.theoretical_patrol, vec![1]);
+    assert!(chief_ai.patrol.is_empty());
+    assert!(chief_ai.missed_patrol_members.is_empty());
+    assert!(chief_ai.needs_patrol_reinit);
+}

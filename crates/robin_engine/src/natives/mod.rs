@@ -7003,6 +7003,7 @@ impl HostFunctions for GameHost {
                             // `chief_assigns`.
                             ai.patrol.clear();
                             ai.missed_patrol_members.clear();
+                            ai.needs_patrol_reinit = true;
                         }
                     }
                     0
