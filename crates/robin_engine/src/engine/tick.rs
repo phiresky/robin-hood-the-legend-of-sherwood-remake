@@ -1607,11 +1607,16 @@ impl EngineInner {
                             // beginning the shot.
                             let (bow_target, shoot_mode) =
                                 self.can_shoot_with_bow_at(assets, owner, target);
-                            let resolved_mode = if bow_target == super::input::BowTarget::Valid {
-                                Some(shoot_mode)
-                            } else {
-                                None
-                            };
+                            if bow_target != super::input::BowTarget::Valid {
+                                tracing::debug!(
+                                    ?owner,
+                                    ?target,
+                                    ?bow_target,
+                                    "ShootBow command rejected during dispatch"
+                                );
+                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                continue;
+                            }
 
                             match bow_shot::begin_bow_shot(
                                 &mut self.entities,
@@ -1622,7 +1627,7 @@ impl EngineInner {
                                 elem_idx,
                                 shoot_once,
                                 ammo_count,
-                                resolved_mode,
+                                Some(shoot_mode),
                                 &mut self.next_order_id,
                             ) {
                                 BeginShotResult::Started => {
