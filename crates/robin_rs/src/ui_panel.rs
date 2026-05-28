@@ -81,11 +81,6 @@ const NUMBER_OF_QA_MEMORY_U16: u16 = crate::macro_store::NUMBER_OF_QA_MEMORY as 
 
 // ─── Colors (RGB565) ───────────────────────────────────────────────
 
-/// Dark panel background.
-fn color_panel_bg() -> u16 {
-    Renderer::create_color_16(20, 16, 12)
-}
-
 /// Fallback fill for the visage slot when the portrait sprite fails to load.
 fn color_visage_fill() -> u16 {
     Renderer::create_color_16(50, 40, 30)
@@ -1519,22 +1514,10 @@ pub fn draw_panel(
                         );
                     }
 
-                    // Disabled overlay: stipple pattern to gray out the widget.
-                    // We draw dark horizontal lines every 2 pixels as a dither.
-                    if is_disabled {
-                        let bg = color_panel_bg();
-                        let mut y = act_top;
-                        while y < act_bot {
-                            renderer.draw_line_screen(
-                                btn_lefts[i] as i32,
-                                y as i32,
-                                btn_rights[i] as i32,
-                                y as i32,
-                                bg,
-                            );
-                            y += 2;
-                        }
-                    }
+                    // Disabled-state BTTN resources are already authored as
+                    // grayed-out sprites.  Do not add a synthetic stipple on
+                    // top: it produces visible horizontal artifacts through
+                    // portrait action icons.
                 }
             }
 
