@@ -3256,8 +3256,11 @@ pub fn tick_arrows(
                 let max_norm = ddx.max(ddy).max(ddz);
                 if max_norm <= 100.0 {
                     let eyes = snap.eyes;
-                    let old_to_eyes = distance(arrow_old, eyes);
-                    if old_to_eyes <= range
+                    // C++ uses the arrow's current position for the
+                    // leaning-out eye retry, unlike the primary human
+                    // belt check's "deguillaumized" old-position gate.
+                    let new_to_eyes = distance(arrow_new, eyes);
+                    if new_to_eyes <= range
                         && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
                     {
                         hit_victim = Some(snap.id);
@@ -3292,8 +3295,13 @@ pub fn tick_arrows(
         if !required_filter.is_empty() || is_burster {
             for snap in &fx_target_snapshots {
                 let hit = if use_range_gate {
-                    let old_to_target = distance(arrow_old, snap.center);
-                    old_to_target <= range
+                    // C++ `FindTargetVictim` gates FX targets by
+                    // distance from the projectile's current position
+                    // to target center, not by old position.  This
+                    // catches the scripted-target case where the
+                    // current frame reaches the center exactly.
+                    let new_to_target = distance(arrow_new, snap.center);
+                    new_to_target <= range
                         && point_to_line_distance(snap.center, arrow_old, arrow_new) <= HIT_DISTANCE
                 } else {
                     distance(arrow_new, snap.center) <= HIT_DISTANCE
@@ -4034,6 +4042,84 @@ mod tests {
             activation,
             Some((EntityId(0), Command::ActivateApple)),
             "apple projectile should activate APPLE-filter target with ActivateApple"
+        );
+    }
+
+    /// C++ `FindTargetVictim` uses current-position range gating for
+    /// FX targets: a target just beyond the old->new segment endpoint
+    /// can still be hit when it is within one movement length of the
+    /// arrow's current position.  This catches short final segments
+    /// that would otherwise land without activating scripted targets.
+    #[test]
+    fn tick_arrows_arrow_target_uses_current_position_range_gate() {
+        use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
+
+        let mut target_element = ElementData {
+            kind: ElementKind::Target,
+            active: true,
+            ..ElementData::default()
+        };
+        target_element.set_position_map(ElemPoint2D { x: 40.0, y: 0.0 });
+        target_element.set_position(Point3D {
+            x: 40.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        let target = Entity::Target(ElementTarget {
+            element: target_element,
+            fx: FxData::default(),
+            target: TargetData {
+                action_filter: TargetFilter::ARROW,
+                ..TargetData::default()
+            },
+        });
+
+        let mut arrow_element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..ElementData::default()
+        };
+        arrow_element.set_position_map(ElemPoint2D { x: 0.0, y: 0.0 });
+        arrow_element.set_position(Point3D {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        let arrow = Entity::Projectile(ElementProjectile {
+            element: arrow_element,
+            object: ObjectData {
+                associated_action: Action::Bow,
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                quantity: 1,
+                reference: Some(EntityId(0)),
+                ..ObjectData::default()
+            },
+            projectile: ProjectileData {
+                shooter: Some(EntityId(2)),
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: Point3D {
+                        x: 25.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    time: 1,
+                }],
+                damage: 30,
+                ..ProjectileData::default()
+            },
+        });
+
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))];
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+
+        assert!(
+            results.iter().any(|r| {
+                r.fx_target_hit == Some((EntityId(0), Command::ActivateArrow)) && r.despawn
+            }),
+            "arrow should activate target using C++ current-position range gate"
         );
     }
 
