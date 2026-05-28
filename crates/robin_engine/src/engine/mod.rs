@@ -2698,13 +2698,13 @@ impl EngineInner {
         false
     }
 
-    /// `true` if `pc_id` has any pending (not-yet-launched)
-    /// `Command::ShootBow` sequence element.  Used by the right-click
-    /// `Bow` arm to decide whether to drain the shoot-list (queue
-    /// non-empty) or cancel the Bow action (queue empty).
+    /// `true` if `pc_id` has any queued `Command::ShootBow` sequence
+    /// element.  Used by the right-click `Bow` arm to decide whether to
+    /// drain the shoot-list (queue non-empty) or cancel the Bow action
+    /// (queue empty).
     pub fn pc_has_pending_shoot_bow(&self, pc_id: EntityId) -> bool {
         self.sequence_manager
-            .element_is_about_to_be_launched(pc_id, crate::element::Command::ShootBow)
+            .queued_element_exists(pc_id, crate::element::Command::ShootBow)
     }
 
     /// Background animation entity ids.

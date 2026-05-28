@@ -3415,11 +3415,17 @@ impl SequenceManager {
         }
     }
 
-    /// Stop pending not-yet-launched elements for `owner` whose command
-    /// matches `command`.  Counterpart to [`Self::stop_pending_elements`]
-    /// with a command filter — used by the right-click `Bow` arm to
-    /// drain the PC's queued `Command::ShootBow` elements without
-    /// cancelling other in-flight work.
+    /// Stop queued elements for `owner` whose command matches `command`.
+    /// Counterpart to [`Self::stop_pending_elements`] with a command
+    /// filter — used by the right-click `Bow` arm to drain the PC's
+    /// queued `Command::ShootBow` elements without cancelling other
+    /// in-flight work.
+    ///
+    /// This covers both not-yet-launched `elements_to_go` entries and
+    /// cross-postponed elements.  C++ stores repeated PC bow clicks in
+    /// `mlpsequenceShootList`; in Rust those clicks may be represented
+    /// as `SequenceState::Postponed`, so clearing the queue must see
+    /// both forms.
     ///
     /// Returns the number of pending elements that were stopped + removed.
     pub fn stop_pending_elements_matching(
@@ -3430,6 +3436,7 @@ impl SequenceManager {
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
     ) -> usize {
         let mut to_remove = Vec::new();
+        let mut stopped = Vec::new();
 
         for i in 0..self.elements_to_go.len() {
             let (seq_id, elem_idx) = self.elements_to_go[i];
@@ -3441,6 +3448,9 @@ impl SequenceManager {
             }
             let elem = &seq.elements[elem_idx];
             if elem.owner != Some(owner) || elem.command != command {
+                continue;
+            }
+            if elem.state == SequenceState::InProgress {
                 continue;
             }
 
@@ -3457,6 +3467,7 @@ impl SequenceManager {
                 && seq.elements[elem_idx].state == SequenceState::Interrupted
             {
                 to_remove.push(i);
+                stopped.push((seq_id, elem_idx));
             }
         }
 
@@ -3464,7 +3475,78 @@ impl SequenceManager {
         for &idx in to_remove.iter().rev() {
             self.elements_to_go.remove(idx);
         }
-        count
+
+        let mut postponed_targets = Vec::new();
+        for (seq_id, seq) in &self.sequences {
+            for (elem_idx, elem) in seq.elements.iter().enumerate() {
+                if elem.owner == Some(owner)
+                    && elem.command == command
+                    && elem.state == SequenceState::Postponed
+                {
+                    postponed_targets.push((*seq_id, elem_idx));
+                }
+            }
+        }
+
+        let mut stopped_count = count;
+        for (seq_id, elem_idx) in postponed_targets {
+            let effects_vec = self
+                .sequences
+                .get_mut(&seq_id)
+                .map(|seq| seq.stop_element(elem_idx, stop_priority, resolver))
+                .unwrap_or_default();
+            for effects in effects_vec {
+                self.process_effects(seq_id, effects);
+            }
+
+            if let Some(seq) = self.sequences.get(&seq_id)
+                && seq.elements[elem_idx].state == SequenceState::Interrupted
+            {
+                stopped.push((seq_id, elem_idx));
+                stopped_count += 1;
+            }
+        }
+
+        if !stopped.is_empty() {
+            for seq in self.sequences.values_mut() {
+                for elem in &mut seq.elements {
+                    if let Some(cross) = elem.cross_postponed
+                        && stopped.contains(&cross)
+                    {
+                        elem.cross_postponed = None;
+                    }
+                }
+            }
+        }
+
+        stopped_count
+    }
+
+    /// Returns `true` if `owner` has a queued element with this command.
+    /// Includes both not-yet-launched `elements_to_go` entries and
+    /// cross-postponed elements.
+    pub fn queued_element_exists(&self, owner: EntityId, command: Command) -> bool {
+        for &(seq_id, elem_idx) in &self.elements_to_go {
+            let Some(seq) = self.sequences.get(&seq_id) else {
+                continue;
+            };
+            let Some(elem) = seq.elements.get(elem_idx) else {
+                continue;
+            };
+            if elem.owner == Some(owner)
+                && elem.command == command
+                && elem.state != SequenceState::InProgress
+            {
+                return true;
+            }
+        }
+        self.sequences.values().any(|seq| {
+            seq.elements.iter().any(|elem| {
+                elem.owner == Some(owner)
+                    && elem.command == command
+                    && elem.state == SequenceState::Postponed
+            })
+        })
     }
 
     /// Returns `true` if `owner` has an active sword-strike element
@@ -4248,6 +4330,48 @@ mod tests {
             "continuation resumes after the preserved front order"
         );
         assert_eq!(continuation.orders.front().unwrap().target_x, 20.0);
+    }
+
+    #[test]
+    fn stop_pending_elements_matching_clears_cross_postponed_shoot_bow() {
+        let mut mgr = SequenceManager::new();
+        let owner = EntityId(0);
+
+        let mut current = make_simple_element(1, Command::ShootBow, Some(owner));
+        current.priority = SequencePriority::Preference;
+        current
+            .orders
+            .push_back(Order::test_new(OrderType::ShootingWithBow, 10.0, 0.0));
+        let current_seq = mgr.launch_element(current);
+        mgr.element_in_progress(current_seq, 0);
+
+        let mut queued = make_simple_element(1, Command::ShootBow, Some(owner));
+        queued.priority = SequencePriority::Preference;
+        let queued_seq = mgr.launch_element(queued);
+
+        mgr.get_element_mut(current_seq, 0).unwrap().cross_postponed = Some((queued_seq, 0));
+        mgr.postpone_element(queued_seq, 0);
+
+        assert!(mgr.queued_element_exists(owner, Command::ShootBow));
+
+        let resolver = |_elem: &SequenceElement| SequencePriority::Preference;
+        let stopped = mgr.stop_pending_elements_matching(
+            owner,
+            Command::ShootBow,
+            SequencePriority::Preference,
+            &resolver,
+        );
+
+        assert_eq!(stopped, 1);
+        assert_eq!(
+            mgr.get_element(queued_seq, 0).unwrap().state,
+            SequenceState::Interrupted
+        );
+        assert_eq!(
+            mgr.get_element(current_seq, 0).unwrap().cross_postponed,
+            None
+        );
+        assert!(!mgr.queued_element_exists(owner, Command::ShootBow));
     }
 
     #[test]
