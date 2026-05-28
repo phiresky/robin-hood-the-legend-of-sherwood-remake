@@ -102,12 +102,7 @@ impl EngineInner {
             }
 
             let exhausted = proj.advance_trajectory_one_frame();
-            let timed_out = proj.projectile.frame_count >= bow_shot::ARROW_MAX_LIFETIME_FRAMES
-                && proj.projectile.flying;
-            if timed_out {
-                proj.projectile.flying = false;
-            }
-            if exhausted || timed_out {
+            if exhausted {
                 impacts.push(NestImpact {
                     id: EntityId(idx as u32),
                     pos: proj.element.position(),

@@ -103,16 +103,7 @@ impl EngineInner {
             // also drives arrow ticks.  Returns true when the trajectory
             // ran out — the projectile has landed.
             let exhausted = proj.advance_trajectory_one_frame();
-            // Safety-net timeout in case the trajectory itself is
-            // degenerate (zero-length) and the helper kept returning
-            // false; matches the arrow-side `ARROW_MAX_LIFETIME_FRAMES`
-            // check.
-            let timed_out = proj.projectile.frame_count >= bow_shot::ARROW_MAX_LIFETIME_FRAMES
-                && proj.projectile.flying;
-            if timed_out {
-                proj.projectile.flying = false;
-            }
-            if exhausted || timed_out {
+            if exhausted {
                 let id = EntityId(idx as u32);
                 let pos = proj.element.position();
                 let layer = proj.element.layer();

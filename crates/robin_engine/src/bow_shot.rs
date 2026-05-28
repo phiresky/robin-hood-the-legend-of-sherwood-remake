@@ -90,10 +90,6 @@ pub const HIT_DISTANCE: f32 = 15.0;
 /// Experience points awarded for a bow kill.
 pub const BOW_KILL_EXPERIENCE_POINTS: u32 = 20;
 
-/// Hard limit on arrow lifetime, in frames.  Safety net in case
-/// trajectory computation produced no points or is otherwise degenerate.
-pub const ARROW_MAX_LIFETIME_FRAMES: u16 = 250;
-
 /// Fallback for the post-impact `OBJECT_BURSTING` countdown when the
 /// projectile's sprite has no script loaded (e.g. headless tests with
 /// `Sprite::default()`).  See `burst_ticks_for_proj` for the live path.
@@ -3183,30 +3179,10 @@ pub fn tick_arrows(
             }
         }
 
-        // Increment lifetime counter and check for timeout.
+        // Increment lifetime counter for diagnostics/replay state. C++
+        // projectile lifetime is governed by trajectory exhaustion and
+        // impact side effects; it has no hard timeout.
         proj.projectile.frame_count = proj.projectile.frame_count.saturating_add(1);
-        if proj.projectile.frame_count >= ARROW_MAX_LIFETIME_FRAMES {
-            let impact_pos = proj.element.position_map();
-            proj.projectile.flying = false;
-            let despawn = if is_burster {
-                proj.object.animation = Animation::ObjectBursting;
-                proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
-                false
-            } else {
-                true
-            };
-            results.push(ArrowTickResult {
-                arrow: arrow_id,
-                hit_target: None,
-                shield_hit: None,
-                fx_target_hit: None,
-                despawn,
-                damage,
-                impact_fx,
-                impact_pos,
-            });
-            continue;
-        }
 
         // ── Falling arrows skip all collision checks ──────────────
         // Once an arrow is deflected (by a shield or target), it
@@ -4582,6 +4558,55 @@ mod tests {
             results.iter().all(|r| r.fx_target_hit.is_none()),
             "stationary projectile must not activate nearby FX target by radius"
         );
+    }
+
+    #[test]
+    fn tick_arrows_has_no_artificial_lifetime_timeout() {
+        let trajectory = (1..=320)
+            .map(|i| TrajectoryPoint {
+                position: Point3D {
+                    x: i as f32 * 10.0,
+                    y: 0.0,
+                    z: 40.0,
+                },
+                time: 1,
+            })
+            .collect();
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 0.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 3200.0, y: 0.0 },
+            trajectory,
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: None,
+        });
+        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, -100.0)), Some(arrow)];
+
+        let mut despawn_frame = None;
+        for frame in 0..260 {
+            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            if results.iter().any(|r| r.despawn) {
+                despawn_frame = Some(frame);
+                break;
+            }
+        }
+
+        assert_eq!(
+            despawn_frame, None,
+            "C++ projectile lifetime is trajectory-driven, not capped at 250 frames"
+        );
+        match entities[1].as_ref().unwrap() {
+            Entity::Projectile(p) => assert!(p.projectile.flying),
+            _ => panic!("expected projectile"),
+        }
     }
 
     /// Apple projectile flying through a target that does NOT have the
