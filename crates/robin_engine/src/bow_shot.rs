@@ -1831,9 +1831,7 @@ pub fn tick_bow_shots(
 
             // Compute sprite hand anchor point for accurate bow origin.
             // The sprite returns a relative hotspot offset; we add the
-            // entity's map position to get absolute coordinates.  When
-            // hotspot data is missing, fall back to the sprite position
-            // itself.
+            // entity's map position to get absolute coordinates.
             // (immutable borrow — safe now that the mutable borrow above is done)
             let sprite_hand_point = {
                 let shoot_anim =
@@ -1849,23 +1847,29 @@ pub fn tick_bow_shots(
                         })
                     }
                     None => {
-                        // No hotspot data — fall back to sprite position.
-                        tracing::trace!(
+                        tracing::warn!(
                             shooter = idx,
-                            "Bow hand hotspot missing; falling back to sprite position"
+                            ?shoot_anim,
+                            dir_u16,
+                            "Bow release skipped: missing bow-point sprite hotspot"
                         );
-                        Some(crate::geo2d::Point2D {
-                            x: sprite_pos.x,
-                            y: sprite_pos.y,
-                        })
+                        continue;
                     }
                 }
             };
 
+            let Some(target) = shot.target else {
+                tracing::warn!(
+                    shooter = idx,
+                    "Bow release skipped: active shot missing target"
+                );
+                continue;
+            };
+
             events.fired.push(ShotTickResult {
                 shooter: EntityId(idx as u32),
-                target: shot.target.unwrap(),
-                seq_id: shot.sequence_id.unwrap(),
+                target,
+                seq_id: shot_seq_id,
                 elem_idx: shot.element_index,
                 shooter_position,
                 target_pos: ElemPoint2D::default(),
@@ -1886,26 +1890,51 @@ pub fn tick_bow_shots(
     }
 
     // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
-    for result in &mut events.fired {
-        if let Some(Some(target_entity)) = entities.get(result.target.0 as usize) {
-            result.target_pos = target_entity.element_data().position_map();
-            result.target_point = if target_entity.is_human() {
-                target_entity.compute_belt_point().unwrap_or_else(|| {
-                    compute_target_belt_point_fallback(target_entity.element_data().position())
-                })
-            } else if target_entity.is_fx_target() {
-                target_entity
-                    .compute_target_center()
-                    .unwrap_or_else(|| target_entity.element_data().position())
-            } else {
-                target_entity.element_data().position()
+    events.fired.retain_mut(|result| {
+        let Some(Some(target_entity)) = entities.get(result.target.0 as usize) else {
+            tracing::warn!(
+                shooter = ?result.shooter,
+                target = ?result.target,
+                "Bow release skipped: target entity missing"
+            );
+            return false;
+        };
+        result.target_pos = target_entity.element_data().position_map();
+        result.target_point = if target_entity.is_human() {
+            let Some(point) = target_entity.compute_belt_point() else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    target = ?result.target,
+                    "Bow release skipped: human target missing belt hotspot"
+                );
+                return false;
             };
-            result.target_forecasted_movement = target_entity
-                .position_iface()
-                .get_forecasted_movement()
-                .into();
-        }
-    }
+            point
+        } else if target_entity.is_fx_target() {
+            let Some(point) = target_entity.compute_target_center() else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    target = ?result.target,
+                    "Bow release skipped: FX target missing center hotspot"
+                );
+                return false;
+            };
+            point
+        } else {
+            tracing::warn!(
+                shooter = ?result.shooter,
+                target = ?result.target,
+                kind = ?target_entity.kind(),
+                "Bow release skipped: unsupported target kind"
+            );
+            return false;
+        };
+        result.target_forecasted_movement = target_entity
+            .position_iface()
+            .get_forecasted_movement()
+            .into();
+        true
+    });
 
     events
 }
@@ -3661,6 +3690,8 @@ mod tests {
         ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
     };
     use crate::element::{ActorPc, ActorSoldier, NpcData, PcData, SoldierData};
+    use crate::geo2d::{Point2D as GeoPoint2D, Vec2D};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     fn make_pc(x: f32, y: f32) -> Entity {
         let mut element = ElementData {
@@ -3743,6 +3774,32 @@ mod tests {
         // which the tests skip.
         sm.element_in_progress(seq_id, 0);
         (sm, seq_id, 0)
+    }
+
+    fn bind_test_bow_release_rows(entity: &mut Entity, order_type: OrderType) {
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let base_row = 0u16;
+        conversion[order_type as usize] = base_row;
+
+        let mut scripts = Vec::with_capacity(16);
+        for _direction in 0..16 {
+            scripts.push(SpriteScript {
+                action_id: order_type as u16,
+                action_done: 1,
+                average_speed: 0.0,
+                hotspot: GeoPoint2D { x: 2.0, y: 3.0 },
+                sum_distance: 0,
+                frame_ids: vec![1, 2, 3],
+                delays: vec![0, 0, 0],
+                distances: vec![0, 0, 0],
+                offsets: vec![Vec2D { x: 0.0, y: 0.0 }; 3],
+                sound_ids: vec![0, 0, 0],
+            });
+        }
+
+        let sprite = &mut entity.element_data_mut().sprite;
+        sprite.scripts = std::sync::Arc::new(scripts);
+        sprite.conversion = std::sync::Arc::new(conversion);
     }
 
     #[test]
@@ -3906,6 +3963,7 @@ mod tests {
     fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
 
         begin_bow_shot(
@@ -3921,12 +3979,10 @@ mod tests {
             &mut 1u32,
         );
 
-        // Tick — without a real sprite the stub returns `Done` so each
-        // order resolves immediately.  We may need multiple ticks if
-        // there are transition orders before the shoot order.
+        // Tick through the facing freeze, then the shoot row's action-done pulse.
         let mut fired = Vec::new();
         let mut completed = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..24 {
             let events = tick_bow_shots(&mut entities, &mut sm);
             fired.extend(events.fired);
             completed.extend(events.completed);
@@ -4988,6 +5044,7 @@ mod tests {
     fn down_bow_shot_release_keeps_leaning_out_posture() {
         let mut pc = make_pc(0.0, 0.0);
         pc.element_data_mut().posture = Posture::LeaningOut;
+        bind_test_bow_release_rows(&mut pc, OrderType::ShootingWithBowLeaningOut);
         let mut target = make_soldier(50.0, 0.0);
         target.element_data_mut().posture = Posture::LeaningOut;
         let mut entities: Vec<Option<Entity>> = vec![Some(pc), Some(target)];
