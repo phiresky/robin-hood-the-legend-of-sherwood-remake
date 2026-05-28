@@ -12,7 +12,8 @@
 //! When a desync is detected, writes a JSON debug file containing
 //! the sequence of commands replayed, the live engine state, and
 //! the re-simulated engine state to `rollback_desync_<frame>.json`
-//! in the current directory.
+//! in the current directory, including the replay file path when one
+//! is available.
 
 use crate::Host;
 use std::collections::VecDeque;
@@ -65,12 +66,15 @@ pub struct RollbackChecker {
     /// Whether we've already dumped a desync debug file this session.
     /// Repeated dumps are write-amplified noise.
     desync_dumped: Arc<AtomicBool>,
+    /// Replay recording path for this session, used to make desync
+    /// dumps directly reproducible.
+    replay_path: Option<String>,
     worker: Option<JoinHandle<()>>,
     perf: PerfStats,
 }
 
 impl RollbackChecker {
-    pub fn new(assets: Arc<LevelAssets>) -> Self {
+    pub fn new(assets: Arc<LevelAssets>, replay_path: Option<String>) -> Self {
         Self {
             history: VecDeque::with_capacity(ROLLBACK_WINDOW + 1),
             window_start: None,
@@ -78,6 +82,7 @@ impl RollbackChecker {
             pending_start: None,
             frames_since_check: 0,
             desync_dumped: Arc::new(AtomicBool::new(false)),
+            replay_path,
             worker: None,
             perf: PerfStats::default(),
         }
@@ -186,6 +191,7 @@ impl RollbackChecker {
             assets: Arc::clone(&self.assets),
             current_engine: current_engine.clone(),
             desync_dumped: Arc::clone(&self.desync_dumped),
+            replay_path: self.replay_path.clone(),
         };
         self.perf.check_clone_us += clone_start.elapsed().as_micros();
 
@@ -227,6 +233,7 @@ struct RollbackCheckJob {
     assets: Arc<LevelAssets>,
     current_engine: Engine,
     desync_dumped: Arc<AtomicBool>,
+    replay_path: Option<String>,
 }
 
 impl RollbackCheckJob {
@@ -274,6 +281,7 @@ impl RollbackCheckJob {
                     &sim_snapshot.engine,
                     start_frame,
                     end_frame,
+                    self.replay_path.as_deref(),
                 )
             {
                 tracing::error!("Failed to write rollback debug file: {e}");
@@ -297,6 +305,7 @@ impl RollbackCheckJob {
         replayed: &Engine,
         start_frame: u32,
         end_frame: u32,
+        replay_path: Option<&str>,
     ) -> std::io::Result<()> {
         // Emit a focused JSON of `path → (live, replayed)` for every leaf
         // where the two engines differ. The original "dump both engines
@@ -310,6 +319,7 @@ impl RollbackCheckJob {
 
         let dump = serde_json::json!({
             "end_frame": end_frame,
+            "replay_path": replay_path,
             "start_frame": start_frame,
             "differences": diffs,
         });
@@ -411,6 +421,6 @@ fn collect_diffs(
 
 impl Default for RollbackChecker {
     fn default() -> Self {
-        Self::new(Arc::new(LevelAssets::new()))
+        Self::new(Arc::new(LevelAssets::new()), None)
     }
 }

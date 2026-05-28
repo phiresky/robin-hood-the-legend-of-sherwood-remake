@@ -11,9 +11,11 @@
 // carry an `#[allow(clippy::disallowed_methods)]` with a comment.
 #![warn(clippy::disallowed_methods)]
 
-use std::sync::Once;
+use std::sync::{Mutex, Once, OnceLock};
 
 static TRACING_INIT: Once = Once::new();
+#[cfg(not(target_arch = "wasm32"))]
+static REPLAY_LOG_FILE: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
 
 /// Initialize the tracing subscriber for library use.
 /// Safe to call multiple times — only the first call takes effect.
@@ -25,13 +27,85 @@ pub fn init_tracing() {
         #[cfg(not(target_arch = "wasm32"))]
         {
             use std::io::IsTerminal;
+            use tracing_subscriber::{filter::LevelFilter, prelude::*};
+
             let ansi = std::io::stderr().is_terminal();
-            tracing_subscriber::fmt()
+            let stderr_layer = tracing_subscriber::fmt::layer()
                 .with_ansi(ansi)
-                .with_env_filter(build_env_filter())
+                .with_writer(std::io::stderr)
+                .with_filter(build_env_filter());
+            let replay_file_layer = tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(ReplayLogMakeWriter)
+                .with_filter(LevelFilter::DEBUG);
+            tracing_subscriber::registry()
+                .with(stderr_layer)
+                .with(replay_file_layer)
                 .init();
         }
     });
+}
+
+/// Start writing DEBUG-and-higher tracing events to `path`.
+///
+/// The tracing subscriber is installed during early process startup,
+/// before the replay filename is known, so this swaps the destination
+/// used by the always-installed replay log layer.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_replay_log_file(path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path.as_ref())?;
+    *REPLAY_LOG_FILE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("replay log file mutex poisoned") = Some(file);
+    tracing::info!("Replay debug log → {}", path.as_ref().display());
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct ReplayLogMakeWriter;
+
+#[cfg(not(target_arch = "wasm32"))]
+struct ReplayLogWriter;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ReplayLogMakeWriter {
+    type Writer = ReplayLogWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        ReplayLogWriter
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::io::Write for ReplayLogWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(file) = REPLAY_LOG_FILE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("replay log file mutex poisoned")
+            .as_mut()
+        {
+            file.write_all(buf)?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(file) = REPLAY_LOG_FILE
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("replay log file mutex poisoned")
+            .as_mut()
+        {
+            file.flush()?;
+        }
+        Ok(())
+    }
 }
 
 /// Build the `EnvFilter` honoring `RUST_LOG`, but ensure WARN-level

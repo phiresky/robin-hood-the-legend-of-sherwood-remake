@@ -53,6 +53,16 @@ fn default_replay_path() -> String {
         .into_owned()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(replay_path);
+    let filename = path
+        .file_name()
+        .map(|name| format!("{}.debug.log", name.to_string_lossy()))
+        .unwrap_or_else(|| "replay.debug.log".to_string());
+    path.with_file_name(filename)
+}
+
 /// Bundle of determinism-related mission state built by
 /// [`init_replay_and_rollback`] — replay recorder, replay player,
 /// rollback checker, and the hold-to-rewind snapshot buffer.
@@ -96,6 +106,14 @@ pub(super) fn init_replay_and_rollback(
 
     // No recording while playing back (either source).
     let is_playing_back = pending.is_some() || args.replay_data.is_some() || args.replay.is_some();
+    #[cfg(not(target_arch = "wasm32"))]
+    let replay_path = if is_playing_back {
+        None
+    } else {
+        Some(args.record.clone().unwrap_or_else(default_replay_path))
+    };
+    #[cfg(target_arch = "wasm32")]
+    let replay_path: Option<String> = None;
     // The script-RPC `get-replay` endpoint serves a byte-for-byte
     // mirror of the recorder's output.  Reset it here (fresh mission =
     // fresh buffer) and tee every recorder write into it via
@@ -112,16 +130,25 @@ pub(super) fn init_replay_and_rollback(
         // `get-replay` serializes straight back to the JS caller).
         #[cfg(not(target_arch = "wasm32"))]
         let primary: Option<Box<dyn std::io::Write + Send>> = {
-            let path = args.record.clone().unwrap_or_else(default_replay_path);
-            if let Some(parent) = std::path::Path::new(&path).parent()
+            let path = replay_path
+                .as_deref()
+                .expect("native replay recording has a path");
+            if let Some(parent) = std::path::Path::new(path).parent()
                 && let Err(e) = std::fs::create_dir_all(parent)
             {
                 tracing::error!("Failed to create replay dir {parent:?}: {e}");
                 None
             } else {
-                match std::fs::File::create(&path) {
+                match std::fs::File::create(path) {
                     Ok(f) => {
                         tracing::info!("Recording replay → {path}");
+                        let log_path = replay_debug_log_path(path);
+                        if let Err(e) = crate::set_replay_log_file(&log_path) {
+                            tracing::warn!(
+                                "Failed to create replay debug log {}: {e}",
+                                log_path.display()
+                            );
+                        }
                         Some(Box::new(f))
                     }
                     Err(e) => {
@@ -219,7 +246,11 @@ pub(super) fn init_replay_and_rollback(
         && !cfg!(target_arch = "wasm32")
         && !is_multiplayer
     {
-        Some(crate::rollback_checker::RollbackChecker::new(assets))
+        let rollback_replay_path = recorder.as_ref().and(replay_path.clone());
+        Some(crate::rollback_checker::RollbackChecker::new(
+            assets,
+            rollback_replay_path,
+        ))
     } else {
         if is_multiplayer && args.rollback_check && player.is_none() {
             tracing::info!(
