@@ -23,7 +23,8 @@ enum ArrowHitOutcome {
     /// Arrow flies through silently — friendly-fire filter or VIP NPC.
     /// Hit flag and impact sound are both suppressed.
     PassThrough,
-    /// Arrow ricochets off the victim's armor.  Plays the impact sound.
+    /// Arrow ricochets off the victim's armor.  C++ puts the arrow into
+    /// falling state before impact-FX lookup, so this path is silent.
     Ricochet,
 }
 
@@ -477,8 +478,8 @@ impl EngineInner {
     ///     branch.
     ///
     /// `PassThrough` replays the silent miss, `Ricochet` plays the
-    /// falling-state transition + impact sound, and `Damage` launches
-    /// the damage sequence element.
+    /// falling-state transition, and `Damage` launches the damage
+    /// sequence element.
     fn classify_arrow_hit(
         &self,
         assets: &LevelAssets,
@@ -617,8 +618,9 @@ impl EngineInner {
 
         // ── (F) Outcome dispatch ────────────────────────────────────
         // Hurtable → Damage.
-        // !Hurtable + victim is PC or Soldier → Ricochet (plays impact
-        //   FX 510).
+        // !Hurtable + victim is PC or Soldier → Ricochet. This is
+        // silent for arrows because `MakeFallingDown` sets `mbFalling`
+        // before `GetImpactFx()`.
         // !Hurtable + civilian → silent miss (PassThrough).
         if hurtable {
             ArrowHitOutcome::Damage
@@ -1693,7 +1695,7 @@ impl EngineInner {
                         // pre-filter.  Each outcome is a distinct
                         // side-effect:
                         //   * `PassThrough`  — arrow keeps flying, no sound.
-                        //   * `Ricochet`     — falling state + impact FX.
+                        //   * `Ricochet`     — falling state, silent.
                         //   * `Damage`       — launch damage sequence element.
                         match self.classify_arrow_hit(assets, victim, shooter) {
                             ArrowHitOutcome::PassThrough => {

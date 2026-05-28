@@ -2640,6 +2640,11 @@ pub fn tick_arrows(
         /// True when posture == LeaningOut — arrows get an eye-level
         /// re-check after the belt miss.
         leaning_out: bool,
+        is_pc: bool,
+        is_soldier: bool,
+        is_civilian: bool,
+        camp: Option<crate::element::Camp>,
+        holding_shield: bool,
     }
     let human_snapshots: Vec<HumanSnapshot> = entities
         .iter()
@@ -2674,11 +2679,26 @@ pub fn tick_arrows(
             };
             let belt = e.compute_belt_point().unwrap_or(fallback);
             let eyes = e.compute_eyes_point(None).unwrap_or(fallback);
+            let camp = match e {
+                Entity::Pc(_) => Some(crate::element::Camp::Royalists),
+                Entity::Soldier(s) => Some(s.soldier.cached_camp),
+                Entity::Civilian(c) => Some(c.civilian.cached_camp),
+                _ => None,
+            };
+            let holding_shield = e
+                .actor_data()
+                .map(|a| a.action_state.is_shield())
+                .unwrap_or(false);
             Some(HumanSnapshot {
                 id: EntityId(idx as u32),
                 belt,
                 eyes,
                 leaning_out: posture == crate::element::Posture::LeaningOut,
+                is_pc: e.is_pc(),
+                is_soldier: e.is_soldier(),
+                is_civilian: e.is_civilian(),
+                camp,
+                holding_shield,
             })
         })
         .collect();
@@ -3201,6 +3221,28 @@ pub fn tick_arrows(
             let dz = b.z - a.z;
             (dx * dx + dy * dy + dz * dz).sqrt()
         }
+        fn projectile_victim_prefilter_allows(
+            shooter: Option<&HumanSnapshot>,
+            victim: &HumanSnapshot,
+        ) -> bool {
+            let Some(shooter) = shooter else {
+                return true;
+            };
+            let same_camp = matches!(
+                (shooter.camp, victim.camp),
+                (Some(shooter_camp), Some(victim_camp)) if shooter_camp == victim_camp
+            );
+
+            // C++ filters these candidates inside `FindHumanVictim`
+            // before geometric hit selection:
+            //   - soldier projectiles do not hit civilians
+            //   - soldier projectiles do not hit same-camp humans
+            //   - PC projectiles do not hit shield-holding PCs
+            // The separate forest GoodSoldier rule is covered by the
+            // same-camp soldier branch for Royalist soldiers.
+            !(shooter.is_soldier && (victim.is_civilian || same_camp)
+                || shooter.is_pc && victim.is_pc && victim.holding_shield)
+        }
 
         // Segment length (range of this frame's movement).
         let range = distance(arrow_old, arrow_new);
@@ -3216,8 +3258,13 @@ pub fn tick_arrows(
         let use_range_gate = range > 0.1;
 
         let mut hit_victim = None;
+        let shooter_snapshot =
+            shooter_id.and_then(|id| human_snapshots.iter().find(|snap| snap.id == id));
         for snap in &human_snapshots {
             if Some(snap.id) == shooter_id {
+                continue;
+            }
+            if !projectile_victim_prefilter_allows(shooter_snapshot, snap) {
                 continue;
             }
             let anchor = if uses_eyes_anchor {
@@ -3554,6 +3601,10 @@ mod tests {
     }
 
     fn make_soldier(x: f32, y: f32) -> Entity {
+        make_soldier_with_camp(x, y, crate::element::Camp::Royalists)
+    }
+
+    fn make_soldier_with_camp(x: f32, y: f32, camp: crate::element::Camp) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorSoldier,
             active: true,
@@ -3569,7 +3620,10 @@ mod tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             npc,
-            soldier: SoldierData::default(),
+            soldier: SoldierData {
+                cached_camp: camp,
+                ..SoldierData::default()
+            },
         })
     }
 
@@ -3944,6 +3998,60 @@ mod tests {
             }
         }
         assert_eq!(hit, Some(EntityId(1)), "arrow should reach target");
+    }
+
+    #[test]
+    fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            target: EntityId(2),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: None,
+        });
+        let mut entities: Vec<Option<Entity>> = vec![
+            Some(make_soldier_with_camp(
+                0.0,
+                0.0,
+                crate::element::Camp::Royalists,
+            )),
+            Some(make_soldier_with_camp(
+                20.0,
+                0.0,
+                crate::element::Camp::Royalists,
+            )),
+            Some(make_soldier_with_camp(
+                40.0,
+                0.0,
+                crate::element::Camp::Lacklandists,
+            )),
+            Some(arrow),
+        ];
+
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        assert!(
+            results.iter().all(|r| r.hit_target != Some(EntityId(1))),
+            "same-camp soldier must be filtered before hit selection"
+        );
+        assert!(
+            results.iter().any(|r| r.hit_target == Some(EntityId(2))),
+            "arrow should continue to the valid victim behind the filtered candidate"
+        );
     }
 
     /// Apple projectile flying through an APPLE-filtered FX target
