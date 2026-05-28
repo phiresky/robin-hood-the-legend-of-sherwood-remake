@@ -155,10 +155,28 @@ impl EngineInner {
         }
         let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
         for result in events.fired {
-            let layer = self
-                .get_entity(result.shooter)
-                .map(|e| e.element_data().layer())
-                .unwrap_or(0);
+            let Some(shooter_entity) = self.get_entity(result.shooter) else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    target = ?result.target,
+                    "Bow shot release skipped: shooter entity missing"
+                );
+                continue;
+            };
+            let layer = shooter_entity.element_data().layer();
+            let shooter_is_pc = shooter_entity.kind().is_pc();
+
+            let Some(target_entity) = self.get_entity(result.target) else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    target = ?result.target,
+                    "Bow shot release skipped: target entity missing"
+                );
+                continue;
+            };
+            let target_is_fx_target = target_entity.kind().is_fx_target();
+            let target_is_human = target_entity.is_human();
+            let target_posture = target_entity.element_data().posture;
 
             // ── Determine shoot mode from action state ───────────
             let shoot_mode = bow_shot::shoot_mode_from_action_state(result.action_state);
@@ -216,10 +234,7 @@ impl EngineInner {
             // `can_shoot_with_bow_at_point` folds in range / posture-
             // override / ammo semantics.
             let mut target_point = result.target_point;
-            let target_posture = self
-                .get_entity(result.target)
-                .map(|e| e.element_data().posture);
-            if target_posture == Some(crate::element::Posture::LeaningOut)
+            if target_posture == crate::element::Posture::LeaningOut
                 && shoot_mode == crate::weapons::ShootMode::Normal
             {
                 let (belt_status, belt_mode) =
@@ -242,18 +257,7 @@ impl EngineInner {
             // PositionInterface returns its own `Point3D` type
             // (serializable), separate from `element::Point3D`; convert
             // here.
-            let target_movement = self
-                .get_entity(result.target)
-                .filter(|e| e.is_human())
-                .map(|e| e.position_iface())
-                .map(|pi| {
-                    let m = pi.get_forecasted_movement();
-                    crate::element::Point3D {
-                        x: m.x,
-                        y: m.y,
-                        z: m.z,
-                    }
-                });
+            let target_movement = target_is_human.then_some(result.target_forecasted_movement);
 
             // ── Compute velocity ─────────────────────────────────
             // `compute_shot_velocity_params` forwards `target_movement`
@@ -267,15 +271,6 @@ impl EngineInner {
                 shoot_mode,
                 target_movement,
             );
-
-            let target_is_fx_target = self
-                .get_entity(result.target)
-                .map(|e| e.kind().is_fx_target())
-                .unwrap_or(false);
-            let target_is_human = self
-                .get_entity(result.target)
-                .map(|e| e.is_human())
-                .unwrap_or(false);
 
             // ── Hit chance roll ──────────────────────────────────
             // C++ only applies `mpBow->GetHitChance(...)` in the
@@ -318,10 +313,6 @@ impl EngineInner {
             // When a PC shoots an FX target in a forest level the
             // arrow gets magic-bullet mode, bypassing obstacle collision so
             // it can pass through trees to reach the target.
-            let shooter_is_pc = self
-                .get_entity(result.shooter)
-                .map(|e| e.kind().is_pc())
-                .unwrap_or(false);
             let magic_bullet = target_is_fx_target && shooter_is_pc && self.weather.is_forest_level;
 
             // ── Compute ballistic trajectory ─────────────────────
@@ -397,12 +388,20 @@ impl EngineInner {
             // already detects the shooter (otherwise the soldier wouldn't
             // be visually tracking them, so reacting would be cheating).
             let target_is_shield_soldier = match self.get_entity(result.target) {
-                Some(Entity::Soldier(s)) => assets
+                Some(Entity::Soldier(s)) => match assets
                     .profile_manager
                     .get_soldier(s.soldier.soldier_profile_index)
                     .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
-                    .map(|w| w.shield)
-                    .unwrap_or(false),
+                {
+                    Some(w) => w.shield,
+                    None => {
+                        tracing::warn!(
+                            target = ?result.target,
+                            "Bow shot shield warning skipped: missing soldier HtH weapon profile"
+                        );
+                        false
+                    }
+                },
                 _ => false,
             };
             if target_is_shield_soldier {
