@@ -2325,27 +2325,43 @@ impl EngineInner {
                         | Command::UnequipBow
                         | Command::RaiseBow
                         | Command::LowerBow => {
-                            let has_orders_before = self
-                                .sequence_manager
-                                .get_element(seq_id, elem_idx)
-                                .is_some_and(|e| !e.orders.is_empty());
-                            let unequip_body_already_queued = self
+                            let command_body_already_queued = self
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .is_some_and(|e| {
                                     e.orders.iter().any(|o| {
-                                        matches!(
-                                            o.order_type,
-                                            crate::order::OrderType::TransitionUnloadBow
-                                                | crate::order::OrderType::TransitionUnloadBowAnonymous
-                                                | crate::order::OrderType::TransitionUnequipBow
-                                                | crate::order::OrderType::TransitionUnequipBowAnonymous
-                                        )
+                                        use crate::order::OrderType as OT;
+                                        match elem.command {
+                                            Command::EquipBow => matches!(
+                                                o.order_type,
+                                                OT::TransitionEquipBow
+                                                    | OT::TransitionEquipBowAnonymous
+                                            ),
+                                            Command::EquipBowDown => {
+                                                o.order_type == OT::TransitionLoweringBowLeaningOut
+                                            }
+                                            Command::UnequipBow => matches!(
+                                                o.order_type,
+                                                OT::TransitionUnloadBow
+                                                    | OT::TransitionUnloadBowAnonymous
+                                                    | OT::TransitionUnequipBow
+                                                    | OT::TransitionUnequipBowAnonymous
+                                            ),
+                                            Command::RaiseBow => matches!(
+                                                o.order_type,
+                                                OT::TransitionRaisingBow
+                                                    | OT::TransitionRaisingBowAnonymous
+                                            ),
+                                            Command::LowerBow => matches!(
+                                                o.order_type,
+                                                OT::TransitionLoweringBow
+                                                    | OT::TransitionLoweringBowAnonymous
+                                            ),
+                                            _ => false,
+                                        }
                                     })
                                 });
-                            let append_command_body = !has_orders_before
-                                || (elem.command == Command::UnequipBow
-                                    && !unequip_body_already_queued);
+                            let append_command_body = !command_body_already_queued;
                             if append_command_body {
                                 let owner_entity = self.get_entity(owner).unwrap_or_else(|| {
                                     panic!("bow command owner missing: {owner:?}")
@@ -8163,6 +8179,17 @@ mod bow_command_body_parity_tests {
         engine
     }
 
+    fn command_order_types(engine: &EngineInner) -> Vec<OrderType> {
+        engine
+            .sequence_manager
+            .get_element(SequenceId(1), 0)
+            .unwrap()
+            .orders
+            .iter()
+            .map(|order| order.order_type)
+            .collect()
+    }
+
     fn make_bow_soldier(posture: Posture, action_state: ActionState) -> Entity {
         Entity::Soldier(ActorSoldier {
             element: ElementData {
@@ -8239,6 +8266,36 @@ mod bow_command_body_parity_tests {
         assert!(
             elem.orders.is_empty(),
             "redundant EquipBowDown must not queue equip/load/lower orders"
+        );
+    }
+
+    #[test]
+    fn raise_bow_from_waiting_queues_equip_load_then_raise() {
+        let engine = launch_bow_command_and_tick(Command::RaiseBow, ActionState::Waiting);
+
+        assert_eq!(
+            command_order_types(&engine),
+            vec![
+                OrderType::TransitionEquipBow,
+                OrderType::TransitionLoadingBow,
+                OrderType::TransitionRaisingBow,
+            ],
+            "C++ TestBowAimUp expects RaiseBow from waiting to equip, load, then raise"
+        );
+    }
+
+    #[test]
+    fn unequip_bow_from_aiming_up_queues_lower_unload_then_unequip() {
+        let engine = launch_bow_command_and_tick(Command::UnequipBow, ActionState::AimingWithBowUp);
+
+        assert_eq!(
+            command_order_types(&engine),
+            vec![
+                OrderType::TransitionLoweringBow,
+                OrderType::TransitionUnloadBow,
+                OrderType::TransitionUnequipBow,
+            ],
+            "C++ TestBowAimUp expects UnequipBow from bow-up to lower, unload, then unequip"
         );
     }
 }
