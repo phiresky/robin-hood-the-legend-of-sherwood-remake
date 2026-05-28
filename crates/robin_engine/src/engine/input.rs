@@ -2113,12 +2113,21 @@ impl EngineInner {
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
+        let bow_fx_forest_magic_preview = selected_action == crate::profiles::Action::Bow
+            && self.weather.is_forest_level
+            && target_entity
+                .and_then(|id| self.get_entity(id))
+                .is_some_and(|target| target.is_fx_target());
         let trajectory = bow_shot::compute_trajectory_ballistic(
             source_point,
             velocity,
             mass,
             false,
-            Some(&obstacle_check),
+            if bow_fx_forest_magic_preview {
+                None
+            } else {
+                Some(&obstacle_check)
+            },
         );
 
         // Net on Easy difficulty: predict whether the net would
