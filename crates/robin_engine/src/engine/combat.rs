@@ -1545,10 +1545,21 @@ fn bonus_auto_pickup_allowed(obj_type: crate::element::ObjectType) -> bool {
     obj_type != crate::element::ObjectType::BonusArrow
 }
 
+fn soldier_piercing_protection(
+    profile_manager: &crate::profiles::ProfileManager,
+    profile_index: crate::profiles::SoldierProfileIdx,
+) -> Option<u16> {
+    profile_manager
+        .get_soldier(profile_index)
+        .and_then(|p| profile_manager.get_hth_weapon(p.hth_weapon_id))
+        .map(|w| w.piercing_protection)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::bonus_auto_pickup_allowed;
+    use super::{bonus_auto_pickup_allowed, soldier_piercing_protection};
     use crate::element::ObjectType;
+    use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
 
     #[test]
     fn arrow_bonus_is_not_auto_pickup() {
@@ -1558,6 +1569,30 @@ mod tests {
     #[test]
     fn non_arrow_bonus_keeps_existing_auto_pickup_path() {
         assert!(bonus_auto_pickup_allowed(ObjectType::BonusPlants));
+    }
+
+    #[test]
+    fn stone_soldier_protection_requires_real_weapon_profile() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            ..SoldierProfile::default()
+        });
+
+        assert_eq!(
+            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
+            None
+        );
+
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            piercing_protection: 35,
+            ..HtHWeaponProfile::default()
+        });
+
+        assert_eq!(
+            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
+            Some(35)
+        );
     }
 }
 
@@ -1907,26 +1942,28 @@ impl EngineInner {
         };
         let is_vip =
             crate::engine::melee::is_vip_from_profile(victim_entity, &assets.profile_manager);
-        let is_soldier = victim_entity.is_soldier();
         let is_npc = victim_entity.is_npc();
 
         // Piercing-protection roll for soldiers only:
         // `(!is_soldier) || (rand() % 100) >= protection`
-        let protected = if is_soldier {
-            let protection = match victim_entity {
-                Entity::Soldier(s) => assets
-                    .profile_manager
-                    .get_soldier(s.soldier.soldier_profile_index)
-                    .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
-                    .map(|w| w.piercing_protection)
-                    .unwrap_or(0),
-                _ => 0,
-            };
-            if protection == 0 {
-                false
-            } else {
-                let roll = crate::sim_rng::u32(0..100);
-                roll < protection as u32
+        let protected = if let Entity::Soldier(s) = victim_entity {
+            match soldier_piercing_protection(
+                &assets.profile_manager,
+                s.soldier.soldier_profile_index,
+            ) {
+                Some(0) => false,
+                Some(protection) => {
+                    let roll = crate::sim_rng::u32(0..100);
+                    roll < protection as u32
+                }
+                None => {
+                    tracing::warn!(
+                        ?victim,
+                        profile_index = ?s.soldier.soldier_profile_index,
+                        "stone hit: missing soldier HtH weapon profile; treating victim as protected"
+                    );
+                    true
+                }
             }
         } else {
             false
