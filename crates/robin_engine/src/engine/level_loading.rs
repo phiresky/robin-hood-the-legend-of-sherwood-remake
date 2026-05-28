@@ -1206,9 +1206,9 @@ impl EngineInner {
         // ── Entity spawn order ──
         //
         // Elements are added to the script-elements array in the order
-        // they appear in the proto + mission files.  Script handles are
-        // 1-based indices into this array, so getting the order right is
-        // essential — otherwise script natives like `Deactivate(GetActorScript(N))`
+        // they appear in the proto + mission files. Script handles carry
+        // tagged 0-based indices into this array, so getting the order
+        // right is essential — otherwise script natives like `Deactivate(GetActorScript(N))`
         // hit the wrong entity, leaving initially-hidden enemies/scrolls/FX
         // visible at mission start.
         //
@@ -1345,8 +1345,7 @@ impl EngineInner {
                     },
                 });
                 let id = self.add_entity(entity);
-                // Entity handle is 1-based
-                let handle = (id.0 as i32) + 1;
+                let handle = crate::natives::GameHost::actor_handle(id);
                 patch_entity_handles.push(Some(handle));
                 tracing::trace!(
                     "Spawned patch {patch_idx} FX entity: id={:?}, handle={handle}, sprite='{fname}'",
@@ -2450,8 +2449,8 @@ impl EngineInner {
             assets.scroll_entity_ids.push(scroll_eid);
 
             // `force_visible` flips status to Visible.  The scroll status
-            // lives on `GameHost::scroll_status`, keyed by entity handle
-            // (1-based). Capture handles here and flush them once the
+            // lives on `GameHost::scroll_status`, keyed by actor handle.
+            // Capture ids here and flush them once the
             // mission script (and its host) is loaded below.
             if raw.force_visible {
                 force_visible_scroll_ids.push(scroll_eid);
@@ -4792,7 +4791,8 @@ impl EngineInner {
                 crate::level_data::RawBuildingEntry::Building { doors } => (doors, true),
                 crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => (doors, false),
             };
-            let first_handle = game_host.doors.len() as i32 + 1;
+            let first_handle =
+                crate::natives::GameHost::door_handle_from_index(game_host.doors.len());
             for raw in raw_doors {
                 // Standalone (non-building) doors must be Default (0),
                 // Gate (3), or Trap (7).
@@ -5408,9 +5408,10 @@ impl EngineInner {
             }
             game_host.arrow_reserves[bld_idx] = tenants.arrow_reserve;
             for &elem_idx in &tenants.tenant_element_indices {
-                let actor_h = (elem_idx as i32) + 1; // 1-based handle
+                let actor_h =
+                    crate::natives::GameHost::actor_handle_from_index(usize::from(elem_idx));
                 game_host.building_occupants[bld_idx].push(actor_h);
-                let bld_h = (bld_idx as i32) + 1;
+                let bld_h = crate::natives::GameHost::building_handle_from_index(bld_idx);
                 game_host.actor_building.insert(actor_h, bld_h);
             }
         }

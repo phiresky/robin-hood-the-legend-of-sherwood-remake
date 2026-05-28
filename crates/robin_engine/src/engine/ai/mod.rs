@@ -7223,9 +7223,7 @@ impl EngineInner {
                 &mut self.mission_stat,
             );
             for &(npc_id, path_idx, wp_idx) in &requests {
-                // 1-based handle mirrors the other per-entity script
-                // dispatch sites (actor_instances is keyed the same way).
-                let actor_handle = (npc_id.0 as i32) + 1;
+                let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
                 match script.call_waypoint_function(path_idx, wp_idx, "ReachPoint", &[actor_handle])
                 {
                     Ok(_) => {}

@@ -34,7 +34,7 @@ impl EngineInner {
 
         for (idx, slot) in self.entities.iter().enumerate() {
             let Some(entity) = slot else { continue };
-            let handle = (idx as i32) + 1;
+            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
 
             // FX / target active state (existing)
             if entity.kind().is_fx() || entity.kind().is_fx_target() {
@@ -85,7 +85,7 @@ impl EngineInner {
         let selected_pc_handles: Vec<i32> = self.seats[0]
             .selection
             .iter()
-            .map(|id| id.0 as i32 + 1)
+            .map(|&id| crate::natives::GameHost::actor_handle(id))
             .collect();
 
         // Live animation snapshot per handle.  Actors source from the
@@ -97,7 +97,7 @@ impl EngineInner {
             Vec::with_capacity(self.actor_ids.len() + self.animation_ids.len());
         for (idx, slot) in self.entities.iter().enumerate() {
             let Some(entity) = slot else { continue };
-            let handle = (idx as i32) + 1;
+            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
             if entity.is_actor() {
                 if let Some((_, _, order)) = self
                     .sequence_manager
@@ -154,7 +154,7 @@ impl EngineInner {
         let mut pc_bit_idx = 0u16;
         for (idx, slot) in self.entities.iter().enumerate() {
             if let Some(Entity::Pc(_)) = slot {
-                let handle = (idx as i32) + 1;
+                let handle = crate::natives::GameHost::actor_handle_from_index(idx);
                 let bit = 1u16 << pc_bit_idx;
                 bits.push((handle, bit));
                 pc_bit_idx += 1;
@@ -267,7 +267,7 @@ impl EngineInner {
         if let Some(game_host) = script.game_host_mut() {
             // ── Entity active state → real entities ──
             for (&handle, &active) in &game_host.entity_active {
-                if let Some(idx) = crate::natives::GameHost::handle_to_index(handle)
+                if let Some(idx) = crate::natives::GameHost::actor_index(handle)
                     && let Some(Some(entity)) = self.entities.get_mut(idx)
                     && (entity.kind().is_fx() || entity.kind().is_fx_target())
                 {
@@ -335,7 +335,7 @@ impl EngineInner {
                         // then emit the side-effect so the host audio backend
                         // picks up the source and starts a channel.  Symmetric
                         // with the Deactivate path below.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(h) {
+                        if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
                             // Re-activation cancels any previously
                             // scheduled finish so we don't prematurely
                             // kill a freshly-restarted source.
@@ -365,7 +365,7 @@ impl EngineInner {
                         // would fire as a no-op on an already-inactive
                         // source, but clearing it keeps the queue small
                         // and unambiguous across rollback snapshots.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(h) {
+                        if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
                             if let Some(src) = self.sound_sim.sources.get_mut(idx) {
                                 src.active = false;
                             }
@@ -375,7 +375,7 @@ impl EngineInner {
                         }
                     }
                     crate::natives::SoundCommand::Destroy(h) => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(h) {
+                        if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
                             if let Some(src) = self.sound_sim.sources.get_mut(idx) {
                                 src.active = false;
                             }
@@ -416,7 +416,7 @@ impl EngineInner {
             // Without this, the post-script HUD continues to highlight
             // a slot the script has just disabled.
             for (&handle, actions) in &game_host.pc_disabled_actions {
-                if let Some(idx) = crate::natives::GameHost::handle_to_index(handle)
+                if let Some(idx) = crate::natives::GameHost::actor_index(handle)
                     && let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(idx)
                 {
                     pc.pc.disabled_actions = actions.clone();
@@ -466,7 +466,7 @@ impl EngineInner {
                             } else {
                                 self.unselect_all_pcs(0);
                             }
-                        } else if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        } else if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let id = EntityId(idx as u32);
                             if select {
                                 // Script-path SelectPC uses `speak=false`
@@ -478,7 +478,7 @@ impl EngineInner {
                         }
                     }
                     crate::natives::DeferredCommand::StopActor { actor } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let id = EntityId(idx as u32);
                             self.stop_owner(id, crate::sequence::SequencePriority::Script);
                         }
@@ -487,23 +487,23 @@ impl EngineInner {
                         self.freeze_all = freeze;
                     }
                     crate::natives::DeferredCommand::HandleDeath { actor } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let id = EntityId(idx as u32);
                             self.handle_death(assets, id);
                         }
                     }
                     crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             self.add_damage_number(EntityId(idx as u32), damage);
                         }
                     }
                     crate::natives::DeferredCommand::PcSayOuchForLifeDrop { actor, damage } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             self.say_ouch(assets, EntityId(idx as u32), Some(damage));
                         }
                     }
                     crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             self.apply_scripted_life_points(assets, EntityId(idx as u32), amount);
                         }
                     }
@@ -512,7 +512,7 @@ impl EngineInner {
                         amount,
                         force_value,
                     } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             // Clamp negative `i32` from the script stack to 0
                             // before casting; `combat::set_concussion` clamps
                             // the upper bound to `CONCUSSION_MAX`.
@@ -521,7 +521,7 @@ impl EngineInner {
                         }
                     }
                     crate::natives::DeferredCommand::QuitSwordfight { actor } => {
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let id = EntityId(idx as u32);
                             self.quit_swordfight(assets, id);
                         }
@@ -531,7 +531,7 @@ impl EngineInner {
                         // currently unconscious — `remove_unconscious_stars_if`
                         // takes `is_still_unconscious` and short-circuits
                         // otherwise.  Read the live human-data flag now.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor)
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor)
                             && let Some(Some(entity)) = self.entities.get(idx)
                         {
                             let still_unconscious =
@@ -554,7 +554,7 @@ impl EngineInner {
                         } else {
                             crate::messenger::PcMessage::DisableCharacter
                         };
-                        let pc_id = crate::natives::GameHost::handle_to_index(actor)
+                        let pc_id = crate::natives::GameHost::actor_index(actor)
                             .map(|idx| crate::element::EntityId(idx as u32));
                         self.messenger.send(Message::pc(msg_type, pc_id));
                         tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
@@ -570,7 +570,7 @@ impl EngineInner {
                         // actor's current command is already `LockAi`.
                         // We implement that by peeking the sequence
                         // manager for the actor's in-flight command.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let owner = EntityId(idx as u32);
                             let from_lockai_command = self
                                 .sequence_manager
@@ -597,7 +597,7 @@ impl EngineInner {
                     }
                     crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
                         // Rewind the actor's sprite to frame 0 of its current row.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor)
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor)
                             && let Some(Some(entity)) = self.entities.get_mut(idx)
                         {
                             entity.sprite_mut().reset_sprite_frame(false);
@@ -606,7 +606,7 @@ impl EngineInner {
                     crate::natives::DeferredCommand::ClearAllQuickActionSlots { actor } => {
                         // Per-slot `SetQuickActionSequence(0, 0, i, 0xFFFFFFFF)`
                         // loop: drops QA titbits + clears macro_store slot.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let pc_id = EntityId(idx as u32);
                             for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
                                 self.remove_quick_action_titbits_for(pc_id, slot);
@@ -624,7 +624,7 @@ impl EngineInner {
                         // was running.  Called from `SetActorPosture`,
                         // `SetActorActionState` (every arm), etc., right
                         // after the script stamps the new posture/action-state.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let owner = EntityId(idx as u32);
                             let mut elem = crate::sequence::SequenceElement::new(
                                 1,
@@ -643,7 +643,7 @@ impl EngineInner {
                         // at `Injury` priority.  Routes through the engine's
                         // wrapper so movement/path-request teardown stays
                         // in sync with the sequence-manager stop.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let id = EntityId(idx as u32);
                             self.stop_owner(id, priority);
                         }
@@ -654,7 +654,7 @@ impl EngineInner {
                         // `SetActorPosture` ID_KO/ID_TIED arms.  Both are
                         // NPC-only (guarded by `is_npc()`); we no-op when
                         // the entity has no AI controller.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             let id = EntityId(idx as u32);
                             // Queue stimulus first so the AI's next think
                             // tick observes the "lose consciousness" event
@@ -682,7 +682,7 @@ impl EngineInner {
                         // branch.  The engine-side `broadcast_resurrection`
                         // walks every other NPC and clears the resurrected
                         // NPC from their `DETECTABLE_BODY` list.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor)
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor)
                             && let Some(Some(entity)) = self.entities.get(idx)
                             && entity.is_npc()
                         {
@@ -700,7 +700,7 @@ impl EngineInner {
                         // would deref a non-PC as PC (UB), so we guard
                         // and log instead — script callers in shipping
                         // levels only target PCs.
-                        let Some(idx) = crate::natives::GameHost::handle_to_index(actor) else {
+                        let Some(idx) = crate::natives::GameHost::actor_index(actor) else {
                             continue;
                         };
                         let Some(Some(entity)) = self.entities.get(idx) else {
@@ -746,7 +746,7 @@ impl EngineInner {
                         // flags so the speed change takes effect
                         // mid-segment instead of waiting for the next
                         // waypoint pickup.
-                        if let Some(idx) = crate::natives::GameHost::handle_to_index(actor) {
+                        if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
                             self.relaunch_path_at_new_speed(assets, EntityId(idx as u32));
                         }
                     }
@@ -885,7 +885,10 @@ impl EngineInner {
                 if script_class.is_empty() {
                     return None;
                 }
-                Some(((idx as i32) + 1, script_class.clone()))
+                Some((
+                    crate::natives::GameHost::actor_handle_from_index(idx),
+                    script_class.clone(),
+                ))
             })
             .collect();
 
@@ -903,7 +906,10 @@ impl EngineInner {
                     if t.target.script_class.is_empty() {
                         return None;
                     }
-                    Some(((idx as i32) + 1, t.target.script_class.clone()))
+                    Some((
+                        crate::natives::GameHost::actor_handle_from_index(idx),
+                        t.target.script_class.clone(),
+                    ))
                 } else {
                     None
                 }
@@ -923,7 +929,10 @@ impl EngineInner {
                     if s.script_class.is_empty() {
                         return None;
                     }
-                    Some(((idx as i32) + 1, s.script_class.clone()))
+                    Some((
+                        crate::natives::GameHost::actor_handle_from_index(idx),
+                        s.script_class.clone(),
+                    ))
                 } else {
                     None
                 }
@@ -1074,7 +1083,9 @@ impl EngineInner {
                 if !has_override {
                     continue;
                 }
-                let idx = (handle - 1) as usize;
+                let Some(idx) = crate::natives::GameHost::actor_index(handle) else {
+                    continue;
+                };
                 if let Some(Some(entity)) = self.entities.get_mut(idx)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
@@ -1172,7 +1183,13 @@ impl EngineInner {
         }
         let changes: Vec<(i32, i32, i32)> = changes
             .into_iter()
-            .map(|(idx, new_anim, old_anim)| ((idx as i32) + 1, new_anim as i32, old_anim as i32))
+            .map(|(idx, new_anim, old_anim)| {
+                (
+                    crate::natives::GameHost::actor_handle_from_index(idx),
+                    new_anim as i32,
+                    old_anim as i32,
+                )
+            })
             .collect();
 
         if changes.is_empty() {
@@ -1239,7 +1256,7 @@ impl EngineInner {
             if !s.element.active {
                 continue;
             }
-            let handle = (idx as i32) + 1;
+            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
             let has_script = self
                 .mission_script
                 .as_ref()
@@ -1315,7 +1332,7 @@ impl EngineInner {
         use crate::element::Entity;
         use crate::engine::scroll_reveal::ScrollStatus;
 
-        let handle = (scroll_id.0 as i32) + 1;
+        let handle = crate::natives::GameHost::actor_handle(scroll_id);
 
         // Step 1 — always flip to the "opened" pose, even if there's no
         // script.  Set status to Opened and force the sprite animation
@@ -1342,7 +1359,7 @@ impl EngineInner {
         }
 
         // Step 3 — dispatch via the SetScrollExecutingScript bracket.
-        let pc_handle = (pc_id.0 as i32) + 1;
+        let pc_handle = crate::natives::GameHost::actor_handle(pc_id);
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
@@ -1491,7 +1508,7 @@ impl EngineInner {
             }
             let pos = crate::geo2d::pt(ed.position_map().x, ed.position_map().y);
             let layer = ed.layer();
-            let handle = (entity_idx as i32) + 1;
+            let handle = crate::natives::GameHost::actor_handle_from_index(entity_idx);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip zones that `DefineFlatTrajectoryZone` converted
@@ -1535,7 +1552,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let carried_h = (carried_id.0 as i32) + 1;
+            let carried_h = crate::natives::GameHost::actor_handle(carried_id);
             entries.push((zone_idx, carried_id, carried_h));
         }
         entries
@@ -1667,7 +1684,7 @@ impl EngineInner {
             let active = ed.active && !ed.in_honolulu;
             let pos = crate::geo2d::pt(ed.position_map().x, ed.position_map().y);
             let layer = ed.layer();
-            let handle = (entity_idx as i32) + 1;
+            let handle = crate::natives::GameHost::actor_handle_from_index(entity_idx);
             let eidx = crate::entity_id::EntityId(entity_idx as u32);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
@@ -1711,7 +1728,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let carried_h = (carried_id.0 as i32) + 1;
+            let carried_h = crate::natives::GameHost::actor_handle(carried_id);
             enter_events.push((zone_idx, carried_id, carried_h));
         }
         let primary_exit_len = exit_events.len();
@@ -1732,7 +1749,7 @@ impl EngineInner {
             {
                 continue;
             }
-            let carried_h = (carried_id.0 as i32) + 1;
+            let carried_h = crate::natives::GameHost::actor_handle(carried_id);
             exit_events.push((zone_idx, carried_id, carried_h));
         }
 
@@ -2093,7 +2110,7 @@ impl EngineInner {
     // ─── AI event filter precompute ─────────────────────────────
 
     /// Run the per-actor `FilterAIEvent` for a stimulus about to be
-    /// dispatched to `handle` (1-based entity index).
+    /// dispatched to `handle` (opaque script actor handle).
     ///
     /// Returns `true` if `think()` should proceed, `false` if the
     /// script blocked the stimulus.  Implements the early-gate:
@@ -2116,9 +2133,8 @@ impl EngineInner {
     ///  - Script VM errors — logged and treated as allow so a
     ///    script bug never blocks AI progress.
     ///
-    /// Source actor is extracted from `stimulus.info`: `Human(h)` →
-    /// 1-based handle `h + 1`; other info variants → 0 (originally
-    /// NULL, which the VM reads as 0).
+    /// Source actor is extracted from `stimulus.info`: `Human(h)` becomes
+    /// a script actor handle; other info variants become 0 (originally NULL).
     pub fn filter_stimulus(
         &mut self,
         assets: &LevelAssets,
@@ -2149,7 +2165,9 @@ impl EngineInner {
         };
 
         let source = match stimulus.info {
-            crate::ai::StimulusInfo::Human(h) => (h as i32) + 1,
+            crate::ai::StimulusInfo::Human(h) => {
+                crate::natives::GameHost::actor_handle(crate::element::EntityId(h))
+            }
             _ => 0,
         };
 
@@ -2225,7 +2243,7 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
         tick_data: &crate::ai::AiPerTickData,
     ) -> bool {
-        let handle = (entity_id.0 as i32) + 1;
+        let handle = crate::natives::GameHost::actor_handle(entity_id);
         if !self.filter_stimulus(assets, handle, stimulus) {
             return false;
         }
@@ -2293,19 +2311,18 @@ impl EngineInner {
             if !is_scripted {
                 continue;
             }
-            let handle = (idx as i32) + 1;
+            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
             for (state, source_opt) in drained {
                 let code = state.state_change_event_code();
-                // `None` ⇒ source is self: use this actor's 1-based
-                // script handle.  `Some(0)` ⇒ source is null
+                // `None` ⇒ source is self: use this actor's script
+                // handle.  `Some(0)` ⇒ source is null
                 // (Attacking/Menacing/Fleeing without a primary
                 // target); leave as `0`.  `Some(h)` ⇒ primary target
-                // handle is 0-based, translate to the script's 1-based
-                // actor handle.
+                // handle is 0-based, translate to the script actor handle.
                 let source = match source_opt {
                     None => handle,
                     Some(0) => 0,
-                    Some(h) => (h as i32) + 1,
+                    Some(h) => crate::natives::GameHost::actor_handle(crate::element::EntityId(h)),
                 };
                 notifications.push((handle, source, code));
             }
@@ -2433,14 +2450,11 @@ impl EngineInner {
 
     // ─── Script command processing ──────────────────────────────
 
-    /// Resolve a script location handle (1-based) to a map position.
+    /// Resolve a script location handle to a map position.
     /// Script locations are points and sectors from the SCRIPT chunk,
-    /// **not** entity handles. Index 0 = null.
+    /// **not** entity handles. Handle 0 = null.
     fn resolve_location_position(assets: &LevelAssets, handle: i32) -> Option<geo2d::Point2D> {
-        if handle <= 0 {
-            return None;
-        }
-        let idx = (handle - 1) as usize;
+        let idx = crate::natives::GameHost::location_index(handle)?;
         assets
             .script_location_positions
             .get(idx)
@@ -2530,7 +2544,14 @@ impl EngineInner {
                     use crate::element_kinds::OutlineColorName;
                     use crate::element_kinds::outline_colors;
                     use crate::minimap::CustomDot;
-                    let id = crate::element::EntityId(actor_handle as u32);
+                    let Some(actor_idx) = crate::natives::GameHost::actor_index(actor_handle)
+                    else {
+                        tracing::warn!(
+                            "CustomizeMinimapDisplay: invalid actor handle {actor_handle}"
+                        );
+                        continue;
+                    };
+                    let id = crate::element::EntityId(actor_idx as u32);
                     let Some(entity) = self.get_entity_mut(id) else {
                         tracing::warn!(
                             "CustomizeMinimapDisplay: invalid actor handle {actor_handle}"
@@ -2756,7 +2777,7 @@ impl EngineInner {
                     // the grid cell, and — when a new floor landed the
                     // actor on a different projection-area obstacle —
                     // re-bind obstacle/material too.
-                    let Some(idx) = crate::natives::GameHost::handle_to_index(actor_handle) else {
+                    let Some(idx) = crate::natives::GameHost::actor_index(actor_handle) else {
                         tracing::warn!("SetActorLocation: invalid actor handle {actor_handle}");
                         continue;
                     };
@@ -2906,10 +2927,9 @@ impl EngineInner {
                     // Set scroll status: write status, run minimap-dot
                     // update, force animation `BonusThree` when entering
                     // Opened.  The native pre-validates handle/type/
-                    // range, so the script handle is a
-                    // 1-based scroll entity index and `status` is in
-                    // 0..=3.
-                    let Some(idx) = crate::natives::GameHost::handle_to_index(scroll_handle) else {
+                    // range, so the script handle is an actor handle
+                    // for a scroll entity and `status` is in 0..=3.
+                    let Some(idx) = crate::natives::GameHost::actor_index(scroll_handle) else {
                         continue;
                     };
                     let eid = crate::element::EntityId(idx as u32);
@@ -2929,7 +2949,7 @@ impl EngineInner {
                     // variant or launches a brand-new
                     // `Command::CrouchDown` so the actor plays the
                     // crouch-down animation.
-                    let Some(idx) = crate::natives::GameHost::handle_to_index(actor_handle) else {
+                    let Some(idx) = crate::natives::GameHost::actor_index(actor_handle) else {
                         tracing::error!(
                             "Script Error: The Actor in MakePCCrouched is invalid (handle {actor_handle})"
                         );
@@ -2950,7 +2970,7 @@ impl EngineInner {
                     // can't draw, so it hands the ID off to the host's
                     // outline pass, which flashes the outline for one
                     // frame.
-                    if let Some(idx) = crate::natives::GameHost::handle_to_index(actor_handle) {
+                    if let Some(idx) = crate::natives::GameHost::actor_index(actor_handle) {
                         let eid = crate::element::EntityId(idx as u32);
                         if matches!(self.get_entity(eid), Some(crate::element::Entity::Pc(_))) {
                             self.pending_side_effects.pending_mark_pc_ids.push(eid);
@@ -3051,8 +3071,7 @@ impl EngineInner {
                     // `level_loading.rs:L4980` stores the door's
                     // `door_index` on each grid sector; we scan for a
                     // matching sector and drive `set_sector_active`.
-                    let Some(door_idx) = crate::natives::GameHost::handle_to_index(door_handle)
-                    else {
+                    let Some(door_idx) = crate::natives::GameHost::door_index(door_handle) else {
                         tracing::warn!(
                             "ActivateDoorMouseSector: invalid door handle {door_handle}"
                         );
@@ -3114,11 +3133,11 @@ impl EngineInner {
     /// building's special layer + sector, teleport onto the first gate's
     /// `point_in`, and DisableAllActionsTemp for PCs.
     fn put_actor_in_building(&mut self, actor: i32, building: i32) {
-        let Some(actor_idx) = crate::natives::GameHost::handle_to_index(actor) else {
+        let Some(actor_idx) = crate::natives::GameHost::actor_index(actor) else {
             tracing::warn!("PutActorInBuilding: invalid actor handle {actor}");
             return;
         };
-        let Some(bld_idx) = crate::natives::GameHost::handle_to_index(building) else {
+        let Some(bld_idx) = crate::natives::GameHost::building_index(building) else {
             tracing::warn!("PutActorInBuilding: invalid building handle {building}");
             return;
         };
@@ -3139,7 +3158,7 @@ impl EngineInner {
                 .and_then(|g| g.first())
                 .copied();
             let point_in = gate_handle
-                .and_then(crate::natives::GameHost::handle_to_index)
+                .and_then(crate::natives::GameHost::door_index)
                 .and_then(|di| game_host.doors.get(di))
                 .map(|d| d.point_in);
             let sn = self.fast_grid.level.sectors.iter().find_map(|gs| {
@@ -3191,11 +3210,10 @@ impl EngineInner {
                 pi.set_position_map(crate::geo2d::pt(point_in.0, point_in.1));
             }
             is_pc = entity.pc_data().is_some();
-            carried_handle = entity.pc_data().and_then(|pc| pc.carried).map(|eid| {
-                // PC.carried is stored as `EntityId` (0-based), script
-                // handles are 1-based — convert by adding 1.
-                (eid.0 as i32) + 1
-            });
+            carried_handle = entity
+                .pc_data()
+                .and_then(|pc| pc.carried)
+                .map(crate::natives::GameHost::actor_handle);
             if is_pc && let Some(pc) = entity.pc_data_mut() {
                 // DisableAllActionsTemp gates the
                 // disabled_actions_temp loop on `playable` so a
@@ -3224,7 +3242,7 @@ impl EngineInner {
             if let Some(carried_h) = carried_handle
                 && carried_h != 0
             {
-                if let Some(carried_idx) = crate::natives::GameHost::handle_to_index(carried_h)
+                if let Some(carried_idx) = crate::natives::GameHost::actor_index(carried_h)
                     && let Some(Some(carried_entity)) = self.entities.get_mut(carried_idx)
                 {
                     let elem = carried_entity.element_data_mut();
@@ -3266,7 +3284,7 @@ impl EngineInner {
                 .cloned()
                 .unwrap_or_default();
             for occ_h in occupants {
-                let Some(occ_idx) = crate::natives::GameHost::handle_to_index(occ_h) else {
+                let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
                     continue;
                 };
                 let Some(Some(occ)) = self.entities.get_mut(occ_idx) else {

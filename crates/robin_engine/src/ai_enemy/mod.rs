@@ -252,8 +252,7 @@ pub struct EnemyAi {
 
     /// PC this NPC is guarding. Uses `HumanHandle` (`u32`) rather
     /// than a bespoke `PcHandle` newtype because the wider codebase
-    /// already keys every entity reference off the same 1-based handle
-    /// space.
+    /// keys entity references off the same handle space.
     pub guarded_pc: HumanHandle,
 
     pub my_line_jump: Option<u32>,

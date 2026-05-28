@@ -2155,11 +2155,9 @@ impl EngineInner {
             return;
         }
 
-        // Resolve the attached scroll entity id.  The script-side
-        // `scroll_attachments` map (populated by `AttachScrollToNPC`
-        // at `natives/mod.rs:5593`) indexes by 1-based script handle —
-        // see `titbit_sync.rs:826` for the `npc_id.0 + 1` convention.
-        let npc_handle: i32 = target.0 as i32 + 1;
+        // Resolve the attached scroll entity id. The script-side
+        // `scroll_attachments` map is keyed by actor script handle.
+        let npc_handle = crate::natives::GameHost::actor_handle(target);
         let scroll_handle: Option<i32> = self
             .mission_script
             .as_ref()
@@ -2173,12 +2171,12 @@ impl EngineInner {
             );
             return;
         };
-        let Some(scroll_entity_idx) = scroll_handle.checked_sub(1) else {
+        let Some(scroll_entity_idx) = crate::natives::GameHost::actor_index(scroll_handle) else {
             tracing::warn!(
                 ?actor,
                 ?target,
                 scroll_handle,
-                "apply_scroll_read_with_seek: non-positive scroll handle"
+                "apply_scroll_read_with_seek: invalid scroll handle"
             );
             return;
         };
@@ -3960,7 +3958,10 @@ mod tests {
             .unwrap()
             .game_host
             .scroll_attachments
-            .insert(npc_id.0 as i32 + 1, scroll_id.0 as i32 + 1);
+            .insert(
+                crate::natives::GameHost::actor_handle(npc_id),
+                crate::natives::GameHost::actor_handle(scroll_id),
+            );
 
         (engine, assets, pc_id, npc_id, scroll_id)
     }

@@ -25,7 +25,7 @@ struct PatchContext {
     pathfinder_layer: u16,
     pathfinder_sector: u16,
     pathfinder_changing_obstacles: u32,
-    /// Entity handle (1-based) for the patch's FX animation entity, if any.
+    /// Actor script handle for the patch's FX animation entity, if any.
     animation_entity_handle: Option<i32>,
     /// Whether this patch's final frame should be baked into the background.
     integrate_in_background: bool,
@@ -70,7 +70,7 @@ impl EngineInner {
                     }
 
                     if let Some(handle) = ctx.animation_entity_handle
-                        && let Some(entity_id) = crate::natives::GameHost::handle_to_index(handle)
+                        && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
                             .map(|i| crate::element::EntityId(i as u32))
                     {
                         if applied {
@@ -114,7 +114,7 @@ impl EngineInner {
                     // drain will replay the saved rectangle and
                     // re-compose affected mask textures.
                     if let Some(handle) = ctx.animation_entity_handle
-                        && let Some(entity_id) = crate::natives::GameHost::handle_to_index(handle)
+                        && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
                             .map(|i| crate::element::EntityId(i as u32))
                     {
                         self.queue_restore_fx_bg(entity_id);
@@ -453,7 +453,10 @@ impl EngineInner {
         };
 
         // Activate the entity and set the animation frame.
-        let entity_idx = (handle - 1) as usize;
+        let Some(entity_idx) = crate::natives::GameHost::actor_index(handle) else {
+            tracing::warn!(handle, "patch_effects: invalid animation entity handle");
+            return;
+        };
         if let Some(Some(entity)) = self.entities.get_mut(entity_idx) {
             entity.element_data_mut().active = true;
             {
@@ -497,7 +500,10 @@ impl EngineInner {
             None => return,
         };
 
-        let entity_idx = (handle - 1) as usize;
+        let Some(entity_idx) = crate::natives::GameHost::actor_index(handle) else {
+            tracing::warn!(handle, "patch_effects: invalid animation entity handle");
+            return;
+        };
         if let Some(Some(entity)) = self.entities.get_mut(entity_idx) {
             entity.element_data_mut().active = false;
         }

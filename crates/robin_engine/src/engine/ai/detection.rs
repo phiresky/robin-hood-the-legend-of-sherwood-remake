@@ -497,8 +497,8 @@ impl EngineInner {
                     .action_filter
                     .remove(crate::element::TargetFilter::LISTEN);
                 if !t.target.script_class.is_empty() {
-                    let target_handle = (idx as i32) + 1;
-                    let pc_handle = (listening_pc.0 as i32) + 1;
+                    let target_handle = crate::natives::GameHost::actor_handle_from_index(idx);
+                    let pc_handle = crate::natives::GameHost::actor_handle(listening_pc);
                     listenable_calls.push((target_handle, pc_handle));
                 }
             }

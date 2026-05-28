@@ -85,7 +85,7 @@ pub enum StopReason {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct PendingNestedCall {
-    /// 1-based entity handle of the script instance to invoke against.
+    /// Actor script handle of the script instance to invoke against.
     pub actor_handle: i32,
     /// Function name to invoke on the target's bound script class.
     pub fn_name: String,
