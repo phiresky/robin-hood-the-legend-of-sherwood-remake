@@ -1552,6 +1552,7 @@ pub(crate) async fn run_mission(
             &mut game,
             &mut manager,
             &mut host,
+            &mut frame_cmds,
             &assets,
             campaign_ref,
             &mut *window,
@@ -1672,7 +1673,7 @@ pub(crate) async fn run_mission(
                     dispatch_local_command(
                         &mut host,
                         &mut manager.engine,
-                        Some(&mut frame_cmds),
+                        &mut frame_cmds,
                         &assets,
                         &cmd,
                     );
@@ -1708,6 +1709,7 @@ pub(crate) async fn run_mission(
             &mut game,
             &mut manager,
             &mut host,
+            &mut frame_cmds,
             &assets,
             callbacks,
             campaign_ref,
@@ -1821,7 +1823,7 @@ pub(crate) async fn run_mission(
                     dispatch_local_command(
                         &mut host,
                         &mut manager.engine,
-                        Some(&mut frame_cmds),
+                        &mut frame_cmds,
                         &assets,
                         &cmd,
                     );
@@ -2056,7 +2058,7 @@ pub(crate) async fn run_mission(
                 dispatch_local_command(
                     &mut host,
                     &mut manager.engine,
-                    Some(&mut frame_cmds),
+                    &mut frame_cmds,
                     &assets,
                     &cmd,
                 );
@@ -2168,7 +2170,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2178,7 +2180,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2194,7 +2196,7 @@ pub(crate) async fn run_mission(
                                     dispatch_local_command(
                                         &mut host,
                                         &mut manager.engine,
-                                        Some(&mut frame_cmds),
+                                        &mut frame_cmds,
                                         &assets,
                                         &cmd,
                                     );
@@ -2219,7 +2221,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2286,7 +2288,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2302,7 +2304,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2317,7 +2319,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2331,7 +2333,7 @@ pub(crate) async fn run_mission(
                                 dispatch_local_command(
                                     &mut host,
                                     &mut manager.engine,
-                                    Some(&mut frame_cmds),
+                                    &mut frame_cmds,
                                     &assets,
                                     &cmd,
                                 );
@@ -2379,7 +2381,7 @@ pub(crate) async fn run_mission(
                                             dispatch_local_command(
                                                 &mut host,
                                                 &mut manager.engine,
-                                                Some(&mut frame_cmds),
+                                                &mut frame_cmds,
                                                 &assets,
                                                 &cmd,
                                             );
@@ -2884,6 +2886,34 @@ pub(crate) async fn run_mission(
             }
         }
 
+        // ── Locker follow hover ──
+        // `SelectFollowElement` mutates sim-visible seat/camera state.
+        // Keep it in the recorded pre-tick command stream; doing this
+        // from the render cursor pass applies it after rollback/rewind
+        // have committed the frame and leaves no command to replay.
+        if replay_player.is_none()
+            && !rewind_active
+            && !paused
+            && manager.engine.locker_active()
+            && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
+            && let Some(id) = manager.engine.find_focusable_npc(
+                &assets,
+                mouse_map,
+                robin_engine::element::Focus::View,
+            )
+        {
+            let cmd = PlayerCommand::SelectFollowElement {
+                entity_id: Some(id),
+            };
+            dispatch_local_command(
+                &mut host,
+                &mut manager.engine,
+                &mut frame_cmds,
+                &assets,
+                &cmd,
+            );
+        }
+
         // ── Per-frame aim orientation ──
         // This is sim state (direction/current animation row and
         // bow raise/lower command launch), so it must be recorded in
@@ -2903,7 +2933,7 @@ pub(crate) async fn run_mission(
                 dispatch_local_command(
                     &mut host,
                     &mut manager.engine,
-                    Some(&mut frame_cmds),
+                    &mut frame_cmds,
                     &assets,
                     &cmd,
                 );
@@ -3362,7 +3392,7 @@ pub(crate) async fn run_mission(
                     dispatch_local_command(
                         &mut host,
                         &mut manager.engine,
-                        Some(&mut frame_cmds),
+                        &mut frame_cmds,
                         &assets,
                         &cmd,
                     );
@@ -3419,7 +3449,7 @@ pub(crate) async fn run_mission(
                     dispatch_local_command(
                         &mut host,
                         &mut manager.engine,
-                        Some(&mut frame_cmds),
+                        &mut frame_cmds,
                         &assets,
                         &cmd,
                     );
@@ -3485,7 +3515,7 @@ pub(crate) async fn run_mission(
             dispatch_local_command(
                 &mut host,
                 &mut manager.engine,
-                None,
+                &mut frame_cmds,
                 &assets,
                 &PlayerCommand::ApplyQuitMissionUpdates { exit_code },
             );

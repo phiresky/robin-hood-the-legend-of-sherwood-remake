@@ -3525,7 +3525,7 @@ impl EngineInner {
     ///
     /// `GameHost.patches` is not hashed, so this mutation is rollback-
     /// safe; the helper exists to keep the wrapper invariant clean.
-    pub(crate) fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
+    pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
         if let Some(game_host) = self.mission_script_game_host_mut() {
             for patch in game_host.patches.iter_mut() {
                 patch.display_doors = false;

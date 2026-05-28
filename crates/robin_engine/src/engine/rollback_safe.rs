@@ -502,6 +502,16 @@ impl Engine {
         self.inner.cutscene_camera().view_position
     }
 
+    /// Refresh render-only patch door highlight flags.
+    ///
+    /// `GameHost.patches` is intentionally outside the rollback hash,
+    /// so this is allowed from the cursor/render path. Sim-visible
+    /// mouse effects must still travel through `PlayerCommand`.
+    pub fn refresh_selected_patch_display_doors(&mut self, selected_patch_idx: Option<u32>) {
+        self.inner
+            .refresh_selected_patch_display_doors(selected_patch_idx);
+    }
+
     // ── Per-frame drains ────
     // Patch-effect bg blits now travel through `SideEffects`
     // (`apply_side_effects` moves them into `Host::pending_bg_blits`)

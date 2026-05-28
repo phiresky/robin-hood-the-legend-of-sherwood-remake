@@ -3,14 +3,11 @@
 //! Originally lived as `impl Engine` methods in `robin_engine::engine::input`
 //! but these three functions are pure host UI computation — they read engine
 //! state and write into `Host.input` / trajectory fields. Moved here during
-//! the Host carve-out. Still take `&mut Engine` because the mouse handler
-//! also has to dispatch `PlayerCommand::SelectViewElement`,
-//! `PlayerCommand::SelectFollowElement`, and `PlayerCommand::RequestPcInfoOverlay`
-//! via `engine.apply_command(...)` — per-frame UI requests that share the
-//! single command entry point with the sim input pipeline.
+//! the Host carve-out. Still takes `&mut Engine` for render-only refreshes
+//! such as patch door highlights; sim-visible mouse commands are dispatched
+//! earlier in the frame so replay / rollback can record them.
 
 use crate::Host;
-use crate::game_session::dispatch_local_command;
 use robin_engine::element::Entity;
 use robin_engine::engine::input::{
     BowTarget, MOUSE_BOW_CIVIL_COLOR, MOUSE_BOW_NO_COLOR, MOUSE_BOW_VIP_COLOR,
@@ -774,17 +771,9 @@ pub fn update_mouse(
     host.input.hovered_door_idx = door_click_polygon_at(engine, mouse_map);
 
     // Refresh `Patch::display_doors` for the currently-selected
-    // patch.  Routed through the command pipeline so rollback /
-    // replay see the same per-frame hover-driven mutation; not
-    // recorded in frame_cmds since the selected_patch_idx is already
-    // derivable from mouse input.
-    {
-        let selected_patch_idx = host.input.selected_patch_idx;
-        let cmd = crate::player_command::PlayerCommand::RefreshSelectedPatchDisplayDoors {
-            selected_patch_idx,
-        };
-        dispatch_local_command(host, engine, None, assets, &cmd);
-    }
+    // patch. This is render-only state (`GameHost.patches` is not
+    // rollback-hashed), so keep it out of the command log.
+    engine.refresh_selected_patch_display_doors(host.input.selected_patch_idx);
 
     // `valid_position_for_move` is true when the hovered patch is
     // set, or the selected sector is a motion-area / door / jump
@@ -836,10 +825,6 @@ pub fn update_mouse(
     if engine.locker_active() {
         if let Some(id) = engine.find_focusable_npc(assets, mouse_map, Focus::View) {
             host.input.focused_entity_id = Some(id);
-            let cmd = crate::player_command::PlayerCommand::SelectFollowElement {
-                entity_id: Some(id),
-            };
-            dispatch_local_command(host, engine, None, assets, &cmd);
         }
         return RHMOUSE_VIEW;
     }

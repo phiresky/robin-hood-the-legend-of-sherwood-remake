@@ -50,22 +50,17 @@ pub(crate) fn dispatch_local_commands(
 /// mutate the local engine but not the peers' engines, instant
 /// desync.
 ///
-/// Pass `None` for `frame_cmds` at sites that intentionally don't
-/// record the command (transient HUD-only commands historically
-/// applied without recording).
 pub(crate) fn dispatch_local_command(
     host: &mut Host,
     engine: &mut Engine,
-    frame_cmds: Option<&mut FrameCommands>,
+    frame_cmds: &mut FrameCommands,
     assets: &LevelAssets,
     cmd: &PlayerCommand,
 ) {
     if let Some(net) = host.net.as_ref() {
         net.send_input(cmd.clone());
     } else {
-        if let Some(fc) = frame_cmds {
-            fc.push(cmd.clone());
-        }
+        frame_cmds.push(cmd.clone());
         engine.apply_local_commands(
             &mut host.engine_display,
             &mut host.input,

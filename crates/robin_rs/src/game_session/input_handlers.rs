@@ -94,7 +94,7 @@ pub(super) fn handle_gamepad_events(
         }
     }
     for cmd in &gamepad_frame.cmds {
-        dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, cmd);
+        dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, cmd);
     }
     if let Some(qa_event) = gamepad_frame.qa {
         let cmd = match qa_event {
@@ -122,7 +122,7 @@ pub(super) fn handle_gamepad_events(
                 }
             }
         };
-        dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &cmd);
+        dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
     }
 }
 

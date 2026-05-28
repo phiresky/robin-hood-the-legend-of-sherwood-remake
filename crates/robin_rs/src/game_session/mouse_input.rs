@@ -126,7 +126,7 @@ pub(super) fn handle_mouse_input(
                         // In the event-driven model, MouseDown on the
                         // minimap is inherently "entered nicely".
                         let cmd = PlayerCommand::MinimapMouseDown { click_pt };
-                        dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         // Don't start multi-selection when clicking minimap
                     } else if !host.input.ignore_next_drag
                         && host.input.has_focus
@@ -246,7 +246,7 @@ pub(super) fn handle_mouse_input(
                         mouse_pt,
                         left_mouse_down: host.input.left_mouse_down,
                     };
-                    dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
 
                     // Multi-selection box drag (only when not minimap-dragging).
                     // Skip the entire drag body while
@@ -334,7 +334,7 @@ pub(super) fn handle_mouse_input(
                             click_pt,
                             on_minimap,
                         };
-                        dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         host.input.cancel_multi_selection();
                     }
 
@@ -354,7 +354,7 @@ pub(super) fn handle_mouse_input(
                             pt2: host.input.multi_selection_pt2,
                             shift: shift_held,
                         };
-                        dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         tracing::info!(
                             "Box-select: {} PCs selected",
                             engine.seat_selection(local_seat).len()
@@ -394,25 +394,13 @@ pub(super) fn handle_mouse_input(
                                 let is_recording_slot = engine.is_qa_recording_for(pc_id);
                                 if engine.is_recording_macro() && is_recording_slot {
                                     let cmd = PlayerCommand::ChangeQaMemory { slot };
-                                    dispatch_local_command(
-                                        host,
-                                        engine,
-                                        Some(frame_cmds),
-                                        assets,
-                                        &cmd,
-                                    );
+                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                 } else if has_macro {
                                     let cmd = PlayerCommand::StartMacro {
                                         pc: Some(pc_id),
                                         slot,
                                     };
-                                    dispatch_local_command(
-                                        host,
-                                        engine,
-                                        Some(frame_cmds),
-                                        assets,
-                                        &cmd,
-                                    );
+                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                 } else {
                                     continue;
                                 }
@@ -441,13 +429,7 @@ pub(super) fn handle_mouse_input(
                                 );
                             if macro_stop_handled {
                                 let cmd = PlayerCommand::StopRecordingMacro;
-                                dispatch_local_command(
-                                    host,
-                                    engine,
-                                    Some(frame_cmds),
-                                    assets,
-                                    &cmd,
-                                );
+                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                 tracing::info!(
                                     "Portrait click: stop recording macro on slot {}",
                                     hit.slot
@@ -486,21 +468,13 @@ pub(super) fn handle_mouse_input(
                                                     running: false,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cmd,
+                                                    host, engine, frame_cmds, assets, &cmd,
                                                 );
                                                 let cancel = PlayerCommand::CancelAction {
                                                     pc_id: healer_id,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cancel,
+                                                    host, engine, frame_cmds, assets, &cancel,
                                                 );
                                                 tracing::info!(
                                                     "Portrait heal: {:?} → heal {:?}",
@@ -543,21 +517,13 @@ pub(super) fn handle_mouse_input(
                                                     running: false,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cmd,
+                                                    host, engine, frame_cmds, assets, &cmd,
                                                 );
                                                 let cancel = PlayerCommand::CancelAction {
                                                     pc_id: shielder_id,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cancel,
+                                                    host, engine, frame_cmds, assets, &cancel,
                                                 );
                                                 tracing::info!(
                                                     "Portrait shield: {:?} → protect {:?}",
@@ -589,11 +555,7 @@ pub(super) fn handle_mouse_input(
                                         );
                                         let cmd = PlayerCommand::ResetComa { pc_id };
                                         dispatch_local_command(
-                                            host,
-                                            engine,
-                                            Some(frame_cmds),
-                                            assets,
-                                            &cmd,
+                                            host, engine, frame_cmds, assets, &cmd,
                                         );
                                     }
                                     PortraitHitArea::Guard => {
@@ -621,11 +583,7 @@ pub(super) fn handle_mouse_input(
                                         );
                                         let cmd = PlayerCommand::SendReinforcement { pc_id };
                                         dispatch_local_command(
-                                            host,
-                                            engine,
-                                            Some(frame_cmds),
-                                            assets,
-                                            &cmd,
+                                            host, engine, frame_cmds, assets, &cmd,
                                         );
                                     }
                                     _ => {
@@ -643,11 +601,7 @@ pub(super) fn handle_mouse_input(
                                     if let Some(fast_pc) = host.input.portrait_action_pc {
                                         let cmd = PlayerCommand::MakePcFast { pc_id: fast_pc };
                                         dispatch_local_command(
-                                            host,
-                                            engine,
-                                            Some(frame_cmds),
-                                            assets,
-                                            &cmd,
+                                            host, engine, frame_cmds, assets, &cmd,
                                         );
                                     }
                                     host.input.portrait_action_countdown = 0;
@@ -657,13 +611,7 @@ pub(super) fn handle_mouse_input(
                                         pc_id,
                                         append: false,
                                     };
-                                    dispatch_local_command(
-                                        host,
-                                        engine,
-                                        Some(frame_cmds),
-                                        assets,
-                                        &cmd,
-                                    );
+                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                     tracing::info!(
                                         "Portrait double-click: selected slot {}",
                                         hit.slot
@@ -709,11 +657,7 @@ pub(super) fn handle_mouse_input(
                                                     amount,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cmd,
+                                                    host, engine, frame_cmds, assets, &cmd,
                                                 );
                                                 tracing::info!(
                                                     "Portrait drop ammo: slot {}, action {:?}, amount {}",
@@ -735,11 +679,7 @@ pub(super) fn handle_mouse_input(
                                                     action_index: btn_idx as u32,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cmd,
+                                                    host, engine, frame_cmds, assets, &cmd,
                                                 );
                                                 host.input.portrait_drop_ammo_armed = false;
                                                 host.input.portrait_action_countdown = 5;
@@ -778,11 +718,7 @@ pub(super) fn handle_mouse_input(
                                                     append: ctrl_held,
                                                 };
                                                 dispatch_local_command(
-                                                    host,
-                                                    engine,
-                                                    Some(frame_cmds),
-                                                    assets,
-                                                    &cmd2,
+                                                    host, engine, frame_cmds, assets, &cmd2,
                                                 );
                                                 tracing::info!(
                                                     "Portrait action button {} disabled on slot {}; selecting PC",
@@ -803,11 +739,7 @@ pub(super) fn handle_mouse_input(
                                             append: ctrl_held,
                                         };
                                         dispatch_local_command(
-                                            host,
-                                            engine,
-                                            Some(frame_cmds),
-                                            assets,
-                                            &cmd,
+                                            host, engine, frame_cmds, assets, &cmd,
                                         );
                                         tracing::info!(
                                             "Portrait select: slot {}, area {:?}",
@@ -821,11 +753,7 @@ pub(super) fn handle_mouse_input(
                                             append: ctrl_held,
                                         };
                                         dispatch_local_command(
-                                            host,
-                                            engine,
-                                            Some(frame_cmds),
-                                            assets,
-                                            &cmd,
+                                            host, engine, frame_cmds, assets, &cmd,
                                         );
                                         tracing::info!(
                                             "Portrait select: slot {}, area {:?}",
@@ -846,11 +774,7 @@ pub(super) fn handle_mouse_input(
                                             append: ctrl_held,
                                         };
                                         dispatch_local_command(
-                                            host,
-                                            engine,
-                                            Some(frame_cmds),
-                                            assets,
-                                            &cmd,
+                                            host, engine, frame_cmds, assets, &cmd,
                                         );
                                     }
                                 }
@@ -935,7 +859,7 @@ pub(super) fn handle_mouse_input(
                     // the next right-click.
                     if engine.is_recording_macro() {
                         let cmd = PlayerCommand::StopRecordingMacro;
-                        dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         host.input.cancel_multi_unselection();
                         host.input.ignore_next_drag = false;
                         host.input.ignore_next_left_click = false;
@@ -952,7 +876,7 @@ pub(super) fn handle_mouse_input(
                             pt1: host.input.multi_selection_pt1,
                             pt2: host.input.multi_selection_pt2,
                         };
-                        dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                        dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         tracing::info!(
                             "Box-deselect: {} PCs remain selected",
                             engine.selected_pc_ids().len()
@@ -969,7 +893,7 @@ pub(super) fn handle_mouse_input(
                         //     element.
                         if engine.is_lock_alt() {
                             let cmd = PlayerCommand::SetLockAlt(false);
-                            dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         } else {
                             host.selected_view_element = None;
                         }
@@ -985,7 +909,7 @@ pub(super) fn handle_mouse_input(
                                 .is_over_widget(geo2d::pt(mx as f32, my as f32))
                         {
                             let cmd = PlayerCommand::MinimapRightClick;
-                            dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         } else if let Some(hit) = crate::ui_panel::hit_test_portrait_detailed(
                             engine,
                             local_seat,
@@ -1001,13 +925,7 @@ pub(super) fn handle_mouse_input(
                                     pc: Some(pc_id),
                                     slot,
                                 };
-                                dispatch_local_command(
-                                    host,
-                                    engine,
-                                    Some(frame_cmds),
-                                    assets,
-                                    &cmd,
-                                );
+                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                 continue;
                             }
                             // Right-click on portrait action button → cancel action.
@@ -1023,13 +941,7 @@ pub(super) fn handle_mouse_input(
                                 && let crate::ui_panel::PortraitHitArea::ActionButton(_) = hit.area
                             {
                                 let cmd = PlayerCommand::CancelAction { pc_id };
-                                dispatch_local_command(
-                                    host,
-                                    engine,
-                                    Some(frame_cmds),
-                                    assets,
-                                    &cmd,
-                                );
+                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                 host.input.portrait_drop_ammo_armed = true;
                                 tracing::info!(
                                     "Portrait right-click: cancel action on slot {}",
@@ -1046,13 +958,7 @@ pub(super) fn handle_mouse_input(
                                 // is armed.
                                 if let Some(&actor_id) = engine.seat_selection(local_seat).first() {
                                     let cmd = PlayerCommand::CancelAction { pc_id: actor_id };
-                                    dispatch_local_command(
-                                        host,
-                                        engine,
-                                        Some(frame_cmds),
-                                        assets,
-                                        &cmd,
-                                    );
+                                    dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                     tracing::info!(
                                         "Portrait right-click while {:?} armed: cancel on slot {}",
                                         armed_action,
@@ -1074,13 +980,7 @@ pub(super) fn handle_mouse_input(
                                 // `TogglePcSelection` since we already
                                 // verified the PC is in the selection.
                                 let cmd = PlayerCommand::TogglePcSelection { pc_id };
-                                dispatch_local_command(
-                                    host,
-                                    engine,
-                                    Some(frame_cmds),
-                                    assets,
-                                    &cmd,
-                                );
+                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                                 tracing::info!(
                                     "Portrait right-click: unselect PC on slot {}",
                                     hit.slot
@@ -1274,7 +1174,7 @@ pub(super) async fn handle_pause_menu_events(
                                 base: geo2d::pt(w - 83.0, 38.0),
                                 corner_size: host.minimap_corner_size,
                             };
-                            dispatch_local_command(host, engine, Some(frame_cmds), assets, &cmd);
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
                         *sherwood_layout = crate::sherwood_hud::SherwoodHudLayout::for_resolution(
                             w_u16 as u32,
@@ -1476,25 +1376,25 @@ pub(super) fn dispatch_corner_button_left_click(
                 let slot = choose_recording_place(&manager.engine, local_seat);
                 game.level_of_qa = slot as u16;
                 let cmd = PlayerCommand::StartRecordingMacro { pc: None, slot };
-                dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &cmd);
+                dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
             } else {
                 let next = ((game.level_of_qa as usize + 1)
                     % crate::macro_store::NUMBER_OF_QA_MEMORY) as u8;
                 game.level_of_qa = next as u16;
                 let cmd = PlayerCommand::ChangeQaMemory { slot: next };
-                dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &cmd);
+                dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
             }
         }
         CornerButton::Sight => {
             let cmd = PlayerCommand::SetLockAlt(true);
-            dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &cmd);
+            dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
         }
         CornerButton::QuickStart => {
             if manager.engine.is_recording_macro() {
                 return;
             }
             let cmd = PlayerCommand::StartMacro { pc: None, slot: 0 };
-            dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &cmd);
+            dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
         }
     }
 }
@@ -1518,11 +1418,11 @@ pub(super) fn dispatch_corner_button_right_click(
             // (commands.rs), so the engine's `qa_recording_for` is
             // cleared inline — no host-side flag to twiddle.
             let cmd = PlayerCommand::DeleteMacro { pc: None, slot: 0 };
-            dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &cmd);
+            dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &cmd);
         }
         CornerButton::Sight => {
             let unlock = PlayerCommand::SetLockAlt(false);
-            dispatch_local_command(host, &mut manager.engine, Some(frame_cmds), assets, &unlock);
+            dispatch_local_command(host, &mut manager.engine, frame_cmds, assets, &unlock);
             // `selected_view_element` is host-side UI state — clear
             // locally, no PlayerCommand needed.
             host.selected_view_element = None;
@@ -1559,6 +1459,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
     game: &mut Game,
     manager: &mut robin_engine::engine_manager::EngineManager,
     host: &mut Host,
+    frame_cmds: &mut FrameCommands,
     assets: &robin_engine::engine::LevelAssets,
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
@@ -1685,7 +1586,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
                         );
@@ -1732,14 +1633,14 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::UnselectAllPcs,
                         );
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::CampaignConvertSelectedPeasantsToBlazons,
                         );
@@ -1757,7 +1658,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::SetMenToBlazonConversionMode { on: false },
                         );
@@ -1775,7 +1676,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     dispatch_local_command(
                         host,
                         engine,
-                        None,
+                        frame_cmds,
                         assets,
                         &PlayerCommand::CampaignHarvestProductionSectorState,
                     );
@@ -1794,7 +1695,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     dispatch_local_command(
                         host,
                         engine,
-                        None,
+                        frame_cmds,
                         assets,
                         &PlayerCommand::DispatchStartupMessage {
                             msg: 1000,
@@ -1821,6 +1722,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     game: &mut Game,
     manager: &mut robin_engine::engine_manager::EngineManager,
     host: &mut Host,
+    frame_cmds: &mut FrameCommands,
     assets: &robin_engine::engine::LevelAssets,
     campaign_ref: &mut Campaign,
     event_pump: &mut crate::window::GameWindow,
@@ -2052,7 +1954,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::CampaignSelectNextMission {
                                 mission_idx: Some(idx),
@@ -2068,7 +1970,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::CampaignSelectNextMission {
                                 mission_idx: Some(idx),
@@ -2078,7 +1980,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
                         );
@@ -2091,7 +1993,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         dispatch_local_command(
                             host,
                             engine,
-                            None,
+                            frame_cmds,
                             assets,
                             &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
                         );
