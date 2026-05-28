@@ -3466,7 +3466,11 @@ pub fn tick_arrows(
                     new_to_target <= range
                         && point_to_line_distance(snap.center, arrow_old, arrow_new) <= HIT_DISTANCE
                 } else {
-                    distance(arrow_new, snap.center) <= HIT_DISTANCE
+                    // With no movement C++ still evaluates
+                    // `vtRange.Norm() <= range`, so only an exact center
+                    // overlap can activate the target. Do not use the
+                    // normal hit-radius fallback here.
+                    distance(arrow_new, snap.center) <= 0.01
                 };
                 if hit {
                     fx_target_hit = Some((snap.id, activation_command));
@@ -4459,6 +4463,82 @@ mod tests {
                 r.fx_target_hit == Some((EntityId(0), Command::ActivateArrow)) && r.despawn
             }),
             "arrow should activate target using C++ current-position range gate"
+        );
+    }
+
+    /// C++ stationary FX-target checks still require
+    /// `vtRange.Norm() <= range`, so a projectile with zero movement
+    /// cannot activate a nearby target unless it is exactly centered on
+    /// it. Rust used to fall back to `HIT_DISTANCE`, which could fire
+    /// scripted targets from a stopped projectile.
+    #[test]
+    fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
+        use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
+
+        let mut target_element = ElementData {
+            kind: ElementKind::Target,
+            active: true,
+            ..ElementData::default()
+        };
+        target_element.set_position_map(ElemPoint2D { x: 10.0, y: 0.0 });
+        target_element.set_position(Point3D {
+            x: 10.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        let target = Entity::Target(ElementTarget {
+            element: target_element,
+            fx: FxData::default(),
+            target: TargetData {
+                action_filter: TargetFilter::ARROW,
+                ..TargetData::default()
+            },
+        });
+
+        let mut arrow_element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..ElementData::default()
+        };
+        arrow_element.set_position_map(ElemPoint2D { x: 0.0, y: 0.0 });
+        arrow_element.set_position(Point3D {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        let arrow = Entity::Projectile(ElementProjectile {
+            element: arrow_element,
+            object: ObjectData {
+                associated_action: Action::Bow,
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                quantity: 1,
+                reference: Some(EntityId(0)),
+                ..ObjectData::default()
+            },
+            projectile: ProjectileData {
+                shooter: Some(EntityId(2)),
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: Point3D {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    time: 1,
+                }],
+                damage: 30,
+                ..ProjectileData::default()
+            },
+        });
+
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))];
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+
+        assert!(
+            results.iter().all(|r| r.fx_target_hit.is_none()),
+            "stationary projectile must not activate nearby FX target by radius"
         );
     }
 
