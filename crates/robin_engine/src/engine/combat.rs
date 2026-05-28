@@ -103,7 +103,7 @@ impl EngineInner {
     ///
     /// Returns `(bow_profile_index, shooting_ability)` or `None` if the
     /// entity has no bow data.
-    fn bow_profile_and_ability(
+    pub(super) fn bow_profile_and_ability(
         &self,
         assets: &LevelAssets,
         entity_id: EntityId,

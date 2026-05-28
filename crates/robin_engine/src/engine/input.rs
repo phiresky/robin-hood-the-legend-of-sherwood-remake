@@ -1530,7 +1530,7 @@ impl EngineInner {
     }
 
     /// 3D-point variant of `can_shoot_with_bow_at` for cursor
-    /// selection.
+    /// selection and scripted bow shots.
     ///
     /// Uses the PC's 3D hand body point, applies a cone range check
     /// above the target or a cylinder check at/below, doubles the
@@ -1541,31 +1541,41 @@ impl EngineInner {
     pub fn can_shoot_with_bow_at_point(
         &self,
         assets: &LevelAssets,
-        pc_id: EntityId,
+        shooter_id: EntityId,
         target_point: crate::element::Point3D,
         forest_target: bool,
     ) -> (BowTarget, crate::weapons::ShootMode) {
         use crate::weapons::{BowState, ShootMode};
 
-        let pc = match self.get_entity(pc_id) {
+        let shooter = match self.get_entity(shooter_id) {
             Some(e) => e,
             None => return (BowTarget::Invalid, ShootMode::Normal),
         };
 
-        // Get the PC's bow profile.
-        let char_profile = pc
-            .pc_data()
-            .and_then(|pc_data| assets.profile_manager.get_character(pc_data.profile_index));
-        let bow_profile =
-            char_profile.and_then(|cp| assets.profile_manager.get_bow(cp.shooting_weapon_id));
-
-        let bow_profile = match bow_profile {
-            Some(bp) => bp,
-            None => return (BowTarget::Invalid, ShootMode::Normal),
+        // Get the shooter's bow profile. C++ calls through
+        // `RHElementActorHuman::CanShootWithBowAt`, so scripted NPC
+        // archers must use their soldier bow profile rather than the
+        // PC-only character-profile path.
+        let Some((bow_profile_idx, _shooting_ability)) =
+            self.bow_profile_and_ability(assets, shooter_id)
+        else {
+            tracing::warn!(
+                ?shooter_id,
+                "can_shoot_with_bow_at_point: shooter missing bow profile"
+            );
+            return (BowTarget::Invalid, ShootMode::Normal);
+        };
+        let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+            tracing::warn!(
+                ?shooter_id,
+                bow_profile_idx,
+                "can_shoot_with_bow_at_point: bow profile id missing"
+            );
+            return (BowTarget::Invalid, ShootMode::Normal);
         };
 
         // No ammo → invalid target.
-        if !self.check_bow_ammo(pc_id) {
+        if !self.check_bow_ammo(shooter_id) {
             return (BowTarget::Invalid, ShootMode::Normal);
         }
 
@@ -1578,9 +1588,9 @@ impl EngineInner {
         let max_range = bow_state.get_max_range(bow_profile) as f32;
 
         // Compute 3D hand point for the shooter.
-        let Some(hand_point) = pc.compute_hand_point(None) else {
+        let Some(hand_point) = shooter.compute_hand_point(None) else {
             tracing::warn!(
-                ?pc_id,
+                ?shooter_id,
                 "can_shoot_with_bow_at_point: shooter missing hand hotspot"
             );
             return (BowTarget::Invalid, ShootMode::Normal);
@@ -1618,8 +1628,8 @@ impl EngineInner {
         let mut shoot_mode = bow_state.get_shoot_mode_for_distance(bow_profile, dist_3d);
 
         // Leaning-out shooter forces a DownShoot.
-        let pc_posture = pc.element_data().posture;
-        if pc_posture == crate::element::Posture::LeaningOut {
+        let shooter_posture = shooter.element_data().posture;
+        if shooter_posture == crate::element::Posture::LeaningOut {
             shoot_mode = ShootMode::Down;
         }
 
@@ -1635,14 +1645,14 @@ impl EngineInner {
         // for Down) on top of the hand point so low parapets and
         // chest-high walls are cleared.
         if !forest_target {
-            let direction = pc.element_data().direction();
+            let direction = shooter.element_data().direction();
             let sprite_hand_point = {
-                let sprite_pos = pc.element_data().position_map();
+                let sprite_pos = shooter.element_data().position_map();
                 let hotspot = {
-                    let sprite = &pc.element_data().sprite;
+                    let sprite = &shooter.element_data().sprite;
                     let Ok(dir_u16) = u16::try_from(direction) else {
                         tracing::warn!(
-                            ?pc_id,
+                            ?shooter_id,
                             direction,
                             "can_shoot_with_bow_at_point: invalid shooter direction"
                         );
@@ -1660,7 +1670,7 @@ impl EngineInner {
                     },
                     None => {
                         tracing::warn!(
-                            ?pc_id,
+                            ?shooter_id,
                             ?shoot_mode,
                             direction,
                             "can_shoot_with_bow_at_point: missing bow-point sprite hotspot"
