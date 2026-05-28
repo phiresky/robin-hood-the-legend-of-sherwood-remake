@@ -433,6 +433,7 @@ impl EngineInner {
             // the flying arrow renders its proper sprite instead of the
             // colored-rect fallback.
             self.attach_accessory_sprite(assets, arrow_id);
+            self.tick_new_projectile_once(assets, arrow_id);
 
             tracing::debug!(
                 shooter = ?result.shooter,
@@ -1762,6 +1763,28 @@ impl EngineInner {
             static_active: &self.static_sight_obstacle_active,
         };
         let results = bow_shot::tick_arrows(&mut self.entities, sight_obstacles);
+        self.process_projectile_tick_results(assets, results);
+    }
+
+    fn tick_new_projectile_once(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
+        if self.freeze_all {
+            return;
+        }
+        self.update_shield_obstacles(assets);
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.dynamic_sight_obstacles,
+            static_active: &self.static_sight_obstacle_active,
+        };
+        let results = bow_shot::tick_arrow(&mut self.entities, sight_obstacles, arrow_id);
+        self.process_projectile_tick_results(assets, results);
+    }
+
+    fn process_projectile_tick_results(
+        &mut self,
+        assets: &LevelAssets,
+        results: Vec<bow_shot::ArrowTickResult>,
+    ) {
         for result in results {
             // ── Shield hit — trigger parry ───────────────────────
             // Runs for every projectile type.  The per-type impact FX

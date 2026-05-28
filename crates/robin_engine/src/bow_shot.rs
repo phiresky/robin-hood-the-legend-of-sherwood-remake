@@ -2778,6 +2778,28 @@ pub fn tick_arrows(
     entities: &mut [Option<Entity>],
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(entities, sight_obstacles, None, false)
+}
+
+/// Advance and resolve collision for one active projectile.
+///
+/// Used immediately after spawning a bow arrow to match C++
+/// `ShootWithBowAt`, which calls `pArrow->Hourglass()` before the
+/// arrow enters the engine element list.
+pub fn tick_arrow(
+    entities: &mut [Option<Entity>],
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    arrow_id: EntityId,
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(entities, sight_obstacles, Some(arrow_id), true)
+}
+
+fn tick_arrows_matching(
+    entities: &mut [Option<Entity>],
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    only_arrow_id: Option<EntityId>,
+    primed_segment_already_advanced: bool,
+) -> Vec<ArrowTickResult> {
     let mut results = Vec::new();
 
     // Snapshot living humans for line-segment hit detection.  Computes
@@ -2941,6 +2963,11 @@ pub fn tick_arrows(
         .collect();
 
     for (idx, slot) in entities.iter_mut().enumerate() {
+        if let Some(only_arrow_id) = only_arrow_id
+            && only_arrow_id.0 != idx as u32
+        {
+            continue;
+        }
         let entity = match slot {
             Some(e) => e,
             None => continue,
@@ -3013,13 +3040,17 @@ pub fn tick_arrows(
         let damage = proj.projectile.damage;
         let shooter_id = proj.projectile.shooter;
         let primed_segment_start = proj.projectile.launch_segment_start.take();
+        let has_primed_segment = primed_segment_start.is_some();
+        let already_advanced_this_segment = has_primed_segment && primed_segment_already_advanced;
 
         // ── Trajectory advancement ────────────────────────────────
 
-        if primed_segment_start.is_some() {
-            // Spawn already advanced this first segment to match C++
-            // `pArrow->Hourglass()` before engine insertion.  Still run
-            // collision below against `primed_segment_start -> current`.
+        if has_primed_segment {
+            // Spawn primed the first segment. The immediate single-arrow
+            // path has already advanced it to match C++ `pArrow->Hourglass()`;
+            // the general tick path keeps the old public behavior and applies
+            // the stored increment below. Both paths still run collision
+            // against `primed_segment_start -> current/new`.
         } else if proj.projectile.trajectory_frame_count == 0 {
             if !proj.projectile.trajectory.is_empty() {
                 // Pop the next trajectory waypoint.
@@ -3123,19 +3154,21 @@ pub fn tick_arrows(
             proj.projectile.trajectory_frame_count -= 1;
         }
 
-        // Apply the per-frame increment to position.
-        let mut p = proj.element.position();
-        p.x += proj.projectile.velocity_increment.x;
-        p.y += proj.projectile.velocity_increment.y;
-        p.z += proj.projectile.velocity_increment.z;
-        proj.element.set_position(p);
+        if !already_advanced_this_segment {
+            // Apply the per-frame increment to position.
+            let mut p = proj.element.position();
+            p.x += proj.projectile.velocity_increment.x;
+            p.y += proj.projectile.velocity_increment.y;
+            p.z += proj.projectile.velocity_increment.z;
+            proj.element.set_position(p);
 
-        // Update the 2D map position from 3D (project Z onto Y for
-        // isometric display: map.y = pos.y - pos.z).
-        proj.element.set_position_map_preserving_3d(ElemPoint2D {
-            x: proj.element.position().x,
-            y: proj.element.position().y - proj.element.position().z,
-        });
+            // Update the 2D map position from 3D (project Z onto Y for
+            // isometric display: map.y = pos.y - pos.z).
+            proj.element.set_position_map_preserving_3d(ElemPoint2D {
+                x: proj.element.position().x,
+                y: proj.element.position().y - proj.element.position().z,
+            });
+        }
         // Update facing direction from velocity increment.  Use the
         // isometric Y-stretch so the flight-direction sector agrees
         // with the one set at spawn.
@@ -3191,7 +3224,9 @@ pub fn tick_arrows(
         // Increment lifetime counter for diagnostics/replay state. C++
         // projectile lifetime is governed by trajectory exhaustion and
         // impact side effects; it has no hard timeout.
-        proj.projectile.frame_count = proj.projectile.frame_count.saturating_add(1);
+        if !already_advanced_this_segment {
+            proj.projectile.frame_count = proj.projectile.frame_count.saturating_add(1);
+        }
 
         // ── Falling arrows skip all collision checks ──────────────
         // Once an arrow is deflected (by a shield or target), it
@@ -3223,7 +3258,12 @@ pub fn tick_arrows(
         let vy = proj.projectile.velocity_increment.y;
 
         let mut shield_blocker = None;
-        if !proj.projectile.trajectory.is_empty() || proj.projectile.trajectory_frame_count > 0 {
+        if already_advanced_this_segment
+            || !proj.projectile.trajectory.is_empty()
+            || proj.projectile.trajectory_frame_count > 0
+            || vx != 0.0
+            || vy != 0.0
+        {
             let old_pos = [arrow_old.x, arrow_old.y - arrow_old.z, arrow_old.z];
             let new_pos = [arrow_new.x, arrow_map.y, arrow_new.z];
 
@@ -4208,6 +4248,100 @@ mod tests {
     }
 
     #[test]
+    fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 0.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: -0.25,
+            },
+        });
+        let mut other_arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 1000.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 1010.0,
+                    y: 0.0,
+                    z: 40.0,
+                },
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        });
+        let Entity::Projectile(p) = &mut other_arrow else {
+            panic!("spawn_arrow should create projectile");
+        };
+        p.projectile.launch_segment_start = Some(Point3D {
+            x: 1000.0,
+            y: 0.0,
+            z: 40.0,
+        });
+
+        let mut entities: Vec<Option<Entity>> = vec![
+            Some(make_pc(0.0, 0.0)),
+            Some(make_arrow_target(50.0, 0.0)),
+            Some(arrow),
+            Some(other_arrow),
+        ];
+
+        let results = tick_arrow(
+            &mut entities,
+            crate::sight_obstacle::ObstacleList::empty(),
+            EntityId(2),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].arrow, EntityId(2));
+        assert_eq!(
+            results[0].fx_target_hit,
+            Some((EntityId(1), Command::ActivateArrow))
+        );
+
+        let Some(Entity::Projectile(p)) = entities[3].as_ref() else {
+            panic!("other arrow should remain present");
+        };
+        assert!(
+            p.projectile.launch_segment_start.is_some(),
+            "filtered tick must not consume another projectile's primed segment"
+        );
+    }
+
+    #[test]
     fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
@@ -4218,10 +4352,10 @@ mod tests {
             },
             trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(2),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: ElemPoint2D { x: 100.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: Point3D {
-                    x: 50.0,
+                    x: 100.0,
                     y: 0.0,
                     z: 25.0,
                 },
@@ -4248,7 +4382,7 @@ mod tests {
                 crate::element::Camp::Royalists,
             )),
             Some(make_soldier_with_camp(
-                40.0,
+                80.0,
                 0.0,
                 crate::element::Camp::Lacklandists,
             )),
