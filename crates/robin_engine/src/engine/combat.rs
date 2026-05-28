@@ -2248,19 +2248,14 @@ impl EngineInner {
                 &assets.profile_manager,
                 s.soldier.soldier_profile_index,
             ) {
-                Some(0) => false,
                 Some(protection) => {
                     let roll = crate::sim_rng::u32(0..100);
                     roll < protection as u32
                 }
-                None => {
-                    tracing::warn!(
-                        ?victim,
-                        profile_index = ?s.soldier.soldier_profile_index,
-                        "stone hit: missing soldier HtH weapon profile; treating victim as protected"
-                    );
-                    true
-                }
+                None => panic!(
+                    "stone hit: missing soldier HtH weapon profile for victim={victim:?} profile_index={:?}",
+                    s.soldier.soldier_profile_index
+                ),
             }
         } else {
             false

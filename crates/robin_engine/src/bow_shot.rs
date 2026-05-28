@@ -3455,26 +3455,37 @@ fn tick_arrows_matching(
         //       distant target that happens to be near its final line).
         // This catches fast arrows that would otherwise tunnel past a
         // target between frames, which the old 2D point check missed.
-        /// Perpendicular distance from `p` to the line through `a→b`,
-        /// computed via `||ap × ab|| / ||ab||`.  Returns `f32::MAX`
-        /// when the segment has zero length (caller should fall back
-        /// to a point-to-point distance).
-        fn point_to_line_distance(p: Point3D, a: Point3D, b: Point3D) -> f32 {
+        /// Perpendicular offset from `p` to the line through `a→b`.
+        ///
+        /// C++ uses `SBGeoPoint3D::DistanceVectorToLine` for both the
+        /// hit-radius norm and the leaning-out arrow retry's coarse
+        /// `MaxNorm` gate. Return an infinite vector when the segment
+        /// has zero length so callers naturally reject the line test.
+        fn point_to_line_delta(p: Point3D, a: Point3D, b: Point3D) -> Point3D {
             let abx = b.x - a.x;
             let aby = b.y - a.y;
             let abz = b.z - a.z;
             let ab_len_sq = abx * abx + aby * aby + abz * abz;
             if ab_len_sq < 1e-6 {
-                return f32::MAX;
+                return Point3D {
+                    x: f32::MAX,
+                    y: f32::MAX,
+                    z: f32::MAX,
+                };
             }
             let apx = p.x - a.x;
             let apy = p.y - a.y;
             let apz = p.z - a.z;
-            let cx = apy * abz - apz * aby;
-            let cy = apz * abx - apx * abz;
-            let cz = apx * aby - apy * abx;
-            let cross_sq = cx * cx + cy * cy + cz * cz;
-            (cross_sq / ab_len_sq).sqrt()
+            let t = (apx * abx + apy * aby + apz * abz) / ab_len_sq;
+            Point3D {
+                x: p.x - (a.x + t * abx),
+                y: p.y - (a.y + t * aby),
+                z: p.z - (a.z + t * abz),
+            }
+        }
+        fn point_to_line_distance(p: Point3D, a: Point3D, b: Point3D) -> f32 {
+            let delta = point_to_line_delta(p, a, b);
+            (delta.x * delta.x + delta.y * delta.y + delta.z * delta.z).sqrt()
         }
         fn distance(a: Point3D, b: Point3D) -> f32 {
             let dx = b.x - a.x;
@@ -3515,7 +3526,7 @@ fn tick_arrows_matching(
         // C++ `FindHumanVictim` returns no human victim when the
         // projectile is not moving.  FX target handling is separate in
         // `FindTargetVictim` and keeps the point fallback below.
-        let use_range_gate = range > 0.1;
+        let use_range_gate = range > 0.0;
 
         let mut hit_victim = None;
         let shooter_snapshot =
@@ -3549,21 +3560,20 @@ fn tick_arrows_matching(
                     break;
                 }
 
-                // Leaning-out re-check for arrows only.  If the arrow
-                // missed the belt by less than 100 (max-component
-                // distance), try again at the eye level — catches arrows
-                // that sail just above the belt of a soldier leaning out
-                // of a battlement.
+                // Leaning-out re-check for arrows only.  If the belt's
+                // perpendicular distance-to-flight-line has max component
+                // <= 100, try again at eye level. This matches the C++
+                // `vtDistance.MaxNorm()` gate after the belt check.
                 if snap.leaning_out
                     && matches!(proj.object.object_type, ObjectType::Arrow)
                     && use_range_gate
                 {
-                    // Use max-component distance ≤ 100 as the coarse gate
-                    // for the re-check.
-                    let ddx = (anchor.x - arrow_new.x).abs();
-                    let ddy = (anchor.y - arrow_new.y).abs();
-                    let ddz = (anchor.z - arrow_new.z).abs();
-                    let max_norm = ddx.max(ddy).max(ddz);
+                    let belt_line_delta = point_to_line_delta(anchor, arrow_old, arrow_new);
+                    let max_norm = belt_line_delta
+                        .x
+                        .abs()
+                        .max(belt_line_delta.y.abs())
+                        .max(belt_line_delta.z.abs());
                     if max_norm <= 100.0 {
                         let eyes = snap.eyes;
                         // C++ uses the arrow's current position for the
