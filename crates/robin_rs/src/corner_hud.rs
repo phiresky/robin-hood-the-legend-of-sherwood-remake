@@ -370,19 +370,19 @@ pub fn draw_with_sprites(
                 // read the user expects for the blowing-horn / QA-start
                 // castle when their click conditions aren't satisfied.
                 renderer.blit_to_screen_alpha(sid, None, Some(&dst), 40, BLIT_SOURCE_TRANSPARENT);
-            } else {
-                // Shadow-aware blit — the BTTN sprites encode shadow as
-                // pure blue (SHADOW_KEY = 0x001F) which must be
-                // multiply-darkened rather than rendered opaque.
+            } else if btn == CornerButton::QuickStart {
                 renderer.blit_with_shadow(
                     sid,
                     None,
                     0, // screen
                     Some(&dst),
                     0,  // shadow_color unused
-                    40, // default shadow intensity
+                    50, // SBUIRendererShadow default intensity
                     BLIT_SOURCE_TRANSPARENT,
                 );
+            } else {
+                // Clock and Sight are SBUIRendererBitmap widgets in C++.
+                renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
             }
         }
     }

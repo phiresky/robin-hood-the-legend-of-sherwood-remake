@@ -357,7 +357,9 @@ pub fn draw_with_sprites(
                 y: (rect.y() + rect.height() as i32) as f32,
             },
         );
-        renderer.blit_with_shadow(sid, None, 0, Some(&dst), 0, 40, BLIT_SOURCE_TRANSPARENT);
+        // C++ stature arrows are SBWidgetToggleButton<SBUIRendererBitmap>,
+        // so they use the regular transparent bitmap path.
+        renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
 }
 

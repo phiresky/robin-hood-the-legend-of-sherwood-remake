@@ -1044,20 +1044,26 @@ pub(super) fn render_frame(
     // for resolution-dependent positioning and the `sherwood_enable`
     // mask to gate widget state.
     if game.is_sherwood {
+        let mp = threaded_input.position();
+        let hovered_btn =
+            sherwood_layout.hit_test_geometric(mp.x as i32, mp.y as i32, sherwood_enable);
+        let hover = crate::sherwood_hud::SherwoodHoverState {
+            hovered: hovered_btn,
+            mouse_pressed: host.input.left_mouse_down,
+        };
         crate::sherwood_hud::draw_with_sprites(
             renderer,
             sherwood_layout,
             sherwood_enable,
+            hover,
             sherwood_sprites,
+            engine.frame_counter(),
         );
 
         // Per-button hover tooltip (Start/Quit mission).  The actual
         // text swaps with mode (Sherwood vs in-mission, regular vs
         // men-to-blazon) — `sherwood_button_tooltip_mt_id` owns that
         // 3-way switch.
-        let mp = threaded_input.position();
-        let hovered_btn =
-            sherwood_layout.hit_test_geometric(mp.x as i32, mp.y as i32, sherwood_enable);
         sherwood_tooltip.update(hovered_btn);
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();

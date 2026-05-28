@@ -286,18 +286,10 @@ pub fn draw_with_sprites(
                     y: (rect.y() + rect.height() as i32) as f32,
                 },
             );
-            // Shadow-aware blit — the zoom BTTN sprites encode shadow
-            // as pure blue (SHADOW_KEY = 0x001F) which must be
-            // multiply-darkened rather than rendered opaque.
-            renderer.blit_with_shadow(
-                sid,
-                None,
-                0, // screen
-                Some(&dst),
-                0,  // shadow_color unused
-                40, // default shadow intensity
-                BLIT_SOURCE_TRANSPARENT,
-            );
+            // C++ zoom widgets use SBUIRendererBitmap, not the shadow
+            // renderer, so shadow-key pixels are treated by the normal
+            // transparent blit path.
+            renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
         }
         // No placeholder-rect fallback — if a zoom sprite is missing
         // from DEFAULT.RES we simply don't draw the button.  The old

@@ -426,16 +426,16 @@ pub fn eye_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         | Posture::AnonymousArcher
         | Posture::OnLadder
         | Posture::OnWall
-        | Posture::Flying
-        // LeaningOut also gets +45 (plus an XY bend shift handled by
-        // `leaning_out_xy_offset`, not here).
-        | Posture::LeaningOut => {
+        | Posture::Flying => {
             if is_rider {
                 60.0
             } else {
                 45.0
             }
         }
+        // LeaningOut always gets +45 in the original, plus an XY bend
+        // shift handled by `leaning_out_xy_offset`.
+        Posture::LeaningOut => 45.0,
         // Carried on shoulders → +85.
         Posture::OnShoulders => 85.0,
         // Low postures → +25.
@@ -447,8 +447,9 @@ pub fn eye_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         | Posture::DeadBack
         | Posture::StuckUnderNet
         | Posture::Tied => 5.0,
-        // Other postures (Carried, UnderNet, etc.) — approximate with 5.
-        _ => 5.0,
+        Posture::Carried | Posture::Undefined | Posture::Unused => {
+            panic!("eye_z_for_posture called for posture without an eye point: {posture:?}")
+        }
     }
 }
 
@@ -480,13 +481,7 @@ pub fn detection_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
             }
         }
         // LeaningOut → +45 Z (plus XY bend vector).
-        Posture::LeaningOut => {
-            if is_rider {
-                60.0
-            } else {
-                45.0
-            }
-        }
+        Posture::LeaningOut => 45.0,
         // On shoulders → +85.
         Posture::OnShoulders => 85.0,
         // Low postures and carried → +25.
@@ -501,8 +496,9 @@ pub fn detection_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         | Posture::DeadBack
         | Posture::StuckUnderNet
         | Posture::Tied => 2.0,
-        // Other undefined postures — approximate with 2.
-        _ => 2.0,
+        Posture::Undefined | Posture::Unused => {
+            panic!("detection_z_for_posture called for undefined posture: {posture:?}")
+        }
     }
 }
 

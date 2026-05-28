@@ -3065,40 +3065,126 @@ impl Renderer {
         true
     }
 
-    /// Outline draw, but clipped to `clip_rect`. We compute the visible
-    /// dst sub-rectangle and the matching uv sub-rectangle so the
-    /// shader samples only the visible portion.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn render_cached_outline_clipped(
+    pub(crate) fn render_hidden_mask_outline(
         &mut self,
+        frame_holder: &FrameHolder,
         bank_id: u32,
         variant: SpriteVariant,
         shadow_color: u16,
-        _shadow_level: u16,
-        dst_rect: Rect,
-        clip_rect: Rect,
+        mask_bitmap: &[u8],
+        mask_w: u16,
+        mask_h: u16,
+        mask_rect: Rect,
+        sprite_rect: Rect,
         rgb: (u8, u8, u8),
-        alpha: u8,
     ) -> bool {
-        let key = outline_cache_key(bank_id, variant, shadow_color);
-        let bg = match self.sprite_cache.entries.get(&key) {
-            Some(c) => c.bind_group.clone(),
-            None => return false,
-        };
-        let Some((vis_dst, vis_uv)) = clip_dst_to_uv(dst_rect, clip_rect) else {
-            return true; // fully clipped — count as a successful no-op draw
-        };
-        let tex_idx = self.queue_cached_bg(bg);
+        if mask_w == 0 || mask_h == 0 || mask_rect.w <= 0 || mask_rect.h <= 0 {
+            return true;
+        }
+        if sprite_rect.w <= 0 || sprite_rect.h <= 0 {
+            return true;
+        }
+        let expected_mask = mask_w as usize * mask_h as usize;
+        if mask_bitmap.len() < expected_mask {
+            return false;
+        }
+
+        let left = mask_rect.left().max(sprite_rect.left()).max(0);
+        let top = mask_rect.top().max(sprite_rect.top()).max(0);
+        let right = mask_rect
+            .right()
+            .min(sprite_rect.right())
+            .min(self.width as i32);
+        let bottom = mask_rect
+            .bottom()
+            .min(sprite_rect.bottom())
+            .min(self.height as i32);
+        if left >= right || top >= bottom {
+            return true;
+        }
+
+        let sw = frame_holder.sprite_width(bank_id) as usize;
+        let sh = frame_holder.sprite_height(bank_id) as usize;
+        if sw == 0 || sh == 0 {
+            return false;
+        }
+
+        let mut sprite = vec![TRANSPARENT_COLOR_KEY_16; sw * sh];
+        frame_holder.uncompress_frame(
+            &mut sprite,
+            sw,
+            bank_id,
+            variant,
+            shadow_color,
+            self.bit_depth,
+        );
+
+        let out_w = (right - left) as usize;
+        let out_h = (bottom - top) as usize;
+        let mut rgba = vec![0u8; out_w * out_h * 4];
+        let mut any = false;
+        let mask_scale_x = mask_w as f32 / mask_rect.w as f32;
+        let mask_scale_y = mask_h as f32 / mask_rect.h as f32;
+        let sprite_scale_x = sw as f32 / sprite_rect.w as f32;
+        let sprite_scale_y = sh as f32 / sprite_rect.h as f32;
+
+        for y in top..bottom {
+            let mask_y = ((y - mask_rect.y) as f32 * mask_scale_y).floor() as usize;
+            let sy = ((y - sprite_rect.y) as f32 * sprite_scale_y).floor() as usize;
+            if mask_y >= mask_h as usize || sy >= sh {
+                continue;
+            }
+            for x in left..right {
+                let mask_x = ((x - mask_rect.x) as f32 * mask_scale_x).floor() as usize;
+                if mask_x >= mask_w as usize {
+                    continue;
+                }
+                if mask_bitmap[mask_y * mask_w as usize + mask_x] == 0 {
+                    continue;
+                }
+
+                let sx = ((x - sprite_rect.x) as f32 * sprite_scale_x).floor() as usize;
+                if sx + 1 >= sw {
+                    continue;
+                }
+                let row = sy * sw;
+                let mut p1 = sprite[row + sx];
+                let mut p2 = sprite[row + sx + 1];
+                if p1 == shadow_color {
+                    p1 = TRANSPARENT_COLOR_KEY_16;
+                }
+                if p2 == shadow_color {
+                    p2 = TRANSPARENT_COLOR_KEY_16;
+                }
+                if p1 != p2 && (p1 == TRANSPARENT_COLOR_KEY_16 || p2 == TRANSPARENT_COLOR_KEY_16) {
+                    let out_idx = (((y - top) as usize * out_w) + (x - left) as usize) * 4;
+                    rgba[out_idx] = rgb.0;
+                    rgba[out_idx + 1] = rgb.1;
+                    rgba[out_idx + 2] = rgb.2;
+                    rgba[out_idx + 3] = 255;
+                    any = true;
+                }
+            }
+        }
+
+        if !any {
+            return true;
+        }
+
+        let (_texture, view) = upload_rgba_texture(
+            &self.gpu,
+            &rgba,
+            out_w as u32,
+            out_h as u32,
+            "hidden mask outline",
+        );
+        let tex_idx = self.queue_frame_texture(&view);
         self.queued.push(QueuedDraw {
-            dst: vis_dst,
+            dst: Rect::new(left, top, out_w as u32, out_h as u32),
             corners: None,
-            uv: vis_uv,
-            tint: [
-                rgb.0 as f32 / 255.0,
-                rgb.1 as f32 / 255.0,
-                rgb.2 as f32 / 255.0,
-                alpha as f32 / 255.0,
-            ],
+            uv: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0, 1.0, 1.0, 1.0],
             tex: TextureRef::Frame(tex_idx),
             blend: BlendMode::Blend,
         });

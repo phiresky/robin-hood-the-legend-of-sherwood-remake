@@ -23,6 +23,9 @@
 
 use crate::gfx_types::Rect as SdlRect;
 
+use crate::ingame_menu::layout::{
+    BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
+};
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids::{
@@ -220,20 +223,16 @@ impl SherwoodHudLayout {
         let quit_y = 150;
 
         let (dcm_w, dcm_h) = sprites
-            .display_campaign_map
-            .map(|(_, w, h)| (w, h))
+            .size(SherwoodButton::DisplayCampaignMap)
             .unwrap_or((FALLBACK_WIDE_W, FALLBACK_WIDE_H));
         let (gte_w, gte_h) = sprites
-            .go_to_exit
-            .map(|(_, w, h)| (w, h))
+            .size(SherwoodButton::GoToExit)
             .unwrap_or((FALLBACK_WIDE_W, FALLBACK_WIDE_H));
         let (sm_w, sm_h) = sprites
-            .start_mission
-            .map(|(_, w, h)| (w, h))
+            .size(SherwoodButton::StartMission)
             .unwrap_or((FALLBACK_TALL_W, FALLBACK_TALL_H));
         let (qm_w, qm_h) = sprites
-            .quit_mission
-            .map(|(_, w, h)| (w, h))
+            .size(SherwoodButton::QuitMission)
             .unwrap_or((FALLBACK_TALL_W, FALLBACK_TALL_H));
 
         Self {
@@ -283,19 +282,20 @@ impl SherwoodHudLayout {
     }
 }
 
+type SpriteFrame = (u32, u16, u16);
+
 /// Cached sprite surface ids for the four Sherwood HUD buttons.
 ///
 /// Resource IDs: `RHID_DISPLAY_CAMPAIGN_MAP` (251), `RHID_GO_TO_EXIT`
 /// (241), `RHID_FLOATING_OK` (281 — Start), `RHID_FLOATING_CANCEL`
-/// (282 — Quit).  Each resource is a multi-sub-id BTTN strip
-/// (default / pressed / focused); we load sub-id 0 (default) as the
-/// single visual — what the widget blits when idle.
+/// (282 — Quit).  Each resource is a multi-sub-id BTTN strip:
+/// disabled, normal, focused, selected.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SherwoodButtonSprites {
-    pub display_campaign_map: Option<(u32, u16, u16)>,
-    pub go_to_exit: Option<(u32, u16, u16)>,
-    pub start_mission: Option<(u32, u16, u16)>,
-    pub quit_mission: Option<(u32, u16, u16)>,
+    pub display_campaign_map: [Option<SpriteFrame>; 4],
+    pub go_to_exit: [Option<SpriteFrame>; 4],
+    pub start_mission: [Option<SpriteFrame>; 4],
+    pub quit_mission: [Option<SpriteFrame>; 4],
 }
 
 impl SherwoodButtonSprites {
@@ -303,43 +303,96 @@ impl SherwoodButtonSprites {
     /// resources fall back to `None`; `draw_with_sprites` then skips
     /// the button entirely (no fallback rect — see `draw_with_sprites`).
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        // BTTN resources often have sub_id 0 absent (it's the DISABLED
-        // state in `SBSUBRES_BUTTON_*`).  Try sub_id 1 (NORMAL) first,
-        // then fall back to 0, so these buttons pick up their normal
-        // art instead of silently failing to load.
-        fn fetch(
+        fn fetch_frame(
+            res: &mut ResourceManager,
+            renderer: &mut Renderer,
+            id: i32,
+            sub: usize,
+            label: &str,
+        ) -> Option<SpriteFrame> {
+            match res.get_picture(id, sub) {
+                Ok(pic) => {
+                    let w = pic.width;
+                    let h = pic.height;
+                    let surface = crate::ui_panel::pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "sherwood_hud: {label} sub{sub} -> resource {id}, surface {surface} ({w}x{h})"
+                    );
+                    Some((surface, w, h))
+                }
+                Err(e) => {
+                    tracing::debug!("sherwood_hud: {label} sub{sub} missing (resource {id}): {e}");
+                    None
+                }
+            }
+        }
+        fn fetch_all(
             res: &mut ResourceManager,
             renderer: &mut Renderer,
             id: i32,
             label: &str,
-        ) -> Option<(u32, u16, u16)> {
-            // Try NORMAL (sub 1) first, then DISABLED (sub 0).  Can't
-            // use `.or_else(|_| res.get_picture(...))` because both
-            // calls borrow `res` mutably — sequence the two lookups
-            // with an explicit match instead.
-            let pic = match res.get_picture(id, 1) {
-                Ok(_) => res.get_picture(id, 1).ok()?,
-                Err(_) => res.get_picture(id, 0).ok()?,
-            };
-            let w = pic.width;
-            let h = pic.height;
-            let surface = crate::ui_panel::pic_to_surface(renderer, pic);
-            tracing::info!("sherwood_hud: {label} → resource {id}, surface {surface} ({w}x{h})");
-            Some((surface, w, h))
+        ) -> [Option<SpriteFrame>; 4] {
+            [
+                fetch_frame(res, renderer, id, 0, label),
+                fetch_frame(res, renderer, id, 1, label),
+                fetch_frame(res, renderer, id, 2, label),
+                fetch_frame(res, renderer, id, 3, label),
+            ]
         }
 
         Self {
-            display_campaign_map: fetch(
+            display_campaign_map: fetch_all(
                 res,
                 renderer,
                 RHID_DISPLAY_CAMPAIGN_MAP,
                 "DisplayCampaignMap",
             ),
-            go_to_exit: fetch(res, renderer, RHID_GO_TO_EXIT, "GoToExit"),
-            start_mission: fetch(res, renderer, RHID_FLOATING_OK, "StartMission"),
-            quit_mission: fetch(res, renderer, RHID_FLOATING_CANCEL, "QuitMission"),
+            go_to_exit: fetch_all(res, renderer, RHID_GO_TO_EXIT, "GoToExit"),
+            start_mission: fetch_all(res, renderer, RHID_FLOATING_OK, "StartMission"),
+            quit_mission: fetch_all(res, renderer, RHID_FLOATING_CANCEL, "QuitMission"),
         }
     }
+
+    fn frames(&self, btn: SherwoodButton) -> &[Option<SpriteFrame>; 4] {
+        match btn {
+            SherwoodButton::DisplayCampaignMap => &self.display_campaign_map,
+            SherwoodButton::GoToExit => &self.go_to_exit,
+            SherwoodButton::StartMission => &self.start_mission,
+            SherwoodButton::QuitMission => &self.quit_mission,
+        }
+    }
+
+    fn frame(&self, btn: SherwoodButton, state: usize, frame_counter: u32) -> Option<SpriteFrame> {
+        let frames = self.frames(btn);
+        let state = if btn == SherwoodButton::DisplayCampaignMap && state == BTN_STATE_NORMAL {
+            // C++ calls SetBlinking(DEFAULT, DEFAULT, FOCUSED, 25):
+            // 25 frames normal, 25 frames focused, repeating.
+            if (frame_counter / 25) & 1 == 1 {
+                BTN_STATE_HOVER
+            } else {
+                BTN_STATE_NORMAL
+            }
+        } else {
+            state
+        };
+        frames[state].or(frames[BTN_STATE_NORMAL])
+    }
+
+    fn size(&self, btn: SherwoodButton) -> Option<(u16, u16)> {
+        let frames = self.frames(btn);
+        frames[BTN_STATE_NORMAL]
+            .or(frames[BTN_STATE_HOVER])
+            .or(frames[BTN_STATE_PRESSED])
+            .or(frames[BTN_STATE_DISABLED])
+            .map(|(_, w, h)| (w, h))
+    }
+}
+
+/// Transient per-frame hover snapshot used by the draw routine.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SherwoodHoverState {
+    pub hovered: Option<SherwoodButton>,
+    pub mouse_pressed: bool,
 }
 
 /// Draw the Sherwood HUD buttons using loaded sprite surfaces.  A
@@ -348,40 +401,38 @@ pub fn draw_with_sprites(
     renderer: &mut Renderer,
     layout: &SherwoodHudLayout,
     enable: SherwoodButtonEnable,
+    hover: SherwoodHoverState,
     sprites: &SherwoodButtonSprites,
+    frame_counter: u32,
 ) {
     let buttons = [
         (
             &layout.display_campaign_map,
             enable.display_campaign_map,
-            sprites.display_campaign_map,
-            "Map",
+            SherwoodButton::DisplayCampaignMap,
         ),
         (
             &layout.go_to_exit,
             enable.go_to_exit,
-            sprites.go_to_exit,
-            "Exit",
+            SherwoodButton::GoToExit,
         ),
         (
             &layout.start_mission,
             enable.start_mission,
-            sprites.start_mission,
-            "Go",
+            SherwoodButton::StartMission,
         ),
         (
             &layout.quit_mission,
             enable.quit_mission,
-            sprites.quit_mission,
-            "Back",
+            SherwoodButton::QuitMission,
         ),
     ];
 
-    for (rect, enabled, sprite, _label) in buttons {
-        if !enabled {
-            continue;
-        }
-        if let Some((sid, _sw, _sh)) = sprite {
+    for (rect, enabled, btn) in buttons {
+        let is_hovered = hover.hovered == Some(btn);
+        let pressed = is_hovered && hover.mouse_pressed && enabled;
+        let state = button_sprite_state(enabled, is_hovered, pressed);
+        if let Some((sid, _sw, _sh)) = sprites.frame(btn, state, frame_counter) {
             // Blit centred inside the hit-test rect.  The sprite is
             // typically authored at the button's native size, but we
             // blit into the logical rect anyway so the visuals track
@@ -396,21 +447,22 @@ pub fn draw_with_sprites(
                     y: (rect.y() + rect.height() as i32) as f32,
                 },
             );
-            // Use `blit_with_shadow` so the SHADOW_KEY (0x001F, pure
-            // blue) pixels baked into the button sprites get
-            // multiply-darkened instead of rendering opaque blue.
-            // Equivalent to the widget refresh path's `BlitAlphaKeying`
-            // call with the configured shadow key / intensity.
-            // Intensity 40 is the default shadow level.
-            renderer.blit_with_shadow(
-                sid,
-                None,
-                0, // screen
-                Some(&dst),
-                0,  // shadow_color (unused in the MMX-parity path)
-                40, // shadow_level — default intensity
-                BLIT_SOURCE_TRANSPARENT,
-            );
+            if matches!(
+                btn,
+                SherwoodButton::StartMission | SherwoodButton::QuitMission
+            ) {
+                renderer.blit_with_shadow(
+                    sid,
+                    None,
+                    0, // screen
+                    Some(&dst),
+                    0,  // shadow_color (unused in the MMX-parity path)
+                    50, // SBUIRendererShadow default intensity
+                    BLIT_SOURCE_TRANSPARENT,
+                );
+            } else {
+                renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+            }
         }
         // No placeholder-rect fallback — a missing sprite simply means
         // the button isn't drawn.  The old "Go" / "Back" / "Map" label

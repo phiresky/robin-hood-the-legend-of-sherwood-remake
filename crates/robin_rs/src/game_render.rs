@@ -1290,14 +1290,14 @@ pub(crate) fn render_entities_gpu(
                     actor_position,
                 )
             };
-            // When `draw_hidden` is on, the masked area of the sprite
-            // additionally renders the outline silhouette in the
-            // actor's outline colour.  We approximate the per-pixel
-            // silhouette pass with a GPU clipped blit of the cached
-            // outline texture tinted with the outline colour.  Built
-            // outside the loop so we don't re-tint per mask.
+            // When `draw_hidden` is on, the original mutates the
+            // temporary sprite surface per mask: masked pixels become
+            // transparent, except horizontal transparent/body edges
+            // become the actor's outline colour. The background mask
+            // pass below does the transparency part; the hidden
+            // outline pass restores those edge pixels.
             let draw_hidden = host.input.draw_hidden;
-            let outline_prepped = if draw_hidden {
+            let hidden_outline_rgb = if draw_hidden {
                 // Objects/bonuses hardcode the Hidden outline color
                 // regardless of any "current outline" state — there is
                 // no targeting concept on a ground-lying object.
@@ -1313,19 +1313,7 @@ pub(crate) fn render_entities_gpu(
                 } else {
                     elem.active_outline_color()
                 };
-                if color_565 != 0 {
-                    renderer
-                        .ensure_outline_cached(
-                            &host.frame_holder,
-                            bank_id,
-                            variant,
-                            shadow_color,
-                            shadow_level,
-                        )
-                        .map(|(ow, oh)| (ow, oh, rgb565_to_rgb8(color_565)))
-                } else {
-                    None
-                }
+                (color_565 != 0).then(|| rgb565_to_rgb8(color_565))
             } else {
                 None
             };
@@ -1346,22 +1334,18 @@ pub(crate) fn render_entities_gpu(
                 );
                 renderer.render_cached_mask_clipped(u32::from(mask_idx), mask_rect, dst_rect);
 
-                if let Some((ow, oh, rgb)) = outline_prepped {
-                    let outline_rect = crate::gfx_types::Rect::new(
-                        dst_x - OUTLINE_PAD as i32,
-                        dst_y,
-                        ow as u32,
-                        oh as u32,
-                    );
-                    renderer.render_cached_outline_clipped(
+                if let Some(rgb) = hidden_outline_rgb {
+                    renderer.render_hidden_mask_outline(
+                        &host.frame_holder,
                         bank_id,
                         variant,
                         shadow_color,
-                        shadow_level,
-                        outline_rect,
+                        &mask.bitmap,
+                        mask.width,
+                        mask.height,
                         mask_rect,
+                        dst_rect,
                         rgb,
-                        255,
                     );
                 }
             }
