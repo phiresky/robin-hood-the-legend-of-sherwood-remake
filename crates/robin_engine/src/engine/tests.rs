@@ -85,7 +85,17 @@ fn hourglass_returns_in_progress() {
 fn enter_helping_climb_sequence_dispatches_stealth_transition() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        actions: [
+            crate::profiles::Action::HelpToClimb,
+            crate::profiles::Action::NoAction,
+            crate::profiles::Action::NoAction,
+        ],
+        ..Default::default()
+    });
+    assets.profile_manager = std::sync::Arc::new(profiles);
     let mut engine = EngineInner::new();
 
     let pc_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
@@ -99,14 +109,18 @@ fn enter_helping_climb_sequence_dispatches_stealth_transition() {
             ..Default::default()
         },
         human: Default::default(),
-        pc: Default::default(),
+        pc: crate::element::PcData {
+            life_points: 50,
+            ..Default::default()
+        },
     }));
 
-    engine.launch_element(crate::sequence::SequenceElement::new(
+    let elem = crate::sequence::SequenceElement::new(
         1,
         crate::element::Command::EnterHelpingClimb,
         Some(pc_id),
-    ));
+    );
+    engine.launch_element(elem);
 
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)

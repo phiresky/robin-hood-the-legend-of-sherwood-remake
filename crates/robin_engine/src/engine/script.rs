@@ -18,7 +18,6 @@ impl EngineInner {
         let mut robin_handle: i32 = 0;
         let mut pc_profile_map: Vec<(i32, crate::profiles::CharacterProfileIdx)> =
             Vec::with_capacity(self.pc_ids.len());
-        let mut pc_disabled_actions: Vec<(i32, Vec<bool>)> = Vec::with_capacity(self.pc_ids.len());
         let mut any_civilian_dead = false;
         let mut any_enemy_dead = false;
         let mut overall_enemy_alert: i32 = 0;
@@ -45,7 +44,6 @@ impl EngineInner {
             if let Entity::Pc(pc) = entity {
                 pc_handles.push(handle);
                 pc_profile_map.push((handle, pc.pc.profile_index));
-                pc_disabled_actions.push((handle, pc.pc.disabled_actions.clone()));
                 if pc.pc.robin {
                     robin_handle = handle;
                 }
@@ -136,10 +134,6 @@ impl EngineInner {
         game_host.pc_profile_map.clear();
         for (h, pi) in pc_profile_map {
             game_host.pc_profile_map.insert(h, pi);
-        }
-        game_host.pc_disabled_actions.clear();
-        for (h, actions) in pc_disabled_actions {
-            game_host.pc_disabled_actions.insert(h, actions);
         }
         game_host.any_civilian_dead = any_civilian_dead;
         game_host.any_enemy_dead = any_enemy_dead;
@@ -406,38 +400,6 @@ impl EngineInner {
             // ── Completed sequences (from Record*/Thanx) ──
             for seq in game_host.take_completed_sequences() {
                 self.launch_sequence(seq);
-            }
-
-            // ── PC disabled actions → real PC entities ──
-            //
-            // When a script call to `SetActionAvailable(actor, idx, 0)`
-            // flips a slot to disabled, also clear `current_action` /
-            // `saved_action` if they point at the now-disabled action.
-            // Without this, the post-script HUD continues to highlight
-            // a slot the script has just disabled.
-            for (&handle, actions) in &game_host.pc_disabled_actions {
-                if let Some(idx) = crate::natives::GameHost::actor_index(handle)
-                    && let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(idx)
-                {
-                    pc.pc.disabled_actions = actions.clone();
-                    let profile_idx = usize::from(pc.pc.profile_index);
-                    if let Some(profile) = assets.profile_manager.characters.get(profile_idx) {
-                        for (slot, &disabled) in pc.pc.disabled_actions.iter().enumerate() {
-                            if !disabled {
-                                continue;
-                            }
-                            let Some(&action) = profile.actions.get(slot) else {
-                                continue;
-                            };
-                            if pc.pc.current_action == action {
-                                pc.pc.current_action = crate::profiles::Action::NoAction;
-                            }
-                            if pc.pc.saved_action == action {
-                                pc.pc.saved_action = crate::profiles::Action::NoAction;
-                            }
-                        }
-                    }
-                }
             }
 
             // ── Deferred game-logic commands ──

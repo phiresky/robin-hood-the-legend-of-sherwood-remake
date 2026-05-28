@@ -867,6 +867,7 @@ impl EngineInner {
                 // `0xFFFF`.  Re-enables the action slot via
                 // `enable_pc_action` when amount > 0.
                 self.force_ammo_with_banner(
+                    assets,
                     crate::profiles::Action::WaspNest,
                     0xFFFF,
                     "Wasps",
@@ -878,6 +879,7 @@ impl EngineInner {
                 // error or force-sets every selected PC's bow ammo to
                 // `0xFFFF` (and re-enables the action slot).
                 self.force_ammo_with_banner(
+                    assets,
                     crate::profiles::Action::Bow,
                     0xFFFF,
                     "Arrows",
@@ -920,7 +922,7 @@ impl EngineInner {
                     // Re-enable every slot now that it has ammo again.
                     for action in actions {
                         if action != crate::profiles::Action::NoAction {
-                            self.enable_pc_action(id, action);
+                            self.enable_pc_action(assets, id, action);
                         }
                     }
                 }
@@ -1113,6 +1115,7 @@ impl EngineInner {
     /// re-enabled now that it has ammo again.
     fn force_ammo_with_banner(
         &mut self,
+        assets: &LevelAssets,
         action: crate::profiles::Action,
         amount: u16,
         banner: &str,
@@ -1139,7 +1142,7 @@ impl EngineInner {
         }
         if amount > 0 {
             for (id, _idx) in profile_indices {
-                self.enable_pc_action(id, action);
+                self.enable_pc_action(assets, id, action);
             }
         } else {
             // Forcing the ammo counter to 0 should disable the action

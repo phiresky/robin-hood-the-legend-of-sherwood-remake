@@ -1345,6 +1345,7 @@ pub fn begin_strangle(
 ///    sequence element.
 pub fn begin_listen(
     entities: &mut [Option<Entity>],
+    profiles: &crate::profiles::ProfileManager,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     seq_id: SequenceId,
@@ -1362,13 +1363,20 @@ pub fn begin_listen(
         return BeginResult::Impossible;
     }
 
-    // Honour `disabled_actions[Action::Listen]`.
+    // Honour the Listen portrait slot. C++ disabled action masks are
+    // indexed by profile action slot, not by the action enum value.
     if let Some(pc) = actor_entity.pc_data() {
-        let idx = crate::profiles::Action::Listen as usize;
-        if pc.disabled_actions.get(idx).copied().unwrap_or(false)
-            || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false)
-        {
+        let Some(profile) = profiles.get_character(pc.profile_index) else {
             return BeginResult::Impossible;
+        };
+        if let Some(idx) =
+            crate::inventory::find_action_slot(profile, crate::profiles::Action::Listen)
+        {
+            if pc.disabled_actions.get(idx).copied().unwrap_or(false)
+                || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false)
+            {
+                return BeginResult::Impossible;
+            }
         }
     }
 

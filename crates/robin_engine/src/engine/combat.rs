@@ -1068,11 +1068,11 @@ impl EngineInner {
     /// directly each frame.
     pub(super) fn disable_pc_action(
         &mut self,
-        _assets: &LevelAssets,
+        assets: &LevelAssets,
         pc_id: EntityId,
         action: crate::profiles::Action,
     ) {
-        let action_idx = action as usize;
+        let action_idx = self.pc_action_slot(assets, pc_id, action);
         if let Some(entity) = self.get_entity_mut(pc_id)
             && let Some(pc) = entity.pc_data_mut()
         {
@@ -1086,7 +1086,9 @@ impl EngineInner {
             if pc.saved_action == action {
                 pc.saved_action = crate::profiles::Action::NoAction;
             }
-            if action_idx < pc.disabled_actions.len() {
+            if let Some(action_idx) = action_idx
+                && action_idx < pc.disabled_actions.len()
+            {
                 pc.disabled_actions[action_idx] = true;
             }
             tracing::trace!(
@@ -1109,10 +1111,16 @@ impl EngineInner {
     /// a slot left both perm-disabled and temp-disabled would stay
     /// perm-disabled after the temp mask later clears, leaving the
     /// action permanently unavailable.
-    pub(super) fn enable_pc_action(&mut self, pc_id: EntityId, action: crate::profiles::Action) {
-        let action_idx = action as usize;
+    pub(super) fn enable_pc_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+    ) {
+        let action_idx = self.pc_action_slot(assets, pc_id, action);
         if let Some(entity) = self.get_entity_mut(pc_id)
             && let Some(pc) = entity.pc_data_mut()
+            && let Some(action_idx) = action_idx
             && action_idx < pc.disabled_actions.len()
         {
             // Unconditional clear, BEFORE the temp-disable gate (which
@@ -1124,6 +1132,20 @@ impl EngineInner {
                 "Action re-enabled"
             );
         }
+    }
+
+    fn pc_action_slot(
+        &self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+    ) -> Option<usize> {
+        let profile_idx = self
+            .get_entity(pc_id)
+            .and_then(|e| e.pc_data())
+            .map(|pc| pc.profile_index)?;
+        let profile = assets.profile_manager.get_character(profile_idx)?;
+        crate::inventory::find_action_slot(profile, action)
     }
 
     /// Per-tick refresh of the Purse-action disable flag based on
@@ -1185,7 +1207,7 @@ impl EngineInner {
             if num_purses == 0 || !ransom_ok {
                 self.disable_pc_action(assets, pc_id, Action::Purse);
             } else {
-                self.enable_pc_action(pc_id, Action::Purse);
+                self.enable_pc_action(assets, pc_id, Action::Purse);
             }
         }
     }
@@ -1245,7 +1267,7 @@ impl EngineInner {
 
         // If ammo > 0, re-enable the action.
         if new_ammo > 0 {
-            self.enable_pc_action(pc_id, action);
+            self.enable_pc_action(assets, pc_id, action);
         }
     }
 
@@ -1298,7 +1320,7 @@ impl EngineInner {
         let result = result?;
 
         if result.taken > 0 {
-            self.enable_pc_action(pc_id, action);
+            self.enable_pc_action(assets, pc_id, action);
         }
 
         Some(result)

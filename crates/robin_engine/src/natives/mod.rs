@@ -321,9 +321,6 @@ pub struct GameHost {
     pub robin_handle: i32,
     /// PC entity handle → character profile index.
     pub pc_profile_map: BTreeMap<i32, crate::profiles::CharacterProfileIdx>,
-    /// Per-PC action disabled flags. Key = PC entity handle.
-    pub pc_disabled_actions: BTreeMap<i32, Vec<bool>>,
-
     /// Whether any civilian NPC is dead (snapshot).
     pub any_civilian_dead: bool,
     /// Whether any enemy (soldier) NPC is dead (snapshot).
@@ -507,7 +504,6 @@ impl GameHost {
             selected_pc_handles: Vec::new(),
             robin_handle: 0,
             pc_profile_map: BTreeMap::new(),
-            pc_disabled_actions: BTreeMap::new(),
             any_civilian_dead: false,
             any_enemy_dead: false,
             overall_enemy_alert: 0,
@@ -2307,17 +2303,20 @@ impl GameHost {
                 if let Some(desc) = campaign.characters.get_mut(char_idx) {
                     desc.status.set_ammo(action, amount_u16);
                 }
-                // Toggle the live PC entity's `disabled_actions` slot
-                // so the HUD reflects the new ammo.
-                let action_idx = action as usize;
-                if let Some(Entity::Pc(pc)) = self
-                    .entities
-                    .get_mut(actor as usize)
-                    .and_then(|e| e.as_mut())
-                    && action_idx < pc.pc.disabled_actions.len()
+                // Toggle the live PC entity's profile action slot so
+                // the HUD reflects the new ammo. C++ resolves through
+                // GetActionIndex(action); the action enum value is not
+                // the portrait slot.
+                let action_slot = self
+                    .profile_manager
+                    .get_character(profile_index)
+                    .and_then(|p| crate::inventory::find_action_slot(p, action));
+                if let Some(action_slot) = action_slot
+                    && let Some(Entity::Pc(pc)) = self.get_entity_mut(actor)
+                    && action_slot < pc.pc.disabled_actions.len()
                 {
                     if amount_u16 == 0 {
-                        pc.pc.disabled_actions[action_idx] = true;
+                        pc.pc.disabled_actions[action_slot] = true;
                         if pc.pc.current_action == action {
                             pc.pc.current_action = Action::NoAction;
                         }
@@ -2325,7 +2324,7 @@ impl GameHost {
                             pc.pc.saved_action = Action::NoAction;
                         }
                     } else {
-                        pc.pc.disabled_actions[action_idx] = false;
+                        pc.pc.disabled_actions[action_slot] = false;
                     }
                 }
                 return true;
@@ -6174,24 +6173,12 @@ impl HostFunctions for GameHost {
                 // --- action / property ---
                 SetActionAvailable => {
                     // Validates `IsPC(actor)` then `action ∈ [0, 5]`,
-                    // forwards an enable/disable message, and
-                    // returns true / false.
-                    //
-                    // NOTE: this native was observably a no-op in
-                    // the original engine — both message handlers
-                    // were empty bodies and no other site mutated
-                    // the `disabled_actions` array in response.  We
-                    // intentionally extend the native to write
-                    // `pc_disabled_actions[actor][action_idx]`,
-                    // which is copied onto `PcData.disabled_actions`
-                    // after each script tick and observed by the
-                    // engine-side availability checks (`element.rs`,
-                    // `selection.rs`, `abilities.rs`, `bow_shot.rs`,
-                    // `combat.rs`).  This is the gameplay direction
-                    // the native obviously intended; see
-                    // `parity-audit/RHScript-24.md`
-                    // (SetActionAvailable).
-                    let avail = stack.pop_i32();
+                    // forwards an enable/disable message, and returns
+                    // true / false. The C++ message handlers do not
+                    // mutate RHElementActorPC::mpbDisabledActions; real
+                    // persistent disables are maintained by PC ammo /
+                    // action methods.
+                    let _avail = stack.pop_i32();
                     let action_idx = stack.pop_i32();
                     let actor = stack.pop_i32();
                     let Some(entity) = self.get_entity(actor) else {
@@ -6209,12 +6196,6 @@ impl HostFunctions for GameHost {
                             "Script Error: SetActionAvailable action index {action_idx} out of range"
                         );
                         return 0;
-                    }
-                    if let Some(actions) = self.pc_disabled_actions.get_mut(&actor)
-                        && let Some(slot) = actions.get_mut(action_idx as usize)
-                    {
-                        // disabled_actions[i] == true means DISABLED
-                        *slot = avail == 0;
                     }
                     1
                 }
