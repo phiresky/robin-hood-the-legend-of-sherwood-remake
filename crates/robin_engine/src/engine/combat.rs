@@ -1972,6 +1972,15 @@ impl EngineInner {
                     command = ?activation_cmd,
                     "FX target activated by projectile"
                 );
+                if let Some(fx_id) = result.impact_fx {
+                    self.pending_side_effects
+                        .sounds
+                        .push(super::SoundCommand::Fx {
+                            fx_id,
+                            position: crate::geo2d::pt(result.impact_pos.x, result.impact_pos.y),
+                            material: None,
+                        });
+                }
                 if result.despawn {
                     self.remove_entity(result.arrow);
                 }
@@ -2005,11 +2014,17 @@ impl EngineInner {
 
                 match projectile_kind {
                     crate::element::ObjectType::Apple => {
+                        if let Some(old_pos) = result.human_hit_old_position {
+                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
+                        }
                         // No damage; if the victim is a soldier, set
                         // apple-smell and dispatch EventApple.
                         self.on_apple_hit_human(result.arrow, victim);
                     }
                     crate::element::ObjectType::Stone => {
+                        if let Some(old_pos) = result.human_hit_old_position {
+                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
+                        }
                         // Non-VIP and (non-soldier OR piercing-protection
                         // roll failed) → piercing damage.  NPCs that
                         // dodge (VIP or protected soldier) trigger an
@@ -2051,6 +2066,10 @@ impl EngineInner {
                                 continue;
                             }
                             ArrowHitOutcome::Damage => {}
+                        }
+
+                        if let Some(old_pos) = result.human_hit_old_position {
+                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
                         }
 
                         let damage = result.damage;
@@ -2156,6 +2175,21 @@ impl EngineInner {
                 self.remove_entity(result.arrow);
             }
         }
+    }
+
+    fn rewind_projectile_to_human_hit_old_position(
+        &mut self,
+        projectile: EntityId,
+        old_pos: crate::element::Point3D,
+    ) {
+        let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.0 as usize) else {
+            tracing::warn!(
+                ?projectile,
+                "projectile human-hit rewind skipped: projectile entity missing"
+            );
+            return;
+        };
+        p.element.set_position(old_pos);
     }
 
     /// Apple lands on a human.  Apples deal no damage; they only

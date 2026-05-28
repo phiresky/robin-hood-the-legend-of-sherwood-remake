@@ -2791,6 +2791,11 @@ pub struct ArrowTickResult {
     /// Map-space position of the projectile at impact, for locating
     /// the impact FX sound.  Only meaningful when `impact_fx.is_some()`.
     pub impact_pos: ElemPoint2D,
+    /// Previous 3D projectile position for C++ `SetPosition(old)` on
+    /// human hits whose `HitHuman` handler returns true.  Arrows only
+    /// use this in the damage branch; pass-through and ricochet keep
+    /// their current position/falling trajectory.
+    pub human_hit_old_position: Option<Point3D>,
 }
 
 fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
@@ -2922,6 +2927,7 @@ fn tick_arrows_matching(
         is_civilian: bool,
         camp: Option<crate::element::Camp>,
         holding_shield: bool,
+        position_map: ElemPoint2D,
     }
     let human_snapshots: Vec<HumanSnapshot> = entities
         .iter()
@@ -2980,6 +2986,7 @@ fn tick_arrows_matching(
                 is_civilian: e.is_civilian(),
                 camp,
                 holding_shield,
+                position_map: e.element_data().position_map(),
             })
         })
         .collect();
@@ -2993,6 +3000,7 @@ fn tick_arrows_matching(
     struct FxTargetSnapshot {
         id: EntityId,
         center: Point3D,
+        position_map: ElemPoint2D,
         action_filter: crate::element::TargetFilter,
     }
     let fx_target_snapshots: Vec<FxTargetSnapshot> = entities
@@ -3024,6 +3032,7 @@ fn tick_arrows_matching(
             Some(FxTargetSnapshot {
                 id: EntityId(idx as u32),
                 center,
+                position_map: e.element_data().position_map(),
                 action_filter: filter,
             })
         })
@@ -3122,6 +3131,7 @@ fn tick_arrows_matching(
                         damage: 0,
                         impact_fx: None,
                         impact_pos: proj.element.position_map(),
+                        human_hit_old_position: None,
                     });
                 }
             }
@@ -3248,6 +3258,7 @@ fn tick_arrows_matching(
                     damage,
                     impact_fx,
                     impact_pos,
+                    human_hit_old_position: None,
                 });
                 continue;
             }
@@ -3410,6 +3421,7 @@ fn tick_arrows_matching(
                     // Silent — see note above.
                     impact_fx: None,
                     impact_pos: proj.element.position_map(),
+                    human_hit_old_position: None,
                 });
             } else {
                 // Apple / stone: keep flying on current trajectory; the
@@ -3427,6 +3439,7 @@ fn tick_arrows_matching(
                     damage,
                     impact_fx,
                     impact_pos: proj.element.position_map(),
+                    human_hit_old_position: None,
                 });
             }
             continue;
@@ -3532,7 +3545,7 @@ fn tick_arrows_matching(
                     false
                 };
                 if hit {
-                    hit_victim = Some(snap.id);
+                    hit_victim = Some((snap.id, snap.position_map));
                     break;
                 }
 
@@ -3560,7 +3573,7 @@ fn tick_arrows_matching(
                         if new_to_eyes <= range
                             && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
                         {
-                            hit_victim = Some(snap.id);
+                            hit_victim = Some((snap.id, snap.position_map));
                             break;
                         }
                     }
@@ -3581,7 +3594,7 @@ fn tick_arrows_matching(
                 Command::ActivateArrow,
             ),
         };
-        let mut fx_target_hit: Option<(EntityId, Command)> = None;
+        let mut fx_target_hit: Option<(EntityId, Command, ElemPoint2D)> = None;
         if !required_filter.is_empty() {
             for snap in &fx_target_snapshots {
                 if !snap.action_filter.contains(required_filter) {
@@ -3604,14 +3617,14 @@ fn tick_arrows_matching(
                     distance(arrow_new, snap.center) <= 0.01
                 };
                 if hit {
-                    fx_target_hit = Some((snap.id, activation_command));
+                    fx_target_hit = Some((snap.id, activation_command, snap.position_map));
                     break;
                 }
             }
         }
 
-        if let Some(victim) = hit_victim {
-            let impact_pos = proj.element.position_map();
+        if let Some((victim, victim_position_map)) = hit_victim {
+            let impact_pos = victim_position_map;
             proj.projectile.flying = false;
             let despawn = if is_burster {
                 proj.object.animation = Animation::ObjectBursting;
@@ -3629,9 +3642,10 @@ fn tick_arrows_matching(
                 damage,
                 impact_fx,
                 impact_pos,
+                human_hit_old_position: Some(arrow_old),
             });
-        } else if let Some(fx_hit) = fx_target_hit {
-            let impact_pos = proj.element.position_map();
+        } else if let Some((fx_id, fx_command, fx_position_map)) = fx_target_hit {
+            let impact_pos = fx_position_map;
             proj.projectile.flying = false;
             let despawn = if is_burster {
                 proj.object.animation = Animation::ObjectBursting;
@@ -3644,11 +3658,12 @@ fn tick_arrows_matching(
                 arrow: arrow_id,
                 hit_target: None,
                 shield_hit: None,
-                fx_target_hit: Some(fx_hit),
+                fx_target_hit: Some((fx_id, fx_command)),
                 despawn,
                 damage,
                 impact_fx,
                 impact_pos,
+                human_hit_old_position: None,
             });
         }
     }
@@ -4716,6 +4731,81 @@ mod tests {
     }
 
     #[test]
+    fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
+        let traj = vec![
+            TrajectoryPoint {
+                position: Point3D {
+                    x: 20.0,
+                    y: 0.0,
+                    z: 35.0,
+                },
+                time: 2,
+            },
+            TrajectoryPoint {
+                position: Point3D {
+                    x: 40.0,
+                    y: 0.0,
+                    z: 30.0,
+                },
+                time: 2,
+            },
+            TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 2,
+            },
+        ];
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 0.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory: traj,
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        });
+        let mut entities: Vec<Option<Entity>> = vec![
+            Some(make_pc(0.0, 0.0)),
+            Some(make_soldier(50.0, 0.0)),
+            Some(arrow),
+        ];
+
+        let mut hit = None;
+        for _ in 0..20 {
+            let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+            hit = results
+                .into_iter()
+                .find(|result| result.hit_target == Some(EntityId(1)));
+            if hit.is_some() {
+                break;
+            }
+        }
+
+        let hit = hit.expect("arrow should reach human target");
+        assert_eq!(hit.impact_pos, ElemPoint2D { x: 50.0, y: 0.0 });
+        let old_pos = hit
+            .human_hit_old_position
+            .expect("human hit should carry previous projectile position");
+        assert!(old_pos.x < hit.impact_pos.x);
+        assert!((old_pos.y - 0.0).abs() < 0.01);
+        assert!(old_pos.z >= 25.0);
+    }
+
+    #[test]
     fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
@@ -5046,10 +5136,12 @@ mod tests {
             vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))];
 
         let mut activation = None;
+        let mut impact = None;
         for _ in 0..20 {
             for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
                 if let Some(hit) = r.fx_target_hit {
                     activation = Some(hit);
+                    impact = Some((r.impact_fx, r.impact_pos));
                     break;
                 }
             }
@@ -5062,6 +5154,7 @@ mod tests {
             Some((EntityId(0), Command::ActivateApple)),
             "apple projectile should activate APPLE-filter target with ActivateApple"
         );
+        assert_eq!(impact, Some((Some(509), target_pos)));
     }
 
     /// C++ `FindTargetVictim` uses current-position range gating for
