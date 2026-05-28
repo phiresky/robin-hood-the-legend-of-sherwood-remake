@@ -2891,10 +2891,14 @@ fn tick_arrows_matching(
                 Entity::Civilian(c) => Some(c.civilian.cached_camp),
                 _ => None,
             };
-            let holding_shield = e
-                .actor_data()
-                .map(|a| a.action_state.is_shield())
-                .unwrap_or(false);
+            let Some(actor) = e.actor_data() else {
+                tracing::warn!(
+                    entity = idx,
+                    "Projectile hit snapshot skipped: human missing actor data"
+                );
+                return None;
+            };
+            let holding_shield = actor.action_state.is_shield();
             Some(HumanSnapshot {
                 id: EntityId(idx as u32),
                 belt,
