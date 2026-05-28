@@ -1193,6 +1193,9 @@ impl EngineInner {
                 }
                 _ => continue,
             };
+            if !bonus_auto_pickup_allowed(obj_type) {
+                continue;
+            }
 
             for &(pc_id, px, py, pc_layer) in &pc_positions {
                 if pc_layer != blayer {
@@ -1484,6 +1487,29 @@ impl EngineInner {
         } else {
             None
         }
+    }
+}
+
+fn bonus_auto_pickup_allowed(obj_type: crate::element::ObjectType) -> bool {
+    // C++ arrow/bonus objects are picked through RHElementObject::MouseClicked,
+    // which queues Seek -> Take and only grants ammo after the Taking animation.
+    // Keep arrows out of Rust's proximity shortcut so they animate like scrolls.
+    obj_type != crate::element::ObjectType::BonusArrow
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bonus_auto_pickup_allowed;
+    use crate::element::ObjectType;
+
+    #[test]
+    fn arrow_bonus_is_not_auto_pickup() {
+        assert!(!bonus_auto_pickup_allowed(ObjectType::BonusArrow));
+    }
+
+    #[test]
+    fn non_arrow_bonus_keeps_existing_auto_pickup_path() {
+        assert!(bonus_auto_pickup_allowed(ObjectType::BonusPlants));
     }
 }
 
