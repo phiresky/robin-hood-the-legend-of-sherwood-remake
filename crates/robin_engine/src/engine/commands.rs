@@ -1808,9 +1808,13 @@ impl EngineInner {
         command: Command,
         running: bool,
     ) {
-        // Ranged throws bypass the seek entirely — the PC throws from
-        // wherever it stands.
-        if matches!(command, Command::ThrowApple | Command::ThrowStone) {
+        // Ranged actions bypass the seek entirely: the actor fires or
+        // throws from wherever it stands.  This mirrors the original
+        // bow click path, which launches RHCOMMAND_SHOOT_BOW directly.
+        if matches!(
+            command,
+            Command::ShootBow | Command::ShootBowOnce | Command::ThrowApple | Command::ThrowStone
+        ) {
             let elem = SequenceElement::new_interaction(1, command, Some(actor), Some(target));
             self.launch_element(elem);
             return;
@@ -4164,6 +4168,27 @@ mod tests {
         engine.apply_interaction_with_seek(pc_id, target_id, Command::SearchCmd, false);
 
         assert!((first_seek_tolerance(&engine) - 19.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn shoot_bow_interaction_launches_without_seek() {
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
+        {
+            let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
+            pc.set_position_map(crate::element::Point2D { x: 10.0, y: 10.0 });
+        }
+        let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
+
+        engine.apply_interaction_with_seek(pc_id, target_id, Command::ShootBow, false);
+
+        assert_eq!(engine.sequence_manager.sequence_count(), 1);
+        let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
+        let element = sequence.get(0).unwrap();
+        assert_eq!(element.command, Command::ShootBow);
+        assert!(matches!(
+            element.data,
+            SequenceElementData::Interaction { .. }
+        ));
     }
 
     #[test]
