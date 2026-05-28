@@ -30,6 +30,12 @@ rayon = { version = "1.10.0" }
 gpu-allocator = { version = "0.28.0", default-features = false, features = ["hashbrown"] }
 image = { version = "0.25.8", features = ["tga", "jpeg", "png", "bmp"], default-features = false }
 
+[patch.crates-io]
+# proc-macro-error2 2.0.1 re-exports a private `extern crate proc_macro`,
+# which is a future hard error. Keep the same crate/version and apply the
+# compiler-suggested visibility fix until upstream publishes it.
+proc-macro-error2 = { path = "third_party/proc-macro-error2" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"
