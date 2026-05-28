@@ -1906,11 +1906,9 @@ pub fn tick_bow_shots(
             continue;
         }
 
-        // Unknown order type in the queue while we have an active shot.
-        // Pop it to avoid stalling.
-        if let Some(elem) = sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx) {
-            elem.orders.pop_front();
-        }
+        panic!(
+            "active bow shot reached non-bow order: shooter={idx} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}"
+        );
     }
 
     // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
@@ -3942,6 +3940,35 @@ mod tests {
         assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Normal));
         // Should have: shoot order + reload order (and possibly transition orders)
         assert!(sm.get_element(seq_id, elem_idx).unwrap().orders.len() >= 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "active bow shot reached non-bow order")]
+    fn tick_bow_shots_panics_on_non_bow_active_order() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            None,
+            &mut 1u32,
+        );
+        assert_eq!(result, BeginShotResult::Started);
+        sm.get_element_mut(seq_id, elem_idx)
+            .unwrap()
+            .orders
+            .front_mut()
+            .unwrap()
+            .order_type = OrderType::WalkingUpright;
+
+        let _ = tick_bow_shots(&mut entities, &mut sm);
     }
 
     #[test]
