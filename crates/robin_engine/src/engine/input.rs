@@ -1896,7 +1896,7 @@ impl EngineInner {
         pc_id: crate::element::EntityId,
         target_point: crate::element::Point3D,
         shoot_mode: crate::weapons::ShootMode,
-        _target_entity: Option<crate::element::EntityId>,
+        target_entity: Option<crate::element::EntityId>,
     ) -> TrajectoryPreview {
         use crate::bow_shot;
         use crate::element::Point3D;
@@ -1928,58 +1928,156 @@ impl EngineInner {
             None => return TrajectoryPreview::Invalid,
         };
 
-        // Compute shooter's bow point for a long shot.
-        let elevation = pc.position_iface().get_elevation();
-        let shooter_pos = Point3D {
-            x: pc.element_data().position_map().x,
-            y: pc.element_data().position_map().y,
-            z: elevation,
+        // C++ preview code computes the source hand point using the
+        // direction from the selected PC to the hovered destination for
+        // every projectile action. Bow uses ComputeBowPoint(LongShoot);
+        // throwables use their own throwing animation hand point.
+        let direction = {
+            let shooter_map = pc.element_data().position_map();
+            crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_point.x - shooter_map.x,
+                bow_ground_y(target_point) - shooter_map.y,
+            )
         };
-        let direction = pc.element_data().direction();
-
-        // Get sprite hand point for this direction/animation.
-        // Same logic as tick_bow_shots: add sprite position to hotspot offset.
-        let sprite_hand_point = {
-            let sprite_pos = pc.element_data().position_map();
-            let hotspot = {
-                let sprite = &pc.element_data().sprite;
-                let Ok(dir_u16) = u16::try_from(direction) else {
-                    tracing::warn!(
-                        ?pc_id,
-                        direction,
-                        "compute_trajectory_preview_to_point: invalid shooter direction"
-                    );
-                    return TrajectoryPreview::Invalid;
+        let throwable_source = |animation| {
+            pc.compute_hand_point_for_posture(
+                direction,
+                animation,
+                crate::element::Posture::Upright,
+            )
+        };
+        let source_point = match selected_action {
+            crate::profiles::Action::Bow => {
+                let elevation = pc.position_iface().get_elevation();
+                let shooter_pos = Point3D {
+                    x: pc.element_data().position_map().x,
+                    y: pc.element_data().position_map().y,
+                    z: elevation,
                 };
-                sprite.get_point(
-                    crate::bow_shot::bow_point_order_type_for_mode(ShootMode::Long),
-                    dir_u16,
+                let sprite_hand_point = {
+                    let sprite_pos = pc.element_data().position_map();
+                    let hotspot = {
+                        let sprite = &pc.element_data().sprite;
+                        let Ok(dir_u16) = u16::try_from(direction) else {
+                            tracing::warn!(
+                                ?pc_id,
+                                direction,
+                                "compute_trajectory_preview_to_point: invalid shooter direction"
+                            );
+                            return TrajectoryPreview::Invalid;
+                        };
+                        sprite.get_point(
+                            crate::bow_shot::bow_point_order_type_for_mode(ShootMode::Long),
+                            dir_u16,
+                        )
+                    };
+                    match hotspot {
+                        Some(offset) => crate::geo2d::Point2D {
+                            x: sprite_pos.x + offset.x,
+                            y: sprite_pos.y + offset.y,
+                        },
+                        None => {
+                            tracing::warn!(
+                                ?pc_id,
+                                direction,
+                                "compute_trajectory_preview_to_point: missing long-shot bow-point hotspot"
+                            );
+                            return TrajectoryPreview::Invalid;
+                        }
+                    }
+                };
+                bow_shot::compute_bow_point(
+                    shooter_pos,
+                    ShootMode::Long,
+                    direction,
+                    sprite_hand_point,
                 )
-            };
-            match hotspot {
-                Some(offset) => crate::geo2d::Point2D {
-                    x: sprite_pos.x + offset.x,
-                    y: sprite_pos.y + offset.y,
-                },
-                None => {
-                    tracing::warn!(
-                        ?pc_id,
-                        direction,
-                        "compute_trajectory_preview_to_point: missing long-shot bow-point hotspot"
-                    );
-                    return TrajectoryPreview::Invalid;
+            }
+            crate::profiles::Action::Apple => {
+                match throwable_source(crate::order::OrderType::ThrowingApple) {
+                    Some(point) => point,
+                    None => {
+                        tracing::warn!(
+                            ?pc_id,
+                            direction,
+                            "compute_trajectory_preview_to_point: missing apple hand hotspot"
+                        );
+                        return TrajectoryPreview::Invalid;
+                    }
                 }
             }
+            crate::profiles::Action::Stone => {
+                match throwable_source(crate::order::OrderType::ThrowingStone) {
+                    Some(point) => point,
+                    None => {
+                        tracing::warn!(
+                            ?pc_id,
+                            direction,
+                            "compute_trajectory_preview_to_point: missing stone hand hotspot"
+                        );
+                        return TrajectoryPreview::Invalid;
+                    }
+                }
+            }
+            crate::profiles::Action::Net => {
+                match throwable_source(crate::order::OrderType::ThrowingNet) {
+                    Some(point) => point,
+                    None => {
+                        tracing::warn!(
+                            ?pc_id,
+                            direction,
+                            "compute_trajectory_preview_to_point: missing net hand hotspot"
+                        );
+                        return TrajectoryPreview::Invalid;
+                    }
+                }
+            }
+            crate::profiles::Action::Purse => {
+                match throwable_source(crate::order::OrderType::ThrowingPurse) {
+                    Some(point) => point,
+                    None => {
+                        tracing::warn!(
+                            ?pc_id,
+                            direction,
+                            "compute_trajectory_preview_to_point: missing purse hand hotspot"
+                        );
+                        return TrajectoryPreview::Invalid;
+                    }
+                }
+            }
+            crate::profiles::Action::WaspNest => {
+                match throwable_source(crate::order::OrderType::ThrowingWaspNest) {
+                    Some(point) => point,
+                    None => {
+                        tracing::warn!(
+                            ?pc_id,
+                            direction,
+                            "compute_trajectory_preview_to_point: missing wasp-nest hand hotspot"
+                        );
+                        return TrajectoryPreview::Invalid;
+                    }
+                }
+            }
+            _ => return TrajectoryPreview::Invalid,
         };
 
-        let bow_point =
-            bow_shot::compute_bow_point(shooter_pos, ShootMode::Long, direction, sprite_hand_point);
+        let target_forecasted_movement = match (selected_action, target_entity) {
+            (crate::profiles::Action::Bow, Some(target_id)) => self
+                .get_entity(target_id)
+                .filter(|target| target.is_human())
+                .map(|target| target.position_iface().get_forecasted_movement().into()),
+            (crate::profiles::Action::Stone, Some(target_id)) => self
+                .get_entity(target_id)
+                .filter(|target| target.is_npc())
+                .map(|target| target.position_iface().get_forecasted_movement().into()),
+            _ => None,
+        };
 
         // Apex height: for throwables use the fixed apex constant;
         // for arrows compute from distance.
-        let dx = target_point.x - bow_point.x;
-        let dy = target_point.y - bow_point.y;
-        let dz = target_point.z - bow_point.z;
+        let dx = target_point.x - source_point.x;
+        let dy = target_point.y - source_point.y;
+        let dz = target_point.z - source_point.z;
         let distance = (dx * dx + dy * dy + dz * dz).sqrt();
         let apex_height = apex_height_override.unwrap_or_else(|| (distance / 10.0).max(1.0));
 
@@ -1988,8 +2086,18 @@ impl EngineInner {
             y: dy,
             z: dz,
         };
-        let velocity =
-            bow_shot::compute_initial_throw_velocity(direction_vec, apex_height, mass, 0, None);
+        let flight_time = if selected_action == crate::profiles::Action::Stone {
+            1
+        } else {
+            0
+        };
+        let velocity = bow_shot::compute_initial_throw_velocity(
+            direction_vec,
+            apex_height,
+            mass,
+            flight_time,
+            target_forecasted_movement,
+        );
 
         // Compute trajectory with obstacle checking.
         let Some(layer) = self.get_entity(pc_id).map(|e| e.element_data().layer()) else {
@@ -2006,7 +2114,7 @@ impl EngineInner {
             water_zones: Some(&assets.water_zones),
         };
         let trajectory = bow_shot::compute_trajectory_ballistic(
-            bow_point,
+            source_point,
             velocity,
             mass,
             false,
@@ -2033,7 +2141,7 @@ impl EngineInner {
                 let crumpled = self.predict_net_crumple_at(assets, landing, layer);
                 return TrajectoryPreview::ShowArc {
                     points: trajectory,
-                    start: bow_point,
+                    start: source_point,
                     crumpled,
                     layer,
                 };
@@ -2042,7 +2150,7 @@ impl EngineInner {
             // affordance).
             return TrajectoryPreview::ShowArc {
                 points: trajectory,
-                start: bow_point,
+                start: source_point,
                 crumpled: false,
                 layer,
             };
@@ -2052,13 +2160,13 @@ impl EngineInner {
         // this warns the player that the long shot won't land. The
         // `crumpled` flag on `ShowArc` is consumed by the render
         // layer to swap the arc colour from cyan to pink.
-        let will_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point);
+        let will_hit = bow_shot::will_hit_target(&trajectory, source_point, target_point);
         if will_hit {
             TrajectoryPreview::HitNoArc
         } else {
             TrajectoryPreview::ShowArc {
                 points: trajectory,
-                start: bow_point,
+                start: source_point,
                 crumpled: true,
                 layer,
             }
@@ -2643,32 +2751,24 @@ impl EngineInner {
                 pc.element.sprite.position_iface.turn();
             }
 
-            // Consult `can_shoot_with_bow_at_point`; on a
-            // state/animation match with the resolved shoot type
-            // launch `RAISE_BOW` / `LOWER_BOW`. Only trigger when the
-            // target is actually reachable — otherwise the resolved
-            // shoot mode is undefined, so skipping the auto-toggle is
-            // the safe, deterministic interpretation.
-            let (bow_status, shoot_mode) =
+            // C++ `AimWithBowAt` ignores the reachability return value
+            // from `CanShootWithBowAt` and uses the resolved shoot type
+            // anyway.  This still raises for out-of-range/blocked long
+            // shots so the aiming pose tracks the hovered point.
+            let (_bow_status, shoot_mode) =
                 self.can_shoot_with_bow_at_point(assets, pc_id, target_3d, false);
-            if bow_status == BowTarget::Valid {
-                match (action_state, shoot_mode, current_anim) {
-                    (
-                        ActionState::AimingWithBow,
-                        ShootMode::Long,
-                        Some(OrderType::AimingWithBow),
-                    ) => {
-                        raise_lower.push((pc_id, Command::RaiseBow));
-                    }
-                    (
-                        ActionState::AimingWithBowUp,
-                        ShootMode::Normal,
-                        Some(OrderType::AimingWithBowUp),
-                    ) => {
-                        raise_lower.push((pc_id, Command::LowerBow));
-                    }
-                    _ => {}
+            match (action_state, shoot_mode, current_anim) {
+                (ActionState::AimingWithBow, ShootMode::Long, Some(OrderType::AimingWithBow)) => {
+                    raise_lower.push((pc_id, Command::RaiseBow));
                 }
+                (
+                    ActionState::AimingWithBowUp,
+                    ShootMode::Normal,
+                    Some(OrderType::AimingWithBowUp),
+                ) => {
+                    raise_lower.push((pc_id, Command::LowerBow));
+                }
+                _ => {}
             }
         }
 

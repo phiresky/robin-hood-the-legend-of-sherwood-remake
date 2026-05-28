@@ -365,17 +365,25 @@ fn is_shoot_order(ot: OrderType) -> bool {
 fn is_bow_transition_order(ot: OrderType) -> bool {
     matches!(
         ot,
-        OrderType::TransitionRaisingBow
+        OrderType::TransitionEquipBow
+            | OrderType::TransitionRaisingBow
             | OrderType::TransitionLoweringBow
             | OrderType::TransitionRaisingBowLeaningOut
             | OrderType::TransitionLoweringBowLeaningOut
             | OrderType::TransitionLoadingBow
+            | OrderType::TransitionUnloadBow
             | OrderType::TransitionUnequipBow
+            | OrderType::TransitionEquipBowAnonymous
             | OrderType::TransitionRaisingBowAnonymous
             | OrderType::TransitionLoweringBowAnonymous
             | OrderType::TransitionLoadingBowAnonymous
+            | OrderType::TransitionUnloadBowAnonymous
             | OrderType::TransitionUnequipBowAnonymous
     )
+}
+
+fn is_active_bow_order(ot: OrderType) -> bool {
+    is_shoot_order(ot) || is_bow_transition_order(ot)
 }
 
 fn apply_bow_transition_state_side_effect(
@@ -435,6 +443,11 @@ fn apply_bow_transition_state_side_effect(
             if entity.element_data().posture != Posture::AnonymousArcher {
                 entity.element_data_mut().posture = Posture::Upright;
             }
+            Some(ActionState::Waiting)
+        }
+        OrderType::TransitionUnloadBow | OrderType::TransitionUnloadBowAnonymous
+            if motion == SpriteMotionState::Start =>
+        {
             Some(ActionState::Waiting)
         }
         _ => None,
@@ -1720,6 +1733,24 @@ pub fn tick_bow_shots(
             Some(o) => (o.order_type, Some(o.order_id)),
             None => continue,
         };
+        if !is_active_bow_order(current_order_type) {
+            let bow_order_pending = sequence_manager
+                .get_element(shot_seq_id, shot_elem_idx)
+                .map(|e| {
+                    e.orders
+                        .iter()
+                        .any(|order| is_active_bow_order(order.order_type))
+                })
+                .unwrap_or(false);
+            if bow_order_pending {
+                // C++ `Translate(SHOOT_BOW)` appends bow orders after
+                // any pre-command setup transitions already owned by the
+                // same sequence element. The active shot has been
+                // registered, but the actor must finish those setup orders
+                // before the bow runner starts driving the shoot body.
+                continue;
+            }
+        }
 
         let mut direction = direction;
         let mut frame_progression = crate::sprite::FrameProgression::Default;
@@ -3962,14 +3993,62 @@ mod tests {
             &mut 1u32,
         );
         assert_eq!(result, BeginShotResult::Started);
+        let orders = &mut sm.get_element_mut(seq_id, elem_idx).unwrap().orders;
+        orders.clear();
+        let mut next_order_id = 1000;
+        orders.push_back(Order::new(
+            OrderType::WalkingUpright,
+            0.0,
+            0.0,
+            crate::order::alloc_order_id(&mut next_order_id),
+        ));
+
+        let _ = tick_bow_shots(&mut entities, &mut sm);
+    }
+
+    #[test]
+    fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            None,
+            &mut 1u32,
+        );
+        assert_eq!(result, BeginShotResult::Started);
+        let mut next_order_id = 1000;
         sm.get_element_mut(seq_id, elem_idx)
             .unwrap()
             .orders
-            .front_mut()
-            .unwrap()
-            .order_type = OrderType::WalkingUpright;
+            .push_front(Order::new(
+                OrderType::TransitionWaitingUprightBoredWaitingUpright,
+                0.0,
+                0.0,
+                crate::order::alloc_order_id(&mut next_order_id),
+            ));
 
-        let _ = tick_bow_shots(&mut entities, &mut sm);
+        let events = tick_bow_shots(&mut entities, &mut sm);
+
+        assert!(events.fired.is_empty());
+        assert!(events.completed.is_empty());
+        assert!(
+            entities[0]
+                .as_ref()
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .is_active(),
+            "pre-shoot setup orders should not cancel the pending bow shot"
+        );
     }
 
     #[test]
@@ -5449,6 +5528,36 @@ mod tests {
             pc.actor_data().unwrap().action_state,
             ActionState::AimingWithBow,
             "C++ TransitionEquipBow sets AimingWithBow on RHMOTION_START"
+        );
+    }
+
+    #[test]
+    fn equip_and_unload_are_active_bow_transition_orders() {
+        assert!(is_bow_transition_order(OrderType::TransitionEquipBow));
+        assert!(is_bow_transition_order(
+            OrderType::TransitionEquipBowAnonymous
+        ));
+        assert!(is_bow_transition_order(OrderType::TransitionUnloadBow));
+        assert!(is_bow_transition_order(
+            OrderType::TransitionUnloadBowAnonymous
+        ));
+    }
+
+    #[test]
+    fn unload_bow_sets_waiting_on_animation_start() {
+        let mut pc = make_pc(0.0, 0.0);
+        pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowDown;
+
+        apply_bow_transition_state_side_effect(
+            &mut pc,
+            OrderType::TransitionUnloadBow,
+            SpriteMotionState::Start,
+        );
+
+        assert_eq!(
+            pc.actor_data().unwrap().action_state,
+            ActionState::Waiting,
+            "C++ TransitionUnloadBow sets Waiting on RHMOTION_START"
         );
     }
 
