@@ -1708,7 +1708,14 @@ pub fn tick_bow_shots(
             }
             direction = entity.element_data().direction();
         }
-        let dir_u16 = u16::try_from(direction).unwrap_or(0);
+        let Ok(dir_u16) = u16::try_from(direction) else {
+            tracing::warn!(
+                shooter = idx,
+                direction,
+                "Bow shot tick skipped: invalid shooter direction"
+            );
+            continue;
+        };
 
         // Drive the current animation through the sprite.
         //
