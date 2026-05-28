@@ -3251,10 +3251,9 @@ pub fn tick_arrows(
         // aim for the belt, stones aim for the eyes.
         let uses_eyes_anchor = matches!(proj.object.object_type, ObjectType::Stone);
 
-        // Skip the segment check for a stationary projectile on the
-        // first frame (no velocity yet → zero range).  In that case
-        // fall back to a simple point-to-point test on the aim anchor.
-        // This keeps the "spawn at target" test scaffolding working.
+        // C++ `FindHumanVictim` returns no human victim when the
+        // projectile is not moving.  FX target handling is separate in
+        // `FindTargetVictim` and keeps the point fallback below.
         let use_range_gate = range > 0.1;
 
         let mut hit_victim = None;
@@ -3279,7 +3278,7 @@ pub fn tick_arrows(
                 old_to_target <= range
                     && point_to_line_distance(anchor, arrow_old, arrow_new) <= HIT_DISTANCE
             } else {
-                distance(arrow_new, anchor) <= HIT_DISTANCE
+                false
             };
             if hit {
                 hit_victim = Some(snap.id);
@@ -4051,6 +4050,61 @@ mod tests {
         assert!(
             results.iter().any(|r| r.hit_target == Some(EntityId(2))),
             "arrow should continue to the valid victim behind the filtered candidate"
+        );
+    }
+
+    #[test]
+    fn tick_arrows_stationary_projectile_does_not_hit_human() {
+        let mut arrow_element = ElementData {
+            kind: ElementKind::ObjectProjectile,
+            active: true,
+            ..ElementData::default()
+        };
+        arrow_element.set_position_map(ElemPoint2D { x: 50.0, y: -25.0 });
+        arrow_element.set_position(Point3D {
+            x: 50.0,
+            y: 0.0,
+            z: 25.0,
+        });
+        let arrow = Entity::Projectile(ElementProjectile {
+            element: arrow_element,
+            object: ObjectData {
+                associated_action: Action::Bow,
+                object_type: ObjectType::Arrow,
+                animation: Animation::ObjectFlying,
+                quantity: 1,
+                reference: Some(EntityId(1)),
+                ..ObjectData::default()
+            },
+            projectile: ProjectileData {
+                shooter: Some(EntityId(0)),
+                flying: true,
+                trajectory: vec![TrajectoryPoint {
+                    position: Point3D {
+                        x: 50.0,
+                        y: 0.0,
+                        z: 25.0,
+                    },
+                    time: 1,
+                }],
+                damage: 30,
+                ..ProjectileData::default()
+            },
+        });
+        let mut entities: Vec<Option<Entity>> = vec![
+            Some(make_pc(0.0, 0.0)),
+            Some(make_soldier_with_camp(
+                50.0,
+                0.0,
+                crate::element::Camp::Lacklandists,
+            )),
+            Some(arrow),
+        ];
+
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        assert!(
+            results.iter().all(|r| r.hit_target.is_none()),
+            "C++ FindHumanVictim returns no victim when projectile is not moving"
         );
     }
 
