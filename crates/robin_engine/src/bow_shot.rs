@@ -1394,20 +1394,19 @@ pub fn begin_bow_shot(
         return BeginShotResult::Impossible;
     }
 
-    // Read target position for distance computation.
+    // Read target ground position for direction/order selection.
     let (tx, ty) = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+        Some(e) if e.is_fx_target() => {
+            let pos = e
+                .compute_target_center()
+                .unwrap_or_else(|| e.element_data().position());
+            // Rust 3D sprite points include elevation in Y; C++ bow launch
+            // direction uses the target projected back onto the ground plane.
+            (pos.x, pos.y - pos.z)
+        }
         Some(e) => {
-            let pos = if e.is_fx_target() {
-                e.compute_target_center()
-                    .unwrap_or_else(|| e.element_data().position())
-            } else {
-                Point3D {
-                    x: e.element_data().position_map().x,
-                    y: e.element_data().position_map().y,
-                    z: e.element_data().position().z,
-                }
-            };
-            (pos.x, pos.y)
+            let position_map = e.element_data().position_map();
+            (position_map.x, position_map.y)
         }
         None => return BeginShotResult::Impossible,
     };
@@ -3649,6 +3648,42 @@ mod tests {
                 .active_shot
                 .target,
             Some(EntityId(1))
+        );
+    }
+
+    #[test]
+    fn begin_bow_shot_faces_arrow_fx_target_ground_projection() {
+        let mut target = make_arrow_target(50.0, 120.0);
+        target.element_data_mut().set_position(Point3D {
+            x: 50.0,
+            y: 120.0,
+            z: 100.0,
+        });
+        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 100.0)), Some(target)];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            None,
+            &mut 1u32,
+        );
+
+        assert_eq!(result, BeginShotResult::Started);
+        let direction = entities[0].as_ref().unwrap().element_data().direction();
+        assert_eq!(
+            direction,
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
+        );
+        assert_ne!(
+            direction,
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
         );
     }
 

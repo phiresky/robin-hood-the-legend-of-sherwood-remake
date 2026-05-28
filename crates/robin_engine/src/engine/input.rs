@@ -45,6 +45,13 @@ pub enum BowTarget {
     Invalid,
 }
 
+#[inline]
+fn bow_ground_y(point: crate::element::Point3D) -> f32 {
+    // Rust stores sprite-space 3D points with elevation already folded into Y.
+    // C++ projects bow targets to ground before direction/range checks.
+    point.y - point.z
+}
+
 /// Output of `compute_trajectory_preview*`. Host applies this to its
 /// own `valid_trajectory` / `trajectory_preview_*` fields after the
 /// readonly computation returns. See `Host` in `robin_rs::game` for
@@ -1576,6 +1583,8 @@ impl EngineInner {
         let hand_point = pc
             .compute_hand_point(None)
             .unwrap_or(pc.element_data().position());
+        let hand_ground_y = bow_ground_y(hand_point);
+        let target_ground_y = bow_ground_y(target_point);
 
         let rel_height = hand_point.z - target_point.z;
 
@@ -1583,7 +1592,7 @@ impl EngineInner {
         // targets use a doubled radius.
         let in_range = {
             let dx = target_point.x - hand_point.x;
-            let dy = (target_point.y - hand_point.y) * INVERSE_ASPECT_RATIO_PROJ;
+            let dy = (target_ground_y - hand_ground_y) * INVERSE_ASPECT_RATIO_PROJ;
             let mut radius = if rel_height > 0.0 {
                 max_range + rel_height * THROW_ANGLE_BOW.tan()
             } else {
@@ -1601,7 +1610,7 @@ impl EngineInner {
 
         // Pick the shoot mode from 3D distance using the true 3D norm.
         let dx = target_point.x - hand_point.x;
-        let dy = target_point.y - hand_point.y;
+        let dy = target_ground_y - hand_ground_y;
         let dz = target_point.z - hand_point.z;
         let dist_3d = (dx * dx + dy * dy + dz * dz).sqrt();
         let mut shoot_mode = bow_state.get_shoot_mode_for_distance(bow_profile, dist_3d);
@@ -2463,7 +2472,7 @@ impl EngineInner {
 
         let ground_pt = Point2D {
             x: target_3d.x,
-            y: target_3d.y,
+            y: bow_ground_y(target_3d),
         };
 
         let ids = self.seats[0].selection.clone();
