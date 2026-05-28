@@ -1411,19 +1411,46 @@ impl EnemyAi {
                         self.base.say(Remark::OfficerAsksWhatsup);
                     }
                     StimulusType::EventTimer => {
-                        // The reference checks IsDetecting180Degrees
-                        // and dead/unconscious. We approximate with
-                        // camp_soldiers state check.
                         let ant = tick
                             .camp_soldiers
                             .iter()
                             .find(|cs| cs.handle == self.base.antagonist);
                         if let Some(ant) = ant {
-                            if ant.is_able_to_fight && ant.ai_state == AiState::Seeking {
+                            let alive_and_conscious = ctx
+                                .entity_view(ant.handle)
+                                .is_some_and(|view| !view.is_dead && !view.is_unconscious);
+                            let visible = alive_and_conscious
+                                && self.is_detecting_180_degrees(ant.handle as HumanHandle, ctx);
+                            if visible && ant.ai_state == AiState::Seeking {
                                 self.missed_soldier_timer = 0;
                                 self.base.launch_timer(30, ctx.frame);
-                            } else {
+                            } else if visible {
                                 self.return_to_duty(DutyFlags::empty(), ctx, tick);
+                            } else {
+                                self.missed_soldier_timer += 1;
+                                if self.missed_soldier_timer > 100 {
+                                    // Enough waiting — seek ourselves or alert soldiers
+                                    if !self.alert_soldiers(
+                                        ctx.position,
+                                        0,
+                                        global,
+                                        grid,
+                                        ctx,
+                                        tick,
+                                    ) {
+                                        self.seek_area(
+                                            ctx.position,
+                                            parameters_ai::AI_DEAD_BODY_SEEK_RADIUS as u16,
+                                            SeekFlags::LOCATION_FIRST | self.seek_flags,
+                                            0,
+                                            global,
+                                            ctx,
+                                            tick,
+                                        );
+                                    }
+                                } else {
+                                    self.base.launch_timer(30, ctx.frame);
+                                }
                             }
                         } else {
                             self.missed_soldier_timer += 1;
