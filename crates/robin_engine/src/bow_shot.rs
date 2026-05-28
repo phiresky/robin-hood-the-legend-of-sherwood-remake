@@ -2698,6 +2698,18 @@ fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
     }
 }
 
+fn apply_arrow_falling_sprite_visual(proj: &mut ElementProjectile) {
+    // C++ `RHElementArrow::Refresh` renders falling arrows with
+    // `ForceSpriteRow(mubFallingDirection)`,
+    // `ForceSprite(mubFallingDirection, (rand() % 3) + 3)`, then rotates
+    // the row by -2 sectors for the next refresh.
+    let row = proj.projectile.falling_direction;
+    let frame = (crate::sim_rng::u32(0..3) as u16) + 3;
+    proj.element.sprite.force_sprite_row_raw(row);
+    proj.element.sprite.force_sprite(row, frame);
+    proj.projectile.falling_direction = (row + 14) % 16;
+}
+
 pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_by_shield: bool) {
     let sector = current_arrow_orientation_sector(proj);
     proj.projectile.falling = true;
@@ -2742,6 +2754,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
     // recomputing the trajectory, so the ricochet visibly advances on
     // the same tick as the shield/target impact.
     proj.advance_trajectory_one_frame();
+    apply_arrow_falling_sprite_visual(proj);
 }
 
 /// Advance every arrow projectile by one frame along its precomputed
@@ -3137,15 +3150,7 @@ pub fn tick_arrows(
         // directional sector row and the vertical-pitch frame.
         if matches!(proj.object.object_type, ObjectType::Arrow) {
             if proj.projectile.falling {
-                // Render on row = falling direction, frame =
-                // `(rand() % 3) + 3` (a three-frame tumble cycle),
-                // then rotate the direction by -2 sectors (i.e. +14
-                // mod 16) for next tick.
-                let row = proj.projectile.falling_direction;
-                let frame = (crate::sim_rng::u32(0..3) as u16) + 3;
-                proj.element.sprite.force_sprite_row_raw(row);
-                proj.element.sprite.force_sprite(row, frame);
-                proj.projectile.falling_direction = (row + 14) % 16;
+                apply_arrow_falling_sprite_visual(proj);
             } else if vx != 0.0 || vy != 0.0 {
                 let norm_sq = vx * vx + vy * vy + vz * vz;
                 if norm_sq > 0.0 {
@@ -4990,151 +4995,160 @@ mod tests {
     /// despawn on the same tick.
     #[test]
     fn tick_arrows_shield_hit_deflects_and_keeps_flying() {
-        use crate::element::ActionState;
+        crate::sim_rng::with_seed(1, || {
+            use crate::element::ActionState;
 
-        // Shield holder facing east (sector 4 = +X), toward the arrow
-        // which is flying westward from bow_point (100,…) to target
-        // (50,…).  The shield quad projects forward in the holder's
-        // facing direction, so the arrow's path intersects it.
-        let mut shield_holder = make_soldier(50.0, 0.0);
-        {
-            let actor = shield_holder.actor_data_mut().unwrap();
-            actor.action_state = ActionState::HoldingShield;
-            let params = shield_params_for_soldier(20, 40);
-            let obs = compute_shield_obstacle(ElemPoint2D { x: 50.0, y: 0.0 }, 0.0, 4, &params);
-            actor.shield_obstacle = Some(obs);
-        }
-        shield_holder.element_data_mut().set_direction_instantly(4);
+            // Shield holder facing east (sector 4 = +X), toward the arrow
+            // which is flying westward from bow_point (100,…) to target
+            // (50,…).  The shield quad projects forward in the holder's
+            // facing direction, so the arrow's path intersects it.
+            let mut shield_holder = make_soldier(50.0, 0.0);
+            {
+                let actor = shield_holder.actor_data_mut().unwrap();
+                actor.action_state = ActionState::HoldingShield;
+                let params = shield_params_for_soldier(20, 40);
+                let obs = compute_shield_obstacle(ElemPoint2D { x: 50.0, y: 0.0 }, 0.0, 4, &params);
+                actor.shield_obstacle = Some(obs);
+            }
+            shield_holder.element_data_mut().set_direction_instantly(4);
 
-        // Arrow flying from +X toward the shield holder at Z=40 —
-        // mid-shield height for `shield_params_for_soldier(20, 40)`
-        // which places the quad between Z=30 and Z=50.  The isometric
-        // projection requires `world.y = map_y + z`, so for the arrow
-        // to render at the holder's map-space column (map_y=0) it
-        // needs world.y = 40 — see `compute_bow_point` which adds
-        // elevation into the hand Y the same way.
-        let trajectory = vec![TrajectoryPoint {
-            position: Point3D {
-                x: 50.0,
-                y: 40.0,
-                z: 40.0,
-            },
-            time: 2,
-        }];
-        let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
-            bow_point: Point3D {
-                x: 100.0,
-                y: 40.0,
-                z: 40.0,
-            },
-            target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
-            trajectory,
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: None,
-        });
+            // Arrow flying from +X toward the shield holder at Z=40 —
+            // mid-shield height for `shield_params_for_soldier(20, 40)`
+            // which places the quad between Z=30 and Z=50.  The isometric
+            // projection requires `world.y = map_y + z`, so for the arrow
+            // to render at the holder's map-space column (map_y=0) it
+            // needs world.y = 40 — see `compute_bow_point` which adds
+            // elevation into the hand Y the same way.
+            let trajectory = vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 40.0,
+                    z: 40.0,
+                },
+                time: 2,
+            }];
+            let arrow = spawn_arrow(SpawnArrowParams {
+                shooter: EntityId(0),
+                bow_point: Point3D {
+                    x: 100.0,
+                    y: 40.0,
+                    z: 40.0,
+                },
+                target: EntityId(1),
+                target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+                trajectory,
+                damage: 30,
+                layer: 0,
+                lands_in_hole: false,
+                initial_velocity: None,
+            });
 
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(100.0, 0.0)), Some(shield_holder), Some(arrow)];
+            let mut entities: Vec<Option<Entity>> =
+                vec![Some(make_pc(100.0, 0.0)), Some(shield_holder), Some(arrow)];
 
-        // Advance ticks until the shield_hit fires.
-        let mut shield_hit = None;
-        let mut despawn_seen = false;
-        for _ in 0..10 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-                if let Some(holder) = r.shield_hit {
-                    shield_hit = Some(holder);
-                    despawn_seen = r.despawn;
+            // Advance ticks until the shield_hit fires.
+            let mut shield_hit = None;
+            let mut despawn_seen = false;
+            for _ in 0..10 {
+                for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
+                    if let Some(holder) = r.shield_hit {
+                        shield_hit = Some(holder);
+                        despawn_seen = r.despawn;
+                    }
+                }
+                if shield_hit.is_some() {
+                    break;
                 }
             }
-            if shield_hit.is_some() {
-                break;
-            }
-        }
-        assert_eq!(
-            shield_hit,
-            Some(EntityId(1)),
-            "arrow must report shield hit on the holder"
-        );
-        assert!(
-            !despawn_seen,
-            "shield-hit arrow keeps flying (falling) on same tick"
-        );
+            assert_eq!(
+                shield_hit,
+                Some(EntityId(1)),
+                "arrow must report shield hit on the holder"
+            );
+            assert!(
+                !despawn_seen,
+                "shield-hit arrow keeps flying (falling) on same tick"
+            );
 
-        // The projectile should be flagged as falling, and the hit
-        // check must now skip (falling arrows pass through bodies).
-        match entities[2].as_ref().unwrap() {
-            Entity::Projectile(p) => {
-                assert!(
-                    p.projectile.falling,
-                    "shield deflection flips arrow into falling state"
-                );
-                assert!(
-                    p.projectile.flying,
-                    "falling arrow still visually flying (arcs to ground)"
-                );
-                assert_ne!(
-                    p.element.position(),
-                    (Point3D {
-                        x: 50.0,
-                        y: 40.0,
-                        z: 40.0
-                    }),
-                    "C++ MakeFallingDown advances the falling trajectory immediately"
-                );
+            // The projectile should be flagged as falling, and the hit
+            // check must now skip (falling arrows pass through bodies).
+            match entities[2].as_ref().unwrap() {
+                Entity::Projectile(p) => {
+                    assert!(
+                        p.projectile.falling,
+                        "shield deflection flips arrow into falling state"
+                    );
+                    assert!(
+                        p.projectile.flying,
+                        "falling arrow still visually flying (arcs to ground)"
+                    );
+                    assert_ne!(
+                        p.element.position(),
+                        (Point3D {
+                            x: 50.0,
+                            y: 40.0,
+                            z: 40.0
+                        }),
+                        "C++ MakeFallingDown advances the falling trajectory immediately"
+                    );
+                }
+                _ => panic!("expected projectile"),
             }
-            _ => panic!("expected projectile"),
-        }
+        });
     }
 
     #[test]
     fn non_shield_arrow_ricochet_advances_immediately() {
-        let trajectory = vec![TrajectoryPoint {
-            position: Point3D {
-                x: 50.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            time: 2,
-        }];
-        let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
-            bow_point: Point3D {
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
-            trajectory,
-            damage: 30,
-            layer: 0,
-            lands_in_hole: false,
-            initial_velocity: None,
+        crate::sim_rng::with_seed(1, || {
+            let trajectory = vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                time: 2,
+            }];
+            let arrow = spawn_arrow(SpawnArrowParams {
+                shooter: EntityId(0),
+                bow_point: Point3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                target: EntityId(1),
+                target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+                trajectory,
+                damage: 30,
+                layer: 0,
+                lands_in_hole: false,
+                initial_velocity: None,
+            });
+            let mut projectile = match arrow {
+                Entity::Projectile(p) => p,
+                _ => panic!("expected arrow projectile"),
+            };
+            projectile.element.set_direction_instantly(4);
+            let impact_position = projectile.element.position();
+
+            make_arrow_falling_down(&mut projectile, false);
+
+            assert!(projectile.projectile.falling);
+            assert!(projectile.projectile.flying);
+            assert_eq!(
+                projectile.element.sprite.current_row, 12,
+                "impact-frame render uses the first falling sector"
+            );
+            assert!((3..=5).contains(&projectile.element.sprite.current_frame));
+            assert_eq!(
+                projectile.projectile.falling_direction, 10,
+                "falling refresh rotates the next tumble sector by -2"
+            );
+            assert_ne!(
+                projectile.element.position(),
+                impact_position,
+                "C++ MakeFallingDown calls Hourglass for armor ricochets too"
+            );
         });
-        let mut projectile = match arrow {
-            Entity::Projectile(p) => p,
-            _ => panic!("expected arrow projectile"),
-        };
-        projectile.element.set_direction_instantly(4);
-        let impact_position = projectile.element.position();
-
-        make_arrow_falling_down(&mut projectile, false);
-
-        assert!(projectile.projectile.falling);
-        assert!(projectile.projectile.flying);
-        assert_eq!(
-            projectile.projectile.falling_direction, 12,
-            "non-shield MakeFallingDown inverts the current sector"
-        );
-        assert_ne!(
-            projectile.element.position(),
-            impact_position,
-            "C++ MakeFallingDown calls Hourglass for armor ricochets too"
-        );
     }
 
     /// An arrow that runs out of trajectory without hitting anything
