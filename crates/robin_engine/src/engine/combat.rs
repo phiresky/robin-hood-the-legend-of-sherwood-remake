@@ -302,16 +302,21 @@ impl EngineInner {
                 // soldier whose LOS of the archer is now occluded by a
                 // wall would still raise his shield — the audit-flagged
                 // "soldier cheats" case.
-                let target_detects_shooter = self
-                    .get_entity(result.target)
-                    .and_then(|e| e.npc_data())
-                    .map(|npc| {
-                        npc.detectable_lists.iter().any(|list| {
+                let target_detects_shooter =
+                    match self.get_entity(result.target).and_then(|e| e.npc_data()) {
+                        Some(npc) => npc.detectable_lists.iter().any(|list| {
                             list.iter()
                                 .any(|d| d.element == Some(result.shooter) && d.seen_now)
-                        })
-                    })
-                    .unwrap_or(false);
+                        }),
+                        None => {
+                            tracing::warn!(
+                                target = ?result.target,
+                                shooter = ?result.shooter,
+                                "Bow shot shield warning skipped: shield soldier missing NPC data"
+                            );
+                            false
+                        }
+                    };
                 if target_detects_shooter {
                     self.dispatch_ai_stimulus(
                         result.target,
@@ -787,10 +792,17 @@ impl EngineInner {
     /// Returns `false` for non-PCs or if campaign isn't loaded.
     pub(super) fn has_ammo(&self, actor_id: EntityId, action: crate::profiles::Action) -> bool {
         match self.get_entity(actor_id) {
-            Some(Entity::Pc(pc)) => self
-                .pc_description_for_pc_data(&pc.pc)
-                .map(|pc_desc| pc_desc.status.get_ammo(action) > 0)
-                .unwrap_or(true),
+            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+                Some(pc_desc) => pc_desc.status.get_ammo(action) > 0,
+                None => {
+                    tracing::warn!(
+                        actor = ?actor_id,
+                        ?action,
+                        "has_ammo: PC has no campaign status"
+                    );
+                    false
+                }
+            },
             _ => true, // non-PCs don't track ammo
         }
     }
