@@ -2371,7 +2371,8 @@ impl EnemyAi {
                     // Request the engine to enter swordfight with the new
                     // target. The engine picks this up after the AI
                     // tick.
-                    self.base.pending_enter_swordfight = Some(nearest_enemy_of_solo);
+                    self.base.pending_enter_swordfight =
+                        Some(EnterSwordfightRequest::Engage(nearest_enemy_of_solo));
                     self.base.primary_target = nearest_enemy_of_solo;
                     return;
                 }

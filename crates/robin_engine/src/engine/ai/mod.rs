@@ -4165,38 +4165,36 @@ impl EngineInner {
         }
 
         // Process enter_swordfight.  Two shapes:
-        //   * `Some(handle)` with `handle != 0` — engagement against a
-        //     specific opponent.  Run the full
-        //     `enter_swordfight_with_jump_line` path so the opponent
-        //     lists, jump-line links, and `prepare_to_enter_swordfight`
-        //     `stop(Preference)` cascade fire correctly.
-        //   * `Some(0)` — raise-sword pose without engagement.
-        //     `go_to`'s `GOTO_SWORD` arm sets `OPPONENT = 0`, plus the
-        //     `AttackingApproachToObserve` and menace-effect-of-hit
-        //     branches need a sword pose held without an active fight.
-        //     Launch a bare `Command::EnterSwordfight` element so
-        //     `dispatch_enter_swordfight` queues the
-        //     `TransitionRaisingSword` order and skips the
-        //     opponent-bookkeeping path (which early-rejects on
-        //     `opponent.0 == 0`).
-        if let Some(target_handle) = enter {
-            if target_handle == 0 {
-                let elem = crate::sequence::SequenceElement::new_generic(
-                    1,
-                    crate::element::Command::EnterSwordfight,
-                    Some(npc_id),
-                );
-                self.launch_element(elem);
-            } else {
-                let target_id = EntityId(target_handle);
-                let aggressor_jl = enter_jl.and_then(crate::jump_line::JumpLineIndex::new);
-                self.enter_swordfight_with_jump_line(
-                    assets,
-                    npc_id,
-                    target_id,
-                    false,
-                    aggressor_jl,
-                );
+        //   * Engage(target) — engagement against a specific opponent.
+        //     Run the full `enter_swordfight_with_jump_line` path so the
+        //     opponent lists, jump-line links, and
+        //     `prepare_to_enter_swordfight` `stop(Preference)` cascade
+        //     fire correctly.
+        //   * RaiseSword — sword pose without engagement. `go_to`'s
+        //     `GOTO_SWORD` arm, `AttackingApproachToObserve`, and
+        //     menace-effect-of-hit need a sword pose held without an
+        //     active fight.
+        if let Some(request) = enter {
+            match request {
+                crate::ai::EnterSwordfightRequest::RaiseSword => {
+                    let elem = crate::sequence::SequenceElement::new_generic(
+                        1,
+                        crate::element::Command::EnterSwordfight,
+                        Some(npc_id),
+                    );
+                    self.launch_element(elem);
+                }
+                crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
+                    let target_id = EntityId(target_handle);
+                    let aggressor_jl = enter_jl.and_then(crate::jump_line::JumpLineIndex::new);
+                    self.enter_swordfight_with_jump_line(
+                        assets,
+                        npc_id,
+                        target_id,
+                        false,
+                        aggressor_jl,
+                    );
+                }
             }
         }
 
@@ -4463,10 +4461,8 @@ impl EngineInner {
         //     `(seeker_rank == OFFICER || cs != antagonist)`,
         //   - and detects either charly or self within 180°,
         // dispatches `CALL_CHARLY_IS_BACK` carrying charly's handle.
-        // The pending field's payload selects charly:
-        //   `Some(0)`      → charly = self (the seeker-side shorthand);
-        //   `Some(handle)` → charly = `handle` (the parametric form
-        //                     used by `event_sees_charly_standard_procedure`).
+        // The pending field's payload selects either self or an
+        // explicit Charly handle.
         let unalert = if let Some(Some(Entity::Soldier(s))) =
             self.entities.get_mut(npc_id.0 as usize)
             && let Some(ai) = s.npc.ai_brain.base_mut()
@@ -4491,11 +4487,9 @@ impl EngineInner {
                 ),
                 _ => (None, None, crate::profiles::ProfileRank::None, 0),
             };
-            // Resolve `charly`: 0 ≡ "self" (the seeker is the charly).
-            let charly_handle = if target_charly == 0 {
-                npc_id.0
-            } else {
-                target_charly
+            let charly_handle = match target_charly {
+                crate::ai::CharlySeekerTarget::SelfNpc => npc_id.0,
+                crate::ai::CharlySeekerTarget::Npc(handle) => handle,
             };
             let charly_pos = self
                 .entities

@@ -34,6 +34,41 @@ pub type ObjectHandle = u32;
 /// Opaque handle to a door.
 pub type DoorHandle = u32;
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum CharlySeekerTarget {
+    SelfNpc,
+    Npc(NpcHandle),
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum AiStateChangeSource {
+    SelfActor,
+    Null,
+    Human(HumanHandle),
+}
+
+impl AiStateChangeSource {
+    pub fn from_optional_human(handle: HumanHandle) -> Self {
+        if handle == 0 {
+            Self::Null
+        } else {
+            Self::Human(handle)
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum EnterSwordfightRequest {
+    RaiseSword,
+    Engage(HumanHandle),
+}
+
 pub use crate::position_interface::SectorHandle;
 
 // NpcHandle is just a `u32` alias and EntityId is `EntityId(u32)`; the
@@ -4543,8 +4578,9 @@ pub struct AiController {
     /// already tracking.
     pub pending_blink_enemy_specific: Vec<crate::element::EntityId>,
 
-    /// AI requests that the engine call `enter_swordfight(me, target)`.
-    pub pending_enter_swordfight: Option<HumanHandle>,
+    /// AI requests that the engine either raise this NPC's sword or call
+    /// `enter_swordfight(me, target)`.
+    pub pending_enter_swordfight: Option<EnterSwordfightRequest>,
     /// Jump-line index for table swordfight, passed alongside
     /// `pending_enter_swordfight`. `None` = normal swordfight.
     pub pending_enter_swordfight_jump_line: Option<u32>,
@@ -4578,14 +4614,8 @@ pub struct AiController {
     /// or the seeker (`me`) within 180°. Deferred via this option
     /// because the walk needs the engine's NPC table.
     ///
-    /// `None`         — no request pending.
-    /// `Some(0)`      — sweep with `charly == me` (shorthand used by
-    ///                  the seeker-side call sites in the Seeking
-    ///                  substates).
-    /// `Some(handle)` — sweep with an explicit charly handle (used by
-    ///                  `EventSeesCharlyStandardProcedure` once that
-    ///                  path is ported through).
-    pub pending_unalert_near_charly_seekers: Option<NpcHandle>,
+    /// `None` — no request pending.
+    pub pending_unalert_near_charly_seekers: Option<CharlySeekerTarget>,
 
     /// AI requests the engine refill the bow ammo to `MAX_NPC_ARROWS`.
     /// Triggered when a fleeing archer reaches an arrow-reserves point.
@@ -4632,23 +4662,23 @@ pub struct AiController {
     /// `(new_state, source)` where `source` mirrors the explicit
     /// argument:
     ///
-    /// - `None` — pass `me` (the script-side handle for the actor
+    /// - `SelfActor` — pass `me` (the script-side handle for the actor
     ///   itself). Used for Sleeping / Default / Wondering / Seeking
     ///   transitions (friendly AI also routes Default/Wondering/
     ///   Seeking/Sleeping the same way).
-    /// - `Some(h)` — pass the primary-target handle (0-based
-    ///   `HumanHandle`). `Some(0)` means a `NULL` source
-    ///   (Attacking/Menacing/Fleeing without a primary target).
+    /// - `Null` — pass a null source for Attacking/Menacing/Fleeing
+    ///   without a primary target.
+    /// - `Human(h)` — pass a primary-target handle.
     ///
     /// The engine drains the queue after the AI tick via
     /// `dispatch_ai_state_change_notifications`, translating
-    /// `Some(h)` to an actor script handle (`Some(0) → 0`).
+    /// source variants to actor script handles.
     ///
     /// Capturing each transition synchronously inside `set_state` gives
     /// per-substate firing — every intra-think transition produces a
     /// notification, not just the final delta against `start_think`'s
     /// snapshot.
-    pub pending_state_change_notifications: Vec<(AiState, Option<HumanHandle>)>,
+    pub pending_state_change_notifications: Vec<(AiState, AiStateChangeSource)>,
 
     /// AI requests that the engine fire `SlowlyOpenEyes()` on this
     /// NPC: reset `view_radius` to 5, point `view_radius_goal` at the
@@ -7246,8 +7276,6 @@ impl AiController {
     ///
     ///   * `GOTO_SWORD` set, not currently in a sword action-state →
     ///     prepend `ENTER_SWORDFIGHT` (raise-sword pose, no opponent).
-    ///     Sets `pending_enter_swordfight = Some(0)` to mean "no
-    ///     specific target".
     ///   * `GOTO_SWORD` not set, currently in a sword action-state →
     ///     prepend `QUIT_SWORDFIGHT` (sheath sword + clear opponents).
     ///   * `GOTO_SWORD` not set, currently `Menacing` → prepend
@@ -7260,9 +7288,9 @@ impl AiController {
         let action_state = ctx.self_action_state;
         if flags.contains(GotoFlags::SWORD) {
             // GOTO_SWORD branch — already-in-sword is a no-op,
-            // otherwise prepend ENTER_SWORDFIGHT with opponent=0.
+            // otherwise prepend ENTER_SWORDFIGHT without an opponent.
             if !action_state.is_sword() && self.pending_enter_swordfight.is_none() {
-                self.pending_enter_swordfight = Some(0);
+                self.pending_enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
                 self.pending_enter_swordfight_jump_line = None;
             }
         } else if action_state.is_sword() {

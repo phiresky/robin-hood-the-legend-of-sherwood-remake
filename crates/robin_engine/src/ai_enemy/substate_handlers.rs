@@ -2797,7 +2797,7 @@ impl EnemyAi {
                     self.base.stop_all();
                     // Launch EnterSwordfight with opponent=0 (just
                     // rises the sword pose).
-                    self.base.pending_enter_swordfight = Some(0);
+                    self.base.pending_enter_swordfight = Some(EnterSwordfightRequest::RaiseSword);
                     self.base.pending_enter_swordfight_jump_line = None;
                     self.set_state(AiState::Attacking, Substate::AttackingObserve);
                     self.base.set_emoticon(EmoticonType::None);
@@ -4634,8 +4634,8 @@ impl EnemyAi {
                     // `pending_unalert_near_charly_seekers` — the
                     // engine walks all soldiers and dispatches
                     // CallCharlyIsBack to ones detecting me 180°.
-                    // `Some(0)` is the shorthand for `charly == me`.
-                    self.base.pending_unalert_near_charly_seekers = Some(0);
+                    self.base.pending_unalert_near_charly_seekers =
+                        Some(CharlySeekerTarget::SelfNpc);
                     self.base.launch_timer(10, ctx.frame);
                 }
             }
@@ -4666,7 +4666,8 @@ impl EnemyAi {
                         self.base.launch_timer(10, ctx.frame);
                     } else {
                         // unalert_all_near_charly_seekers(me).
-                        self.base.pending_unalert_near_charly_seekers = Some(0);
+                        self.base.pending_unalert_near_charly_seekers =
+                            Some(CharlySeekerTarget::SelfNpc);
                         self.base.launch_timer(10, ctx.frame);
                     }
                 }
@@ -4688,7 +4689,8 @@ impl EnemyAi {
                         .unwrap_or(false);
                     if waits_for_charly {
                         // unalert_all_near_charly_seekers(me).
-                        self.base.pending_unalert_near_charly_seekers = Some(0);
+                        self.base.pending_unalert_near_charly_seekers =
+                            Some(CharlySeekerTarget::SelfNpc);
                         self.base.launch_timer(20, ctx.frame);
                     } else {
                         self.return_to_duty(DutyFlags::empty(), ctx, tick);
@@ -4981,11 +4983,11 @@ impl EnemyAi {
                         self.base.stop_all();
                         self.set_state(AiState::Menacing, Substate::MenacingPcInComa);
                         if self.is_vip {
-                            // VIP variant — launch an EnterSwordfight with
-                            // no opponent to trigger the menace-variant
+                            // VIP variant — launch an EnterSwordfight against
+                            // the guarded PC to trigger the menace-variant
                             // sword draw.
                             self.base.pending_enter_swordfight =
-                                Some(self.base.primary_target as HumanHandle);
+                                Some(EnterSwordfightRequest::Engage(self.base.primary_target));
                             self.base.pending_enter_swordfight_jump_line = None;
                         } else {
                             // Normal variant — say, launch StartMenace

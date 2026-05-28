@@ -95,8 +95,8 @@ impl FriendlyAi {
         // primary target for Fleeing, otherwise self; civilians
         // never reach Attacking/Menacing.
         let source = match state {
-            AiState::Fleeing => Some(self.base.primary_target),
-            _ => None,
+            AiState::Fleeing => AiStateChangeSource::from_optional_human(self.base.primary_target),
+            _ => AiStateChangeSource::SelfActor,
         };
         self.base
             .pending_state_change_notifications

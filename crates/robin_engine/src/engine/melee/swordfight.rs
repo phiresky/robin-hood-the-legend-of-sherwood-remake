@@ -467,9 +467,9 @@ impl EngineInner {
     ) -> bool {
         if opponent.0 == 0 {
             // Opponent==0 is a legitimate input upstream now — the
-            // `pending_enter_swordfight = Some(0)` drain branch in
-            // `engine/ai/mod.rs::drain_pending_for_npc` routes around
-            // this function and launches a bare `Command::EnterSwordfight`
+            // the `EnterSwordfightRequest::RaiseSword` drain branch in
+            // `engine/ai/mod.rs::drain_pending_for_npc` routes around this
+            // function and launches a bare `Command::EnterSwordfight`
             // element so the actor raises the sword without engaging.
             // Anything reaching this path with opponent==0 means a
             // direct caller skipped the drain — log at trace and
@@ -478,7 +478,7 @@ impl EngineInner {
                 ?initiator,
                 "enter_swordfight called with opponent=EntityId(0) — \
                  raise-sword-no-opponent should be routed via the \
-                 pending_enter_swordfight=Some(0) drain instead"
+                 EnterSwordfightRequest::RaiseSword drain instead"
             );
             return false;
         }
