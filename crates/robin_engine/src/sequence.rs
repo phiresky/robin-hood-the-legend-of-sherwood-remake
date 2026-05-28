@@ -2528,12 +2528,12 @@ impl SequenceManager {
                 debug_assert!(false, "actor_live contains stale element ref");
                 continue;
             };
-            if elem.state != SequenceState::Todo || elem.priority <= new_priority {
+            if elem.state != SequenceState::Todo || elem.priority >= new_priority {
                 continue;
             }
             let better = match best {
                 None => true,
-                Some((_, _, best_prio)) => elem.priority > best_prio,
+                Some((_, _, best_prio)) => elem.priority < best_prio,
             };
             if better {
                 best = Some((elem_ref.sequence_id, elem_ref.element_index, elem.priority));

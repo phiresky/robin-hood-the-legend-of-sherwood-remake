@@ -1857,6 +1857,7 @@ impl EngineInner {
                                                     ActiveMovement::new(seq_id, elem_idx);
                                                 actor.passing_door_directly = direct;
                                                 actor.active_door_pass = Some(dp);
+                                                actor.sequence_element_started = true;
                                             }
                                             self.apply_door_pass_continue_state(owner, *action);
                                             tracing::debug!(

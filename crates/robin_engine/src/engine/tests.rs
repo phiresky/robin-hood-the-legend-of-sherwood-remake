@@ -2260,6 +2260,41 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
     );
 }
 
+#[test]
+fn arbitration_pending_pass_door_blocks_new_move() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut pending_pass =
+        SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
+    pending_pass.priority = SequencePriority::NonInterruptable;
+    let pass_seq = engine.sequence_manager.launch_element(pending_pass);
+
+    let mut incoming =
+        SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+    incoming.priority = SequencePriority::Normal;
+    let incoming_seq = engine.sequence_manager.launch_element(incoming);
+
+    let accepted = engine.arbitrate_instruct(incoming_seq, 0);
+    assert!(
+        !accepted,
+        "pending PASS_DOOR must win same-tick arbitration over a new MOVE"
+    );
+
+    let pass = engine.sequence_manager.get_element(pass_seq, 0).unwrap();
+    assert_eq!(pass.cross_postponed, Some((incoming_seq, 0)));
+
+    let incoming = engine
+        .sequence_manager
+        .get_element(incoming_seq, 0)
+        .unwrap();
+    assert_eq!(incoming.state, SequenceState::Postponed);
+}
+
 /// A Crouched soldier receiving `ENTER_ATTENTIVE_MODE` must first
 /// auto-stand (CROUCH_UP) before the alerted transition can play,
 /// because `get_transition_flags_soldier` for this command sets
