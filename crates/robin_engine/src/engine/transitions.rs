@@ -705,6 +705,27 @@ fn set_action_state_after(
     }
 }
 
+fn push_unequip_bow_transition_orders(
+    engine: &mut EngineInner,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    anonymous: bool,
+) {
+    let (unload, unequip) = if anonymous {
+        (
+            OrderType::TransitionUnloadBowAnonymous,
+            OrderType::TransitionUnequipBowAnonymous,
+        )
+    } else {
+        (
+            OrderType::TransitionUnloadBow,
+            OrderType::TransitionUnequipBow,
+        )
+    };
+    push_anim_order(engine, seq_id, elem_idx, unload);
+    push_anim_order(engine, seq_id, elem_idx, unequip);
+}
+
 /// Build a [`TransitionCtx`] from the current state of `(owner, seq,
 /// elem)`. Returns `None` if the entity or element is missing.
 fn build_ctx(
@@ -981,21 +1002,9 @@ fn make_action_transition_human(
     match action_state {
         ActionState::AimingWithBow => {
             if flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_AIMING_BOW) {
-                // Queue Unload then Unequip Bow, with anonymous-posture
-                // variants.
-                let (unload, unequip) = if is_anonymous_archer {
-                    (
-                        OrderType::TransitionUnloadBowAnonymous,
-                        OrderType::TransitionUnequipBowAnonymous,
-                    )
-                } else {
-                    (
-                        OrderType::TransitionUnloadBow,
-                        OrderType::TransitionUnequipBow,
-                    )
-                };
-                push_anim_order(engine, seq_id, elem_idx, unload);
-                push_anim_order(engine, seq_id, elem_idx, unequip);
+                // C++ Translate(UNEQUIP_BOW): unload then unequip,
+                // with anonymous-posture variants.
+                push_unequip_bow_transition_orders(engine, seq_id, elem_idx, is_anonymous_archer);
                 set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
             }
             true
@@ -1004,20 +1013,13 @@ fn make_action_transition_human(
             if flags.contains(EX::MUST_BE_WAITING) && !flags.contains(EX::CAN_BE_AIMING_BOW_UP) {
                 push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoweringBow);
                 if !flags.contains(EX::CAN_BE_AIMING_BOW) {
-                    // Queue Unload then Unequip Bow.
-                    let (unload, unequip) = if is_anonymous_archer {
-                        (
-                            OrderType::TransitionUnloadBowAnonymous,
-                            OrderType::TransitionUnequipBowAnonymous,
-                        )
-                    } else {
-                        (
-                            OrderType::TransitionUnloadBow,
-                            OrderType::TransitionUnequipBow,
-                        )
-                    };
-                    push_anim_order(engine, seq_id, elem_idx, unload);
-                    push_anim_order(engine, seq_id, elem_idx, unequip);
+                    // C++ Translate(UNEQUIP_BOW): unload then unequip.
+                    push_unequip_bow_transition_orders(
+                        engine,
+                        seq_id,
+                        elem_idx,
+                        is_anonymous_archer,
+                    );
                     set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
                 } else {
                     set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
@@ -1134,7 +1136,9 @@ fn make_action_transition_soldier(
                 OrderType::TransitionRaisingBowLeaningOut,
             );
             if !flags.contains(EX::CAN_BE_AIMING_BOW) {
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionUnequipBow);
+                // C++ calls Translate(UNEQUIP_BOW) here, so preserve
+                // the unload frame before unequipping.
+                push_unequip_bow_transition_orders(engine, seq_id, elem_idx, false);
                 set_action_state_after(engine, seq_id, elem_idx, ActionState::Waiting);
             } else {
                 set_action_state_after(engine, seq_id, elem_idx, ActionState::AimingWithBow);
@@ -2254,6 +2258,30 @@ mod tests {
         assert!(
             orders.contains(&OrderType::TransitionLeaningOutWaitingAlerted),
             "expected LeaningOut→WaitingAlerted unstick, got {:?}",
+            orders
+        );
+    }
+
+    #[test]
+    fn soldier_bow_down_exit_queues_unload_before_unequip() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(P::LeaningOut, AS::AimingWithBowDown, false));
+        let (seq, idx) = launch(&mut engine, owner, Command::Turn);
+
+        let ok = engine.generate_transition(owner, seq, idx);
+        assert!(ok);
+
+        let orders = orders_for(&engine, seq, idx);
+        assert!(
+            orders.windows(3).any(|window| {
+                window
+                    == [
+                        OrderType::TransitionRaisingBowLeaningOut,
+                        OrderType::TransitionUnloadBow,
+                        OrderType::TransitionUnequipBow,
+                    ]
+            }),
+            "C++ Translate(UNEQUIP_BOW) queues unload before unequip after raising from bow-down, got {:?}",
             orders
         );
     }
