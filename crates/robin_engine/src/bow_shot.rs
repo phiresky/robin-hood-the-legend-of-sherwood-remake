@@ -1476,14 +1476,27 @@ pub fn begin_bow_shot(
         None => return BeginShotResult::Impossible,
     };
 
+    // C++ `RHElementActorHuman::Translate(RHCOMMAND_SHOOT_BOW)` chooses
+    // raise/lower setup from the sequence element's
+    // ActionStateAfterTransition, not from the actor's live state.  That
+    // matters when the same element already queued equip/load orders:
+    // the live state is still Waiting, but the shoot body must see
+    // AimingWithBow and add a raise order for a first long shot.
+    let action_state_after_transition = sequence_manager
+        .get_element(seq_id, elem_idx)
+        .map(|elem| elem.action_state_after_transition)
+        .unwrap_or(current_state);
+
     // Determine the desired shoot mode.  The engine resolves the mode
     // up front via `can_shoot_with_bow_at` and passes it in; we
-    // override for leaning-out, then fall back to the current action
-    // state or Normal.
+    // override for leaning-out, then fall back to the post-transition
+    // bow attitude or the current action state.
     let desired_mode = if shooter_posture == Posture::LeaningOut {
         ShootMode::Down
     } else if let Some(mode) = resolved_shoot_mode {
         mode
+    } else if action_state_after_transition.is_bow() {
+        shoot_mode_from_action_state(action_state_after_transition)
     } else if current_state.is_bow() {
         shoot_mode_from_action_state(current_state)
     } else {
@@ -1506,7 +1519,7 @@ pub fn begin_bow_shot(
     // orders go with it.
     let _ = actor; // actor mutable borrow ends here; below we borrow sequence_manager instead
     let anonymous = shooter_posture == Posture::AnonymousArcher;
-    let transitions = aim_transition_orders(current_state, desired_mode, anonymous);
+    let transitions = aim_transition_orders(action_state_after_transition, desired_mode, anonymous);
     for t in &transitions {
         let mut order = Order::new(*t, tx, ty, crate::order::alloc_order_id(next_order_id));
         order.compute_direction = false;
@@ -3854,6 +3867,17 @@ mod tests {
         (sm, seq_id, 0)
     }
 
+    fn set_test_action_state_after_transition(
+        sm: &mut SequenceManager,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        action_state: ActionState,
+    ) {
+        sm.get_element_mut(seq_id, elem_idx)
+            .unwrap()
+            .action_state_after_transition = action_state;
+    }
+
     fn bind_test_bow_release_rows(entity: &mut Entity, order_type: OrderType) {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         let base_row = 0u16;
@@ -3923,6 +3947,12 @@ mod tests {
             .unwrap()
             .action_state = ActionState::AimingWithBow;
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        set_test_action_state_after_transition(
+            &mut sm,
+            seq_id,
+            elem_idx,
+            ActionState::AimingWithBow,
+        );
 
         let result = begin_bow_shot(
             &mut entities,
@@ -3949,6 +3979,47 @@ mod tests {
             .map(|o| o.order_type)
             .collect();
         assert_eq!(orders[0], OrderType::TransitionRaisingBow);
+        assert_eq!(orders[1], OrderType::ShootingWithBowUp);
+    }
+
+    #[test]
+    fn begin_bow_shot_uses_action_state_after_transition_for_setup_orders() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        set_test_action_state_after_transition(
+            &mut sm,
+            seq_id,
+            elem_idx,
+            ActionState::AimingWithBow,
+        );
+
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            Some(ShootMode::Long),
+            &mut 1u32,
+        );
+
+        assert_eq!(result, BeginShotResult::Started);
+        let orders: Vec<OrderType> = sm
+            .get_element(seq_id, elem_idx)
+            .unwrap()
+            .orders
+            .iter()
+            .map(|o| o.order_type)
+            .collect();
+        assert_eq!(
+            orders[0],
+            OrderType::TransitionRaisingBow,
+            "C++ uses ActionStateAfterTransition, so a first long shot after equip/load still raises the bow before shooting"
+        );
         assert_eq!(orders[1], OrderType::ShootingWithBowUp);
     }
 
