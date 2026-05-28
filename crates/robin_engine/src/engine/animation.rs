@@ -203,6 +203,32 @@ mod tests {
     }
 
     #[test]
+    fn bow_equip_start_enters_aiming_state() {
+        let mut entity = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            pc: Default::default(),
+        });
+
+        apply_active_animation_start_state_side_effect(
+            &mut entity,
+            OrderType::TransitionEquipBow,
+            MotionState::Start,
+        );
+
+        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::AimingWithBow
+        );
+    }
+
+    #[test]
     fn arrow_extraction_side_effect_only_runs_on_start() {
         let mut entity = weak_soldier_at_action_done(0);
         entity.set_posture(Posture::Lying);
@@ -1422,10 +1448,64 @@ fn apply_active_animation_start_state_side_effect(
     anim_type: OrderType,
     motion: MotionState,
 ) {
+    match (anim_type, motion) {
+        (
+            OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous,
+            MotionState::Start,
+        ) => {
+            if entity.element_data().posture != Posture::AnonymousArcher {
+                entity.set_posture(Posture::Upright);
+            }
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::AimingWithBow;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous,
+            MotionState::Start,
+        ) => {
+            if entity.element_data().posture != Posture::AnonymousArcher {
+                entity.set_posture(Posture::Upright);
+            }
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionUnloadBow | OrderType::TransitionUnloadBowAnonymous,
+            MotionState::Start,
+        ) => {
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::Waiting;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionLoweringBow | OrderType::TransitionLoweringBowAnonymous,
+            MotionState::Done | MotionState::Terminated,
+        ) => {
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::AimingWithBow;
+            }
+            return;
+        }
+        (
+            OrderType::TransitionRaisingBow | OrderType::TransitionRaisingBowAnonymous,
+            MotionState::Done | MotionState::Terminated,
+        ) => {
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::AimingWithBowUp;
+            }
+            return;
+        }
+        _ => {}
+    }
+
     if !matches!(motion, MotionState::Start) {
         return;
     }
-
     let Some(action_state) = (match anim_type {
         OrderType::Provoking => Some(ActionState::WaitingSword),
         OrderType::WaitingShield => Some(ActionState::HoldingShield),
