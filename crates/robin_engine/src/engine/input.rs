@@ -1471,6 +1471,7 @@ impl EngineInner {
     /// * Non-human in forest → raw position with forest flag (weaker
     ///   range checks, no LOS check)
     /// * Non-human in city   → raw position
+    #[track_caller]
     pub fn can_shoot_with_bow_at(
         &self,
         assets: &LevelAssets,
@@ -1538,6 +1539,7 @@ impl EngineInner {
     /// [`BowState::get_shoot_mode_for_distance`], and finally walks
     /// the engine sight obstacles to detect blocked LOS (skipped for
     /// forest targets).
+    #[track_caller]
     pub fn can_shoot_with_bow_at_point(
         &self,
         assets: &LevelAssets,
@@ -1559,8 +1561,11 @@ impl EngineInner {
         let Some((bow_profile_idx, _shooting_ability)) =
             self.bow_profile_and_ability(assets, shooter_id)
         else {
+            let caller = std::panic::Location::caller();
             tracing::warn!(
                 ?shooter_id,
+                caller_file = caller.file(),
+                caller_line = caller.line(),
                 "can_shoot_with_bow_at_point: shooter missing bow profile"
             );
             return (BowTarget::Invalid, ShootMode::Normal);

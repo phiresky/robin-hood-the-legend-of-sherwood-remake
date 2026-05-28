@@ -4221,7 +4221,7 @@ impl EngineInner {
         // Process pending bow shot.
         if let Some(target_handle) = shoot {
             let target_id = EntityId(target_handle);
-            self.shoot_bow_at(npc_id, target_id);
+            self.shoot_bow_at(assets, npc_id, target_id);
         }
 
         // Process pending focus / focus_point / unfocus — the

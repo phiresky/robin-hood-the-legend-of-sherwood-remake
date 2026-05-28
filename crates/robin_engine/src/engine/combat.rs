@@ -67,6 +67,7 @@ impl EngineInner {
     /// shooter and returns its sequence id.
     pub fn shoot_bow_at(
         &mut self,
+        assets: &LevelAssets,
         shooter: EntityId,
         target: EntityId,
     ) -> Option<crate::sequence::SequenceId> {
@@ -92,6 +93,32 @@ impl EngineInner {
                 shooter = ?shooter,
                 target = ?target,
                 "shoot_bow_at: dead shooter"
+            );
+            return None;
+        }
+        let Some((bow_profile_idx, _)) = self.bow_profile_and_ability(assets, shooter) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: shooter has no bow profile"
+            );
+            return None;
+        };
+        let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                bow_profile_idx,
+                "shoot_bow_at: missing bow profile"
+            );
+            return None;
+        };
+        if bow_profile.normal_shoot.range == 0 {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                bow_profile_idx,
+                "shoot_bow_at: shooter bow profile has no range"
             );
             return None;
         }
