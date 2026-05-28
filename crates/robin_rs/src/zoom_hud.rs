@@ -101,8 +101,8 @@ impl ZoomHudLayout {
     /// screen-absolute — the zoom buttons live on the top-right
     /// parchment scroll, not the lower panel.  Hit-box sizes follow
     /// the BTTN sprite dimensions when available; when the resource is
-    /// missing we fall back to a 24x24 placeholder so the layout stays
-    /// usable on dev/demo datadirs with an incomplete DEFAULT.RES.
+    /// missing we fall back to a 24x24 hit box; drawing still skips the
+    /// missing sprite.
     pub fn for_resolution(screen_w: u32, _screen_h: u32, sprites: &ZoomButtonSprites) -> Self {
         const FALLBACK_W: u32 = 24;
         const FALLBACK_H: u32 = 24;

@@ -3494,6 +3494,64 @@ impl AiContext {
         self.entity_view(handle).map(|v| v.position)
     }
 
+    /// Resolve a C++ `PositionToPoint3D` style point from a sector/layer
+    /// position. The returned y coordinate is screen-space (`y + z`).
+    pub fn position_to_point_3d(&self, position: Position) -> crate::position_interface::Point3D {
+        let z = match position.sector {
+            None => 0.0,
+            Some(handle) => {
+                let sector_number = crate::sector::SectorNumber::new(handle.get() as i16);
+                let grid_idx = self
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&sector_number)
+                    .copied();
+                let is_motion = grid_idx.is_some_and(|idx| {
+                    self.fast_grid
+                        .level
+                        .sectors
+                        .get(idx)
+                        .is_some_and(|sector| sector.sector_type.is_motion())
+                });
+                if grid_idx.is_some() && !is_motion {
+                    panic!(
+                        "position_to_point_3d: sector {} is not a motion sector",
+                        handle.get()
+                    );
+                }
+
+                let point = crate::geo2d::pt(position.x, position.y);
+                let mut best: Option<(f32, f32)> = None;
+                for (_, obstacle) in self.sight_obstacles.list().iter_indexed() {
+                    if !obstacle.is_projection_area()
+                        || obstacle.sector != handle.get()
+                        || obstacle.layer != position.level
+                        || !obstacle.box_screen.contains_point(point)
+                        || !obstacle.contains_point_screen(point)
+                    {
+                        continue;
+                    }
+                    let z_max = obstacle.box_3d_max[2];
+                    let z = obstacle.compute_top_z(position.x, position.y);
+                    match best {
+                        None => best = Some((z_max, z)),
+                        Some((prev_z_max, _)) if z_max > prev_z_max => best = Some((z_max, z)),
+                        _ => {}
+                    }
+                }
+
+                best.map(|(_, z)| z).unwrap_or(0.0)
+            }
+        };
+
+        crate::position_interface::Point3D {
+            x: position.x,
+            y: position.y + z,
+            z,
+        }
+    }
+
     /// Borrowed [`crate::sight_obstacle::ObstacleList`] view over this
     /// tick's sight-obstacle snapshot — the shape that
     /// `ai_vision::los_clear` and the visibility query helpers accept.
@@ -6991,13 +7049,13 @@ impl AiController {
                 && let Some(raw_path) = hiking_paths.get(path_id.get() as usize)
             {
                 for wp in raw_path.waypoints.iter() {
-                    // Waypoints carry no Z; approximate via the
-                    // partner's current elevation + 15.
-                    let pt = crate::position_interface::Point3D {
+                    let mut pt = ctx.position_to_point_3d(Position {
                         x: wp.x as f32,
                         y: wp.y as f32,
-                        z: target_view.elevation + 15.0,
-                    };
+                        sector: SectorHandle::new(wp.sector),
+                        level: wp.level,
+                    });
+                    pt.z += 15.0;
                     if ctx.is_detecting_point_360(pt) {
                         visible_point_found = true;
                         break;
@@ -9109,6 +9167,107 @@ mod tests {
         );
         assert_eq!(report.report_type, ReportType::Enemy);
         assert_eq!(report.seek_position.x, 50.0);
+    }
+
+    #[test]
+    fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
+        let mut bbox = crate::geo2d::BBox2D::new();
+        let points = vec![
+            crate::geo2d::pt(0.0, 0.0),
+            crate::geo2d::pt(100.0, 0.0),
+            crate::geo2d::pt(100.0, 100.0),
+            crate::geo2d::pt(0.0, 100.0),
+        ];
+        for &point in &points {
+            bbox.expand_point(point);
+        }
+
+        let sector_number = crate::sector::SectorNumber::new(7);
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points,
+            bounding_box: bbox,
+            sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
+            layer: 2,
+            sector_number,
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        level.sector_number_map.insert(sector_number, 0);
+
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new(
+            0,
+            crate::sight_obstacle::SIGHTOBSTACLE_SOLID
+                | crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+        );
+        obstacle.obstacle_points = vec![
+            crate::sight_obstacle::ObstaclePoint {
+                x: 0.0,
+                y: 0.0,
+                z_bottom: 0.0,
+                z_top: 20.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 100.0,
+                y: 0.0,
+                z_bottom: 0.0,
+                z_top: 20.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 100.0,
+                y: 100.0,
+                z_bottom: 0.0,
+                z_top: 20.0,
+            },
+            crate::sight_obstacle::ObstaclePoint {
+                x: 0.0,
+                y: 100.0,
+                z_bottom: 0.0,
+                z_top: 20.0,
+            },
+        ];
+        obstacle.layer = 2;
+        obstacle.sector = 7;
+        obstacle.top_plane_points = [[0.0, 0.0, 20.0], [100.0, 0.0, 20.0], [0.0, 100.0, 20.0]];
+        obstacle.bottom_plane_points = [[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [0.0, 100.0, 0.0]];
+        obstacle.rebuild_geometry();
+
+        let ctx = AiContext {
+            fast_grid: crate::fast_find_grid::FastFindGrid {
+                level: std::sync::Arc::new(level),
+                line_active: Vec::new(),
+                sector_active: vec![true],
+                mask_active: Vec::new(),
+                lift_state: std::collections::BTreeMap::new(),
+                sector_type_overlay: std::collections::BTreeMap::new(),
+            },
+            sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
+                static_obstacles: std::sync::Arc::new(vec![obstacle]),
+                dynamic_obstacles: std::sync::Arc::new(Vec::new()),
+                static_active: std::sync::Arc::new(vec![true]),
+            },
+            ..AiContext::default()
+        };
+
+        let point = ctx.position_to_point_3d(Position {
+            x: 50.0,
+            y: 50.0,
+            sector: SectorHandle::new(7),
+            level: 2,
+        });
+
+        assert_eq!(point.x, 50.0);
+        assert_eq!(point.y, 70.0);
+        assert_eq!(point.z, 20.0);
     }
 
     // ── House / building-AI tests ─────────────────────────────────

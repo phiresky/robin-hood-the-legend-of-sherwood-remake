@@ -196,7 +196,8 @@ impl StatureHudLayout {
     /// are positioned relative to the lower-panel origin
     /// `(0, height - PANNEL_HEIGHT)` (see
     /// `corner_hud::CornerHudLayout::for_resolution` for the same
-    /// derivation). Missing sprites fall back to a 32×32 placeholder.
+    /// derivation). Missing sprites fall back to a 32x32 hit box; drawing
+    /// still skips the missing sprite.
     pub fn for_resolution(_screen_w: u32, screen_h: u32, sprites: &StatureSprites) -> Self {
         const FALLBACK_W: u32 = 32;
         const FALLBACK_H: u32 = 32;

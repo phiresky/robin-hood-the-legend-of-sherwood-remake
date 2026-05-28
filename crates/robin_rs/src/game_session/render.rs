@@ -348,9 +348,12 @@ fn render_display_info_overlay(
             crate::sound::MusicMode::Fight => 0xf80f,
         }
     };
-    // The Rust audio backend does not expose music stream progress; keep the
-    // DisplayInfo slot visible with a placeholder.
-    text(renderer, "--%", left + 96, top - 12);
+    text(
+        renderer,
+        &format!("{}%", host.sound.stream_relative_position()),
+        left + 96,
+        top - 12,
+    );
     fill_rect(renderer, left + 84, top - 8, 12, 4, mode_color);
 
     host.display_info_max_pending_sounds = host

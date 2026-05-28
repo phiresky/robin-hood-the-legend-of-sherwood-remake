@@ -425,6 +425,13 @@ impl SoundManager {
         self.start_music
     }
 
+    pub fn stream_relative_position(&self) -> u16 {
+        // C++ RHSound::GetStreamRelativePosition was left unimplemented and
+        // always returned 0; keep DisplayInfo parity until stream timing is
+        // intentionally wired through the backend.
+        0
+    }
+
     pub fn listen_point(&self) -> Point2D {
         self.geometry_engine.listen_point()
     }
