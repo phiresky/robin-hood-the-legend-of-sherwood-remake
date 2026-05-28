@@ -70,32 +70,76 @@ impl EngineInner {
         shooter: EntityId,
         target: EntityId,
     ) -> Option<crate::sequence::SequenceId> {
-        let shooter_ok = self
-            .get_entity(shooter)
-            .map(|e| e.is_human() && !e.is_dead())
-            .unwrap_or(false);
-        // Both humans and FX targets are valid bow-shot targets.  FX
-        // targets with the ARROW action filter are the hunting/puzzle
-        // targets in forest levels.
-        let target_ok = self
-            .get_entity(target)
-            .map(|e| match e {
-                Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => !e.is_dead(),
-                Entity::Target(t) => t
-                    .target
-                    .action_filter
-                    .contains(crate::element::TargetFilter::ARROW),
-                _ => false,
-            })
-            .unwrap_or(false);
-        if !shooter_ok || !target_ok {
+        let Some(shooter_entity) = self.get_entity(shooter) else {
             tracing::warn!(
                 shooter = ?shooter,
                 target = ?target,
-                "shoot_bow_at: invalid shooter or target"
+                "shoot_bow_at: missing shooter"
+            );
+            return None;
+        };
+        if !shooter_entity.is_human() {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                shooter_kind = ?shooter_entity.kind(),
+                "shoot_bow_at: non-human shooter"
             );
             return None;
         }
+        if shooter_entity.is_dead() {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: dead shooter"
+            );
+            return None;
+        }
+
+        // Both humans and FX targets are valid bow-shot targets.  FX
+        // targets with the ARROW action filter are the hunting/puzzle
+        // targets in forest levels.
+        let Some(target_entity) = self.get_entity(target) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: missing target"
+            );
+            return None;
+        };
+        match target_entity {
+            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) if target_entity.is_dead() => {
+                tracing::warn!(
+                    shooter = ?shooter,
+                    target = ?target,
+                    "shoot_bow_at: dead target"
+                );
+                return None;
+            }
+            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => {}
+            Entity::Target(t)
+                if t.target
+                    .action_filter
+                    .contains(crate::element::TargetFilter::ARROW) => {}
+            Entity::Target(_) => {
+                tracing::warn!(
+                    shooter = ?shooter,
+                    target = ?target,
+                    "shoot_bow_at: target does not accept arrows"
+                );
+                return None;
+            }
+            other => {
+                tracing::warn!(
+                    shooter = ?shooter,
+                    target = ?target,
+                    target_kind = ?other.kind(),
+                    "shoot_bow_at: unsupported target kind"
+                );
+                return None;
+            }
+        }
+
         Some(self.launch_element(bow_shot::build_shoot_bow_element(shooter, target)))
     }
 

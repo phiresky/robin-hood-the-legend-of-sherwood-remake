@@ -439,10 +439,15 @@ fn resolve_action_left_click(
             // 3. Shooter posture guard: AnonymousArcher (archers'
             //    contest) → hero speech + drop the click.  Only
             //    applied in the non-record branch.
-            let archer_posture = engine
-                .get_entity(pc_id)
-                .map(|e| e.element_data().posture)
-                .unwrap_or(Posture::Upright);
+            let Some(pc_entity) = engine.get_entity(pc_id) else {
+                tracing::warn!(
+                    ?pc_id,
+                    ?target_id,
+                    "Bow click rejected: selected PC entity missing"
+                );
+                return vec![];
+            };
+            let archer_posture = pc_entity.element_data().posture;
             if !is_recording && archer_posture == Posture::AnonymousArcher {
                 tracing::info!(
                     ?pc_id,
