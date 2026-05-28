@@ -1445,12 +1445,17 @@ pub fn begin_bow_shot(
         match entities.get(shooter_id.0 as usize).and_then(|s| s.as_ref()) {
             Some(e) if e.is_human() && !e.is_dead() => {
                 let posture = e.element_data().posture;
-                let action = e.actor_data().map(|a| a.action_state);
-                let active = e.actor_data().map(|a| a.active_shot.is_active());
-                if active == Some(true) {
+                let Some(actor) = e.actor_data() else {
+                    tracing::warn!(
+                        shooter = ?shooter_id,
+                        "Begin bow shot rejected: human shooter missing actor data"
+                    );
+                    return BeginShotResult::Impossible;
+                };
+                if actor.active_shot.is_active() {
                     (false, posture, ActionState::Waiting)
                 } else {
-                    (true, posture, action.unwrap_or(ActionState::Waiting))
+                    (true, posture, actor.action_state)
                 }
             }
             _ => return BeginShotResult::Impossible,
