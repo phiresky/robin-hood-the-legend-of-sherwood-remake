@@ -1565,6 +1565,16 @@ fn soldier_shield_dimensions(
         .map(|w| (w.shield_width, w.shield_height))
 }
 
+fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::element::Point2D> {
+    match entity {
+        Entity::Projectile(p) => Some(crate::element::Point2D {
+            x: p.projectile.start_of_trajectory_x,
+            y: p.projectile.start_of_trajectory_y,
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1852,10 +1862,17 @@ impl EngineInner {
                         }
 
                         let damage = result.damage;
-                        let arrow_flight_direction = self
+                        let Some(arrow_flight_direction) = self
                             .get_entity(result.arrow)
                             .map(|e| e.element_data().direction())
-                            .unwrap_or(0);
+                        else {
+                            tracing::warn!(
+                                arrow = ?result.arrow,
+                                victim = ?victim,
+                                "arrow hit missing projectile direction; skipping damage"
+                            );
+                            continue;
+                        };
                         // Civilian-with-attached-scroll immunity
                         // (scroll-reveal beggar).  Consume the arrow but
                         // don't apply damage.
@@ -1890,16 +1907,17 @@ impl EngineInner {
                         let victim_is_npc =
                             self.get_entity(victim).map(|e| e.is_npc()).unwrap_or(false);
                         if victim_is_npc {
-                            let trajectory_origin =
-                                self.get_entity(result.arrow).and_then(|e| match e {
-                                    Entity::Projectile(p) => Some(crate::element::Point2D {
-                                        x: p.projectile.start_of_trajectory_x,
-                                        y: p.projectile.start_of_trajectory_y,
-                                    }),
-                                    _ => None,
-                                });
+                            let trajectory_origin = self
+                                .get_entity(result.arrow)
+                                .and_then(projectile_trajectory_origin);
                             if let Some(origin) = trajectory_origin {
                                 self.dispatch_event_get_arrow(victim, origin);
+                            } else {
+                                tracing::warn!(
+                                    arrow = ?result.arrow,
+                                    victim = ?victim,
+                                    "arrow hit NPC missing trajectory origin; skipping EventGetArrow"
+                                );
                             }
                         }
 
@@ -1944,28 +1962,19 @@ impl EngineInner {
     /// Apple lands on a human.  Apples deal no damage; they only
     /// affect soldiers via the apple-smell AI hook.
     fn on_apple_hit_human(&mut self, apple: EntityId, victim: EntityId) {
-        let origin = self
-            .get_entity(apple)
-            .map(|e| {
-                let proj = e.element_data();
-                crate::element::Point2D {
-                    x: proj.position_map().x,
-                    y: proj.position_map().y,
-                }
-            })
-            .unwrap_or_default();
         // Use the shooter's original position (trajectory origin) as
         // the EventApple stimulus anchor.
-        let trajectory_origin = self
+        let Some(trajectory_origin) = self
             .get_entity(apple)
-            .and_then(|e| match e {
-                Entity::Projectile(p) => Some(crate::element::Point2D {
-                    x: p.projectile.start_of_trajectory_x,
-                    y: p.projectile.start_of_trajectory_y,
-                }),
-                _ => None,
-            })
-            .unwrap_or(origin);
+            .and_then(projectile_trajectory_origin)
+        else {
+            tracing::warn!(
+                ?apple,
+                ?victim,
+                "apple hit human missing trajectory origin; skipping EventApple"
+            );
+            return;
+        };
         let victim_is_soldier = self
             .get_entity(victim)
             .map(|e| e.is_soldier())
@@ -2043,10 +2052,16 @@ impl EngineInner {
             }
             // Apply stone damage: damage=10, concussion=100 — heavy
             // KO potential.
-            let flight_direction = self
-                .get_entity(stone)
-                .map(|e| e.element_data().direction())
-                .unwrap_or(0);
+            let Some(flight_direction) =
+                self.get_entity(stone).map(|e| e.element_data().direction())
+            else {
+                tracing::warn!(
+                    ?stone,
+                    ?victim,
+                    "stone hit missing projectile direction; skipping damage"
+                );
+                return;
+            };
             let died = bow_shot::apply_projectile_hit(
                 &mut self.entities,
                 victim,
@@ -2062,16 +2077,17 @@ impl EngineInner {
         } else if is_npc {
             // VIP / armored-soldier dodge: treated similarly to an
             // apple hit.
-            let trajectory_origin = self
+            let Some(trajectory_origin) = self
                 .get_entity(stone)
-                .and_then(|e| match e {
-                    Entity::Projectile(p) => Some(crate::element::Point2D {
-                        x: p.projectile.start_of_trajectory_x,
-                        y: p.projectile.start_of_trajectory_y,
-                    }),
-                    _ => None,
-                })
-                .unwrap_or_default();
+                .and_then(projectile_trajectory_origin)
+            else {
+                tracing::warn!(
+                    ?stone,
+                    ?victim,
+                    "stone hit NPC missing trajectory origin; skipping EventApple"
+                );
+                return;
+            };
             self.dispatch_event_apple(victim, trajectory_origin);
         }
     }
