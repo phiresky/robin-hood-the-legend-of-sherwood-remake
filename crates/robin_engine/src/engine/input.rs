@@ -2364,6 +2364,8 @@ impl EngineInner {
 
         match selected_action {
             Action::Bow => {
+                self.manage_input_pre_action_bow(assets, 0);
+
                 let focused = self.find_focusable_entity(
                     assets,
                     &draw_order.as_ref().unwrap().ids,

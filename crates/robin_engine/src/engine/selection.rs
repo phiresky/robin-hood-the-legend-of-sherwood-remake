@@ -761,7 +761,7 @@ impl EngineInner {
     /// (`set_pc_action` collapses the selection to the clicked PC when
     /// `action != NoAction`). The macro-recording short-circuit is enforced
     /// by the sole caller `set_pc_action`.
-    fn manage_input_pre_action_bow(&mut self, assets: &LevelAssets, seat: usize) {
+    pub(crate) fn manage_input_pre_action_bow(&mut self, assets: &LevelAssets, seat: usize) {
         let Some(&pc_id) = self.seats[seat].selection.first() else {
             return;
         };
@@ -775,6 +775,25 @@ impl EngineInner {
                 | ActionState::AimingWithBowUp
                 | ActionState::AimingWithBowDown
         ) {
+            return;
+        }
+
+        let current_anim = self
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .map(|(_, _, order)| order.order_type);
+        if matches!(
+            current_anim,
+            Some(
+                crate::order::OrderType::TransitionEquipBow
+                    | crate::order::OrderType::TransitionEquipBowAnonymous
+                    | crate::order::OrderType::TransitionLoadingBow
+                    | crate::order::OrderType::TransitionLoadingBowAnonymous
+            )
+        ) || self
+            .sequence_manager
+            .element_is_about_to_be_launched(pc_id, Command::EquipBow)
+        {
             return;
         }
 

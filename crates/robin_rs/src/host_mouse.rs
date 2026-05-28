@@ -722,8 +722,11 @@ pub fn update_mouse(
     // least one tick.  `time_no_mouse_move` is bumped just above
     // when the mouse doesn't move and reset to 0 on any movement.
     // Skipping the dispatch on moving frames keeps the selected
-    // PCs' facing stable while the cursor travels.
-    if host.time_no_mouse_move != 0 {
+    // PCs' facing stable while the cursor travels. Bow is the
+    // exception: the archer should track the target cursor continuously.
+    let bow_armed =
+        engine.selected_action_for_seat(host.local_seat) == robin_engine::profiles::Action::Bow;
+    if host.time_no_mouse_move != 0 || bow_armed {
         let cmd = crate::player_command::PlayerCommand::PerformOrientation { mouse_map };
         dispatch_local_command(host, engine, None, assets, &cmd);
     }
