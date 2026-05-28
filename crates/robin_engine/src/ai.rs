@@ -5266,6 +5266,13 @@ impl AiController {
     pub fn script_lock(&mut self, remember_events: bool, from_lockai_command: bool) {
         self.script_locked = true;
         self.remember_events = remember_events;
+        // C++ AI calls Think(EVENT_RETURN_TO_DUTY) synchronously from
+        // AssignPath before the later recorded LockAI can run. In Rust
+        // those AI actions are deferred through pending_* queues; once the
+        // script lock lands, no pre-lock deferred return-to-duty work may
+        // survive and interrupt the scripted sequence that follows.
+        self.pending_orders.clear();
+        self.pending_self_stimuli.clear();
         if !from_lockai_command {
             // Cancel the NPC's current order. The engine drains
             // `pending_halt` in post-think.

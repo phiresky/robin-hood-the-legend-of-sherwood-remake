@@ -1767,12 +1767,12 @@ impl EngineInner {
                                     }
                                 }
 
-                                // Disable anti-collision during door
-                                // pass.
+                                // C++ Translate(RHCOMMAND_PASS_DOOR) calls
+                                // mpSprite->SetAntiCollisionOn(false) before expanding the
+                                // door-pass order chain.
                                 if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
-                                    && let Some(actor) = entity.actor_data_mut()
                                 {
-                                    actor.is_ignored_for_anti_collision = true;
+                                    entity.position_iface_mut().set_anti_collision_on(false);
                                 }
 
                                 // Build the full step chain.  Forward

@@ -763,11 +763,11 @@ impl EngineInner {
         trigger_number: u8,
     ) {
         if trigger_number > 0 {
-            // Second (and later) trigger: re-enable anti-collision.
-            if let Some(entity) = self.get_entity_mut(entity_id)
-                && let Some(actor) = entity.actor_data_mut()
-            {
-                actor.is_ignored_for_anti_collision = false;
+            // Second (and later) trigger:
+            // RHNONANIMATION_PASSING_DOOR calls SetAntiCollisionOn(true)
+            // once PassDoor() has already consumed the gate.
+            if let Some(entity) = self.get_entity_mut(entity_id) {
+                entity.position_iface_mut().set_anti_collision_on(true);
             }
             return;
         }

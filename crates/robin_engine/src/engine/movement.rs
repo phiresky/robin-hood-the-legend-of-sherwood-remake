@@ -3416,12 +3416,26 @@ impl EngineInner {
                     // No active Move element (element terminated or
                     // was never active) — drop out of the moving
                     // state back to Waiting.
-                    actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
-                        crate::element::ActionState::WaitingSword
-                    } else {
-                        crate::element::ActionState::Waiting
+                    let restore_anti_collision = {
+                        let restore_anti_collision = actor.active_door_pass.is_some();
+                        if restore_anti_collision {
+                            tracing::warn!(
+                                entity = ?entity_id_inner,
+                                "DoorPass: clearing stale active pass after movement element disappeared"
+                            );
+                            actor.active_door_pass = None;
+                        }
+                        actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
+                            crate::element::ActionState::WaitingSword
+                        } else {
+                            crate::element::ActionState::Waiting
+                        };
+                        actor.active_movement.clear();
+                        restore_anti_collision
                     };
-                    actor.active_movement.clear();
+                    if restore_anti_collision {
+                        entity.position_iface_mut().set_anti_collision_on(true);
+                    }
                     continue;
                 };
                 let Some(order) = self
@@ -4622,13 +4636,27 @@ impl EngineInner {
                     if let Some(seq_id) = actor.active_movement.sequence_id {
                         blocked_impossible.push((seq_id, actor.active_movement.element_index));
                     }
-                    actor.clear_path();
-                    actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
-                        crate::element::ActionState::WaitingSword
-                    } else {
-                        crate::element::ActionState::Waiting
+                    let restore_anti_collision = {
+                        let restore_anti_collision = actor.active_door_pass.is_some();
+                        if restore_anti_collision {
+                            tracing::warn!(
+                                entity = ?EntityId(idx as u32),
+                                "DoorPass: movement blocked; clearing active pass with aborted movement"
+                            );
+                            actor.active_door_pass = None;
+                        }
+                        actor.clear_path();
+                        actor.action_state = if is_swordfighting || actor.action_state.is_sword() {
+                            crate::element::ActionState::WaitingSword
+                        } else {
+                            crate::element::ActionState::Waiting
+                        };
+                        actor.active_movement.clear();
+                        restore_anti_collision
                     };
-                    actor.active_movement.clear();
+                    if restore_anti_collision {
+                        entity.position_iface_mut().set_anti_collision_on(true);
+                    }
                     entity.position_iface_mut().reset_box_blocked();
                 }
 
