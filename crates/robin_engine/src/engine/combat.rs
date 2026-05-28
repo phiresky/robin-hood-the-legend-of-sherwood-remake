@@ -1741,14 +1741,28 @@ impl EngineInner {
 
             if let Some(victim) = result.hit_target {
                 // Identify the shooter and projectile type.
-                let (shooter, projectile_kind) = self
-                    .get_entity(result.arrow)
-                    .and_then(|e| match e {
+                let Some((shooter, projectile_kind)) =
+                    self.get_entity(result.arrow).and_then(|e| match e {
                         Entity::Projectile(p) => Some((p.projectile.shooter, p.object.object_type)),
                         _ => None,
                     })
-                    .unwrap_or((None, crate::element::ObjectType::Arrow));
-                let shooter = shooter.unwrap_or(EntityId(0));
+                else {
+                    tracing::warn!(
+                        projectile = ?result.arrow,
+                        ?victim,
+                        "projectile human hit missing projectile entity; skipping hit"
+                    );
+                    continue;
+                };
+                let Some(shooter) = shooter else {
+                    tracing::warn!(
+                        projectile = ?result.arrow,
+                        ?victim,
+                        ?projectile_kind,
+                        "projectile human hit missing shooter; skipping hit"
+                    );
+                    continue;
+                };
 
                 match projectile_kind {
                     crate::element::ObjectType::Apple => {
