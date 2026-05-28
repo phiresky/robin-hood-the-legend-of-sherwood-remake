@@ -105,6 +105,12 @@ enum ActionButtonVisual {
     HoverPressed,
 }
 
+const ACTION_SUB_ID_DISABLED: usize = 0;
+const ACTION_SUB_ID_UNSELECTED: usize = 1;
+const ACTION_SUB_ID_FOCUSED: usize = 2;
+const ACTION_SUB_ID_SELECTED: usize = 3;
+const ACTION_SUB_ID_FOCUSED_SELECTED: usize = 4;
+
 fn action_button_visual(
     is_active: bool,
     is_disabled: bool,
@@ -430,7 +436,7 @@ impl PortraitCache {
                     // Action button BTTN resources follow SBResourceWidgetID:
                     // radio 0 = disabled, 1 = unselected, 2 = focused,
                     // 3 = selected, 4 = focused selected.
-                    match res.get_picture(*res_id, 0) {
+                    match res.get_picture(*res_id, ACTION_SUB_ID_DISABLED) {
                         Ok(pic) => {
                             disabled[i] = Some(pic_to_surface(renderer, pic));
                         }
@@ -438,7 +444,7 @@ impl PortraitCache {
                             // Fallback: disabled surface unavailable, will use normal.
                         }
                     }
-                    match res.get_picture(*res_id, 1) {
+                    match res.get_picture(*res_id, ACTION_SUB_ID_UNSELECTED) {
                         Ok(pic) => {
                             let surface_id = pic_to_surface(renderer, pic);
                             tracing::info!(
@@ -455,7 +461,7 @@ impl PortraitCache {
                         }
                     }
                     // Focused/hover state (sub_id 2).
-                    match res.get_picture(*res_id, 2) {
+                    match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED) {
                         Ok(pic) => {
                             hover[i] = Some(pic_to_surface(renderer, pic));
                         }
@@ -464,7 +470,7 @@ impl PortraitCache {
                         }
                     }
                     // Pressed/selected state (sub_id 3).
-                    match res.get_picture(*res_id, 3) {
+                    match res.get_picture(*res_id, ACTION_SUB_ID_SELECTED) {
                         Ok(pic) => {
                             pressed[i] = Some(pic_to_surface(renderer, pic));
                         }
@@ -472,22 +478,16 @@ impl PortraitCache {
                             // Fallback: pressed surface unavailable, will use normal
                         }
                     }
-                    // Focused selected state. The shipped portrait action
-                    // resources are `RDO` entries with seven sub-pictures:
-                    // standard radio widgets use sub-id 4, while the
-                    // radio-ex layout uses sub-id 5 for "focused second".
-                    // Prefer the seven-frame hover-selected image so active
-                    // action icons visibly react to hover; keep sub-id 4 as
-                    // the fallback for standard resources.
-                    let focused_selected_pic = match res.get_picture(*res_id, 5) {
-                        Ok(pic) => Some(pic),
-                        Err(_) => res.get_picture(*res_id, 4).ok(),
-                    };
-                    match focused_selected_pic {
-                        Some(pic) => {
+                    // Focused selected state (sub-id 4). C++
+                    // `SBWidgetRadioButton::TransformStateIntoID` maps
+                    // focused+selected action buttons here; sub-id 5 is
+                    // focused-unselected and must not be preferred for active
+                    // action hover.
+                    match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED_SELECTED) {
+                        Ok(pic) => {
                             hover_pressed[i] = Some(pic_to_surface(renderer, pic));
                         }
-                        None => {
+                        Err(_) => {
                             // Fallback: focused selected surface unavailable.
                         }
                     }
@@ -2728,6 +2728,15 @@ mod tests {
             action_button_visual(true, true, true),
             ActionButtonVisual::Disabled
         );
+    }
+
+    #[test]
+    fn action_button_sub_ids_match_cxx_radio_button() {
+        assert_eq!(ACTION_SUB_ID_DISABLED, 0);
+        assert_eq!(ACTION_SUB_ID_UNSELECTED, 1);
+        assert_eq!(ACTION_SUB_ID_FOCUSED, 2);
+        assert_eq!(ACTION_SUB_ID_SELECTED, 3);
+        assert_eq!(ACTION_SUB_ID_FOCUSED_SELECTED, 4);
     }
 
     // The CharacterKind resource-lookup and sub-id tests live in
