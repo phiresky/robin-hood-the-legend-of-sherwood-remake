@@ -472,12 +472,22 @@ impl PortraitCache {
                             // Fallback: pressed surface unavailable, will use normal
                         }
                     }
-                    // Focused selected state (sub_id 4).
-                    match res.get_picture(*res_id, 4) {
-                        Ok(pic) => {
+                    // Focused selected state. The shipped portrait action
+                    // resources are `RDO` entries with seven sub-pictures:
+                    // standard radio widgets use sub-id 4, while the
+                    // radio-ex layout uses sub-id 5 for "focused second".
+                    // Prefer the seven-frame hover-selected image so active
+                    // action icons visibly react to hover; keep sub-id 4 as
+                    // the fallback for standard resources.
+                    let focused_selected_pic = match res.get_picture(*res_id, 5) {
+                        Ok(pic) => Some(pic),
+                        Err(_) => res.get_picture(*res_id, 4).ok(),
+                    };
+                    match focused_selected_pic {
+                        Some(pic) => {
                             hover_pressed[i] = Some(pic_to_surface(renderer, pic));
                         }
-                        Err(_) => {
+                        None => {
                             // Fallback: focused selected surface unavailable.
                         }
                     }
