@@ -30,7 +30,7 @@ git worktree add "$dir" -b "$branch" "$base"
 cp -a original-code "$dir/"
 
 if [ "$AGENT" = "codex" ]; then
-    cmd="pnpx @openai/codex $(printf '%q' "$prompt")"
+    cmd="codex $(printf '%q' "$prompt")"
 else
     cmd="claude --permission-mode acceptEdits $(printf '%q' "$prompt")"
 fi
