@@ -1910,7 +1910,9 @@ impl GameHost {
             // Bow presence:
             //   - PC: bow-action presence is reflected in PcStatus's ammo
             //     counter mapping (no counter means no bow).
-            //   - Soldier: profile's shooting weapon id is non-zero.
+            //   - Soldier: `InitializeWeapons(profile.shooting - 1)` only
+            //     constructs `mpBow` when the profile has a valid shooting
+            //     weapon.
             //   - Civilian: never has a bow.
             0 => {
                 if !entity.is_human() {
@@ -1950,16 +1952,7 @@ impl GameHost {
                         }
                     }
                     Entity::Soldier(e) => {
-                        // Use the AI brain flag to identify archers — same
-                        // gate `set_persistent_property` uses on the write
-                        // path.
-                        let is_archer = e
-                            .npc
-                            .ai_brain
-                            .enemy()
-                            .map(|en| en.is_archer_unit)
-                            .unwrap_or(false);
-                        if is_archer {
+                        if self.soldier_has_bow_profile(e.soldier.soldier_profile_index) {
                             e.npc.number_of_arrows as i32
                         } else {
                             0
@@ -2193,26 +2186,42 @@ impl GameHost {
                         Some(pc) => pc.profile_index,
                         None => {
                             // For an NPC archer, write `number_of_arrows`
-                            // directly.  Honour the bow-presence gate via
-                            // `is_archer_unit` so a civilian or non-archer
-                            // soldier bails out instead of silently
-                            // storing an unused count.
-                            if prop == 0
-                                && let Some(Some(Entity::Soldier(s))) =
-                                    self.entities.get_mut(actor as usize)
-                            {
-                                let is_archer = s
-                                    .npc
-                                    .ai_brain
-                                    .enemy()
-                                    .map(|e| e.is_archer_unit)
-                                    .unwrap_or(false);
-                                if !is_archer {
+                            // directly.  C++ gates `SetPersistentProperty`
+                            // through `GetBow()`, which is constructed from
+                            // the soldier profile's shooting weapon id.  The
+                            // AI archer-unit flag is not enough: officer
+                            // scripts can have archer AI without an actual
+                            // bow weapon.
+                            if prop == 0 {
+                                let soldier_profile_index = match self.get_entity(actor) {
+                                    Some(Entity::Soldier(s)) => s.soldier.soldier_profile_index,
+                                    Some(_) => {
+                                        tracing::debug!(
+                                            "SetPersistentProperty: actor {actor} is not a PC, skipping ammo"
+                                        );
+                                        return false;
+                                    }
+                                    None => {
+                                        tracing::warn!(
+                                            "Script Error: SetPersistentProperty invalid actor {actor}"
+                                        );
+                                        return false;
+                                    }
+                                };
+                                if !self.soldier_has_bow_profile(soldier_profile_index) {
                                     tracing::warn!(
-                                        "Script Error: SetPersistentProperty 'arrows' on soldier without Bow action"
+                                        "Script Error: SetPersistentProperty 'arrows' on soldier without bow profile"
                                     );
                                     return false;
                                 }
+                                let Some(Some(Entity::Soldier(s))) =
+                                    self.entities.get_mut(actor as usize)
+                                else {
+                                    tracing::warn!(
+                                        "Script Error: SetPersistentProperty invalid actor {actor}"
+                                    );
+                                    return false;
+                                };
                                 s.npc.number_of_arrows = amount as u16;
                                 tracing::debug!(
                                     actor,
@@ -2333,6 +2342,19 @@ impl GameHost {
 
         tracing::warn!("Script Error: SetPersistentProperty invalid property {prop}");
         false
+    }
+
+    fn soldier_has_bow_profile(&self, profile_index: crate::profiles::SoldierProfileIdx) -> bool {
+        let Some(profile) = self.profile_manager.get_soldier(profile_index) else {
+            tracing::warn!(
+                ?profile_index,
+                "soldier_has_bow_profile: missing soldier profile"
+            );
+            return false;
+        };
+        self.profile_manager
+            .get_bow(profile.shooting_weapon_id)
+            .is_some()
     }
 }
 

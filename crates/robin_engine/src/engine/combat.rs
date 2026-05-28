@@ -113,11 +113,17 @@ impl EngineInner {
             Entity::Pc(pc) => {
                 let idx = usize::from(pc.pc.profile_index);
                 let profile = assets.profile_manager.characters.get(idx)?;
+                if profile.shooting_weapon_id == 0 {
+                    return None;
+                }
                 Some((profile.shooting_weapon_id, profile.shooting as u32))
             }
             Entity::Soldier(s) => {
                 let idx = usize::from(s.soldier.soldier_profile_index);
                 let profile = assets.profile_manager.soldiers.get(idx)?;
+                if profile.shooting_weapon_id == 0 {
+                    return None;
+                }
                 // The shooting-ability lookup applies FIGHTING modifiers
                 // (not SHOOTING — appears to be an upstream bug preserved
                 // for accuracy).
