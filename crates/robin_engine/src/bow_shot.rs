@@ -1490,12 +1490,6 @@ pub fn begin_bow_shot(
         ShootMode::Normal
     };
 
-    // Set the action state to the matching aim state.
-    actor.action_state = match desired_mode {
-        ShootMode::Normal => ActionState::AimingWithBow,
-        ShootMode::Long => ActionState::AimingWithBowUp,
-        ShootMode::Down => ActionState::AimingWithBowDown,
-    };
     let order_id = crate::order::alloc_order_id(next_order_id);
     actor.active_shot = ActiveShot {
         sequence_id: Some(seq_id),
@@ -1503,6 +1497,7 @@ pub fn begin_bow_shot(
         target: Some(target_id),
         order_id: Some(order_id),
         released: false,
+        shoot_mode: Some(desired_mode),
     };
     actor.clear_path();
 
@@ -1609,9 +1604,8 @@ pub struct ShotTickResult {
     pub target_pos: ElemPoint2D,
     /// Target's 3D belt point (for trajectory computation).
     pub target_point: Point3D,
-    /// The action state at the moment the shot was released —
-    /// determines shoot mode, arrow mass, and damage lookup.
-    pub action_state: ActionState,
+    /// Shoot mode selected when the command was translated.
+    pub shoot_mode: ShootMode,
     /// Shooter's facing direction (0–15) for bow-point computation.
     pub shooter_direction: i16,
     /// Sprite hand anchor point (sprite position + hotspot).
@@ -1626,7 +1620,7 @@ struct PendingShotTickResult {
     seq_id: SequenceId,
     elem_idx: usize,
     shooter_position: Point3D,
-    action_state: ActionState,
+    shoot_mode: ShootMode,
     shooter_direction: i16,
     sprite_hand_point: crate::geo2d::Point2D,
 }
@@ -1824,7 +1818,9 @@ pub fn tick_bow_shots(
 
             // Shoot action-done pulse — arrow is released, but the
             // animation continues until Terminated.
-            let shot_action_state = actor.action_state;
+            let shot_mode = shot
+                .shoot_mode
+                .unwrap_or_else(|| shoot_mode_from_action_state(actor.action_state));
             actor.action_state = ActionState::AimingWithBow;
             if current_order_type == OrderType::ShootingWithBowLeaningOut {
                 entity.element_data_mut().posture = Posture::LeaningOut;
@@ -1837,8 +1833,7 @@ pub fn tick_bow_shots(
             // entity's map position to get absolute coordinates.
             // (immutable borrow — safe now that the mutable borrow above is done)
             let sprite_hand_point = {
-                let shoot_anim =
-                    bow_point_order_type_for_mode(shoot_mode_from_action_state(shot_action_state));
+                let shoot_anim = bow_point_order_type_for_mode(shot_mode);
                 let sprite_pos = entity.element_data().position_map();
                 let hotspot = entity.element_data().sprite.get_point(shoot_anim, dir_u16);
                 match hotspot {
@@ -1875,7 +1870,7 @@ pub fn tick_bow_shots(
                 seq_id: shot_seq_id,
                 elem_idx: shot.element_index,
                 shooter_position,
-                action_state: shot_action_state,
+                shoot_mode: shot_mode,
                 shooter_direction: direction,
                 sprite_hand_point,
             });
@@ -1941,7 +1936,7 @@ pub fn tick_bow_shots(
             shooter_position: result.shooter_position,
             target_pos,
             target_point,
-            action_state: result.action_state,
+            shoot_mode: result.shoot_mode,
             shooter_direction: result.shooter_direction,
             sprite_hand_point: result.sprite_hand_point,
             target_forecasted_movement,
@@ -3897,11 +3892,56 @@ mod tests {
         assert_eq!(result, BeginShotResult::Started);
 
         let actor = entities[0].as_ref().unwrap().actor_data().unwrap();
-        assert_eq!(actor.action_state, ActionState::AimingWithBow);
+        assert_eq!(
+            actor.action_state,
+            ActionState::Waiting,
+            "C++ ShootBow translation must not force the actor's action state before queued bow orders run"
+        );
         assert!(actor.active_shot.is_active());
         assert_eq!(actor.active_shot.target, Some(EntityId(1)));
+        assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Normal));
         // Should have: shoot order + reload order (and possibly transition orders)
         assert!(sm.get_element(seq_id, elem_idx).unwrap().orders.len() >= 2);
+    }
+
+    #[test]
+    fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        entities[0]
+            .as_mut()
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::AimingWithBow;
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            Some(ShootMode::Long),
+            &mut 1u32,
+        );
+
+        assert_eq!(result, BeginShotResult::Started);
+        let actor = entities[0].as_ref().unwrap().actor_data().unwrap();
+        assert_eq!(actor.action_state, ActionState::AimingWithBow);
+        assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Long));
+        let orders: Vec<OrderType> = sm
+            .get_element(seq_id, elem_idx)
+            .unwrap()
+            .orders
+            .iter()
+            .map(|o| o.order_type)
+            .collect();
+        assert_eq!(orders[0], OrderType::TransitionRaisingBow);
+        assert_eq!(orders[1], OrderType::ShootingWithBowUp);
     }
 
     #[test]

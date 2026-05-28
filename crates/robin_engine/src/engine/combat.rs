@@ -229,7 +229,7 @@ impl EngineInner {
             let target_posture = target_entity.element_data().posture;
 
             // ── Determine shoot mode from action state ───────────
-            let shoot_mode = bow_shot::shoot_mode_from_action_state(result.action_state);
+            let shoot_mode = result.shoot_mode;
             let flat_shot = bow_shot::is_flat_shot(shoot_mode);
             let mass = bow_shot::arrow_mass(shoot_mode);
 

@@ -23,6 +23,7 @@ use crate::geo2d::{self, Point2D};
 use crate::order::{Order, OrderType};
 use crate::position_interface::{PositionInterface, TargetInfo};
 use crate::sequence::{SequenceElement, SequenceId};
+use crate::weapons::ShootMode;
 
 // ═══════════════════════════════════════════════════════════════════
 //  Constants
@@ -142,6 +143,10 @@ pub struct ActiveShot {
     /// shoot animation.  C++ fires on the sprite's action-done pulse,
     /// then lets the animation continue to termination.
     pub released: bool,
+    /// Shoot mode resolved when the `ShootBow` command was translated.
+    /// C++ keeps this as the selected shoot animation/order instead of
+    /// forcing the actor's action state ahead of queued aim transitions.
+    pub shoot_mode: Option<ShootMode>,
 }
 
 impl ActiveShot {
