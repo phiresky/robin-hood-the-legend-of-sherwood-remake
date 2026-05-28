@@ -2698,9 +2698,10 @@ fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
     }
 }
 
-fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_by_shield: bool) {
+pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_by_shield: bool) {
     let sector = current_arrow_orientation_sector(proj);
     proj.projectile.falling = true;
+    proj.projectile.flying = true;
 
     let (falling_direction, velocity) = if thrown_away_by_shield {
         let direction = (sector + 4) & 15;
@@ -5087,6 +5088,53 @@ mod tests {
             }
             _ => panic!("expected projectile"),
         }
+    }
+
+    #[test]
+    fn non_shield_arrow_ricochet_advances_immediately() {
+        let trajectory = vec![TrajectoryPoint {
+            position: Point3D {
+                x: 50.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            time: 2,
+        }];
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory,
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: None,
+        });
+        let mut projectile = match arrow {
+            Entity::Projectile(p) => p,
+            _ => panic!("expected arrow projectile"),
+        };
+        projectile.element.set_direction_instantly(4);
+        let impact_position = projectile.element.position();
+
+        make_arrow_falling_down(&mut projectile, false);
+
+        assert!(projectile.projectile.falling);
+        assert!(projectile.projectile.flying);
+        assert_eq!(
+            projectile.projectile.falling_direction, 12,
+            "non-shield MakeFallingDown inverts the current sector"
+        );
+        assert_ne!(
+            projectile.element.position(),
+            impact_position,
+            "C++ MakeFallingDown calls Hourglass for armor ricochets too"
+        );
     }
 
     /// An arrow that runs out of trajectory without hitting anything

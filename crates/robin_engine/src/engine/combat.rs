@@ -428,7 +428,6 @@ impl EngineInner {
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
     fn start_arrow_ricochet(&mut self, arrow_id: EntityId) {
-        use crate::element::Point3D;
         let Some(Some(entity)) = self.entities.get_mut(arrow_id.0 as usize) else {
             return;
         };
@@ -436,28 +435,7 @@ impl EngineInner {
             return;
         };
 
-        let sector = proj.element.direction() ^ 8;
-        let (dx, dy) = crate::element::direction_vector_16(sector);
-        let deflect_velocity = Point3D {
-            x: dx * 30.0,
-            y: dy * crate::combat::ASPECT_RATIO * 10.0,
-            z: 0.0,
-        };
-
-        proj.projectile.falling = true;
-        proj.projectile.flying = true;
-        // Seed `falling_direction` from the inverted sector so `Refresh`
-        // renders the tumble animation against the ricochet direction
-        // rather than the prototype default.
-        proj.projectile.falling_direction = sector as u16;
-        proj.projectile.trajectory = bow_shot::compute_trajectory_ballistic(
-            proj.element.position(),
-            deflect_velocity,
-            bow_shot::MASS_ARROW_HIGH,
-            false,
-            None,
-        );
-        proj.projectile.trajectory_frame_count = 0;
+        bow_shot::make_arrow_falling_down(proj, false);
     }
 
     /// Classify an arrow impact on a candidate victim.
