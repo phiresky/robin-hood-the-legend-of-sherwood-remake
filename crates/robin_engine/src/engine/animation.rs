@@ -3167,6 +3167,19 @@ impl EngineInner {
                                         FrameProgression::FrozenFirstFrame,
                                     ),
                                 }
+                            } else if matches!(cur_command, Some(Command::PlayAnimLoop)) {
+                                (
+                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+                                    FrameProgression::Cyclically,
+                                )
+                            } else if matches!(
+                                cur_command,
+                                Some(Command::PlayAnimFreeze | Command::PlayAnimFrozen)
+                            ) {
+                                (
+                                    sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
+                                    FrameProgression::FreezeWhenTerminated,
+                                )
                             } else {
                                 (
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),

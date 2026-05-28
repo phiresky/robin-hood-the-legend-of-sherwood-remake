@@ -172,6 +172,13 @@ fn then_outside_recording_returns_zero() {
 // --- Actor comparison & state queries ---
 
 #[test]
+fn script_actor_handle_maps_back_to_zero_based_entity_id() {
+    assert_eq!(GameHost::actor_id(0), None);
+    assert_eq!(GameHost::actor_id(1), Some(EntityId(0)));
+    assert_eq!(GameHost::actor_id(71), Some(EntityId(70)));
+}
+
+#[test]
 fn is_actor_equal_same() {
     assert_eq!(run_native(86, &[7, 7]), StopReason::ReturnedValue(1));
 }

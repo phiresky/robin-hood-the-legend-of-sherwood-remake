@@ -4951,29 +4951,12 @@ impl EngineInner {
                         }
 
                         // Script-recorded PlayAnim / PlayAnimLoop /
-                        // PlayAnimFreeze on FX targets.  Pull the
-                        // animation id out of the generic property
-                        // bag, stamp `progression`, force the sprite
-                        // animation + reset its frame, and terminate
-                        // the element.  The animation was queued
-                        // into the element by the `RecordPlayAnim*`
-                        // natives at natives/mod.rs:2680-2729 as
-                        // `Field::AnimationId` →
-                        // `FieldValue::Animation(OrderType)`.
+                        // PlayAnimFreeze.  C++ translates these to
+                        // PLAY_CUSTOM non-animations for actors, which
+                        // then drive the stored RHFIELD_ANIMATION_ID.
+                        // FX targets instead force the target sprite
+                        // animation/progression immediately.
                         Command::PlayAnim | Command::PlayAnimLoop | Command::PlayAnimFreeze => {
-                            // These are only valid on FX targets.
-                            // Scripts shouldn't record PLAY_ANIM on
-                            // non-target actors; if one slips
-                            // through, fall through to the catch-all
-                            // below which just terminates the
-                            // element.
-                            let is_fx_target = self
-                                .get_entity(owner)
-                                .is_some_and(|e| e.kind().is_fx_target());
-                            if !is_fx_target {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
-                                continue;
-                            }
                             let anim = match elem.get_property(crate::sequence::Field::AnimationId)
                             {
                                 Some(crate::sequence::FieldValue::Animation(anim)) => Some(*anim),
@@ -4991,6 +4974,26 @@ impl EngineInner {
                                 self.sequence_manager.element_terminated(seq_id, elem_idx);
                                 continue;
                             };
+
+                            let Some(owner_entity) = self.get_entity(owner) else {
+                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                continue;
+                            };
+                            if owner_entity.is_human() {
+                                let mut order =
+                                    crate::order::Order::new(anim, 0.0, 0.0, self.alloc_order_id());
+                                order.compute_direction = false;
+                                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                continue;
+                            }
+
+                            let is_fx_target = owner_entity.kind().is_fx_target();
+                            if !is_fx_target {
+                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                continue;
+                            }
+
                             // Progression tags — stored as raw u32
                             // ordinal on `TargetData.progression`,
                             // matching the `FrameProgression` enum.

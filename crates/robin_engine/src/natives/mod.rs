@@ -687,11 +687,7 @@ impl GameHost {
     /// Convert a script actor handle to an `Option<EntityId>`.
     /// 0 (null handle) maps to `None`.
     fn actor_id(handle: i32) -> Option<EntityId> {
-        if handle == 0 {
-            None
-        } else {
-            Some(EntityId(handle as u32))
-        }
+        Self::handle_to_index(handle).map(|idx| EntityId(idx as u32))
     }
 
     /// Add a sequence element to the current recording session.
