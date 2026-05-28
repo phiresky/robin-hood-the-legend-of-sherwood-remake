@@ -1374,6 +1374,22 @@ fn aim_transition_orders(
     transitions
 }
 
+fn bow_target_ground_position(entity: &Entity) -> ElemPoint2D {
+    if entity.is_fx_target() {
+        let pos = entity.element_data().position();
+        // C++ bow facing uses the target's rendered ground position.
+        // Scripted targets store their interaction point in
+        // position_map, so use the 3D sprite position projected back
+        // onto the ground plane instead.
+        ElemPoint2D {
+            x: pos.x,
+            y: pos.y - pos.z,
+        }
+    } else {
+        entity.element_data().position_map()
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Public dispatch
 // ═══════════════════════════════════════════════════════════════════
@@ -1435,15 +1451,9 @@ pub fn begin_bow_shot(
 
     // Read target ground position for direction/order selection.
     let (tx, ty) = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
-        Some(e) if e.is_fx_target() => {
-            let pos = e.element_data().position();
-            // Rust 3D sprite points include elevation in Y; C++ bow launch
-            // direction uses the target projected back onto the ground plane.
-            (pos.x, pos.y - pos.z)
-        }
         Some(e) => {
-            let position_map = e.element_data().position_map();
-            (position_map.x, position_map.y)
+            let position = bow_target_ground_position(e);
+            (position.x, position.y)
         }
         None => return BeginShotResult::Impossible,
     };
@@ -1667,10 +1677,7 @@ pub fn tick_bow_shots(
     let mut pending_fired = Vec::new();
     let target_ground_positions: Vec<Option<ElemPoint2D>> = entities
         .iter()
-        .map(|slot| {
-            slot.as_ref()
-                .map(|entity| entity.element_data().position_map())
-        })
+        .map(|slot| slot.as_ref().map(bow_target_ground_position))
         .collect();
 
     for (idx, slot) in entities.iter_mut().enumerate() {
@@ -4190,6 +4197,53 @@ mod tests {
         );
 
         assert_eq!(result, BeginShotResult::Started);
+        let direction_goal = i16::from(
+            entities[0]
+                .as_ref()
+                .unwrap()
+                .element_data()
+                .sprite
+                .position_iface
+                .get_direction_goal(),
+        );
+        assert_eq!(
+            direction_goal,
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
+        );
+        assert_ne!(
+            direction_goal,
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
+        );
+    }
+
+    #[test]
+    fn tick_bow_shots_keeps_facing_fx_target_ground_projection() {
+        let mut target = make_arrow_target(50.0, 120.0);
+        target.element_data_mut().set_position(Point3D {
+            x: 50.0,
+            y: 120.0,
+            z: 100.0,
+        });
+        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 100.0)), Some(target)];
+        bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            Some(ShootMode::Normal),
+            &mut 1u32,
+        );
+        assert_eq!(result, BeginShotResult::Started);
+
+        tick_bow_shots(&mut entities, &mut sm);
+
         let direction_goal = i16::from(
             entities[0]
                 .as_ref()
