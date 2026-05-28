@@ -605,10 +605,9 @@ impl EngineInner {
             // `(rand() % 101) > protection` runs even when protection is
             // 0 — gives a 1/101 ricochet for the exact `roll == 0` case,
             // and keeps RNG consumption consistent with the
-            // piercing-protection > 0 path. Only fall back to
-            // unconditional-hurtable when the weapon profile lookup
-            // returned nothing (defensive only — every PC/soldier with
-            // a real HtH weapon has a profile-driven protection value).
+            // piercing-protection > 0 path. Missing weapon profile data
+            // is invalid actor state; C++ calls through `mpSword`, so do
+            // not invent an unconditional-damage fallback.
             match piercing_protection {
                 Some(protection) => {
                     let roll = crate::sim_rng::u32(0..101);
@@ -617,9 +616,9 @@ impl EngineInner {
                 None => {
                     tracing::warn!(
                         ?victim_id,
-                        "IsHurtableByArrow: missing HtH weapon profile; treating victim as hurtable",
+                        "IsHurtableByArrow: missing HtH weapon profile; treating victim as protected",
                     );
-                    true
+                    false
                 }
             }
         } else {
