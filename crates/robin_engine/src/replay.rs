@@ -362,7 +362,7 @@ pub fn state_hash(engine: &crate::engine::EngineInner) -> u64 {
         s.count += 1;
         s.hash_us += elapsed_us as u64;
         if s.count == 1 || s.count % 50 == 0 {
-            tracing::info!(
+            tracing::debug!(
                 target: "robin_engine::replay::perf",
                 "state_hash count={} avg_us={}",
                 s.count,

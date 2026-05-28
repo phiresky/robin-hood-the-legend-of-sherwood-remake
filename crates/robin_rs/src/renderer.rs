@@ -3979,7 +3979,7 @@ fn log_fps(draws_this_frame: usize, uploads_this_frame: usize) {
         let avg_uploads = g.uploads_total / g.frames as usize;
         let (present_avg_us, _) = present_time::take_avg();
         let upload_labels = upload_counter::take_labels();
-        tracing::info!(
+        tracing::debug!(
             target: "fps",
             "{} fps  draws/f={}  uploads/f={}  present={:.2}ms  upload_labels={}",
             g.frames, avg_draws, avg_uploads,

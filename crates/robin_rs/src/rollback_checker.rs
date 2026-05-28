@@ -282,7 +282,7 @@ impl RollbackCheckJob {
             tracing::trace!("Rollback OK: frames {start_frame}..={end_frame} hash {expected:016x}");
         }
 
-        tracing::info!(
+        tracing::debug!(
             target: "robin_rs::rollback_checker::perf",
             clone_us,
             replay_us,
