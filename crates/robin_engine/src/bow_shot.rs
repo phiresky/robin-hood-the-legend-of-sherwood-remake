@@ -3316,13 +3316,10 @@ pub fn tick_arrows(
             }
         }
 
-        // FX-target segment/point check (same semantics).  Each
-        // projectile type checks a specific filter bit and launches a
-        // specific activation command on a matching hit.  Apples and
-        // stones additionally force the bursting animation on contact
-        // regardless of filter — so an apple flying through a
-        // non-apple FX target still bursts on impact (cosmetic, no
-        // activation).
+        // FX-target segment/point check (same semantics).  C++
+        // `FindTargetVictim` only returns FX targets whose action
+        // filter matches the projectile type, so nonmatching targets
+        // are ignored before `HitTarget` can run.
         let (required_filter, activation_command) = match proj.object.object_type {
             ObjectType::Arrow => (crate::element::TargetFilter::ARROW, Command::ActivateArrow),
             ObjectType::Apple => (crate::element::TargetFilter::APPLE, Command::ActivateApple),
@@ -3333,13 +3330,11 @@ pub fn tick_arrows(
             ),
         };
         let mut fx_target_hit: Option<(EntityId, Command)> = None;
-        // Mismatched-filter burster contact — used to fire the impact
-        // FX and burst animation when no activation can be launched.
-        // The bursting animation is forced *before* the filter check,
-        // so the sprite always bursts on contact.
-        let mut fx_target_burst_only: Option<EntityId> = None;
-        if !required_filter.is_empty() || is_burster {
+        if !required_filter.is_empty() {
             for snap in &fx_target_snapshots {
+                if !snap.action_filter.contains(required_filter) {
+                    continue;
+                }
                 let hit = if use_range_gate {
                     // C++ `FindTargetVictim` gates FX targets by
                     // distance from the projectile's current position
@@ -3353,11 +3348,7 @@ pub fn tick_arrows(
                     distance(arrow_new, snap.center) <= HIT_DISTANCE
                 };
                 if hit {
-                    if snap.action_filter.contains(required_filter) {
-                        fx_target_hit = Some((snap.id, activation_command));
-                    } else if is_burster {
-                        fx_target_burst_only = Some(snap.id);
-                    }
+                    fx_target_hit = Some((snap.id, activation_command));
                     break;
                 }
             }
@@ -3400,25 +3391,6 @@ pub fn tick_arrows(
                 fx_target_hit: Some(fx_hit),
                 despawn,
                 damage,
-                impact_fx,
-                impact_pos,
-            });
-        } else if fx_target_burst_only.is_some() {
-            // Mismatched-filter contact for an apple/stone — burst
-            // the sprite on impact, play the per-type impact FX, but
-            // launch no activation sequence (the target's filter
-            // doesn't match).
-            let impact_pos = proj.element.position_map();
-            proj.projectile.flying = false;
-            proj.object.animation = Animation::ObjectBursting;
-            proj.projectile.burst_countdown = burst_ticks_for_proj(proj);
-            results.push(ArrowTickResult {
-                arrow: arrow_id,
-                hit_target: None,
-                shield_hit: None,
-                fx_target_hit: None,
-                despawn: false,
-                damage: 0,
                 impact_fx,
                 impact_pos,
             });
@@ -4298,6 +4270,11 @@ mod tests {
             ..ElementData::default()
         };
         target_element.set_position_map(ElemPoint2D { x: 50.0, y: 0.0 });
+        target_element.set_position(Point3D {
+            x: 50.0,
+            y: 0.0,
+            z: 0.0,
+        });
         let target = Entity::Target(ElementTarget {
             element: target_element,
             fx: FxData::default(),
@@ -4336,14 +4313,11 @@ mod tests {
         });
 
         let mut entities: Vec<Option<Entity>> = vec![Some(target), Some(apple)];
-        for _ in 0..6 {
-            for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
-                assert!(
-                    r.fx_target_hit.is_none(),
-                    "apple must not activate an ARROW-only target"
-                );
-            }
-        }
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        assert!(
+            results.is_empty(),
+            "C++ FindTargetVictim ignores nonmatching target filters before HitTarget can burst"
+        );
     }
 
     /// Apple impact on an FX target sets the burst animation + decay
