@@ -3623,21 +3623,32 @@ pub fn apply_projectile_hit(
     concussion: u16,
     arrow_flight_direction: i16,
 ) -> bool {
-    // Resolve shooter PC-ness before the victim mutable borrow.
-    // The flag is read only when the victim transitions to
-    // unconscious; missing slot ⇒ false.
-    let shooter_is_pc = entities
-        .get(shooter_id.0 as usize)
-        .and_then(|s| s.as_ref())
-        .map(|e| e.is_pc())
-        .unwrap_or(false);
+    // Resolve shooter PC-ness before the victim mutable borrow. C++
+    // projectile damage carries a real origin pointer; missing shooter
+    // state is invalid and must not become "not a PC" silently.
+    let Some(shooter) = entities.get(shooter_id.0 as usize).and_then(|s| s.as_ref()) else {
+        tracing::warn!(
+            ?victim_id,
+            ?shooter_id,
+            "projectile hit skipped: missing shooter before damage"
+        );
+        return false;
+    };
+    let shooter_is_pc = shooter.is_pc();
 
     let victim = match entities
         .get_mut(victim_id.0 as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
-        None => return false,
+        None => {
+            tracing::warn!(
+                ?victim_id,
+                ?shooter_id,
+                "projectile hit skipped: missing victim before damage"
+            );
+            return false;
+        }
     };
 
     // Snap the victim to face the arrow's opposite direction (toward
