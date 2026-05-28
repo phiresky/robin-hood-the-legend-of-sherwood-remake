@@ -489,9 +489,7 @@ impl EngineInner {
         pc_data: &crate::element::PcData,
     ) -> Option<usize> {
         let idx = usize::from(pc_data.list_index);
-        let Some(campaign) = self.campaign.as_ref() else {
-            return None;
-        };
+        let campaign = self.campaign.as_ref()?;
         let Some(desc) = campaign.characters.get(idx) else {
             tracing::warn!(
                 "PC status index {} out of range for profile {}",
@@ -2183,10 +2181,8 @@ impl EngineInner {
         // Reset every sprite's transient last_motion_state so the next
         // tick starts clean, regardless of whether the slot was an
         // actor or had an order to mark.
-        for slot in self.entities.iter_mut() {
-            if let Some(entity) = slot {
-                entity.element_data_mut().sprite.last_motion_state = None;
-            }
+        for entity in self.entities.iter_mut().flatten() {
+            entity.element_data_mut().sprite.last_motion_state = None;
         }
     }
 

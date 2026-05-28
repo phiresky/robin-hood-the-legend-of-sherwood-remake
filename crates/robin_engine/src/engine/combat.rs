@@ -1745,6 +1745,7 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::element::Point
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
         bonus_auto_pickup_allowed, soldier_piercing_protection, soldier_shield_dimensions,

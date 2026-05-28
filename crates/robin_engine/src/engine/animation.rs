@@ -665,7 +665,7 @@ mod tests {
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
         );
-        assert!(matches!(entity.element_data().direction(), 7 | 8 | 9));
+        assert!(matches!(entity.element_data().direction(), 7..=9));
         assert_eq!(
             entity.ai_controller().unwrap().current_emoticon_type,
             crate::ai::EmoticonType::Thunderstorm

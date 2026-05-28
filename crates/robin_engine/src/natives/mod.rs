@@ -2739,10 +2739,10 @@ impl GameHost {
             return;
         }
 
-        if entity.is_pc() {
-            if let Some(pc) = entity.pc_data_mut() {
-                pc.fried_psykokwack = freeze;
-            }
+        if entity.is_pc()
+            && let Some(pc) = entity.pc_data_mut()
+        {
+            pc.fried_psykokwack = freeze;
         }
         // NPC branch intentionally empty: the C++ NPC freeze flag
         // (`mbFriedPikachu`) is stored on assignment and never consulted —
@@ -4782,13 +4782,12 @@ impl HostFunctions for GameHost {
                                 );
                                 return 0;
                             };
-                            let e = SequenceElement::new_interaction(
+                            SequenceElement::new_interaction(
                                 level,
                                 Command::ShootBowOnce,
                                 owner,
                                 antagonist,
-                            );
-                            e
+                            )
                         }
                         ENTER_SF => {
                             let Some(antagonist) = resolve_antagonist(number, &self.entities)

@@ -378,6 +378,7 @@ fn render_text_centered_gpu(
 /// 1. Portrait slot text: character name + HP in the bottom panel
 /// 2. Ammunition counts below action buttons
 /// 3. Floating counter titbits (coin pickups, etc.)
+#[allow(clippy::too_many_arguments)]
 pub fn render_hud_text(
     engine: &Engine,
     local_seat: PlayerId,

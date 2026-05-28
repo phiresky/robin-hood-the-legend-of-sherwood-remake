@@ -121,9 +121,11 @@ fn name_lookup() {
 #[test]
 fn door_sector_goal_resolves_click_polygon_door_index() {
     let mut host = GameHost::new();
-    let mut door = Door::default();
-    door.active = true;
-    door.click_polygon = vec![(10.0, 10.0), (30.0, 10.0), (30.0, 30.0), (10.0, 30.0)];
+    let mut door = Door {
+        active: true,
+        click_polygon: vec![(10.0, 10.0), (30.0, 10.0), (30.0, 30.0), (10.0, 30.0)],
+        ..Default::default()
+    };
     door.rebuild_click_bbox();
     host.doors.push(door);
 

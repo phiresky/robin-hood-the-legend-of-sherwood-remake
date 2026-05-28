@@ -1371,12 +1371,10 @@ pub fn begin_listen(
         };
         if let Some(idx) =
             crate::inventory::find_action_slot(profile, crate::profiles::Action::Listen)
+            && (pc.disabled_actions.get(idx).copied().unwrap_or(false)
+                || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false))
         {
-            if pc.disabled_actions.get(idx).copied().unwrap_or(false)
-                || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false)
-            {
-                return BeginResult::Impossible;
-            }
+            return BeginResult::Impossible;
         }
     }
 

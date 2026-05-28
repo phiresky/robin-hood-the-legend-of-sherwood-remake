@@ -717,6 +717,7 @@ fn tick_active_popup_scroll_batch(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tick_active_debriefing_batch(
     batch: &mut ActiveDebriefingBatch,
     event_pump: &mut crate::window::GameWindow,

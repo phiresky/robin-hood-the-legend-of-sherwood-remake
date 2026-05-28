@@ -946,6 +946,7 @@ fn render_ground_mark_set(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_character_masks_clipped(
     engine: &Engine,
     renderer: &mut Renderer,
@@ -1439,6 +1440,7 @@ fn transition_crenel_climb_up_mask_position(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_sprite_mask_debug_overlay(
     host: &Host,
     engine: &Engine,

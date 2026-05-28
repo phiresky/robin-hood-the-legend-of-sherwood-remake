@@ -167,7 +167,10 @@ fn sequence_call_registers_callback() {
                 lua.named_registry_value("robin_lua.sequence_callbacks")?;
             let stash_id: i32 = callbacks.get("__next_id")?;
             assert_eq!(stash_id, 10_001);
-            let kind: String = format!("{}", callbacks.get::<mlua::Value>(10_000_i32)?.type_name());
+            let kind = callbacks
+                .get::<mlua::Value>(10_000_i32)?
+                .type_name()
+                .to_string();
             assert_eq!(kind, "function");
             Ok(())
         })
