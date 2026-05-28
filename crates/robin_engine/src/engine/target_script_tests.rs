@@ -193,25 +193,11 @@ fn build_test_scb() -> ScbFile {
 
 /// Stand up an engine with a `MissionScript` loaded from the synthetic
 /// SCB, plus an FX target entity bound to the `TestTarget` class.
-/// Returns the engine and the target's 1-based handle.
+/// Returns the engine and the target entity id.
 fn build_engine_with_target() -> (EngineInner, EntityId) {
     let mut engine = EngineInner::new();
     let script = MissionScript::from_scb(build_test_scb()).expect("mission script builds");
     engine.mission_script = Some(script);
-
-    // Add a dummy entity at handle 0 so real entities have handle >= 1
-    // (matches level-loading which reserves slot 0).  Use a minimal
-    // Fx placeholder.
-    let filler = Entity::Target(ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Fx,
-            active: false,
-            ..ElementData::default()
-        },
-        fx: FxData::default(),
-        target: TargetData::default(),
-    });
-    engine.add_entity(filler);
 
     // FX target with a script_class of "TestTarget".
     let target = Entity::Target(ElementTarget {
@@ -232,7 +218,7 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
 
     // Bind the target to its script class.  In production this runs
     // during per-target Initialize (see `script.rs:568-584`).
-    let handle = (target_id.0 as i32) + 1;
+    let handle = crate::natives::GameHost::actor_handle(target_id);
     if let Some(ref mut script) = engine.mission_script {
         assert!(script.bind_target(handle, "TestTarget"), "bind_target");
     }
@@ -272,7 +258,7 @@ fn launch_activation(engine: &mut EngineInner, target: EntityId, pc: EntityId, c
 #[test]
 fn activated_by_lever_fires_on_activation_command() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(1); // filler slot we inserted first
+    let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateLever);
 
     let assets = crate::engine::types::LevelAssets::new();
@@ -293,7 +279,7 @@ fn activated_by_lever_fires_on_activation_command() {
 #[test]
 fn activated_by_search_fires_on_activation_command() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(1);
+    let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateSearch);
 
     let assets = crate::engine::types::LevelAssets::new();
@@ -310,7 +296,7 @@ fn activated_by_search_fires_on_activation_command() {
 #[test]
 fn activated_by_apple_fires_on_activation_command() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(1);
+    let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateApple);
 
     let assets = crate::engine::types::LevelAssets::new();
@@ -327,7 +313,7 @@ fn activated_by_apple_fires_on_activation_command() {
 #[test]
 fn activated_by_arrow_fires_on_activation_command() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(1);
+    let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateArrow);
 
     let assets = crate::engine::types::LevelAssets::new();
@@ -345,7 +331,7 @@ fn activated_by_arrow_fires_on_activation_command() {
 #[test]
 fn activation_without_matching_method_is_no_op() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(1);
+    let pc = target_id;
     // ActivateStone / ActivateHandle / ActivateSword are not defined
     // on `TestTarget`.
     for cmd in [
@@ -431,7 +417,7 @@ fn handle_target_and_take_target_both_route_to_activated_by_hand() {
 #[test]
 fn multiple_activations_in_one_tick_all_fire() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(1);
+    let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateLever);
     launch_activation(&mut engine, target_id, pc, Command::ActivateSearch);
     launch_activation(&mut engine, target_id, pc, Command::ActivateApple);

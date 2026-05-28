@@ -109,7 +109,7 @@ pub enum EngineCommand {
     },
     /// Update a scroll's status from script.  Stores the new status,
     /// updates the minimap dot, and (on `Opened`) forces the
-    /// `BONUS_THREE` animation.  `scroll_handle` is the 1-based script
+    /// `BONUS_THREE` animation. `scroll_handle` is the actor script
     /// handle; status is in `0..=3` (Invisible/Visible/Taken/Opened) —
     /// both pre-validated by the native.
     SetScrollStatus { scroll_handle: i32, status: i32 },

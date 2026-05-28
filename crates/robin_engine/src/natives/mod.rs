@@ -107,10 +107,25 @@ fn anim_ordinal_to_order_type(anim: i32, native: &str) -> OrderType {
 
 // ── Script handle encoding ──────────────────────────────────────────
 //
-// Script handles are 1-based indices: handle = index + 1, null = 0
-// (NULL means "no entity"). The script language is typed (Actor,
-// Door, Patch, etc.), so there is no ambiguity between handle types
-// at the same numeric value.
+// C++ script values are typed `void*` handles. `NULL` is 0; valid
+// handles are opaque non-null pointers. The Rust VM stores script values
+// as `i32`, so we encode those opaque handles as tagged integers:
+//
+//   high 4 bits: script type tag
+//   low 28 bits: 0-based index in that type's table
+//
+// This keeps the script-facing index payload 0-based while preserving
+// the original null semantics (`0` is still null and can never name the
+// first actor).
+
+const SCRIPT_HANDLE_INDEX_MASK: i32 = 0x0fff_ffff;
+const SCRIPT_HANDLE_ACTOR_TAG: i32 = 0x1000_0000;
+const SCRIPT_HANDLE_DOOR_TAG: i32 = 0x2000_0000;
+const SCRIPT_HANDLE_PATCH_TAG: i32 = 0x3000_0000;
+const SCRIPT_HANDLE_LOCATION_TAG: i32 = 0x4000_0000;
+const SCRIPT_HANDLE_SOUND_SOURCE_TAG: i32 = 0x5000_0000;
+const SCRIPT_HANDLE_BUILDING_TAG: i32 = 0x6000_0000;
+const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
 
 /// Geometry snapshot for a single script zone, captured at level load.
 /// Lets the [`IsInside`] native recompute occupancy via the same
@@ -200,8 +215,8 @@ pub struct GameHost {
     /// indices with the "already been destroyed" error.
     pub sound_source_alive: Vec<bool>,
 
-    /// Position (x, y) for each script location handle (1-based).
-    /// Populated by the engine when loading a level.  Index = handle - 1.
+    /// Position (x, y) for each script location index.
+    /// Populated by the engine when loading a level.
     pub location_positions: Vec<(f32, f32)>,
     /// Layer (floor) for each static script location handle, parallel to
     /// `location_positions` (only covers indices `< script_location_count`).
@@ -236,10 +251,10 @@ pub struct GameHost {
     pub completed_sequences: Vec<Sequence>,
 
     // ── Door / patch / building / sound state for script natives ────
-    /// Door state. Script handles are 1-based indices (0 = null).
+    /// Door state. Script handles are tagged 0-based indices (0 = null).
     /// Populated by the engine when loading a level.
     pub doors: Vec<Door>,
-    /// Patch state. Script handles are 1-based indices (0 = null).
+    /// Patch state. Script handles are tagged 0-based indices (0 = null).
     /// Populated by the engine when loading a level.
     pub patches: Vec<Patch>,
     /// Queued sound commands for the engine to process after script execution.
@@ -275,7 +290,7 @@ pub struct GameHost {
     /// the sequence manager.
     pub current_animations: BTreeMap<i32, OrderType>,
 
-    /// Building occupants. Index = building handle − 1. Value = actor handles.
+    /// Building occupants. Index = building index. Value = actor handles.
     pub building_occupants: Vec<Vec<i32>>,
     /// Parallel to `building_occupants` (same indexing): whether each
     /// building carries an arrow reserve the player can collect.
@@ -298,7 +313,7 @@ pub struct GameHost {
     pub pc_auth_bits: BTreeMap<i32, u16>,
 
     // ── PC / NPC snapshot state (populated by engine before script) ──
-    /// All PC entity handles (1-based), in spawn order.
+    /// All PC actor handles, in spawn order.
     pub pc_handles: Vec<i32>,
     /// Currently selected PC entity handles.
     pub selected_pc_handles: Vec<i32>,
@@ -340,9 +355,9 @@ pub struct GameHost {
     pub lua_patrol_names: BTreeMap<String, i32>,
     pub lua_scroll_names: BTreeMap<String, i32>,
 
-    /// Building active state. Index = building handle − 1.
+    /// Building active state. Index = building index.
     pub building_active: Vec<bool>,
-    /// Building → gate (door) handles. Index = building handle − 1.
+    /// Building → gate (door) handles. Index = building index.
     pub building_gates: Vec<Vec<i32>>,
 
     /// Whether the game is in "men to blazon" conversion UI mode (Sherwood).
@@ -357,10 +372,10 @@ pub struct GameHost {
     /// `BLINK_TIMEOUT` (50) ticks.
     pub blink_expire_frame: u32,
 
-    /// Script location positions. Index = location handle − 1.
+    /// Script location positions. Index = location index.
     /// Populated by the engine when loading a level.
 
-    /// Patch → animation FX entity handle. Index = patch handle − 1.
+    /// Patch → animation FX entity handle. Index = patch index.
     /// Populated by the engine when loading a level.
     pub patch_animation_entities: Vec<Option<i32>>,
 
@@ -598,15 +613,15 @@ impl GameHost {
         }
     }
 
-    /// Look up an entity by actor handle (1-based). Returns None for null or invalid handles.
+    /// Look up an entity by actor handle. Returns None for null or invalid handles.
     fn get_entity(&self, handle: i32) -> Option<&Entity> {
-        let idx = Self::handle_to_index(handle)?;
+        let idx = Self::actor_index(handle)?;
         self.entities.get(idx)?.as_ref()
     }
 
-    /// Look up an entity mutably by its script handle (1-based).
+    /// Look up an entity mutably by its actor handle.
     fn get_entity_mut(&mut self, handle: i32) -> Option<&mut Entity> {
-        let idx = Self::handle_to_index(handle)?;
+        let idx = Self::actor_index(handle)?;
         self.entities.get_mut(idx)?.as_mut()
     }
 
@@ -687,7 +702,7 @@ impl GameHost {
     /// Convert a script actor handle to an `Option<EntityId>`.
     /// 0 (null handle) maps to `None`.
     fn actor_id(handle: i32) -> Option<EntityId> {
-        Self::handle_to_index(handle).map(|idx| EntityId(idx as u32))
+        Self::actor_index(handle).map(|idx| EntityId(idx as u32))
     }
 
     /// Add a sequence element to the current recording session.
@@ -1833,7 +1848,7 @@ impl GameHost {
                 && e.element.active
                 && e.object.object_type == object_type
             {
-                return (idx + 1) as i32; // 1-based handle
+                return Self::actor_handle_from_index(idx);
             }
         }
         0 // not found
@@ -2362,43 +2377,114 @@ impl Default for GameHost {
 
 // ── Handle resolution helpers ────────────────────────────────────────
 impl GameHost {
-    /// Convert a 1-based script handle to a 0-based index.
-    /// Returns `None` for null (0) or negative handles.
-    pub fn handle_to_index(handle: i32) -> Option<usize> {
-        if handle > 0 {
-            Some((handle - 1) as usize)
-        } else {
-            None
-        }
+    fn make_script_handle(tag: i32, index: usize) -> i32 {
+        let index = i32::try_from(index).expect("script handle index exceeds i32 range");
+        assert!(
+            (0..=SCRIPT_HANDLE_INDEX_MASK).contains(&index),
+            "script handle index exceeds 28-bit payload: {index}"
+        );
+        tag | index
+    }
+
+    pub fn actor_handle(id: EntityId) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, id.0 as usize)
+    }
+
+    pub fn actor_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, index)
+    }
+
+    pub fn door_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_DOOR_TAG, index)
+    }
+
+    pub fn patch_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_PATCH_TAG, index)
+    }
+
+    pub fn location_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_LOCATION_TAG, index)
+    }
+
+    pub fn sound_source_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_SOUND_SOURCE_TAG, index)
+    }
+
+    pub fn building_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_BUILDING_TAG, index)
+    }
+
+    pub fn way_handle_from_index(index: usize) -> i32 {
+        Self::make_script_handle(SCRIPT_HANDLE_WAY_TAG, index)
+    }
+
+    pub fn actor_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_ACTOR_TAG)
+    }
+
+    pub fn door_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
+    }
+
+    pub fn patch_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
+    }
+
+    pub fn location_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_LOCATION_TAG)
+    }
+
+    pub fn sound_source_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_SOUND_SOURCE_TAG)
+    }
+
+    pub fn building_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_BUILDING_TAG)
+    }
+
+    pub fn way_index(handle: i32) -> Option<usize> {
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_WAY_TAG)
+    }
+
+    fn handle_has_tag(handle: i32, tag: i32) -> bool {
+        handle > 0 && (handle & !SCRIPT_HANDLE_INDEX_MASK) == tag
+    }
+
+    fn typed_handle_to_index(handle: i32, tag: i32) -> Option<usize> {
+        Self::handle_has_tag(handle, tag).then_some((handle & SCRIPT_HANDLE_INDEX_MASK) as usize)
     }
 
     /// Whether `loc` is a script-sector handle (as opposed to a
-    /// script-point handle or unrelated entity handle).  Script
-    /// location handles are laid out as `[points..., sectors...]`
-    /// (1-based), so a sector handle satisfies
-    /// `script_point_count < loc <= script_location_count`.
+    /// script-point handle or unrelated entity handle). Script location
+    /// payload indices are laid out as `[points..., sectors...]`, so a
+    /// sector handle satisfies `script_point_count <= idx < script_location_count`.
     /// Used as the script-sector type guard by
     /// `GetNumberOfActorsInSector` / `GetActorInSector` etc.
     fn is_script_sector_handle(&self, loc: i32) -> bool {
-        loc > 0
-            && (loc as usize) > self.script_point_count
-            && (loc as usize) <= self.script_location_count
+        let Some(idx) = Self::typed_handle_to_index(loc, SCRIPT_HANDLE_LOCATION_TAG) else {
+            return false;
+        };
+        idx >= self.script_point_count && idx < self.script_location_count
     }
 
     fn get_door(&self, handle: i32) -> Option<&Door> {
-        Self::handle_to_index(handle).and_then(|idx| self.doors.get(idx))
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
+            .and_then(|idx| self.doors.get(idx))
     }
 
     fn get_door_mut(&mut self, handle: i32) -> Option<&mut Door> {
-        Self::handle_to_index(handle).and_then(|idx| self.doors.get_mut(idx))
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
+            .and_then(|idx| self.doors.get_mut(idx))
     }
 
     fn get_patch(&self, handle: i32) -> Option<&Patch> {
-        Self::handle_to_index(handle).and_then(|idx| self.patches.get(idx))
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
+            .and_then(|idx| self.patches.get(idx))
     }
 
     fn get_patch_mut(&mut self, handle: i32) -> Option<&mut Patch> {
-        Self::handle_to_index(handle).and_then(|idx| self.patches.get_mut(idx))
+        Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
+            .and_then(|idx| self.patches.get_mut(idx))
     }
 
     /// Resolve an actor handle to a character profile index.
@@ -2425,10 +2511,9 @@ impl GameHost {
     /// dynamically-computed locations (`GetActorLocation`,
     /// `ComputeLocationBetween`) are always points.
     fn is_script_point(&self, handle: i32) -> bool {
-        if handle <= 0 {
+        let Some(idx) = Self::location_index(handle) else {
             return false;
-        }
-        let idx = (handle - 1) as usize;
+        };
         if idx < self.script_point_count {
             return true;
         }
@@ -2442,10 +2527,7 @@ impl GameHost {
     /// Handles 1..=script_location_count are static locations from level data.
     /// Handles beyond that are dynamically computed by script natives.
     fn resolve_location_pos(&self, handle: i32) -> Option<(f32, f32)> {
-        if handle <= 0 {
-            return None;
-        }
-        let idx = (handle - 1) as usize;
+        let idx = Self::location_index(handle)?;
         if idx < self.script_location_count {
             self.location_positions.get(idx).copied()
         } else {
@@ -2464,10 +2546,7 @@ impl GameHost {
     /// These reads back the `RecordEnterGame` layer/sector pickup and
     /// the `SetActorLocation` sector refresh.
     fn resolve_location_layer_sector(&self, handle: i32) -> Option<(u16, u16)> {
-        if handle <= 0 {
-            return None;
-        }
-        let idx = (handle - 1) as usize;
+        let idx = Self::location_index(handle)?;
         if idx < self.script_location_count {
             return Some((
                 *self.location_layers.get(idx)?,
@@ -2489,21 +2568,23 @@ impl GameHost {
     ) -> i32 {
         self.computed_locations.push((x, y));
         self.computed_location_layers.push(layer_sector);
-        (self.script_location_count + self.computed_locations.len()) as i32
+        Self::location_handle_from_index(
+            self.script_location_count + self.computed_locations.len() - 1,
+        )
     }
 
-    /// Validate a 0-based script-object index and return its 1-based
+    /// Validate a 0-based script-object index and return its opaque script
     /// handle, or 0 with an error log if out of range. Common shape for
     /// the `GetXScript` family of natives (doors, patches, locations,
     /// sound sources, buildings, hiking paths).
     ///
     /// `-1` means "no script reference" and silently returns null.
-    fn script_index_to_handle(idx: i32, count: usize, kind: &str) -> i32 {
+    fn script_index_to_handle(idx: i32, count: usize, kind: &str, tag: i32) -> i32 {
         if idx == -1 {
             return 0;
         }
         if idx >= 0 && (idx as usize) < count {
-            return idx + 1;
+            return Self::make_script_handle(tag, idx as usize);
         }
         tracing::error!("Script Error: invalid {kind} ID {idx} (max={count})");
         0
@@ -3245,9 +3326,8 @@ impl HostFunctions for GameHost {
                 }),
 
                 // --- entity handle / script lookup ---
-                // Handles are 1-based (handle = index + 1, 0 = null).
-                // (The legacy mobile-element tier is dead engine code
-                // and is not modelled.)
+                // Handles are opaque non-null VM values with 0-based payload indices.
+                // The legacy mobile-element tier is dead engine code and is not modelled.
                 GetActorScript => {
                     let idx = stack.pop_i32();
                     let script_count = self.entities.len();
@@ -3257,7 +3337,7 @@ impl HostFunctions for GameHost {
                         panic!("GetActorScript: negative actor ID {idx}");
                     } else if (idx as usize) < script_count {
                         if self.entities[idx as usize].is_some() {
-                            idx + 1
+                            Self::actor_handle_from_index(idx as usize)
                         } else {
                             // legacy implementation returns `marrayElementsScript[idx]`
                             // directly; in-range NULL entries are valid
@@ -3273,16 +3353,23 @@ impl HostFunctions for GameHost {
                         0
                     }
                 }
-                GetDoorScript => {
-                    Self::script_index_to_handle(stack.pop_i32(), self.doors.len(), "door")
-                }
-                GetPatchScript => {
-                    Self::script_index_to_handle(stack.pop_i32(), self.patches.len(), "patch")
-                }
+                GetDoorScript => Self::script_index_to_handle(
+                    stack.pop_i32(),
+                    self.doors.len(),
+                    "door",
+                    SCRIPT_HANDLE_DOOR_TAG,
+                ),
+                GetPatchScript => Self::script_index_to_handle(
+                    stack.pop_i32(),
+                    self.patches.len(),
+                    "patch",
+                    SCRIPT_HANDLE_PATCH_TAG,
+                ),
                 GetLocationScript => Self::script_index_to_handle(
                     stack.pop_i32(),
                     self.script_location_count,
                     "location",
+                    SCRIPT_HANDLE_LOCATION_TAG,
                 ),
                 GetSoundSourceScript => {
                     // If the slot was nulled by a prior
@@ -3302,7 +3389,7 @@ impl HostFunctions for GameHost {
                             .copied()
                             .unwrap_or(false)
                         {
-                            idx + 1
+                            Self::sound_source_handle_from_index(idx as usize)
                         } else {
                             tracing::error!(
                                 "Script Error: trying to get a sound source that has already been destroyed ({idx})"
@@ -3321,24 +3408,35 @@ impl HostFunctions for GameHost {
                     stack.pop_i32(),
                     self.script_building_count,
                     "building",
+                    SCRIPT_HANDLE_BUILDING_TAG,
                 ),
                 GetWayScript => Self::script_index_to_handle(
                     stack.pop_i32(),
                     self.script_hiking_path_count,
                     "way",
+                    SCRIPT_HANDLE_WAY_TAG,
                 ),
 
                 // --- Reverse index lookup (handle → script index) ---
                 //
                 // There is a separate native per object type, but the
-                // underlying `handle - 1` math is identical for all
-                // of these except `GetSoundSourceIndex`, which gates
+                // All reverse lookups decode the tagged 0-based payload.
+                // `GetSoundSourceIndex` also gates
                 // on the sound subsystem being ready and on the
                 // per-slot "still alive" flag — split out below.
                 GetActorIndex | GetDoorIndex | GetPatchIndex | GetLocationIndex
                 | GetBuildingIndex | GetWayIndex => {
                     let handle = stack.pop_i32();
-                    Self::handle_to_index(handle).map_or(-1, |i| i as i32)
+                    let idx = match f {
+                        GetActorIndex => Self::actor_index(handle),
+                        GetDoorIndex => Self::door_index(handle),
+                        GetPatchIndex => Self::patch_index(handle),
+                        GetLocationIndex => Self::location_index(handle),
+                        GetBuildingIndex => Self::building_index(handle),
+                        GetWayIndex => Self::way_index(handle),
+                        _ => unreachable!(),
+                    };
+                    idx.map_or(-1, |i| i as i32)
                 }
                 GetSoundSourceIndex => {
                     //   - start with idx = -1
@@ -3347,7 +3445,7 @@ impl HostFunctions for GameHost {
                     //     sound-source array; an unknown source logs
                     //     and still returns -1.
                     let handle = stack.pop_i32();
-                    let Some(idx) = Self::handle_to_index(handle) else {
+                    let Some(idx) = Self::sound_source_index(handle) else {
                         return -1;
                     };
                     // Proxy for "sound is ready": no slots ⇒ no sound
@@ -4627,9 +4725,8 @@ impl HostFunctions for GameHost {
                     // Antagonist lookup for SHOOT / ENTER_SF /
                     // THRUST_*: `number` is a 0-based index into the
                     // script-element array; we abort with `false`
-                    // when out of range.  Our handle is 1-based, so
-                    // add one before wrapping; bound against
-                    // `entities.len()`.
+                    // when out of range. Convert that script index into
+                    // an actor handle before resolving it.
                     let resolve_antagonist =
                         |number: i32, entities: &[Option<Entity>]| -> Option<Option<EntityId>> {
                             if number < 0 || (number as usize) >= entities.len() {
@@ -4638,7 +4735,9 @@ impl HostFunctions for GameHost {
                                 // Slot may be None (a null antagonist
                                 // is accepted once the bounds check
                                 // passes).
-                                Some(Self::actor_id(number + 1))
+                                Some(Self::actor_id(Self::actor_handle_from_index(
+                                    number as usize,
+                                )))
                             }
                         };
                     // Script command constants.
@@ -5993,7 +6092,7 @@ impl HostFunctions for GameHost {
                                 .push(Sequence::single_damage(target, 10000, 0));
                         }
                     } else if is_npc {
-                        let target_idx = Self::handle_to_index(actor);
+                        let target_idx = Self::actor_index(actor);
                         for (i, slot) in self.entities.iter_mut().enumerate() {
                             let Some(entity) = slot else { continue };
                             let Some(ai) = entity.ai_controller_mut() else {
@@ -7000,11 +7099,17 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
 
-                    // Convert the script handle (1-based) to the
-                    // NpcHandle convention used by `theoretical_patrol`
+                    // Convert the actor script handle to the NpcHandle
+                    // convention used by `theoretical_patrol`
                     // (0-based EntityId, matching `tick_patrol_coordination`'s
                     // `eid.0` push at engine/ai/mod.rs:5035).
-                    let sub_handle = (subordinate - 1) as u32;
+                    let Some(sub_handle) = Self::actor_index(subordinate).map(|idx| idx as u32)
+                    else {
+                        tracing::error!(
+                            "Script Error: AddAsSubordinate with invalid subordinate handle {subordinate}"
+                        );
+                        return 0;
+                    };
                     if let Some(entity) = self.get_entity_mut(actor)
                         && let Some(ai) = entity.ai_controller_mut()
                     {
@@ -7054,7 +7159,7 @@ impl HostFunctions for GameHost {
                     // is the same end-state as the event-hook
                     // approach.
                     for minion_handle in minion_handles {
-                        let minion_actor = (minion_handle as i32) + 1;
+                        let minion_actor = Self::actor_handle_from_index(minion_handle as usize);
                         if let Some(entity) = self.get_entity_mut(minion_actor)
                             && let Some(ai) = entity.ai_controller_mut()
                         {
@@ -7174,7 +7279,7 @@ impl HostFunctions for GameHost {
                 }
                 ApplyPatch => {
                     let h = stack.pop_i32();
-                    if let Some(patch_index) = Self::handle_to_index(h)
+                    if let Some(patch_index) = Self::patch_index(h)
                         && let Some(patch) = self.patches.get_mut(patch_index)
                     {
                         let effects = patch.apply();
@@ -7193,7 +7298,7 @@ impl HostFunctions for GameHost {
                 }
                 ResetPatch => {
                     let h = stack.pop_i32();
-                    if let Some(patch_index) = Self::handle_to_index(h)
+                    if let Some(patch_index) = Self::patch_index(h)
                         && let Some(patch) = self.patches.get_mut(patch_index)
                     {
                         let effects = patch.force_reset();
@@ -7227,7 +7332,7 @@ impl HostFunctions for GameHost {
                     let patch_h = stack.pop_i32();
                     // The patch's animation is an FX entity
                     // referenced by handle; flip its active flag.
-                    let idx = Self::handle_to_index(patch_h);
+                    let idx = Self::patch_index(patch_h);
                     if let Some(animation_h) =
                         idx.and_then(|i| self.patch_animation_entities.get(i).copied().flatten())
                     {
@@ -7251,7 +7356,7 @@ impl HostFunctions for GameHost {
                     // somewhere to read.
                     let fx_h = stack.pop_i32();
                     let target_h = stack.pop_i32();
-                    let fx_id = match Self::handle_to_index(fx_h) {
+                    let fx_id = match Self::actor_index(fx_h) {
                         Some(idx) => crate::element::EntityId(idx as u32),
                         None => {
                             tracing::warn!(
@@ -7318,7 +7423,7 @@ impl HostFunctions for GameHost {
                     // happens via the queued `SoundCommand::Destroy`
                     // after the script call.
                     let ss_h = stack.pop_i32();
-                    if let Some(idx) = Self::handle_to_index(ss_h)
+                    if let Some(idx) = Self::sound_source_index(ss_h)
                         && let Some(alive) = self.sound_source_alive.get_mut(idx)
                     {
                         *alive = false;
@@ -7332,7 +7437,7 @@ impl HostFunctions for GameHost {
                     let actor_h = stack.pop_i32();
                     // Remove actor from their current building's occupant list
                     if let Some(&bld_h) = self.actor_building.get(&actor_h) {
-                        if let Some(idx) = Self::handle_to_index(bld_h)
+                        if let Some(idx) = Self::building_index(bld_h)
                             && let Some(occupants) = self.building_occupants.get_mut(idx)
                         {
                             occupants.retain(|&a| a != actor_h);
@@ -7390,7 +7495,7 @@ impl HostFunctions for GameHost {
                 PutActorInBuilding => {
                     let bld_h = stack.pop_i32();
                     let actor_h = stack.pop_i32();
-                    if let Some(idx) = Self::handle_to_index(bld_h) {
+                    if let Some(idx) = Self::building_index(bld_h) {
                         if idx >= self.building_occupants.len() {
                             self.building_occupants.resize(idx + 1, Vec::new());
                         }
@@ -7411,7 +7516,7 @@ impl HostFunctions for GameHost {
                     let val = stack.pop_i32();
                     let bld_h = stack.pop_i32();
                     let active = val != 0;
-                    if let Some(idx) = Self::handle_to_index(bld_h) {
+                    if let Some(idx) = Self::building_index(bld_h) {
                         if idx < self.building_active.len() {
                             self.building_active[idx] = active;
                         }
@@ -7441,7 +7546,7 @@ impl HostFunctions for GameHost {
                     // returning real occupants.  No shipped SCB
                     // appears to rely on it.
                     let bld_h = stack.pop_i32();
-                    Self::handle_to_index(bld_h)
+                    Self::building_index(bld_h)
                         .and_then(|idx| self.building_occupants.get(idx))
                         .and_then(|occ| occ.first().copied())
                         .unwrap_or(0)
@@ -7900,9 +8005,9 @@ impl HostFunctions for GameHost {
                 }
                 GetNumberOfActorsInSector => {
                     // Warn when the handle is not a script-sector.
-                    // Script-location handles are laid out
-                    // `[points..., sectors...]` (1-based); a sector
-                    // handle is `(point_count, location_count]`.
+                    // Script-location handles are tagged indices laid
+                    // out `[points..., sectors...]`; a sector payload
+                    // index is in `[point_count, location_count)`.
                     let loc = stack.pop_i32();
                     if loc == 0 {
                         return 0;

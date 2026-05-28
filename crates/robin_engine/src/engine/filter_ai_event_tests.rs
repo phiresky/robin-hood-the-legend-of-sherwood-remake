@@ -223,32 +223,20 @@ fn make_scripted_soldier(script_class: &str) -> Entity {
     })
 }
 
-/// Returns the engine plus the 1-based handles for: robin PC, a
+/// Returns the engine plus the actor script handles for: robin PC, a
 /// source-sensitive NPC, and a no-override NPC.
 fn build_engine() -> (EngineInner, i32, i32, i32) {
     let mut engine = EngineInner::new();
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.mission_script = Some(script);
 
-    // Slot 0 reserved (matches level loading).
-    let filler = Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Fx,
-            active: false,
-            ..ElementData::default()
-        },
-        fx: crate::element::FxData::default(),
-        target: crate::element::TargetData::default(),
-    });
-    engine.add_entity(filler);
-
     let robin_id = engine.add_entity(make_pc(true));
     let sensitive_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
     let noov_id = engine.add_entity(make_scripted_soldier("NoOverride"));
 
-    let robin_handle = (robin_id.0 as i32) + 1;
-    let sensitive_handle = (sensitive_id.0 as i32) + 1;
-    let noov_handle = (noov_id.0 as i32) + 1;
+    let robin_handle = crate::natives::GameHost::actor_handle(robin_id);
+    let sensitive_handle = crate::natives::GameHost::actor_handle(sensitive_id);
+    let noov_handle = crate::natives::GameHost::actor_handle(noov_id);
 
     if let Some(ref mut s) = engine.mission_script {
         assert!(s.bind_actor(sensitive_handle, "SourceSensitive"));
@@ -271,7 +259,8 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
     // source — the stimulus info encodes a 0-based human handle, so
     // `filter_stimulus` will translate it to `robin_handle` before
     // passing to the script.
-    let robin_human = (robin_handle - 1) as u32;
+    let robin_human =
+        crate::natives::GameHost::actor_index(robin_handle).expect("valid robin handle") as u32;
     let stim = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, robin_human);
 
     let allowed = engine.filter_stimulus(&LevelAssets::new(), sensitive_handle, &stim);
@@ -341,19 +330,8 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.mission_script = Some(script);
 
-    // Slot 0 reserved, then add a scripted NPC but do NOT bind it.
-    let filler = Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Fx,
-            active: false,
-            ..ElementData::default()
-        },
-        fx: crate::element::FxData::default(),
-        target: crate::element::TargetData::default(),
-    });
-    engine.add_entity(filler);
     let unbound_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
-    let unbound_handle = (unbound_id.0 as i32) + 1;
+    let unbound_handle = crate::natives::GameHost::actor_handle(unbound_id);
 
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     assert!(
@@ -369,7 +347,8 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     let (mut engine, _, sensitive_handle, _) = build_engine();
 
     // Snapshot AI state pre-dispatch.
-    let sensitive_idx = (sensitive_handle - 1) as usize;
+    let sensitive_idx =
+        crate::natives::GameHost::actor_index(sensitive_handle).expect("valid test handle");
     let before_state = engine.entities[sensitive_idx]
         .as_ref()
         .and_then(|e| e.ai_controller())
@@ -379,7 +358,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     let ctx = crate::ai::AiContext::default();
     let tick_data = crate::ai::AiPerTickData::stub();
-    let sensitive_entity_id = EntityId((sensitive_handle - 1) as u32);
+    let sensitive_entity_id = EntityId(sensitive_idx as u32);
 
     let handled = engine.dispatch_filtered_stimulus(
         &LevelAssets::new(),

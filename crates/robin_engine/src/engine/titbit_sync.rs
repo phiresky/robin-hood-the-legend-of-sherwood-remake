@@ -883,7 +883,7 @@ impl EngineInner {
     /// setter.
     fn sync_speak_titbits(&mut self) {
         // Collect (npc_id, has_scroll, force_refresh) from the game host.
-        // The map uses 1-based script handles, so convert to 0-based EntityId.
+        // The map uses actor script handles.
         // `force_refresh` carries the remove-then-add pulse for NPCs
         // whose attached scroll handle just changed value
         // (`scroll_attachment_dirty`, populated by the scroll-attachment
@@ -934,8 +934,7 @@ impl EngineInner {
             if !active {
                 continue;
             }
-            // Script handle = entity_id + 1 (1-based).
-            let script_handle = npc_id.0 as i32 + 1;
+            let script_handle = crate::natives::GameHost::actor_handle(npc_id);
             states.push(SpeakState {
                 id: npc_id,
                 position: Point3D {

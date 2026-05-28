@@ -4955,9 +4955,10 @@ impl EngineInner {
                                     .is_some_and(|e| e.kind().is_fx_target()),
                                 "{method} dispatched on non-FX-target owner {owner:?}",
                             );
-                            // Handles are 1-based.
-                            let target_handle = (owner.0 as i32) + 1;
-                            let pc_handle = antagonist.map(|a| (a.0 as i32) + 1).unwrap_or(0);
+                            let target_handle = crate::natives::GameHost::actor_handle(owner);
+                            let pc_handle = antagonist
+                                .map(crate::natives::GameHost::actor_handle)
+                                .unwrap_or(0);
                             pending_target_activations.push((target_handle, pc_handle, method));
                             self.sequence_manager.element_terminated(seq_id, elem_idx);
                         }
@@ -7118,7 +7119,7 @@ impl EngineInner {
                 // Dispatch ProcessMessage to the owner's per-actor
                 // script.
                 let (msg, arg1, arg2) = self.extract_message_properties(seq_id, elem_idx);
-                let handle = (owner.0 as i32) + 1;
+                let handle = crate::natives::GameHost::actor_handle(owner);
                 deferred_process_messages.push((handle, msg, arg1, arg2));
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
             }

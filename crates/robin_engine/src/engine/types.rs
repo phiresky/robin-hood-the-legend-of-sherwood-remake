@@ -655,7 +655,7 @@ pub struct LevelAssets {
     /// `SoundCache::initialize_sound_source_cache`, immediately after
     /// the source manager is loaded.
     pub sound_source_required_ids: std::collections::BTreeSet<u32>,
-    /// Patch index → FX entity handle (1-based, or `None` when the patch
+    /// Patch index → FX entity actor handle, or `None` when the patch
     /// has no animation).  Populated during level load when each patch's
     /// FX entity is spawned; consumed once by
     /// [`populate_game_host_from_level`] to fill
@@ -716,17 +716,17 @@ pub struct LevelAssets {
         std::sync::Arc<std::sync::RwLock<crate::sight_obstacle::SharedSightObstacles>>,
 
     // ── Script-indexed level data ─────────────────────────────────
-    // Level-load-only collections that scripts index by 1-based handle.
+    // Level-load-only collections that scripts index by script handle.
     // Read during script init (copied into GameHost) and during engine
     // methods that resolve script location handles to world positions.
     /// Number of script objects (locations) in the level.
     pub script_location_count: usize,
     /// Number of script-point locations (as opposed to sectors); points
     /// come first in the `script_location_*` arrays. Handles in
-    /// `1..=script_point_count` are points, the rest are sectors.
+    /// `0..script_point_count` are points, the rest are sectors.
     pub script_point_count: usize,
     /// Positions of script locations (points then sectors), indexed by
-    /// script location handle (1-based). Points use their (x, y);
+    /// script location index. Points use their (x, y);
     /// sectors use their polygon centroid. Populated from `RawScriptObjects`.
     pub script_location_positions: Vec<(f32, f32)>,
     /// Layer (floor) for each script location, parallel to
@@ -942,7 +942,7 @@ pub struct MissionScript {
     /// behind `Vm::host`'s serde skip.
     pub game_host: GameHost,
     pub instance: ScriptInstance,
-    /// Per-actor script instances, keyed by entity handle (1-based).
+    /// Per-actor script instances, keyed by actor script handle.
     ///
     /// Each actor with a `script_class` gets a persistent `ScriptInstance`
     /// whose heap survives across calls. The host (`GameHost`) is NOT stored
@@ -955,7 +955,7 @@ pub struct MissionScript {
     /// Zones with a `script_class` get a persistent `ScriptInstance` for
     /// `Initialize`, `EnterZone(actor)`, and `ExitZone(actor)` callbacks.
     pub zone_instances: BTreeMap<usize, ScriptInstance>,
-    /// Per-target script instances, keyed by target entity handle (1-based).
+    /// Per-target script instances, keyed by target actor script handle.
     ///
     /// FX targets with a non-empty `script_class` get a persistent
     /// `ScriptInstance` whose heap survives across calls.  Each target
@@ -963,7 +963,7 @@ pub struct MissionScript {
     /// `ActivatedByApple`, `ActivatedByArrow`, etc.  Calls go through
     /// [`MissionScript::call_target_function`].
     pub target_instances: BTreeMap<i32, ScriptInstance>,
-    /// Per-scroll script instances, keyed by scroll entity handle (1-based).
+    /// Per-scroll script instances, keyed by scroll actor script handle.
     ///
     /// Scrolls with a non-empty `script_class` bind their class during
     /// scroll mission-stream init and then run their script's

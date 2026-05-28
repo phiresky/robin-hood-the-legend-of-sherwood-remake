@@ -805,7 +805,7 @@ impl EngineInner {
             Some(e) => (e.element_data().sector(), e.is_pc()),
             None => return,
         };
-        let actor_handle = (entity_id.0 as i32) + 1; // 1-based handle for GameHost
+        let actor_handle = crate::natives::GameHost::actor_handle(entity_id);
 
         // ── Leave callbacks ──
         // Track whether we're leaving a building so we can refresh the
@@ -865,7 +865,7 @@ impl EngineInner {
                 // into "stored" state.
                 if is_pc && let Some(bi) = bld_idx {
                     if let Some(carried_id) = carried_to_unhide {
-                        let carried_h = (carried_id.0 as i32) + 1;
+                        let carried_h = crate::natives::GameHost::actor_handle(carried_id);
                         if let Some(ref mut script) = self.mission_script
                             && let Some(game_host) = script.game_host_mut()
                         {
@@ -887,14 +887,13 @@ impl EngineInner {
                         .cloned()
                         .unwrap_or_default();
                     let any_pc_remains = occupants.iter().any(|&h| {
-                        crate::natives::GameHost::handle_to_index(h)
+                        crate::natives::GameHost::actor_index(h)
                             .and_then(|idx| self.entities.get(idx).and_then(|s| s.as_ref()))
                             .is_some_and(|e| e.is_pc())
                     });
                     if !any_pc_remains {
                         for occ_h in occupants {
-                            let Some(occ_idx) = crate::natives::GameHost::handle_to_index(occ_h)
-                            else {
+                            let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
                                 continue;
                             };
                             let Some(Some(occ)) = self.entities.get_mut(occ_idx) else {
@@ -1011,7 +1010,8 @@ impl EngineInner {
             // Entering a building — add to occupant list.
             let bld_idx = enter_gs.and_then(|s| s.building_index);
             if let Some(bi) = bld_idx {
-                let bld_handle = i32::from(u16::from(bi)) + 1;
+                let bld_handle =
+                    crate::natives::GameHost::building_handle_from_index(usize::from(bi));
                 if let Some(ref mut script) = self.mission_script
                     && let Some(game_host) = script.game_host_mut()
                 {
@@ -1060,8 +1060,9 @@ impl EngineInner {
             // `PutActorInBuilding` helper.
             if is_pc && let Some(bi) = bld_idx {
                 if let Some(carried_id) = carried_to_hide {
-                    let carried_h = (carried_id.0 as i32) + 1;
-                    let bld_handle = i32::from(u16::from(bi)) + 1;
+                    let carried_h = crate::natives::GameHost::actor_handle(carried_id);
+                    let bld_handle =
+                        crate::natives::GameHost::building_handle_from_index(usize::from(bi));
                     if let Some(ref mut script) = self.mission_script
                         && let Some(game_host) = script.game_host_mut()
                     {
@@ -1085,7 +1086,7 @@ impl EngineInner {
                     .cloned()
                     .unwrap_or_default();
                 for occ_h in occupants {
-                    let Some(occ_idx) = crate::natives::GameHost::handle_to_index(occ_h) else {
+                    let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
                         continue;
                     };
                     let Some(Some(occ)) = self.entities.get_mut(occ_idx) else {

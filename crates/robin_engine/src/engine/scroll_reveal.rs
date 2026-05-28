@@ -24,7 +24,7 @@ use crate::element::{Entity, EntityId};
 use crate::geo2d::{self, Point2D};
 
 /// Scroll reveal status.  Persisted in `GameHost::scroll_status`
-/// (keyed by 1-based entity handle); the script natives
+/// (keyed by actor script handle); the script natives
 /// `GetScrollStatus` / `SetScrollStatus` read/write it directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(i32)]
@@ -138,7 +138,7 @@ impl EngineInner {
     /// Returns [`ScrollStatus::Invisible`] for scrolls that have no
     /// entry or when the mission script is unavailable.
     pub fn scroll_status(&self, scroll: EntityId) -> ScrollStatus {
-        let handle = (scroll.0 as i32) + 1;
+        let handle = crate::natives::GameHost::actor_handle(scroll);
         let raw = self
             .mission_script
             .as_ref()
@@ -150,7 +150,7 @@ impl EngineInner {
 
     /// Update a scroll's status and refresh its minimap dot.
     pub(crate) fn set_scroll_status(&mut self, scroll: EntityId, status: ScrollStatus) {
-        let handle = (scroll.0 as i32) + 1;
+        let handle = crate::natives::GameHost::actor_handle(scroll);
         if let Some(script) = self.mission_script.as_mut()
             && let Some(gh) = script.game_host_mut()
         {
@@ -175,8 +175,7 @@ impl EngineInner {
     ///    A non-zero return promotes status `Opened → Taken` and
     ///    refreshes the minimap dot.
     ///
-    /// `scroll_handle` and `pc_handle` are 1-based (actors are indexed
-    /// by their engine-element handle plus one).
+    /// `scroll_handle` and `pc_handle` are actor script handles.
     pub(crate) fn take_scroll(&mut self, pc: EntityId, scroll: EntityId) {
         // Flip the taken flag.
         if let Some(entity) = self.get_entity_mut(scroll)
@@ -198,8 +197,8 @@ impl EngineInner {
         // Non-zero return advances status to Taken; zero keeps it at
         // Opened.  Scrolls with no bound class get `Ok(0)` and stay
         // at Opened.
-        let scroll_handle = (scroll.0 as i32) + 1;
-        let pc_handle = (pc.0 as i32) + 1;
+        let scroll_handle = crate::natives::GameHost::actor_handle(scroll);
+        let pc_handle = crate::natives::GameHost::actor_handle(pc);
         let script_result = self
             .mission_script
             .as_mut()

@@ -174,8 +174,14 @@ fn then_outside_recording_returns_zero() {
 #[test]
 fn script_actor_handle_maps_back_to_zero_based_entity_id() {
     assert_eq!(GameHost::actor_id(0), None);
-    assert_eq!(GameHost::actor_id(1), Some(EntityId(0)));
-    assert_eq!(GameHost::actor_id(71), Some(EntityId(70)));
+    assert_eq!(
+        GameHost::actor_id(GameHost::actor_handle_from_index(0)),
+        Some(EntityId(0))
+    );
+    assert_eq!(
+        GameHost::actor_id(GameHost::actor_handle_from_index(70)),
+        Some(EntityId(70))
+    );
 }
 
 #[test]
@@ -319,7 +325,13 @@ fn get_distance_with_positions() {
     host.script_location_count = 2;
     host.script_point_count = 2;
     host.location_positions = vec![(0.0, 0.0), (30.0, 40.0)];
-    let prog = call_native_return(160, &[1, 2]);
+    let prog = call_native_return(
+        160,
+        &[
+            GameHost::location_handle_from_index(0),
+            GameHost::location_handle_from_index(1),
+        ],
+    );
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(50)); // sqrt(30²+40²)=50
 }
@@ -332,8 +344,10 @@ fn get_distance_invalid_handle() {
 #[test]
 fn is_inside_building_specific() {
     let mut host = GameHost::new();
-    host.actor_building.insert(5, 3); // actor 5 is in building 3
-    let prog = call_native_return(98, &[5, 3]);
+    let actor = GameHost::actor_handle_from_index(4);
+    let building = GameHost::building_handle_from_index(2);
+    host.actor_building.insert(actor, building);
+    let prog = call_native_return(98, &[actor, building]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
 }
@@ -341,8 +355,10 @@ fn is_inside_building_specific() {
 #[test]
 fn is_inside_building_wrong() {
     let mut host = GameHost::new();
-    host.actor_building.insert(5, 3); // actor 5 is in building 3
-    let prog = call_native_return(98, &[5, 7]); // check building 7
+    let actor = GameHost::actor_handle_from_index(4);
+    host.actor_building
+        .insert(actor, GameHost::building_handle_from_index(2));
+    let prog = call_native_return(98, &[actor, GameHost::building_handle_from_index(6)]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }
@@ -350,9 +366,11 @@ fn is_inside_building_wrong() {
 #[test]
 fn is_inside_building_null_checks_any() {
     let mut host = GameHost::new();
-    host.actor_building.insert(5, 3);
+    let actor = GameHost::actor_handle_from_index(4);
+    host.actor_building
+        .insert(actor, GameHost::building_handle_from_index(2));
     // NULL building (0): checks if in ANY building
-    let prog = call_native_return(98, &[5, 0]);
+    let prog = call_native_return(98, &[actor, 0]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
 }
@@ -360,8 +378,7 @@ fn is_inside_building_null_checks_any() {
 #[test]
 fn is_inside_building_not_in_any() {
     let host = GameHost::new();
-    // actor 5 is not in any building
-    let prog = call_native_return(98, &[5, 0]);
+    let prog = call_native_return(98, &[GameHost::actor_handle_from_index(4), 0]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }
@@ -369,8 +386,17 @@ fn is_inside_building_not_in_any() {
 #[test]
 fn is_inside_zone() {
     let mut host = GameHost::new();
-    host.zone_occupants.insert(2, vec![3, 5, 7]);
-    let prog = call_native_return(97, &[5, 2]); // IsInside(5, loc=2)
+    let actor = GameHost::actor_handle_from_index(4);
+    let loc = GameHost::location_handle_from_index(1);
+    host.zone_occupants.insert(
+        loc,
+        vec![
+            GameHost::actor_handle_from_index(2),
+            actor,
+            GameHost::actor_handle_from_index(6),
+        ],
+    );
+    let prog = call_native_return(97, &[actor, loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
 }
@@ -378,8 +404,16 @@ fn is_inside_zone() {
 #[test]
 fn is_inside_zone_not_present() {
     let mut host = GameHost::new();
-    host.zone_occupants.insert(2, vec![3, 7]);
-    let prog = call_native_return(97, &[5, 2]);
+    let actor = GameHost::actor_handle_from_index(4);
+    let loc = GameHost::location_handle_from_index(1);
+    host.zone_occupants.insert(
+        loc,
+        vec![
+            GameHost::actor_handle_from_index(2),
+            GameHost::actor_handle_from_index(6),
+        ],
+    );
+    let prog = call_native_return(97, &[actor, loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }
@@ -393,10 +427,17 @@ fn actors_in_sector() {
     let mut host = GameHost::new();
     host.script_point_count = 1;
     host.script_location_count = 2;
-    host.zone_occupants.insert(2, vec![3, 5, 7]);
+    let loc = GameHost::location_handle_from_index(1);
+    host.zone_occupants.insert(
+        loc,
+        vec![
+            GameHost::actor_handle_from_index(2),
+            GameHost::actor_handle_from_index(4),
+            GameHost::actor_handle_from_index(6),
+        ],
+    );
 
-    // GetNumberOfActorsInSector(loc=2)
-    let prog = call_native_return(204, &[2]);
+    let prog = call_native_return(204, &[loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(3));
 
@@ -404,11 +445,20 @@ fn actors_in_sector() {
     let mut host2 = GameHost::new();
     host2.script_point_count = 1;
     host2.script_location_count = 2;
-    host2.zone_occupants.insert(2, vec![3, 5, 7]);
-    // GetActorInSector(loc=2, idx=1) → actor 5
-    let prog2 = call_native_return(205, &[2, 1]);
+    host2.zone_occupants.insert(
+        loc,
+        vec![
+            GameHost::actor_handle_from_index(2),
+            GameHost::actor_handle_from_index(4),
+            GameHost::actor_handle_from_index(6),
+        ],
+    );
+    let prog2 = call_native_return(205, &[loc, 1]);
     let mut vm2 = Vm::new().with_host(Box::new(host2));
-    assert_eq!(vm2.run(&prog2), StopReason::ReturnedValue(5));
+    assert_eq!(
+        vm2.run(&prog2),
+        StopReason::ReturnedValue(GameHost::actor_handle_from_index(4))
+    );
 }
 
 #[test]
@@ -419,13 +469,21 @@ fn compute_location_between() {
     host.location_positions = vec![(0.0, 0.0), (100.0, 200.0)];
     host.location_layers = vec![0, 0];
     host.location_sectors = vec![0, 0];
-    // ComputeLocationBetween(loc=1, loc=2, lambda=0.5)
     let lambda_bits = 0.5f32.to_bits() as i32;
-    let prog = call_native_return(213, &[1, 2, lambda_bits]);
+    let prog = call_native_return(
+        213,
+        &[
+            GameHost::location_handle_from_index(0),
+            GameHost::location_handle_from_index(1),
+            lambda_bits,
+        ],
+    );
     let mut vm = Vm::new().with_host(Box::new(host));
     // Should return a handle >= 3 (first computed location)
     match vm.run(&prog) {
-        StopReason::ReturnedValue(handle) => assert!(handle >= 3),
+        StopReason::ReturnedValue(handle) => {
+            assert_eq!(GameHost::location_index(handle), Some(2));
+        }
         other => panic!("expected return, got {other:?}"),
     }
 }
@@ -668,8 +726,8 @@ fn add_as_subordinate_requests_patrol_reinit() {
     host.entities = vec![Some(native_test_soldier()), Some(native_test_soldier())];
 
     let mut stack = NativeStack::default();
-    stack.push_i32(1);
-    stack.push_i32(2);
+    stack.push_i32(GameHost::actor_handle_from_index(0));
+    stack.push_i32(GameHost::actor_handle_from_index(1));
     let ret =
         <GameHost as HostFunctions>::call(&mut host, NativeFn::AddAsSubordinate as u32, &mut stack);
     assert_eq!(ret, 0);

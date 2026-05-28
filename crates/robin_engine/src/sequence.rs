@@ -412,7 +412,7 @@ pub struct RecordingSession {
     /// Used by `Then()` to only increment when something was actually recorded.
     has_elements_at_current_level: bool,
     /// Per-recording shadow of moving-actor → motion-target.  Key:
-    /// actor handle (script-side, 1-based).  Value: cached destination
+    /// actor script handle. Value: cached destination
     /// (x, y, layer, sector) recorded by the most recent
     /// `RecordEnterGame` / `RecordMove*` for that actor.  Used to
     /// suppress the second-call teleport in `RecordEnterGame` and to

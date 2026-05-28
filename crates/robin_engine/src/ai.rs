@@ -3899,8 +3899,8 @@ impl House {
 //     code should query this.
 //
 //   * `natives::GameHost::building_occupants: Vec<Vec<i32>>` — the
-//     script-facing view, indexed by `building_index` with 1-based
-//     legacy actor handles.  Kept in sync by the same hooks so script
+//     script-facing view, indexed by `building_index` with actor
+//     script handles. Kept in sync by the same hooks so script
 //     natives (`GetNumberOfOccupants`, `GetOccupant`, etc.) see the
 //     same occupancy that AI code does.
 //
@@ -4642,8 +4642,7 @@ pub struct AiController {
     ///
     /// The engine drains the queue after the AI tick via
     /// `dispatch_ai_state_change_notifications`, translating
-    /// `Some(h)` to a 1-based script actor handle (`h + 1`, with
-    /// `Some(0) → 0`).
+    /// `Some(h)` to an actor script handle (`Some(0) → 0`).
     ///
     /// Capturing each transition synchronously inside `set_state` gives
     /// per-substate firing — every intra-think transition produces a
@@ -4719,7 +4718,7 @@ pub struct AiController {
     /// Sequence commands the AI wants the engine to launch on behalf of
     /// *another* entity (e.g. soldier forcing a beggar to stand up via
     /// `Command::LeaveBeggar`). Each entry is `(target_handle, command)`
-    /// — target handle is the standard 1-based script handle (matches
+    /// — target handle is the standard actor script handle (matches
     /// the `SequenceElement` owner). Used by the beggar identify
     /// cascade.
     pub pending_launch_on_target: Vec<(crate::ai::NpcHandle, crate::element::Command)>,
