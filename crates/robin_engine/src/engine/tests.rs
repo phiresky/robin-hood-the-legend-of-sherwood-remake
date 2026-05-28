@@ -2261,7 +2261,7 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
 }
 
 #[test]
-fn arbitration_pending_pass_door_blocks_new_move() {
+fn started_pass_door_rejects_new_move() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
@@ -2269,30 +2269,30 @@ fn arbitration_pending_pass_door_blocks_new_move() {
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
 
-    let mut pending_pass =
+    let mut current_pass =
         SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
-    pending_pass.priority = SequencePriority::NonInterruptable;
-    let pass_seq = engine.sequence_manager.launch_element(pending_pass);
+    current_pass.priority = SequencePriority::NonInterruptable;
+    let pass_seq = engine.sequence_manager.launch_element(current_pass);
+    engine.sequence_manager.element_in_progress(pass_seq, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .sequence_element_started = true;
 
-    let mut incoming =
+    let incoming =
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-    incoming.priority = SequencePriority::Normal;
-    let incoming_seq = engine.sequence_manager.launch_element(incoming);
-
-    let accepted = engine.arbitrate_instruct(incoming_seq, 0);
-    assert!(
-        !accepted,
-        "pending PASS_DOOR must win same-tick arbitration over a new MOVE"
-    );
+    let incoming_seq = engine.launch_element_for_owner(incoming);
 
     let pass = engine.sequence_manager.get_element(pass_seq, 0).unwrap();
-    assert_eq!(pass.cross_postponed, Some((incoming_seq, 0)));
+    assert_eq!(pass.state, SequenceState::InProgress);
 
     let incoming = engine
         .sequence_manager
         .get_element(incoming_seq, 0)
         .unwrap();
-    assert_eq!(incoming.state, SequenceState::Postponed);
+    assert_eq!(incoming.state, SequenceState::Impossible);
 }
 
 /// A Crouched soldier receiving `ENTER_ATTENTIVE_MODE` must first

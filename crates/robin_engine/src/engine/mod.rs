@@ -1818,54 +1818,6 @@ impl EngineInner {
         self.sequence_manager.current_element_for_actor(actor)
     }
 
-    /// Find the arbitration competitor for a newly-launched element
-    /// owned by `actor` — the InProgress element to arbitrate against,
-    /// or a pending `Todo` element with STRICTLY HIGHER priority that
-    /// was launched earlier in the same tick.
-    ///
-    /// Including high-priority pending Todos fixes a race where a
-    /// lower-priority element launched through a synchronous-promote
-    /// path (e.g. `launch_single_order_sequence_stamped` for a Turn
-    /// order from `process_pending_ai_orders`) would see an "idle"
-    /// actor and win arbitration, only to be postponed a fraction
-    /// later when hourglass picked up the pending higher-priority
-    /// element.  The visible symptom was a one-frame flash of the
-    /// lower-priority element's animation before the higher one took
-    /// over.
-    ///
-    /// Only strictly higher-priority Todos are considered — same- or
-    /// lower-priority Todos are left alone so back-to-back launches
-    /// of same-priority elements (e.g. a stack of
-    /// `Command::ActivateLever` on one target) don't interrupt each
-    /// other.  That preserves the "all stacked activations fire in
-    /// order" semantics that the hourglass-pass dispatch already
-    /// delivers for same-priority peers.
-    ///
-    /// The current-element pointer advances the moment `Instruct`
-    /// runs, so subsequent launches in the same tick always see it as
-    /// current.  This implementation leaves non-single-order elements
-    /// in `Todo` until hourglass runs their Translate arm; filtering
-    /// for higher-priority Todos reaches the same effective behaviour
-    /// without breaking the same-priority stacking path.
-    fn arbitration_competitor_for_actor(
-        &self,
-        actor: EntityId,
-        exclude: (crate::sequence::SequenceId, usize),
-        new_priority: crate::sequence::SequencePriority,
-    ) -> Option<(crate::sequence::SequenceId, usize)> {
-        // InProgress has priority over pending Todo — always pick it
-        // if present.  This matches the previous behaviour when no
-        // Todo competition is in play.
-        if let Some(in_progress) = self.sequence_manager.current_element_for_actor(actor)
-            && in_progress != exclude
-        {
-            return Some(in_progress);
-        }
-        // No InProgress — look for a strictly higher-priority Todo.
-        self.sequence_manager
-            .higher_priority_todo_for_actor(actor, exclude, new_priority)
-    }
-
     /// Arbitrate a new sequence-element dispatch against the actor's
     /// currently-executing element.
     ///
@@ -2085,18 +2037,7 @@ impl EngineInner {
             }
         }
 
-        // Arbitrate against the highest-priority OTHER live element
-        // for this owner — including `Todo` elements that were
-        // launched earlier in the same tick but not yet hourglass-
-        // dispatched.  See `arbitration_competitor_for_actor` for the
-        // full rationale; the short version is: `launch_element_for_owner`
-        // leaves owned elements in `Todo` until hourglass runs their
-        // Translate arm, so a synchronous-promote path like
-        // `launch_single_order_sequence_stamped` must treat that
-        // pending `Todo` as "current" or it races past it.
-        let Some((cur_seq, cur_idx)) =
-            self.arbitration_competitor_for_actor(owner, (new_seq, new_idx), new_priority)
-        else {
+        let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner) else {
             // Idle actor — new element takes over unconditionally.
             return true;
         };

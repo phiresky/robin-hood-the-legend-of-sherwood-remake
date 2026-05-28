@@ -2512,36 +2512,6 @@ impl SequenceManager {
         .is_some()
     }
 
-    pub fn higher_priority_todo_for_actor(
-        &self,
-        actor: EntityId,
-        exclude: (SequenceId, usize),
-        new_priority: SequencePriority,
-    ) -> Option<(SequenceId, usize)> {
-        let set = self.actor_live.get(&actor)?;
-        let mut best: Option<(SequenceId, usize, SequencePriority)> = None;
-        for elem_ref in set {
-            if (elem_ref.sequence_id, elem_ref.element_index) == exclude {
-                continue;
-            }
-            let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
-                debug_assert!(false, "actor_live contains stale element ref");
-                continue;
-            };
-            if elem.state != SequenceState::Todo || elem.priority >= new_priority {
-                continue;
-            }
-            let better = match best {
-                None => true,
-                Some((_, _, best_prio)) => elem.priority < best_prio,
-            };
-            if better {
-                best = Some((elem_ref.sequence_id, elem_ref.element_index, elem.priority));
-            }
-        }
-        best.map(|(seq_id, elem_idx, _)| (seq_id, elem_idx))
-    }
-
     /// Peek the actor's current in-progress order — the `Order` at the
     /// front of the owning `SequenceElement`'s `orders` queue.
     pub fn current_order_for_actor(&self, actor: EntityId) -> Option<(SequenceId, usize, &Order)> {
