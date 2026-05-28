@@ -4268,6 +4268,45 @@ mod tests {
     }
 
     #[test]
+    fn pc_action_disable_uses_profile_slot_not_action_enum_value() {
+        // Bow's enum value is 1, but this profile places it in
+        // portrait slot 0. C++ GetActionIndex(action) disables the
+        // portrait slot.
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 12)]);
+        if let Some(pc) = engine.get_entity_mut(pc_id).and_then(|e| e.pc_data_mut()) {
+            pc.disabled_actions = vec![false, false, false];
+            pc.current_action = Action::Bow;
+            pc.saved_action = Action::Bow;
+        }
+
+        engine.disable_pc_action(&assets, pc_id, Action::Bow);
+
+        let pc = engine
+            .get_entity(pc_id)
+            .and_then(|e| e.pc_data())
+            .expect("test PC exists");
+        assert_eq!(pc.disabled_actions, [true, false, false]);
+        assert_eq!(pc.current_action, Action::NoAction);
+        assert_eq!(pc.saved_action, Action::NoAction);
+    }
+
+    #[test]
+    fn pc_action_enable_uses_profile_slot_not_action_enum_value() {
+        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 12)]);
+        if let Some(pc) = engine.get_entity_mut(pc_id).and_then(|e| e.pc_data_mut()) {
+            pc.disabled_actions = vec![true, false, false];
+        }
+
+        engine.enable_pc_action(&assets, pc_id, Action::Bow);
+
+        let pc = engine
+            .get_entity(pc_id)
+            .and_then(|e| e.pc_data())
+            .expect("test PC exists");
+        assert_eq!(pc.disabled_actions, [false, false, false]);
+    }
+
+    #[test]
     fn pickup_dispatch_bonus_returns_none_when_storage_full() {
         // PC has the action but current ammo == max → reject.
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Heal, 3)]);

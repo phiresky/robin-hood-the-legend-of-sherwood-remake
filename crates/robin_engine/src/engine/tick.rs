@@ -3396,6 +3396,7 @@ impl EngineInner {
                             // element_terminated in combat.rs.
                             match abilities::begin_listen(
                                 &mut self.entities,
+                                &assets.profile_manager,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,

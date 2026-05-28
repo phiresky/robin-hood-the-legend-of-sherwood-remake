@@ -390,7 +390,7 @@ impl EngineInner {
                 if actor.is_pc() && !self.can_pc_execute_commands(actor_id, false) {
                     return false;
                 }
-                is_pc_action_enabled(actor, crate::profiles::Action::HelpToClimb)
+                is_pc_action_enabled(assets, actor, crate::profiles::Action::HelpToClimb)
             }
 
             // ── EnterBeggar ─────────────────────────────────────
@@ -399,7 +399,7 @@ impl EngineInner {
                 if actor.is_pc() && !self.can_pc_execute_commands(actor_id, false) {
                     return false;
                 }
-                is_pc_action_enabled(actor, crate::profiles::Action::Beggar)
+                is_pc_action_enabled(assets, actor, crate::profiles::Action::Beggar)
             }
 
             // ── PC-only arms ────────────────────────────────────
@@ -1390,15 +1390,24 @@ fn is_human_out_of_order(entity: &Entity) -> bool {
 /// Whether the action is currently enabled for the PC's toolbar.
 /// Consulted by `check_sequence_element_validity` for
 /// `EnterHelpingClimb` / `EnterBeggar`.  Reads the PC's
-/// `disabled_actions` / `disabled_actions_temp` at the action's own
-/// enum slot (see `abilities.rs::begin_listen` for the same pattern).
+/// `disabled_actions` / `disabled_actions_temp` at the profile action
+/// slot. The action enum value is not the portrait slot.
 /// Non-PC actors don't have the toolbar — return true so the generic
 /// command path isn't blocked.
-fn is_pc_action_enabled(entity: &Entity, action: crate::profiles::Action) -> bool {
+fn is_pc_action_enabled(
+    assets: &LevelAssets,
+    entity: &Entity,
+    action: crate::profiles::Action,
+) -> bool {
     let Some(pc) = entity.pc_data() else {
         return true;
     };
-    let idx = action as usize;
+    let Some(profile) = assets.profile_manager.get_character(pc.profile_index) else {
+        return false;
+    };
+    let Some(idx) = crate::inventory::find_action_slot(profile, action) else {
+        return true;
+    };
     let disabled = pc.disabled_actions.get(idx).copied().unwrap_or(false)
         || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false);
     !disabled
