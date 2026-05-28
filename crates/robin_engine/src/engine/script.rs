@@ -1815,9 +1815,8 @@ impl EngineInner {
     /// `RegisterAsProductionSector` sets the sector's production type;
     /// `AddProductionPoint` pushes onto the per-type points list.
     pub(super) fn apply_production_registrations(&mut self, assets: &LevelAssets) {
-        // The script zone index within `script_zone_data` equals
-        // `location_handle - points_count - 1`.  Points come before sectors
-        // in the script-location handle layout (see `level_loading.rs:206`).
+        // Points come before sectors in the script-location payload
+        // layout, so a sector's zone index is `location_index - points_count`.
         let points_count = assets
             .script_location_positions
             .len()
@@ -1843,13 +1842,17 @@ impl EngineInner {
                     continue;
                 }
             };
-            if loc_handle <= 0 || (loc_handle as usize) <= points_count {
+            let Some(loc_idx) = crate::natives::GameHost::location_index(loc_handle) else {
+                tracing::warn!("RegisterAsProductionSector: invalid location handle {loc_handle}");
+                continue;
+            };
+            if loc_idx < points_count {
                 tracing::warn!(
                     "RegisterAsProductionSector: location {loc_handle} is not a script zone sector"
                 );
                 continue;
             }
-            let zone_idx = (loc_handle as usize) - points_count - 1;
+            let zone_idx = loc_idx - points_count;
             if zone_idx >= self.script_zone_data.len() {
                 tracing::warn!("RegisterAsProductionSector: zone {zone_idx} out of range");
                 continue;
@@ -1871,12 +1874,15 @@ impl EngineInner {
                 Some(t) => t,
                 None => continue,
             };
-            if loc_handle <= 0 || (loc_handle as usize) > assets.script_location_positions.len() {
+            let Some(loc_idx) = crate::natives::GameHost::location_index(loc_handle) else {
+                continue;
+            };
+            if loc_idx >= assets.script_location_positions.len() {
                 continue;
             }
-            let (x, y) = assets.script_location_positions[(loc_handle as usize) - 1];
-            let layer = assets.script_location_layers[(loc_handle as usize) - 1];
-            let sector = assets.script_location_sectors[(loc_handle as usize) - 1];
+            let (x, y) = assets.script_location_positions[loc_idx];
+            let layer = assets.script_location_layers[loc_idx];
+            let sector = assets.script_location_sectors[loc_idx];
             // GetProjectionArea(point) → GetObstacleIndex.
             let obstacle = self
                 .get_projection_area_index(assets, sector, layer, crate::geo2d::pt(x, y))
@@ -2647,22 +2653,27 @@ impl EngineInner {
                     // zone index and transform its script sector into
                     // an apex sector.
                     //
-                    // Script-location handles are laid out as
+                    // Script-location payload indices are laid out as
                     // `[script_points..., script_sectors...]`; the sector
                     // slice starts at `script_location_count - script_zone_data.len()`.
                     let points_count = assets
                         .script_location_positions
                         .len()
                         .saturating_sub(self.script_zone_data.len());
-                    if location_handle <= 0
-                        || (location_handle as usize) <= points_count
-                        || (location_handle as usize) > assets.script_location_positions.len()
-                    {
+                    let Some(loc_idx) = crate::natives::GameHost::location_index(location_handle)
+                    else {
+                        tracing::warn!(
+                            "DefineFlatTrajectoryZone(loc={location_handle}): invalid location handle"
+                        );
+                        continue;
+                    };
+                    if loc_idx < points_count || loc_idx >= assets.script_location_positions.len() {
                         tracing::warn!(
                             "DefineFlatTrajectoryZone(loc={location_handle}): handle is not a script zone sector"
                         );
+                        continue;
                     } else {
-                        let zone_idx = (location_handle as usize) - points_count - 1;
+                        let zone_idx = loc_idx - points_count;
                         if let Some(zone) = self.script_zone_data.get_mut(zone_idx) {
                             if zone.script_associated {
                                 tracing::warn!(
