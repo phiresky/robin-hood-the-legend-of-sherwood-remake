@@ -40,7 +40,7 @@
 use crate::combat::{self, ConcussionContext};
 use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
-    ObjectData, ObjectType, Point2D as ElemPoint2D, Point3D, Posture, ProjectileData,
+    ObjectData, ObjectType, Point2D as ElemPoint2D, Point3D, Posture, ProjectileData, TargetFilter,
     TrajectoryPoint,
 };
 use crate::movement::ActiveShot;
@@ -1378,24 +1378,37 @@ pub fn begin_bow_shot(
     resolved_shoot_mode: Option<ShootMode>,
     next_order_id: &mut u32,
 ) -> BeginShotResult {
-    // Validate target: must exist, be a living human, not the shooter.
+    // Validate target: must exist, be shootable, and not be the shooter.
     if shooter_id == target_id {
         return BeginShotResult::Impossible;
     }
-    let target_alive = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
-        Some(e) => e.is_human() && !e.is_dead() && e.is_active(),
+    let target_valid = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+        Some(e) if e.is_human() => !e.is_dead() && e.is_active(),
+        Some(Entity::Target(t)) => {
+            t.element.active && t.target.action_filter.contains(TargetFilter::ARROW)
+        }
         None => false,
+        Some(_) => false,
     };
-    if !target_alive {
+    if !target_valid {
         return BeginShotResult::Impossible;
     }
 
     // Read target position for distance computation.
     let (tx, ty) = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
-        Some(e) => (
-            e.element_data().position_map().x,
-            e.element_data().position_map().y,
-        ),
+        Some(e) => {
+            let pos = if e.is_fx_target() {
+                e.compute_target_center()
+                    .unwrap_or_else(|| e.element_data().position())
+            } else {
+                Point3D {
+                    x: e.element_data().position_map().x,
+                    y: e.element_data().position_map().y,
+                    z: e.element_data().position().z,
+                }
+            };
+            (pos.x, pos.y)
+        }
         None => return BeginShotResult::Impossible,
     };
 
@@ -1596,7 +1609,6 @@ pub fn tick_bow_shots(
             continue;
         }
         let shot = actor.active_shot;
-        let order_id = shot.order_id;
         let direction = entity.element_data().direction();
         // Build 3D shooter position: X/Y from the live map position,
         // Z from the position interface's elevation.
@@ -1617,11 +1629,11 @@ pub fn tick_bow_shots(
             (Some(id), ix) => (id, ix),
             _ => continue,
         };
-        let current_order_type = match sequence_manager
+        let (current_order_type, current_order_id) = match sequence_manager
             .get_element(shot_seq_id, shot_elem_idx)
             .and_then(|e| e.current_order())
         {
-            Some(o) => o.order_type,
+            Some(o) => (o.order_type, Some(o.order_id)),
             None => continue,
         };
 
@@ -1644,7 +1656,7 @@ pub fn tick_bow_shots(
             SpriteMotionState::Done
         } else {
             elem.sprite.perform_action(
-                order_id,
+                current_order_id,
                 current_order_type,
                 dir_u16,
                 crate::sprite::FrameProgression::Default,
@@ -1773,13 +1785,14 @@ pub fn tick_bow_shots(
     for result in &mut fired {
         if let Some(Some(target_entity)) = entities.get(result.target.0 as usize) {
             result.target_pos = target_entity.element_data().position_map();
-            // Humans aim at belt; FX targets aim at the target's 3D
-            // position directly (the target's position is already its
-            // center).
             result.target_point = if target_entity.is_human() {
                 target_entity.compute_belt_point().unwrap_or_else(|| {
                     compute_target_belt_point_fallback(target_entity.element_data().position())
                 })
+            } else if target_entity.is_fx_target() {
+                target_entity
+                    .compute_target_center()
+                    .unwrap_or_else(|| target_entity.element_data().position())
             } else {
                 target_entity.element_data().position()
             };
@@ -3484,7 +3497,9 @@ pub fn build_shoot_bow_element(shooter: EntityId, target: EntityId) -> SequenceE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::element::{ActorData, ElementKind, HumanData};
+    use crate::element::{
+        ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
+    };
     use crate::element::{ActorPc, ActorSoldier, NpcData, PcData, SoldierData};
 
     fn make_pc(x: f32, y: f32) -> Entity {
@@ -3519,6 +3534,24 @@ mod tests {
             human: HumanData::default(),
             npc,
             soldier: SoldierData::default(),
+        })
+    }
+
+    fn make_arrow_target(x: f32, y: f32) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::Target,
+            active: true,
+            ..ElementData::default()
+        };
+        element.set_position_map(ElemPoint2D { x, y });
+        element.set_position(Point3D { x, y, z: 0.0 });
+        Entity::Target(ElementTarget {
+            element,
+            fx: FxData::default(),
+            target: TargetData {
+                action_filter: TargetFilter::ARROW,
+                ..TargetData::default()
+            },
         })
     }
 
@@ -3587,6 +3620,36 @@ mod tests {
             &mut 1u32,
         );
         assert_eq!(result, BeginShotResult::Impossible);
+    }
+
+    #[test]
+    fn begin_bow_shot_accepts_arrow_fx_target() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_arrow_target(50.0, 0.0))];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            None,
+            &mut 1u32,
+        );
+        assert_eq!(result, BeginShotResult::Started);
+        assert_eq!(
+            entities[0]
+                .as_ref()
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .target,
+            Some(EntityId(1))
+        );
     }
 
     #[test]

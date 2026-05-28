@@ -1510,9 +1510,16 @@ impl EngineInner {
             return (status, shoot);
         }
 
-        // Non-human target — animals/objects. Use the raw position;
-        // forest levels weaken the range check and skip LOS.
-        let target_pos = target.element_data().position();
+        // Non-human target — animals/objects. FX targets are aimed at
+        // their center, matching the preview and projectile-hit code.
+        // Forest levels weaken the range check and skip LOS.
+        let target_pos = if target.is_fx_target() {
+            target
+                .compute_target_center()
+                .unwrap_or_else(|| target.element_data().position())
+        } else {
+            target.element_data().position()
+        };
         let forest = self.weather.is_forest_level;
         self.can_shoot_with_bow_at_point(assets, pc_id, target_pos, forest)
     }
@@ -2506,6 +2513,22 @@ impl EngineInner {
             let dx = ground_pt.x - pos.x;
             let dy = ground_pt.y - pos.y;
 
+            // C++ turns toward ptFocusHotSpot before AimWithBowAt()
+            // resolves Normal vs Long.  The bow LOS check uses the
+            // shooter's current facing to compute the hand/bow point,
+            // so keep this order or upward/long aim can be evaluated
+            // from the previous direction.
+            if (dx != 0.0 || dy != 0.0)
+                && let Some(Entity::Pc(pc)) = self
+                    .entities
+                    .get_mut(pc_id.0 as usize)
+                    .and_then(|s| s.as_mut())
+            {
+                pc.element
+                    .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
+                pc.element.sprite.position_iface.turn();
+            }
+
             // Consult `can_shoot_with_bow_at_point`; on a
             // state/animation match with the resolved shoot type
             // launch `RAISE_BOW` / `LOWER_BOW`. Only trigger when the
@@ -2532,26 +2555,6 @@ impl EngineInner {
                     }
                     _ => {}
                 }
-            }
-
-            // Direction update.
-            //
-            // `set_direction_goal` updates only the goal; `turn()`
-            // advances the current direction by one sector toward the
-            // goal each tick. Using these (rather than
-            // `set_direction_instantly`, which snaps both fields)
-            // lets the PC rotate through intermediate facings as the
-            // mouse pans around it.
-            if (dx != 0.0 || dy != 0.0)
-                && let Some(Entity::Pc(pc)) = self
-                    .entities
-                    .get_mut(pc_id.0 as usize)
-                    .and_then(|s| s.as_mut())
-            {
-                // The delta is a world-space (ground-position) vector.
-                pc.element
-                    .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
-                pc.element.sprite.position_iface.turn();
             }
         }
 

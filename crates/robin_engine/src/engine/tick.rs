@@ -2323,7 +2323,24 @@ impl EngineInner {
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .is_some_and(|e| !e.orders.is_empty());
-                            if !has_orders_before {
+                            let unequip_body_already_queued = self
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .is_some_and(|e| {
+                                    e.orders.iter().any(|o| {
+                                        matches!(
+                                            o.order_type,
+                                            crate::order::OrderType::TransitionUnloadBow
+                                                | crate::order::OrderType::TransitionUnloadBowAnonymous
+                                                | crate::order::OrderType::TransitionUnequipBow
+                                                | crate::order::OrderType::TransitionUnequipBowAnonymous
+                                        )
+                                    })
+                                });
+                            let append_command_body = !has_orders_before
+                                || (elem.command == Command::UnequipBow
+                                    && !unequip_body_already_queued);
+                            if append_command_body {
                                 let posture = self
                                     .get_entity(owner)
                                     .unwrap_or_else(|| {
@@ -2332,26 +2349,44 @@ impl EngineInner {
                                     .element_data()
                                     .posture;
                                 let anonymous = posture == crate::element::Posture::AnonymousArcher;
-                                let push =
-                                    |engine: &mut EngineInner, ot: crate::order::OrderType| {
-                                        let id = engine.alloc_order_id();
-                                        let mut order = crate::order::Order::new(ot, 0.0, 0.0, id);
-                                        order.compute_direction = false;
-                                        engine
-                                            .sequence_manager
-                                            .push_order_on(seq_id, elem_idx, order);
-                                    };
+                                let push = |engine: &mut EngineInner,
+                                            ot: crate::order::OrderType,
+                                            x: f32,
+                                            y: f32| {
+                                    let id = engine.alloc_order_id();
+                                    let mut order = crate::order::Order::new(ot, x, y, id);
+                                    order.compute_direction = false;
+                                    engine
+                                        .sequence_manager
+                                        .push_order_on(seq_id, elem_idx, order);
+                                };
+                                let target_xy = self
+                                    .sequence_manager
+                                    .get_element(seq_id, elem_idx)
+                                    .and_then(|e| e.orders.back())
+                                    .map(|o| (o.target_x, o.target_y))
+                                    .unwrap_or((0.0, 0.0));
 
                                 use crate::element::ActionState;
                                 use crate::order::OrderType;
                                 match elem.command {
                                     Command::EquipBow => {
                                         if anonymous {
-                                            push(self, OrderType::TransitionEquipBowAnonymous);
-                                            push(self, OrderType::TransitionLoadingBowAnonymous);
+                                            push(
+                                                self,
+                                                OrderType::TransitionEquipBowAnonymous,
+                                                0.0,
+                                                0.0,
+                                            );
+                                            push(
+                                                self,
+                                                OrderType::TransitionLoadingBowAnonymous,
+                                                0.0,
+                                                0.0,
+                                            );
                                         } else {
-                                            push(self, OrderType::TransitionEquipBow);
-                                            push(self, OrderType::TransitionLoadingBow);
+                                            push(self, OrderType::TransitionEquipBow, 0.0, 0.0);
+                                            push(self, OrderType::TransitionLoadingBow, 0.0, 0.0);
                                         }
                                         if let Some(elem) =
                                             self.sequence_manager.get_element_mut(seq_id, elem_idx)
@@ -2361,9 +2396,14 @@ impl EngineInner {
                                         }
                                     }
                                     Command::EquipBowDown => {
-                                        push(self, OrderType::TransitionEquipBow);
-                                        push(self, OrderType::TransitionLoadingBow);
-                                        push(self, OrderType::TransitionLoweringBowLeaningOut);
+                                        push(self, OrderType::TransitionEquipBow, 0.0, 0.0);
+                                        push(self, OrderType::TransitionLoadingBow, 0.0, 0.0);
+                                        push(
+                                            self,
+                                            OrderType::TransitionLoweringBowLeaningOut,
+                                            0.0,
+                                            0.0,
+                                        );
                                         if let Some(elem) =
                                             self.sequence_manager.get_element_mut(seq_id, elem_idx)
                                         {
@@ -2372,12 +2412,23 @@ impl EngineInner {
                                         }
                                     }
                                     Command::UnequipBow => {
+                                        let (x, y) = target_xy;
                                         if anonymous {
-                                            push(self, OrderType::TransitionUnloadBowAnonymous);
-                                            push(self, OrderType::TransitionUnequipBowAnonymous);
+                                            push(
+                                                self,
+                                                OrderType::TransitionUnloadBowAnonymous,
+                                                x,
+                                                y,
+                                            );
+                                            push(
+                                                self,
+                                                OrderType::TransitionUnequipBowAnonymous,
+                                                x,
+                                                y,
+                                            );
                                         } else {
-                                            push(self, OrderType::TransitionUnloadBow);
-                                            push(self, OrderType::TransitionUnequipBow);
+                                            push(self, OrderType::TransitionUnloadBow, x, y);
+                                            push(self, OrderType::TransitionUnequipBow, x, y);
                                         }
                                         if let Some(elem) =
                                             self.sequence_manager.get_element_mut(seq_id, elem_idx)
@@ -2388,9 +2439,14 @@ impl EngineInner {
                                     }
                                     Command::RaiseBow => {
                                         if anonymous {
-                                            push(self, OrderType::TransitionRaisingBowAnonymous);
+                                            push(
+                                                self,
+                                                OrderType::TransitionRaisingBowAnonymous,
+                                                0.0,
+                                                0.0,
+                                            );
                                         } else {
-                                            push(self, OrderType::TransitionRaisingBow);
+                                            push(self, OrderType::TransitionRaisingBow, 0.0, 0.0);
                                         }
                                         if let Some(elem) =
                                             self.sequence_manager.get_element_mut(seq_id, elem_idx)
@@ -2401,9 +2457,14 @@ impl EngineInner {
                                     }
                                     Command::LowerBow => {
                                         if anonymous {
-                                            push(self, OrderType::TransitionLoweringBowAnonymous);
+                                            push(
+                                                self,
+                                                OrderType::TransitionLoweringBowAnonymous,
+                                                0.0,
+                                                0.0,
+                                            );
                                         } else {
-                                            push(self, OrderType::TransitionLoweringBow);
+                                            push(self, OrderType::TransitionLoweringBow, 0.0, 0.0);
                                         }
                                         if let Some(elem) =
                                             self.sequence_manager.get_element_mut(seq_id, elem_idx)
