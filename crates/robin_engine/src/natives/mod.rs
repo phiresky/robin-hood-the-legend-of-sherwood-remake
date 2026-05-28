@@ -196,8 +196,8 @@ pub struct GameHost {
     /// Number of script locations in the level (swapped in from EngineInner).
     pub script_location_count: usize,
     /// Number of script-point locations; points come first in the
-    /// `location_*` arrays, sectors follow. Handles in
-    /// `1..=script_point_count` are points — used as a point/sector
+    /// `location_*` arrays, sectors follow. Location payload indices in
+    /// `0..script_point_count` are points — used as a point/sector
     /// discriminator guard in natives like `RecordScrollCameraTo`.
     pub script_point_count: usize,
     /// Number of script buildings in the level (swapped in from EngineInner).
@@ -225,7 +225,7 @@ pub struct GameHost {
     /// `location_positions`.
     pub location_sectors: Vec<u16>,
     /// Dynamically computed locations created by GetActorLocation /
-    /// ComputeLocationBetween.  Handle = script_location_count + index + 1.
+    /// ComputeLocationBetween. Payload index = `script_location_count + index`.
     pub computed_locations: Vec<(f32, f32)>,
     /// Parallel to `computed_locations`: the (layer, sector) each computed
     /// location was stamped with.  `GetActorLocation` carries the actor's
@@ -303,7 +303,7 @@ pub struct GameHost {
     /// Script zone occupants. Key = location handle, value = actor handles.
     pub zone_occupants: BTreeMap<i32, Vec<i32>>,
     /// Geometry for each script zone (layer + polygon).  Index is
-    /// `zone_idx = (location_handle - script_point_count - 1)`.
+    /// `zone_idx = location_payload_index - script_point_count`.
     /// Populated at level load by
     /// [`crate::engine::EngineInner::install_script_static_data_into_game_host`]
     /// and consulted by the [`IsInside`] native to recompute the
@@ -5572,9 +5572,8 @@ impl HostFunctions for GameHost {
                     // Add/CleanFromScriptZone natives or on the
                     // next-frame tick, so we recompute here when we
                     // have polygon geometry installed.
-                    let zone_idx = (loc as usize)
-                        .checked_sub(self.script_point_count)
-                        .and_then(|v| v.checked_sub(1));
+                    let zone_idx = Self::location_index(loc)
+                        .and_then(|idx| idx.checked_sub(self.script_point_count));
                     if let Some(zi) = zone_idx
                         && let Some(zone) = self.script_zone_polygons.get(zi)
                         && let Some(entity) = self.get_entity(actor)
