@@ -1131,18 +1131,6 @@ pub fn compute_bow_point(
     }
 }
 
-/// Compute a fallback target point when no entity belt point is available.
-///
-/// Uses the entity's 3D position with a fixed belt-height offset.
-/// Prefer `Entity::compute_belt_point()` when the target entity is available.
-pub fn compute_target_belt_point_fallback(position: Point3D) -> Point3D {
-    Point3D {
-        x: position.x,
-        y: position.y,
-        z: position.z + crate::element::HUMAN_ELEVATION_BELT_UPRIGHT,
-    }
-}
-
 /// Apply projectile landing membership (obstacle / layer / sector)
 /// to a projectile element after its trajectory has settled.
 pub fn apply_projectile_landing_resolution(
@@ -1961,10 +1949,7 @@ pub struct SpawnArrowParams {
     /// seeded from the XY of this vector, not from `target - bow` —
     /// the two diverge once leading is applied to moving targets.
     ///
-    /// Pass `None` from test / headless call sites that don't compute
-    /// a full velocity; the fallback derives direction from
-    /// `target_pos - bow_point` (old behaviour).
-    pub initial_velocity: Option<Point3D>,
+    pub initial_velocity: Point3D,
     /// Whether the precomputed trajectory ends inside a hole zone
     /// (before any far-edge fall-into-hole extension).  Pre-flags
     /// `ProjectileData::disappear` so `maybe_splash_on_landing` can
@@ -2016,12 +2001,9 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     // displacement.  Leading shifts the velocity vector off the
     // line-of-sight and occasionally lands on a different sector index.
     // Apply the isometric Y-stretch via `vector_to_sector_0_to_15_iso`.
-    let (dx, dy) = match initial_velocity {
-        Some(v) => (v.x, v.y),
-        None => (target_pos.x - bow_point.x, target_pos.y - bow_point.y),
-    };
     element.set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15_iso(
-        dx, dy,
+        initial_velocity.x,
+        initial_velocity.y,
     ));
     let mut object = ObjectData {
         associated_action: Action::Bow,
@@ -4098,7 +4080,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
         match arrow {
             Entity::Projectile(p) => {
@@ -4135,7 +4121,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
 
         let Entity::Projectile(p) = arrow else {
@@ -4195,7 +4185,11 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: None,
+                initial_velocity: Point3D {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
             })),
         ];
 
@@ -4239,7 +4233,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
         let mut entities: Vec<Option<Entity>> = vec![
             Some(make_soldier_with_camp(
@@ -4349,7 +4347,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
         if let Entity::Projectile(proj) = &mut arrow {
             proj.projectile.shooter = None;
@@ -4643,7 +4645,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
         let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, -100.0)), Some(arrow)];
 
@@ -5165,7 +5171,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
 
         let mut entities: Vec<Option<Entity>> =
@@ -5234,7 +5244,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
 
         let mut entities: Vec<Option<Entity>> = vec![
@@ -5297,7 +5311,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
         let mut entities: Vec<Option<Entity>> = vec![
             Some(make_pc(0.0, 0.0)),
@@ -5370,7 +5388,11 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: None,
+                initial_velocity: Point3D {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
             });
 
             let mut entities: Vec<Option<Entity>> =
@@ -5452,7 +5474,11 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: None,
+                initial_velocity: Point3D {
+                    x: 1.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
             });
             let mut projectile = match arrow {
                 Entity::Projectile(p) => p,
@@ -5508,7 +5534,11 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: None,
+            initial_velocity: Point3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
         });
         // No other humans in range — arrow will fly out and land.
         let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 0.0)), Some(arrow)];

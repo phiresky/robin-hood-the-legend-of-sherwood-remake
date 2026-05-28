@@ -375,7 +375,7 @@ impl EngineInner {
                 damage,
                 layer,
                 lands_in_hole,
-                initial_velocity: Some(velocity),
+                initial_velocity: velocity,
             });
             let arrow_id = self.add_entity(arrow);
             // Hydrate the arrow's sprite from the accessory registry so
