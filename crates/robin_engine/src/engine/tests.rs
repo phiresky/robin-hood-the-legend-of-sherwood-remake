@@ -2261,6 +2261,44 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
 }
 
 #[test]
+fn pc_shoot_bow_queues_behind_live_bow_animation_order() {
+    use crate::element::{Command, Posture};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(Posture::Upright));
+    let target = engine.add_entity(make_test_soldier(Posture::Upright));
+
+    let mut current =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), Some(target));
+    current.priority = SequencePriority::Preference;
+    current
+        .orders
+        .push_back(Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0));
+    let current_seq = engine.sequence_manager.launch_element(current);
+    engine.sequence_manager.element_in_progress(current_seq, 0);
+    engine
+        .get_entity_mut(pc)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .old_action = OrderType::WaitingUpright;
+
+    let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), Some(target));
+    let incoming_seq = engine.launch_element_for_owner(incoming);
+
+    let current = engine.sequence_manager.get_element(current_seq, 0).unwrap();
+    assert_eq!(current.cross_postponed, Some((incoming_seq, 0)));
+
+    let incoming = engine
+        .sequence_manager
+        .get_element(incoming_seq, 0)
+        .unwrap();
+    assert_eq!(incoming.state, SequenceState::Postponed);
+}
+
+#[test]
 fn started_pass_door_rejects_new_move() {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;

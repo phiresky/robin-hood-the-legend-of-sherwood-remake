@@ -1981,22 +1981,28 @@ impl EngineInner {
         if new_command == Command::ShootBow
             && let Some(entity) = self.get_entity(owner)
             && entity.is_pc()
-            && let Some(current_action) = entity.actor_data().map(|a| a.old_action)
+            && let Some((cur_seq, cur_idx, current_order)) =
+                self.sequence_manager.current_order_for_actor(owner)
         {
             use crate::order::OrderType;
-            // The actor's last-played animation lives on `old_action`.
+            // C++ checks `mpSprite->GetLastAnimation()`. The live front
+            // order is the authoritative animation driver here; `old_action`
+            // is only refreshed by the script action-change path and can lag
+            // or stay at Waiting for ordinary PCs.
             let in_bow_anim = matches!(
-                current_action,
+                current_order.order_type,
                 OrderType::ShootingWithBow
                     | OrderType::ShootingWithBowUp
+                    | OrderType::ShootingWithBowAnonymous
+                    | OrderType::ShootingWithBowUpAnonymous
                     | OrderType::TransitionLoadingBow
+                    | OrderType::TransitionLoadingBowAnonymous
                     | OrderType::TransitionRaisingBow
+                    | OrderType::TransitionRaisingBowAnonymous
                     | OrderType::TransitionEquipBow
+                    | OrderType::TransitionEquipBowAnonymous
             );
-            if in_bow_anim
-                && let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner)
-                && (cur_seq, cur_idx) != (new_seq, new_idx)
-            {
+            if in_bow_anim && (cur_seq, cur_idx) != (new_seq, new_idx) {
                 self.engine_postpone(cur_seq, cur_idx, new_seq, new_idx);
                 return false;
             }
