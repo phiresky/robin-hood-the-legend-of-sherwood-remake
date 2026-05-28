@@ -1681,17 +1681,14 @@ impl EngineInner {
             // on the target with the shooter as antagonist. `tick_arrows`
             // selects the command based on the projectile's object type.
             if let Some((target_id, activation_cmd)) = result.fx_target_hit {
-                let shooter = self
-                    .get_entity(result.arrow)
-                    .and_then(|e| match e {
-                        Entity::Projectile(p) => p.projectile.shooter,
-                        _ => None,
-                    })
-                    .unwrap_or(EntityId(0));
+                let shooter = self.get_entity(result.arrow).and_then(|e| match e {
+                    Entity::Projectile(p) => p.projectile.shooter,
+                    _ => None,
+                });
                 let mut seq_elem =
                     crate::sequence::SequenceElement::new(1, activation_cmd, Some(target_id));
                 seq_elem.data = crate::sequence::SequenceElementData::Interaction {
-                    antagonist: Some(shooter),
+                    antagonist: shooter,
                 };
                 self.launch_element(seq_elem);
                 tracing::debug!(
