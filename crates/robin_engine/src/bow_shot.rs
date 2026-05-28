@@ -1620,6 +1620,17 @@ pub struct ShotTickResult {
     pub target_forecasted_movement: Point3D,
 }
 
+struct PendingShotTickResult {
+    shooter: EntityId,
+    target: EntityId,
+    seq_id: SequenceId,
+    elem_idx: usize,
+    shooter_position: Point3D,
+    action_state: ActionState,
+    shooter_direction: i16,
+    sprite_hand_point: crate::geo2d::Point2D,
+}
+
 #[derive(Default)]
 pub struct BowTickEvents {
     pub fired: Vec<ShotTickResult>,
@@ -1638,6 +1649,7 @@ pub fn tick_bow_shots(
     sequence_manager: &mut SequenceManager,
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
+    let mut pending_fired = Vec::new();
     let target_ground_positions: Vec<Option<ElemPoint2D>> = entities
         .iter()
         .map(|slot| {
@@ -1857,18 +1869,15 @@ pub fn tick_bow_shots(
                 continue;
             };
 
-            events.fired.push(ShotTickResult {
+            pending_fired.push(PendingShotTickResult {
                 shooter: EntityId(idx as u32),
                 target,
                 seq_id: shot_seq_id,
                 elem_idx: shot.element_index,
                 shooter_position,
-                target_pos: ElemPoint2D::default(),
-                target_point: Point3D::default(),
                 action_state: shot_action_state,
                 shooter_direction: direction,
                 sprite_hand_point,
-                target_forecasted_movement: Point3D::default(),
             });
             continue;
         }
@@ -1881,24 +1890,24 @@ pub fn tick_bow_shots(
     }
 
     // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
-    events.fired.retain_mut(|result| {
+    for result in pending_fired {
         let Some(Some(target_entity)) = entities.get(result.target.0 as usize) else {
             tracing::warn!(
                 shooter = ?result.shooter,
                 target = ?result.target,
                 "Bow release skipped: target entity missing"
             );
-            return false;
+            continue;
         };
-        result.target_pos = target_entity.element_data().position_map();
-        result.target_point = if target_entity.is_human() {
+        let target_pos = target_entity.element_data().position_map();
+        let target_point = if target_entity.is_human() {
             let Some(point) = target_entity.compute_belt_point() else {
                 tracing::warn!(
                     shooter = ?result.shooter,
                     target = ?result.target,
                     "Bow release skipped: human target missing belt hotspot"
                 );
-                return false;
+                continue;
             };
             point
         } else if target_entity.is_fx_target() {
@@ -1908,7 +1917,7 @@ pub fn tick_bow_shots(
                     target = ?result.target,
                     "Bow release skipped: FX target missing center hotspot"
                 );
-                return false;
+                continue;
             };
             point
         } else {
@@ -1918,14 +1927,26 @@ pub fn tick_bow_shots(
                 kind = ?target_entity.kind(),
                 "Bow release skipped: unsupported target kind"
             );
-            return false;
+            continue;
         };
-        result.target_forecasted_movement = target_entity
+        let target_forecasted_movement = target_entity
             .position_iface()
             .get_forecasted_movement()
             .into();
-        true
-    });
+        events.fired.push(ShotTickResult {
+            shooter: result.shooter,
+            target: result.target,
+            seq_id: result.seq_id,
+            elem_idx: result.elem_idx,
+            shooter_position: result.shooter_position,
+            target_pos,
+            target_point,
+            action_state: result.action_state,
+            shooter_direction: result.shooter_direction,
+            sprite_hand_point: result.sprite_hand_point,
+            target_forecasted_movement,
+        });
+    }
 
     events
 }
