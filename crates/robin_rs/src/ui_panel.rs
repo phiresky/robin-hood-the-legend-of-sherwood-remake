@@ -98,6 +98,7 @@ fn color_action_fill() -> u16 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActionButtonVisual {
+    Disabled,
     Normal,
     Hover,
     Pressed,
@@ -109,11 +110,13 @@ fn action_button_visual(
     is_disabled: bool,
     is_hovered: bool,
 ) -> ActionButtonVisual {
-    if is_active && is_hovered && !is_disabled {
+    if is_disabled {
+        ActionButtonVisual::Disabled
+    } else if is_active && is_hovered {
         ActionButtonVisual::HoverPressed
     } else if is_active {
         ActionButtonVisual::Pressed
-    } else if is_hovered && !is_disabled {
+    } else if is_hovered {
         ActionButtonVisual::Hover
     } else {
         ActionButtonVisual::Normal
@@ -168,6 +171,9 @@ pub(crate) const MENU_TEXT_TABLE_ID_DEMO2: ResourceId = 1000034;
 pub struct PortraitCache {
     /// Renderer surface id for each character's face portrait.
     surfaces: [Option<u32>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (disabled state, sub_id 0).
+    action_disabled_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
     /// (normal state, sub_id 1).
     action_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
@@ -247,6 +253,7 @@ impl PortraitCache {
     pub fn new() -> Self {
         Self {
             surfaces: [None; CharacterKind::COUNT],
+            action_disabled_surfaces: [None; CharacterKind::COUNT],
             action_surfaces: [None; CharacterKind::COUNT],
             action_hover_surfaces: [None; CharacterKind::COUNT],
             action_pressed_surfaces: [None; CharacterKind::COUNT],
@@ -413,6 +420,7 @@ impl PortraitCache {
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
             let action_res_ids = kind.action_resources();
+            let mut disabled = [None; 3];
             let mut surfaces = [None; 3];
             let mut hover = [None; 3];
             let mut pressed = [None; 3];
@@ -420,8 +428,16 @@ impl PortraitCache {
             for (i, opt_id) in action_res_ids.iter().enumerate() {
                 if let Some(res_id) = opt_id {
                     // Action button BTTN resources follow SBResourceWidgetID:
-                    // radio 1 = unselected, 2 = focused, 3 = selected,
-                    // 4 = focused selected.
+                    // radio 0 = disabled, 1 = unselected, 2 = focused,
+                    // 3 = selected, 4 = focused selected.
+                    match res.get_picture(*res_id, 0) {
+                        Ok(pic) => {
+                            disabled[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: disabled surface unavailable, will use normal.
+                        }
+                    }
                     match res.get_picture(*res_id, 1) {
                         Ok(pic) => {
                             let surface_id = pic_to_surface(renderer, pic);
@@ -467,6 +483,7 @@ impl PortraitCache {
                     }
                 }
             }
+            self.action_disabled_surfaces[slot] = Some(disabled);
             self.action_surfaces[slot] = Some(surfaces);
             self.action_hover_surfaces[slot] = Some(hover);
             self.action_pressed_surfaces[slot] = Some(pressed);
@@ -849,6 +866,11 @@ impl PortraitCache {
     /// Look up the renderer surface for a character's face portrait.
     pub fn get_surface(&self, kind: CharacterKind) -> Option<u32> {
         self.surfaces[kind.as_index()]
+    }
+
+    /// Look up the action button surfaces for a character.
+    pub fn get_action_disabled_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+        self.action_disabled_surfaces[kind.as_index()].as_ref()
     }
 
     /// Look up the action button surfaces for a character.
@@ -1408,6 +1430,8 @@ pub fn draw_panel(
 
                 let kind = entity.and_then(pc_character_kind);
                 let action_icons = kind.and_then(|k| portraits.get_action_surfaces(k).cloned());
+                let action_disabled =
+                    kind.and_then(|k| portraits.get_action_disabled_surfaces(k).cloned());
                 let action_hover =
                     kind.and_then(|k| portraits.get_action_hover_surfaces(k).cloned());
                 let action_pressed =
@@ -1432,21 +1456,23 @@ pub fn draw_panel(
 
                 // Determine active action button index and disabled state.
                 let active_idx = entity.and_then(|e| active_action_index(engine, profiles, e));
-                let disabled_actions = entity
-                    .and_then(|e| e.pc_data())
-                    .map(|pc| &pc.disabled_actions);
 
                 for i in 0..num_buttons {
                     let is_active = active_idx == Some(i as u8);
-                    let is_disabled = disabled_actions
-                        .and_then(|da| da.get(i).copied())
-                        .unwrap_or(false);
+                    let is_disabled = entity.and_then(|e| e.pc_data()).is_some_and(|pc| {
+                        pc.disabled_actions.get(i).copied().unwrap_or(false)
+                            || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
+                    });
                     let is_hovered = hovered_action == Some((slot as u8, i as u8));
 
                     let mut icon_drawn = false;
 
                     let visual = action_button_visual(is_active, is_disabled, is_hovered);
                     let visual_surface = match visual {
+                        ActionButtonVisual::Disabled => action_disabled
+                            .as_ref()
+                            .and_then(|disabled| disabled[i])
+                            .or_else(|| action_icons.as_ref().and_then(|icons| icons[i])),
                         ActionButtonVisual::HoverPressed => action_hover_pressed
                             .as_ref()
                             .and_then(|hover_pressed| hover_pressed[i])
@@ -2682,7 +2708,7 @@ mod tests {
         );
         assert_eq!(
             action_button_visual(false, true, true),
-            ActionButtonVisual::Normal
+            ActionButtonVisual::Disabled
         );
         assert_eq!(
             action_button_visual(true, false, true),
@@ -2690,7 +2716,7 @@ mod tests {
         );
         assert_eq!(
             action_button_visual(true, true, true),
-            ActionButtonVisual::Pressed
+            ActionButtonVisual::Disabled
         );
     }
 
