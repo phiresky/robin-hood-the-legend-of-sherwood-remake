@@ -1199,6 +1199,7 @@ fn blit_centered_between_scrolls(
 /// (the `RHMAP_CORNER` sprite covers the slot in non-Sherwood missions).
 ///
 /// Should be called after entity rendering and before `renderer.flip()`.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
     host: &mut Host,
     engine: &Engine,

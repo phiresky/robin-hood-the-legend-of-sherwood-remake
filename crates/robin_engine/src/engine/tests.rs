@@ -1986,8 +1986,7 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
         unreachable!("make_test_soldier returned non-soldier");
     };
     soldier.soldier.cached_camp = camp;
-    soldier.npc.ai_brain =
-        crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::default()));
+    soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
     entity
 }
 
@@ -3027,9 +3026,11 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         target_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
     }
 
-    let mut outcomes = AnimCompletionOutcomes::default();
-    outcomes.execute_sides = ExecuteSideOutcomes {
-        waking_up_done: vec![(rescuer, target)],
+    let outcomes = AnimCompletionOutcomes {
+        execute_sides: ExecuteSideOutcomes {
+            waking_up_done: vec![(rescuer, target)],
+            ..Default::default()
+        },
         ..Default::default()
     };
     engine.process_anim_completion_outcomes(outcomes, &LevelAssets::new());

@@ -8333,8 +8333,10 @@ mod drop_ammo_merge_tests {
         });
 
         let mut campaign = Campaign::default();
-        let mut desc = PcDescription::default();
-        desc.character_profile_idx = Some(CharacterProfileIdx(0));
+        let mut desc = PcDescription {
+            character_profile_idx: Some(CharacterProfileIdx(0)),
+            ..Default::default()
+        };
         desc.status.set_ammo(Action::Bow, bow_ammo);
         campaign.characters.push(desc);
         engine.campaign = Some(campaign);
