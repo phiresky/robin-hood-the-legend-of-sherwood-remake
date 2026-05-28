@@ -2346,13 +2346,25 @@ impl EngineInner {
                                 || (elem.command == Command::UnequipBow
                                     && !unequip_body_already_queued);
                             if append_command_body {
-                                let posture = self
-                                    .get_entity(owner)
+                                let owner_entity = self.get_entity(owner).unwrap_or_else(|| {
+                                    panic!("bow command owner missing: {owner:?}")
+                                });
+                                let posture = owner_entity.element_data().posture;
+                                let owner_action_state = owner_entity
+                                    .actor_data()
+                                    .map(|actor| actor.action_state)
                                     .unwrap_or_else(|| {
-                                        panic!("bow command owner missing: {owner:?}")
-                                    })
-                                    .element_data()
-                                    .posture;
+                                        panic!("bow command owner missing actor data: {owner:?}")
+                                    });
+                                if matches!(elem.command, Command::EquipBow | Command::EquipBowDown)
+                                    && owner_action_state.is_bow()
+                                {
+                                    // C++ `Translate(EQUIP_BOW*)` terminates
+                                    // non-transition command bodies when the
+                                    // actor is already aiming with the bow.
+                                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                    continue;
+                                }
                                 let anonymous = posture == crate::element::Posture::AnonymousArcher;
                                 let push = |engine: &mut EngineInner,
                                             ot: crate::order::OrderType,
@@ -8093,6 +8105,76 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 
     fn random_u32(&self) -> u32 {
         crate::sim_rng::u32(..)
+    }
+}
+
+#[cfg(test)]
+mod bow_command_body_parity_tests {
+    use super::*;
+    use crate::element::{
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, PcData,
+        Posture,
+    };
+    use crate::sequence::{SequenceElement, SequenceId, SequenceState};
+
+    fn make_aiming_pc(action_state: ActionState) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                action_state,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        })
+    }
+
+    fn launch_bow_command_and_tick(command: Command, action_state: ActionState) -> EngineInner {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let pc_id = engine.add_entity(make_aiming_pc(action_state));
+        engine.launch_element(SequenceElement::new(1, command, Some(pc_id)));
+
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+        engine
+    }
+
+    #[test]
+    fn equip_bow_terminates_when_actor_is_already_aiming() {
+        let engine = launch_bow_command_and_tick(Command::EquipBow, ActionState::AimingWithBow);
+        let elem = engine
+            .sequence_manager
+            .get_element(SequenceId(1), 0)
+            .unwrap();
+
+        assert_eq!(elem.state, SequenceState::Terminated);
+        assert!(
+            elem.orders.is_empty(),
+            "redundant EquipBow must not queue equip/load orders"
+        );
+    }
+
+    #[test]
+    fn equip_bow_down_terminates_when_actor_is_already_aiming_up() {
+        let engine =
+            launch_bow_command_and_tick(Command::EquipBowDown, ActionState::AimingWithBowUp);
+        let elem = engine
+            .sequence_manager
+            .get_element(SequenceId(1), 0)
+            .unwrap();
+
+        assert_eq!(elem.state, SequenceState::Terminated);
+        assert!(
+            elem.orders.is_empty(),
+            "redundant EquipBowDown must not queue equip/load/lower orders"
+        );
     }
 }
 
