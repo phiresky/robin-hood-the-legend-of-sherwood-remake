@@ -542,6 +542,24 @@ fn default_true() -> bool {
 /// (short-briefings pane, other mission-state popups) share the same
 /// pattern — add new variants as they get wired up.
 #[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub enum DebriefingTextId {
+    Lose { index: usize },
+    Win { index: usize },
+}
+
+impl DebriefingTextId {
+    pub fn from_outcome(won: bool, index: usize) -> Self {
+        if won {
+            Self::Win { index }
+        } else {
+            Self::Lose { index }
+        }
+    }
+}
+
+#[derive(
     Clone, Debug, Eq, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum ModalKind {
@@ -555,15 +573,12 @@ pub enum ModalKind {
     /// dispatched from `DisplaySherwoodReport`). Unkeyed — only one
     /// in flight at a time.
     SherwoodReport,
-    /// Mission debriefing page queued by `DisplayDebriefing`, keyed
-    /// by the existing encoded pending id: `-(i+1)` for losing text
-    /// entries and `i >= 0` for winning entries.
-    Debriefing { encoded_id: i32 },
+    /// Mission debriefing page queued by `DisplayDebriefing`.
+    Debriefing { text_id: DebriefingTextId },
     /// Final mission debriefing shown after the engine returns a
-    /// mission exit code. Uses the same encoded text id convention as
-    /// `Debriefing`, but is distinct because the final flow can also
-    /// resolve to Restart or Load.
-    FinalDebriefing { encoded_id: i32 },
+    /// mission exit code. Distinct from `Debriefing` because the final
+    /// flow can also resolve to Restart or Load.
+    FinalDebriefing { text_id: DebriefingTextId },
     /// Mission-state confirmation popup.
     MissionState { kind: MissionStateModalKind },
 }

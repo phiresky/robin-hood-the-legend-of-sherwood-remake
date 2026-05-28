@@ -547,14 +547,6 @@ enum SettledDebriefingOutcome {
     EmergencyEnd,
 }
 
-fn final_debriefing_encoded_id(won: bool, index: usize) -> i32 {
-    if won {
-        index as i32
-    } else {
-        -((index as i32) + 1)
-    }
-}
-
 fn final_debriefing_result(
     outcome: &SettledDebriefingOutcome,
 ) -> robin_engine::player_command::DialogResult {
@@ -3174,7 +3166,7 @@ pub(crate) async fn run_mission(
         // Console `LEVEL TEXT D/DB/PT` sets `dev.debug.all_*` bools.
         // The engine tick can't expand them because level descriptors
         // live host-side; we do the expansion here using the same
-        // encoding the drain code below already understands.
+        // typed IDs the drain code below already understands.
         if dev.debug.all_dialogues {
             dev.debug.all_dialogues = false;
             if let Some(descriptors) = &level_descriptors {
@@ -3197,12 +3189,17 @@ pub(crate) async fn run_mission(
         if dev.debug.all_debriefings {
             dev.debug.all_debriefings = false;
             if let Some(descriptors) = &level_descriptors {
-                // Losing pages encoded as `-(i+1)`, winning pages as `i`.
                 let lose = descriptors.debriefing.lose_count as usize;
                 let win = descriptors.debriefing.win_count as usize;
+                host.pending_debriefings.extend(
+                    (0..lose).map(
+                        |index| robin_engine::player_command::DebriefingTextId::Lose { index },
+                    ),
+                );
                 host.pending_debriefings
-                    .extend((0..lose).map(|i| -((i as i32) + 1)));
-                host.pending_debriefings.extend((0..win).map(|i| i as i32));
+                    .extend((0..win).map(|index| {
+                        robin_engine::player_command::DebriefingTextId::Win { index }
+                    }));
             } else {
                 tracing::warn!("cheat all_debriefings: level descriptors unavailable");
             }
@@ -3585,7 +3582,10 @@ pub(crate) async fn run_mission(
                 // never empty.
                 let debriefing_index = manager.engine.mission().victory_defeat_id as usize;
                 let debriefing_kind = robin_engine::player_command::ModalKind::FinalDebriefing {
-                    encoded_id: final_debriefing_encoded_id(won, debriefing_index),
+                    text_id: robin_engine::player_command::DebriefingTextId::from_outcome(
+                        won,
+                        debriefing_index,
+                    ),
                 };
                 let debriefing_body = if let Some(descriptors) = level_descriptors.as_ref() {
                     let table_id = if won {

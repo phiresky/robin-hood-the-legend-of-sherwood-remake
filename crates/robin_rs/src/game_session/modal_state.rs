@@ -8,6 +8,7 @@ use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::sdl_audio::SdlMixerBackend;
 use robin_engine::engine::Engine;
+use robin_engine::player_command::DebriefingTextId;
 use std::collections::VecDeque;
 
 pub(super) struct ActiveDialogueItem {
@@ -580,7 +581,7 @@ pub(super) fn start_active_debriefing_batch(
     if host.pending_debriefings.is_empty() {
         return None;
     }
-    let ids: Vec<i32> = host.pending_debriefings.drain(..).collect();
+    let ids: Vec<DebriefingTextId> = host.pending_debriefings.drain(..).collect();
     let (Some(descriptors), Some(_resources)) = (level_descriptors, menu_resources) else {
         tracing::warn!(
             "DisplayDebriefing: level descriptors or menu resources unavailable — \
@@ -590,17 +591,18 @@ pub(super) fn start_active_debriefing_batch(
         return None;
     };
 
-    let (lose_ids, win_ids): (Vec<i32>, Vec<i32>) =
-        ids.into_iter().partition(|encoded| *encoded < 0);
+    let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
+        .into_iter()
+        .partition(|text_id| matches!(text_id, DebriefingTextId::Lose { .. }));
     let mut pending = VecDeque::new();
-    for encoded in lose_ids {
-        let index = (-(encoded + 1)) as usize;
+    for text_id in lose_ids {
+        let DebriefingTextId::Lose { index } = text_id else {
+            unreachable!("lose_ids was partitioned from DebriefingTextId::Lose");
+        };
         let table_id = descriptors.debriefing.lose_text_table_id;
         match text_res.get_string(table_id, index) {
             Ok(s) => {
-                let kind = robin_engine::player_command::ModalKind::Debriefing {
-                    encoded_id: encoded,
-                };
+                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 pending.push_back(ActiveDebriefingItem {
                     kind,
@@ -609,17 +611,17 @@ pub(super) fn start_active_debriefing_batch(
                     replay_result,
                 });
             }
-            Err(e) => tracing::warn!("DisplayDebriefing({encoded}): text lookup failed: {e}"),
+            Err(e) => tracing::warn!("DisplayDebriefing({text_id:?}): text lookup failed: {e}"),
         }
     }
-    for encoded in win_ids {
-        let index = encoded as usize;
+    for text_id in win_ids {
+        let DebriefingTextId::Win { index } = text_id else {
+            unreachable!("win_ids was partitioned from DebriefingTextId::Win");
+        };
         let table_id = descriptors.debriefing.win_text_table_id;
         match text_res.get_string(table_id, index) {
             Ok(s) => {
-                let kind = robin_engine::player_command::ModalKind::Debriefing {
-                    encoded_id: encoded,
-                };
+                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 pending.push_back(ActiveDebriefingItem {
                     kind,
@@ -628,7 +630,7 @@ pub(super) fn start_active_debriefing_batch(
                     replay_result,
                 });
             }
-            Err(e) => tracing::warn!("DisplayDebriefing({encoded}): text lookup failed: {e}"),
+            Err(e) => tracing::warn!("DisplayDebriefing({text_id:?}): text lookup failed: {e}"),
         }
     }
 
@@ -1127,9 +1129,8 @@ pub(super) async fn drain_pending_sherwood_stat(
 
 /// Drain cheat-queued debriefing requests for the frame.
 ///
-/// Cheat `DisplayAllDebriefings` pushes encoded IDs onto
-/// `pending_debriefings`: `-(i+1)` selects the losing text table,
-/// `i >= 0` selects the winning text table.
+/// Cheat `DisplayAllDebriefings` pushes typed text IDs onto
+/// `pending_debriefings`.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_debriefings(
     host: &mut Host,
@@ -1146,34 +1147,31 @@ pub(super) async fn drain_pending_debriefings(
     >,
 ) {
     // ── Drain pending debriefing requests ──
-    // Cheat `DisplayAllDebriefings` pushes encoded IDs onto
-    // `pending_debriefings`: `-(i+1)` selects the losing text table,
-    // `i >= 0` selects the winning text table.
-    //
     // The lose phase and win phase run as two distinct calls — each
     // starts with a fresh emergency-end state, so an EmergencyEnd in
     // the lose phase breaks only the lose loop and the win phase
-    // still runs.  We replicate that by partitioning the encoded
-    // queue into a lose phase and a win phase and iterating each
+    // still runs.  We replicate that by partitioning the typed queue
+    // into a lose phase and a win phase and iterating each
     // independently.
     if !host.pending_debriefings.is_empty() {
-        let ids: Vec<i32> = host.pending_debriefings.drain(..).collect();
+        let ids: Vec<DebriefingTextId> = host.pending_debriefings.drain(..).collect();
         if let (Some(descriptors), Some(resources)) = (&level_descriptors, &menu_resources) {
-            let (lose_ids, win_ids): (Vec<i32>, Vec<i32>) =
-                ids.into_iter().partition(|encoded| *encoded < 0);
+            let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
+                .into_iter()
+                .partition(|text_id| matches!(text_id, DebriefingTextId::Lose { .. }));
 
             // Lose phase: each `Display(loseVec, false, false)` call.
-            for encoded in lose_ids {
-                let kind = robin_engine::player_command::ModalKind::Debriefing {
-                    encoded_id: encoded,
+            for text_id in lose_ids {
+                let DebriefingTextId::Lose { index } = text_id else {
+                    unreachable!("lose_ids was partitioned from DebriefingTextId::Lose");
                 };
+                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-                let index = (-(encoded + 1)) as usize;
                 let table_id = descriptors.debriefing.lose_text_table_id;
                 let text = match text_res.get_string(table_id, index) {
                     Ok(s) => s.to_string(),
                     Err(e) => {
-                        tracing::warn!("DisplayDebriefing({encoded}): text lookup failed: {e}");
+                        tracing::warn!("DisplayDebriefing({text_id:?}): text lookup failed: {e}");
                         continue;
                     }
                 };
@@ -1219,17 +1217,17 @@ pub(super) async fn drain_pending_debriefings(
             }
 
             // Win phase: fresh `Display(winVec, true, false)` call.
-            for encoded in win_ids {
-                let kind = robin_engine::player_command::ModalKind::Debriefing {
-                    encoded_id: encoded,
+            for text_id in win_ids {
+                let DebriefingTextId::Win { index } = text_id else {
+                    unreachable!("win_ids was partitioned from DebriefingTextId::Win");
                 };
+                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-                let index = encoded as usize;
                 let table_id = descriptors.debriefing.win_text_table_id;
                 let text = match text_res.get_string(table_id, index) {
                     Ok(s) => s.to_string(),
                     Err(e) => {
-                        tracing::warn!("DisplayDebriefing({encoded}): text lookup failed: {e}");
+                        tracing::warn!("DisplayDebriefing({text_id:?}): text lookup failed: {e}");
                         continue;
                     }
                 };
@@ -1354,7 +1352,7 @@ fn build_dialogue_sentences(
 mod tests {
     use super::pop_matching_dismissal;
     use robin_engine::player_command::{
-        DialogResult, MissionStateModalKind, ModalKind, PlayerCommand,
+        DebriefingTextId, DialogResult, MissionStateModalKind, ModalKind, PlayerCommand,
     };
     use std::collections::VecDeque;
 
@@ -1366,7 +1364,9 @@ mod tests {
                 result: DialogResult::Completed,
             },
             PlayerCommand::ModalDismiss {
-                kind: ModalKind::Debriefing { encoded_id: -2 },
+                kind: ModalKind::Debriefing {
+                    text_id: DebriefingTextId::Lose { index: 1 },
+                },
                 result: DialogResult::Aborted,
             },
             PlayerCommand::ModalDismiss {
@@ -1377,7 +1377,12 @@ mod tests {
             },
         ]);
 
-        let result = pop_matching_dismissal(&mut queue, &ModalKind::Debriefing { encoded_id: -2 });
+        let result = pop_matching_dismissal(
+            &mut queue,
+            &ModalKind::Debriefing {
+                text_id: DebriefingTextId::Lose { index: 1 },
+            },
+        );
 
         assert_eq!(result, Some(DialogResult::Aborted));
         assert_eq!(queue.len(), 2);
@@ -1402,11 +1407,18 @@ mod tests {
     #[test]
     fn pop_matching_dismissal_leaves_unmatched_queue_intact() {
         let mut queue = VecDeque::from([PlayerCommand::ModalDismiss {
-            kind: ModalKind::Debriefing { encoded_id: 1 },
+            kind: ModalKind::Debriefing {
+                text_id: DebriefingTextId::Win { index: 1 },
+            },
             result: DialogResult::Completed,
         }]);
 
-        let result = pop_matching_dismissal(&mut queue, &ModalKind::Debriefing { encoded_id: -1 });
+        let result = pop_matching_dismissal(
+            &mut queue,
+            &ModalKind::Debriefing {
+                text_id: DebriefingTextId::Lose { index: 0 },
+            },
+        );
 
         assert_eq!(result, None);
         assert_eq!(queue.len(), 1);

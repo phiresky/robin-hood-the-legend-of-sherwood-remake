@@ -479,7 +479,7 @@ pub fn render_screen_remarks(engine: &Engine, renderer: &mut Renderer, fonts: &H
     }
 }
 
-/// Dev overlay: draw each live entity's `EntityId` number just below
+/// Dev overlay: draw each live entity's zero-based `EntityId` just below
 /// its feet.  Toggled by `/screenshot?entity_ids` over the HTTP RPC.
 ///
 /// Shares the `render_hud_text` text-surface pattern: allocate a
@@ -510,9 +510,7 @@ pub fn render_entity_id_overlay(
             continue;
         };
 
-        // Format: `<internal>(<script>)` where script handle =
-        // internal + 1.
-        let text = format!("{}({})", id.0, id.0 + 1);
+        let text = id.0.to_string();
         let tw = font.text_width(&text);
         let text_x = screen_pt.x as i32 - tw / 2;
         // +6 px offset clears the feet / selection ring without

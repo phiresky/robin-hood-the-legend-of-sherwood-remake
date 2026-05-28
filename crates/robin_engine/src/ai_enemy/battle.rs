@@ -833,7 +833,8 @@ impl EnemyAi {
                             self.base.pending_set_direction_instantly = Some(dir as i16);
                         }
                     } else {
-                        self.base.pending_enter_swordfight = Some(0);
+                        self.base.pending_enter_swordfight =
+                            Some(EnterSwordfightRequest::RaiseSword);
                         self.base.pending_enter_swordfight_jump_line = None;
                     }
                     if target != 0 {
@@ -2388,7 +2389,8 @@ impl EnemyAi {
         // entities get added to each other's opponent lists and action
         // states transition to sword combat. The jump-line index is
         // passed alongside for table-swordfight positioning.
-        self.base.pending_enter_swordfight = Some(self.base.primary_target);
+        self.base.pending_enter_swordfight =
+            Some(EnterSwordfightRequest::Engage(self.base.primary_target));
         self.base.pending_enter_swordfight_jump_line = tick.primary_target_jump_line;
 
         // VIPs use a different remark variant.

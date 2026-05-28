@@ -421,9 +421,8 @@ pub struct Host {
     /// `DisplayAllPopupTexts`.  Accumulated from every tick.  Drained
     /// by the game session through `RHMenuPopupScroll::DisplaySingle`.
     pub pending_popup_texts: Vec<i32>,
-    /// Encoded debriefing text IDs pushed by the
-    /// `DisplayAllDebriefings` cheat (sign selects win/lose text table).
-    pub pending_debriefings: Vec<i32>,
+    /// Debriefing text IDs pushed by the `DisplayAllDebriefings` cheat.
+    pub pending_debriefings: Vec<robin_engine::player_command::DebriefingTextId>,
     /// Set when a tick fired `DisplaySherwoodReport`.
     pub pending_sherwood_report: bool,
     /// Set when a tick fired `DisplayConsole`.

@@ -54,7 +54,8 @@ impl EnemyAi {
                     if already_reported {
                         return;
                     }
-                    self.base.pending_unalert_near_charly_seekers = Some(charly);
+                    self.base.pending_unalert_near_charly_seekers =
+                        Some(CharlySeekerTarget::Npc(charly));
 
                     // If pCharly is a rank-Soldier, acquire him and wait.
                     let charly_is_soldier = charly_view
@@ -122,7 +123,8 @@ impl EnemyAi {
                                     AiState::Seeking,
                                     Substate::SeekingSendCharlyToOfficer,
                                 );
-                                self.base.pending_unalert_near_charly_seekers = Some(charly);
+                                self.base.pending_unalert_near_charly_seekers =
+                                    Some(CharlySeekerTarget::Npc(charly));
                                 self.base
                                     .say_with_flags(Remark::FoundCharly, SpeechFlags::MYTALK_1);
                                 self.base.friend_in_trouble = charly;
@@ -167,7 +169,8 @@ impl EnemyAi {
                 // SEEKING_DETECTED_CHARLY.
                 self.previous_state = self.base.current_state;
                 self.previous_substate = self.base.current_substate;
-                self.base.pending_unalert_near_charly_seekers = Some(charly);
+                self.base.pending_unalert_near_charly_seekers =
+                    Some(CharlySeekerTarget::Npc(charly));
                 self.set_state(AiState::Seeking, Substate::SeekingDetectedCharly);
                 self.base
                     .launch_timer(parameters_ai::AI_CHARLY_LOOK_TIME as u32, ctx.frame);
@@ -1542,7 +1545,8 @@ impl EnemyAi {
                             .map(|f| f.has_as_opponent(attacker))
                             .unwrap_or(false);
                         if !attacker_is_friend && !already_opponent {
-                            self.base.pending_enter_swordfight = Some(attacker);
+                            self.base.pending_enter_swordfight =
+                                Some(EnterSwordfightRequest::Engage(attacker));
                         }
                     }
                 } else if self.base.current_substate == Substate::MenacingPcInComa {
@@ -1556,7 +1560,8 @@ impl EnemyAi {
                             Substate::AttackingReturnToOtherPcAfterMenacing,
                         );
                         self.base.primary_target = attacker;
-                        self.base.pending_enter_swordfight = Some(0);
+                        self.base.pending_enter_swordfight =
+                            Some(EnterSwordfightRequest::RaiseSword);
                         self.base.pending_enter_swordfight_jump_line = None;
                         self.base.face_entity(attacker, ctx);
                     }
@@ -2106,7 +2111,8 @@ impl EnemyAi {
                 if b_hey_this_is_charly {
                     // The body we're seeing is charly — broadcast the
                     // unalert.
-                    self.base.pending_unalert_near_charly_seekers = Some(body);
+                    self.base.pending_unalert_near_charly_seekers =
+                        Some(CharlySeekerTarget::Npc(body));
                 }
                 self.run_to_examine_body(body, ctx, tick, grid);
                 return;
@@ -2141,7 +2147,7 @@ impl EnemyAi {
         // non-mid-seek discoveries too. The body we just saw IS charly,
         // so the sweep target is the body handle.
         if b_hey_this_is_charly {
-            self.base.pending_unalert_near_charly_seekers = Some(body);
+            self.base.pending_unalert_near_charly_seekers = Some(CharlySeekerTarget::Npc(body));
         }
         self.react(
             parameters_ai::AI_MAX_DEADBODY_REACTIONTIME as u16,

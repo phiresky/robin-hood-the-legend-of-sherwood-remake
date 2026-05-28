@@ -2165,17 +2165,17 @@ impl EnemyAi {
         // Fire `filter_ai_event(source, AI_STATE_CHANGE_TO_*)`
         // inside `set_state` whenever `current_substate != substate`,
         // *before* the raw state/substate assignment so the script
-        // reads the outgoing state.  Source = `primary_target` (may
-        // be 0) for Attacking/Menacing/Fleeing, otherwise `me`.
+        // reads the outgoing state.  Source = `primary_target` for
+        // Attacking/Menacing/Fleeing, otherwise `me`.
         // Engine access isn't available here, so queue the
         // notification for the post-think dispatcher to drain in
         // order.
         if self.base.current_substate != substate {
             let source = match state {
                 AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
-                    Some(self.base.primary_target)
+                    AiStateChangeSource::from_optional_human(self.base.primary_target)
                 }
-                _ => None,
+                _ => AiStateChangeSource::SelfActor,
             };
             self.base
                 .pending_state_change_notifications
@@ -3452,7 +3452,7 @@ mod tests {
         // `RHArtificialMalignity::SetState` at L9226).
         assert_eq!(
             ai.base.pending_state_change_notifications,
-            vec![(AiState::Attacking, Some(0))]
+            vec![(AiState::Attacking, AiStateChangeSource::Null)]
         );
     }
 

@@ -2161,10 +2161,8 @@ pub struct SideEffects {
     /// popup parchment widget.
     pub pending_popup_texts: Vec<i32>,
     /// Debriefing text IDs queued this tick by the `DisplayAllDebriefings`
-    /// cheat. Encoding: non-negative indices reference the winning
-    /// debriefing table, negated indices (`-(i+1)`) reference the
-    /// losing table.
-    pub pending_debriefings: Vec<i32>,
+    /// cheat.
+    pub pending_debriefings: Vec<crate::player_command::DebriefingTextId>,
     /// Set when the `DisplaySherwoodReport` script native fired this tick.
     pub pending_sherwood_report: bool,
     /// Set when the `DisplayConsole` script native (or cheat key) fired

@@ -1,6 +1,7 @@
 //! Script/GameHost wiring, mission script management, campaign integration.
 
 use super::*;
+use crate::ai::AiStateChangeSource;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::element::{Entity, EntityId};
 use crate::geo2d::{self};
@@ -2318,17 +2319,14 @@ impl EngineInner {
                 continue;
             }
             let handle = crate::natives::GameHost::actor_handle_from_index(idx);
-            for (state, source_opt) in drained {
+            for (state, source_kind) in drained {
                 let code = state.state_change_event_code();
-                // `None` ⇒ source is self: use this actor's script
-                // handle.  `Some(0)` ⇒ source is null
-                // (Attacking/Menacing/Fleeing without a primary
-                // target); leave as `0`.  `Some(h)` ⇒ primary target
-                // handle is 0-based, translate to the script actor handle.
-                let source = match source_opt {
-                    None => handle,
-                    Some(0) => 0,
-                    Some(h) => crate::natives::GameHost::actor_handle(crate::element::EntityId(h)),
+                let source = match source_kind {
+                    AiStateChangeSource::SelfActor => handle,
+                    AiStateChangeSource::Null => 0,
+                    AiStateChangeSource::Human(h) => {
+                        crate::natives::GameHost::actor_handle(crate::element::EntityId(h))
+                    }
                 };
                 notifications.push((handle, source, code));
             }
