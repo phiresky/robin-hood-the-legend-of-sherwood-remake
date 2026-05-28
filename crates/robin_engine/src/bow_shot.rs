@@ -1922,6 +1922,10 @@ pub fn tick_bow_shots(
 pub struct SpawnArrowParams {
     pub shooter: EntityId,
     pub bow_point: Point3D,
+    /// C++ `ShootWithBowAt` stores the shooter map position as
+    /// `mposStartOfTrajectory` after the arrow's first `Hourglass()`.
+    /// AI reactions use this origin, not the bow hand hotspot.
+    pub trajectory_origin: ElemPoint2D,
     pub target: EntityId,
     pub target_pos: ElemPoint2D,
     pub trajectory: Vec<TrajectoryPoint>,
@@ -1954,6 +1958,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     let SpawnArrowParams {
         shooter,
         bow_point,
+        trajectory_origin,
         target,
         target_pos,
         trajectory,
@@ -2005,8 +2010,8 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     let projectile = ProjectileData {
         start: bow_point,
         end: end_pos,
-        start_of_trajectory_x: bow_point.x,
-        start_of_trajectory_y: bow_point.y,
+        start_of_trajectory_x: trajectory_origin.x,
+        start_of_trajectory_y: trajectory_origin.y,
         shooter: Some(shooter),
         flying: true,
         disappear: lands_in_hole,
@@ -4053,6 +4058,7 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(1),
             target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
             trajectory: traj,
@@ -4071,6 +4077,39 @@ mod tests {
             }
             _ => panic!("expected ElementProjectile"),
         }
+    }
+
+    #[test]
+    fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
+        let arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 100.0,
+                y: 40.0,
+                z: 40.0,
+            },
+            trajectory_origin: ElemPoint2D { x: 100.0, y: 0.0 },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 40.0,
+                    z: 40.0,
+                },
+                time: 2,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: None,
+        });
+
+        let Entity::Projectile(p) = arrow else {
+            panic!("spawn_arrow should create projectile");
+        };
+        assert_eq!(p.projectile.start_of_trajectory_x, 100.0);
+        assert_eq!(p.projectile.start_of_trajectory_y, 0.0);
     }
 
     #[test]
@@ -4116,6 +4155,7 @@ mod tests {
                     y: 0.0,
                     z: 40.0,
                 },
+                trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
                 target: EntityId(1),
                 target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
                 trajectory: traj,
@@ -4152,6 +4192,7 @@ mod tests {
                 y: 0.0,
                 z: 25.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(2),
             target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
@@ -4261,6 +4302,7 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(1),
             target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
@@ -5033,6 +5075,7 @@ mod tests {
                 y: 0.0,
                 z: 25.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(1),
             target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
             trajectory,
@@ -5101,6 +5144,7 @@ mod tests {
                 y: 0.0,
                 z: 82.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(1),
             target_pos: ElemPoint2D { x: 90.0, y: 0.0 },
             trajectory,
@@ -5163,6 +5207,7 @@ mod tests {
                 y: 0.0,
                 z: 30.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(1),
             target_pos: ElemPoint2D { x: 80.0, y: 0.0 },
             trajectory,
@@ -5235,6 +5280,7 @@ mod tests {
                     y: 40.0,
                     z: 40.0,
                 },
+                trajectory_origin: ElemPoint2D { x: 100.0, y: 0.0 },
                 target: EntityId(1),
                 target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
                 trajectory,
@@ -5316,6 +5362,7 @@ mod tests {
                     y: 0.0,
                     z: 0.0,
                 },
+                trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
                 target: EntityId(1),
                 target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
                 trajectory,
@@ -5371,6 +5418,7 @@ mod tests {
                 y: 0.0,
                 z: 5.0,
             },
+            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
             target: EntityId(0),
             target_pos: ElemPoint2D { x: 10.0, y: 0.0 },
             trajectory,

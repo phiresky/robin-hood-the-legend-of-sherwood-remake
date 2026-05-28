@@ -374,6 +374,10 @@ impl EngineInner {
             let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
                 bow_point,
+                trajectory_origin: crate::element::Point2D {
+                    x: result.shooter_position.x,
+                    y: result.shooter_position.y,
+                },
                 target: result.target,
                 target_pos: result.target_pos,
                 trajectory,
