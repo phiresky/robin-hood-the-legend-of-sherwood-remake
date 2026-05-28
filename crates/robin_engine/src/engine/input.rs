@@ -1486,9 +1486,13 @@ impl EngineInner {
 
         if target.is_human() {
             let target_posture = target.element_data().posture;
-            let belt = target
-                .compute_belt_point()
-                .unwrap_or(target.element_data().position());
+            let Some(belt) = target.compute_belt_point() else {
+                tracing::warn!(
+                    ?target_id,
+                    "can_shoot_with_bow_at: human target missing belt hotspot"
+                );
+                return (BowTarget::Invalid, ShootMode::Normal);
+            };
 
             if target_posture != crate::element::Posture::LeaningOut {
                 return self.can_shoot_with_bow_at_point(assets, pc_id, belt, false);
@@ -1574,9 +1578,13 @@ impl EngineInner {
         let max_range = bow_state.get_max_range(bow_profile) as f32;
 
         // Compute 3D hand point for the shooter.
-        let hand_point = pc
-            .compute_hand_point(None)
-            .unwrap_or(pc.element_data().position());
+        let Some(hand_point) = pc.compute_hand_point(None) else {
+            tracing::warn!(
+                ?pc_id,
+                "can_shoot_with_bow_at_point: shooter missing hand hotspot"
+            );
+            return (BowTarget::Invalid, ShootMode::Normal);
+        };
         let hand_ground_y = bow_ground_y(hand_point);
         let target_ground_y = bow_ground_y(target_point);
 
@@ -1632,7 +1640,14 @@ impl EngineInner {
                 let sprite_pos = pc.element_data().position_map();
                 let hotspot = {
                     let sprite = &pc.element_data().sprite;
-                    let dir_u16 = u16::try_from(direction).unwrap_or(0);
+                    let Ok(dir_u16) = u16::try_from(direction) else {
+                        tracing::warn!(
+                            ?pc_id,
+                            direction,
+                            "can_shoot_with_bow_at_point: invalid shooter direction"
+                        );
+                        return (BowTarget::Invalid, ShootMode::Normal);
+                    };
                     sprite.get_point(
                         crate::bow_shot::bow_point_order_type_for_mode(shoot_mode),
                         dir_u16,
@@ -1643,10 +1658,15 @@ impl EngineInner {
                         x: sprite_pos.x + offset.x,
                         y: sprite_pos.y + offset.y,
                     }),
-                    None => Some(crate::geo2d::Point2D {
-                        x: sprite_pos.x,
-                        y: sprite_pos.y,
-                    }),
+                    None => {
+                        tracing::warn!(
+                            ?pc_id,
+                            ?shoot_mode,
+                            direction,
+                            "can_shoot_with_bow_at_point: missing bow-point sprite hotspot"
+                        );
+                        return (BowTarget::Invalid, ShootMode::Normal);
+                    }
                 }
             };
             let bow_point = crate::bow_shot::compute_bow_point(
@@ -1691,10 +1711,34 @@ impl EngineInner {
     ) -> TrajectoryPreview {
         // Compute target belt point (humans) / centre (FX targets).
         let target_point = match self.get_entity(target_id) {
-            Some(t) => t
-                .compute_belt_point()
-                .or_else(|| t.compute_target_center())
-                .unwrap_or(t.element_data().position()),
+            Some(t) if t.is_human() => {
+                let Some(point) = t.compute_belt_point() else {
+                    tracing::warn!(
+                        ?target_id,
+                        "compute_trajectory_preview: human target missing belt hotspot"
+                    );
+                    return TrajectoryPreview::Invalid;
+                };
+                point
+            }
+            Some(t) if t.is_fx_target() => {
+                let Some(point) = t.compute_target_center() else {
+                    tracing::warn!(
+                        ?target_id,
+                        "compute_trajectory_preview: FX target missing center hotspot"
+                    );
+                    return TrajectoryPreview::Invalid;
+                };
+                point
+            }
+            Some(t) => {
+                tracing::warn!(
+                    ?target_id,
+                    kind = ?t.kind(),
+                    "compute_trajectory_preview: unsupported bow preview target"
+                );
+                return TrajectoryPreview::Invalid;
+            }
             None => return TrajectoryPreview::Invalid,
         };
         self.compute_trajectory_preview_to_point(
@@ -1884,7 +1928,14 @@ impl EngineInner {
             let sprite_pos = pc.element_data().position_map();
             let hotspot = {
                 let sprite = &pc.element_data().sprite;
-                let dir_u16 = u16::try_from(direction).unwrap_or(0);
+                let Ok(dir_u16) = u16::try_from(direction) else {
+                    tracing::warn!(
+                        ?pc_id,
+                        direction,
+                        "compute_trajectory_preview_to_point: invalid shooter direction"
+                    );
+                    return TrajectoryPreview::Invalid;
+                };
                 sprite.get_point(
                     crate::bow_shot::bow_point_order_type_for_mode(ShootMode::Long),
                     dir_u16,
@@ -1895,10 +1946,14 @@ impl EngineInner {
                     x: sprite_pos.x + offset.x,
                     y: sprite_pos.y + offset.y,
                 }),
-                None => Some(crate::geo2d::Point2D {
-                    x: sprite_pos.x,
-                    y: sprite_pos.y,
-                }),
+                None => {
+                    tracing::warn!(
+                        ?pc_id,
+                        direction,
+                        "compute_trajectory_preview_to_point: missing long-shot bow-point hotspot"
+                    );
+                    return TrajectoryPreview::Invalid;
+                }
             }
         };
 
@@ -1922,10 +1977,13 @@ impl EngineInner {
             bow_shot::compute_initial_throw_velocity(direction_vec, apex_height, mass, 0, None);
 
         // Compute trajectory with obstacle checking.
-        let layer = self
-            .get_entity(pc_id)
-            .map(|e| e.element_data().layer())
-            .unwrap_or(0);
+        let Some(layer) = self.get_entity(pc_id).map(|e| e.element_data().layer()) else {
+            tracing::warn!(
+                ?pc_id,
+                "compute_trajectory_preview_to_point: shooter missing for layer lookup"
+            );
+            return TrajectoryPreview::Invalid;
+        };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.fast_grid,
             layer,
