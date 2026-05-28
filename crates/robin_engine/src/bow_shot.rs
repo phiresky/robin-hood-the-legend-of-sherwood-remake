@@ -2844,20 +2844,20 @@ pub fn tick_arrows(
             ) {
                 return None;
             }
-            // Compute belt/eyes 3D anchor points.  If the helper
-            // returns None (unsupported entity), fall back to the
-            // element position + a nominal human-belt elevation so we
-            // still get a reasonable hit volume.
-            let fallback = {
-                let p = e.element_data().position();
-                Point3D {
-                    x: p.x,
-                    y: p.y,
-                    z: p.z + crate::element::HUMAN_ELEVATION_BELT_UPRIGHT,
-                }
+            let Some(belt) = e.compute_belt_point() else {
+                tracing::warn!(
+                    entity = idx,
+                    "Projectile hit snapshot skipped: human missing belt hotspot"
+                );
+                return None;
             };
-            let belt = e.compute_belt_point().unwrap_or(fallback);
-            let eyes = e.compute_eyes_point(None).unwrap_or(fallback);
+            let Some(eyes) = e.compute_eyes_point(None) else {
+                tracing::warn!(
+                    entity = idx,
+                    "Projectile hit snapshot skipped: human missing eyes hotspot"
+                );
+                return None;
+            };
             let camp = match e {
                 Entity::Pc(_) => Some(crate::element::Camp::Royalists),
                 Entity::Soldier(s) => Some(s.soldier.cached_camp),
@@ -2912,12 +2912,13 @@ pub fn tick_arrows(
             ) {
                 return None;
             }
-            // `compute_target_center` adds half the sprite height to
-            // Z.  In a headless test with no sprite this collapses to
-            // the element's 3D position, which is the right behaviour.
-            let center = e
-                .compute_target_center()
-                .unwrap_or(e.element_data().position());
+            let Some(center) = e.compute_target_center() else {
+                tracing::warn!(
+                    entity = idx,
+                    "Projectile hit snapshot skipped: FX target missing center hotspot"
+                );
+                return None;
+            };
             Some(FxTargetSnapshot {
                 id: EntityId(idx as u32),
                 center,
