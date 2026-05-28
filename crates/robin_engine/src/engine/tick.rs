@@ -202,12 +202,13 @@ impl EngineInner {
             }
         }
 
-        let skip_render = self.tick_display_state(display);
+        let skip_render = self.tick_camera_display_state();
 
-        // Reset legacy script-camera scroll dedupe after `tick_display_state`.
-        // Local viewport scroll is host-side and never enters engine state.
-        // so peer-2's held scroll doesn't gate the host's, and vice
+        // Reset per-frame scroll dedupe after the camera display tick.
+        // Host-local viewport scroll is host-side and never enters engine
+        // state, so peer-2's held scroll doesn't gate the host's, and vice
         // versa.
+        self.cutscene_camera.display.frame_scrolled = [false; 4];
         display.frame_scrolled = [false; 4];
 
         self.rng = crate::sim_rng::uninstall();

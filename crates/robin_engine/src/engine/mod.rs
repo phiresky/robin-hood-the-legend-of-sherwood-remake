@@ -60,7 +60,7 @@ pub(crate) use commands::command_action_distance_animation;
 pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use global_options::*;
-pub use peripherals::{DebugFlags, DevState, HostDisplayState};
+pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup,
 };
@@ -3801,10 +3801,12 @@ impl EngineInner {
                 crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::ZoomUpEnd),
                 (zoom_up << 16) | zoom_down,
             ));
-            display.background_transform.zoom_to_up = false;
-            display.background_transform.zoom_to_down = false;
-            display.background_transform.required_zoom_up = false;
-            display.background_transform.required_zoom_down = false;
+            let bg = &mut self.cutscene_camera.display.background_transform;
+            bg.zoom_to_up = false;
+            bg.zoom_to_down = false;
+            bg.required_zoom_up = false;
+            bg.required_zoom_down = false;
+            self.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
             self.cutscene_camera.zoom_init_done = false;
         }
 

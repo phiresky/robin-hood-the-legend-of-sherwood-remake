@@ -400,6 +400,13 @@ pub struct CameraState {
     /// when the zoom / slide completes.
     pub sequence_element: Option<crate::sequence::SequenceElementRef>,
 
+    /// Display-op/zoom-transition state for the shared script camera.
+    ///
+    /// This is engine-owned because it advances `view_position`,
+    /// `zoom_factor`, and camera sequence completion. Host-local viewport
+    /// scroll/zoom has its own state in `robin_rs::Host`.
+    pub display: super::CameraDisplayState,
+
     /// Screen-space mouse position captured when a non-mechanized zoom
     /// request fires (host sets this before `EngineStateRequest::
     /// Zooming{Up,Down}`). At `DisplayOpCode::InitZoom`, display_state
@@ -431,6 +438,7 @@ impl Default for CameraState {
             displacement_counter: 0,
             position_saved: geo2d::pt(0.0, 0.0),
             sequence_element: None,
+            display: super::CameraDisplayState::default(),
             pending_zoom_mouse_screen: None,
         }
     }

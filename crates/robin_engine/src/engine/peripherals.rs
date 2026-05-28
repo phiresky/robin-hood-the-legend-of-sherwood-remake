@@ -19,14 +19,47 @@ pub struct DisplayedNoise {
     pub start_radius: u16,
 }
 
-/// Host-owned display-state machine scratch for the legacy engine
-/// camera pipeline.
+/// Engine-owned display-state machine for the shared script/director
+/// camera.
+///
+/// This intentionally contains only the fields the engine camera
+/// transition code needs.  Host-local presentation state such as the
+/// minimap and macro UI lives in [`HostDisplayState`] and must not feed
+/// back into the rollback-safe engine tick.
+#[derive(
+    Clone, Debug, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct CameraDisplayState {
+    pub background_transform: BackgroundTransform,
+    pub display_op: DisplayOpCode,
+    pub frame_scrolled: [bool; 4],
+}
+
+impl CameraDisplayState {
+    pub(crate) fn to_host_display_state(&self) -> HostDisplayState {
+        HostDisplayState {
+            background_transform: self.background_transform.clone(),
+            display_op: self.display_op,
+            frame_scrolled: self.frame_scrolled,
+            ..HostDisplayState::default()
+        }
+    }
+
+    pub(crate) fn update_from_host_display_state(&mut self, display: &HostDisplayState) {
+        self.background_transform = display.background_transform.clone();
+        self.display_op = display.display_op;
+        self.frame_scrolled = display.frame_scrolled;
+    }
+}
+
+/// Host-owned display-state machine scratch for local presentation and
+/// UI widgets.
 ///
 /// This is deliberately outside [`super::EngineInner`]: it drives
-/// presentation details such as background scroll/zoom interpolation and
-/// per-frame scroll dedupe. Callers pass it into engine tick/command paths
-/// that still need to advance the script/director camera until that pipeline
-/// is fully host-side.
+/// presentation details such as minimap transitions, local UI animation, and
+/// per-frame input scratch.  Script/director camera transition state lives in
+/// [`CameraDisplayState`] instead so rollback replay never depends on host
+/// viewport scratch.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct HostDisplayState {
     pub background_transform: BackgroundTransform,

@@ -38,6 +38,36 @@ impl DrawOrder {
 impl EngineInner {
     // ─── Rendering ───────────────────────────────────────────────
 
+    pub(super) fn with_camera_display_state<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self, &mut HostDisplayState) -> R,
+    ) -> R {
+        let mut display = self.cutscene_camera.display.to_host_display_state();
+        let result = f(self, &mut display);
+        self.cutscene_camera
+            .display
+            .update_from_host_display_state(&display);
+        result
+    }
+
+    /// Advance the script/director camera display state stored inside
+    /// the engine snapshot.
+    pub(super) fn tick_camera_display_state(&mut self) -> u32 {
+        self.with_camera_display_state(|engine, display| engine.tick_display_state(display))
+    }
+
+    /// Apply an engine state request against the internal camera display
+    /// state instead of the host's local presentation scratch.
+    pub(crate) fn change_state_with_camera_display(
+        &mut self,
+        seat: usize,
+        request: EngineStateRequest,
+    ) -> bool {
+        self.with_camera_display_state(|engine, display| {
+            engine.change_state(display, seat, request)
+        })
+    }
+
     /// Advance the display-state machine for one tick.
     ///
     /// Only the *sim-state* half of rendering. All actual GPU work

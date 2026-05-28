@@ -33,14 +33,10 @@ fn scrolling_table_generation() {
 
 #[test]
 fn zoom_state_machine() {
-    let mut display = HostDisplayState::default();
+    let display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
-    // `set_operation` is monotonic: a zoom request can't downgrade an
-    // in-progress Redraw. After engine ctor `display_op` defaults to
-    // Redraw; apply the post-draw reset to `NoBackgroundMove` so the
-    // zoom-init-op can actually propagate.
-    display.display_op = DisplayOpCode::NoBackgroundMove;
+    engine.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
 
     assert!(engine.is_zoom_possible(&display));
     assert!(engine.is_zoom_up_possible());
@@ -48,10 +44,13 @@ fn zoom_state_machine() {
     assert!(!engine.is_zooming(&display));
 
     // Trigger zoom up
-    assert!(engine.change_state(&mut display, 0, EngineStateRequest::ZoomingUp));
+    assert!(engine.change_state_with_camera_display(0, EngineStateRequest::ZoomingUp));
     assert!(engine.is_zooming(&display));
     assert!(!engine.is_zoom_possible(&display));
-    assert_eq!(display.display_op, DisplayOpCode::InitZoom);
+    assert_eq!(
+        engine.cutscene_camera.display.display_op,
+        DisplayOpCode::InitZoom
+    );
 }
 
 #[test]
@@ -358,6 +357,50 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     assert_eq!(restored.cutscene_camera.displacement, geo2d::pt(0.0, 0.0));
     assert_eq!(restored.cutscene_camera.displacement_counter, 0);
     assert_eq!(restored.cutscene_camera.pending_zoom_mouse_screen, None);
+}
+
+#[test]
+fn host_display_scroll_does_not_mutate_script_camera() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.view_position = geo2d::pt(100.0, 200.0);
+
+    display.display_op = DisplayOpCode::Scroll;
+    display.background_transform.scrolling_vector = geo2d::pt(25.0, 0.0);
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    assert_eq!(
+        engine.cutscene_camera.view_position,
+        geo2d::pt(100.0, 200.0)
+    );
+}
+
+#[test]
+fn camera_display_scroll_mutates_script_camera() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.view_position = geo2d::pt(100.0, 200.0);
+
+    engine.cutscene_camera.display.display_op = DisplayOpCode::Scroll;
+    engine
+        .cutscene_camera
+        .display
+        .background_transform
+        .scrolling_vector = geo2d::pt(25.0, 0.0);
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    assert_eq!(
+        engine.cutscene_camera.view_position,
+        geo2d::pt(125.0, 200.0)
+    );
 }
 
 /// Regression test for the PI-into-Sprite refactor (save-format v2).
@@ -750,12 +793,22 @@ fn post_load_fixups_aborts_midzoom() {
     // leave the engine mid-zoom.
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
-    display.background_transform.zoom_to_up = true;
+    engine
+        .cutscene_camera
+        .display
+        .background_transform
+        .zoom_to_up = true;
     engine.cutscene_camera.zoom_init_done = true;
 
     engine.post_load_fixups(&mut display);
 
-    assert!(!display.background_transform.zoom_to_up);
+    assert!(
+        !engine
+            .cutscene_camera
+            .display
+            .background_transform
+            .zoom_to_up
+    );
     assert!(!engine.cutscene_camera.zoom_init_done);
     let msg = engine.messenger.poll().expect("expected zoom end message");
     assert_eq!(msg.msg_type, MessageType::Simple(SimpleMessage::ZoomUpEnd));

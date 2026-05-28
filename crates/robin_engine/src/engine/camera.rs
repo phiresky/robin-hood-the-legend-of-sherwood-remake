@@ -522,8 +522,8 @@ impl EngineInner {
     /// progress) for the host seat.  Single-player + UI gating
     /// callers use this; per-seat dispatch uses
     /// [`Self::is_zoom_possible_for_seat`].
-    pub fn is_zoom_possible(&self, display: &HostDisplayState) -> bool {
-        self.is_zoom_possible_for_seat(display, 0)
+    pub fn is_zoom_possible(&self, _display: &HostDisplayState) -> bool {
+        self.is_camera_zoom_possible_for_seat(0)
     }
 
     /// Per-seat variant of [`Self::is_zoom_possible`].
@@ -534,23 +534,31 @@ impl EngineInner {
             && !display.background_transform.zoom_to_down
     }
 
+    fn is_camera_zoom_possible_for_seat(&self, seat: usize) -> bool {
+        let display = self.cutscene_camera.display.to_host_display_state();
+        self.is_zoom_possible_for_seat(&display, seat)
+    }
+
     /// Whether a zoom is currently in progress.
-    pub fn is_zooming(&self, display: &HostDisplayState) -> bool {
-        !self.is_zoom_possible(display)
+    pub fn is_zooming(&self, _display: &HostDisplayState) -> bool {
+        !self.is_camera_zoom_possible_for_seat(0)
     }
 
     /// Whether a zoom-up transition is currently in flight.  Set when
     /// `MSG_ZOOM_UP_START` fires and cleared at `MSG_ZOOM_UP_END`.  Used
     /// by HUD code to pin the zoom+ widget to selected for the duration
     /// of the transition.
-    pub fn is_zoom_up_in_progress(&self, display: &HostDisplayState) -> bool {
-        display.background_transform.zoom_to_up
+    pub fn is_zoom_up_in_progress(&self, _display: &HostDisplayState) -> bool {
+        self.cutscene_camera.display.background_transform.zoom_to_up
     }
 
     /// Companion to [`Self::is_zoom_up_in_progress`] for zoom-out
     /// transitions.
-    pub fn is_zoom_down_in_progress(&self, display: &HostDisplayState) -> bool {
-        display.background_transform.zoom_to_down
+    pub fn is_zoom_down_in_progress(&self, _display: &HostDisplayState) -> bool {
+        self.cutscene_camera
+            .display
+            .background_transform
+            .zoom_to_down
     }
 
     /// Whether zooming in (2x) is possible for the host seat.
