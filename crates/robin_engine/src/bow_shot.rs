@@ -386,6 +386,13 @@ fn is_active_bow_order(ot: OrderType) -> bool {
     is_shoot_order(ot) || is_bow_transition_order(ot)
 }
 
+fn has_active_bow_order(element: &crate::sequence::SequenceElement) -> bool {
+    element
+        .orders
+        .iter()
+        .any(|order| is_active_bow_order(order.order_type))
+}
+
 fn apply_bow_transition_state_side_effect(
     entity: &mut Entity,
     order_type: OrderType,
@@ -1736,11 +1743,7 @@ pub fn tick_bow_shots(
         if !is_active_bow_order(current_order_type) {
             let bow_order_pending = sequence_manager
                 .get_element(shot_seq_id, shot_elem_idx)
-                .map(|e| {
-                    e.orders
-                        .iter()
-                        .any(|order| is_active_bow_order(order.order_type))
-                })
+                .map(has_active_bow_order)
                 .unwrap_or(false);
             if bow_order_pending {
                 // C++ `Translate(SHOOT_BOW)` appends bow orders after
@@ -1833,16 +1836,18 @@ pub fn tick_bow_shots(
                 motion,
                 SpriteMotionState::Terminated | SpriteMotionState::Aborted
             ) {
-                let remaining = if let Some(elem) =
+                let (remaining, bow_remaining) = if let Some(elem) =
                     sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
                 {
                     elem.orders.pop_front();
-                    elem.orders.is_empty()
+                    (elem.orders.is_empty(), has_active_bow_order(elem))
                 } else {
-                    true
+                    (true, false)
                 };
-                if remaining {
+                if remaining || !bow_remaining {
                     actor.active_shot.clear();
+                }
+                if remaining {
                     events.completed.push((shot_seq_id, shot_elem_idx));
                 }
             }
@@ -1855,16 +1860,18 @@ pub fn tick_bow_shots(
                 motion,
                 SpriteMotionState::Terminated | SpriteMotionState::Aborted
             ) {
-                let remaining = if let Some(elem) =
+                let (remaining, bow_remaining) = if let Some(elem) =
                     sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
                 {
                     elem.orders.pop_front();
-                    elem.orders.is_empty()
+                    (elem.orders.is_empty(), has_active_bow_order(elem))
                 } else {
-                    true
+                    (true, false)
                 };
-                if remaining {
+                if remaining || !bow_remaining {
                     actor.active_shot.clear();
+                }
+                if remaining {
                     events.completed.push((shot_seq_id, shot_elem_idx));
                 }
                 continue;
@@ -4048,6 +4055,82 @@ mod tests {
                 .active_shot
                 .is_active(),
             "pre-shoot setup orders should not cancel the pending bow shot"
+        );
+    }
+
+    #[test]
+    fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            Some(ShootMode::Normal),
+            &mut 1u32,
+        );
+        assert_eq!(result, BeginShotResult::Started);
+
+        let mut next_order_id = 1000;
+        let orders = &mut sm.get_element_mut(seq_id, elem_idx).unwrap().orders;
+        orders.clear();
+        orders.push_back(Order::new(
+            OrderType::ShootingWithBow,
+            0.0,
+            0.0,
+            crate::order::alloc_order_id(&mut next_order_id),
+        ));
+        orders.push_back(Order::new(
+            OrderType::TransitionWaitingUprightBoredWaitingUpright,
+            0.0,
+            0.0,
+            crate::order::alloc_order_id(&mut next_order_id),
+        ));
+
+        let mut fired = Vec::new();
+        let mut completed = Vec::new();
+        for _ in 0..64 {
+            let events = tick_bow_shots(&mut entities, &mut sm);
+            fired.extend(events.fired);
+            completed.extend(events.completed);
+            if !entities[0]
+                .as_ref()
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .is_active()
+            {
+                break;
+            }
+        }
+
+        assert_eq!(fired.len(), 1);
+        assert!(completed.is_empty());
+        assert!(
+            !entities[0]
+                .as_ref()
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .is_active(),
+            "active bow-shot driver should detach after the final bow order"
+        );
+        assert_eq!(
+            sm.get_element(seq_id, elem_idx)
+                .unwrap()
+                .current_order()
+                .unwrap()
+                .order_type,
+            OrderType::TransitionWaitingUprightBoredWaitingUpright
         );
     }
 
