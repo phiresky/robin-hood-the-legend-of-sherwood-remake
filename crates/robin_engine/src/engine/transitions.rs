@@ -276,7 +276,9 @@ fn get_transition_flags_actor(ctx: &TransitionCtx) -> (EX, CP, EA) {
         }
 
         AssertPosition | Freeze | WaitFreeLift | Generic | ChangePosition | PlayAnim
-        | PlayAnimFreeze | PlayAnimFrozen | PlayAnimLoop => {
+        | PlayAnimFreeze | PlayAnimFrozen | PlayAnimLoop | ActivateApple | ActivateArrow
+        | ActivateHandle | ActivateHeal | ActivateLever | ActivateMoney | ActivateSearch
+        | ActivateStone | ActivateSword => {
             // No transition flags — these are no-op commands for the
             // base actor (their Translate arms handle their own setup).
         }

@@ -912,6 +912,11 @@ fn compute_trajectory_ballistic_impl(
             // 3D raycast: finds the first blocking obstacle (or ground
             // crossing) and returns the impact point plus the obstacle
             // index (None for ground).
+            // C++ `RHElementProjectile::ComputeTrajectory` checks
+            // projectile flight with `SIGHTOBSTACLE_SOLID` only.  The
+            // earlier reachability gate may use opaque obstacles to
+            // select long-shot mode, but the arrow itself must not be
+            // clipped by opaque-only sight blockers.
             let impact_3d = crate::sight_obstacle::is_reachable_impact_3d(
                 crate::position_interface::Point3D {
                     x: position.x,
@@ -923,38 +928,16 @@ fn compute_trajectory_ballistic_impl(
                     y: new_position.y,
                     z: new_position.z,
                 },
-                crate::sight_obstacle::SIGHTOBSTACLE_SOLID
-                    | crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+                crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
                 check.sight_obstacles,
                 Some(check.fast_find_grid.level.map_bbox),
             );
 
-            // 2D motion line check — catches thin walls / fences / doors
-            // represented in the fast-find-grid but not always as sight
-            // obstacles.  Projected to screen space (map.y = y - z).
-            let origin_2d = crate::geo2d::Point2D {
-                x: position.x,
-                y: position.y - position.z,
-            };
-            let dest_2d = crate::geo2d::Point2D {
-                x: new_position.x,
-                y: new_position.y - new_position.z,
-            };
-            let ratio_2d =
-                if check
-                    .fast_find_grid
-                    .is_reachable_impact(origin_2d, dest_2d, check.layer)
-                {
-                    None
-                } else {
-                    check
-                        .fast_find_grid
-                        .impact_intersection_ratio(origin_2d, dest_2d, check.layer)
-                        .or(Some(0.5))
-                };
-
             // Compute the 3D impact ratio relative to the current
-            // segment so we can compare against the 2D ratio.
+            // segment.  C++ projectile trajectory integration uses
+            // `RHFastFindGrid::IsReachableImpact` over sight obstacles;
+            // it does not collide with pathfinding/motion-line
+            // geometry.  Keep this path sight-obstacle-only.
             let ratio_3d = impact_3d.as_ref().map(|r| {
                 let seg_dx = new_position.x - position.x;
                 let seg_dy = new_position.y - position.y;
@@ -970,52 +953,34 @@ fn compute_trajectory_ballistic_impl(
                 }
             });
 
-            let use_3d_first = match (ratio_3d, ratio_2d) {
-                (Some(a), Some(b)) => a <= b,
-                (Some(_), None) => true,
-                (None, Some(_)) => false,
-                (None, None) => {
-                    // Neither path is blocked — continue flight below.
-                    // Reset `last_impact = None` for a clear free-flight
-                    // step.
-                    trajectory.push(TrajectoryPoint {
-                        position: new_position,
-                        time: TIME_FLYSEGMENT,
-                    });
-                    velocity.z = new_vz;
-                    position = new_position;
-                    last_impact = None;
-                    continue;
-                }
+            let Some(ratio) = ratio_3d else {
+                trajectory.push(TrajectoryPoint {
+                    position: new_position,
+                    time: TIME_FLYSEGMENT,
+                });
+                velocity.z = new_vz;
+                position = new_position;
+                last_impact = None;
+                continue;
             };
-
-            let (ratio, impact, obstacle) = if use_3d_first {
-                let r = impact_3d.unwrap();
-                let obs = r
-                    .obstacle_index
-                    .and_then(|i| check.sight_obstacles.get(i as usize));
-                (
-                    ratio_3d.unwrap(),
-                    Point3D {
-                        x: r.impact.x,
-                        y: r.impact.y,
-                        z: r.impact.z,
-                    },
-                    obs,
-                )
-            } else {
-                let t = ratio_2d.unwrap();
-                let impact = Point3D {
-                    x: position.x + (new_position.x - position.x) * t,
-                    y: position.y + (new_position.y - position.y) * t,
-                    z: position.z + (new_position.z - position.z) * t,
-                };
-                // 2D-only impact: no sight obstacle info available
-                // (the fast-find grid doesn't expose a back-reference
-                // to a SightObstacle), so treat as a generic wall with
-                // unit material factors.
-                (t, impact, None)
+            let r = impact_3d.unwrap();
+            let obstacle = r
+                .obstacle_index
+                .and_then(|i| check.sight_obstacles.get(i as usize));
+            let impact = Point3D {
+                x: r.impact.x,
+                y: r.impact.y,
+                z: r.impact.z,
             };
+            tracing::trace!(
+                ratio,
+                ?position,
+                ?new_position,
+                ?impact,
+                obstacle_type = obstacle.map(|o| o.obstacle_type),
+                obstacle_layer = obstacle.map(|o| o.layer),
+                "Projectile trajectory clipped by obstacle"
+            );
 
             let impact_time = ((TIME_FLYSEGMENT as f32 * ratio + 0.5) as u16).max(1);
             trajectory.push(TrajectoryPoint {

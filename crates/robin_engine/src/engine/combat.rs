@@ -259,7 +259,19 @@ impl EngineInner {
                 target_movement,
             );
 
+            let target_is_fx_target = self
+                .get_entity(result.target)
+                .map(|e| e.kind().is_fx_target())
+                .unwrap_or(false);
+            let target_is_human = self
+                .get_entity(result.target)
+                .map(|e| e.is_human())
+                .unwrap_or(false);
+
             // ── Hit chance roll ──────────────────────────────────
+            // C++ only applies `mpBow->GetHitChance(...)` in the
+            // `pTarget->IsHuman()` branch of `ShootWithBowAt`.
+            // Scripted FX targets use the exact center-point trajectory.
             let hit_distance = {
                 let dx = target_point.x - bow_point.x;
                 let dy = target_point.y - bow_point.y;
@@ -267,17 +279,23 @@ impl EngineInner {
                 (dx * dx + dy * dy + dz * dz).sqrt()
             };
 
-            let hit_chance = bow_profile
-                .map(|bp| {
-                    let bow = crate::weapons::BowState::new(bow_profile_idx, bp, 1);
-                    bow.get_hit_chance(bp, shooting_ability, hit_distance as u32)
-                })
-                .unwrap_or(100); // no profile → always hit
+            let hit_chance = if target_is_human {
+                bow_profile
+                    .map(|bp| {
+                        let bow = crate::weapons::BowState::new(bow_profile_idx, bp, 1);
+                        bow.get_hit_chance(bp, shooting_ability, hit_distance as u32)
+                    })
+                    .unwrap_or(100) // no profile → always hit
+            } else {
+                100
+            };
 
             // Bow skill capacity for bias scaling.
             let bow_skill_capacity = shooting_ability;
 
-            if let Some(bias) = bow_shot::roll_hit_and_compute_bias(hit_chance, bow_skill_capacity)
+            if target_is_human
+                && let Some(bias) =
+                    bow_shot::roll_hit_and_compute_bias(hit_chance, bow_skill_capacity)
             {
                 // Miss — deflect the velocity.
                 velocity.x += bias.x;
@@ -295,10 +313,6 @@ impl EngineInner {
             // When a PC shoots an FX target in a forest level the
             // arrow gets magic-bullet mode, bypassing obstacle collision so
             // it can pass through trees to reach the target.
-            let target_is_fx_target = self
-                .get_entity(result.target)
-                .map(|e| e.kind().is_fx_target())
-                .unwrap_or(false);
             let shooter_is_pc = self
                 .get_entity(result.shooter)
                 .map(|e| e.kind().is_pc())
@@ -324,6 +338,19 @@ impl EngineInner {
                 } else {
                     Some(&obstacle_check)
                 },
+            );
+            let trajectory_end = trajectory.last().map(|tp| tp.position);
+            tracing::debug!(
+                shooter = ?result.shooter,
+                target = ?result.target,
+                ?shoot_mode,
+                ?bow_point,
+                ?target_point,
+                ?trajectory_end,
+                trajectory_len = trajectory.len(),
+                magic_bullet,
+                predicted_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point),
+                "Bow shot trajectory computed"
             );
 
             // ── Spawn the arrow ──────────────────────────────────

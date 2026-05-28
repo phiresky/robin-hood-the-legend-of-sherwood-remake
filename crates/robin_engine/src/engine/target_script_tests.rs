@@ -137,14 +137,16 @@ const GLOBAL_ID_SEARCH: i32 = 101;
 const GLOBAL_ID_APPLE: i32 = 102;
 const GLOBAL_ID_HEAL: i32 = 103;
 const GLOBAL_ID_MONEY: i32 = 104;
+const GLOBAL_ID_ARROW: i32 = 105;
 const SENTINEL_LEVER: i32 = 0x11111111;
 const SENTINEL_SEARCH: i32 = 0x22222222;
 const SENTINEL_APPLE: i32 = 0x33333333;
 const SENTINEL_HEAL: i32 = 0x44444444;
 const SENTINEL_MONEY: i32 = 0x55555555;
+const SENTINEL_ARROW: i32 = 0x66666666;
 
 /// Construct an SCB with a `StartUp` class (required by
-/// `MissionScript::from_scb`) and a `TestTarget` class exposing five
+/// `MissionScript::from_scb`) and a `TestTarget` class exposing six
 /// `ActivatedBy*` methods that record into host globals.
 fn build_test_scb() -> ScbFile {
     // StartUp: one empty Initialize function.
@@ -167,6 +169,7 @@ fn build_test_scb() -> ScbFile {
         ("ActivatedByApple", GLOBAL_ID_APPLE, SENTINEL_APPLE),
         ("ActivatedByHeal", GLOBAL_ID_HEAL, SENTINEL_HEAL),
         ("ActivatedByMoney", GLOBAL_ID_MONEY, SENTINEL_MONEY),
+        ("ActivatedByArrow", GLOBAL_ID_ARROW, SENTINEL_ARROW),
     ] {
         let base = target_quads.len() as i32;
         let (f, q) = activated_by_function(name, base, gid, sentinel);
@@ -318,18 +321,34 @@ fn activated_by_apple_fires_on_activation_command() {
     assert_eq!(host_global(&engine, GLOBAL_ID_APPLE), SENTINEL_APPLE);
 }
 
+/// Scripted archery targets use the same projectile activation path:
+/// an arrow hitting an ARROW-filter target launches `ACTIVATE_ARROW`,
+/// which dispatches to `ActivatedByArrow`.
+#[test]
+fn activated_by_arrow_fires_on_activation_command() {
+    let (mut engine, target_id) = build_engine_with_target();
+    let pc = EntityId(1);
+    launch_activation(&mut engine, target_id, pc, Command::ActivateArrow);
+
+    let assets = crate::engine::types::LevelAssets::new();
+    let mut dev = crate::engine::DevState::default();
+    let mut display = crate::engine::HostDisplayState::default();
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    assert_eq!(host_global(&engine, GLOBAL_ID_ARROW), SENTINEL_ARROW);
+}
+
 /// All nine `ActivatedBy*` commands share the same dispatcher; spot-
 /// check that a target missing one of the methods is a clean no-op
 /// rather than a hard error.  (The `TestTarget` class only defines
-/// five of the nine — the other four should log but not panic.)
+/// six of the nine — the other three should log but not panic.)
 #[test]
 fn activation_without_matching_method_is_no_op() {
     let (mut engine, target_id) = build_engine_with_target();
     let pc = EntityId(1);
-    // ActivateArrow / ActivateStone / ActivateHandle / ActivateSword
-    // are not defined on `TestTarget`.
+    // ActivateStone / ActivateHandle / ActivateSword are not defined
+    // on `TestTarget`.
     for cmd in [
-        Command::ActivateArrow,
         Command::ActivateStone,
         Command::ActivateHandle,
         Command::ActivateSword,
@@ -346,6 +365,7 @@ fn activation_without_matching_method_is_no_op() {
     assert_eq!(host_global(&engine, GLOBAL_ID_LEVER), 0);
     assert_eq!(host_global(&engine, GLOBAL_ID_SEARCH), 0);
     assert_eq!(host_global(&engine, GLOBAL_ID_APPLE), 0);
+    assert_eq!(host_global(&engine, GLOBAL_ID_ARROW), 0);
 }
 
 // Removed `use_lever_on_fx_target_fires_activated_by_lever` and
