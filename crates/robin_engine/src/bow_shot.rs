@@ -1753,6 +1753,15 @@ pub fn tick_bow_shots(
                 // before the bow runner starts driving the shoot body.
                 continue;
             }
+            tracing::debug!(
+                shooter = idx,
+                ?shot_seq_id,
+                shot_elem_idx,
+                ?current_order_type,
+                "Bow shot driver detached after sequence advanced past bow orders"
+            );
+            entity.actor_data_mut().unwrap().active_shot.clear();
+            continue;
         }
 
         let mut direction = direction;
@@ -1946,7 +1955,7 @@ pub fn tick_bow_shots(
         }
 
         panic!(
-            "active bow shot reached non-bow order: shooter={idx} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}"
+            "active bow shot reached unhandled active bow order: shooter={idx} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}"
         );
     }
 
@@ -3982,8 +3991,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "active bow shot reached non-bow order")]
-    fn tick_bow_shots_panics_on_non_bow_active_order() {
+    fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
@@ -4010,7 +4018,20 @@ mod tests {
             crate::order::alloc_order_id(&mut next_order_id),
         ));
 
-        let _ = tick_bow_shots(&mut entities, &mut sm);
+        let events = tick_bow_shots(&mut entities, &mut sm);
+
+        assert!(events.fired.is_empty());
+        assert!(events.completed.is_empty());
+        assert!(
+            !entities[0]
+                .as_ref()
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .active_shot
+                .is_active(),
+            "C++ shoot-list ownership ends once the sequence has no bow orders left"
+        );
     }
 
     #[test]
