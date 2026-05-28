@@ -96,6 +96,30 @@ fn color_action_fill() -> u16 {
     Renderer::create_color_16(40, 50, 35)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionButtonVisual {
+    Normal,
+    Hover,
+    Pressed,
+    HoverPressed,
+}
+
+fn action_button_visual(
+    is_active: bool,
+    is_disabled: bool,
+    is_hovered: bool,
+) -> ActionButtonVisual {
+    if is_active && is_hovered && !is_disabled {
+        ActionButtonVisual::HoverPressed
+    } else if is_active {
+        ActionButtonVisual::Pressed
+    } else if is_hovered && !is_disabled {
+        ActionButtonVisual::Hover
+    } else {
+        ActionButtonVisual::Normal
+    }
+}
+
 use crate::resource_ids;
 
 // ─── Scroll decoration resource IDs ───────────────────────────────
@@ -148,9 +172,15 @@ pub struct PortraitCache {
     /// (normal state, sub_id 1).
     action_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
-    /// (pressed/selected state, sub_id 2).  Used to highlight the
+    /// (focused/hover state, sub_id 2).
+    action_hover_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (pressed/selected state, sub_id 3).  Used to highlight the
     /// currently active action button.
     action_pressed_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (focused selected state, sub_id 4).
+    action_hover_pressed_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
     /// Localized display name per character.
     localized_names: [Option<String>; CharacterKind::COUNT],
     /// Generic scroll decoration surfaces (shared by all portraits).
@@ -218,7 +248,9 @@ impl PortraitCache {
         Self {
             surfaces: [None; CharacterKind::COUNT],
             action_surfaces: [None; CharacterKind::COUNT],
+            action_hover_surfaces: [None; CharacterKind::COUNT],
             action_pressed_surfaces: [None; CharacterKind::COUNT],
+            action_hover_pressed_surfaces: [None; CharacterKind::COUNT],
             localized_names: [const { None }; CharacterKind::COUNT],
             top_scroll_surface: None,
             top_scroll_alt_surface: None,
@@ -377,15 +409,19 @@ impl PortraitCache {
             }
         }
 
-        // ── Load action button icons (normal + pressed states) ──
+        // ── Load action button icons (normal + focused + pressed states) ──
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
             let action_res_ids = kind.action_resources();
             let mut surfaces = [None; 3];
+            let mut hover = [None; 3];
             let mut pressed = [None; 3];
+            let mut hover_pressed = [None; 3];
             for (i, opt_id) in action_res_ids.iter().enumerate() {
                 if let Some(res_id) = opt_id {
-                    // Action button BTTN resources: sub_id 1 = normal, sub_id 2 = pressed/selected
+                    // Action button BTTN resources follow SBResourceWidgetID:
+                    // radio 1 = unselected, 2 = focused, 3 = selected,
+                    // 4 = focused selected.
                     match res.get_picture(*res_id, 1) {
                         Ok(pic) => {
                             let surface_id = pic_to_surface(renderer, pic);
@@ -402,8 +438,17 @@ impl PortraitCache {
                             );
                         }
                     }
-                    // Pressed/selected state (sub_id 2)
+                    // Focused/hover state (sub_id 2).
                     match res.get_picture(*res_id, 2) {
+                        Ok(pic) => {
+                            hover[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: hover surface unavailable, will use normal.
+                        }
+                    }
+                    // Pressed/selected state (sub_id 3).
+                    match res.get_picture(*res_id, 3) {
                         Ok(pic) => {
                             pressed[i] = Some(pic_to_surface(renderer, pic));
                         }
@@ -411,10 +456,21 @@ impl PortraitCache {
                             // Fallback: pressed surface unavailable, will use normal
                         }
                     }
+                    // Focused selected state (sub_id 4).
+                    match res.get_picture(*res_id, 4) {
+                        Ok(pic) => {
+                            hover_pressed[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: focused selected surface unavailable.
+                        }
+                    }
                 }
             }
             self.action_surfaces[slot] = Some(surfaces);
+            self.action_hover_surfaces[slot] = Some(hover);
             self.action_pressed_surfaces[slot] = Some(pressed);
+            self.action_hover_pressed_surfaces[slot] = Some(hover_pressed);
         }
         tracing::info!(
             "Portrait cache: {} action icon sets loaded",
@@ -800,9 +856,22 @@ impl PortraitCache {
         self.action_surfaces[kind.as_index()].as_ref()
     }
 
+    /// Look up the focused/hover action button surfaces for a character.
+    pub fn get_action_hover_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+        self.action_hover_surfaces[kind.as_index()].as_ref()
+    }
+
     /// Look up the pressed/selected action button surfaces for a character.
     pub fn get_action_pressed_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
         self.action_pressed_surfaces[kind.as_index()].as_ref()
+    }
+
+    /// Look up the focused selected action button surfaces for a character.
+    pub fn get_action_hover_pressed_surfaces(
+        &self,
+        kind: CharacterKind,
+    ) -> Option<&[Option<u32>; 3]> {
+        self.action_hover_pressed_surfaces[kind.as_index()].as_ref()
     }
 
     /// Look up the fighting sword overlay surface for a character.
@@ -1111,6 +1180,8 @@ pub fn draw_panel(
     profiles: &robin_engine::profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
+    mouse_x: f32,
+    mouse_y: f32,
     titbit_renderer: Option<&mut crate::titbit_renderer::TitbitRenderer>,
 ) {
     let sw = renderer.screen_width();
@@ -1159,6 +1230,12 @@ pub fn draw_panel(
     let displayed_pcs = engine.displayed_pc_ids();
     let num_portraits = displayed_pcs.len().min(NUMBER_OF_SLOTS as usize) as u16;
     let frame = engine.frame_counter();
+    let hovered_action =
+        hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y)
+            .and_then(|hit| match hit.area {
+                PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
+                _ => None,
+            });
 
     let mut titbit_renderer_opt = titbit_renderer;
 
@@ -1331,8 +1408,12 @@ pub fn draw_panel(
 
                 let kind = entity.and_then(pc_character_kind);
                 let action_icons = kind.and_then(|k| portraits.get_action_surfaces(k).cloned());
+                let action_hover =
+                    kind.and_then(|k| portraits.get_action_hover_surfaces(k).cloned());
                 let action_pressed =
                     kind.and_then(|k| portraits.get_action_pressed_surfaces(k).cloned());
+                let action_hover_pressed =
+                    kind.and_then(|k| portraits.get_action_hover_pressed_surfaces(k).cloned());
 
                 let two_button_mode = action_icons
                     .as_ref()
@@ -1360,28 +1441,27 @@ pub fn draw_panel(
                     let is_disabled = disabled_actions
                         .and_then(|da| da.get(i).copied())
                         .unwrap_or(false);
+                    let is_hovered = hovered_action == Some((slot as u8, i as u8));
 
                     let mut icon_drawn = false;
 
-                    // Use pressed surface for active button, normal for others.
-                    if is_active
-                        && let Some(ref pressed) = action_pressed
-                        && let Some(sid) = pressed[i]
-                    {
-                        let dst = bbox(btn_lefts[i], act_top, btn_rights[i], act_bot);
-                        blit_to_screen_widget(
-                            renderer,
-                            sid,
-                            None,
-                            Some(&dst),
-                            BLIT_SOURCE_TRANSPARENT,
-                        );
-                        icon_drawn = true;
+                    let visual = action_button_visual(is_active, is_disabled, is_hovered);
+                    let visual_surface = match visual {
+                        ActionButtonVisual::HoverPressed => action_hover_pressed
+                            .as_ref()
+                            .and_then(|hover_pressed| hover_pressed[i])
+                            .or_else(|| action_pressed.as_ref().and_then(|pressed| pressed[i])),
+                        ActionButtonVisual::Pressed => {
+                            action_pressed.as_ref().and_then(|pressed| pressed[i])
+                        }
+                        ActionButtonVisual::Hover => {
+                            action_hover.as_ref().and_then(|hover| hover[i])
+                        }
+                        ActionButtonVisual::Normal => None,
                     }
-                    if !icon_drawn
-                        && let Some(ref icons) = action_icons
-                        && let Some(surface_id) = icons[i]
-                    {
+                    .or_else(|| action_icons.as_ref().and_then(|icons| icons[i]));
+
+                    if let Some(surface_id) = visual_surface {
                         let dst = bbox(btn_lefts[i], act_top, btn_rights[i], act_bot);
                         blit_to_screen_widget(
                             renderer,
@@ -2588,6 +2668,30 @@ mod tests {
         assert_eq!(b.min.y, 20.0);
         assert_eq!(b.max.x, 30.0);
         assert_eq!(b.max.y, 40.0);
+    }
+
+    #[test]
+    fn action_button_visual_matches_widget_priority() {
+        assert_eq!(
+            action_button_visual(false, false, false),
+            ActionButtonVisual::Normal
+        );
+        assert_eq!(
+            action_button_visual(false, false, true),
+            ActionButtonVisual::Hover
+        );
+        assert_eq!(
+            action_button_visual(false, true, true),
+            ActionButtonVisual::Normal
+        );
+        assert_eq!(
+            action_button_visual(true, false, true),
+            ActionButtonVisual::HoverPressed
+        );
+        assert_eq!(
+            action_button_visual(true, true, true),
+            ActionButtonVisual::Pressed
+        );
     }
 
     // The CharacterKind resource-lookup and sub-id tests live in

@@ -920,6 +920,7 @@ pub(super) fn render_frame(
     crate::ui_panel::render_macro_dotted_chains(host, engine, renderer);
 
     // ── GPU phase: UI panel, minimap ──
+    let panel_mouse = threaded_input.position();
     crate::ui_panel::draw_panel(
         host,
         engine,
@@ -927,6 +928,8 @@ pub(super) fn render_frame(
         &assets.profile_manager,
         renderer,
         portrait_cache,
+        panel_mouse.x,
+        panel_mouse.y,
         Some(titbit_renderer),
     );
 
