@@ -720,6 +720,109 @@ fn native_test_soldier() -> Entity {
     })
 }
 
+fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>) -> Entity {
+    Entity::Pc(crate::element::ActorPc {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            ..Default::default()
+        },
+        actor: crate::element::ActorData::default(),
+        human: crate::element::HumanData::default(),
+        pc: crate::element::PcData {
+            disabled_actions,
+            disabled_actions_temp,
+            ..Default::default()
+        },
+    })
+}
+
+#[test]
+fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
+    let mut host = GameHost::new();
+    host.entities = vec![Some(native_test_pc(
+        vec![false, false, false],
+        vec![false, false, false],
+    ))];
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(GameHost::actor_handle_from_index(0));
+    stack.push_i32(0);
+    stack.push_i32(0);
+    let ret = <GameHost as HostFunctions>::call(
+        &mut host,
+        NativeFn::SetActionAvailable as u32,
+        &mut stack,
+    );
+    assert_eq!(ret, 1);
+    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    assert_eq!(pc.disabled_actions, [false, false, false]);
+}
+
+#[test]
+fn is_action_available_rejects_out_of_range_slot() {
+    let mut host = GameHost::new();
+    host.entities = vec![Some(native_test_pc(
+        vec![false, false, false],
+        vec![false, false, false],
+    ))];
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(GameHost::actor_handle_from_index(0));
+    stack.push_i32(-1);
+    let ret = <GameHost as HostFunctions>::call(
+        &mut host,
+        NativeFn::IsActionAvailable as u32,
+        &mut stack,
+    );
+    assert_eq!(ret, 0);
+}
+
+#[test]
+fn is_action_available_reads_persistent_and_temp_slot_masks() {
+    let mut host = GameHost::new();
+    host.entities = vec![Some(native_test_pc(
+        vec![false, true, false],
+        vec![false, false, true],
+    ))];
+    let actor = GameHost::actor_handle_from_index(0);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(0);
+    assert_eq!(
+        <GameHost as HostFunctions>::call(
+            &mut host,
+            NativeFn::IsActionAvailable as u32,
+            &mut stack
+        ),
+        1
+    );
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(1);
+    assert_eq!(
+        <GameHost as HostFunctions>::call(
+            &mut host,
+            NativeFn::IsActionAvailable as u32,
+            &mut stack
+        ),
+        0
+    );
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(2);
+    assert_eq!(
+        <GameHost as HostFunctions>::call(
+            &mut host,
+            NativeFn::IsActionAvailable as u32,
+            &mut stack
+        ),
+        0
+    );
+}
+
 #[test]
 fn add_as_subordinate_requests_patrol_reinit() {
     let mut host = GameHost::new();

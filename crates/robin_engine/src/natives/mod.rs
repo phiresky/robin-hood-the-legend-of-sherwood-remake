@@ -6214,6 +6214,12 @@ impl HostFunctions for GameHost {
                         );
                         return 0;
                     };
+                    if !(0..=5).contains(&action_idx) {
+                        tracing::error!(
+                            "Script Error: IsActionAvailable action index {action_idx} out of range"
+                        );
+                        return 0;
+                    }
                     let idx = action_idx as usize;
                     let disabled_persistent =
                         pc.disabled_actions.get(idx).copied().unwrap_or(false);
