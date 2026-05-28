@@ -93,9 +93,7 @@ pub fn resolve_left_click(
                 selected_action,
                 is_double,
             );
-            if !cmds.is_empty() {
-                return cmds;
-            }
+            return cmds;
         } else if is_double && (engine.is_alt_effective(&host.input) || engine.locker_active()) {
             // No-action double-click with Alt or Locker held: swallow
             // the click (no run-move).  Without this, the GroupMove
