@@ -1996,8 +1996,15 @@ impl EngineInner {
                         // arrow's trajectory origin so the surviving
                         // target wakes up and searches toward the shot
                         // origin.
-                        let victim_is_npc =
-                            self.get_entity(victim).map(|e| e.is_npc()).unwrap_or(false);
+                        let Some(victim_is_npc) = self.get_entity(victim).map(|e| e.is_npc())
+                        else {
+                            tracing::warn!(
+                                ?victim,
+                                arrow = ?result.arrow,
+                                "arrow hit follow-up skipped: victim missing before EventGetArrow"
+                            );
+                            continue;
+                        };
                         if victim_is_npc {
                             let trajectory_origin = self
                                 .get_entity(result.arrow)
@@ -2067,10 +2074,14 @@ impl EngineInner {
             );
             return;
         };
-        let victim_is_soldier = self
-            .get_entity(victim)
-            .map(|e| e.is_soldier())
-            .unwrap_or(false);
+        let Some(victim_is_soldier) = self.get_entity(victim).map(|e| e.is_soldier()) else {
+            tracing::warn!(
+                ?apple,
+                ?victim,
+                "apple hit follow-up skipped: victim missing before EventApple"
+            );
+            return;
+        };
         if !victim_is_soldier {
             return;
         }

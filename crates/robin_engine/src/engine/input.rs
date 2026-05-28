@@ -2470,13 +2470,21 @@ impl EngineInner {
                 );
                 // If the focused target is a human, aim at its belt
                 // point (so the arc computation uses the torso
-                // height, not the foot position); otherwise use the
-                // element's 3D position. With no focused element,
-                // project the 2D mouse onto the sight-obstacle grid.
+                // height, not the foot position). Missing body points
+                // are data errors, not a reason to aim at the feet.
+                // With no focused element, project the 2D mouse onto
+                // the sight-obstacle grid.
                 let target_3d = match focused.and_then(|id| self.get_entity(id)) {
-                    Some(e) if e.is_human() => e
-                        .compute_belt_point()
-                        .unwrap_or_else(|| e.element_data().position()),
+                    Some(e) if e.is_human() => {
+                        let Some(point) = e.compute_belt_point() else {
+                            tracing::warn!(
+                                entity = ?focused,
+                                "perform_orientation: bow human target missing belt hotspot"
+                            );
+                            return;
+                        };
+                        point
+                    }
                     Some(e) => e.element_data().position(),
                     None => self
                         .fast_grid
