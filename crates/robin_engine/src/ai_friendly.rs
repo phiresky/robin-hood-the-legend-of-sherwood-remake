@@ -281,7 +281,9 @@ impl FriendlyAi {
             | StimulusType::CallPatrolCoordinate
             | StimulusType::CallYouJustWait
             | StimulusType::EventAppleChaseNear
-            | StimulusType::EventNetAway => self.think_unexpected_event(stimulus, ctx, grid, doors),
+            | StimulusType::EventNetAway => {
+                self.think_unexpected_event(stimulus, ctx, tick, grid, doors)
+            }
 
             // Alerting events
             StimulusType::EventView
@@ -1031,6 +1033,7 @@ impl FriendlyAi {
         &mut self,
         stimulus: &Stimulus,
         ctx: &AiContext,
+        tick: &AiPerTickData,
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
         // `_doors` is not consumed by the Apple-Chase / Sees-Soldier
         // arms in this dispatcher; threaded for symmetry with the
@@ -1100,8 +1103,7 @@ impl FriendlyAi {
             }
 
             StimulusType::CallPatrolCoordinate => {
-                self.base
-                    .coordinate_patrol(&stimulus.info, ctx, &AiPerTickData::stub());
+                self.base.coordinate_patrol(&stimulus.info, ctx, tick);
             }
 
             StimulusType::EventAfterScriptGoOn => {
@@ -2299,7 +2301,13 @@ mod tests {
         ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
 
         let stimulus = Stimulus::new(StimulusType::EventCouldntReachPoint);
-        ai.think_unexpected_event(&stimulus, &AiContext::default(), None, None);
+        ai.think_unexpected_event(
+            &stimulus,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+            None,
+        );
 
         assert_eq!(ai.base.current_state, AiState::Default);
         // Walks back to post first.
@@ -2312,7 +2320,13 @@ mod tests {
         ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
 
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
-        ai.think_unexpected_event(&stimulus, &AiContext::default(), None, None);
+        ai.think_unexpected_event(
+            &stimulus,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+            None,
+        );
 
         assert_eq!(ai.base.current_state, AiState::Default);
     }
@@ -2328,7 +2342,13 @@ mod tests {
         ai.set_state(AiState::Sleeping, Substate::SleepingUnconscious);
 
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
-        ai.think_unexpected_event(&stimulus, &AiContext::default(), None, None);
+        ai.think_unexpected_event(
+            &stimulus,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+            None,
+        );
 
         assert!(
             ai.base.pending_inform_resurrection,
@@ -2445,10 +2465,58 @@ mod tests {
         let mut ai = FriendlyAi::new(1);
         let stimulus = Stimulus::new(StimulusType::EventNetAway);
 
-        ai.think_unexpected_event(&stimulus, &AiContext::default(), None, None);
+        ai.think_unexpected_event(
+            &stimulus,
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+            None,
+        );
 
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
+    }
+
+    #[test]
+    fn patrol_coordinate_uses_real_chief_position_for_near_backwards_gate() {
+        let mut ai = FriendlyAi::new(1);
+        ai.base.patrol_chief = 2;
+        ai.set_state(AiState::Default, Substate::DefaultPatrolEnroute);
+
+        let ctx = AiContext {
+            position: Position {
+                x: 0.0,
+                y: 0.0,
+                sector: SectorHandle::new(1),
+                level: 0,
+            },
+            direction: 0,
+            ..AiContext::default()
+        };
+        let mut tick = AiPerTickData::stub();
+        tick.patrol_chief_position = Position {
+            x: 100.0,
+            y: 0.0,
+            ..ctx.position
+        };
+        let stimulus = Stimulus::with_position(
+            StimulusType::CallPatrolCoordinate,
+            Position {
+                x: -10.0,
+                y: 0.0,
+                ..ctx.position
+            },
+        );
+
+        ai.think_unexpected_event(&stimulus, &ctx, &tick, None, None);
+        let orders = ai.base.take_pending_orders();
+
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
+        assert!(
+            !ai.base.already_on_point,
+            "near-backwards patrol coordinate must turn toward the chief, not walk to the slot"
+        );
     }
 
     #[test]
