@@ -2085,9 +2085,14 @@ impl EngineInner {
         };
 
         // Compute 3D hand point for the thrower.
-        let hand_point = pc
-            .compute_hand_point(None)
-            .unwrap_or(pc.element_data().position());
+        let Some(hand_point) = pc.compute_hand_point(None) else {
+            tracing::warn!(
+                ?pc_id,
+                ?action,
+                "Projectile range check failed: thrower missing hand hotspot"
+            );
+            return false;
+        };
 
         // Resolve the 3D target point:
         // - human target → eyes point
@@ -2110,28 +2115,47 @@ impl EngineInner {
         let target_3d = if let Some(tid) = target_entity {
             if let Some(target) = self.get_entity(tid) {
                 if target.is_human() {
-                    target
-                        .compute_eyes_point(None)
-                        .unwrap_or(target.element_data().position())
+                    let Some(point) = target.compute_eyes_point(None) else {
+                        tracing::warn!(
+                            ?pc_id,
+                            target = ?tid,
+                            ?action,
+                            "Projectile range check failed: human target missing eyes hotspot"
+                        );
+                        return false;
+                    };
+                    point
                 } else if target.is_fx_target() {
                     // FX target: lift z by half the sprite height to
                     // land mid-sprite.
-                    target
-                        .compute_target_center()
-                        .unwrap_or(target.element_data().position())
+                    let Some(point) = target.compute_target_center() else {
+                        tracing::warn!(
+                            ?pc_id,
+                            target = ?tid,
+                            ?action,
+                            "Projectile range check failed: FX target missing center hotspot"
+                        );
+                        return false;
+                    };
+                    point
                 } else {
-                    // Animals / other non-humans — this arm is
-                    // undefined behaviour in release. Fall back to
-                    // raw position so we don't silently allow an
-                    // invalid target type to pass the range check.
-                    debug_assert!(
-                        false,
-                        "is_in_range_for_projectile: target entity must be human or FX target"
+                    tracing::warn!(
+                        ?pc_id,
+                        target = ?tid,
+                        kind = ?target.kind(),
+                        ?action,
+                        "Projectile range check failed: unsupported target kind"
                     );
-                    target.element_data().position()
+                    return false;
                 }
             } else {
-                ground_3d()
+                tracing::warn!(
+                    ?pc_id,
+                    target = ?tid,
+                    ?action,
+                    "Projectile range check failed: target entity missing"
+                );
+                return false;
             }
         } else {
             ground_3d()
