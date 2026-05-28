@@ -384,6 +384,14 @@ fn apply_bow_transition_state_side_effect(
     motion: SpriteMotionState,
 ) {
     let action_state = match order_type {
+        OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
+            if motion == SpriteMotionState::Start =>
+        {
+            if entity.element_data().posture != Posture::AnonymousArcher {
+                entity.element_data_mut().posture = Posture::Upright;
+            }
+            Some(ActionState::AimingWithBow)
+        }
         OrderType::TransitionLoweringBow | OrderType::TransitionLoweringBowAnonymous
             if matches!(
                 motion,
@@ -5321,6 +5329,24 @@ mod tests {
             pc.actor_data().unwrap().action_state,
             ActionState::Waiting,
             "C++ TransitionUnequipBow sets Waiting on RHMOTION_START"
+        );
+    }
+
+    #[test]
+    fn equip_bow_sets_aiming_on_animation_start() {
+        let mut pc = make_pc(0.0, 0.0);
+        pc.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+
+        apply_bow_transition_state_side_effect(
+            &mut pc,
+            OrderType::TransitionEquipBow,
+            SpriteMotionState::Start,
+        );
+
+        assert_eq!(
+            pc.actor_data().unwrap().action_state,
+            ActionState::AimingWithBow,
+            "C++ TransitionEquipBow sets AimingWithBow on RHMOTION_START"
         );
     }
 
