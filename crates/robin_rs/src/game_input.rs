@@ -409,6 +409,12 @@ fn resolve_action_left_click(
             let Some(target_id) =
                 engine.find_focusable_entity(assets, draw_order, map_pt, Focus::Bow)
             else {
+                tracing::info!(
+                    ?pc_id,
+                    mouse_x = map_pt.x,
+                    mouse_y = map_pt.y,
+                    "Bow click rejected: no bow-focus target"
+                );
                 return vec![];
             };
 
@@ -422,6 +428,11 @@ fn resolve_action_left_click(
                 && target.is_npc()
                 && (target.is_civilian() || engine.is_entity_vip(assets, target))
             {
+                tracing::info!(
+                    ?pc_id,
+                    ?target_id,
+                    "Bow click rejected: civilian or VIP target"
+                );
                 return vec![];
             }
 
@@ -433,6 +444,11 @@ fn resolve_action_left_click(
                 .map(|e| e.element_data().posture)
                 .unwrap_or(Posture::Upright);
             if !is_recording && archer_posture == Posture::AnonymousArcher {
+                tracing::info!(
+                    ?pc_id,
+                    ?target_id,
+                    "Bow click rejected: anonymous archer cannot shoot"
+                );
                 return vec![PlayerCommand::HeroSpeak {
                     pc_id,
                     expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
@@ -447,6 +463,12 @@ fn resolve_action_left_click(
                 let (bow_status, _shoot_mode) =
                     engine.can_shoot_with_bow_at(assets, pc_id, target_id);
                 if bow_status != robin_engine::engine::input::BowTarget::Valid {
+                    tracing::info!(
+                        ?pc_id,
+                        ?target_id,
+                        ?bow_status,
+                        "Bow click rejected: target not shootable"
+                    );
                     return vec![];
                 }
             }
@@ -463,6 +485,7 @@ fn resolve_action_left_click(
                 command: Command::ShootBow,
                 running: is_double,
             }];
+            tracing::info!(?pc_id, ?target_id, "Bow click dispatched ShootBow");
             // Stop macro recording after a recorded bow shot.  No
             // unselect trailer on the non-record branch — the launch
             // and return path leaves the action armed.

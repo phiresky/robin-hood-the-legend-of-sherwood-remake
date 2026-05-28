@@ -419,12 +419,12 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
 /// Per-frame mouse/cursor update hoisted out of `render_frame` so that
 /// pass can observe an immutable `&Engine`.
 ///
-/// `host_mouse::update_mouse` dispatches
-/// `PlayerCommand::PerformOrientation` (aim direction for the selected
-/// PC) and updates host-side per-frame state
+/// `host_mouse::update_mouse` updates host-side per-frame state
 /// (`focused_entity_id`, `selected_sector_idx`, cursor shadow/opacity,
-/// etc.), so it must mutate engine + host.  The cursor texture upload
-/// lives here too since it reads the same `new_cursor` id.
+/// etc.). The cursor texture upload lives here too since it reads the
+/// same `new_cursor` id. Sim mutations such as
+/// `PlayerCommand::PerformOrientation` must run earlier in the frame,
+/// before rollback/replay command logging commits the tick.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update_mouse_and_cursor(
     manager: &mut robin_engine::engine_manager::EngineManager,

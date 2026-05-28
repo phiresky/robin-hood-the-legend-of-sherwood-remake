@@ -713,24 +713,6 @@ pub fn update_mouse(
     host.input.increment_cursor_animation = true;
     host.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
 
-    // Per-frame aim orientation, called from the per-frame element
-    // refresh pass when the window has focus. Routed through the
-    // command pipeline for rollback determinism.
-    //
-    // Outer gate: `time_no_mouse_move != 0` — the whole routine only
-    // runs on frames where the mouse has been stationary for at
-    // least one tick.  `time_no_mouse_move` is bumped just above
-    // when the mouse doesn't move and reset to 0 on any movement.
-    // Skipping the dispatch on moving frames keeps the selected
-    // PCs' facing stable while the cursor travels. Bow is the
-    // exception: the archer should track the target cursor continuously.
-    let bow_armed =
-        engine.selected_action_for_seat(host.local_seat) == robin_engine::profiles::Action::Bow;
-    if host.time_no_mouse_move != 0 || bow_armed {
-        let cmd = crate::player_command::PlayerCommand::PerformOrientation { mouse_map };
-        dispatch_local_command(host, engine, None, assets, &cmd);
-    }
-
     // Sector lookup for the selected sector / layer.  Used for door/
     // jump alpha overlays and cursor context.  With shift held, use
     // the "peek under" helper that returns the sector under the

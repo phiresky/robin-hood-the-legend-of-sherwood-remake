@@ -2884,6 +2884,32 @@ pub(crate) async fn run_mission(
             }
         }
 
+        // ── Per-frame aim orientation ──
+        // This is sim state (direction/current animation row and
+        // bow raise/lower command launch), so it must be recorded in
+        // the same frame command log as clicks and keys.  Do not run
+        // it from `host_mouse::update_mouse`: render happens after
+        // rollback has committed the frame, and live-only mutation
+        // there desynchronizes replay/rollback.
+        if replay_player.is_none()
+            && !rewind_active
+            && !paused
+            && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
+        {
+            let bow_armed = manager.engine.selected_action_for_seat(host.local_seat)
+                == robin_engine::profiles::Action::Bow;
+            if host.time_no_mouse_move != 0 || bow_armed {
+                let cmd = PlayerCommand::PerformOrientation { mouse_map };
+                dispatch_local_command(
+                    &mut host,
+                    &mut manager.engine,
+                    Some(&mut frame_cmds),
+                    &assets,
+                    &cmd,
+                );
+            }
+        }
+
         // ── Record frame commands + periodic state hash ──
         // The matching `recorder.end_frame()` runs after the modal
         // drain block so `ModalDismiss` entries land in the same
