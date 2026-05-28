@@ -31,10 +31,11 @@
 //!
 //! When ammo reaches 0, the ammo decrement path
 //! (`engine/combat.rs::decrement_bow_ammo`) calls
-//! `EngineInner::disable_pc_action`, which sets
-//! `PcData::disabled_actions[Bow] = true`.  The HUD action-slot strip is
+//! `EngineInner::disable_pc_action`, which resolves Bow through the
+//! PC's profile action list and sets that portrait slot in
+//! `PcData::disabled_actions`.  The HUD action-slot strip is
 //! immediate-mode (see `ui_panel.rs`) and re-reads `disabled_actions`
-//! each frame, so no messenger notification is needed — the next frame
+//! each frame, so no messenger notification is needed; the next frame
 //! shows the disabled bow slot automatically.
 
 use crate::combat::{self, ConcussionContext};
