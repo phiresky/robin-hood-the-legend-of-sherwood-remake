@@ -335,11 +335,13 @@ pub fn arrow_mass(mode: ShootMode) -> f32 {
 }
 
 /// Determine the appropriate `OrderType` for the shoot animation.
-fn shoot_order_type_for_mode(mode: ShootMode) -> OrderType {
-    match mode {
-        ShootMode::Normal => OrderType::ShootingWithBow,
-        ShootMode::Long => OrderType::ShootingWithBowUp,
-        ShootMode::Down => OrderType::ShootingWithBowLeaningOut,
+fn shoot_order_type_for_mode(mode: ShootMode, anonymous: bool) -> OrderType {
+    match (mode, anonymous) {
+        (ShootMode::Normal, true) => OrderType::ShootingWithBowAnonymous,
+        (ShootMode::Long, true) => OrderType::ShootingWithBowUpAnonymous,
+        (ShootMode::Normal, false) => OrderType::ShootingWithBow,
+        (ShootMode::Long, false) => OrderType::ShootingWithBowUp,
+        (ShootMode::Down, _) => OrderType::ShootingWithBowLeaningOut,
     }
 }
 
@@ -1285,7 +1287,11 @@ pub fn compute_shot_velocity_params(
 ///
 /// Returns 0–2 transition `OrderType`s that should be pushed before the
 /// shoot animation order.
-fn aim_transition_orders(current_state: ActionState, desired_mode: ShootMode) -> Vec<OrderType> {
+fn aim_transition_orders(
+    current_state: ActionState,
+    desired_mode: ShootMode,
+    anonymous: bool,
+) -> Vec<OrderType> {
     let mut transitions = Vec::new();
 
     match desired_mode {
@@ -1293,7 +1299,11 @@ fn aim_transition_orders(current_state: ActionState, desired_mode: ShootMode) ->
             match current_state {
                 ActionState::AimingWithBowUp => {
                     // Lower from up → normal
-                    transitions.push(OrderType::TransitionLoweringBow);
+                    transitions.push(if anonymous {
+                        OrderType::TransitionLoweringBowAnonymous
+                    } else {
+                        OrderType::TransitionLoweringBow
+                    });
                 }
                 ActionState::AimingWithBowDown => {
                     // Raise from leaning-out → normal
@@ -1306,12 +1316,20 @@ fn aim_transition_orders(current_state: ActionState, desired_mode: ShootMode) ->
             match current_state {
                 ActionState::AimingWithBow => {
                     // Raise from normal → up
-                    transitions.push(OrderType::TransitionRaisingBow);
+                    transitions.push(if anonymous {
+                        OrderType::TransitionRaisingBowAnonymous
+                    } else {
+                        OrderType::TransitionRaisingBow
+                    });
                 }
                 ActionState::AimingWithBowDown => {
                     // Raise from leaning-out → normal → up
                     transitions.push(OrderType::TransitionRaisingBowLeaningOut);
-                    transitions.push(OrderType::TransitionRaisingBow);
+                    transitions.push(if anonymous {
+                        OrderType::TransitionRaisingBowAnonymous
+                    } else {
+                        OrderType::TransitionRaisingBow
+                    });
                 }
                 _ => {} // Already up or first shot
             }
@@ -1324,7 +1342,11 @@ fn aim_transition_orders(current_state: ActionState, desired_mode: ShootMode) ->
                 }
                 ActionState::AimingWithBowUp => {
                     // Lower from up → normal → leaning-out
-                    transitions.push(OrderType::TransitionLoweringBow);
+                    transitions.push(if anonymous {
+                        OrderType::TransitionLoweringBowAnonymous
+                    } else {
+                        OrderType::TransitionLoweringBow
+                    });
                     transitions.push(OrderType::TransitionLoweringBowLeaningOut);
                 }
                 _ => {} // Already down or first shot
@@ -1474,7 +1496,8 @@ pub fn begin_bow_shot(
     // `SequenceElement.orders` — when the element is cancelled, its
     // orders go with it.
     let _ = actor; // actor mutable borrow ends here; below we borrow sequence_manager instead
-    let transitions = aim_transition_orders(current_state, desired_mode);
+    let anonymous = shooter_posture == Posture::AnonymousArcher;
+    let transitions = aim_transition_orders(current_state, desired_mode, anonymous);
     for t in &transitions {
         let mut order = Order::new(*t, tx, ty, crate::order::alloc_order_id(next_order_id));
         order.compute_direction = false;
@@ -1482,7 +1505,7 @@ pub fn begin_bow_shot(
     }
 
     // Push the shoot animation order.
-    let shoot_ot = shoot_order_type_for_mode(desired_mode);
+    let shoot_ot = shoot_order_type_for_mode(desired_mode, anonymous);
     let mut order = Order::new(shoot_ot, tx, ty, order_id);
     order.target_actor = Some(target_id.0);
     order.compute_direction = false;
@@ -1760,8 +1783,7 @@ pub fn tick_bow_shots(
             // itself.
             // (immutable borrow — safe now that the mutable borrow above is done)
             let sprite_hand_point = {
-                let shoot_anim =
-                    shoot_order_type_for_mode(shoot_mode_from_action_state(shot_action_state));
+                let shoot_anim = current_order_type;
                 let sprite_pos = entity.element_data().position_map();
                 let hotspot = entity.element_data().sprite.get_point(shoot_anim, dir_u16);
                 match hotspot {
@@ -3602,6 +3624,12 @@ mod tests {
         })
     }
 
+    fn make_anonymous_pc(x: f32, y: f32) -> Entity {
+        let mut pc = make_pc(x, y);
+        pc.element_data_mut().posture = Posture::AnonymousArcher;
+        pc
+    }
+
     fn make_soldier(x: f32, y: f32) -> Entity {
         make_soldier_with_camp(x, y, crate::element::Camp::Royalists)
     }
@@ -3742,6 +3770,39 @@ mod tests {
                 .target,
             Some(EntityId(1))
         );
+    }
+
+    #[test]
+    fn begin_bow_shot_uses_anonymous_shoot_orders() {
+        let mut entities: Vec<Option<Entity>> = vec![
+            Some(make_anonymous_pc(0.0, 0.0)),
+            Some(make_soldier(50.0, 0.0)),
+        ];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            Some(ShootMode::Normal),
+            &mut 1u32,
+        );
+
+        assert_eq!(result, BeginShotResult::Started);
+        let orders: Vec<OrderType> = sm
+            .get_element(seq_id, elem_idx)
+            .unwrap()
+            .orders
+            .iter()
+            .map(|o| o.order_type)
+            .collect();
+        assert_eq!(orders[0], OrderType::ShootingWithBowAnonymous);
+        assert_eq!(orders[1], OrderType::TransitionLoadingBowAnonymous);
     }
 
     #[test]
@@ -4579,17 +4640,26 @@ mod tests {
 
     #[test]
     fn aim_transitions_from_up_to_normal() {
-        let t = aim_transition_orders(ActionState::AimingWithBowUp, ShootMode::Normal);
+        let t = aim_transition_orders(ActionState::AimingWithBowUp, ShootMode::Normal, false);
         assert_eq!(t.len(), 1);
         assert_eq!(t[0], OrderType::TransitionLoweringBow);
     }
 
     #[test]
     fn aim_transitions_from_down_to_long() {
-        let t = aim_transition_orders(ActionState::AimingWithBowDown, ShootMode::Long);
+        let t = aim_transition_orders(ActionState::AimingWithBowDown, ShootMode::Long, false);
         assert_eq!(t.len(), 2);
         assert_eq!(t[0], OrderType::TransitionRaisingBowLeaningOut);
         assert_eq!(t[1], OrderType::TransitionRaisingBow);
+    }
+
+    #[test]
+    fn aim_transitions_use_anonymous_raise_lower_orders() {
+        let normal = aim_transition_orders(ActionState::AimingWithBowUp, ShootMode::Normal, true);
+        assert_eq!(normal, vec![OrderType::TransitionLoweringBowAnonymous]);
+
+        let long = aim_transition_orders(ActionState::AimingWithBow, ShootMode::Long, true);
+        assert_eq!(long, vec![OrderType::TransitionRaisingBowAnonymous]);
     }
 
     #[test]
