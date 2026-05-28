@@ -1585,23 +1585,20 @@ impl Sprite {
             self.maybe_initialize_frame(anim, progression);
         }
 
-        // Unconditional frame increment — runs regardless of
-        // motionState.
-        let anim_finished = self.increment_frame(progression);
+        // C++ `RHSprite::PerformAction` reports `RHMOTION_START` for
+        // the first tick of a new order without advancing the frame.
+        // Advancing here makes short action-done animations, including
+        // bow shots, fire one tick too early.
+        let anim_finished = if state == MotionState::Start {
+            false
+        } else {
+            self.increment_frame(progression)
+        };
 
-        // Action done?  Guarded by `state != Start` so the Done pulse
-        // cannot fire on the very first tick of a new order — callers
-        // use Done as a mid-animation edge (frame N hit), not as an
-        // immediate "yes this order just started" signal.  Applying
-        // the guard in isolation previously broke transition orders
-        // that relied on Done-on-Start flipping `action_state` away
-        // from Moving; that path is now superseded by routing
-        // transitions through `MotionMethod::TillLastFrame` in
-        // `tick_move`, which advances the order on `Terminated`
-        // (animation-loop) without needing a synthetic Done-on-Start
-        // pulse.
-        if state != MotionState::Start
-            && self.current_frame == self.action_done_frame
+        // Action done?  With C++ start-tick timing above, newly
+        // initialized orders have not advanced yet, so this can follow
+        // the original unconditional action-done check.
+        if self.current_frame == self.action_done_frame
             && self.frame_count == self.action_done_counter
         {
             state = MotionState::Done;
@@ -2326,6 +2323,26 @@ mod tests {
         );
 
         assert!(state == MotionState::InProgress || state == MotionState::Done);
+    }
+
+    #[test]
+    fn perform_action_start_tick_does_not_advance_frame() {
+        let mut s = make_test_sprite();
+
+        let state = s.perform_action(
+            Some(std::num::NonZeroU32::new(1).unwrap()),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+        );
+
+        assert_eq!(state, MotionState::Start);
+        assert_eq!(
+            s.current_frame, 0,
+            "C++ RHSprite::PerformAction reports START without incrementing the new order"
+        );
+        assert_eq!(s.frame_count, 0xFFFF);
     }
 
     #[test]
