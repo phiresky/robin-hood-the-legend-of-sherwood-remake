@@ -2821,6 +2821,9 @@ impl EngineInner {
                 if actor.active_melee.is_active() {
                     continue;
                 }
+                if actor.active_shot.is_active() {
+                    continue;
+                }
 
                 let direction = entity.element_data().direction() as u16;
 

@@ -138,6 +138,10 @@ pub struct ActiveShot {
     /// transitions inside `Sprite::perform_action`.  `None` while the
     /// shot is inactive / cleared.
     pub order_id: Option<std::num::NonZeroU32>,
+    /// Whether the arrow has already been released for the current
+    /// shoot animation.  C++ fires on the sprite's action-done pulse,
+    /// then lets the animation continue to termination.
+    pub released: bool,
 }
 
 impl ActiveShot {

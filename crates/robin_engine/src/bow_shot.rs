@@ -1468,6 +1468,7 @@ pub fn begin_bow_shot(
         element_index: elem_idx,
         target: Some(target_id),
         order_id: Some(order_id),
+        released: false,
     };
     actor.clear_path();
 
@@ -1674,13 +1675,9 @@ pub fn tick_bow_shots(
         let actor = entity.actor_data_mut().unwrap();
 
         if is_bow_transition_order(current_order_type) {
-            // Transition animation done — pop it and let the next order
-            // (either another transition or the shoot) run next frame.
-            if let Some(elem) = sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx) {
-                elem.orders.pop_front();
-            }
-
-            // Update action state based on which transition completed.
+            // Update action state on the action-done pulse, matching the
+            // C++ execute arm.  Keep the visual transition order alive until
+            // Terminated so it does not collapse to a one-frame animation.
             match current_order_type {
                 OrderType::TransitionLoweringBow | OrderType::TransitionLoweringBowAnonymous => {
                     actor.action_state = ActionState::AimingWithBow;
@@ -1703,26 +1700,45 @@ pub fn tick_bow_shots(
                 }
                 _ => {}
             }
+            if matches!(
+                motion,
+                SpriteMotionState::Terminated | SpriteMotionState::Aborted
+            ) {
+                if let Some(elem) = sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx) {
+                    elem.orders.pop_front();
+                }
+            }
             continue;
         }
 
         if is_shoot_order(current_order_type) {
-            // Shoot animation done — arrow is released.
-            // Capture the action state BEFORE clearing (needed for shoot mode).
-            let shot_action_state = actor.action_state;
-
-            // Pop the shoot order and update state (finish mutable borrow).
-            let remaining =
-                if let Some(elem) = sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx) {
+            if matches!(
+                motion,
+                SpriteMotionState::Terminated | SpriteMotionState::Aborted
+            ) {
+                let remaining = if let Some(elem) =
+                    sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
+                {
                     elem.orders.pop_front();
                     elem.orders.is_empty()
                 } else {
                     true
                 };
-            actor.action_state = ActionState::AimingWithBow;
-            if remaining {
-                actor.active_shot.clear();
+                if remaining {
+                    actor.active_shot.clear();
+                }
+                continue;
             }
+
+            if actor.active_shot.released {
+                continue;
+            }
+            actor.active_shot.released = true;
+
+            // Shoot action-done pulse — arrow is released, but the
+            // animation continues until Terminated.
+            let shot_action_state = actor.action_state;
+            actor.action_state = ActionState::AimingWithBow;
 
             // Compute sprite hand anchor point for accurate bow origin.
             // The sprite returns a relative hotspot offset; we add the
