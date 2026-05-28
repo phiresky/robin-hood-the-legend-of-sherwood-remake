@@ -3639,7 +3639,14 @@ pub fn apply_projectile_hit(
     // Snapshot the pre-hit unconscious state so we can detect the KO
     // transition triggered by the concussion add and forward the
     // shooter attribution into `inform_my_friends`.
-    let was_unconscious = victim.human_data().map(|h| h.unconscious).unwrap_or(false);
+    let Some(human) = victim.human_data() else {
+        tracing::warn!(
+            ?victim_id,
+            "projectile hit skipped: human victim missing human data before damage"
+        );
+        return false;
+    };
+    let was_unconscious = human.unconscious;
 
     let died = match victim {
         Entity::Pc(pc) => combat::receive_piercing_damage(
@@ -3675,7 +3682,14 @@ pub fn apply_projectile_hit(
     // broadcasts the body to nearby NPCs.  Without this, a stone-KO'd
     // soldier would not be detected by his friends, breaking witness
     // wiring for PC-thrown stones.
-    let now_unconscious = victim.human_data().map(|h| h.unconscious).unwrap_or(false);
+    let Some(human) = victim.human_data() else {
+        tracing::warn!(
+            ?victim_id,
+            "projectile hit skipped: human victim missing human data after damage"
+        );
+        return false;
+    };
+    let now_unconscious = human.unconscious;
     if !was_unconscious
         && now_unconscious
         && let Some(npc) = victim.npc_data_mut()
