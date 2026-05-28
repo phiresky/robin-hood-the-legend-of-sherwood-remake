@@ -643,29 +643,58 @@ impl EngineInner {
 
     /// Check if the shooter has bow ammo available.
     ///
-    /// Returns `true` if the entity is not a PC (soldiers have unlimited
-    /// ammo) or if the PC has at least 1 arrow.  Returns `false` only
-    /// when a PC has 0 arrows.
+    /// Returns `true` if the shooter has at least one arrow. PCs read
+    /// campaign-side status; NPC soldiers read their live
+    /// `number_of_arrows` counter.
     pub fn check_bow_ammo(&self, shooter_id: EntityId) -> bool {
         match self.get_entity(shooter_id) {
-            Some(Entity::Pc(pc)) => self
-                .pc_description_for_pc_data(&pc.pc)
-                .map(|pc_desc| pc_desc.status.get_ammo(crate::profiles::Action::Bow) > 0)
-                .unwrap_or(true),
-            _ => true, // Non-PCs (soldiers) have unlimited ammo
+            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+                Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) > 0,
+                None => {
+                    tracing::warn!(
+                        shooter = ?shooter_id,
+                        "check_bow_ammo: PC has no campaign status"
+                    );
+                    false
+                }
+            },
+            Some(Entity::Soldier(s)) => s.npc.number_of_arrows > 0,
+            Some(_) => true,
+            None => {
+                tracing::warn!(
+                    shooter = ?shooter_id,
+                    "check_bow_ammo: shooter entity missing"
+                );
+                false
+            }
         }
     }
 
     /// Get the number of bow arrows the shooter has.
     ///
-    /// Returns `u32::MAX` for non-PCs (soldiers have unlimited ammo).
+    /// Returns `u32::MAX` only for non-human object/civilian callers
+    /// that do not track bow ammo.
     pub fn get_bow_ammo_count(&self, shooter_id: EntityId) -> u32 {
         match self.get_entity(shooter_id) {
-            Some(Entity::Pc(pc)) => self
-                .pc_description_for_pc_data(&pc.pc)
-                .map(|pc_desc| pc_desc.status.get_ammo(crate::profiles::Action::Bow) as u32)
-                .unwrap_or(u32::MAX),
-            _ => u32::MAX, // Non-PCs (soldiers) have unlimited ammo
+            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+                Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) as u32,
+                None => {
+                    tracing::warn!(
+                        shooter = ?shooter_id,
+                        "get_bow_ammo_count: PC has no campaign status"
+                    );
+                    0
+                }
+            },
+            Some(Entity::Soldier(s)) => u32::from(s.npc.number_of_arrows),
+            Some(_) => u32::MAX,
+            None => {
+                tracing::warn!(
+                    shooter = ?shooter_id,
+                    "get_bow_ammo_count: shooter entity missing"
+                );
+                0
+            }
         }
     }
 
