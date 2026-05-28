@@ -5464,20 +5464,22 @@ impl EngineInner {
         // for their minions, and dispatch CALL_PATROL_COORDINATE.
         self.tick_patrol_coordination(assets);
 
-        // ── Per-frame arrow tick ────────────────────────────────
-        // Advance arrows already present at the start of this frame.
-        // Bow release below explicitly runs the new arrow's spawn
-        // `Hourglass()` to match C++; running this pass first prevents
-        // freshly released arrows from advancing a second time in the
-        // same frame.
-        self.tick_arrows(assets);
-
         // ── Per-frame bow-shot tick ─────────────────────────────
         // Drive the `SHOOTING_WITH_BOW` animation for every actor
         // with an active bow shot; when the animation reports
         // `Done`, spawn an arrow projectile and notify the sequence
         // manager.
         self.tick_bow_shots(assets);
+
+        // ── Per-frame arrow tick ────────────────────────────────
+        // C++ `ShootWithBowAt` calls `pArrow->Hourglass()` before
+        // `AddElement`, then appends the arrow immediately to
+        // `marrayElements`. `PerformHourglass` checks the dynamic array
+        // size each iteration, so a freshly released arrow can still be
+        // visited by the normal element hourglass pass later in that
+        // same frame. Keep this after bow-shot release to preserve that
+        // spawn-frame double advance.
+        self.tick_arrows(assets);
 
         // ── Per-frame purse / coin tick ─────────────────────────
         // Drive purse trajectories until impact (then burst into
