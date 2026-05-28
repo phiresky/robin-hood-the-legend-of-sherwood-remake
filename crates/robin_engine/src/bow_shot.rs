@@ -374,6 +374,65 @@ fn is_bow_transition_order(ot: OrderType) -> bool {
     )
 }
 
+fn apply_bow_transition_state_side_effect(
+    entity: &mut Entity,
+    order_type: OrderType,
+    motion: SpriteMotionState,
+) {
+    let action_state = match order_type {
+        OrderType::TransitionLoweringBow | OrderType::TransitionLoweringBowAnonymous
+            if matches!(
+                motion,
+                SpriteMotionState::Done | SpriteMotionState::Terminated
+            ) =>
+        {
+            Some(ActionState::AimingWithBow)
+        }
+        OrderType::TransitionRaisingBow | OrderType::TransitionRaisingBowAnonymous
+            if matches!(
+                motion,
+                SpriteMotionState::Done | SpriteMotionState::Terminated
+            ) =>
+        {
+            Some(ActionState::AimingWithBowUp)
+        }
+        OrderType::TransitionLoweringBowLeaningOut
+            if matches!(
+                motion,
+                SpriteMotionState::Done | SpriteMotionState::Terminated
+            ) =>
+        {
+            Some(ActionState::AimingWithBowDown)
+        }
+        OrderType::TransitionRaisingBowLeaningOut
+            if matches!(
+                motion,
+                SpriteMotionState::Done | SpriteMotionState::Terminated
+            ) =>
+        {
+            Some(ActionState::AimingWithBow)
+        }
+        OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
+            if matches!(
+                motion,
+                SpriteMotionState::Start | SpriteMotionState::Done | SpriteMotionState::Terminated
+            ) =>
+        {
+            if entity.element_data().posture != Posture::AnonymousArcher {
+                entity.element_data_mut().posture = Posture::Upright;
+            }
+            Some(ActionState::Waiting)
+        }
+        _ => None,
+    };
+
+    if let Some(action_state) = action_state
+        && let Some(actor) = entity.actor_data_mut()
+    {
+        actor.action_state = action_state;
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Ballistic trajectory computation
 // ═══════════════════════════════════════════════════════════════════
@@ -1691,41 +1750,28 @@ pub fn tick_bow_shots(
             )
         };
 
-        if !matches!(
-            motion,
-            SpriteMotionState::Done | SpriteMotionState::Terminated | SpriteMotionState::Aborted
-        ) {
+        let transition_start =
+            is_bow_transition_order(current_order_type) && motion == SpriteMotionState::Start;
+        if !transition_start
+            && !matches!(
+                motion,
+                SpriteMotionState::Done
+                    | SpriteMotionState::Terminated
+                    | SpriteMotionState::Aborted
+            )
+        {
             continue;
         }
 
-        // Animation for current order completed.
-        let actor = entity.actor_data_mut().unwrap();
+        // Animation for current order reached a state with bow side
+        // effects or queue-completion behavior.
 
         if is_bow_transition_order(current_order_type) {
             // Update action state on the action-done pulse, matching the
             // C++ execute arm.  Keep the visual transition order alive until
             // Terminated so it does not collapse to a one-frame animation.
-            match current_order_type {
-                OrderType::TransitionLoweringBow | OrderType::TransitionLoweringBowAnonymous => {
-                    actor.action_state = ActionState::AimingWithBow;
-                }
-                OrderType::TransitionRaisingBow | OrderType::TransitionRaisingBowAnonymous => {
-                    actor.action_state = ActionState::AimingWithBowUp;
-                }
-                OrderType::TransitionLoweringBowLeaningOut => {
-                    actor.action_state = ActionState::AimingWithBowDown;
-                }
-                OrderType::TransitionRaisingBowLeaningOut => {
-                    actor.action_state = ActionState::AimingWithBow;
-                }
-                OrderType::TransitionLoadingBow | OrderType::TransitionLoadingBowAnonymous => {
-                    // Reload done — stay in current aim state.
-                }
-                OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous => {
-                    actor.action_state = ActionState::Waiting;
-                }
-                _ => {}
-            }
+            apply_bow_transition_state_side_effect(entity, current_order_type, motion);
+            let actor = entity.actor_data_mut().unwrap();
             if matches!(
                 motion,
                 SpriteMotionState::Terminated | SpriteMotionState::Aborted
@@ -1746,6 +1792,7 @@ pub fn tick_bow_shots(
             continue;
         }
 
+        let actor = entity.actor_data_mut().unwrap();
         if is_shoot_order(current_order_type) {
             if matches!(
                 motion,
@@ -4660,6 +4707,24 @@ mod tests {
 
         let long = aim_transition_orders(ActionState::AimingWithBow, ShootMode::Long, true);
         assert_eq!(long, vec![OrderType::TransitionRaisingBowAnonymous]);
+    }
+
+    #[test]
+    fn unequip_bow_sets_waiting_on_animation_start() {
+        let mut pc = make_pc(0.0, 0.0);
+        pc.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+
+        apply_bow_transition_state_side_effect(
+            &mut pc,
+            OrderType::TransitionUnequipBow,
+            SpriteMotionState::Start,
+        );
+
+        assert_eq!(
+            pc.actor_data().unwrap().action_state,
+            ActionState::Waiting,
+            "C++ TransitionUnequipBow sets Waiting on RHMOTION_START"
+        );
     }
 
     #[test]
