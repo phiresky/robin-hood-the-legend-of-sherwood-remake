@@ -1758,14 +1758,34 @@ impl FriendlyAi {
                 }
                 AiState::Attacking | AiState::Menacing | AiState::Fleeing => {
                     // An alerted soldier is already nearby — no
-                    // need to alert another.  `is_detecting_360_*`
-                    // is an aspect-ratio-corrected distance within
-                    // squared real view radius, the same
-                    // approximation `EnemyAi` uses.
-                    let dx = view.position.x - my_pos.x;
-                    let dy = (view.position.y - my_pos.y)
+                    // need to alert another.
+                    if ctx.in_building || view.in_building {
+                        continue;
+                    }
+                    let viewer_eye_z = ctx.elevation
+                        + crate::stealth::eye_z_for_posture(
+                            crate::element::Posture::Upright,
+                            ctx.self_is_rider,
+                        );
+                    let target_detection_xy = crate::stealth::detection_point_xy(
+                        crate::geo2d::pt(view.position.x, view.position.y),
+                        view.posture,
+                        view.direction as i16,
+                    );
+                    let target_eye_z = view.elevation
+                        + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+                    let dx = target_detection_xy.x - my_pos.x;
+                    let dy = (target_detection_xy.y - my_pos.y)
                         * crate::position_interface::INVERSE_ASPECT_RATIO;
-                    if dx * dx + dy * dy <= sq_view_radius {
+                    let dz = target_eye_z - viewer_eye_z;
+                    if dx * dx + dy * dy + dz * dz <= sq_view_radius
+                        && crate::sight_obstacle::is_reachable_3d(
+                            ctx.obstacle_list(),
+                            [ctx.position.x, ctx.position.y, viewer_eye_z],
+                            [target_detection_xy.x, target_detection_xy.y, target_eye_z],
+                            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+                        )
+                    {
                         // Clear the friend list and return false.
                         // We queue the clear — the engine drains it
                         // post-think.

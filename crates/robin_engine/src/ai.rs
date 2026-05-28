@@ -3593,13 +3593,16 @@ impl AiContext {
         if self.in_building {
             return false;
         }
-        let viewer_eye_z = self.elevation
-            + crate::stealth::eye_z_for_posture(
-                crate::element::Posture::Upright,
-                self.self_is_rider,
-            );
-        let dx = pt.x - self.position.x;
-        let dy = (pt.y - self.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+        let viewer_eye = crate::stealth::eye_point_xy(
+            crate::geo2d::pt(self.position.x, self.position.y),
+            self.posture,
+            self.direction as i16,
+            false,
+        );
+        let viewer_eye_z =
+            self.elevation + crate::stealth::eye_z_for_posture(self.posture, self.self_is_rider);
+        let dx = pt.x - viewer_eye.x;
+        let dy = (pt.y - viewer_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
         let dz = pt.z - viewer_eye_z;
         let sq_distance = dx * dx + dy * dy + dz * dz;
         if sq_distance > self.sq_standard_view_radius {
@@ -3607,7 +3610,7 @@ impl AiContext {
         }
         crate::sight_obstacle::is_reachable_3d(
             self.obstacle_list(),
-            [self.position.x, self.position.y, viewer_eye_z],
+            [viewer_eye.x, viewer_eye.y, viewer_eye_z],
             [pt.x, pt.y, pt.z],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         )
@@ -9268,6 +9271,30 @@ mod tests {
         assert_eq!(point.x, 50.0);
         assert_eq!(point.y, 70.0);
         assert_eq!(point.z, 20.0);
+    }
+
+    #[test]
+    fn is_detecting_point_360_uses_current_eye_point() {
+        let ctx = AiContext {
+            position: Position {
+                x: 0.0,
+                y: 0.0,
+                sector: None,
+                level: 0,
+            },
+            direction: 4,
+            posture: crate::element::Posture::LeaningOut,
+            sq_standard_view_radius: 11.0 * 11.0,
+            ..AiContext::default()
+        };
+
+        assert!(
+            ctx.is_detecting_point_360(crate::position_interface::Point3D {
+                x: 50.0,
+                y: 0.0,
+                z: 45.0,
+            })
+        );
     }
 
     // ── House / building-AI tests ─────────────────────────────────

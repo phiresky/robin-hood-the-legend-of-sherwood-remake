@@ -799,10 +799,8 @@ impl EnemyAi {
 
     // -----------------------------------------------------------------------
     // AlertOfficer — soldier alerts nearby officer
-    // Faithful except for
-    // the `IsDetecting360Degrees` LOS check on the "another soldier is
-    // already alerting" gate, which is approximated with a 500-unit
-    // MaxNorm radius (see inline comment).
+    // Mirrors the original officer search and "another soldier is
+    // already alerting" suppression gate.
     // -----------------------------------------------------------------------
 
     pub fn alert_officer(
@@ -909,11 +907,7 @@ impl EnemyAi {
                             | Substate::SeekingGroupGetInstructedByOfficer
                             | Substate::SeekingRunningToOfficer
                             | Substate::SeekingRunningToOfficerSeen => {
-                                // IsDetecting360Degrees — approximate with
-                                // distance check (same radius as us-list: 500).
-                                let dx = (cs.position.x - my_pos.x).abs();
-                                let dy = (cs.position.y - my_pos.y).abs();
-                                if dx.max(dy) < 500.0 {
+                                if self.is_detecting_360_degrees(cs.handle, ctx) {
                                     // Another soldier is already alerting an
                                     // officer — abort.
                                     return false;

@@ -1006,7 +1006,11 @@ impl EnemyAi {
             if victim_view.in_building {
                 continue;
             }
-            let victim_pos = victim_view.position;
+            let victim_pos = crate::stealth::detection_point_xy(
+                crate::geo2d::pt(victim_view.position.x, victim_view.position.y),
+                victim_view.posture,
+                victim_view.direction as i16,
+            );
             let viewer_eye_z = ctx.elevation
                 + crate::stealth::eye_z_for_posture(
                     crate::element::Posture::Upright,
@@ -1025,9 +1029,11 @@ impl EnemyAi {
             if ctx.in_building || sq > ctx.sq_standard_view_radius {
                 continue;
             }
-            if !ctx.los_clear(
-                crate::geo2d::pt(ctx.position.x, ctx.position.y),
-                crate::geo2d::pt(victim_pos.x, victim_pos.y),
+            if !crate::sight_obstacle::is_reachable_3d(
+                ctx.obstacle_list(),
+                [ctx.position.x, ctx.position.y, viewer_eye_z],
+                [victim_pos.x, victim_pos.y, target_eye_z],
+                crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
             ) {
                 continue;
             }
@@ -1616,9 +1622,14 @@ impl EnemyAi {
             );
         let target_eye_z =
             view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
-        let dx = view.position.x - ctx.position.x;
-        let dy =
-            (view.position.y - ctx.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+        let target_detection_xy = crate::stealth::detection_point_xy(
+            crate::geo2d::pt(view.position.x, view.position.y),
+            view.posture,
+            view.direction as i16,
+        );
+        let dx = target_detection_xy.x - ctx.position.x;
+        let dy = (target_detection_xy.y - ctx.position.y)
+            * crate::position_interface::INVERSE_ASPECT_RATIO;
         let dz = target_eye_z - viewer_eye_z;
         let sq_distance = dx * dx + dy * dy + dz * dz;
         if sq_distance > ctx.sq_standard_view_radius {
@@ -1637,7 +1648,7 @@ impl EnemyAi {
         let los_clear = crate::sight_obstacle::is_reachable_3d(
             ctx.obstacle_list(),
             [ctx.position.x, ctx.position.y, viewer_eye_z],
-            [view.position.x, view.position.y, target_eye_z],
+            [target_detection_xy.x, target_detection_xy.y, target_eye_z],
             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
         );
         tracing::trace!(

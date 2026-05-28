@@ -411,9 +411,7 @@ pub fn command_requires_upright(command: Command) -> bool {
 /// Used by the VIEWER (NPC) side of the near-auto-visible distance check
 /// and by PC blip/seen-by-pc geometry. Riders get a +60 instead of +45
 /// for the upright-group.  Lying/dead postures use a +5 base; the
-/// original adds a direction-dependent lateral shift for crawling that
-/// is not yet ported, so callers that need perfect LOS for crawling
-/// should add the direction-dependent XY offset.
+/// direction-dependent crawling XY shift lives in [`eye_point_xy`].
 pub fn eye_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
     match posture {
         // Upright-group (riders get +60).
@@ -441,8 +439,8 @@ pub fn eye_z_for_posture(posture: Posture, is_rider: bool) -> f32 {
         Posture::OnShoulders => 85.0,
         // Low postures → +25.
         Posture::Crouched | Posture::Sitting | Posture::SimulatingBeggar | Posture::Tree => 25.0,
-        // Lying/dead variants → +5 (plus crawling XY offsets not yet
-        // ported).
+        // Lying/dead variants → +5 (plus crawling XY offsets via
+        // `eye_point_xy`).
         Posture::Lying
         | Posture::Dead
         | Posture::DeadBack

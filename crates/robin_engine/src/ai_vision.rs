@@ -309,10 +309,9 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
     }
 
     // Secondary distance check using the effective view radius from
-    // [`compute_view_radius`].  Accounts for the ground-plane sphere
-    // projection and night/fog light-sector modulation.  Obstacle
-    // projection (target-on-obstacle path) is not yet ported —
-    // requires per-entity obstacle references.
+    // [`compute_view_radius`].  Callers pass the per-target effective
+    // radius, including ground/obstacle sphere projection and
+    // night/fog light-sector modulation.
     let sqr_effective = q.effective_view_radius * q.effective_view_radius;
     if sqr_distance > sqr_effective {
         return 0.0;
