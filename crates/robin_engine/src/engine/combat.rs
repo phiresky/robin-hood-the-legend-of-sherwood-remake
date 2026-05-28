@@ -1555,9 +1555,21 @@ fn soldier_piercing_protection(
         .map(|w| w.piercing_protection)
 }
 
+fn soldier_shield_dimensions(
+    profile_manager: &crate::profiles::ProfileManager,
+    profile_index: crate::profiles::SoldierProfileIdx,
+) -> Option<(u16, u16)> {
+    profile_manager
+        .get_soldier(profile_index)
+        .and_then(|p| profile_manager.get_hth_weapon(p.hth_weapon_id))
+        .map(|w| (w.shield_width, w.shield_height))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{bonus_auto_pickup_allowed, soldier_piercing_protection};
+    use super::{
+        bonus_auto_pickup_allowed, soldier_piercing_protection, soldier_shield_dimensions,
+    };
     use crate::element::ObjectType;
     use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
 
@@ -1592,6 +1604,31 @@ mod tests {
         assert_eq!(
             soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
             Some(35)
+        );
+    }
+
+    #[test]
+    fn soldier_shield_dimensions_require_real_weapon_profile() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            ..SoldierProfile::default()
+        });
+
+        assert_eq!(
+            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
+            None
+        );
+
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            shield_width: 22,
+            shield_height: 44,
+            ..HtHWeaponProfile::default()
+        });
+
+        assert_eq!(
+            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
+            Some((22, 44))
         );
     }
 }
@@ -2449,12 +2486,23 @@ impl EngineInner {
                 }
                 Entity::Soldier(s) => {
                     // Look up HtH weapon profile for shield dimensions.
-                    let (sw, sh) = assets
-                        .profile_manager
-                        .get_soldier(s.soldier.soldier_profile_index)
-                        .and_then(|sp| assets.profile_manager.get_hth_weapon(sp.hth_weapon_id))
-                        .map(|wp| (wp.shield_width, wp.shield_height))
-                        .unwrap_or((20, 40)); // fallback defaults
+                    let Some((sw, sh)) = soldier_shield_dimensions(
+                        &assets.profile_manager,
+                        s.soldier.soldier_profile_index,
+                    ) else {
+                        tracing::warn!(
+                            soldier = ?crate::element::EntityId(idx as u32),
+                            profile_index = ?s.soldier.soldier_profile_index,
+                            "shield update: missing soldier HtH weapon profile; clearing shield obstacle"
+                        );
+                        if actor.shield_obstacle.is_some()
+                            && let Some(Some(e)) = self.entities.get_mut(idx)
+                            && let Some(a) = e.actor_data_mut()
+                        {
+                            a.shield_obstacle = None;
+                        }
+                        continue;
+                    };
                     shield_params_for_soldier(sw, sh)
                 }
                 _ => continue,
