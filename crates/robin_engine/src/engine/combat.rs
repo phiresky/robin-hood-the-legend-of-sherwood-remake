@@ -272,6 +272,57 @@ impl EngineInner {
                 target_movement,
             );
 
+            // Warn shield-bearing target soldiers that they're being shot
+            // at before the hit roll and projectile insertion, matching
+            // C++ `ShootWithBowAt`.
+            let target_is_shield_soldier = match self.get_entity(result.target) {
+                Some(Entity::Soldier(s)) => match assets
+                    .profile_manager
+                    .get_soldier(s.soldier.soldier_profile_index)
+                    .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
+                {
+                    Some(w) => w.shield,
+                    None => {
+                        tracing::warn!(
+                            target = ?result.target,
+                            "Bow shot shield warning skipped: missing soldier HtH weapon profile"
+                        );
+                        false
+                    }
+                },
+                _ => false,
+            };
+            if target_is_shield_soldier {
+                // "Detecting" means the shooter is visible *this frame*
+                // (cone + LOS).  The NPC tick caches that live result as
+                // `det.seen_now`, so checking that flag is equivalent to
+                // a fresh visibility query without rebuilding the full
+                // `VisibilityQuery`.  Using `detectable_lists` membership
+                // alone would be wrong: the entry persists forever, so a
+                // soldier whose LOS of the archer is now occluded by a
+                // wall would still raise his shield — the audit-flagged
+                // "soldier cheats" case.
+                let target_detects_shooter = self
+                    .get_entity(result.target)
+                    .and_then(|e| e.npc_data())
+                    .map(|npc| {
+                        npc.detectable_lists.iter().any(|list| {
+                            list.iter()
+                                .any(|d| d.element == Some(result.shooter) && d.seen_now)
+                        })
+                    })
+                    .unwrap_or(false);
+                if target_detects_shooter {
+                    self.dispatch_ai_stimulus(
+                        result.target,
+                        crate::ai::Stimulus::with_human(
+                            crate::ai::StimulusType::EventArrowLaunched,
+                            result.shooter.0,
+                        ),
+                    );
+                }
+            }
+
             // ── Hit chance roll ──────────────────────────────────
             // C++ only applies `mpBow->GetHitChance(...)` in the
             // `pTarget->IsHuman()` branch of `ShootWithBowAt`.
@@ -383,57 +434,6 @@ impl EngineInner {
             // colored-rect fallback.
             self.attach_accessory_sprite(assets, arrow_id);
 
-            // Warn shield-bearing target soldiers that they're being shot
-            // at so they can raise the shield.  Only fires when the target
-            // already detects the shooter (otherwise the soldier wouldn't
-            // be visually tracking them, so reacting would be cheating).
-            let target_is_shield_soldier = match self.get_entity(result.target) {
-                Some(Entity::Soldier(s)) => match assets
-                    .profile_manager
-                    .get_soldier(s.soldier.soldier_profile_index)
-                    .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
-                {
-                    Some(w) => w.shield,
-                    None => {
-                        tracing::warn!(
-                            target = ?result.target,
-                            "Bow shot shield warning skipped: missing soldier HtH weapon profile"
-                        );
-                        false
-                    }
-                },
-                _ => false,
-            };
-            if target_is_shield_soldier {
-                // "Detecting" means the shooter is visible *this frame*
-                // (cone + LOS).  The NPC tick caches that live result as
-                // `det.seen_now`, so checking that flag is equivalent to
-                // a fresh visibility query without rebuilding the full
-                // `VisibilityQuery`.  Using `detectable_lists` membership
-                // alone would be wrong: the entry persists forever, so a
-                // soldier whose LOS of the archer is now occluded by a
-                // wall would still raise his shield — the audit-flagged
-                // "soldier cheats" case.
-                let target_detects_shooter = self
-                    .get_entity(result.target)
-                    .and_then(|e| e.npc_data())
-                    .map(|npc| {
-                        npc.detectable_lists.iter().any(|list| {
-                            list.iter()
-                                .any(|d| d.element == Some(result.shooter) && d.seen_now)
-                        })
-                    })
-                    .unwrap_or(false);
-                if target_detects_shooter {
-                    self.dispatch_ai_stimulus(
-                        result.target,
-                        crate::ai::Stimulus::with_human(
-                            crate::ai::StimulusType::EventArrowLaunched,
-                            result.shooter.0,
-                        ),
-                    );
-                }
-            }
             tracing::debug!(
                 shooter = ?result.shooter,
                 target = ?result.target,
