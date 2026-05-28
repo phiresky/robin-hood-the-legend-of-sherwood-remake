@@ -4063,6 +4063,7 @@ mod tests {
             (Command::PlayAnim, OrderType::WaitingUpright),
             (Command::PlayAnimLoop, OrderType::WaitingCrouched),
             (Command::PlayAnimFreeze, OrderType::Taking),
+            (Command::PlayAnimFrozen, OrderType::Pointing),
         ];
         for (cmd, anim) in cases {
             let mut elem = SequenceElement::new_generic(1, cmd, None);

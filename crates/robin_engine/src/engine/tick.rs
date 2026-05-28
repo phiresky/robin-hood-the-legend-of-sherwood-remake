@@ -4951,12 +4951,15 @@ impl EngineInner {
                         }
 
                         // Script-recorded PlayAnim / PlayAnimLoop /
-                        // PlayAnimFreeze.  C++ translates these to
+                        // PlayAnimFreeze / PlayAnimFrozen.  C++ translates these to
                         // PLAY_CUSTOM non-animations for actors, which
                         // then drive the stored RHFIELD_ANIMATION_ID.
                         // FX targets instead force the target sprite
                         // animation/progression immediately.
-                        Command::PlayAnim | Command::PlayAnimLoop | Command::PlayAnimFreeze => {
+                        Command::PlayAnim
+                        | Command::PlayAnimLoop
+                        | Command::PlayAnimFreeze
+                        | Command::PlayAnimFrozen => {
                             let anim = match elem.get_property(crate::sequence::Field::AnimationId)
                             {
                                 Some(crate::sequence::FieldValue::Animation(anim)) => Some(*anim),
@@ -5006,6 +5009,9 @@ impl EngineInner {
                                 }
                                 Command::PlayAnimFreeze => {
                                     crate::sprite::FrameProgression::FreezeWhenTerminated as u32
+                                }
+                                Command::PlayAnimFrozen => {
+                                    crate::sprite::FrameProgression::FrozenLastFrame as u32
                                 }
                                 _ => unreachable!(),
                             };
@@ -6404,6 +6410,19 @@ impl EngineInner {
 
         for (seq_id, elem_idx) in outcomes.seq_terminate {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
+        }
+
+        for (actor, command_level, anim) in outcomes.play_anim_frozen {
+            let mut elem = crate::sequence::SequenceElement::new_generic(
+                command_level,
+                crate::element::Command::PlayAnimFrozen,
+                Some(actor),
+            );
+            elem.set_property(
+                crate::sequence::Field::AnimationId,
+                crate::sequence::FieldValue::Animation(anim),
+            );
+            self.sequence_manager.launch_element(elem);
         }
 
         // ABORTED motion result: set the sequence element to

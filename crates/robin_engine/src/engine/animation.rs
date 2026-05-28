@@ -2666,6 +2666,11 @@ pub(super) struct AnimCompletionOutcomes {
     pub resume_door_pass: Vec<EntityId>,
     /// Entities whose active jump should advance to the next step.
     pub next_jump_step: Vec<EntityId>,
+    /// C++ `PLAY_CUSTOM_FREEZE` launches a follow-up
+    /// `PLAY_ANIM_FROZEN` sequence when the animation terminates, so
+    /// the actor holds the last frame as a separate in-progress
+    /// element.
+    pub play_anim_frozen: Vec<(EntityId, u16, OrderType)>,
     /// Soldier-style side effects that touch other entities —
     /// accumulated from `apply_soldier_execute_side_effects`.
     pub execute_sides: ExecuteSideOutcomes,
@@ -2867,6 +2872,11 @@ impl EngineInner {
                 // body-point calculations (e.g. compute-stars-point).
                 let cur_command = order_seq_elem.and_then(|(s, e)| {
                     self.sequence_manager.get_element(s, e).map(|el| el.command)
+                });
+                let cur_command_level = order_seq_elem.and_then(|(s, e)| {
+                    self.sequence_manager
+                        .get_element(s, e)
+                        .map(|el| el.command_level)
                 });
                 let driving_one_shot = matches!(cur_command, Some(cmd) if cmd != Command::Wait && cmd != Command::WaitTimer);
                 let settled_dead_or_ko_hold = matches!(
@@ -3172,13 +3182,10 @@ impl EngineInner {
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
                                     FrameProgression::Cyclically,
                                 )
-                            } else if matches!(
-                                cur_command,
-                                Some(Command::PlayAnimFreeze | Command::PlayAnimFrozen)
-                            ) {
+                            } else if matches!(cur_command, Some(Command::PlayAnimFrozen)) {
                                 (
                                     sprite_anim_for_order(sprite, effective_anim, owner_is_pc),
-                                    FrameProgression::FreezeWhenTerminated,
+                                    FrameProgression::FrozenLastFrame,
                                 )
                             } else {
                                 (
@@ -3384,6 +3391,15 @@ impl EngineInner {
                             && anim_forces_non_interruptable_on_start(anim_type)
                         {
                             non_interruptable_lifts.push((seq_id, elem_idx));
+                        }
+                        if matches!(motion_state, MotionState::Terminated)
+                            && cur_command == Some(Command::PlayAnimFreeze)
+                        {
+                            completion_outcomes.play_anim_frozen.push((
+                                EntityId(entity_idx as u32),
+                                cur_command_level.unwrap_or(1),
+                                anim_type,
+                            ));
                         }
                     }
                     // Dispatch the per-arm return decision, then apply
