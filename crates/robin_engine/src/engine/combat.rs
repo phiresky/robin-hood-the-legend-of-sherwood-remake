@@ -833,38 +833,51 @@ impl EngineInner {
             Some(t) => t,
             None => return,
         };
-        let (throw_pos, layer) = match self.get_entity(actor_id) {
-            Some(e) => {
-                let hand = e
-                    .compute_hand_point(None)
-                    .unwrap_or(e.element_data().position());
-                (hand, e.element_data().layer())
-            }
-            None => return,
+        let Some((throw_pos, layer)) =
+            self.projectile_throw_origin(actor_id, "on_throw_projectile_done")
+        else {
+            return;
         };
         // Lead the victim's forecasted motion only when it's an NPC
         // (Soldier/Civilian); FX targets and fellow-PC victims fall
         // through to the centre branch with no movement lead.
         let (target_pos, target_forecasted_movement) = match self.get_entity(target_id) {
             Some(e) => {
-                if e.is_npc() {
-                    let pos = e
-                        .compute_eyes_point(None)
-                        .unwrap_or(e.element_data().position());
-                    let movement = {
+                if e.is_human() {
+                    let Some(pos) = e.compute_eyes_point(None) else {
+                        tracing::warn!(
+                            ?target_id,
+                            "on_throw_projectile_done: human target missing eyes hotspot"
+                        );
+                        return;
+                    };
+                    let movement = if e.is_npc() {
                         let m = e.position_iface().get_forecasted_movement();
                         Some(crate::element::Point3D {
                             x: m.x,
                             y: m.y,
                             z: m.z,
                         })
+                    } else {
+                        None
                     };
                     (pos, movement)
-                } else {
-                    let pos = e
-                        .compute_target_center()
-                        .unwrap_or(e.element_data().position());
+                } else if e.is_fx_target() {
+                    let Some(pos) = e.compute_target_center() else {
+                        tracing::warn!(
+                            ?target_id,
+                            "on_throw_projectile_done: FX target missing center hotspot"
+                        );
+                        return;
+                    };
                     (pos, None)
+                } else {
+                    tracing::warn!(
+                        ?target_id,
+                        kind = ?e.kind(),
+                        "on_throw_projectile_done: unsupported projectile target"
+                    );
+                    return;
                 }
             }
             None => return,
@@ -907,6 +920,26 @@ impl EngineInner {
             "Throw projectile spawned"
         );
         self.decrement_ability_ammo(assets, actor_id, action);
+    }
+
+    fn projectile_throw_origin(
+        &self,
+        actor_id: EntityId,
+        context: &'static str,
+    ) -> Option<(crate::element::Point3D, u16)> {
+        let Some(entity) = self.get_entity(actor_id) else {
+            tracing::warn!(?actor_id, context, "projectile throw actor missing");
+            return None;
+        };
+        let Some(hand) = entity.compute_hand_point(None) else {
+            tracing::warn!(
+                ?actor_id,
+                context,
+                "projectile throw actor missing hand hotspot"
+            );
+            return None;
+        };
+        Some((hand, entity.element_data().layer()))
     }
 
     /// Disable a PC action slot and deselect if it's the current action.
@@ -2231,10 +2264,13 @@ impl EngineInner {
     /// Dispatch an EventApple stimulus at the origin of the thrown
     /// projectile.  Used by both apple and stone impacts on NPCs.
     fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::element::Point2D) {
-        let layer = self
-            .get_entity(victim)
-            .map(|e| e.element_data().layer())
-            .unwrap_or(0);
+        let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
+            tracing::warn!(
+                ?victim,
+                "dispatch_event_apple: victim missing for layer lookup"
+            );
+            return;
+        };
         let pos = crate::ai::Position {
             x: origin.x,
             y: origin.y,
@@ -2251,10 +2287,13 @@ impl EngineInner {
     /// origin — wakes the struck NPC and seeds the search toward the
     /// shot origin.
     fn dispatch_event_get_arrow(&mut self, victim: EntityId, origin: crate::element::Point2D) {
-        let layer = self
-            .get_entity(victim)
-            .map(|e| e.element_data().layer())
-            .unwrap_or(0);
+        let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
+            tracing::warn!(
+                ?victim,
+                "dispatch_event_get_arrow: victim missing for layer lookup"
+            );
+            return;
+        };
         let pos = crate::ai::Position {
             x: origin.x,
             y: origin.y,
@@ -3084,15 +3123,12 @@ impl EngineInner {
                     // Spawn a net projectile entity with ballistic
                     // trajectory.  Launch origin is the thrower's hand
                     // point, not their feet.
-                    let (throw_pos, layer) = self
-                        .get_entity(actor_id)
-                        .map(|e| {
-                            let hand = e
-                                .compute_hand_point(None)
-                                .unwrap_or(e.element_data().position());
-                            (hand, e.element_data().layer())
-                        })
-                        .unwrap_or_default();
+                    let Some((throw_pos, layer)) =
+                        self.projectile_throw_origin(actor_id, "ThrowNetDone")
+                    else {
+                        self.sequence_manager.element_terminated(seq_id, elem_idx);
+                        continue;
+                    };
                     let target_3d = crate::element::Point3D {
                         x: target_pos.x,
                         y: target_pos.y,
@@ -3139,15 +3175,12 @@ impl EngineInner {
                     // the purse arcs over walls / falls onto roofs the
                     // same way other ground-targeted throwables do.
                     // Launch origin is the thrower's hand point.
-                    let (throw_pos, layer) = self
-                        .get_entity(actor_id)
-                        .map(|e| {
-                            let hand = e
-                                .compute_hand_point(None)
-                                .unwrap_or(e.element_data().position());
-                            (hand, e.element_data().layer())
-                        })
-                        .unwrap_or_default();
+                    let Some((throw_pos, layer)) =
+                        self.projectile_throw_origin(actor_id, "ThrowPurseDone")
+                    else {
+                        self.sequence_manager.element_terminated(seq_id, elem_idx);
+                        continue;
+                    };
                     let target_3d = crate::element::Point3D {
                         x: target_pos.x,
                         y: target_pos.y,
@@ -3194,15 +3227,12 @@ impl EngineInner {
                     // Spawn a wasp nest projectile entity with ballistic
                     // trajectory.  Launch origin is the thrower's hand
                     // point.
-                    let (throw_pos, layer) = self
-                        .get_entity(actor_id)
-                        .map(|e| {
-                            let hand = e
-                                .compute_hand_point(None)
-                                .unwrap_or(e.element_data().position());
-                            (hand, e.element_data().layer())
-                        })
-                        .unwrap_or_default();
+                    let Some((throw_pos, layer)) =
+                        self.projectile_throw_origin(actor_id, "ThrowWaspNestDone")
+                    else {
+                        self.sequence_manager.element_terminated(seq_id, elem_idx);
+                        continue;
+                    };
                     let target_3d = crate::element::Point3D {
                         x: target_pos.x,
                         y: target_pos.y,
