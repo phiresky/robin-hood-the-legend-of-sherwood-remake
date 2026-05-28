@@ -1633,7 +1633,10 @@ impl EngineInner {
                 let hotspot = {
                     let sprite = &pc.element_data().sprite;
                     let dir_u16 = u16::try_from(direction).unwrap_or(0);
-                    sprite.get_point(crate::order::OrderType::ShootingWithBowUp, dir_u16)
+                    sprite.get_point(
+                        crate::bow_shot::bow_point_order_type_for_mode(shoot_mode),
+                        dir_u16,
+                    )
                 };
                 match hotspot {
                     Some(offset) => Some(crate::geo2d::Point2D {
@@ -1882,7 +1885,10 @@ impl EngineInner {
             let hotspot = {
                 let sprite = &pc.element_data().sprite;
                 let dir_u16 = u16::try_from(direction).unwrap_or(0);
-                sprite.get_point(crate::order::OrderType::ShootingWithBowUp, dir_u16)
+                sprite.get_point(
+                    crate::bow_shot::bow_point_order_type_for_mode(ShootMode::Long),
+                    dir_u16,
+                )
             };
             match hotspot {
                 Some(offset) => Some(crate::geo2d::Point2D {

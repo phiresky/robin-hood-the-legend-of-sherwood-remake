@@ -345,6 +345,17 @@ fn shoot_order_type_for_mode(mode: ShootMode, anonymous: bool) -> OrderType {
     }
 }
 
+/// C++ `RHElementActorHuman::ComputeBowPoint` selects these non-anonymous
+/// animation ids for hotspot lookup even when the active shoot animation is
+/// an anonymous archer variant.
+pub(crate) fn bow_point_order_type_for_mode(mode: ShootMode) -> OrderType {
+    match mode {
+        ShootMode::Normal => OrderType::ShootingWithBow,
+        ShootMode::Long => OrderType::ShootingWithBowUp,
+        ShootMode::Down => OrderType::ShootingWithBowLeaningOut,
+    }
+}
+
 /// Whether this order type is a bow shoot animation.
 fn is_shoot_order(ot: OrderType) -> bool {
     matches!(
@@ -1830,7 +1841,8 @@ pub fn tick_bow_shots(
             // itself.
             // (immutable borrow — safe now that the mutable borrow above is done)
             let sprite_hand_point = {
-                let shoot_anim = current_order_type;
+                let shoot_anim =
+                    bow_point_order_type_for_mode(shoot_mode_from_action_state(shot_action_state));
                 let sprite_pos = entity.element_data().position_map();
                 let hotspot = entity.element_data().sprite.get_point(shoot_anim, dir_u16);
                 match hotspot {
@@ -4683,6 +4695,22 @@ mod tests {
             shoot_mode_from_action_state(ActionState::AimingWithBowDown),
             ShootMode::Down
         ));
+    }
+
+    #[test]
+    fn bow_point_order_types_are_non_anonymous_cxx_compute_bow_point_ids() {
+        assert_eq!(
+            bow_point_order_type_for_mode(ShootMode::Normal),
+            OrderType::ShootingWithBow
+        );
+        assert_eq!(
+            bow_point_order_type_for_mode(ShootMode::Long),
+            OrderType::ShootingWithBowUp
+        );
+        assert_eq!(
+            bow_point_order_type_for_mode(ShootMode::Down),
+            OrderType::ShootingWithBowLeaningOut
+        );
     }
 
     #[test]
