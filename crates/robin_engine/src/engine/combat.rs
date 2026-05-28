@@ -508,12 +508,21 @@ impl EngineInner {
         // Arrow sails past silently, no impact sound.
         if victim.is_npc() {
             let is_vip = match victim {
-                Entity::Soldier(s) => assets
+                Entity::Soldier(s) => match assets
                     .profile_manager
                     .soldiers
                     .get(usize::from(s.soldier.soldier_profile_index))
-                    .map(|p| p.vip)
-                    .unwrap_or(false),
+                {
+                    Some(profile) => profile.vip,
+                    None => {
+                        tracing::warn!(
+                            ?victim_id,
+                            profile = ?s.soldier.soldier_profile_index,
+                            "arrow hit classification missing soldier profile; treating victim as protected"
+                        );
+                        return ArrowHitOutcome::PassThrough;
+                    }
+                },
                 _ => false,
             };
             if is_vip {
@@ -522,11 +531,18 @@ impl EngineInner {
         }
 
         // ── (B) Gather shooter / victim camp + kind info ────────────
-        let shooter = self.get_entity(shooter_id);
-        let shooter_is_npc = shooter.map(|s| s.is_npc()).unwrap_or(false);
-        let shooter_is_pc = shooter.map(|s| s.is_pc()).unwrap_or(false);
-        let shooter_is_soldier = shooter.map(|s| s.is_soldier()).unwrap_or(false);
-        let shooter_camp = shooter.map(|s| match s {
+        let Some(shooter) = self.get_entity(shooter_id) else {
+            tracing::warn!(
+                ?victim_id,
+                ?shooter_id,
+                "arrow hit classification missing shooter entity; skipping hit"
+            );
+            return ArrowHitOutcome::PassThrough;
+        };
+        let shooter_is_npc = shooter.is_npc();
+        let shooter_is_pc = shooter.is_pc();
+        let shooter_is_soldier = shooter.is_soldier();
+        let shooter_camp = Some(match shooter {
             Entity::Pc(_) => crate::element::Camp::Royalists,
             Entity::Soldier(s) => s.soldier.cached_camp,
             Entity::Civilian(c) => c.civilian.cached_camp,
@@ -542,11 +558,20 @@ impl EngineInner {
             (shooter_camp, victim_camp),
             (Some(sc), Some(vc)) if sc == vc,
         );
-        let victim_is_pc_with_shield = victim.is_pc()
-            && victim
-                .actor_data()
-                .map(|a| a.action_state.is_shield())
-                .unwrap_or(false);
+        let victim_is_pc_with_shield = if victim.is_pc() {
+            match victim.actor_data() {
+                Some(actor) => actor.action_state.is_shield(),
+                None => {
+                    tracing::warn!(
+                        ?victim_id,
+                        "arrow hit classification PC victim missing actor data"
+                    );
+                    return ArrowHitOutcome::PassThrough;
+                }
+            }
+        } else {
+            false
+        };
         let victim_is_pc_or_soldier = victim.is_pc() || victim.is_soldier();
 
         // ── (C) Find-victim pre-filter ──────────────────────────────
