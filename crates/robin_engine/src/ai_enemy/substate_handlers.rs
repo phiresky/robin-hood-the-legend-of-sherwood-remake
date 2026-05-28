@@ -2654,9 +2654,7 @@ impl EnemyAi {
             // `AttackingSwordfight` matches `EventReachPoint` /
             // `EventDone` / `EventTimer`, clears the emoticon, calls
             // `reconsider_swordfight`, and (if still in the same
-            // substate) says `CombatInsult`.  The emoticon and
-            // combat-insult side effects are not yet ported; the
-            // core reconsider loop is.
+            // substate) says `CombatInsult`.
             //
             // `pending_special_strike` gate: a folded-in special-strike
             // arm — since we don't model SpecialStrike as a distinct
@@ -3355,11 +3353,7 @@ impl EnemyAi {
                                         y: door.point_out.1,
                                         ..dest
                                     };
-                                    // Run to the PointOut position (map exit).
-                                    // We approximate the
-                                    // map-exit sequence element with GoTo.
-                                    self.base
-                                        .go_to(point_out_pos, crate::ai::GotoFlags::RUN, ctx);
+                                    self.base.run_to_map_exit(point_out_pos);
                                 } else {
                                     // Door gone — just lock and deactivate.
                                     self.base.non_script_lock(crate::ai::AiLockFlags::FREEZE);

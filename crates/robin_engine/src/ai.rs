@@ -7411,6 +7411,21 @@ impl AiController {
         self.pending_orders.push(order);
     }
 
+    /// Queue the direct map-exit movement used by
+    /// `SUBSTATE_FLEEING_MERRY_MAN_RUN_TO_LEAVE_MAP` after the NPC
+    /// reaches the reinforcement door. C++ launches an
+    /// `RHSequenceElementMovement(..., RHANIMATION_RUNNING_UPRIGHT,
+    /// pointOut, NULL, 0.f, RHMOVE_MAP)` rather than a regular GoTo.
+    pub fn run_to_map_exit(&mut self, destination: Position) {
+        self.last_goto_destination = destination;
+        self.last_goto_flags = GotoFlags::RUN;
+        self.couldnt_reachpoint = false;
+
+        let mut order = Self::make_move_order(&destination, GotoFlags::RUN);
+        order.move_flags |= crate::sequence::MoveFlags::MAP.bits() as u16;
+        self.pending_orders.push(order);
+    }
+
     /// Low-level movement primitive (go-near variant) — see
     /// [`AiController::go_to`] for the Shape 1 contract caveat. Prefer
     /// `EnemyAi::go_near` / `FriendlyAi::go_near`.
@@ -8925,6 +8940,28 @@ mod tests {
 
         assert!(!ai.already_on_point);
         assert_eq!(ai.take_pending_orders().len(), 1);
+    }
+
+    #[test]
+    fn run_to_map_exit_queues_running_map_movement() {
+        let mut ai = AiController::new(1);
+        let destination = Position {
+            x: 123.0,
+            y: 456.0,
+            sector: SectorHandle::new(7),
+            level: 0,
+        };
+
+        ai.run_to_map_exit(destination);
+        let orders = ai.take_pending_orders();
+
+        assert_eq!(orders.len(), 1);
+        assert_eq!(
+            orders[0].order_type,
+            crate::order::OrderType::RunningUpright
+        );
+        let flags = crate::sequence::MoveFlags::from_bits_truncate(u32::from(orders[0].move_flags));
+        assert!(flags.contains(crate::sequence::MoveFlags::MAP));
     }
 
     fn face_to_ctx(action_state: crate::element::ActionState) -> AiContext {
