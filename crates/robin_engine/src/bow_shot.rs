@@ -1632,7 +1632,9 @@ pub fn begin_bow_shot(
         sequence_manager.push_order_on(seq_id, elem_idx, unequip_order);
     }
 
-    // Face the target immediately.
+    // Face the target via the normal direction-goal path.  C++ sets the
+    // shoot animation's facing at initialization, then freezes the first
+    // frame while Turn() rotates toward it; do not snap instantly here.
     let shooter = entities
         .get_mut(shooter_id.0 as usize)
         .and_then(|s| s.as_mut())
@@ -1640,7 +1642,7 @@ pub fn begin_bow_shot(
     let shooter_pos = shooter.element_data().position_map();
     let dx = tx - shooter_pos.x;
     let dy = ty - shooter_pos.y;
-    shooter.element_data_mut().set_direction_instantly(
+    shooter.element_data_mut().set_direction_goal(
         crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
     );
 
@@ -1694,6 +1696,13 @@ pub fn tick_bow_shots(
     sequence_manager: &mut SequenceManager,
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
+    let target_ground_positions: Vec<Option<ElemPoint2D>> = entities
+        .iter()
+        .map(|slot| {
+            slot.as_ref()
+                .map(|entity| entity.element_data().position_map())
+        })
+        .collect();
 
     for (idx, slot) in entities.iter_mut().enumerate() {
         let entity = match slot {
@@ -1736,6 +1745,23 @@ pub fn tick_bow_shots(
             None => continue,
         };
 
+        let mut direction = direction;
+        let mut frame_progression = crate::sprite::FrameProgression::Default;
+        if is_shoot_order(current_order_type)
+            && let Some(target_id) = shot.target
+            && let Some(Some(target_pos)) = target_ground_positions.get(target_id.0 as usize)
+        {
+            let shooter_pos = entity.element_data().position_map();
+            let dx = target_pos.x - shooter_pos.x;
+            let dy = target_pos.y - shooter_pos.y;
+            entity.element_data_mut().set_direction_goal(
+                crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
+            );
+            if entity.element_data_mut().sprite.position_iface.turn() {
+                frame_progression = crate::sprite::FrameProgression::FrozenFirstFrame;
+            }
+            direction = entity.element_data().direction();
+        }
         let dir_u16 = u16::try_from(direction).unwrap_or(0);
 
         // Drive the current animation through the sprite.
@@ -1752,13 +1778,17 @@ pub fn tick_bow_shots(
         // here we explicitly opt out and synthesize `Done`.
         let elem = entity.element_data_mut();
         let motion = if elem.sprite.scripts.is_empty() {
-            SpriteMotionState::Done
+            if frame_progression == crate::sprite::FrameProgression::FrozenFirstFrame {
+                SpriteMotionState::InProgress
+            } else {
+                SpriteMotionState::Done
+            }
         } else {
             elem.sprite.perform_action(
                 current_order_id,
                 current_order_type,
                 dir_u16,
-                crate::sprite::FrameProgression::Default,
+                frame_progression,
                 false,
             )
         };
@@ -3902,13 +3932,21 @@ mod tests {
         );
 
         assert_eq!(result, BeginShotResult::Started);
-        let direction = entities[0].as_ref().unwrap().element_data().direction();
+        let direction_goal = i16::from(
+            entities[0]
+                .as_ref()
+                .unwrap()
+                .element_data()
+                .sprite
+                .position_iface
+                .get_direction_goal(),
+        );
         assert_eq!(
-            direction,
+            direction_goal,
             crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
         );
         assert_ne!(
-            direction,
+            direction_goal,
             crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
         );
     }
@@ -4818,8 +4856,14 @@ mod tests {
             &mut 1u32,
         );
 
-        let events = tick_bow_shots(&mut entities, &mut sm);
-        assert_eq!(events.fired.len(), 1);
+        let mut fired = Vec::new();
+        for _ in 0..16 {
+            fired.extend(tick_bow_shots(&mut entities, &mut sm).fired);
+            if !fired.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(fired.len(), 1);
         assert_eq!(
             entities[0].as_ref().unwrap().element_data().posture,
             Posture::LeaningOut
