@@ -494,7 +494,20 @@ impl EngineInner {
             self.set_shield_protected(initiator, None);
         }
 
-        // Cancel any pending bow shot.
+        // C++ `EnterSwordFight` calls `ClearShootList()` before the
+        // validity gates. In Rust, repeated PC bow clicks are represented
+        // as pending/postponed `ShootBow` sequence elements.
+        {
+            let resolver = Self::priority_resolver(&self.entities);
+            self.sequence_manager.stop_pending_elements_matching(
+                initiator,
+                crate::element::Command::ShootBow,
+                crate::sequence::SequencePriority::Preference,
+                &resolver,
+            );
+        }
+
+        // Cancel any pending AI bow shot.
         if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(initiator.0 as usize)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {

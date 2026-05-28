@@ -1881,6 +1881,38 @@ fn make_test_pc(posture: crate::element::Posture) -> Entity {
     })
 }
 
+#[test]
+fn enter_swordfight_clears_pending_bow_shot_list() {
+    let mut engine = EngineInner::new();
+    let pc = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let opponent = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+
+    let mut shot = crate::sequence::SequenceElement::new_interaction(
+        1,
+        crate::element::Command::ShootBow,
+        Some(pc),
+        Some(opponent),
+    );
+    shot.priority = crate::sequence::SequencePriority::Preference;
+    let shot_seq = engine.sequence_manager.launch_element(shot);
+    assert!(engine.pc_has_pending_shoot_bow(pc));
+
+    let _ = engine.enter_swordfight(&LevelAssets::new(), pc, opponent, false);
+
+    assert_eq!(
+        engine
+            .sequence_manager
+            .get_element(shot_seq, 0)
+            .unwrap()
+            .state,
+        crate::sequence::SequenceState::Interrupted
+    );
+    assert!(
+        !engine.pc_has_pending_shoot_bow(pc),
+        "C++ EnterSwordFight clears the actor's pending shoot list before validity checks"
+    );
+}
+
 fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     let mut entity = make_test_soldier(crate::element::Posture::Upright);
     let Entity::Soldier(soldier) = &mut entity else {
