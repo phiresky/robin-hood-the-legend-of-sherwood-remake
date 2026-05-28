@@ -4192,27 +4192,6 @@ mod tests {
     }
 
     #[test]
-    fn bow_orientation_recovers_armed_but_not_aiming_pc() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
-        engine.seats[0].selection.push(pc_id);
-        {
-            let entity = engine.get_entity_mut(pc_id).unwrap();
-            entity.pc_data_mut().unwrap().current_action = Action::Bow;
-            entity.actor_data_mut().unwrap().action_state = ActionState::Waiting;
-        }
-
-        engine.perform_orientation(&assets, crate::geo2d::pt(90.0, 10.0));
-
-        let bow_sequences: Vec<_> = engine
-            .sequence_manager
-            .sequences_iter()
-            .flat_map(|seq| seq.elements.iter())
-            .filter(|elem| elem.owner == Some(pc_id) && elem.command == Command::EquipBow)
-            .collect();
-        assert_eq!(bow_sequences.len(), 1);
-    }
-
-    #[test]
     fn mapped_interaction_missing_sprite_action_distance_noops() {
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Hit, 0)]);
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);

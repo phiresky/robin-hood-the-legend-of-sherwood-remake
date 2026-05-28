@@ -2306,6 +2306,126 @@ impl EngineInner {
                         Command::ParryShield => {
                             self.dispatch_parry_shield(owner, seq_id, elem_idx);
                         }
+                        // ── Bow equip / raise / lower ───────────
+                        //
+                        // C++ RHElementActorHuman::Translate appends
+                        // these bow animation orders from the command
+                        // body itself. Some command profiles may have
+                        // already queued transition orders before
+                        // translate; when they have not, push the
+                        // command's own orders here.
+                        Command::EquipBow
+                        | Command::EquipBowDown
+                        | Command::UnequipBow
+                        | Command::RaiseBow
+                        | Command::LowerBow => {
+                            let has_orders_before = self
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .is_some_and(|e| !e.orders.is_empty());
+                            if !has_orders_before {
+                                let posture = self
+                                    .get_entity(owner)
+                                    .unwrap_or_else(|| {
+                                        panic!("bow command owner missing: {owner:?}")
+                                    })
+                                    .element_data()
+                                    .posture;
+                                let anonymous = posture == crate::element::Posture::AnonymousArcher;
+                                let push =
+                                    |engine: &mut EngineInner, ot: crate::order::OrderType| {
+                                        let id = engine.alloc_order_id();
+                                        let mut order = crate::order::Order::new(ot, 0.0, 0.0, id);
+                                        order.compute_direction = false;
+                                        engine
+                                            .sequence_manager
+                                            .push_order_on(seq_id, elem_idx, order);
+                                    };
+
+                                use crate::element::ActionState;
+                                use crate::order::OrderType;
+                                match elem.command {
+                                    Command::EquipBow => {
+                                        if anonymous {
+                                            push(self, OrderType::TransitionEquipBowAnonymous);
+                                            push(self, OrderType::TransitionLoadingBowAnonymous);
+                                        } else {
+                                            push(self, OrderType::TransitionEquipBow);
+                                            push(self, OrderType::TransitionLoadingBow);
+                                        }
+                                        if let Some(elem) =
+                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        {
+                                            elem.action_state_after_transition =
+                                                ActionState::AimingWithBow;
+                                        }
+                                    }
+                                    Command::EquipBowDown => {
+                                        push(self, OrderType::TransitionEquipBow);
+                                        push(self, OrderType::TransitionLoadingBow);
+                                        push(self, OrderType::TransitionLoweringBowLeaningOut);
+                                        if let Some(elem) =
+                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        {
+                                            elem.action_state_after_transition =
+                                                ActionState::AimingWithBowDown;
+                                        }
+                                    }
+                                    Command::UnequipBow => {
+                                        if anonymous {
+                                            push(self, OrderType::TransitionUnloadBowAnonymous);
+                                            push(self, OrderType::TransitionUnequipBowAnonymous);
+                                        } else {
+                                            push(self, OrderType::TransitionUnloadBow);
+                                            push(self, OrderType::TransitionUnequipBow);
+                                        }
+                                        if let Some(elem) =
+                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        {
+                                            elem.action_state_after_transition =
+                                                ActionState::Waiting;
+                                        }
+                                    }
+                                    Command::RaiseBow => {
+                                        if anonymous {
+                                            push(self, OrderType::TransitionRaisingBowAnonymous);
+                                        } else {
+                                            push(self, OrderType::TransitionRaisingBow);
+                                        }
+                                        if let Some(elem) =
+                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        {
+                                            elem.action_state_after_transition =
+                                                ActionState::AimingWithBowUp;
+                                        }
+                                    }
+                                    Command::LowerBow => {
+                                        if anonymous {
+                                            push(self, OrderType::TransitionLoweringBowAnonymous);
+                                        } else {
+                                            push(self, OrderType::TransitionLoweringBow);
+                                        }
+                                        if let Some(elem) =
+                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        {
+                                            elem.action_state_after_transition =
+                                                ActionState::AimingWithBow;
+                                        }
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+
+                            let has_orders = self
+                                .sequence_manager
+                                .get_element(seq_id, elem_idx)
+                                .is_some_and(|e| !e.orders.is_empty());
+                            if has_orders {
+                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            } else {
+                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            }
+                        }
                         // ── Hide behind shield ──────────────────
                         //
                         // 1. Holder must be holding-shield (HOLDING/

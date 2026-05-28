@@ -2736,6 +2736,47 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     );
 }
 
+#[test]
+fn equip_bow_translate_plays_transition_orders() {
+    let mut display = HostDisplayState::default();
+    use crate::element::{ActionState, Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let pc_id = engine.add_entity(make_test_pc(Posture::Upright));
+
+    let elem = SequenceElement::new(1, Command::EquipBow, Some(pc_id));
+    let seq_id = engine.launch_element(elem);
+    engine.ensure_wait_element(pc_id);
+
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let elem = engine
+        .sequence_manager
+        .get_element(seq_id, 0)
+        .expect("EquipBow element still present");
+    assert_eq!(elem.state, SequenceState::InProgress);
+    assert_eq!(
+        elem.action_state_after_transition,
+        ActionState::AimingWithBow
+    );
+    assert!(
+        elem.orders
+            .iter()
+            .any(|order| order.order_type == OrderType::TransitionEquipBow),
+        "EquipBow should queue the take-bow transition"
+    );
+    assert!(
+        elem.orders
+            .iter()
+            .any(|order| order.order_type == OrderType::TransitionLoadingBow),
+        "EquipBow should queue the loading transition"
+    );
+}
+
 // ─── NPC translate dispatch ────────────────────────────────────────
 //
 // The four NPC-specific commands each push a single one-shot

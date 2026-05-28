@@ -761,7 +761,7 @@ impl EngineInner {
     /// (`set_pc_action` collapses the selection to the clicked PC when
     /// `action != NoAction`). The macro-recording short-circuit is enforced
     /// by the sole caller `set_pc_action`.
-    pub(crate) fn manage_input_pre_action_bow(&mut self, assets: &LevelAssets, seat: usize) {
+    fn manage_input_pre_action_bow(&mut self, assets: &LevelAssets, seat: usize) {
         let Some(&pc_id) = self.seats[seat].selection.first() else {
             return;
         };
