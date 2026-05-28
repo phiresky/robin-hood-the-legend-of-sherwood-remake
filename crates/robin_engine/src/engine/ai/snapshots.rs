@@ -22,6 +22,10 @@ use crate::geo2d::{self};
 pub(super) struct PcSnapshot {
     pub(super) id: EntityId,
     pub(super) position: geo2d::Point2D,
+    /// PC viewer eye-point XY. Differs from feet position for
+    /// LeaningOut and lying/dead postures, matching C++
+    /// `ComputeEyesPoint` in `SeesBlip` / bonus discovery.
+    pub(super) eye_position: geo2d::Point2D,
     pub(super) layer: u16,
     pub(super) posture: crate::element::Posture,
     pub(super) action_state: crate::element::ActionState,
@@ -415,6 +419,17 @@ impl EngineInner {
             // (PC as target).  PCs are never riders in the current
             // data model, so pass `false`.
             let pc_ground_z = pc.element.position().z;
+            let emergency_lying = pc
+                .element
+                .sprite
+                .position_iface
+                .is_using_emergency_lying_box();
+            let eye_position = crate::stealth::eye_point_xy(
+                pos,
+                pc.element.posture,
+                pc.element.direction(),
+                emergency_lying,
+            );
             let eye_z = pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture, false);
             let detection_z =
                 pc_ground_z + crate::stealth::detection_z_for_posture(pc.element.posture, false);
@@ -446,6 +461,7 @@ impl EngineInner {
             pc_snapshots.push(PcSnapshot {
                 id: pc_id,
                 position: pos,
+                eye_position,
                 layer,
                 posture: pc.element.posture,
                 action_state: pc.actor.action_state,

@@ -329,8 +329,8 @@ impl EngineInner {
                     if pc.layer != blip_layer {
                         continue;
                     }
-                    let dx = blip_eye_xy.x - pc.position.x;
-                    let dy = (blip_eye_xy.y - pc.position.y)
+                    let dx = blip_eye_xy.x - pc.eye_position.x;
+                    let dy = (blip_eye_xy.y - pc.eye_position.y)
                         * crate::position_interface::INVERSE_ASPECT_RATIO;
                     let dz = blip_eye_z - pc.eye_z;
 
@@ -354,7 +354,7 @@ impl EngineInner {
                     if in_range
                         && crate::sight_obstacle::is_reachable_3d(
                             sight_obstacles,
-                            [pc.position.x, pc.position.y, pc.eye_z],
+                            [pc.eye_position.x, pc.eye_position.y, pc.eye_z],
                             [blip_eye_xy.x, blip_eye_xy.y, blip_eye_z],
                             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                         )
@@ -421,8 +421,8 @@ impl EngineInner {
                     if pc.layer != blip_layer {
                         continue;
                     }
-                    let dx = blip_eye_xy.x - pc.position.x;
-                    let dy = (blip_eye_xy.y - pc.position.y)
+                    let dx = blip_eye_xy.x - pc.eye_position.x;
+                    let dy = (blip_eye_xy.y - pc.eye_position.y)
                         * crate::position_interface::INVERSE_ASPECT_RATIO;
                     let dz = blip_eye_z - pc.eye_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
@@ -434,7 +434,7 @@ impl EngineInner {
                     if dist_3d_sq < super_det * svr * svr
                         && crate::sight_obstacle::is_reachable_3d(
                             sight_obstacles,
-                            [pc.position.x, pc.position.y, pc.eye_z],
+                            [pc.eye_position.x, pc.eye_position.y, pc.eye_z],
                             [blip_eye_xy.x, blip_eye_xy.y, blip_eye_z],
                             crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                         )

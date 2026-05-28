@@ -5,6 +5,7 @@
 //! `stealth::execute_*` to get the animation + posture result.
 
 use crate::element::{ActionState, Command, Posture};
+use crate::element_kinds::{CRAWLING_OFFSETS_X, CRAWLING_OFFSETS_Y};
 use crate::order::OrderType;
 
 // ─── Constants ─────────────────────────────────────────────────────
@@ -532,6 +533,32 @@ pub fn detection_point_xy(
     crate::geo2d::pt(ground.x + sx, ground.y + sy)
 }
 
+/// Apply the posture-dependent eye-point XY shift to a ground-plane
+/// position. This is the XY half of C++ `ComputeEyesPoint`.
+pub fn eye_point_xy(
+    ground: crate::geo2d::Point2D,
+    posture: Posture,
+    direction: i16,
+    emergency_lying: bool,
+) -> crate::geo2d::Point2D {
+    match posture {
+        Posture::LeaningOut => detection_point_xy(ground, posture, direction),
+        Posture::Lying
+        | Posture::Dead
+        | Posture::DeadBack
+        | Posture::StuckUnderNet
+        | Posture::Tied => {
+            let dir = direction.rem_euclid(16) as usize;
+            let scale = if emergency_lying { 0.5 } else { 1.0 };
+            crate::geo2d::pt(
+                ground.x + scale * CRAWLING_OFFSETS_X[dir],
+                ground.y + scale * CRAWLING_OFFSETS_Y[dir],
+            )
+        }
+        _ => ground,
+    }
+}
+
 /// Select the appropriate damage animation variant based on posture.
 ///
 /// Returns `true` when the crouched variants of the hit/dying
@@ -747,6 +774,23 @@ mod tests {
         assert!((shifted.y - 200.0).abs() < 1e-3);
         // Non-LeaningOut postures pass through.
         let same = detection_point_xy(ground, Posture::Upright, 4);
+        assert_eq!(same.x, ground.x);
+        assert_eq!(same.y, ground.y);
+    }
+
+    #[test]
+    fn eye_point_xy_applies_crawling_offsets() {
+        use crate::geo2d::pt;
+        let ground = pt(100.0, 200.0);
+        let shifted = eye_point_xy(ground, Posture::Lying, 4, false);
+        assert!((shifted.x - 116.0).abs() < 1e-3);
+        assert!((shifted.y - 200.0).abs() < 1e-3);
+
+        let emergency = eye_point_xy(ground, Posture::Lying, 4, true);
+        assert!((emergency.x - 108.0).abs() < 1e-3);
+        assert!((emergency.y - 200.0).abs() < 1e-3);
+
+        let same = eye_point_xy(ground, Posture::Upright, 4, false);
         assert_eq!(same.x, ground.x);
         assert_eq!(same.y, ground.y);
     }
