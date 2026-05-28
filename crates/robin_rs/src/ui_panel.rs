@@ -110,7 +110,6 @@ const ACTION_SUB_ID_UNSELECTED: usize = 1;
 const ACTION_SUB_ID_FOCUSED: usize = 2;
 const ACTION_SUB_ID_SELECTED: usize = 3;
 const ACTION_SUB_ID_FOCUSED_SELECTED: usize = 4;
-const ACTION_SUB_ID_RDO_FOCUSED_SECOND: usize = 5;
 
 fn action_button_visual(
     is_active: bool,
@@ -479,24 +478,15 @@ impl PortraitCache {
                             // Fallback: pressed surface unavailable, will use normal
                         }
                     }
-                    // Focused selected state. The portrait action resources
-                    // are shipped as seven-frame `RDO` radio resources. The
-                    // extra focused-second image is the only visibly distinct
-                    // active-hover frame for Robin's bow icon; fall back to
-                    // the classic radio focused-selected sub-picture for
-                    // resources without the extra RDO frame.
-                    let focused_selected_pic =
-                        match res.get_picture(*res_id, ACTION_SUB_ID_RDO_FOCUSED_SECOND) {
-                            Ok(pic) => Some(pic),
-                            Err(_) => res
-                                .get_picture(*res_id, ACTION_SUB_ID_FOCUSED_SELECTED)
-                                .ok(),
-                        };
-                    match focused_selected_pic {
-                        Some(pic) => {
+                    // Focused selected state. C++ portrait actions are
+                    // `RHWidgetRadioButton`, which uses classic radio state
+                    // ids even when the backing resource contains seven RDO
+                    // frames.
+                    match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED_SELECTED) {
+                        Ok(pic) => {
                             hover_pressed[i] = Some(pic_to_surface(renderer, pic));
                         }
-                        None => {
+                        Err(_) => {
                             // Fallback: focused selected surface unavailable.
                         }
                     }
@@ -2746,7 +2736,6 @@ mod tests {
         assert_eq!(ACTION_SUB_ID_FOCUSED, 2);
         assert_eq!(ACTION_SUB_ID_SELECTED, 3);
         assert_eq!(ACTION_SUB_ID_FOCUSED_SELECTED, 4);
-        assert_eq!(ACTION_SUB_ID_RDO_FOCUSED_SECOND, 5);
     }
 
     // The CharacterKind resource-lookup and sub-id tests live in
