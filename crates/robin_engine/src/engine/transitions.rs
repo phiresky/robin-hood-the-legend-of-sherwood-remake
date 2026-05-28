@@ -1933,6 +1933,7 @@ fn make_final_action_transition_soldier(
         match action_after {
             ActionState::Waiting => {
                 push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionEquipBow);
+                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionLoadingBow);
                 push_anim_order(
                     engine,
                     seq_id,
@@ -2259,6 +2260,33 @@ mod tests {
             orders.contains(&OrderType::TransitionLeaningOutWaitingAlerted),
             "expected LeaningOut→WaitingAlerted unstick, got {:?}",
             orders
+        );
+    }
+
+    #[test]
+    fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_soldier(P::Upright, AS::Waiting, true));
+        let (seq, idx) = launch(&mut engine, owner, Command::EquipBowDown);
+
+        let ok = dispatch_make_final_action_transition(
+            &mut engine,
+            seq,
+            idx,
+            owner,
+            EA::MUST_BE_AIMING_BOW_DOWN,
+        );
+        assert!(ok);
+
+        let orders = orders_for(&engine, seq, idx);
+        assert_eq!(
+            orders,
+            vec![
+                OrderType::TransitionEquipBow,
+                OrderType::TransitionLoadingBow,
+                OrderType::TransitionLoweringBowLeaningOut,
+            ],
+            "C++ soldier bow-down entry calls Translate(EQUIP_BOW) before LOWER_BOW_LEAN_OUT"
         );
     }
 

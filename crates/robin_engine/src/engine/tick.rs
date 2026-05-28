@@ -4626,6 +4626,7 @@ impl EngineInner {
                         | Command::StopSleep
                         | Command::LowerBowLeanOut
                         | Command::RaiseBowLeanOut => {
+                            let command = elem.command;
                             // Push `compute_direction = false`
                             // transition orders onto the owning
                             // sequence element — these are one- and
@@ -4638,7 +4639,7 @@ impl EngineInner {
                                     .sequence_manager
                                     .push_order_on(seq_id, elem_idx, order);
                             };
-                            match elem.command {
+                            match command {
                                 Command::StartMenace => {
                                     push(self, crate::order::OrderType::TransitionRaisingSword);
                                     push(
@@ -4675,7 +4676,14 @@ impl EngineInner {
                                 }
                                 _ => unreachable!(),
                             }
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            if matches!(
+                                command,
+                                Command::LowerBowLeanOut | Command::RaiseBowLeanOut
+                            ) {
+                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            } else {
+                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            }
                         }
 
                         // ── DrinkAle / Take ────────────────────
@@ -8115,9 +8123,10 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 mod bow_command_body_parity_tests {
     use super::*;
     use crate::element::{
-        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, PcData,
-        Posture,
+        ActionState, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, Entity, HumanData,
+        NpcData, PcData, Posture, SoldierData,
     };
+    use crate::order::OrderType;
     use crate::sequence::{SequenceElement, SequenceId, SequenceState};
 
     fn make_aiming_pc(action_state: ActionState) -> Entity {
@@ -8147,6 +8156,54 @@ mod bow_command_body_parity_tests {
         let mut dev = DevState::default();
         engine.perform_hourglass(&mut display, &assets, &mut dev);
         engine
+    }
+
+    fn make_bow_soldier(posture: Posture, action_state: ActionState) -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                action_state,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        })
+    }
+
+    #[test]
+    fn bow_lean_out_commands_keep_transition_order_live() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        let soldier_id = engine.add_entity(make_bow_soldier(
+            Posture::Upright,
+            ActionState::AimingWithBow,
+        ));
+        let seq_id = engine.launch_element(SequenceElement::new(
+            1,
+            Command::LowerBowLeanOut,
+            Some(soldier_id),
+        ));
+
+        let mut display = HostDisplayState::default();
+        let mut dev = DevState::default();
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+        let elem = engine.sequence_manager.get_element(seq_id, 0).unwrap();
+        assert_eq!(
+            elem.state,
+            SequenceState::InProgress,
+            "C++ LOWER_BOW_LEAN_OUT keeps its translated transition order live"
+        );
+        assert_eq!(
+            elem.current_order().map(|order| order.order_type),
+            Some(OrderType::TransitionLoweringBowLeaningOut)
+        );
     }
 
     #[test]
