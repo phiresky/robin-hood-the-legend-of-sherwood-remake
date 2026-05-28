@@ -7290,13 +7290,16 @@ impl AiController {
         //   - `!likes_to_sit_around && !special_action`
         //   - animation state ∈ {WAITING_UPRIGHT, WAITING_ALERTED,
         //                         NONANIMATION_END}
-        // We approximate the animation-state gate with "not
-        // swordfighting and upright posture" — same approximation the
-        // facing short-circuit uses at `face_position_impl`. When the
-        // gate fires, `end_think` drains `already_on_point` into a
-        // `Think(EVENT_REACHPOINT)` re-entry.
-        let idle_upright = !ctx.is_swordfighting && ctx.posture == crate::element::Posture::Upright;
-        let may_short_circuit = idle_upright && !self.likes_to_sit_around && !self.special_action;
+        // When the gate fires, `end_think` drains `already_on_point`
+        // into a `Think(EVENT_REACHPOINT)` re-entry.
+        let idle_for_goto_short_circuit = matches!(
+            ctx.self_animation,
+            crate::order::OrderType::WaitingUpright
+                | crate::order::OrderType::WaitingAlerted
+                | crate::order::OrderType::NonanimationEnd
+        );
+        let may_short_circuit =
+            idle_for_goto_short_circuit && !self.likes_to_sit_around && !self.special_action;
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.already_on_point = true;
             return;
@@ -8883,6 +8886,45 @@ mod tests {
         assert!(order.find_accessible);
         assert!(order.ask_obstacle);
         assert!(!order.compute_direction);
+    }
+
+    fn goto_short_circuit_ctx(animation: crate::order::OrderType) -> AiContext {
+        AiContext {
+            position: Position {
+                x: 100.0,
+                y: 200.0,
+                sector: SectorHandle::new(1),
+                level: 0,
+            },
+            posture: crate::element::Posture::Upright,
+            self_animation: animation,
+            ..AiContext::default()
+        }
+    }
+
+    #[test]
+    fn goto_already_on_point_uses_original_animation_gate() {
+        for animation in [
+            crate::order::OrderType::WaitingUpright,
+            crate::order::OrderType::WaitingAlerted,
+            crate::order::OrderType::NonanimationEnd,
+        ] {
+            let ctx = goto_short_circuit_ctx(animation);
+            let mut ai = AiController::new(1);
+
+            ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
+
+            assert!(ai.already_on_point);
+            assert!(ai.take_pending_orders().is_empty());
+        }
+
+        let ctx = goto_short_circuit_ctx(crate::order::OrderType::WaitingUprightBored);
+        let mut ai = AiController::new(1);
+
+        ai.go_to(ctx.position, GotoFlags::empty(), &ctx);
+
+        assert!(!ai.already_on_point);
+        assert_eq!(ai.take_pending_orders().len(), 1);
     }
 
     fn face_to_ctx(action_state: crate::element::ActionState) -> AiContext {
