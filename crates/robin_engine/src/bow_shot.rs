@@ -413,6 +413,7 @@ fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
+            entity.element_data_mut().posture = Posture::LeaningOut;
             Some(ActionState::AimingWithBowDown)
         }
         OrderType::TransitionRaisingBowLeaningOut
@@ -421,6 +422,7 @@ fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
+            entity.element_data_mut().posture = Posture::Upright;
             Some(ActionState::AimingWithBow)
         }
         OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
@@ -1833,6 +1835,11 @@ pub fn tick_bow_shots(
             // animation continues until Terminated.
             let shot_action_state = actor.action_state;
             actor.action_state = ActionState::AimingWithBow;
+            if current_order_type == OrderType::ShootingWithBowLeaningOut {
+                entity.element_data_mut().posture = Posture::LeaningOut;
+            } else if entity.element_data().posture != Posture::AnonymousArcher {
+                entity.element_data_mut().posture = Posture::Upright;
+            }
 
             // Compute sprite hand anchor point for accurate bow origin.
             // The sprite returns a relative hotspot offset; we add the
@@ -4758,6 +4765,73 @@ mod tests {
             pc.actor_data().unwrap().action_state,
             ActionState::Waiting,
             "C++ TransitionUnequipBow sets Waiting on RHMOTION_START"
+        );
+    }
+
+    #[test]
+    fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
+        let mut soldier = make_soldier(0.0, 0.0);
+        soldier.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
+
+        apply_bow_transition_state_side_effect(
+            &mut soldier,
+            OrderType::TransitionLoweringBowLeaningOut,
+            SpriteMotionState::Done,
+        );
+        assert_eq!(soldier.element_data().posture, Posture::LeaningOut);
+        assert_eq!(
+            soldier.actor_data().unwrap().action_state,
+            ActionState::AimingWithBowDown
+        );
+
+        apply_bow_transition_state_side_effect(
+            &mut soldier,
+            OrderType::TransitionRaisingBowLeaningOut,
+            SpriteMotionState::Done,
+        );
+        assert_eq!(soldier.element_data().posture, Posture::Upright);
+        assert_eq!(
+            soldier.actor_data().unwrap().action_state,
+            ActionState::AimingWithBow
+        );
+    }
+
+    #[test]
+    fn down_bow_shot_release_keeps_leaning_out_posture() {
+        let mut pc = make_pc(0.0, 0.0);
+        pc.element_data_mut().posture = Posture::LeaningOut;
+        let mut target = make_soldier(50.0, 0.0);
+        target.element_data_mut().posture = Posture::LeaningOut;
+        let mut entities: Vec<Option<Entity>> = vec![Some(pc), Some(target)];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+
+        begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            Some(ShootMode::Down),
+            &mut 1u32,
+        );
+
+        let events = tick_bow_shots(&mut entities, &mut sm);
+        assert_eq!(events.fired.len(), 1);
+        assert_eq!(
+            entities[0].as_ref().unwrap().element_data().posture,
+            Posture::LeaningOut
+        );
+        assert_eq!(
+            entities[0]
+                .as_ref()
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::AimingWithBow
         );
     }
 
