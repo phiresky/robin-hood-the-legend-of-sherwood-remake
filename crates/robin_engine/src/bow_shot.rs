@@ -1818,9 +1818,17 @@ pub fn tick_bow_shots(
 
             // Shoot action-done pulse — arrow is released, but the
             // animation continues until Terminated.
-            let shot_mode = shot
-                .shoot_mode
-                .unwrap_or_else(|| shoot_mode_from_action_state(actor.action_state));
+            let shot_mode = match shot.shoot_mode {
+                Some(mode) => mode,
+                None => {
+                    tracing::warn!(
+                        shooter = idx,
+                        action_state = ?actor.action_state,
+                        "Bow release using action-state fallback: active shot missing resolved shoot mode"
+                    );
+                    shoot_mode_from_action_state(actor.action_state)
+                }
+            };
             actor.action_state = ActionState::AimingWithBow;
             if current_order_type == OrderType::ShootingWithBowLeaningOut {
                 entity.element_data_mut().posture = Posture::LeaningOut;
