@@ -1807,6 +1807,11 @@ fn make_final_action_transition_human(
             OrderType::TransitionLoadingBow,
         )
     };
+    let raise_bow = if is_anonymous {
+        OrderType::TransitionRaisingBowAnonymous
+    } else {
+        OrderType::TransitionRaisingBow
+    };
 
     if flags.contains(EA::MUST_BE_AIMING_BOW) {
         match action_after {
@@ -1842,11 +1847,11 @@ fn make_final_action_transition_human(
                     push_anim_order(engine, seq_id, elem_idx, equip_bow);
                     push_anim_order(engine, seq_id, elem_idx, loading_bow);
                 }
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionRaisingBow);
+                push_anim_order(engine, seq_id, elem_idx, raise_bow);
             }
             ActionState::AimingWithBowUp => {}
             ActionState::AimingWithBow | ActionState::AimingWithBowDown => {
-                push_anim_order(engine, seq_id, elem_idx, OrderType::TransitionRaisingBow);
+                push_anim_order(engine, seq_id, elem_idx, raise_bow);
             }
             other => tracing::warn!(
                 ?other,
@@ -2211,6 +2216,27 @@ mod tests {
             .unwrap()
             .posture_after_transition;
         assert_eq!(posture_after, P::Upright);
+    }
+
+    #[test]
+    fn anonymous_archer_aiming_bow_up_transition_uses_anonymous_raise() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(make_pc(P::AnonymousArcher, AS::Waiting));
+        let (seq, idx) = launch(&mut engine, owner, Command::LowerBow);
+
+        let ok = engine.generate_transition(owner, seq, idx);
+        assert!(ok);
+
+        let orders = orders_for(&engine, seq, idx);
+        assert_eq!(
+            orders,
+            vec![
+                OrderType::TransitionEquipBowAnonymous,
+                OrderType::TransitionLoadingBowAnonymous,
+                OrderType::TransitionRaisingBowAnonymous,
+            ],
+            "C++ Translate(RAISE_BOW) preserves anonymous archer variants during final bow-up transitions"
+        );
     }
 
     /// Soldier with MOVE from LeaningOut queues the unstick transition.
