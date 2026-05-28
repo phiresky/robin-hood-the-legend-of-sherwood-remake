@@ -1632,11 +1632,11 @@ impl EnemyAi {
             * crate::position_interface::INVERSE_ASPECT_RATIO;
         let dz = target_eye_z - viewer_eye_z;
         let sq_distance = dx * dx + dy * dy + dz * dz;
-        if sq_distance > ctx.sq_standard_view_radius {
+        if sq_distance > ctx.sq_self_view_radius {
             tracing::trace!(
                 target,
                 sq_distance,
-                sq_view_radius = ctx.sq_standard_view_radius,
+                sq_view_radius = ctx.sq_self_view_radius,
                 detecting = false,
                 "is_detecting_360_degrees: out of range"
             );
@@ -1654,7 +1654,7 @@ impl EnemyAi {
         tracing::trace!(
             target,
             sq_distance,
-            sq_view_radius = ctx.sq_standard_view_radius,
+            sq_view_radius = ctx.sq_self_view_radius,
             los_clear,
             detecting = los_clear,
             "is_detecting_360_degrees"
@@ -1674,13 +1674,9 @@ impl EnemyAi {
     ///   5. dot(view, forward) < 0 (target is behind me) → false
     ///   6. full-ray LOS + spherical-radius check → final answer
     ///
-    /// Steps 1-5 are fully implementable here; step 6 needs sight
-    /// obstacles + obstacle-specific half-radius which live on
-    /// `ai_vision`.  We substitute a conservative "within standard
-    /// view radius" gate for step 6 — the spherical/lightened check
-    /// only shrinks the radius further, so our superset is acceptable
-    /// for the AI's decision-arm gates (re-face, battle-decisions vs
-    /// overview).
+    /// We do not yet have `ComputeViewRadius(positionViewer,
+    /// pActor->GetObstacle())`, so step 6 still uses the live real
+    /// radius as the upper bound before the final opaque LOS test.
     fn is_detecting_180_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
         // Step 1: viewer in a building — always returns false.
         if ctx.in_building {
@@ -1699,13 +1695,29 @@ impl EnemyAi {
             return false;
         }
 
+        let viewer_eye = crate::stealth::eye_point_xy(
+            crate::geo2d::pt(ctx.position.x, ctx.position.y),
+            ctx.posture,
+            ctx.direction as i16,
+            false,
+        );
+        let viewer_eye_z =
+            ctx.elevation + crate::stealth::eye_z_for_posture(ctx.posture, ctx.self_is_rider);
+        let target_detection_xy = crate::stealth::detection_point_xy(
+            crate::geo2d::pt(view.position.x, view.position.y),
+            view.posture,
+            view.direction as i16,
+        );
+        let target_detection_z =
+            view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+
         // Aspect-ratio-stretched view vector (`INVERSE_ASPECT_RATIO`
-        // on the Y component).
-        let dx = view.position.x - ctx.position.x;
-        let dy =
-            (view.position.y - ctx.position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+        // on the Y component), from viewer eye to target detection point.
+        let dx = target_detection_xy.x - viewer_eye.x;
+        let dy = (target_detection_xy.y - viewer_eye.y)
+            * crate::position_interface::INVERSE_ASPECT_RATIO;
         let sq_distance = dx * dx + dy * dy;
-        if sq_distance > ctx.sq_standard_view_radius {
+        if sq_distance > ctx.sq_self_view_radius {
             return false;
         }
 
@@ -1730,9 +1742,16 @@ impl EnemyAi {
             return false;
         }
 
-        // Step 6 (conservative): already passed the standard-radius
-        // gate above; the spherical/lightened check only shrinks it.
-        true
+        crate::sight_obstacle::is_reachable_3d(
+            ctx.obstacle_list(),
+            [viewer_eye.x, viewer_eye.y, viewer_eye_z],
+            [
+                target_detection_xy.x,
+                target_detection_xy.y,
+                target_detection_z,
+            ],
+            crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+        )
     }
 
     /// Collects visible child-civilian NPCs (alive, conscious, in
@@ -3701,6 +3720,7 @@ mod tests {
         let ctx = AiContext {
             position: me,
             sq_standard_view_radius: 500.0 * 500.0,
+            sq_self_view_radius: 500.0 * 500.0,
             move_box: crate::geo2d::BBox2D::from_coords(-5.0, -5.0, 5.0, 5.0),
             entity_views: Arc::new(views),
             ..AiContext::default()
@@ -3750,6 +3770,7 @@ mod tests {
         let ctx = AiContext {
             position: me,
             sq_standard_view_radius: 500.0 * 500.0,
+            sq_self_view_radius: 500.0 * 500.0,
             move_box: crate::geo2d::BBox2D::from_coords(-5.0, -5.0, 5.0, 5.0),
             entity_views: Arc::new(views),
             ..AiContext::default()

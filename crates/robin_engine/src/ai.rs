@@ -3368,6 +3368,11 @@ pub struct AiContext {
     /// cover-position acceptance for archers behind shield bearers (the
     /// cover point must be within view radius of the primary target).
     pub sq_standard_view_radius: f32,
+    /// Square of this NPC's live `mViewParameters.uwRealRadius`.
+    /// Detection helpers use this instead of the level standard radius
+    /// because alertness, drunk view, lean-out, and scripts can mutate
+    /// the real radius independently.
+    pub sq_self_view_radius: f32,
     /// Entity elevation (Z coordinate). Used by archer bow-down/bow-up
     /// decisions.
     pub elevation: f32,
@@ -3587,7 +3592,7 @@ impl AiContext {
     /// / waypoint from here?".
     /// Steps:
     /// 1. viewer in a building → false
-    /// 2. stretched-Y 3D distance vs. `sq_standard_view_radius`
+    /// 2. stretched-Y 3D distance vs. `sq_self_view_radius`
     /// 3. opaque-LOS via the context-only LOS helper.
     pub fn is_detecting_point_360(&self, pt: crate::position_interface::Point3D) -> bool {
         if self.in_building {
@@ -3605,7 +3610,7 @@ impl AiContext {
         let dy = (pt.y - viewer_eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
         let dz = pt.z - viewer_eye_z;
         let sq_distance = dx * dx + dy * dy + dz * dz;
-        if sq_distance > self.sq_standard_view_radius {
+        if sq_distance > self.sq_self_view_radius {
             return false;
         }
         crate::sight_obstacle::is_reachable_3d(
@@ -9285,6 +9290,7 @@ mod tests {
             direction: 4,
             posture: crate::element::Posture::LeaningOut,
             sq_standard_view_radius: 11.0 * 11.0,
+            sq_self_view_radius: 11.0 * 11.0,
             ..AiContext::default()
         };
 

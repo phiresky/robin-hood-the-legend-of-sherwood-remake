@@ -3588,8 +3588,7 @@ impl EnemyAi {
                     // walks same-camp soldiers and checks
                     // is_take_money || is_fight_for_money (minus
                     // MoneyReactiontime), not self, and
-                    // `is_detecting_180_degrees`.  We approximate 180°
-                    // with the 360° gate we use elsewhere.
+                    // `is_detecting_180_degrees`.
                     let another_guy_approaching =
                         self.there_is_another_guy_in_sight_approaching_to_money(ctx, tick);
                     if another_guy_approaching {

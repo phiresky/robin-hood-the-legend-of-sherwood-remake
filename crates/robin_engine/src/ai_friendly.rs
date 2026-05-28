@@ -2682,6 +2682,7 @@ mod tests {
             camp: Camp::Royalists,
             // Large enough so the alerted soldier is "detected 360°"
             sq_standard_view_radius: 1_000_000.0,
+            sq_self_view_radius: 1_000_000.0,
             entity_views: std::sync::Arc::new(views),
             ..AiContext::default()
         };
@@ -2735,6 +2736,7 @@ mod tests {
             },
             camp: Camp::Royalists,
             sq_standard_view_radius: 1.0, // too small for short-circuit
+            sq_self_view_radius: 1.0,
             entity_views: std::sync::Arc::new(views),
             ..AiContext::default()
         };
@@ -2779,6 +2781,7 @@ mod tests {
             },
             camp: Camp::Royalists,
             sq_standard_view_radius: 1.0,
+            sq_self_view_radius: 1.0,
             entity_views: std::sync::Arc::new(views),
             ..AiContext::default()
         };

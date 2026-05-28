@@ -159,11 +159,10 @@ impl EngineInner {
     /// rotation offset (-8..=+8), says the wasp-sting remark, and
     /// fires the `EventWasp` AI stimulus.
     ///
-    /// We queue a single `GettingFreeFromWasp` animation rather than
-    /// `bee_time` cycles because the sprite animation is itself
-    /// `bee_time` frames long and the order-chaining path isn't
-    /// ported — the observable "struggle duration" is approximated by
-    /// the animation's own frame count.
+    /// The original queues `bee_time` struggle orders, doubled while
+    /// smelling apple. The order-completion side channel below re-arms
+    /// each cycle and keeps the sequence element in progress until the
+    /// last cycle finishes.
     pub(super) fn dispatch_receive_wasp_sting(
         &mut self,
         assets: &LevelAssets,

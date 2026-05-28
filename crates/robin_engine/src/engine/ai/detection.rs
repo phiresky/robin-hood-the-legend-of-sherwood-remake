@@ -2288,6 +2288,8 @@ impl EngineInner {
                         move_box: *s.element.sprite.position_iface.get_move_box(),
                         remaining_arrows: s.npc.number_of_arrows,
                         sq_standard_view_radius: sq_view_radius,
+                        sq_self_view_radius: (s.npc.view_radius as f32)
+                            * (s.npc.view_radius as f32),
                         elevation: s.element.position().z,
                         self_is_beggar: false,
                         self_is_child: false,

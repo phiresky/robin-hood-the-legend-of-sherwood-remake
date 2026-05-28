@@ -357,6 +357,10 @@ pub(super) fn build_ai_context_from_entity(
         .npc_data()
         .and_then(|npc| npc.ai_brain.enemy())
         .is_some_and(|enemy| enemy.forced_attentive);
+    let self_view_radius = entity
+        .npc_data()
+        .map(|npc| npc.view_radius as f32)
+        .unwrap_or(standard_view_polygon_radius as f32);
     AiContext {
         position: crate::ai::Position {
             x: elem.position_map().x,
@@ -382,6 +386,7 @@ pub(super) fn build_ai_context_from_entity(
         remaining_arrows,
         sq_standard_view_radius: (standard_view_polygon_radius as f32)
             * (standard_view_polygon_radius as f32),
+        sq_self_view_radius: self_view_radius * self_view_radius,
         elevation: if actor.is_some() {
             entity.position_iface().get_elevation()
         } else {
@@ -5336,20 +5341,14 @@ impl EngineInner {
         };
         // `nearby_civilians_panic` builds an aspect-ratio-stretched
         // axis-aligned box (radius, radius * ASPECT_RATIO) around
-        // self, then walks every NPC asking
-        //   is_civilian() && box.is_inside(p) && is_detecting_360_degrees(self)
-        // `is_detecting_360_degrees` additionally requires both
-        // actors to be active-and-outside-building and clamps
-        // distance via stretched-Y on the civilian's `real_radius`
-        // (we approximate with the standard view radius, matching
-        // the existing `EnemyAi::is_detecting_360_degrees` helper).
-        // LOS via `FastFindGrid::is_reachable` is skipped for the
-        // same reason as the sibling helper — `AiContext` doesn't
-        // carry the engine sight-obstacle list.
+        // self, then walks every NPC asking:
+        //   is_civilian() && box.is_inside(p) && p->is_detecting_360_degrees(self)
+        // The second-stage detection uses the civilian's upright eye
+        // point, the source actor's detection point, the civilian's
+        // live view radius, and opaque 3D LOS.
         let radius_y = view_radius * crate::position_interface::ASPECT_RATIO;
-        let sq_view_radius = view_radius * view_radius;
 
-        let source_pos = {
+        let (source_pos, source_detection_point) = {
             let Some(Some(entity)) = self.entities.get(source.0 as usize) else {
                 return;
             };
@@ -5364,7 +5363,13 @@ impl EngineInner {
             {
                 return;
             }
-            entity.element_data().position_map().to_geo_point()
+            let Some(detection_point) = entity.compute_detection_point() else {
+                return;
+            };
+            (
+                entity.element_data().position_map().to_geo_point(),
+                detection_point,
+            )
         };
 
         let panic_center = crate::ai::Position {
@@ -5383,7 +5388,10 @@ impl EngineInner {
         for npc_id in npc_ids {
             let obstacles = obstacles_owned.list();
             let eligible = {
-                let Some(Some(Entity::Civilian(c))) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+                    continue;
+                };
+                let Entity::Civilian(c) = entity else {
                     continue;
                 };
                 if c.npc.life_points <= 0 || c.human.unconscious {
@@ -5404,23 +5412,34 @@ impl EngineInner {
                 if dx.abs() > view_radius || dy.abs() > radius_y {
                     continue;
                 }
-                // IsDetecting360Degrees stretched-Y distance gate:
-                // dx² + (dy * INVERSE_ASPECT_RATIO)² <= R².
-                let dy_stretch = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
-                if dx * dx + dy_stretch * dy_stretch > sq_view_radius {
+                let Some(viewer_eye) =
+                    entity.compute_eyes_point(Some(crate::element::Posture::Upright))
+                else {
+                    continue;
+                };
+                // IsDetecting360Degrees(actor) stretched-Y 3D distance
+                // gate: civilian upright eye to source detection point,
+                // clamped by the civilian's live real view radius.
+                let dx = source_detection_point.x - viewer_eye.x;
+                let dy = (source_detection_point.y - viewer_eye.y)
+                    * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let dz = source_detection_point.z - viewer_eye.z;
+                let sq_view_radius = {
+                    let radius = c.npc.view_radius as f32;
+                    radius * radius
+                };
+                if dx * dx + dy * dy + dz * dz > sq_view_radius {
                     continue;
                 }
-                // `FastFindGrid::is_reachable` LOS gate: a civilian
-                // behind an opaque obstacle does not panic.
-                // Civilian's layer drives the layer filter.
-                let viewer = crate::geo2d::pt(p.x, p.y);
-                let target = crate::geo2d::pt(source_pos.x, source_pos.y);
-                crate::ai_vision::los_clear_spatial(
-                    viewer,
-                    target,
-                    c.element.layer(),
+                crate::sight_obstacle::is_reachable_3d(
                     obstacles,
-                    &self.fast_grid,
+                    [viewer_eye.x, viewer_eye.y, viewer_eye.z],
+                    [
+                        source_detection_point.x,
+                        source_detection_point.y,
+                        source_detection_point.z,
+                    ],
+                    crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                 )
             };
             if !eligible {
