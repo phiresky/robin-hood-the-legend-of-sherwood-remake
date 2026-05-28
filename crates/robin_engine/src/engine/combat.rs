@@ -152,8 +152,8 @@ impl EngineInner {
         if self.freeze_all {
             return;
         }
-        let fired = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
-        for result in fired {
+        let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
+        for result in events.fired {
             let layer = self
                 .get_entity(result.shooter)
                 .map(|e| e.element_data().layer())
@@ -412,9 +412,13 @@ impl EngineInner {
             // Decrement ammo by 1; disable the bow action if ammo hits 0.
             self.decrement_bow_ammo(assets, result.shooter);
 
-            // Tell the sequence manager the shoot element is done.
-            self.sequence_manager
-                .element_terminated(result.seq_id, result.elem_idx);
+            // The sequence element stays in progress after release so
+            // the shoot animation and reload/unequip orders can finish.
+            // `tick_bow_shots` emits completion when the final bow order
+            // terminates.
+        }
+        for (seq_id, elem_idx) in events.completed {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
         }
     }
 

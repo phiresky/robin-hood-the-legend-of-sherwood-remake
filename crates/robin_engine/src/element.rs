@@ -1966,6 +1966,10 @@ pub struct ProjectileData {
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
     pub velocity_increment: Point3D,
+    /// Optional explicit start point for the next collision segment.
+    /// Used when a projectile is advanced once before entering the
+    /// engine list, matching C++ `pProjectile->Hourglass()` at spawn.
+    pub launch_segment_start: Option<Point3D>,
     /// Frames remaining in the current trajectory segment.
     /// When this reaches 0, the next `TrajectoryPoint` is popped.
     pub trajectory_frame_count: u16,
@@ -2011,6 +2015,7 @@ impl Default for ProjectileData {
             disappear: false,
             trajectory: Vec::new(),
             velocity_increment: Point3D::default(),
+            launch_segment_start: None,
             trajectory_frame_count: 0,
             damage: 0,
             falling: false,

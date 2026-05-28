@@ -1517,16 +1517,10 @@ impl EngineInner {
             return (status, shoot);
         }
 
-        // Non-human target — animals/objects. FX targets are aimed at
-        // their center, matching the preview and projectile-hit code.
-        // Forest levels weaken the range check and skip LOS.
-        let target_pos = if target.is_fx_target() {
-            target
-                .compute_target_center()
-                .unwrap_or_else(|| target.element_data().position())
-        } else {
-            target.element_data().position()
-        };
+        // Non-human target — animals/objects. C++ checks range/LOS
+        // against `pTarget->GetPosition()`; the later shot trajectory
+        // still aims at FX target center.
+        let target_pos = target.element_data().position();
         let forest = self.weather.is_forest_level;
         self.can_shoot_with_bow_at_point(assets, pc_id, target_pos, forest)
     }

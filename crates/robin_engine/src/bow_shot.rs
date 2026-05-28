@@ -1397,9 +1397,7 @@ pub fn begin_bow_shot(
     // Read target ground position for direction/order selection.
     let (tx, ty) = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
         Some(e) if e.is_fx_target() => {
-            let pos = e
-                .compute_target_center()
-                .unwrap_or_else(|| e.element_data().position());
+            let pos = e.element_data().position();
             // Rust 3D sprite points include elevation in Y; C++ bow launch
             // direction uses the target projected back onto the ground plane.
             (pos.x, pos.y - pos.z)
@@ -1583,6 +1581,12 @@ pub struct ShotTickResult {
     pub target_forecasted_movement: Point3D,
 }
 
+#[derive(Default)]
+pub struct BowTickEvents {
+    pub fired: Vec<ShotTickResult>,
+    pub completed: Vec<(SequenceId, usize)>,
+}
+
 /// Advance the shoot animation for every actor with an [`ActiveShot`].
 ///
 /// Returns a list of results for actors whose shoot animation reached
@@ -1593,8 +1597,8 @@ pub struct ShotTickResult {
 pub fn tick_bow_shots(
     entities: &mut [Option<Entity>],
     sequence_manager: &mut SequenceManager,
-) -> Vec<ShotTickResult> {
-    let mut fired = Vec::new();
+) -> BowTickEvents {
+    let mut events = BowTickEvents::default();
 
     for (idx, slot) in entities.iter_mut().enumerate() {
         let entity = match slot {
@@ -1696,7 +1700,6 @@ pub fn tick_bow_shots(
                 }
                 OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous => {
                     actor.action_state = ActionState::Waiting;
-                    actor.active_shot.clear();
                 }
                 _ => {}
             }
@@ -1704,8 +1707,17 @@ pub fn tick_bow_shots(
                 motion,
                 SpriteMotionState::Terminated | SpriteMotionState::Aborted
             ) {
-                if let Some(elem) = sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx) {
+                let remaining = if let Some(elem) =
+                    sequence_manager.get_element_mut(shot_seq_id, shot_elem_idx)
+                {
                     elem.orders.pop_front();
+                    elem.orders.is_empty()
+                } else {
+                    true
+                };
+                if remaining {
+                    actor.active_shot.clear();
+                    events.completed.push((shot_seq_id, shot_elem_idx));
                 }
             }
             continue;
@@ -1726,6 +1738,7 @@ pub fn tick_bow_shots(
                 };
                 if remaining {
                     actor.active_shot.clear();
+                    events.completed.push((shot_seq_id, shot_elem_idx));
                 }
                 continue;
             }
@@ -1773,7 +1786,7 @@ pub fn tick_bow_shots(
                 }
             };
 
-            fired.push(ShotTickResult {
+            events.fired.push(ShotTickResult {
                 shooter: EntityId(idx as u32),
                 target: shot.target.unwrap(),
                 seq_id: shot.sequence_id.unwrap(),
@@ -1797,7 +1810,7 @@ pub fn tick_bow_shots(
     }
 
     // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
-    for result in &mut fired {
+    for result in &mut events.fired {
         if let Some(Some(target_entity)) = entities.get(result.target.0 as usize) {
             result.target_pos = target_entity.element_data().position_map();
             result.target_point = if target_entity.is_human() {
@@ -1818,7 +1831,7 @@ pub fn tick_bow_shots(
         }
     }
 
-    fired
+    events
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1922,11 +1935,14 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         ..ProjectileData::default()
     };
 
-    Entity::Projectile(ElementProjectile {
+    let mut arrow = ElementProjectile {
         element,
         object,
         projectile,
-    })
+    };
+    arrow.advance_trajectory_one_frame();
+    arrow.projectile.launch_segment_start = Some(bow_point);
+    Entity::Projectile(arrow)
 }
 
 /// Spawn a net projectile entity flying toward `target_pos`.
@@ -2817,10 +2833,15 @@ pub fn tick_arrows(
         let _target_id = proj.object.reference;
         let damage = proj.projectile.damage;
         let shooter_id = proj.projectile.shooter;
+        let primed_segment_start = proj.projectile.launch_segment_start.take();
 
         // ── Trajectory advancement ────────────────────────────────
 
-        if proj.projectile.trajectory_frame_count == 0 {
+        if primed_segment_start.is_some() {
+            // Spawn already advanced this first segment to match C++
+            // `pArrow->Hourglass()` before engine insertion.  Still run
+            // collision below against `primed_segment_start -> current`.
+        } else if proj.projectile.trajectory_frame_count == 0 {
             if !proj.projectile.trajectory.is_empty() {
                 // Pop the next trajectory waypoint.
                 let point = proj.projectile.trajectory.remove(0);
@@ -3030,6 +3051,13 @@ pub fn tick_arrows(
             continue;
         }
 
+        let arrow_new = proj.element.position();
+        let arrow_old = primed_segment_start.unwrap_or(Point3D {
+            x: arrow_new.x - proj.projectile.velocity_increment.x,
+            y: arrow_new.y - proj.projectile.velocity_increment.y,
+            z: arrow_new.z - proj.projectile.velocity_increment.z,
+        });
+
         // ── Shield intersection check ─────────────────────────────
         // Before checking victim proximity, check if any shield blocks
         // the projectile path.  This check runs for **every**
@@ -3045,16 +3073,8 @@ pub fn tick_arrows(
 
         let mut shield_blocker = None;
         if !proj.projectile.trajectory.is_empty() || proj.projectile.trajectory_frame_count > 0 {
-            let old_pos = [
-                proj.element.position().x - vx,
-                arrow_map.y + proj.projectile.velocity_increment.z - vy,
-                proj.element.position().z - proj.projectile.velocity_increment.z,
-            ];
-            let new_pos = [
-                proj.element.position().x,
-                arrow_map.y,
-                proj.element.position().z,
-            ];
+            let old_pos = [arrow_old.x, arrow_old.y - arrow_old.z, arrow_old.z];
+            let new_pos = [arrow_new.x, arrow_map.y, arrow_new.z];
 
             // Flight direction with Y un-compressed.
             let flight_dir = (vx, vy * INVERSE_ASPECT_RATIO);
@@ -3154,13 +3174,6 @@ pub fn tick_arrows(
         //       distant target that happens to be near its final line).
         // This catches fast arrows that would otherwise tunnel past a
         // target between frames, which the old 2D point check missed.
-        let arrow_new = proj.element.position();
-        let arrow_old = Point3D {
-            x: arrow_new.x - proj.projectile.velocity_increment.x,
-            y: arrow_new.y - proj.projectile.velocity_increment.y,
-            z: arrow_new.z - proj.projectile.velocity_increment.z,
-        };
-
         /// Perpendicular distance from `p` to the line through `a→b`,
         /// computed via `||ap × ab|| / ||ab||`.  Returns `f32::MAX`
         /// when the segment has zero length (caller should fall back
@@ -3726,14 +3739,20 @@ mod tests {
         // order resolves immediately.  We may need multiple ticks if
         // there are transition orders before the shoot order.
         let mut fired = Vec::new();
+        let mut completed = Vec::new();
         for _ in 0..5 {
-            let results = tick_bow_shots(&mut entities, &mut sm);
-            fired.extend(results);
+            let events = tick_bow_shots(&mut entities, &mut sm);
+            fired.extend(events.fired);
+            completed.extend(events.completed);
             if !fired.is_empty() {
                 break;
             }
         }
         assert_eq!(fired.len(), 1, "expected one fired shot");
+        assert!(
+            completed.is_empty(),
+            "release should not terminate the sequence before the visual orders finish"
+        );
         let r = &fired[0];
         assert_eq!(r.shooter, EntityId(0));
         assert_eq!(r.target, EntityId(1));
@@ -3742,6 +3761,8 @@ mod tests {
         // Shooter should now be in AimingWithBow (sustained aim).
         let actor = entities[0].as_ref().unwrap().actor_data().unwrap();
         assert_eq!(actor.action_state, ActionState::AimingWithBow);
+        assert!(actor.active_shot.is_active());
+        assert!(actor.active_shot.released);
     }
 
     #[test]
@@ -3838,7 +3859,8 @@ mod tests {
         match arrow {
             Entity::Projectile(p) => {
                 assert!(p.projectile.flying);
-                assert_eq!(p.projectile.trajectory.len(), 2);
+                assert_eq!(p.projectile.trajectory.len(), 1);
+                assert_eq!(p.projectile.launch_segment_start.map(|p| p.x), Some(0.0));
                 assert_eq!(p.projectile.damage, 30);
                 assert_eq!(p.object.object_type, ObjectType::Arrow);
             }
@@ -4528,7 +4550,7 @@ mod tests {
         });
         let mut entities: Vec<Option<Entity>> = vec![
             Some(make_pc(0.0, 0.0)),
-            Some(make_soldier(50.0, 0.0)),
+            Some(make_soldier(20.0, 0.0)),
             Some(arrow),
         ];
         let mut hit = None;
