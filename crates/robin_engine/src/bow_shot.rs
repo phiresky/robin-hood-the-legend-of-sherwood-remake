@@ -1968,7 +1968,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         bow_point,
         trajectory_origin,
         target,
-        target_pos,
+        target_pos: _,
         trajectory,
         damage,
         layer,
@@ -1979,11 +1979,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         x: bow_point.x,
         y: bow_point.y,
     };
-    let end_pos = trajectory.last().map(|tp| tp.position).unwrap_or(Point3D {
-        x: target_pos.x,
-        y: target_pos.y,
-        z: 0.0,
-    });
+    let end_pos = trajectory_end_or_start(&trajectory, bow_point, "arrow");
 
     let mut element = ElementData {
         kind: ElementKind::ObjectProjectile,
@@ -2035,6 +2031,24 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     Entity::Projectile(arrow)
 }
 
+fn trajectory_end_or_start(
+    trajectory: &[TrajectoryPoint],
+    start: Point3D,
+    projectile_kind: &'static str,
+) -> Point3D {
+    match trajectory.last() {
+        Some(tp) => tp.position,
+        None => {
+            tracing::warn!(
+                projectile_kind,
+                ?start,
+                "projectile spawn produced empty trajectory; keeping end at start"
+            );
+            start
+        }
+    }
+}
+
 /// Spawn a net projectile entity flying toward `target_pos`.
 ///
 /// Creates an `Entity::Net` with a precomputed ballistic trajectory
@@ -2066,10 +2080,7 @@ pub fn spawn_net(
         obstacle_check,
         (0.1, 0.1),
     );
-    let end_pos = trajectory
-        .last()
-        .map(|tp| tp.position)
-        .unwrap_or(target_pos);
+    let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "net");
 
     let map_pos = ElemPoint2D {
         x: throw_pos.x,
@@ -2167,10 +2178,7 @@ pub fn spawn_wasp_nest(
         obstacle_check,
         (0.33, 0.3),
     );
-    let end_pos = trajectory
-        .last()
-        .map(|tp| tp.position)
-        .unwrap_or(target_pos);
+    let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "wasp_nest");
 
     let map_pos = ElemPoint2D {
         x: throw_pos.x,
@@ -2385,10 +2393,7 @@ fn spawn_throwable(
         target_forecasted_movement,
     );
     let trajectory = compute_trajectory_ballistic(throw_pos, velocity, mass, false, obstacle_check);
-    let end_pos = trajectory
-        .last()
-        .map(|tp| tp.position)
-        .unwrap_or(target_pos);
+    let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "throwable");
 
     let map_pos = ElemPoint2D {
         x: throw_pos.x,
@@ -2501,10 +2506,7 @@ pub fn spawn_purse(
     let velocity = compute_initial_throw_velocity(direction_vec, APEX_PURSE, MASS_PURSE, 0, None);
     let trajectory =
         compute_trajectory_ballistic(throw_pos, velocity, MASS_PURSE, false, obstacle_check);
-    let end_pos = trajectory
-        .last()
-        .map(|tp| tp.position)
-        .unwrap_or(target_pos);
+    let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "purse");
 
     let map_pos = ElemPoint2D {
         x: throw_pos.x,
@@ -2603,10 +2605,7 @@ pub fn spawn_coin(
         obstacle_check,
         BOUNCE_COIN,
     );
-    let end_pos = trajectory
-        .last()
-        .map(|tp| tp.position)
-        .unwrap_or(target_pos);
+    let end_pos = trajectory_end_or_start(&trajectory, source_pos, "coin");
 
     let map_pos = ElemPoint2D {
         x: source_pos.x,
