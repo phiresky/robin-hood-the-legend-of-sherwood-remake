@@ -1839,16 +1839,10 @@ pub fn tick_bow_shots(
 
             // Shoot action-done pulse — arrow is released, but the
             // animation continues until Terminated.
-            let shot_mode = match shot.shoot_mode {
-                Some(mode) => mode,
-                None => {
-                    tracing::warn!(
-                        shooter = idx,
-                        action_state = ?actor.action_state,
-                        "Bow release using action-state fallback: active shot missing resolved shoot mode"
-                    );
-                    shoot_mode_from_action_state(actor.action_state)
-                }
+            let Some(shot_mode) = shot.shoot_mode else {
+                panic!(
+                    "active bow shot missing resolved shoot mode at release: shooter={idx} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}"
+                );
             };
             actor.action_state = ActionState::AimingWithBow;
             if current_order_type == OrderType::ShootingWithBowLeaningOut {
@@ -3967,6 +3961,33 @@ mod tests {
             .front_mut()
             .unwrap()
             .order_type = OrderType::WalkingUpright;
+
+        let _ = tick_bow_shots(&mut entities, &mut sm);
+    }
+
+    #[test]
+    #[should_panic(expected = "active bow shot missing resolved shoot mode")]
+    fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
+        let mut entities: Vec<Option<Entity>> =
+            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let result = begin_bow_shot(
+            &mut entities,
+            &mut sm,
+            EntityId(0),
+            EntityId(1),
+            seq_id,
+            elem_idx,
+            false,
+            10,
+            None,
+            &mut 1u32,
+        );
+        assert_eq!(result, BeginShotResult::Started);
+        let facing = crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 0.0);
+        let shooter = entities[0].as_mut().unwrap();
+        shooter.element_data_mut().set_direction_instantly(facing);
+        shooter.actor_data_mut().unwrap().active_shot.shoot_mode = None;
 
         let _ = tick_bow_shots(&mut entities, &mut sm);
     }
