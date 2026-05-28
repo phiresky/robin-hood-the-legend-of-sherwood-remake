@@ -1861,24 +1861,18 @@ impl EngineInner {
         // The purse preview is only valid when the projectile's
         // computed trajectory lands on a motion sector — the engine's
         // obstacle/ground impact logic leaves layer = -1 when nothing
-        // valid is hit. We approximate that gate by checking whether
-        // the final trajectory endpoint lands on a motion sector on
-        // the shooter's layer; dropped purses landing off-map or in
-        // blocked sectors must not draw an arc. WaspNest and Apple
-        // (the other ground-target actions) skip this gate.
+        // valid is hit. WaspNest and Apple (the other ground-target
+        // actions) skip this gate.
         if self.get_selected_action() == crate::profiles::Action::Purse
             && let TrajectoryPreview::ShowArc { points, .. } = &preview
             && let Some(last) = points.last()
         {
-            use crate::fast_find_grid::SectorHit;
-            let layer = self
-                .get_entity(pc_id)
-                .map(|e| e.element_data().layer())
-                .unwrap_or(0);
             let impact_2d = crate::geo2d::pt(last.position.x, last.position.y - last.position.z);
-            match self.fast_grid.get_sector(impact_2d, impact_2d, layer) {
-                SectorHit::Found { .. } => {}
-                SectorHit::None | SectorHit::Blocked => return TrajectoryPreview::Invalid,
+            let resolution = self
+                .fast_grid
+                .resolve_projectile_landing(impact_2d, self.sight_obstacles(assets));
+            if resolution.sector.is_none() || resolution.blocked_by_motion_obstacle {
+                return TrajectoryPreview::Invalid;
             }
         }
 
