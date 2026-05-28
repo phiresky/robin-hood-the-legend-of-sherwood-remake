@@ -2607,6 +2607,61 @@ pub struct ArrowTickResult {
     pub impact_pos: ElemPoint2D,
 }
 
+fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
+    let vx = proj.projectile.velocity_increment.x;
+    let vy = proj.projectile.velocity_increment.y;
+    if vx != 0.0 || vy != 0.0 {
+        crate::position_interface::vector_to_sector_0_to_15_iso(vx, vy)
+    } else {
+        proj.element.direction()
+    }
+}
+
+fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_by_shield: bool) {
+    let sector = current_arrow_orientation_sector(proj);
+    proj.projectile.falling = true;
+
+    let (falling_direction, velocity) = if thrown_away_by_shield {
+        let direction = (sector + 4) & 15;
+        let (dx, dy) = crate::element::direction_vector_16(direction);
+        (
+            direction as u16,
+            Point3D {
+                x: dx * 30.0,
+                y: dy * ASPECT_RATIO * 30.0,
+                z: -20.0,
+            },
+        )
+    } else {
+        let direction = sector ^ 8;
+        let (dx, dy) = crate::element::direction_vector_16(direction);
+        (
+            direction as u16,
+            Point3D {
+                x: dx * 30.0,
+                y: dy * ASPECT_RATIO * 10.0,
+                z: 0.0,
+            },
+        )
+    };
+
+    proj.projectile.falling_direction = falling_direction;
+    proj.projectile.trajectory = compute_trajectory_ballistic(
+        proj.element.position(),
+        velocity,
+        MASS_ARROW_HIGH,
+        false,
+        None,
+    );
+    proj.projectile.trajectory_frame_count = 0;
+    proj.projectile.launch_segment_start = None;
+
+    // C++ `RHElementArrow::MakeFallingDown` calls `Hourglass()` after
+    // recomputing the trajectory, so the ricochet visibly advances on
+    // the same tick as the shield/target impact.
+    proj.advance_trajectory_one_frame();
+}
+
 /// Advance every arrow projectile by one frame along its precomputed
 /// ballistic trajectory.
 ///
@@ -3126,31 +3181,7 @@ pub fn tick_arrows(
             // (no human / FX-target check), so `continue` after
             // reporting.
             if matches!(proj.object.object_type, ObjectType::Arrow) {
-                proj.projectile.falling = true;
-
-                // Deflect direction: rotate 90° right.
-                let deflect_sector = (proj.element.direction() + 4) & 15;
-                // Stash the deflect sector; the per-tick render path
-                // spins the sprite via `(falling_direction + 14) % 16`.
-                proj.projectile.falling_direction = deflect_sector as u16;
-                let (dx, dy) = crate::element::direction_vector_16(deflect_sector);
-                // Apply aspect ratio to the deflected Y.
-                let deflect_velocity = Point3D {
-                    x: dx * 30.0,
-                    y: dy * ASPECT_RATIO * 30.0,
-                    z: -20.0,
-                };
-
-                // Recompute trajectory with deflected velocity (no obstacle check
-                // for falling arrows — they just arc to the ground).
-                proj.projectile.trajectory = compute_trajectory_ballistic(
-                    proj.element.position(),
-                    deflect_velocity,
-                    MASS_ARROW_HIGH,
-                    false,
-                    None,
-                );
-                proj.projectile.trajectory_frame_count = 0;
+                make_arrow_falling_down(proj, true);
 
                 results.push(ArrowTickResult {
                     arrow: arrow_id,
@@ -4880,6 +4911,15 @@ mod tests {
                 assert!(
                     p.projectile.flying,
                     "falling arrow still visually flying (arcs to ground)"
+                );
+                assert_ne!(
+                    p.element.position(),
+                    (Point3D {
+                        x: 50.0,
+                        y: 40.0,
+                        z: 40.0
+                    }),
+                    "C++ MakeFallingDown advances the falling trajectory immediately"
                 );
             }
             _ => panic!("expected projectile"),
