@@ -1082,9 +1082,7 @@ fn compute_trajectory_ballistic_impl(
 /// where `.z` is the ground elevation and `.y` already includes elevation.
 ///
 /// `sprite_hand_point`: absolute 2D position of the hand anchor, computed as
-/// `sprite_position + hotspot_offset` by the caller.  When the hotspot is
-/// missing, the caller falls back to `sprite_position + (0,0)`.  The
-/// `None` case here is only for headless tests with no sprite at all.
+/// `sprite_position + hotspot_offset` by the caller.
 ///
 /// For down shots, the bow point is shifted laterally by 20 units along
 /// the facing direction vector.
@@ -1092,29 +1090,22 @@ pub fn compute_bow_point(
     position: Point3D,
     shoot_mode: ShootMode,
     direction: i16,
-    sprite_hand_point: Option<crate::geo2d::Point2D>,
+    sprite_hand_point: crate::geo2d::Point2D,
 ) -> Point3D {
     let elevation = position.z;
 
-    // Use the absolute hand point for X/Y; fall back to entity position
-    // only when there is no sprite at all (headless tests).
-    let (hand_x, hand_y) = match sprite_hand_point {
-        Some(pt) => (pt.x, pt.y),
-        None => (position.x, position.y),
-    };
-
     // Isometric projection: elevation shifts the sprite upward on screen,
     // so add it into the hand Y.
-    let hand_y = hand_y + elevation;
+    let hand_y = sprite_hand_point.y + elevation;
 
     match shoot_mode {
         ShootMode::Long => Point3D {
-            x: hand_x,
+            x: sprite_hand_point.x,
             y: hand_y,
             z: elevation + BOW_Z_OFFSET_LONG,
         },
         ShootMode::Normal => Point3D {
-            x: hand_x,
+            x: sprite_hand_point.x,
             y: hand_y,
             z: elevation + BOW_Z_OFFSET_NORMAL,
         },
@@ -1123,7 +1114,7 @@ pub fn compute_bow_point(
             // along the direction vector.
             let (dx, dy) = crate::element::direction_vector_16(direction);
             Point3D {
-                x: hand_x + dx * 20.0,
+                x: sprite_hand_point.x + dx * 20.0,
                 y: hand_y + dy * 20.0,
                 z: elevation + BOW_Z_OFFSET_NORMAL,
             }
@@ -1618,8 +1609,8 @@ pub struct ShotTickResult {
     pub action_state: ActionState,
     /// Shooter's facing direction (0–15) for bow-point computation.
     pub shooter_direction: i16,
-    /// Sprite hand anchor point (sprite position + hotspot), if available.
-    pub sprite_hand_point: Option<crate::geo2d::Point2D>,
+    /// Sprite hand anchor point (sprite position + hotspot).
+    pub sprite_hand_point: crate::geo2d::Point2D,
     /// Target's forecasted movement vector for leading shots.
     pub target_forecasted_movement: Point3D,
 }
@@ -1836,10 +1827,10 @@ pub fn tick_bow_shots(
                 match hotspot {
                     Some(offset) => {
                         // Hotspot found — add sprite position to get absolute coords.
-                        Some(crate::geo2d::Point2D {
+                        crate::geo2d::Point2D {
                             x: sprite_pos.x + offset.x,
                             y: sprite_pos.y + offset.y,
-                        })
+                        }
                     }
                     None => {
                         tracing::warn!(
@@ -5108,15 +5099,16 @@ mod tests {
             y: 20.0,
             z: 0.0,
         };
-        let pt = compute_bow_point(pos, ShootMode::Normal, 0, None);
+        let hand = GeoPoint2D { x: pos.x, y: pos.y };
+        let pt = compute_bow_point(pos, ShootMode::Normal, 0, hand);
         assert_eq!(pt.z, BOW_Z_OFFSET_NORMAL);
         assert_eq!(pt.x, 10.0); // no lateral shift for normal
 
-        let pt_long = compute_bow_point(pos, ShootMode::Long, 0, None);
+        let pt_long = compute_bow_point(pos, ShootMode::Long, 0, hand);
         assert_eq!(pt_long.z, BOW_Z_OFFSET_LONG);
 
         // Down shot should shift laterally by 20 units in direction.
-        let pt_down = compute_bow_point(pos, ShootMode::Down, 4, None);
+        let pt_down = compute_bow_point(pos, ShootMode::Down, 4, hand);
         assert_eq!(pt_down.z, BOW_Z_OFFSET_NORMAL);
         // Sector 4 = east (+x), so x shifts by ~20
         assert!(pt_down.x > pos.x + 15.0, "down-shot should shift x");
@@ -5129,7 +5121,11 @@ mod tests {
             y: 50.0,
             z: 30.0,
         };
-        let pt_elev = compute_bow_point(elevated_pos, ShootMode::Normal, 0, None);
+        let elevated_hand = GeoPoint2D {
+            x: elevated_pos.x,
+            y: elevated_pos.y,
+        };
+        let pt_elev = compute_bow_point(elevated_pos, ShootMode::Normal, 0, elevated_hand);
         assert_eq!(pt_elev.z, 30.0 + BOW_Z_OFFSET_NORMAL);
         assert_eq!(pt_elev.y, 50.0 + 30.0); // map_y + elevation
     }

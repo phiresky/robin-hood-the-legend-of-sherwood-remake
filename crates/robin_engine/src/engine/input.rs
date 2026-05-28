@@ -1654,10 +1654,10 @@ impl EngineInner {
                     )
                 };
                 match hotspot {
-                    Some(offset) => Some(crate::geo2d::Point2D {
+                    Some(offset) => crate::geo2d::Point2D {
                         x: sprite_pos.x + offset.x,
                         y: sprite_pos.y + offset.y,
-                    }),
+                    },
                     None => {
                         tracing::warn!(
                             ?pc_id,
@@ -1942,10 +1942,10 @@ impl EngineInner {
                 )
             };
             match hotspot {
-                Some(offset) => Some(crate::geo2d::Point2D {
+                Some(offset) => crate::geo2d::Point2D {
                     x: sprite_pos.x + offset.x,
                     y: sprite_pos.y + offset.y,
-                }),
+                },
                 None => {
                     tracing::warn!(
                         ?pc_id,
