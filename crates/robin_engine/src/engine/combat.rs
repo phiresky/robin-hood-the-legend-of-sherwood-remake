@@ -166,26 +166,35 @@ impl EngineInner {
             let mass = bow_shot::arrow_mass(shoot_mode);
 
             // ── Look up bow profile for damage and hit chance ────
-            let (bow_profile_idx, shooting_ability) = self
-                .bow_profile_and_ability(assets, result.shooter)
-                .unwrap_or((0, 50)); // fallback: no profile, medium skill
+            let Some((bow_profile_idx, shooting_ability)) =
+                self.bow_profile_and_ability(assets, result.shooter)
+            else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    "Bow shot release skipped: shooter has no bow profile data"
+                );
+                continue;
+            };
 
-            let bow_profile = assets.profile_manager.get_bow(bow_profile_idx);
+            let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    bow_profile_idx,
+                    "Bow shot release skipped: missing bow profile"
+                );
+                continue;
+            };
 
-            let damage = bow_profile
-                .map(|bp| {
-                    use crate::weapons::{BowState, ShootMode};
-                    // Create a temporary BowState just for the lookup.
-                    let bow = BowState::new(bow_profile_idx, bp, 1);
-                    // Down maps to Normal for damage lookup (flat shots use Normal,
-                    // arced shots use Long).
-                    let lookup_mode = match shoot_mode {
-                        ShootMode::Down => ShootMode::Normal,
-                        other => other,
-                    };
-                    bow.get_damage(bp, lookup_mode)
-                })
-                .unwrap_or(bow_shot::ARROW_FALLBACK_DAMAGE);
+            use crate::weapons::{BowState, ShootMode};
+            // Create a temporary BowState just for the lookup.
+            let bow = BowState::new(bow_profile_idx, bow_profile, 1);
+            // Down maps to Normal for damage lookup (flat shots use Normal,
+            // arced shots use Long).
+            let lookup_mode = match shoot_mode {
+                ShootMode::Down => ShootMode::Normal,
+                other => other,
+            };
+            let damage = bow.get_damage(bow_profile, lookup_mode);
 
             // ── Compute bow point (hand position) ────────────────
             let bow_point = bow_shot::compute_bow_point(
@@ -280,12 +289,8 @@ impl EngineInner {
             };
 
             let hit_chance = if target_is_human {
-                bow_profile
-                    .map(|bp| {
-                        let bow = crate::weapons::BowState::new(bow_profile_idx, bp, 1);
-                        bow.get_hit_chance(bp, shooting_ability, hit_distance as u32)
-                    })
-                    .unwrap_or(100) // no profile → always hit
+                let bow = crate::weapons::BowState::new(bow_profile_idx, bow_profile, 1);
+                bow.get_hit_chance(bow_profile, shooting_ability, hit_distance as u32)
             } else {
                 100
             };

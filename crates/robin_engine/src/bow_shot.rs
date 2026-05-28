@@ -118,9 +118,6 @@ fn burst_ticks_for_proj(proj: &ElementProjectile) -> u16 {
     }
 }
 
-/// Fallback damage when no bow profile is available (e.g. in tests).
-pub const ARROW_FALLBACK_DAMAGE: u16 = 30;
-
 /// Z offset added to the bow point for long (high) shots.
 const BOW_Z_OFFSET_LONG: f32 = 50.0;
 
