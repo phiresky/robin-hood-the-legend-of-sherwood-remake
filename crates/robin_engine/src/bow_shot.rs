@@ -3376,58 +3376,62 @@ pub fn tick_arrows(
         let mut hit_victim = None;
         let shooter_snapshot =
             shooter_id.and_then(|id| human_snapshots.iter().find(|snap| snap.id == id));
-        for snap in &human_snapshots {
-            if Some(snap.id) == shooter_id {
-                continue;
-            }
-            if !projectile_victim_prefilter_allows(shooter_snapshot, snap) {
-                continue;
-            }
-            let anchor = if uses_eyes_anchor {
-                snap.eyes
-            } else {
-                snap.belt
-            };
-            let hit = if use_range_gate {
-                // Range gate: the old_pos→target distance must be
-                // within this frame's reach (segment length).
-                let old_to_target = distance(arrow_old, anchor);
-                old_to_target <= range
-                    && point_to_line_distance(anchor, arrow_old, arrow_new) <= HIT_DISTANCE
-            } else {
-                false
-            };
-            if hit {
-                hit_victim = Some(snap.id);
-                break;
-            }
+        // C++ `RHElementProjectile::FindHumanVictim` returns null when
+        // `mpShooter == NULL`; only FX target collision still runs.
+        if let Some(shooter_snapshot) = shooter_snapshot {
+            for snap in &human_snapshots {
+                if Some(snap.id) == shooter_id {
+                    continue;
+                }
+                if !projectile_victim_prefilter_allows(Some(shooter_snapshot), snap) {
+                    continue;
+                }
+                let anchor = if uses_eyes_anchor {
+                    snap.eyes
+                } else {
+                    snap.belt
+                };
+                let hit = if use_range_gate {
+                    // Range gate: the old_pos→target distance must be
+                    // within this frame's reach (segment length).
+                    let old_to_target = distance(arrow_old, anchor);
+                    old_to_target <= range
+                        && point_to_line_distance(anchor, arrow_old, arrow_new) <= HIT_DISTANCE
+                } else {
+                    false
+                };
+                if hit {
+                    hit_victim = Some(snap.id);
+                    break;
+                }
 
-            // Leaning-out re-check for arrows only.  If the arrow
-            // missed the belt by less than 100 (max-component
-            // distance), try again at the eye level — catches arrows
-            // that sail just above the belt of a soldier leaning out
-            // of a battlement.
-            if snap.leaning_out
-                && matches!(proj.object.object_type, ObjectType::Arrow)
-                && use_range_gate
-            {
-                // Use max-component distance ≤ 100 as the coarse gate
-                // for the re-check.
-                let ddx = (anchor.x - arrow_new.x).abs();
-                let ddy = (anchor.y - arrow_new.y).abs();
-                let ddz = (anchor.z - arrow_new.z).abs();
-                let max_norm = ddx.max(ddy).max(ddz);
-                if max_norm <= 100.0 {
-                    let eyes = snap.eyes;
-                    // C++ uses the arrow's current position for the
-                    // leaning-out eye retry, unlike the primary human
-                    // belt check's "deguillaumized" old-position gate.
-                    let new_to_eyes = distance(arrow_new, eyes);
-                    if new_to_eyes <= range
-                        && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
-                    {
-                        hit_victim = Some(snap.id);
-                        break;
+                // Leaning-out re-check for arrows only.  If the arrow
+                // missed the belt by less than 100 (max-component
+                // distance), try again at the eye level — catches arrows
+                // that sail just above the belt of a soldier leaning out
+                // of a battlement.
+                if snap.leaning_out
+                    && matches!(proj.object.object_type, ObjectType::Arrow)
+                    && use_range_gate
+                {
+                    // Use max-component distance ≤ 100 as the coarse gate
+                    // for the re-check.
+                    let ddx = (anchor.x - arrow_new.x).abs();
+                    let ddy = (anchor.y - arrow_new.y).abs();
+                    let ddz = (anchor.z - arrow_new.z).abs();
+                    let max_norm = ddx.max(ddy).max(ddz);
+                    if max_norm <= 100.0 {
+                        let eyes = snap.eyes;
+                        // C++ uses the arrow's current position for the
+                        // leaning-out eye retry, unlike the primary human
+                        // belt check's "deguillaumized" old-position gate.
+                        let new_to_eyes = distance(arrow_new, eyes);
+                        if new_to_eyes <= range
+                            && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
+                        {
+                            hit_victim = Some(snap.id);
+                            break;
+                        }
                     }
                 }
             }
@@ -4241,6 +4245,43 @@ mod tests {
         assert!(
             results.iter().all(|r| r.hit_target.is_none()),
             "C++ FindHumanVictim returns no victim when projectile is not moving"
+        );
+    }
+
+    #[test]
+    fn tick_arrows_without_shooter_does_not_hit_human() {
+        let mut arrow = spawn_arrow(SpawnArrowParams {
+            shooter: EntityId(0),
+            bow_point: Point3D {
+                x: 0.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            target: EntityId(1),
+            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            trajectory: vec![TrajectoryPoint {
+                position: Point3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 1,
+            }],
+            damage: 30,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: None,
+        });
+        if let Entity::Projectile(proj) = &mut arrow {
+            proj.projectile.shooter = None;
+        }
+        let mut entities: Vec<Option<Entity>> =
+            vec![None, Some(make_soldier(50.0, 0.0)), Some(arrow)];
+
+        let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
+        assert!(
+            results.iter().all(|r| r.hit_target.is_none()),
+            "C++ FindHumanVictim returns no victim when projectile has no shooter"
         );
     }
 
