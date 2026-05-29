@@ -26,7 +26,7 @@ use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::{TextFromCaretSide, WidgetInput, WidgetInputField};
-use jiff::Timestamp;
+use jiff::{Timestamp, tz::TimeZone};
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
@@ -113,7 +113,7 @@ pub async fn show_save_load(
     mut cursor: Option<ModalCursor<'_>>,
     save_manager: &mut SaveGameManager,
     mission_id: u32,
-    _profiles: Option<&ProfileManager>,
+    profiles: Option<&ProfileManager>,
     mode: SaveLoadMode,
     mut sound: Option<&mut SoundManager>,
     mut audio_backend: Option<&mut dyn AudioBackend>,
@@ -492,6 +492,7 @@ pub async fn show_save_load(
                             save_manager,
                             &visible,
                             mission_id,
+                            profiles,
                         );
                         let idx = save_manager.create(text, mission_id);
                         break SaveLoadOutcome::Slot(idx);
@@ -515,6 +516,7 @@ pub async fn show_save_load(
                                 save_manager,
                                 &visible,
                                 mission_id,
+                                profiles,
                             );
                             if !new_text.is_empty() {
                                 save_manager
@@ -633,7 +635,7 @@ pub async fn show_save_load(
             };
             let fitted = truncate_to_pixel_width(font, &label, row_area_w);
             if !fitted.is_empty() {
-                render_text_virt_font(renderer, font, transform, fitted, row_area_x, row_y);
+                render_text_virt_font(renderer, font, transform, &fitted, row_area_x, row_y);
             }
             let detail_fitted = truncate_to_pixel_width(font, &detail, row_area_w);
             if !detail_fitted.is_empty() {
@@ -641,7 +643,7 @@ pub async fn show_save_load(
                     renderer,
                     font,
                     transform,
-                    detail_fitted,
+                    &detail_fitted,
                     row_area_x,
                     row_y + 16,
                 );
@@ -1093,16 +1095,11 @@ fn row_detail(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) -
             };
 
             let mut parts = vec![format!("Saved {}", format_saved_time(&save.timestamp))];
-            if save.mission_name.is_empty() {
-                parts.push(format!("Mission {}", save.mission_id));
-            } else {
-                parts.push(format!(
-                    "Mission {} ({})",
-                    save.mission_name, save.mission_id
-                ));
+            if !save.mission_name.is_empty() && save.text.trim() != save.mission_name.trim() {
+                parts.push(save.mission_name.clone());
             }
             if let Some(progress) = save.campaign_progress {
-                parts.push(format!("Campaign {progress}%"));
+                parts.push(format!("{progress}% campaign"));
             }
             if let (Some(done), Some(total)) = (save.missions_done, save.missions_total) {
                 parts.push(format!("{done}/{total} missions"));
@@ -1130,6 +1127,7 @@ fn accepted_save_text(
     save_manager: &SaveGameManager,
     visible: &[usize],
     mission_id: u32,
+    profiles: Option<&ProfileManager>,
 ) -> String {
     let trimmed = input_text.trim();
     if !trimmed.is_empty() {
@@ -1141,16 +1139,16 @@ fn accepted_save_text(
     {
         return slot.text.clone();
     }
-    default_save_text(save_manager, mission_id)
+    default_save_text(save_manager, mission_id, profiles)
 }
 
-fn default_save_text(save_manager: &SaveGameManager, mission_id: u32) -> String {
-    let saved_at = jiff::Zoned::now().strftime("%Y-%m-%d %H:%M").to_string();
-    if mission_id == 0 {
-        format!("Save {} - {saved_at}", save_manager.count() + 1)
-    } else {
-        format!("Mission {mission_id} - {saved_at}")
-    }
+fn default_save_text(
+    save_manager: &SaveGameManager,
+    mission_id: u32,
+    profiles: Option<&ProfileManager>,
+) -> String {
+    mission_display_name(mission_id, profiles)
+        .unwrap_or_else(|| format!("Save {}", save_manager.count() + 1))
 }
 
 fn format_saved_time(timestamp: &str) -> String {
@@ -1158,11 +1156,21 @@ fn format_saved_time(timestamp: &str) -> String {
         .parse::<i64>()
         .ok()
         .and_then(|secs| Timestamp::from_second(secs).ok())
-        .and_then(|ts| ts.in_tz("UTC").ok())
+        .map(|ts| ts.to_zoned(TimeZone::system()))
     else {
         return "unknown".to_string();
     };
-    zoned.strftime("%Y-%m-%d %H:%M UTC").to_string()
+    zoned.strftime("%Y-%m-%d %H:%M").to_string()
+}
+
+fn mission_display_name(mission_id: u32, profiles: Option<&ProfileManager>) -> Option<String> {
+    let profiles = profiles?;
+    profiles
+        .missions
+        .iter()
+        .find(|mission| mission.id == mission_id)
+        .map(|mission| mission.mission_name.clone())
+        .filter(|name| !name.trim().is_empty())
 }
 
 fn hit_button(
@@ -1191,33 +1199,36 @@ fn hit_button(
 }
 
 /// Truncate `text` to the longest prefix that fits in `max_w` pixels
-/// when rendered with `font`. Returns the original text unchanged when
-/// it already fits. Caller-supplied `max_w` is inclusive — a cell at
-/// exactly the span width renders in full. Oversize text is clipped so
-/// it doesn't escape the column span.
-fn truncate_to_pixel_width<'a>(
-    font: &crate::native_font::Font,
-    text: &'a str,
-    max_w: i32,
-) -> &'a str {
+/// when rendered with `font`. Oversize text gets an ASCII ellipsis so
+/// clipped metadata is visibly abbreviated instead of looking like a
+/// broken string.
+fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
     if max_w <= 0 {
-        return "";
+        return String::new();
     }
     if font.text_width(text) <= max_w {
-        return text;
+        return text.to_string();
     }
+
+    let ellipsis = "...";
+    let ellipsis_w = font.text_width(ellipsis);
+    if ellipsis_w > max_w {
+        return String::new();
+    }
+
+    let budget = max_w - ellipsis_w;
     // `text` doesn't fit in full — scan prefix-by-prefix for the
     // longest one that does.  `char_indices()` yields byte offsets at
     // the *start* of each char, so `text[..idx]` is the prefix with
     // `idx` excluded.
     let mut fit_end = 0;
     for (idx, _) in text.char_indices() {
-        if font.text_width(&text[..idx]) > max_w {
-            return &text[..fit_end];
+        if font.text_width(&text[..idx]) > budget {
+            return format!("{}{}", &text[..fit_end], ellipsis);
         }
         fit_end = idx;
     }
-    &text[..fit_end]
+    format!("{}{}", &text[..fit_end], ellipsis)
 }
 
 /// Resync the input-field widget to the current selection. In Save
@@ -1281,8 +1292,8 @@ mod tests {
     #[test]
     fn empty_new_save_name_gets_default_label() {
         let save_manager = SaveGameManager::new("/tmp/test_saves".into());
-        let text = accepted_save_text("", Some(ListRow::New), &save_manager, &[], 123);
-        assert!(text.starts_with("Mission 123 - "));
+        let text = accepted_save_text("", Some(ListRow::New), &save_manager, &[], 123, None);
+        assert_eq!(text, "Save 1");
     }
 
     #[test]
@@ -1297,7 +1308,8 @@ mod tests {
                 Some(ListRow::Existing(0)),
                 &save_manager,
                 &visible,
-                123
+                123,
+                None
             ),
             "Existing Slot"
         );
@@ -1307,7 +1319,8 @@ mod tests {
                 Some(ListRow::Existing(0)),
                 &save_manager,
                 &visible,
-                123
+                123,
+                None
             ),
             "Renamed"
         );
