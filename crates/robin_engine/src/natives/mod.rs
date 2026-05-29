@@ -1003,14 +1003,12 @@ impl GameHost {
                     (None, None)
                 };
                 let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
-                let (entry_action, door_action) = if is_jump {
-                    (action, action)
-                } else {
-                    (
-                        door.get_action_1(step.direct, action),
-                        door.get_action_2(step.direct, action),
-                    )
-                };
+                // Original RHsequence.cpp keeps the caller's action on
+                // gate approach, WAIT_FREE_LIFT, PASS_DOOR, and
+                // post-pass asserts.  Door-specific GetAction1/2 calls
+                // exist in original-code but are commented out at
+                // execution time.
+                let (entry_action, door_action) = (action, action);
                 Some(GateShot {
                     door_index: step.door_index,
                     direct: step.direct,

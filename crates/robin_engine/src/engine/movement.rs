@@ -1573,10 +1573,10 @@ impl EngineInner {
             jump_line_dst: Option<crate::jump_line::JumpLineIndex>,
             // Door typing (only meaningful when !is_jump).
             is_locked_pc_unlockable: bool,
-            // Per-door entry/exit animation hints, derived via
-            // `Door::get_action_1` / `get_action_2` against the
-            // caller's base action.  For default-type doors these
-            // are identity vs `base_action`.
+            // Original RHsequence.cpp keeps the caller's action on
+            // gate approach, WAIT_FREE_LIFT, PASS_DOOR, and post-pass
+            // asserts.  Door-specific GetAction1/2 calls exist in
+            // original-code but are commented out at execution time.
             entry_action: OrderType,
             door_action: OrderType,
         }
@@ -1636,17 +1636,7 @@ impl EngineInner {
                         (None, None)
                     };
                     let is_locked_pc_unlockable = !is_jump && door.locked_pc && door.unlockable;
-                    // Per-door entry / exit animation derivation.
-                    // Jump gates don't carry door-action hints, so
-                    // they fall back to the base action.
-                    let (entry_action, door_action) = if is_jump {
-                        (base_action, base_action)
-                    } else {
-                        (
-                            door.get_action_1(step.direct, base_action),
-                            door.get_action_2(step.direct, base_action),
-                        )
-                    };
+                    let (entry_action, door_action) = (base_action, base_action);
                     Some(GateShot {
                         door_index: step.door_index,
                         direct: step.direct,
@@ -1778,9 +1768,8 @@ impl EngineInner {
                 .map(|s| is_building_sector(self, s))
                 .unwrap_or(false);
 
-            // Per-door action hints. `entry_action` drives the
-            // walk-to-gate / teleport / assert steps; `door_action`
-            // drives the WaitFreeLift / PassDoor / post-pass assert.
+            // Original sequence construction uses the caller's action
+            // for both approach and door-pass sub-elements.
             let entry_action = shot.entry_action;
             let door_action = shot.door_action;
 
@@ -1977,9 +1966,9 @@ impl EngineInner {
                     door_action,
                 );
                 wait.data = SequenceElementData::Movement {
-                    destination: to_pt(shot.entry),
+                    destination: crate::element::Point2D::default(),
                     layer: 0,
-                    sector: None,
+                    sector: crate::position_interface::SectorHandle::new(shot.new_sector),
                     gate_id: Some(shot.door_index),
                     line_id: None,
                     element: None,
