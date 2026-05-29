@@ -5,7 +5,7 @@
 //! [`save_file::default_save_directory`]).  Per-slot layout:
 //!
 //!   `<save_dir>/<filename>.json`  → full payload ([`save_file::GameSaveFile`])
-//!   `<save_dir>/<filename>_t`     → thumbnail
+//!   `<save_dir>/<filename>_thumb.png` → thumbnail
 //!   `<save_dir>/saves.json`       → slot index / metadata
 //!
 //! Special slot filenames (Continue/QuickSave/Restart/Sherwood) are
@@ -419,7 +419,7 @@ impl SaveGameManager {
 
     /// Thumbnail file path.
     pub fn thumb_path(&self, index: usize) -> PathBuf {
-        Path::new(&self.save_directory).join(format!("{}_t", self.saves[index].filename))
+        Path::new(&self.save_directory).join(format!("{}_thumb.png", self.saves[index].filename))
     }
 
     /// Full path to a save file on disk (JSON format, with `.json` extension).
@@ -712,7 +712,7 @@ mod tests {
         assert_eq!(mgr.full_path(0), PathBuf::from("/saves/profile_1/Continue"));
         assert_eq!(
             mgr.thumb_path(0),
-            PathBuf::from("/saves/profile_1/Continue_t")
+            PathBuf::from("/saves/profile_1/Continue_thumb.png")
         );
     }
 

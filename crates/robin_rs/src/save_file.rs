@@ -40,13 +40,6 @@ use robin_engine::engine::Engine;
 
 // ─── Thumbnail ───────────────────────────────────────────────────────
 
-/// Four-byte magic for the sibling thumbnail file (`<slot>_t` on disk).
-/// Chosen to parallel the `"RHSG"` save magic.
-const THUMB_MAGIC: &[u8; 4] = b"RHTB";
-
-/// Thumbnail format revision (bumped whenever the on-disk layout changes).
-const THUMB_VERSION: u16 = 1;
-
 /// Default thumbnail dimensions.  Downsampled to a small fixed size to
 /// keep the sibling file tiny.
 pub const THUMB_WIDTH: u16 = 160;
@@ -54,7 +47,7 @@ pub const THUMB_HEIGHT: u16 = 120;
 
 /// A small RGB565 thumbnail of the last rendered frame.
 ///
-/// Written to a sibling file (`<name>_t`) next to the save payload by
+/// Written to a sibling PNG file (`<name>_thumb.png`) next to the save payload by
 /// [`SaveGameManager::thumb_path`] / [`Thumbnail::write_to`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Thumbnail {
@@ -77,78 +70,115 @@ impl Thumbnail {
         })
     }
 
-    /// Write the thumbnail to `path` as a standalone binary file.
-    ///
-    /// Layout (little-endian):
-    ///
-    /// ```text
-    /// [0..4]   "RHTB" magic
-    /// [4..6]   version (u16)
-    /// [6..8]   width (u16)
-    /// [8..10]  height (u16)
-    /// [10..12] reserved (u16)
-    /// [12..]   width*height RGB565 pixels (u16 LE)
-    /// ```
+    /// Write the thumbnail to `path` as a normal 8-bit RGB PNG file.
     pub fn write_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("creating thumbnail directory {}", parent.display()))?;
         }
-        let mut buf = Vec::with_capacity(12 + self.pixels.len() * 2);
-        buf.extend_from_slice(THUMB_MAGIC);
-        buf.extend_from_slice(&THUMB_VERSION.to_le_bytes());
-        buf.extend_from_slice(&self.width.to_le_bytes());
-        buf.extend_from_slice(&self.height.to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes()); // reserved
-        for px in &self.pixels {
-            buf.extend_from_slice(&px.to_le_bytes());
-        }
-        fs::write(path, &buf).with_context(|| format!("writing thumbnail {}", path.display()))
+
+        let file = fs::File::create(path)
+            .with_context(|| format!("creating thumbnail {}", path.display()))?;
+        let writer = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(writer, self.width as u32, self.height as u32);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .with_context(|| format!("writing thumbnail PNG header {}", path.display()))?;
+        writer
+            .write_image_data(&self.rgb888_pixels())
+            .with_context(|| format!("writing thumbnail PNG data {}", path.display()))
     }
 
     /// Read a thumbnail written by [`write_to`](Self::write_to).
     pub fn read_from(path: &Path) -> Result<Self> {
         let bytes =
             fs::read(path).with_context(|| format!("reading thumbnail {}", path.display()))?;
-        if bytes.len() < 12 {
-            bail!("thumbnail file too short: {} bytes", bytes.len());
-        }
-        if &bytes[0..4] != THUMB_MAGIC {
+        let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        let mut reader = decoder
+            .read_info()
+            .with_context(|| format!("decoding thumbnail PNG header {}", path.display()))?;
+        let mut buf = vec![
+            0;
+            reader.output_buffer_size().ok_or_else(|| anyhow::anyhow!(
+                "unknown thumbnail PNG output size for {}",
+                path.display()
+            ))?
+        ];
+        let info = reader
+            .next_frame(&mut buf)
+            .with_context(|| format!("decoding thumbnail PNG frame {}", path.display()))?;
+        if info.bit_depth != png::BitDepth::Eight {
             bail!(
-                "invalid thumbnail magic: expected {:?}, got {:?}",
-                THUMB_MAGIC,
-                &bytes[0..4]
+                "unsupported thumbnail PNG bit depth {:?} for {}",
+                info.bit_depth,
+                path.display()
             );
         }
-        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != THUMB_VERSION {
-            bail!(
-                "unsupported thumbnail version: expected {}, got {}",
-                THUMB_VERSION,
-                version
-            );
-        }
-        let width = u16::from_le_bytes([bytes[6], bytes[7]]);
-        let height = u16::from_le_bytes([bytes[8], bytes[9]]);
-        let expected_pixels = width as usize * height as usize;
-        let pixel_bytes = &bytes[12..];
-        if pixel_bytes.len() < expected_pixels * 2 {
-            bail!(
-                "thumbnail pixel buffer too small: need {} bytes, got {}",
-                expected_pixels * 2,
-                pixel_bytes.len()
-            );
-        }
+        let data = &buf[..info.buffer_size()];
+        let expected_pixels = info.width as usize * info.height as usize;
         let mut pixels = Vec::with_capacity(expected_pixels);
-        for chunk in pixel_bytes.chunks_exact(2).take(expected_pixels) {
-            pixels.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+        match info.color_type {
+            png::ColorType::Rgb => {
+                for chunk in data.chunks_exact(3) {
+                    pixels.push(rgb888_to_rgb565(chunk[0], chunk[1], chunk[2]));
+                }
+            }
+            png::ColorType::Rgba => {
+                for chunk in data.chunks_exact(4) {
+                    pixels.push(rgb888_to_rgb565(chunk[0], chunk[1], chunk[2]));
+                }
+            }
+            other => {
+                bail!(
+                    "unsupported thumbnail PNG color type {:?} for {}",
+                    other,
+                    path.display()
+                );
+            }
+        }
+        if pixels.len() != expected_pixels {
+            bail!(
+                "thumbnail PNG pixel count mismatch for {}: expected {}, got {}",
+                path.display(),
+                expected_pixels,
+                pixels.len()
+            );
         }
         Ok(Self {
-            width,
-            height,
+            width: info.width.try_into().with_context(|| {
+                format!("thumbnail PNG width exceeds u16 for {}", path.display())
+            })?,
+            height: info.height.try_into().with_context(|| {
+                format!("thumbnail PNG height exceeds u16 for {}", path.display())
+            })?,
             pixels,
         })
     }
+
+    fn rgb888_pixels(&self) -> Vec<u8> {
+        let mut rgb = Vec::with_capacity(self.pixels.len() * 3);
+        for &pixel in &self.pixels {
+            rgb.extend_from_slice(&rgb565_to_rgb888(pixel));
+        }
+        rgb
+    }
+}
+
+fn rgb565_to_rgb888(pixel: u16) -> [u8; 3] {
+    let r5 = ((pixel >> 11) & 0x1F) as u8;
+    let g6 = ((pixel >> 5) & 0x3F) as u8;
+    let b5 = (pixel & 0x1F) as u8;
+    [
+        (r5 << 3) | (r5 >> 2),
+        (g6 << 2) | (g6 >> 4),
+        (b5 << 3) | (b5 >> 2),
+    ]
+}
+
+fn rgb888_to_rgb565(r: u8, g: u8, b: u8) -> u16 {
+    ((r as u16 & 0xF8) << 8) | ((g as u16 & 0xFC) << 3) | (b as u16 >> 3)
 }
 
 // ─── Header ──────────────────────────────────────────────────────────
@@ -654,7 +684,7 @@ mod tests {
     #[test]
     fn thumbnail_round_trip() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("thumb_t");
+        let path = dir.path().join("thumb.png");
         let pixels: Vec<u16> = (0..(THUMB_WIDTH as u32 * THUMB_HEIGHT as u32))
             .map(|i| (i & 0xFFFF) as u16)
             .collect();
@@ -667,10 +697,10 @@ mod tests {
     }
 
     #[test]
-    fn thumbnail_rejects_wrong_magic() {
+    fn thumbnail_rejects_invalid_png() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("bad_thumb");
-        fs::write(&path, b"XXXX\x01\x00\x10\x00\x10\x00\x00\x00").unwrap();
+        let path = dir.path().join("bad_thumb.png");
+        fs::write(&path, b"not a png").unwrap();
         assert!(Thumbnail::read_from(&path).is_err());
     }
 

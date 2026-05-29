@@ -2514,7 +2514,7 @@ pub(crate) async fn run_mission(
         // runs, so that if a save is queued we have a valid preview
         // of the last fully-rendered frame to write alongside the
         // payload.  We grab the current GPU render target and store
-        // it in the `_t` sibling file (see `Thumbnail`).
+        // it in the `_thumb.png` sibling file (see `Thumbnail`).
         let pending_thumbnail = if callbacks.pending.is_some() {
             renderer
                 .capture_screen_thumbnail(

@@ -3549,7 +3549,7 @@ impl Renderer {
 
     /// Downsampled RGB565 thumbnail of the next-to-be-presented
     /// composite frame. Used by the savegame preview pipeline (the
-    /// `_t` sibling of every save). Walks the full RGBA readback with
+    /// `_thumb.png` sibling of every save). Walks the full RGBA readback with
     /// nearest-neighbour subsampling.
     pub fn capture_screen_thumbnail(&mut self, target_w: u16, target_h: u16) -> Option<Vec<u16>> {
         if target_w == 0 || target_h == 0 {
