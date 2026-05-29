@@ -1045,31 +1045,10 @@ impl GameHost {
         for (gate_idx, shot) in gate_shots.iter().enumerate() {
             let gate_flags = flags_at(gate_idx);
 
-            if shot.is_jump {
-                // ── Jump gate ──
-                let (src, dst) = match (shot.jump_line_src, shot.jump_line_dst) {
-                    (Some(s), Some(d)) => (s, d),
-                    _ => {
-                        tracing::warn!(
-                            gate = %shot.door_index,
-                            "Jump gate missing jump_line indices; skipping"
-                        );
-                        prev_sector = shot.new_sector;
-                        last_new_sector = shot.new_sector;
-                        continue;
-                    }
-                };
-                let mut jump_elem = SequenceElement::new_generic(0, Command::Jump, owner);
-                jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
-                jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
-                self.record_seq_step(jump_elem, emit_count == 0);
-                emit_count += 1;
-                prev_sector = shot.new_sector;
-                last_new_sector = shot.new_sector;
-                continue;
-            }
-
-            // ── Door gate ──
+            // ── Gate approach ──
+            //
+            // Original AppendMoveToSequence approaches every gate
+            // before splitting into door handling or RHCOMMAND_JUMP.
             let old_is_building = self.sector_is_building(prev_sector);
             let entry_action = shot.entry_action;
             let door_action = shot.door_action;
@@ -1159,6 +1138,30 @@ impl GameHost {
                 }
                 self.record_seq_step(ap, emit_count == 0);
                 emit_count += 1;
+            }
+
+            if shot.is_jump {
+                // ── Jump gate ──
+                let (src, dst) = match (shot.jump_line_src, shot.jump_line_dst) {
+                    (Some(s), Some(d)) => (s, d),
+                    _ => {
+                        tracing::warn!(
+                            gate = %shot.door_index,
+                            "Jump gate missing jump_line indices; skipping"
+                        );
+                        prev_sector = shot.new_sector;
+                        last_new_sector = shot.new_sector;
+                        continue;
+                    }
+                };
+                let mut jump_elem = SequenceElement::new_generic(0, Command::Jump, owner);
+                jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
+                jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
+                self.record_seq_step(jump_elem, emit_count == 0);
+                emit_count += 1;
+                prev_sector = shot.new_sector;
+                last_new_sector = shot.new_sector;
+                continue;
             }
 
             // ── Lockpick branch ──
