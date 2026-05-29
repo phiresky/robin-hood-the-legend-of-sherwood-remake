@@ -350,6 +350,25 @@ pub(crate) fn bow_point_order_type_for_mode(mode: ShootMode) -> OrderType {
     }
 }
 
+/// Absolute 2D bow hotspot used by C++ `ComputeBowPoint`:
+/// `GetPositionSprite() + sprite.GetPoint(shoot_animation, direction)`.
+pub(crate) fn bow_sprite_hand_point(
+    entity: &Entity,
+    mode: ShootMode,
+    direction: i16,
+) -> Option<crate::geo2d::Point2D> {
+    let dir = u16::try_from(direction).ok()?;
+    let sprite_pos = entity.position_iface().get_position_sprite();
+    let offset = entity
+        .element_data()
+        .sprite
+        .get_point(bow_point_order_type_for_mode(mode), dir)?;
+    Some(crate::geo2d::Point2D {
+        x: sprite_pos.x + offset.x,
+        y: sprite_pos.y + offset.y,
+    })
+}
+
 /// Whether this order type is a bow shoot animation.
 fn is_shoot_order(ot: OrderType) -> bool {
     matches!(
@@ -1906,32 +1925,15 @@ pub fn tick_bow_shots(
                 entity.element_data_mut().posture = Posture::Upright;
             }
 
-            // Compute sprite hand anchor point for accurate bow origin.
-            // The sprite returns a relative hotspot offset; we add the
-            // entity's map position to get absolute coordinates.
-            // (immutable borrow — safe now that the mutable borrow above is done)
-            let sprite_hand_point = {
-                let shoot_anim = bow_point_order_type_for_mode(shot_mode);
-                let sprite_pos = entity.element_data().position_map();
-                let hotspot = entity.element_data().sprite.get_point(shoot_anim, dir_u16);
-                match hotspot {
-                    Some(offset) => {
-                        // Hotspot found — add sprite position to get absolute coords.
-                        crate::geo2d::Point2D {
-                            x: sprite_pos.x + offset.x,
-                            y: sprite_pos.y + offset.y,
-                        }
-                    }
-                    None => {
-                        tracing::warn!(
-                            shooter = idx,
-                            ?shoot_anim,
-                            dir_u16,
-                            "Bow release skipped: missing bow-point sprite hotspot"
-                        );
-                        continue;
-                    }
-                }
+            let Some(sprite_hand_point) = bow_sprite_hand_point(entity, shot_mode, direction)
+            else {
+                tracing::warn!(
+                    shooter = idx,
+                    ?shot_mode,
+                    dir_u16,
+                    "Bow release skipped: missing bow-point sprite hotspot"
+                );
+                continue;
             };
 
             let Some(target) = shot.target else {

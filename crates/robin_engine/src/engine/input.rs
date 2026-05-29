@@ -1651,38 +1651,16 @@ impl EngineInner {
         // chest-high walls are cleared.
         if !forest_target {
             let direction = shooter.element_data().direction();
-            let sprite_hand_point = {
-                let sprite_pos = shooter.element_data().position_map();
-                let hotspot = {
-                    let sprite = &shooter.element_data().sprite;
-                    let Ok(dir_u16) = u16::try_from(direction) else {
-                        tracing::warn!(
-                            ?shooter_id,
-                            direction,
-                            "can_shoot_with_bow_at_point: invalid shooter direction"
-                        );
-                        return (BowTarget::Invalid, ShootMode::Normal);
-                    };
-                    sprite.get_point(
-                        crate::bow_shot::bow_point_order_type_for_mode(shoot_mode),
-                        dir_u16,
-                    )
-                };
-                match hotspot {
-                    Some(offset) => crate::geo2d::Point2D {
-                        x: sprite_pos.x + offset.x,
-                        y: sprite_pos.y + offset.y,
-                    },
-                    None => {
-                        tracing::warn!(
-                            ?shooter_id,
-                            ?shoot_mode,
-                            direction,
-                            "can_shoot_with_bow_at_point: missing bow-point sprite hotspot"
-                        );
-                        return (BowTarget::Invalid, ShootMode::Normal);
-                    }
-                }
+            let Some(sprite_hand_point) =
+                crate::bow_shot::bow_sprite_hand_point(shooter, shoot_mode, direction)
+            else {
+                tracing::warn!(
+                    ?shooter_id,
+                    ?shoot_mode,
+                    direction,
+                    "can_shoot_with_bow_at_point: missing bow-point sprite hotspot"
+                );
+                return (BowTarget::Invalid, ShootMode::Normal);
             };
             let bow_point = crate::bow_shot::compute_bow_point(
                 hand_point,
@@ -1948,37 +1926,15 @@ impl EngineInner {
                     y: pc.element_data().position_map().y,
                     z: elevation,
                 };
-                let sprite_hand_point = {
-                    let sprite_pos = pc.element_data().position_map();
-                    let hotspot = {
-                        let sprite = &pc.element_data().sprite;
-                        let Ok(dir_u16) = u16::try_from(direction) else {
-                            tracing::warn!(
-                                ?pc_id,
-                                direction,
-                                "compute_trajectory_preview_to_point: invalid shooter direction"
-                            );
-                            return TrajectoryPreview::Invalid;
-                        };
-                        sprite.get_point(
-                            crate::bow_shot::bow_point_order_type_for_mode(ShootMode::Long),
-                            dir_u16,
-                        )
-                    };
-                    match hotspot {
-                        Some(offset) => crate::geo2d::Point2D {
-                            x: sprite_pos.x + offset.x,
-                            y: sprite_pos.y + offset.y,
-                        },
-                        None => {
-                            tracing::warn!(
-                                ?pc_id,
-                                direction,
-                                "compute_trajectory_preview_to_point: missing long-shot bow-point hotspot"
-                            );
-                            return TrajectoryPreview::Invalid;
-                        }
-                    }
+                let Some(sprite_hand_point) =
+                    bow_shot::bow_sprite_hand_point(pc, ShootMode::Long, direction)
+                else {
+                    tracing::warn!(
+                        ?pc_id,
+                        direction,
+                        "compute_trajectory_preview_to_point: missing long-shot bow-point sprite hotspot"
+                    );
+                    return TrajectoryPreview::Invalid;
                 };
                 bow_shot::compute_bow_point(
                     shooter_pos,
