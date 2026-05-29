@@ -22,6 +22,7 @@ pub mod change;
 pub mod character_kind;
 pub mod combat;
 pub mod console;
+pub mod coordinates;
 pub mod element;
 pub mod element_kinds;
 pub mod element_priority;

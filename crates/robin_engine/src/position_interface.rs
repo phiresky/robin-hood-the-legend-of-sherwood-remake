@@ -22,6 +22,7 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::{MapPoint, MapVec};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
 use crate::geo2d::{self, BBox2D, Point2D, Vec2D};
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
@@ -63,8 +64,8 @@ impl Point3D {
 
     /// Project to 2D map coordinates: `(x, y - z)`.
     #[inline]
-    pub fn to_map(&self) -> Point2D {
-        geo2d::pt(self.x, self.y - self.z)
+    pub fn to_map(self) -> MapPoint {
+        MapPoint::new(self.x, self.y - self.z)
     }
 
     #[inline]
@@ -113,27 +114,6 @@ impl std::ops::Sub for Point3D {
             z: self.z - o.z,
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Serializable 2D vector (wraps geo::Coord for serde use)
-// ---------------------------------------------------------------------------
-
-/// Thin newtype so we can derive serde on top of `geo::Coord<f32>`.
-/// `geo::Coord` already has serde with the `serde` feature.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
-)]
-pub struct Vec2(pub Point2D);
-
-impl Default for Vec2 {
-    fn default() -> Self {
-        Self(geo2d::pt(0.0, 0.0))
-    }
-}
-
-impl Vec2 {
-    pub const ZERO: Self = Self(Point2D { x: 0.0, y: 0.0 });
 }
 
 // ---------------------------------------------------------------------------
@@ -717,18 +697,18 @@ pub struct PositionInterface {
 
     // -- Positions --
     position: Point3D,
-    position_map: Vec2,
+    position_map: MapPoint,
 
     old_position: Point3D,
-    old_position_map: Vec2,
+    old_position_map: MapPoint,
 
-    goal_map: Vec2,
-    goal_next_map: Vec2,
+    goal_map: MapPoint,
+    goal_next_map: MapPoint,
     goal: Point3D,
 
     // -- Increments --
     increment: Point3D,
-    increment_map: Vec2,
+    increment_map: MapVec,
 
     reversed_movement: bool,
 
@@ -782,7 +762,7 @@ pub struct PositionInterface {
 
     // -- Average speed --
     accumulate_movement_map: bool,
-    accumulated_movement_map: Vec2,
+    accumulated_movement_map: MapVec,
 
     // -- Forecasted movement --
     forecasted_movement: Point3D,
@@ -801,17 +781,17 @@ impl PositionInterface {
             computed_increment: IncrementComputed::NONE,
 
             position: Point3D::ZERO,
-            position_map: Vec2::ZERO,
+            position_map: MapPoint::ZERO,
 
             old_position: Point3D::ZERO,
-            old_position_map: Vec2::ZERO,
+            old_position_map: MapPoint::ZERO,
 
-            goal_map: Vec2::ZERO,
-            goal_next_map: Vec2::ZERO,
+            goal_map: MapPoint::ZERO,
+            goal_next_map: MapPoint::ZERO,
             goal: Point3D::ZERO,
 
             increment: Point3D::ZERO,
-            increment_map: Vec2::ZERO,
+            increment_map: MapVec::ZERO,
 
             reversed_movement: false,
             tolerance: 0.0,
@@ -852,7 +832,7 @@ impl PositionInterface {
             radius_initial: RADIUS_GUY,
 
             accumulate_movement_map: false,
-            accumulated_movement_map: Vec2::ZERO,
+            accumulated_movement_map: MapVec::ZERO,
 
             forecasted_movement: Point3D::ZERO,
         }
@@ -932,7 +912,13 @@ impl PositionInterface {
     #[inline]
     #[must_use = "method returns Point2D by value; `pi.get_position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
     pub fn get_position_map(&self) -> Point2D {
-        self.position_map.0
+        self.position_map.to_geo()
+    }
+
+    #[inline]
+    #[must_use = "method returns MapPoint by value; use `set_map_position` to mutate."]
+    pub fn map_position(&self) -> MapPoint {
+        self.position_map
     }
 
     #[inline]
@@ -949,7 +935,12 @@ impl PositionInterface {
 
     #[inline]
     pub fn set_position_map(&mut self, pt: Point2D) {
-        self.position_map = Vec2(pt);
+        self.set_map_position(MapPoint::from_geo(pt));
+    }
+
+    #[inline]
+    pub fn set_map_position(&mut self, pt: MapPoint) {
+        self.position_map = pt;
         self.recompute_from_map();
     }
 
@@ -964,7 +955,7 @@ impl PositionInterface {
     /// [`Self::set_position_map`] instead.
     #[inline]
     pub fn set_position_map_preserving_3d(&mut self, pt: Point2D) {
-        self.position_map = Vec2(pt);
+        self.position_map = MapPoint::from_geo(pt);
         self.move_box_map = self.get_move_box_offset(pt);
     }
 
@@ -981,7 +972,11 @@ impl PositionInterface {
     }
     #[inline]
     pub fn get_old_position_map(&self) -> Point2D {
-        self.old_position_map.0
+        self.old_position_map.to_geo()
+    }
+    #[inline]
+    pub fn old_map_position(&self) -> MapPoint {
+        self.old_position_map
     }
     #[inline]
     pub fn set_old_position(&mut self, pt: Point3D) {
@@ -989,7 +984,11 @@ impl PositionInterface {
     }
     #[inline]
     pub fn set_old_position_map(&mut self, pt: Point2D) {
-        self.old_position_map = Vec2(pt);
+        self.old_position_map = MapPoint::from_geo(pt);
+    }
+    #[inline]
+    pub fn set_old_map_position(&mut self, pt: MapPoint) {
+        self.old_position_map = pt;
     }
 
     #[inline]
@@ -1004,20 +1003,37 @@ impl PositionInterface {
     // Goal
     #[inline]
     pub fn get_position_goal_map(&self) -> Point2D {
-        self.goal_map.0
+        self.goal_map.to_geo()
+    }
+    #[inline]
+    pub fn map_goal(&self) -> MapPoint {
+        self.goal_map
     }
     #[inline]
     pub fn set_position_goal_map(&mut self, pt: Point2D) {
-        self.goal_map = Vec2(pt);
+        self.set_map_goal(MapPoint::from_geo(pt));
+    }
+    #[inline]
+    pub fn set_map_goal(&mut self, pt: MapPoint) {
+        self.goal_map = pt;
         self.computed_increment = IncrementComputed::NONE;
     }
     #[inline]
     pub fn get_position_goal_next_map(&self) -> Point2D {
-        self.goal_next_map.0
+        self.goal_next_map.to_geo()
+    }
+    #[inline]
+    pub fn next_map_goal(&self) -> MapPoint {
+        self.goal_next_map
     }
     #[inline]
     pub fn set_position_goal_next_map(&mut self, pt: Point2D) {
-        self.goal_next_map = Vec2(pt);
+        self.goal_next_map = MapPoint::from_geo(pt);
+        self.goal_next_valid = true;
+    }
+    #[inline]
+    pub fn set_next_map_goal(&mut self, pt: MapPoint) {
+        self.goal_next_map = pt;
         self.goal_next_valid = true;
     }
     #[inline]
@@ -1087,8 +1103,8 @@ impl PositionInterface {
 
     #[inline]
     pub fn get_movement_map(&self) -> Vec2D {
-        let a = self.position_map.0;
-        let b = self.old_position_map.0;
+        let a = self.position_map;
+        let b = self.old_position_map;
         geo2d::pt(a.x - b.x, a.y - b.y)
     }
 
@@ -1101,7 +1117,13 @@ impl PositionInterface {
     #[inline]
     pub fn get_increment_map(&self) -> Vec2D {
         assert!(self.is_increment_map_computed());
-        self.increment_map.0
+        self.increment_map.to_geo()
+    }
+
+    #[inline]
+    pub fn map_increment(&self) -> MapVec {
+        assert!(self.is_increment_map_computed());
+        self.increment_map
     }
 
     #[inline]
@@ -1117,8 +1139,13 @@ impl PositionInterface {
 
     #[inline]
     pub fn set_increment_map(&mut self, v: Vec2D) {
+        self.set_map_increment(MapVec::from_geo(v));
+    }
+
+    #[inline]
+    pub fn set_map_increment(&mut self, v: MapVec) {
         self.computed_increment = IncrementComputed::MAP;
-        self.increment_map = Vec2(v);
+        self.increment_map = v;
     }
 
     /// Advance position by the 3D increment.
@@ -1133,9 +1160,9 @@ impl PositionInterface {
     #[inline]
     pub fn update_position_map(&mut self) {
         assert!(self.is_increment_map_computed());
-        let im = self.increment_map.0;
-        self.position_map.0.x += im.x;
-        self.position_map.0.y += im.y;
+        let im = self.increment_map;
+        self.position_map.x += im.x;
+        self.position_map.y += im.y;
         self.recompute_from_map();
     }
 
@@ -1149,9 +1176,9 @@ impl PositionInterface {
     /// Advance map position by `increment_map * distance`.
     pub fn update_position_map_scaled(&mut self, distance: f32) {
         assert!(self.is_increment_map_computed());
-        let im = self.increment_map.0;
-        self.position_map.0.x += im.x * distance;
-        self.position_map.0.y += im.y * distance;
+        let im = self.increment_map;
+        self.position_map.x += im.x * distance;
+        self.position_map.y += im.y * distance;
         self.recompute_from_map();
     }
 
@@ -1474,8 +1501,8 @@ impl PositionInterface {
     }
 
     pub fn move_map(&mut self, v: Vec2D) {
-        self.position_map.0.x += v.x;
-        self.position_map.0.y += v.y;
+        self.position_map.x += v.x;
+        self.position_map.y += v.y;
         self.recompute_from_map();
     }
 
@@ -1491,20 +1518,20 @@ impl PositionInterface {
     /// Resync map + move_box_map from the current `position`.
     fn recompute_from_3d(&mut self) {
         let map = self.position.to_map();
-        self.position_map = Vec2(map);
-        self.move_box_map = self.get_move_box_offset(map);
+        self.position_map = map;
+        self.move_box_map = self.get_move_box_offset(map.to_geo());
     }
 
     /// Resync 3D + move_box_map from the current `position_map`.
     fn recompute_from_map(&mut self) {
-        let map = self.position_map.0;
-        self.move_box_map = self.get_move_box_offset(map);
+        let map = self.position_map;
+        self.move_box_map = self.get_move_box_offset(map.to_geo());
         self.position_3d_from_map();
     }
 
     /// Internal: reconstruct 3D from current `position_map` + plane.
     fn position_3d_from_map(&mut self) {
-        let map = self.position_map.0;
+        let map = self.position_map;
         self.position.x = map.x;
         if let Some(p) = &self.plane {
             self.position.z = p.compute_z(map.x, map.y);
@@ -1526,12 +1553,12 @@ impl PositionInterface {
         }
         if self.is_increment_3d_computed() {
             let inc = self.increment;
-            self.increment_map = Vec2(geo2d::pt(inc.x, inc.y - inc.z));
+            self.increment_map = MapVec::new(inc.x, inc.y - inc.z);
         } else {
-            let map = self.position_map.0;
-            let goal = self.goal_map.0;
+            let map = self.position_map;
+            let goal = self.goal_map;
             let v = geo2d::pt(goal.x - map.x, goal.y - map.y);
-            self.increment_map = Vec2(geo2d::normalize(v));
+            self.increment_map = MapVec::from_geo(geo2d::normalize(v));
         }
         self.set_increment_map_computed(true);
     }
@@ -1543,7 +1570,7 @@ impl PositionInterface {
         }
         assert!(self.is_increment_map_computed());
 
-        let im = self.increment_map.0;
+        let im = self.increment_map;
         self.increment.x = im.x;
         if let Some(p) = &self.plane {
             self.increment.z = p.compute_z_increment(im.x, im.y);
@@ -1573,9 +1600,9 @@ impl PositionInterface {
 
         if self.is_increment_3d_computed() {
             let inc = self.increment;
-            self.increment_map = Vec2(geo2d::pt(inc.x, inc.y - inc.z));
+            self.increment_map = MapVec::new(inc.x, inc.y - inc.z);
         } else if self.is_increment_map_computed() {
-            let im = self.increment_map.0;
+            let im = self.increment_map;
             self.increment.x = im.x;
             if let Some(p) = &self.plane {
                 self.increment.z = p.compute_z_increment(im.x, im.y);
@@ -1585,15 +1612,15 @@ impl PositionInterface {
                 self.increment.z = 0.0;
             }
         } else {
-            let map = self.position_map.0;
-            let goal = self.goal_map.0;
+            let map = self.position_map;
+            let goal = self.goal_map;
             let mut v = geo2d::pt(goal.x - map.x, goal.y - map.y);
 
             very_small = v.x.abs().max(v.y.abs()) < 1.0;
 
             if v.x != 0.0 || v.y != 0.0 {
                 v = geo2d::normalize(v);
-                self.increment_map = Vec2(v);
+                self.increment_map = MapVec::from_geo(v);
 
                 self.increment.x = v.x;
                 if let Some(p) = &self.plane {
@@ -1629,14 +1656,14 @@ impl PositionInterface {
     /// live).  Passing `None` for `target` disables the blocked-count
     /// radius-slack branch.
     pub fn is_goal_reached(&self, grid: &FastFindGrid, target: Option<TargetInfo>) -> bool {
-        let map = self.position_map.0;
-        let goal = self.goal_map.0;
-        let im = self.increment_map.0;
+        let map = self.position_map.to_geo();
+        let goal = self.goal_map.to_geo();
+        let im = self.increment_map.to_geo();
 
         if self.deviated {
             if self.goal_next_valid {
                 let hd = self.get_half_diagonal();
-                grid.is_reachable_thick(map, self.goal_next_map.0, self.layer.get(), hd)
+                grid.is_reachable_thick(map, self.goal_next_map.to_geo(), self.layer.get(), hd)
             } else if self.blocked_count == 0 {
                 self.directional_goal_check(map, goal, im)
             } else {
@@ -1685,27 +1712,27 @@ impl PositionInterface {
 
     pub fn initialize_average_speed_map(&mut self, pt: Point2D) {
         let map = self.get_position_map();
-        self.accumulated_movement_map = Vec2(geo2d::pt(map.x - pt.x, map.y - pt.y));
+        self.accumulated_movement_map = MapVec::new(map.x - pt.x, map.y - pt.y);
     }
 
     pub fn update_average_speed_map_distance(&mut self, distance: f32) {
-        let im = self.increment_map.0;
-        self.accumulated_movement_map.0.x += distance * im.x;
-        self.accumulated_movement_map.0.y += distance * im.y;
+        let im = self.increment_map;
+        self.accumulated_movement_map.x += distance * im.x;
+        self.accumulated_movement_map.y += distance * im.y;
     }
 
     pub fn update_average_speed_map_vector(&mut self, v: Vec2D) {
-        self.accumulated_movement_map.0.x += v.x;
-        self.accumulated_movement_map.0.y += v.y;
+        self.accumulated_movement_map.x += v.x;
+        self.accumulated_movement_map.y += v.y;
     }
 
     pub fn get_average_speed_map(&mut self) -> Vec2D {
         let avg = geo2d::pt(
-            self.accumulated_movement_map.0.x * 0.1,
-            self.accumulated_movement_map.0.y * 0.1,
+            self.accumulated_movement_map.x * 0.1,
+            self.accumulated_movement_map.y * 0.1,
         );
-        self.accumulated_movement_map.0.x -= avg.x;
-        self.accumulated_movement_map.0.y -= avg.y;
+        self.accumulated_movement_map.x -= avg.x;
+        self.accumulated_movement_map.y -= avg.y;
         avg
     }
 
@@ -1779,8 +1806,8 @@ impl PositionInterface {
 
     pub fn get_anticollision_data(&self) -> AnticollisionData {
         AnticollisionData {
-            map: self.position_map.0,
-            increment_map: self.increment_map.0,
+            map: self.position_map.to_geo(),
+            increment_map: self.increment_map.to_geo(),
             deviated: self.deviated,
             box_blocked: self.box_blocked,
             blocked_count: self.blocked_count,
@@ -1789,9 +1816,9 @@ impl PositionInterface {
     }
 
     pub fn set_anticollision_data(&mut self, d: &AnticollisionData) {
-        self.position_map = Vec2(d.map);
+        self.position_map = MapPoint::from_geo(d.map);
         self.recompute_from_map();
-        self.increment_map = Vec2(d.increment_map);
+        self.increment_map = MapVec::from_geo(d.increment_map);
         self.deviated = d.deviated;
         self.box_blocked = d.box_blocked;
         self.blocked_count = d.blocked_count;
@@ -1814,7 +1841,13 @@ impl PositionInterface {
         points: &mut Vec<(RepulsivePoint, f32)>,
         lines: &mut Vec<(RepulsiveLine, f32)>,
     ) {
-        sort_repulsive_objects(self.position_map.0, pt_future, self.radius, points, lines);
+        sort_repulsive_objects(
+            self.position_map.to_geo(),
+            pt_future,
+            self.radius,
+            points,
+            lines,
+        );
     }
 
     /// Apply actor-vs-actor anti-collision to the pending movement.
@@ -1846,8 +1879,8 @@ impl PositionInterface {
         disturbing_points: Vec<RepulsivePoint>,
         disturbing_lines: Vec<RepulsiveLine>,
     ) -> bool {
-        let map = self.position_map.0;
-        let im = self.increment_map.0;
+        let map = self.position_map.to_geo();
+        let im = self.increment_map.to_geo();
         let pt_future_naive = geo2d::pt(map.x + distance * im.x, map.y + distance * im.y);
         let mut pt_future = pt_future_naive;
 
@@ -1869,7 +1902,7 @@ impl PositionInterface {
                 let hd = self.get_half_diagonal();
                 if fast_grid.is_reachable_thick(
                     pt_future_naive,
-                    self.goal_map.0,
+                    self.goal_map.to_geo(),
                     self.layer.get(),
                     hd,
                 ) {
@@ -1919,7 +1952,12 @@ impl PositionInterface {
         if !deviated_in_loop {
             if self.deviated {
                 let hd = self.get_half_diagonal();
-                if fast_grid.is_reachable_thick(pt_future, self.goal_map.0, self.layer.get(), hd) {
+                if fast_grid.is_reachable_thick(
+                    pt_future,
+                    self.goal_map.to_geo(),
+                    self.layer.get(),
+                    hd,
+                ) {
                     self.deviated = false;
                     self.set_position_map(pt_future);
                     self.reset_increment_computed();
@@ -1942,7 +1980,7 @@ impl PositionInterface {
             fast_grid.is_straight_movement_authorized(map, pt_future, self.layer.get(), &box_move)
                 && fast_grid.is_reachable_thick(
                     pt_future,
-                    self.goal_map.0,
+                    self.goal_map.to_geo(),
                     self.layer.get(),
                     half_diagonal_move,
                 );
@@ -1974,15 +2012,15 @@ impl PositionInterface {
         // straight toward the goal.  Active when `blocked_count > 0`.
         if self.blocked_count > 0 {
             let to_goal = geo2d::pt(
-                self.goal_map.0.x - self.position_map.0.x,
-                self.goal_map.0.y - self.position_map.0.y,
+                self.goal_map.x - self.position_map.x,
+                self.goal_map.y - self.position_map.y,
             );
             let n = geo2d::normalize(to_goal);
             let mut barge_movement = geo2d::pt(n.x * distance, n.y * distance);
             self.set_direction(vector_to_direction(barge_movement.x, barge_movement.y));
             let mut barge_future = geo2d::pt(
-                self.position_map.0.x + barge_movement.x,
-                self.position_map.0.y + barge_movement.y,
+                self.position_map.x + barge_movement.x,
+                self.position_map.y + barge_movement.y,
             );
 
             // Shrink the move box slightly.
@@ -1999,7 +2037,7 @@ impl PositionInterface {
                 &offset_bbox(&box_move_inset, barge_future),
                 self.layer.get(),
             ) {
-                self.position_map = Vec2(barge_future);
+                self.position_map = MapPoint::from_geo(barge_future);
                 self.recompute_from_map();
             } else {
                 // Try slowing down.
@@ -2009,15 +2047,15 @@ impl PositionInterface {
                         &offset_bbox(&box_move_inset, barge_future),
                         self.layer.get(),
                     ) {
-                        self.position_map = Vec2(barge_future);
+                        self.position_map = MapPoint::from_geo(barge_future);
                         self.recompute_from_map();
                         break;
                     }
                     slower *= 0.8;
                     barge_movement = geo2d::pt(barge_movement.x * 0.8, barge_movement.y * 0.8);
                     barge_future = geo2d::pt(
-                        self.position_map.0.x + barge_movement.x,
-                        self.position_map.0.y + barge_movement.y,
+                        self.position_map.x + barge_movement.x,
+                        self.position_map.y + barge_movement.y,
                     );
                 }
                 if slower <= 0.1 {
@@ -2035,7 +2073,7 @@ impl PositionInterface {
                     }
                     if fast_grid.find_authorized_position(&mut widened, self.layer.get()) {
                         let c = widened.center();
-                        self.position_map = Vec2(c);
+                        self.position_map = MapPoint::from_geo(c);
                         self.recompute_from_map();
                     }
                     // If even the wide search fails we stay put —
@@ -2219,7 +2257,7 @@ impl PositionInterface {
     /// Compute the grid cell `(cx, cy)` for the current map position.
     /// Uses the same 64-pixel cell size as `FastFindGrid`.
     pub fn grid_cell(&self) -> (u16, u16) {
-        let map = self.position_map.0;
+        let map = self.position_map;
         let cx = (map.x as i32 / GRID_CELL_SIZE) as u16;
         let cy = (map.y as i32 / GRID_CELL_SIZE) as u16;
         (cx, cy)
@@ -2227,12 +2265,12 @@ impl PositionInterface {
 
     /// Test whether the current map position is inside the grid bounds.
     pub fn is_inside_grid(&self, grid: &FastFindGrid) -> bool {
-        grid.is_inside_grid_point(self.position_map.0)
+        grid.is_inside_grid_point(self.position_map.to_geo())
     }
 
     /// Get the flat block index for the current map position on the current layer.
     pub fn grid_block_index(&self, grid: &FastFindGrid) -> usize {
-        grid.get_block_index(self.position_map.0, self.layer.get())
+        grid.get_block_index(self.position_map.to_geo(), self.layer.get())
     }
 
     /// Check whether the current map position (with its move box) is free of
@@ -2394,6 +2432,18 @@ mod tests {
         assert!((m.y - 15.0).abs() < 1e-6);
     }
 
+    #[test]
+    fn test_typed_map_position_uses_projected_space() {
+        let mut pi = PositionInterface::new();
+        pi.set_position(p3(10.0, 20.0, 5.0));
+
+        assert_eq!(pi.map_position(), MapPoint::new(10.0, 15.0));
+
+        pi.set_map_position(MapPoint::new(30.0, 40.0));
+        assert_eq!(pi.get_position_map(), geo2d::pt(30.0, 40.0));
+        assert_eq!(pi.get_position(), p3(30.0, 40.0, 0.0));
+    }
+
     fn d(v: i32) -> Direction {
         Direction::from_raw(v)
     }
@@ -2419,6 +2469,10 @@ mod tests {
     #[test]
     fn test_set_position_3d_eagerly_syncs_map_and_move_box() {
         let mut pi = PositionInterface::new();
+        pi.set_move_box(BBox2D::from_corners(
+            geo2d::pt(0.0, 0.0),
+            geo2d::pt(1.0, 1.0),
+        ));
         pi.set_position(p3(100.0, 200.0, 0.0));
 
         let map = pi.get_position_map();
@@ -2605,7 +2659,7 @@ mod tests {
         let mut pi = PositionInterface::new();
         pi.set_position_map(geo2d::pt(50.0, 50.0));
         pi.set_position_goal_map(geo2d::pt(50.0, 50.0));
-        pi.increment_map = Vec2(geo2d::pt(0.0, 1.0));
+        pi.increment_map = MapVec::new(0.0, 1.0);
         pi.computed_increment = IncrementComputed::ALL;
         pi.tolerance = 0.0;
 
@@ -2619,7 +2673,7 @@ mod tests {
         pi.set_position_map(geo2d::pt(50.0, 51.0));
         pi.set_position_goal_map(geo2d::pt(50.0, 50.0));
         // Increment points in +Y direction, goal is behind us (dot < 0)
-        pi.increment_map = Vec2(geo2d::pt(0.0, 1.0));
+        pi.increment_map = MapVec::new(0.0, 1.0);
         pi.computed_increment = IncrementComputed::ALL;
         pi.tolerance = 0.0;
 
