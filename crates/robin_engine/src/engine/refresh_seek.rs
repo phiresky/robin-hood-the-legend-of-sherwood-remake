@@ -616,12 +616,10 @@ impl crate::engine::EngineInner {
     ///
     /// Rebuilds a single-element point-target Seek sequence, interrupts
     /// the current movement element, and launches the replacement at
-    /// info priority.  Three arms — (1) seek-into-door, (2) seek-to-line
-    /// via `MoveFlags::LINE`, and (3) classical point-seek —
-    /// distinguished by the current element's sector and flag bits.
-    /// This port covers the classical arm only; the door and line arms
-    /// are guarded with TODOs because neither the actor-side seek-sector
-    /// bundle nor the line-goal movement pipeline is wired yet.
+    /// info priority.  The active element's sector/layer, line id, flags,
+    /// tolerance, and speed factor are preserved so door/line-flavoured
+    /// point seeks keep their movement metadata if this symmetry helper
+    /// is ever reached.
     ///
     /// The initial dispatch of a SEEK command element whose target is
     /// null (i.e., a pure point-seek) is handled directly through the
