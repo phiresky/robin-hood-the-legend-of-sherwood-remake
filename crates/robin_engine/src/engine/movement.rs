@@ -1763,34 +1763,12 @@ impl EngineInner {
 
         for (gate_idx, shot) in gate_shots.iter().enumerate() {
             let gate_flags = flags_at(gate_idx);
-            // -------- Jump gate branch --------
+            // -------- Gate approach branch --------
             //
-            // A single `Jump` generic element carrying the source and
-            // destination jump-line indices.  The tick handler
-            // consumes these in `start_jump`.
-            if shot.is_jump {
-                let (src, dst) = match (shot.jump_line_src, shot.jump_line_dst) {
-                    (Some(s), Some(d)) => (s, d),
-                    _ => {
-                        tracing::warn!(
-                            gate = %shot.door_index,
-                            "Jump gate missing jump_line indices; skipping jump element"
-                        );
-                        prev_sector = Some(shot.new_sector);
-                        continue;
-                    }
-                };
-                let mut jump_elem =
-                    SequenceElement::new_generic(level, Command::Jump, Some(entity_id));
-                jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
-                jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
-                seq.append_element(jump_elem);
-                level += 1;
-                prev_sector = Some(shot.new_sector);
-                continue;
-            }
-
-            // -------- Door gate branch --------
+            // Doors and jumps both first move to the gate's source
+            // point (or CHANGE_POSITION out of a building), matching
+            // original AppendMoveToSequence.  The door-vs-jump split
+            // happens after this approach.
             let old_is_building = prev_sector
                 .map(|s| is_building_sector(self, s))
                 .unwrap_or(false);
@@ -1910,6 +1888,34 @@ impl EngineInner {
                 };
                 seq.append_element(ap);
                 level += 1;
+            }
+
+            // -------- Jump gate branch --------
+            //
+            // After the approach/assert above, a jump gate emits a
+            // single `Jump` generic element carrying the source and
+            // destination jump-line indices.  The tick handler
+            // consumes these in `start_jump`.
+            if shot.is_jump {
+                let (src, dst) = match (shot.jump_line_src, shot.jump_line_dst) {
+                    (Some(s), Some(d)) => (s, d),
+                    _ => {
+                        tracing::warn!(
+                            gate = %shot.door_index,
+                            "Jump gate missing jump_line indices; skipping jump element"
+                        );
+                        prev_sector = Some(shot.new_sector);
+                        continue;
+                    }
+                };
+                let mut jump_elem =
+                    SequenceElement::new_generic(level, Command::Jump, Some(entity_id));
+                jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
+                jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
+                seq.append_element(jump_elem);
+                level += 1;
+                prev_sector = Some(shot.new_sector);
+                continue;
             }
 
             // -------- Lockpick branch --------
