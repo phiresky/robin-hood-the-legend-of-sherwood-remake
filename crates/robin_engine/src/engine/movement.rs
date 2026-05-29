@@ -1786,17 +1786,20 @@ impl EngineInner {
                 // WaitTimer elements: the 50-frame one is only added
                 // when there was already a prior gate-emitted element
                 // (so the very first gate skips it).
+                let wait_command = if matches!(goal, GoalShape::Line { .. }) {
+                    Command::Wait
+                } else {
+                    Command::WaitTimer
+                };
                 if seq.elements.len() != first_gate_element_count {
-                    let mut w =
-                        SequenceElement::new_generic(level, Command::WaitTimer, Some(entity_id));
+                    let mut w = SequenceElement::new_generic(level, wait_command, Some(entity_id));
                     w.set_property(Field::Timer, FieldValue::Integer(50));
                     seq.append_element(w);
                     level += 1;
                 }
                 // Random 0..30 (sum of two rand-and-15 draws).
                 let r: u32 = self.rng.u32(0..16) + self.rng.u32(0..16);
-                let mut w =
-                    SequenceElement::new_generic(level, Command::WaitTimer, Some(entity_id));
+                let mut w = SequenceElement::new_generic(level, wait_command, Some(entity_id));
                 w.set_property(Field::Timer, FieldValue::Integer(r));
                 seq.append_element(w);
                 level += 1;
