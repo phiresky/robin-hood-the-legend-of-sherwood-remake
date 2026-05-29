@@ -2027,7 +2027,7 @@ fn refresh_dot(
     host: &Host,
     mm: &robin_engine::minimap::MinimapState,
     level_size: robin_engine::geo2d::Vec2D,
-    world_pos: robin_engine::element::Point2D,
+    world_pos: robin_engine::coordinates::MapPoint,
     dot_type: robin_engine::minimap::DotType,
     widget_box: &robin_engine::geo2d::BBox2D,
     renderer: &mut Renderer,

@@ -1287,7 +1287,7 @@ impl EngineInner {
                 // Determine initial active state from start_animation_valid.
                 let initially_active = raw.start_animation_valid;
                 sprite.apply_placement(
-                    crate::element::Point2D {
+                    crate::coordinates::MapPoint {
                         x: raw.element_fx.sprite.position_x as f32,
                         y: raw.element_fx.sprite.position_y as f32,
                     },
@@ -1408,7 +1408,7 @@ impl EngineInner {
                     }
                 }
                 sprite.apply_placement(
-                    crate::element::Point2D {
+                    crate::coordinates::MapPoint {
                         x: raw.sprite.position_x as f32,
                         y: raw.sprite.position_y as f32,
                     },
@@ -3557,7 +3557,7 @@ impl EngineInner {
         if elem.layer() != 0xFFFF
             && self
                 .fast_grid
-                .is_in_shadow_sector(elem.position_map().to_geo_point(), elem.layer())
+                .is_in_shadow_sector(elem.position_map().to_geo(), elem.layer())
         {
             SpriteVariant::Day
         } else {
@@ -5911,7 +5911,7 @@ impl EngineInner {
                 if let Some(Some(crate::element::Entity::Pc(pc))) =
                     self.entities.get_mut(entity_idx)
                 {
-                    pc.element.set_position_map(crate::element::Point2D {
+                    pc.element.set_position_map(crate::coordinates::MapPoint {
                         x: occupant.x,
                         y: occupant.y,
                     });

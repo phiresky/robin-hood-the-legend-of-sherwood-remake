@@ -472,7 +472,7 @@ impl EngineInner {
             assets.static_sight_obstacles.as_slice(),
         );
         element.sprite.apply_placement(
-            crate::element::Point2D {
+            crate::coordinates::MapPoint {
                 x: req.position_map.x,
                 y: req.position_map.y,
             },

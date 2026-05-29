@@ -202,7 +202,7 @@ impl EngineInner {
                         .collect()
                 })
                 .unwrap_or_default();
-            let position = ent.element_data().position_map().to_geo_point();
+            let position = ent.element_data().position_map().to_geo();
             let layer = ent.element_data().layer();
             let (half_diag, move_box) = {
                 let pi = ent.position_iface();
@@ -254,7 +254,7 @@ impl EngineInner {
         &self,
         sector: crate::position_interface::SectorHandle,
         posture: Posture,
-        position: crate::element::Point2D,
+        position: crate::coordinates::MapPoint,
         elem: &SequenceElement,
     ) -> Option<OrderType> {
         let sector =
@@ -585,7 +585,7 @@ impl EngineInner {
             let Some(entity) = self.get_entity(owner) else {
                 return;
             };
-            let position = entity.element_data().position_map().to_geo_point();
+            let position = entity.element_data().position_map().to_geo();
             let layer = entity.element_data().layer();
             let hd = entity.position_iface().get_half_diagonal();
             (position, layer, hd)

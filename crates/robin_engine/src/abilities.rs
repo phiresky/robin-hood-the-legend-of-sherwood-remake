@@ -16,9 +16,9 @@
 //!    restoration, etc.) from the returned [`AbilityTickResult`] values
 //!    *after* the mutable entity borrow is released.
 
+use crate::coordinates::MapPoint as ElemPoint2D;
 use crate::element::{
-    ActionState, Entity, EntityId, GameMaterial, ListenPhase, Point2D as ElemPoint2D, Posture,
-    ReceivePursePhase,
+    ActionState, Entity, EntityId, GameMaterial, ListenPhase, Posture, ReceivePursePhase,
 };
 use crate::movement::{AbilityKind, ActiveAbility};
 use crate::order::{Order, OrderType};

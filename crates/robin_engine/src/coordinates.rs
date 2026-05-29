@@ -50,6 +50,13 @@ macro_rules! coord2 {
             }
         }
 
+        impl From<geo2d::Point2D> for $name {
+            #[inline]
+            fn from(p: geo2d::Point2D) -> Self {
+                Self::from_geo(p)
+            }
+        }
+
         #[inline]
         pub const fn $ctor(x: f32, y: f32) -> $name {
             $name::new(x, y)

@@ -535,7 +535,7 @@ impl EngineInner {
                 self.apply_raise_shield_with_danger(
                     *actor,
                     *protected_pc,
-                    crate::element::Point2D {
+                    crate::coordinates::MapPoint {
                         x: danger_point.x,
                         y: danger_point.y,
                     },
@@ -1896,7 +1896,7 @@ impl EngineInner {
                     match e.sprite().current_hotspot() {
                         Some(hp) => {
                             let ps = e.cxx_position_sprite();
-                            crate::element::Point2D {
+                            crate::coordinates::MapPoint {
                                 x: ps.x + hp.x,
                                 y: ps.y + hp.y,
                             }
@@ -2684,7 +2684,7 @@ impl EngineInner {
         };
 
         let victim_pos_geo = match self.get_entity(target_id) {
-            Some(e) => e.element_data().position_map().to_geo_point(),
+            Some(e) => e.element_data().position_map().to_geo(),
             None => return,
         };
         let t_victim = victim_line.compute_nearest_point_param(victim_pos_geo);
@@ -2937,7 +2937,7 @@ impl EngineInner {
         &mut self,
         actor: EntityId,
         protected_pc: EntityId,
-        danger_point: crate::element::Point2D,
+        danger_point: crate::coordinates::MapPoint,
         danger_point_layer: u16,
     ) {
         use crate::order::OrderType;
@@ -3832,7 +3832,7 @@ mod tests {
             pc: PcData::default(),
         };
         pc.element
-            .set_position_map(crate::element::Point2D { x, y });
+            .set_position_map(crate::coordinates::MapPoint { x, y });
         engine.add_entity(Entity::Pc(pc))
     }
 
@@ -3886,7 +3886,7 @@ mod tests {
         engine.mission_script = Some(minimal_script());
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
-            pc.set_position_map(crate::element::Point2D { x: 100.0, y: 100.0 });
+            pc.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
             pc.set_direction_instantly(0);
         }
         bind_single_action_point(
@@ -3913,7 +3913,7 @@ mod tests {
             civilian: Default::default(),
         };
         npc.element
-            .set_position_map(crate::element::Point2D { x: 110.0, y: 100.0 });
+            .set_position_map(crate::coordinates::MapPoint { x: 110.0, y: 100.0 });
         let npc_id = engine.add_entity(Entity::Civilian(npc));
 
         let scroll_id = spawn_scroll(&mut engine, true);
@@ -4045,7 +4045,7 @@ mod tests {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Resuscitate, 0)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
-            pc.set_position_map(crate::element::Point2D { x: 100.0, y: 100.0 });
+            pc.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
             pc.set_direction_instantly(0);
         }
         bind_single_action_point(
@@ -4071,7 +4071,7 @@ mod tests {
         };
         victim
             .element
-            .set_position_map(crate::element::Point2D { x: 143.0, y: 100.0 });
+            .set_position_map(crate::coordinates::MapPoint { x: 143.0, y: 100.0 });
         let victim_id = engine.add_entity(Entity::Pc(victim));
         let element =
             SequenceElement::new_interaction(1, Command::WakeUp, Some(pc_id), Some(victim_id));
@@ -4082,7 +4082,7 @@ mod tests {
             .get_entity_mut(victim_id)
             .unwrap()
             .element_data_mut()
-            .set_position_map(crate::element::Point2D { x: 144.0, y: 100.0 });
+            .set_position_map(crate::coordinates::MapPoint { x: 144.0, y: 100.0 });
         assert!(!engine.check_sequence_element_validity(&assets, pc_id, &element, true));
     }
 
@@ -4091,7 +4091,7 @@ mod tests {
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
-            pc.set_position_map(crate::element::Point2D { x: 20.0, y: 30.0 });
+            pc.set_position_map(crate::coordinates::MapPoint { x: 20.0, y: 30.0 });
             pc.set_direction_instantly(0);
         }
         bind_single_action_point(
@@ -4119,7 +4119,7 @@ mod tests {
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
-            pc.set_position_map(crate::element::Point2D { x: 10.0, y: 10.0 });
+            pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
             pc.set_direction_instantly(0);
         }
         bind_single_action_point(
@@ -4141,7 +4141,7 @@ mod tests {
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
-            pc.set_position_map(crate::element::Point2D { x: 10.0, y: 10.0 });
+            pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
         }
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
@@ -4172,7 +4172,7 @@ mod tests {
         let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Climb, 0)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
-            pc.set_position_map(crate::element::Point2D { x: 10.0, y: 10.0 });
+            pc.set_position_map(crate::coordinates::MapPoint { x: 10.0, y: 10.0 });
             pc.set_direction_instantly(0);
         }
         bind_single_action_point(

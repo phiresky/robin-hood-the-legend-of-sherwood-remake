@@ -311,7 +311,7 @@ impl EngineInner {
             pos.y += movement.y;
             pos.z += movement.z;
             p.element.set_position(pos);
-            p.element.set_position_map(crate::element::Point2D {
+            p.element.set_position_map(crate::coordinates::MapPoint {
                 x: pos.x,
                 y: pos.y - pos.z,
             });
@@ -721,9 +721,10 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::MapPoint as ElemPoint2D;
     use crate::element::{
         ActorData, ActorSoldier, ElementData, ElementKind, ElementProjectile, HumanData, NpcData,
-        ObjectData, Point2D as ElemPoint2D, Posture, ProjectileData, SoldierData,
+        ObjectData, Posture, ProjectileData, SoldierData,
     };
     use crate::profiles::{ProfileManager, SoldierProfile};
 

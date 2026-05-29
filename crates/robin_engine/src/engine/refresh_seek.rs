@@ -196,7 +196,7 @@ impl crate::engine::EngineInner {
             action: crate::order::OrderType,
             flags: MoveFlags,
             tolerance: f32,
-            new_target_pos: crate::element::Point2D,
+            new_target_pos: crate::coordinates::MapPoint,
         }
 
         let mut refreshes: Vec<Refresh> = Vec::new();
@@ -327,7 +327,7 @@ impl crate::engine::EngineInner {
         action: crate::order::OrderType,
         flags: MoveFlags,
         tolerance: f32,
-        new_target_pos: crate::element::Point2D,
+        new_target_pos: crate::coordinates::MapPoint,
     ) {
         if self.try_handle_same_sector_actor_seek_wait(owner, seq_id, elem_idx, target, flags) {
             return;
@@ -429,9 +429,7 @@ impl crate::engine::EngineInner {
                     .map(|e| e.element_data().position_map())
                 && let Some(owner_e) = self.get_entity_mut(owner)
             {
-                owner_e
-                    .position_iface_mut()
-                    .set_position_map(pos.to_geo_point());
+                owner_e.position_iface_mut().set_position_map(pos.to_geo());
                 self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
             }
             return true;
@@ -477,7 +475,7 @@ impl crate::engine::EngineInner {
                 let elem = e.element_data();
                 let pi = e.position_iface();
                 (
-                    elem.position_map().to_geo_point(),
+                    elem.position_map().to_geo(),
                     elem.sector(),
                     pi.get_door(),
                     pi.get_door_direction(),
@@ -491,11 +489,7 @@ impl crate::engine::EngineInner {
         let (target_pos, target_sector, target_layer) = match self.get_entity(target) {
             Some(e) => {
                 let elem = e.element_data();
-                (
-                    elem.position_map().to_geo_point(),
-                    elem.sector(),
-                    elem.layer(),
-                )
+                (elem.position_map().to_geo(), elem.sector(), elem.layer())
             }
             None => {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
@@ -797,7 +791,7 @@ mod tests {
             pc: PcData::default(),
         };
         pc.element
-            .set_position_map(crate::element::Point2D { x, y });
+            .set_position_map(crate::coordinates::MapPoint { x, y });
         pc.element.set_sector(SectorHandle::new(sector));
         Entity::Pc(pc)
     }
@@ -855,7 +849,7 @@ mod tests {
             OrderType::WalkingUpright,
             MoveFlags::SEEK,
             10.0,
-            crate::element::Point2D { x: 90.0, y: 10.0 },
+            crate::coordinates::MapPoint { x: 90.0, y: 10.0 },
         );
 
         assert_eq!(engine.sequence_manager.sequence_count(), 2);

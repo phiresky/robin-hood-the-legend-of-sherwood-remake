@@ -291,7 +291,7 @@ impl EngineInner {
             self.entities
                 .get(tid.0 as usize)
                 .and_then(|s| s.as_ref())
-                .map(|e| e.element_data().position_map().to_geo_point())
+                .map(|e| e.element_data().position_map().to_geo())
                 .map(|tp| {
                     crate::position_interface::vector_to_sector_0_to_15_iso(
                         tp.x - enemy_pos.x,

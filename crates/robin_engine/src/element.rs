@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::fast_find_grid::GRID_CELL_SIZE;
 use crate::geo2d::Point2D as GeoPoint2D;
 use crate::jump_line::JumpLineIndex;
@@ -94,6 +95,11 @@ impl Point2D {
     #[inline]
     pub fn to_geo_point(self) -> crate::geo2d::Point2D {
         crate::geo2d::pt(self.x, self.y)
+    }
+
+    #[inline]
+    pub fn to_geo(self) -> crate::geo2d::Point2D {
+        self.to_geo_point()
     }
 
     /// Convert to [`crate::rhline::Vec2`].
@@ -338,23 +344,21 @@ impl ElementData {
     }
 
     #[inline]
-    #[must_use = "method returns Point2D by value; `elem.position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
-    pub fn position_map(&self) -> Point2D {
-        let p = self.sprite.position_iface.get_position_map();
-        Point2D { x: p.x, y: p.y }
-    }
-    #[inline]
-    pub fn set_position_map(&mut self, p: Point2D) {
-        self.sprite
-            .position_iface
-            .set_position_map(crate::geo2d::pt(p.x, p.y));
+    #[must_use = "method returns MapPoint by value; `elem.position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
+    pub fn position_map(&self) -> MapPoint {
+        self.sprite.position_iface.map_position()
     }
 
     #[inline]
-    pub fn set_position_map_preserving_3d(&mut self, p: Point2D) {
+    pub fn set_position_map(&mut self, p: MapPoint) {
+        self.sprite.position_iface.set_map_position(p);
+    }
+
+    #[inline]
+    pub fn set_position_map_preserving_3d(&mut self, p: MapPoint) {
         self.sprite
             .position_iface
-            .set_position_map_preserving_3d(crate::geo2d::pt(p.x, p.y));
+            .set_position_map_preserving_3d(p.to_geo());
     }
 
     #[inline]
@@ -512,8 +516,7 @@ impl ElementData {
     /// Get the map position as a `geo2d::Point2D` for use with pathfinder
     /// and fast_find_grid APIs that operate on `geo::Coord<f32>`.
     pub fn position_map_geo(&self) -> GeoPoint2D {
-        let pm = self.position_map();
-        crate::geo2d::pt(pm.x, pm.y)
+        self.position_map().to_geo()
     }
 
     /// Initialise outline colours based on entity kind.
@@ -660,7 +663,7 @@ pub struct ActiveRiderCharge {
     /// Sidewards direction vector (forward rotated +4 sectors).
     pub sidewards: (f32, f32),
     /// Position at charge start (map coords).
-    pub origin: Point2D,
+    pub origin: MapPoint,
     /// Layer at charge start.
     pub layer: u16,
     /// Candidate victims (entities inside the initial large hit zone).
@@ -794,7 +797,7 @@ pub struct ActorData {
 
     // Seeking
     pub seek_target: Option<EntityId>,
-    pub last_seek_target_position: Point2D,
+    pub last_seek_target_position: MapPoint,
     /// Countdown before the actor may re-issue a seek against a moving
     /// target.  Armed to `TIME_SEEK_REFRESH` (25) at seek launch and
     /// after each RefreshSeek; decremented each frame by
@@ -857,7 +860,7 @@ pub struct ActorData {
     /// Set by `dispatch_raise_shield` from the danger point; cleared on
     /// shield lower or combat exit.  Faces the shield toward the threat
     /// rather than the opponent.
-    pub shield_face_point: Option<Point2D>,
+    pub shield_face_point: Option<MapPoint>,
 
     // -- Push flight state --
     /// Active push-flight.  When `Some`, the entity is being pushed through
@@ -928,7 +931,7 @@ impl Default for ActorData {
             listen_phase: ListenPhase::Inactive,
             receive_purse_phase: ReceivePursePhase::Inactive,
             seek_target: None,
-            last_seek_target_position: Point2D::default(),
+            last_seek_target_position: MapPoint::default(),
             seek_refresh_wait: 0,
             post_seek_sequence: None,
             passing_door_directly: false,
@@ -1156,7 +1159,7 @@ pub struct PcData {
     pub feet_seen: bool,
 
     // Teleport
-    pub position_before_teleport: Point2D,
+    pub position_before_teleport: MapPoint,
     /// Frames remaining in the cheat-teleport hulk-rebuild fade.
     /// Decremented each frame by the per-PC render path (not yet
     /// ported); read here by `SetTeleportStuff` to suppress the
@@ -1191,7 +1194,7 @@ pub struct PcData {
     pub work_icon: WorkIcon,
 
     // Ammo dropping
-    pub last_ammo_dropping_position: Point2D,
+    pub last_ammo_dropping_position: MapPoint,
     pub last_dropped_ammo: Option<EntityId>,
     pub last_dropping_direction: u8,
 
@@ -1262,7 +1265,7 @@ impl Default for PcData {
             head_seen: false,
             belt_seen: false,
             feet_seen: false,
-            position_before_teleport: Point2D::default(),
+            position_before_teleport: MapPoint::default(),
             teleport_counter: 0,
             max_teleport_counter: 0,
             fried_psykokwack: false,
@@ -1274,7 +1277,7 @@ impl Default for PcData {
             guard: None,
             time_till_reinforcement: 0xFFFF_FFFF,
             work_icon: WorkIcon::default(),
-            last_ammo_dropping_position: Point2D::default(),
+            last_ammo_dropping_position: MapPoint::default(),
             last_dropped_ammo: None,
             last_dropping_direction: 0,
             profile_index: CharacterProfileIdx(0),
@@ -2675,9 +2678,9 @@ impl Entity {
     /// actor variant.  See [`Actor::is_in_motion`] for the semantic.
     pub fn is_in_motion(&self) -> bool {
         let pi = self.position_iface();
-        let goal = pi.get_position_goal_map();
-        let pos = pi.get_position_map();
-        (goal != pos && goal != crate::geo2d::Point2D::default()) || pi.is_moving_map()
+        let goal = pi.map_goal();
+        let pos = pi.map_position();
+        (goal != pos && goal != MapPoint::ZERO) || pi.is_moving_map()
     }
 
     // — Cross-module accessors —
@@ -2717,19 +2720,20 @@ impl Entity {
         }
     }
 
-    /// 2D projection of the 3D position.  Returns `(map.x, map.y + z)`
-    /// where Z is the elevation from the entity's ground plane.
-    pub fn position_ground(&self) -> crate::geo2d::Point2D {
+    /// Ground/world-XY position: `(world.x, world.y)`.
+    pub fn ground_position(&self) -> GroundPoint {
         let map = self.element_data().position_map();
         let z = self
             .position_iface()
             .get_plane()
             .map(|plane| plane.compute_z(map.x, map.y))
             .unwrap_or(0.0);
-        crate::geo2d::Point2D {
-            x: map.x,
-            y: map.y + z,
-        }
+        GroundPoint::new(map.x, map.y + z)
+    }
+
+    /// Compatibility wrapper for callers that still use `geo2d::Point2D`.
+    pub fn position_ground(&self) -> crate::geo2d::Point2D {
+        self.ground_position().to_geo()
     }
 
     /// Get the NPC's base AI controller, if this is an NPC with AI.
@@ -3321,8 +3325,8 @@ pub trait Element {
     fn position(&self) -> Point3D {
         self.element_data().position()
     }
-    #[must_use = "method returns Point2D by value; `elem.position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
-    fn position_map(&self) -> Point2D {
+    #[must_use = "method returns MapPoint by value; `elem.position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
+    fn position_map(&self) -> MapPoint {
         self.element_data().position_map()
     }
     #[must_use]
@@ -3391,9 +3395,9 @@ pub trait Actor: Element {
     /// frames.
     fn is_in_motion(&self) -> bool {
         let pi = &self.element_data().sprite.position_iface;
-        let goal = pi.get_position_goal_map();
-        let pos = pi.get_position_map();
-        (goal != pos && goal != crate::geo2d::Point2D::default()) || pi.is_moving_map()
+        let goal = pi.map_goal();
+        let pos = pi.map_position();
+        (goal != pos && goal != MapPoint::ZERO) || pi.is_moving_map()
     }
     fn is_ignored(&self) -> bool {
         false
@@ -3904,7 +3908,7 @@ pub fn advance_trajectory_one_frame(
     p.y += projectile.velocity_increment.y;
     p.z += projectile.velocity_increment.z;
     element.set_position(p);
-    element.set_position_map_preserving_3d(Point2D {
+    element.set_position_map_preserving_3d(MapPoint {
         x: p.x,
         y: p.y - p.z,
     });
@@ -4334,7 +4338,7 @@ mod tests {
             kind: ElementKind::ActorPc,
             ..ElementData::default()
         };
-        data.set_position_map(Point2D { x: 200.0, y: 300.0 });
+        data.set_position_map(MapPoint { x: 200.0, y: 300.0 });
 
         data.update_grid_cell();
         // 200/64 = 3, 300/64 = 4
@@ -4347,7 +4351,7 @@ mod tests {
             kind: ElementKind::ActorSoldier,
             ..ElementData::default()
         };
-        data.set_position_map(Point2D { x: 42.5, y: 99.0 });
+        data.set_position_map(MapPoint { x: 42.5, y: 99.0 });
 
         let geo_pt = data.position_map_geo();
         assert!((geo_pt.x - 42.5).abs() < 1e-6);
@@ -4376,7 +4380,7 @@ mod tests {
             sprite,
             ..ElementData::default()
         };
-        element.set_position_map(Point2D {
+        element.set_position_map(MapPoint {
             x: 200.75,
             y: 300.75,
         });

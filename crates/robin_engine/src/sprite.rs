@@ -561,7 +561,7 @@ impl Sprite {
     #[allow(clippy::too_many_arguments)]
     pub fn apply_placement(
         &mut self,
-        position_map: crate::element::Point2D,
+        position_map: crate::coordinates::MapPoint,
         layer: u16,
         sector: Option<crate::position_interface::SectorHandle>,
         direction: i16,
@@ -570,7 +570,7 @@ impl Sprite {
         obstacle_plane: Option<crate::position_interface::PlaneZCoeffs>,
     ) {
         let pi = &mut self.position_iface;
-        pi.set_position_map(crate::geo2d::pt(position_map.x, position_map.y));
+        pi.set_position_map(position_map.to_geo());
         let layer = crate::position_interface::Layer::new(layer)
             .expect("layer must be < 0xFFFF; 0xFFFF is the 'no layer' sentinel");
         pi.set_layer(layer);

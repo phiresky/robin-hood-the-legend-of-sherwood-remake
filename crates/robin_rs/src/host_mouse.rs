@@ -1140,7 +1140,7 @@ pub fn update_mouse(
         // ── Purse ─────────────────
         Action::Purse => {
             let mut cursor = RHMOUSE_PURSE_NO;
-            let mouse_elem = robin_engine::element::Point2D {
+            let mouse_elem = robin_engine::coordinates::MapPoint {
                 x: mouse_map.x,
                 y: mouse_map.y,
             };
@@ -1190,7 +1190,7 @@ pub fn update_mouse(
         // ── WaspNest ─────────────
         Action::WaspNest => {
             let mut cursor = RHMOUSE_WASP_NEST_NO;
-            let mouse_elem = robin_engine::element::Point2D {
+            let mouse_elem = robin_engine::coordinates::MapPoint {
                 x: mouse_map.x,
                 y: mouse_map.y,
             };
@@ -1288,7 +1288,7 @@ pub fn update_mouse(
         // ── Net ───────────────────
         Action::Net => {
             let mut cursor = RHMOUSE_NET_NO;
-            let mouse_elem = robin_engine::element::Point2D {
+            let mouse_elem = robin_engine::coordinates::MapPoint {
                 x: mouse_map.x,
                 y: mouse_map.y,
             };

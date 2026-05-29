@@ -1255,7 +1255,7 @@ pub(crate) fn is_table_swordfight_needed(
         fast_grid,
         i16::from(pc_sector),
         i16::from(victim_sector),
-        victim.element_data().position_map().to_geo_point(),
+        victim.element_data().position_map().to_geo(),
         maximal_distance,
     )
 }
@@ -1331,7 +1331,7 @@ pub(crate) fn find_position_for_table_swordfight(
         if friend.element_data().sector().map(i16::from) != Some(self_sector) {
             continue;
         }
-        let friend_pos = friend.element_data().position_map().to_geo_point();
+        let friend_pos = friend.element_data().position_map().to_geo();
         occupied.push(jump_line.compute_nearest_point_param(friend_pos));
     }
 
@@ -2122,7 +2122,7 @@ mod tests {
     use super::*;
     use crate::element::{
         ActiveFlight, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, HumanData,
-        NpcData, PcData, Point2D as ElemPoint2D, Point3D, SoldierData,
+        NpcData, PcData, Point3D, SoldierData,
     };
 
     fn make_engine() -> EngineInner {
@@ -2140,7 +2140,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(ElemPoint2D {
+        element.set_position_map(crate::coordinates::MapPoint {
             x: pos.x,
             y: pos.y - pos.z,
         });
@@ -2168,7 +2168,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(ElemPoint2D {
+        element.set_position_map(crate::coordinates::MapPoint {
             x: pos.x,
             y: pos.y - pos.z,
         });

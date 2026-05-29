@@ -38,7 +38,7 @@ impl EngineInner {
     pub fn spawn_dropped_ale(
         &mut self,
         assets: &LevelAssets,
-        position_map: crate::element::Point2D,
+        position_map: crate::coordinates::MapPoint,
         layer: u16,
         sector: Option<SectorHandle>,
         direction: i16,

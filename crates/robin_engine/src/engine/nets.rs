@@ -22,7 +22,8 @@
 //!   the net.
 
 use super::*;
-use crate::element::{Command, Entity, EntityId, Point2D as ElemPoint2D, Point3D};
+use crate::coordinates::MapPoint as ElemPoint2D;
+use crate::element::{Command, Entity, EntityId, Point3D};
 
 // ─── Constants ───────────────────────────────────────────────────────
 

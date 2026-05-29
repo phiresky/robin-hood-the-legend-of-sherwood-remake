@@ -933,6 +933,7 @@ impl EngineInner {
 
 // ─── Display order helpers ──────────────────────────────────────────
 
+use crate::coordinates::MapPoint;
 use crate::element::Point2D as ElemPoint2D;
 
 /// Minimum Y coordinate of a display polyline.
@@ -955,8 +956,8 @@ fn y_min_polyline(polyline: &[ElemPoint2D]) -> f32 {
 ///   of the segment the point is on.
 fn is_element_behind_polyline(
     polyline: &[ElemPoint2D],
-    fx_position_map: ElemPoint2D,
-    position_map: ElemPoint2D,
+    fx_position_map: MapPoint,
+    position_map: MapPoint,
 ) -> bool {
     let n = polyline.len();
     if n == 0 {

@@ -3321,7 +3321,7 @@ impl EngineInner {
                     s.element.blipped,
                     s.element.sector(),
                     s.element.is_in_door_transit(),
-                    s.element.position_map().to_geo_point(),
+                    s.element.position_map().to_geo(),
                 ),
                 crate::element::Entity::Civilian(c) => (
                     &mut c.npc,
@@ -3335,7 +3335,7 @@ impl EngineInner {
                     c.element.blipped,
                     c.element.sector(),
                     c.element.is_in_door_transit(),
-                    c.element.position_map().to_geo_point(),
+                    c.element.position_map().to_geo(),
                 ),
                 _ => continue,
             };
@@ -5074,10 +5074,7 @@ impl EngineInner {
             let Some(Some(Entity::Soldier(src))) = self.entities.get(source.0 as usize) else {
                 return;
             };
-            (
-                src.soldier.cached_camp,
-                src.element.position_map().to_geo_point(),
-            )
+            (src.soldier.cached_camp, src.element.position_map().to_geo())
         };
 
         let radius_sq = radius * radius;
@@ -5111,7 +5108,7 @@ impl EngineInner {
                     continue;
                 }
                 // Range check (square distance to avoid sqrt).
-                let p = s.element.position_map().to_geo_point();
+                let p = s.element.position_map().to_geo();
                 let dx = source_pos.x - p.x;
                 let dy = source_pos.y - p.y;
                 dx * dx + dy * dy < radius_sq
@@ -5124,7 +5121,7 @@ impl EngineInner {
             if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize) {
                 // Face toward the seek position via
                 // `vector_to_sector_0_to_15_iso`.
-                let p = s.element.position_map().to_geo_point();
+                let p = s.element.position_map().to_geo();
                 let dx = pos.x - p.x;
                 let dy = pos.y - p.y;
                 s.element.set_direction_instantly(
@@ -5365,7 +5362,7 @@ impl EngineInner {
                 return;
             };
             (
-                entity.element_data().position_map().to_geo_point(),
+                entity.element_data().position_map().to_geo(),
                 detection_point,
             )
         };
@@ -5402,7 +5399,7 @@ impl EngineInner {
                 if self.entity_data_inside_building(&c.element) {
                     continue;
                 }
-                let p = c.element.position_map().to_geo_point();
+                let p = c.element.position_map().to_geo();
                 let dx = source_pos.x - p.x;
                 let dy = source_pos.y - p.y;
                 // Aspect-ratio bounding box: |dx| <= r,
@@ -6522,7 +6519,7 @@ impl EngineInner {
                 if unconscious {
                     continue;
                 }
-                (elem.position_map().to_geo_point(), elem.position().z)
+                (elem.position_map().to_geo(), elem.position().z)
             };
 
             // `noise()` does NOT filter by layer; every in-camp NPC

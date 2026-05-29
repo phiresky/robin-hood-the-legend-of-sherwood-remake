@@ -2756,7 +2756,7 @@ impl EngineInner {
                         tracing::warn!("SetActorLocation: actor {actor_handle} missing entity");
                         continue;
                     };
-                    let pt = crate::element::Point2D { x, y };
+                    let pt = crate::coordinates::MapPoint { x, y };
                     if entity.actor_data().is_none() {
                         // Non-actor entities don't need the full actor
                         // reproject dance; refresh the basic grid.
@@ -2765,10 +2765,7 @@ impl EngineInner {
                         continue;
                     }
                     let pi = entity.position_iface_mut();
-                    // Position interface uses geo2d::Point2D; the
-                    // native already wrote element::Point2D on the
-                    // ElementData copy.  Convert via geo2d::pt.
-                    pi.set_position_map(crate::geo2d::pt(pt.x, pt.y));
+                    pi.set_position_map(pt.to_geo());
                     let ed = entity.element_data_mut();
                     ed.set_position_map(pt);
                     ed.update_grid_cell();
@@ -3166,7 +3163,7 @@ impl EngineInner {
             elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
                 sector_num,
             )));
-            elem.set_position_map(crate::element::Point2D {
+            elem.set_position_map(crate::coordinates::MapPoint {
                 x: point_in.0,
                 y: point_in.1,
             });
@@ -3222,7 +3219,7 @@ impl EngineInner {
                     elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
                         sector_num,
                     )));
-                    elem.set_position_map(crate::element::Point2D {
+                    elem.set_position_map(crate::coordinates::MapPoint {
                         x: point_in.0,
                         y: point_in.1,
                     });

@@ -283,7 +283,7 @@ impl EngineInner {
             let Some(sector) = e.element_data().sector() else {
                 return TableFightMove::Ok;
             };
-            let pos = e.element_data().position_map().to_geo_point();
+            let pos = e.element_data().position_map().to_geo();
             let layer = e.element_data().layer();
             let mb = *e.position_iface().get_move_box();
             (i16::from(sector), pos, layer, mb)
@@ -549,7 +549,7 @@ impl EngineInner {
                     use crate::sequence::{Field, FieldValue};
                     let (pt2d, pt3d) = match properties.get(&Field::ShieldDangerPoint) {
                         Some(FieldValue::Point3D { x, y, z }) => (
-                            Some(crate::element::Point2D { x: *x, y: *y }),
+                            Some(crate::coordinates::MapPoint { x: *x, y: *y }),
                             Some(crate::element::Point3D {
                                 x: *x,
                                 y: *y,
@@ -557,7 +557,7 @@ impl EngineInner {
                             }),
                         ),
                         Some(FieldValue::Point2D { x, y }) => (
-                            Some(crate::element::Point2D { x: *x, y: *y }),
+                            Some(crate::coordinates::MapPoint { x: *x, y: *y }),
                             Some(crate::element::Point3D {
                                 x: *x,
                                 y: *y,

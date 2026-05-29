@@ -1377,14 +1377,17 @@ impl EngineInner {
                                 && let Some(actor) = entity.actor_data_mut()
                             {
                                 actor.seek_target = None;
-                                actor.last_seek_target_position = stored_destination;
+                                actor.last_seek_target_position = crate::coordinates::MapPoint {
+                                    x: stored_destination.x,
+                                    y: stored_destination.y,
+                                };
                                 actor.seek_refresh_wait = 25;
                             }
-                            stored_destination.to_geo_point()
+                            stored_destination.to_geo()
                         }
                     }
                 } else {
-                    stored_destination.to_geo_point()
+                    stored_destination.to_geo()
                 };
                 // Move (or Seek that fell through to Move) inside a
                 // building sector skips the pathfinder entirely:
@@ -1409,7 +1412,7 @@ impl EngineInner {
                 if owner_in_building && (!is_seek || !is_last_of_seq) {
                     if let Some(entity) = self.get_entity_mut(*owner) {
                         entity.position_iface_mut().set_position_map(dest_pt);
-                        let dest_pt_elem = crate::element::Point2D {
+                        let dest_pt_elem = crate::coordinates::MapPoint {
                             x: dest_pt.x,
                             y: dest_pt.y,
                         };
@@ -1915,7 +1918,7 @@ impl EngineInner {
                                 if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
                                 {
                                     let el = entity.element_data_mut();
-                                    el.set_position_map(crate::element::Point2D {
+                                    el.set_position_map(crate::coordinates::MapPoint {
                                         x: dest.x,
                                         y: dest.y,
                                     });
@@ -3654,7 +3657,7 @@ impl EngineInner {
                                         .fast_grid
                                         .find_authorized_position_toward(&mut b, pos_geo, layer)
                                     {
-                                        crate::element::Point2D::from(b.center())
+                                        crate::coordinates::MapPoint::from(b.center())
                                     } else {
                                         pos
                                     }
@@ -3801,7 +3804,7 @@ impl EngineInner {
                                     .fast_grid
                                     .find_authorized_position_toward(&mut b, pos_geo, layer)
                                 {
-                                    crate::element::Point2D::from(b.center())
+                                    crate::coordinates::MapPoint::from(b.center())
                                 } else {
                                     pos
                                 }
@@ -3855,11 +3858,11 @@ impl EngineInner {
                                 crate::sequence::SequenceElementData::Generic { properties } => {
                                     match properties.get(&crate::sequence::Field::NetTarget) {
                                         Some(crate::sequence::FieldValue::Point2D { x, y }) => {
-                                            Some(crate::element::Point2D { x: *x, y: *y })
+                                            Some(crate::coordinates::MapPoint { x: *x, y: *y })
                                         }
                                         Some(crate::sequence::FieldValue::Point3D {
                                             x, y, ..
-                                        }) => Some(crate::element::Point2D { x: *x, y: *y }),
+                                        }) => Some(crate::coordinates::MapPoint { x: *x, y: *y }),
                                         _ => None,
                                     }
                                 }
@@ -3900,11 +3903,11 @@ impl EngineInner {
                                 crate::sequence::SequenceElementData::Generic { properties } => {
                                     match properties.get(&crate::sequence::Field::PurseTarget) {
                                         Some(crate::sequence::FieldValue::Point2D { x, y }) => {
-                                            Some(crate::element::Point2D { x: *x, y: *y })
+                                            Some(crate::coordinates::MapPoint { x: *x, y: *y })
                                         }
                                         Some(crate::sequence::FieldValue::Point3D {
                                             x, y, ..
-                                        }) => Some(crate::element::Point2D { x: *x, y: *y }),
+                                        }) => Some(crate::coordinates::MapPoint { x: *x, y: *y }),
                                         _ => None,
                                     }
                                 }
@@ -3945,11 +3948,11 @@ impl EngineInner {
                                 crate::sequence::SequenceElementData::Generic { properties } => {
                                     match properties.get(&crate::sequence::Field::WaspNestTarget) {
                                         Some(crate::sequence::FieldValue::Point2D { x, y }) => {
-                                            Some(crate::element::Point2D { x: *x, y: *y })
+                                            Some(crate::coordinates::MapPoint { x: *x, y: *y })
                                         }
                                         Some(crate::sequence::FieldValue::Point3D {
                                             x, y, ..
-                                        }) => Some(crate::element::Point2D { x: *x, y: *y }),
+                                        }) => Some(crate::coordinates::MapPoint { x: *x, y: *y }),
                                         _ => None,
                                     }
                                 }
@@ -6181,7 +6184,12 @@ impl EngineInner {
                     }
                 }
                 self.set_transition_position_map_and_compute_position_all(
-                    assets, entity_id, point_in,
+                    assets,
+                    entity_id,
+                    crate::coordinates::MapPoint {
+                        x: point_in.x,
+                        y: point_in.y,
+                    },
                 );
             }
             OT::TransitionWaitingCrouchedClimbingWallDownCrenel => {
@@ -6231,7 +6239,12 @@ impl EngineInner {
                     }
                 }
                 self.set_transition_position_map_and_compute_position_all(
-                    assets, entity_id, point_mid,
+                    assets,
+                    entity_id,
+                    crate::coordinates::MapPoint {
+                        x: point_mid.x,
+                        y: point_mid.y,
+                    },
                 );
             }
             OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
@@ -6284,7 +6297,7 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        point: crate::element::Point2D,
+        point: crate::coordinates::MapPoint,
     ) {
         if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize) {
             let elem = entity.element_data_mut();
@@ -6382,7 +6395,12 @@ impl EngineInner {
 
         if let Some(snap_point) = snap_point {
             self.set_transition_position_map_and_compute_position_all(
-                assets, entity_id, snap_point,
+                assets,
+                entity_id,
+                crate::coordinates::MapPoint {
+                    x: snap_point.x,
+                    y: snap_point.y,
+                },
             );
         }
 
@@ -6648,7 +6666,7 @@ impl EngineInner {
                 if !target_mutual {
                     continue;
                 }
-                let pos = entity.element_data().position_map().to_geo_point();
+                let pos = entity.element_data().position_map().to_geo();
                 let weapon1 =
                     super::melee::weapon_material_from_profile(entity, &assets.profile_manager);
                 (target_id, pos, weapon1)
@@ -6989,7 +7007,7 @@ impl EngineInner {
                 let pos3d = elem.position();
                 (
                     remark,
-                    elem.position_map().to_geo_point(),
+                    elem.position_map().to_geo(),
                     elem.layer(),
                     pos3d.z.max(0.0) as u16,
                 )
@@ -7446,9 +7464,12 @@ impl EngineInner {
                         // position interface + grid cell.
                         if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
                             let pi = entity.position_iface_mut();
-                            pi.set_position_map(crate::geo2d::pt(final_dest.x, final_dest.y));
+                            pi.set_position_map(final_dest.to_geo());
                             let ed = entity.element_data_mut();
-                            ed.set_position_map(final_dest);
+                            ed.set_position_map(crate::coordinates::MapPoint {
+                                x: final_dest.x,
+                                y: final_dest.y,
+                            });
                             ed.set_layer(final_layer);
                             ed.set_sector(final_sector_handle);
                             ed.update_grid_cell();
@@ -7524,7 +7545,10 @@ impl EngineInner {
                             for partner in [carried, carrier].into_iter().flatten() {
                                 if let Some(partner_entity) = self.get_entity_mut(partner) {
                                     let pel = partner_entity.element_data_mut();
-                                    pel.set_position_map(final_dest);
+                                    pel.set_position_map(crate::coordinates::MapPoint {
+                                        x: final_dest.x,
+                                        y: final_dest.y,
+                                    });
                                     pel.set_layer(final_layer);
                                     pel.set_sector(final_sector_handle);
                                     pel.update_grid_cell();
@@ -8303,8 +8327,7 @@ mod soldier_take_drink_parity_tests {
     use super::*;
     use crate::element::{
         ActorData, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementProjectile,
-        HumanData, NpcData, ObjectData, ObjectType, Point2D as ElementPoint2D, Point3D, Posture,
-        ProjectileData, SoldierData,
+        HumanData, NpcData, ObjectData, ObjectType, Point3D, Posture, ProjectileData, SoldierData,
     };
     use crate::sequence::SequenceElement;
 
@@ -8316,7 +8339,7 @@ mod soldier_take_drink_parity_tests {
             ..ElementData::default()
         };
         element.set_position(Point3D { x, y, z: 0.0 });
-        element.set_position_map(ElementPoint2D { x, y });
+        element.set_position_map(crate::coordinates::MapPoint { x, y });
         element.set_direction_instantly(0);
         Entity::Soldier(ActorSoldier {
             element,
@@ -8334,7 +8357,7 @@ mod soldier_take_drink_parity_tests {
             ..ElementData::default()
         };
         element.set_position(Point3D { x, y, z: 0.0 });
-        element.set_position_map(ElementPoint2D { x, y });
+        element.set_position_map(crate::coordinates::MapPoint { x, y });
         Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
@@ -8352,7 +8375,7 @@ mod soldier_take_drink_parity_tests {
             ..ElementData::default()
         };
         element.set_position(Point3D { x, y, z: 0.0 });
-        element.set_position_map(ElementPoint2D { x, y });
+        element.set_position_map(crate::coordinates::MapPoint { x, y });
         Entity::Bonus(ElementBonus {
             element,
             object: ObjectData {
@@ -8464,7 +8487,7 @@ mod drop_ammo_merge_tests {
             posture: Posture::Upright,
             ..ElementData::default()
         };
-        element.set_position_map(crate::element::Point2D { x: 100.0, y: 100.0 });
+        element.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
         element.set_direction_instantly(0);
         // Seed a non-empty move box so try_get_drop_position's
         // is_somewhere check passes.  The exact dims don't matter on
@@ -8579,7 +8602,7 @@ mod drop_ammo_merge_tests {
         if let Some(Some(entity)) = engine.entities.get_mut(pc_id.0 as usize) {
             entity
                 .element_data_mut()
-                .set_position_map(crate::element::Point2D { x: 200.0, y: 200.0 });
+                .set_position_map(crate::coordinates::MapPoint { x: 200.0, y: 200.0 });
         }
 
         drop_ammo_and_tick(&mut engine, pc_id, 1, &assets);

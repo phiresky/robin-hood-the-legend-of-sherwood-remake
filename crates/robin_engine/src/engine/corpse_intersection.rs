@@ -30,7 +30,8 @@
 //! the visible symptom (corpse hitboxes) is only sampled during
 //! movement, which runs once per tick.
 
-use crate::element::{EntityId, Point2D};
+use crate::coordinates::MapPoint;
+use crate::element::EntityId;
 
 use super::EngineInner;
 
@@ -175,7 +176,7 @@ impl EngineInner {
         corpse: EntityId,
         corpse_sector: Option<crate::position_interface::SectorHandle>,
         corpse_layer: u16,
-        corpse_pos: Point2D,
+        corpse_pos: MapPoint,
         candidate_small_flag: bool,
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
@@ -317,7 +318,7 @@ impl EngineInner {
 mod tests {
     use crate::element::{
         ActorCivilian, ActorData, CivilianData, ElementData, ElementKind, Entity, HumanData,
-        NpcData, Point2D, Posture,
+        NpcData, Posture,
     };
     use crate::engine::EngineInner;
 
@@ -327,7 +328,7 @@ mod tests {
             posture,
             ..ElementData::default()
         };
-        element.set_position_map(Point2D { x, y });
+        element.set_position_map(crate::coordinates::MapPoint { x, y });
         element.set_layer(0);
         element.set_sector(crate::position_interface::SectorHandle::new(sector));
         ActorCivilian {

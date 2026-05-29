@@ -28,9 +28,8 @@
 
 use super::EngineInner;
 use crate::bow_shot::{self, COIN_SCATTER_MIN, NUMBER_OF_COINS_IN_PURSE};
-use crate::element::{
-    Animation, DetectableType, Entity, EntityId, ObjectType, Point2D as ElemPoint2D, Point3D,
-};
+use crate::coordinates::MapPoint as ElemPoint2D;
+use crate::element::{Animation, DetectableType, Entity, EntityId, ObjectType, Point3D};
 use crate::fast_find_grid::SectorHit;
 
 /// Purse-impact FX id.

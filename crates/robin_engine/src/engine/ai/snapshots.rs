@@ -351,7 +351,7 @@ impl EngineInner {
             // facing vector for LeaningOut.  Every other posture uses
             // the feet position — the Z offset is layered on below.
             let pos = {
-                let mut p = pc.element.position_map().to_geo_point();
+                let mut p = pc.element.position_map().to_geo();
                 if pc.element.posture == Posture::LeaningOut {
                     let (dx, dy) = crate::element::direction_vector_16(pc.element.direction());
                     p.x += 40.0 * dx;
@@ -788,7 +788,7 @@ impl EngineInner {
                     x: ai.seek_position.x,
                     y: ai.seek_position.y,
                 })
-                .unwrap_or_else(|| s.element.position_map().to_geo_point());
+                .unwrap_or_else(|| s.element.position_map().to_geo());
             // Honour check.
             let in_recovery = !able_to_fight
                 || matches!(
@@ -842,7 +842,7 @@ impl EngineInner {
 
             soldier_snapshots.push(SoldierSnapshot {
                 id: npc_id,
-                position: s.element.position_map().to_geo_point(),
+                position: s.element.position_map().to_geo(),
                 layer: s.element.layer(),
                 camp: s.soldier.cached_camp,
                 ai_state: s.npc.ai_state(),
@@ -1045,7 +1045,7 @@ impl EngineInner {
             let Some(Some(entity)) = self.entities.get(id.0 as usize) else {
                 continue;
             };
-            let position = entity.element_data().position_map().to_geo_point();
+            let position = entity.element_data().position_map().to_geo();
             let layer = entity.element_data().layer();
             let posture = entity.element_data().posture;
             let action_state = entity
@@ -1129,7 +1129,7 @@ impl EngineInner {
             let Some(Some(entity)) = self.entities.get(id.0 as usize) else {
                 continue;
             };
-            let position = entity.element_data().position_map().to_geo_point();
+            let position = entity.element_data().position_map().to_geo();
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;
             let belongs_to_beggar = entity

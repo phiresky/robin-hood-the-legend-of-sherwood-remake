@@ -1813,7 +1813,7 @@ impl GameHost {
         let dest_layer_sector = self.resolve_location_layer_sector(loc);
         if let Some(entity) = self.get_entity_mut(handle) {
             let ed = entity.element_data_mut();
-            ed.set_position_map(crate::element::Point2D { x, y });
+            ed.set_position_map(crate::coordinates::MapPoint { x, y });
             if let Some((layer, sector_num)) = dest_layer_sector {
                 ed.set_layer(layer);
                 ed.set_sector(crate::position_interface::SectorHandle::new(sector_num));
@@ -4161,7 +4161,7 @@ impl HostFunctions for GameHost {
                                 ed.active = true;
                                 ed.in_honolulu = false;
                             }
-                            ed.set_position_map(crate::element::Point2D { x: ox, y: oy });
+                            ed.set_position_map(crate::coordinates::MapPoint { x: ox, y: oy });
                             if let Some((layer, sector_num)) = dest_layer_sector {
                                 ed.set_layer(layer);
                                 ed.set_sector(crate::position_interface::SectorHandle::new(
@@ -5544,7 +5544,7 @@ impl HostFunctions for GameHost {
                                 ed.active = true;
                                 ed.in_honolulu = false;
                             }
-                            ed.set_position_map(crate::element::Point2D { x, y });
+                            ed.set_position_map(crate::coordinates::MapPoint { x, y });
                             if let Some((layer, sector_num)) = dest_layer_sector {
                                 ed.set_layer(layer);
                                 ed.set_sector(crate::position_interface::SectorHandle::new(

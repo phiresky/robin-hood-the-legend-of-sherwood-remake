@@ -25,7 +25,7 @@ use super::{
     SideEffects,
 };
 use crate::campaign::Campaign;
-use crate::element::{EntityId, Point2D as ElemPoint2D};
+use crate::element::EntityId;
 use crate::geo2d;
 use crate::minimap::HitMask;
 use crate::player_command::{PlayerCommand, PlayerInput};
@@ -458,9 +458,9 @@ impl Engine {
             .run_cheat_string(assets, dev, selected_view_element, input)
     }
 
-    /// `element::Point2D → geo2d::Point2D` — static, re-exposed so
+    /// `MapPoint -> geo2d::Point2D` — static, re-exposed so
     /// host code doesn't need to know the inner type's name.
-    pub fn elem_to_geo(p: ElemPoint2D) -> geo2d::Point2D {
+    pub fn elem_to_geo(p: crate::coordinates::MapPoint) -> geo2d::Point2D {
         EngineInner::elem_to_geo(p)
     }
 

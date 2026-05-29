@@ -1523,7 +1523,7 @@ impl EngineInner {
         // `INVERSE_SWORDFIGHT_ASPECT_RATIO` (= 1.0 in the shipping
         // game).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        let attacker_pos_geo = victim_pos.to_geo_point();
+        let attacker_pos_geo = victim_pos.to_geo();
         let nearby: Vec<crate::combat::NearbyVictim> = self
             .entities
             .iter()

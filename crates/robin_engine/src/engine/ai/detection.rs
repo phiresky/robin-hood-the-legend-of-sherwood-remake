@@ -217,7 +217,7 @@ impl EngineInner {
             // exit transition next.
             let fl = FiringListener {
                 pc_id,
-                position: pc.element.position_map().to_geo_point(),
+                position: pc.element.position_map().to_geo(),
                 layer: pc.element.layer(),
                 position_z: pc.element.position().z,
             };
@@ -253,7 +253,7 @@ impl EngineInner {
             // Independent of the blip state — targets are always
             // eligible for Heard() regardless of `blipped`.
             if entity.kind().is_fx_target() && !firing_listeners.is_empty() {
-                let target_pos = elem.position_map().to_geo_point();
+                let target_pos = elem.position_map().to_geo();
                 let target_layer = elem.layer();
                 let target_z = elem.position().z;
                 for pc in &firing_listeners {
@@ -313,7 +313,7 @@ impl EngineInner {
                 continue;
             }
 
-            let blip_pos = elem.position_map().to_geo_point();
+            let blip_pos = elem.position_map().to_geo();
             let blip_layer = elem.layer();
             let (blip_eye_xy, blip_eye_z) = if entity.is_human() {
                 human_eye_point_for_visibility(entity)
@@ -584,7 +584,7 @@ impl EngineInner {
                 };
                 (
                     entity.element_data().layer(),
-                    entity.element_data().position_map().to_geo_point(),
+                    entity.element_data().position_map().to_geo(),
                     entity.element_data().position().z,
                     npc.ai_state(),
                     entity.is_active(),
@@ -2418,7 +2418,7 @@ impl EngineInner {
                 }
                 let ok = s.element.active && s.npc.life_points > 0 && !s.human.unconscious;
                 (
-                    s.element.position_map().to_geo_point(),
+                    s.element.position_map().to_geo(),
                     s.element.layer(),
                     s.element.posture,
                     s.actor.action_state,

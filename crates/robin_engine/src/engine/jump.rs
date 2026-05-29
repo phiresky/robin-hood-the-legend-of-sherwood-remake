@@ -176,7 +176,7 @@ pub fn compute_trajectory_jump(start: Point3D, dest: Point3D) -> Vec<Point3D> {
 pub fn build_jump_steps(
     source: &JumpLine,
     destination: &JumpLine,
-    pt_source: Point2D,
+    pt_source: crate::coordinates::MapPoint,
     posture_before: Posture,
     is_swordfighting: bool,
     dest_forces_crouched: bool,
@@ -1097,7 +1097,7 @@ impl EngineInner {
         // per-frame counter tracked the sprite's true duration.
         if let Some(target) = finished.step.target_3d {
             let elem = entity.element_data_mut();
-            elem.set_position_map(crate::element::Point2D {
+            elem.set_position_map(crate::coordinates::MapPoint {
                 x: target.x,
                 y: target.y - target.z,
             });
@@ -1315,12 +1315,12 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
             // distance; clamp to `full_dist`.
             let travelled_new = (new_x - state.start_x) * dir_x + (new_y - state.start_y) * dir_y;
             if travelled_new >= full_dist {
-                elem.set_position_map(crate::element::Point2D {
+                elem.set_position_map(crate::coordinates::MapPoint {
                     x: target.x,
                     y: target_map_y,
                 });
             } else {
-                elem.set_position_map(crate::element::Point2D { x: new_x, y: new_y });
+                elem.set_position_map(crate::coordinates::MapPoint { x: new_x, y: new_y });
             }
         }
 
@@ -1406,7 +1406,7 @@ mod tests {
         src.associated_line_index = Some(0);
         dst.associated_line_index = Some(0);
 
-        let pt = Point2D { x: 50.0, y: 0.0 };
+        let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
             &src,
             &dst,
@@ -1438,7 +1438,7 @@ mod tests {
         let src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 0.0, 0.0);
         let dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 100.0, 100.0);
 
-        let pt = Point2D { x: 50.0, y: 0.0 };
+        let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
             &src,
             &dst,
@@ -1461,7 +1461,7 @@ mod tests {
         let src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 100.0, 100.0);
         let dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 0.0, 0.0);
 
-        let pt = Point2D { x: 50.0, y: 0.0 };
+        let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
             &src,
             &dst,
@@ -1650,7 +1650,7 @@ mod tests {
     fn sword_long_jump_uses_sword_variants() {
         let src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 0.0, 0.0);
         let dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 0.0, 0.0);
-        let pt = Point2D { x: 50.0, y: 0.0 };
+        let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
             &src,
             &dst,

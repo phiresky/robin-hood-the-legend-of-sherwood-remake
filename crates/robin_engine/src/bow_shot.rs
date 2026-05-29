@@ -39,10 +39,10 @@
 //! shows the disabled bow slot automatically.
 
 use crate::combat::{self, ConcussionContext};
+use crate::coordinates::MapPoint as ElemPoint2D;
 use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
-    ObjectData, ObjectType, Point2D as ElemPoint2D, Point3D, Posture, ProjectileData, TargetFilter,
-    TrajectoryPoint,
+    ObjectData, ObjectType, Point3D, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
 };
 use crate::movement::ActiveShot;
 use crate::order::{Order, OrderType};

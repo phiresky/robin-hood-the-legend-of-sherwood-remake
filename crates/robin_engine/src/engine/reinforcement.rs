@@ -176,7 +176,7 @@ impl EngineInner {
             sprite,
             ..Default::default()
         };
-        element.set_position_map(crate::element::Point2D {
+        element.set_position_map(crate::coordinates::MapPoint {
             x: door_snap.point_out.0,
             y: door_snap.point_out.1,
         });

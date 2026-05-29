@@ -2803,7 +2803,7 @@ impl EngineInner {
         // direction, and selects directional animations
         // (forward/backward/strafe) based on the angle between
         // movement and facing.
-        let mut combat_face_targets: Vec<Option<crate::element::Point2D>> =
+        let mut combat_face_targets: Vec<Option<crate::coordinates::MapPoint>> =
             vec![None; self.entities.len()];
         for (idx, slot) in self.entities.iter().enumerate() {
             let entity = match slot {
@@ -2835,7 +2835,7 @@ impl EngineInner {
             {
                 let self_pos = entity.element_data().position_map();
                 let ally_pos = ally.element_data().position_map();
-                combat_face_targets[idx] = Some(crate::element::Point2D {
+                combat_face_targets[idx] = Some(crate::coordinates::MapPoint {
                     x: 2.0 * self_pos.x - ally_pos.x,
                     y: 2.0 * self_pos.y - ally_pos.y,
                 });
@@ -3058,8 +3058,7 @@ impl EngineInner {
                                 target_is_actor,
                                 target_pos,
                                 use_point_offset,
-                                shield_destination: seek_shield
-                                    .then_some(destination.to_geo_point()),
+                                shield_destination: seek_shield.then_some(destination.to_geo()),
                                 last_seek_target_position: crate::geo2d::pt(
                                     actor.last_seek_target_position.x,
                                     actor.last_seek_target_position.y,
@@ -4383,7 +4382,7 @@ impl EngineInner {
                     pm.y += ny * speed;
                     elem.set_position_map(pm);
                 } else if !line_snap_arrival && !tolerance_arrival {
-                    elem.set_position_map(crate::element::Point2D {
+                    elem.set_position_map(crate::coordinates::MapPoint {
                         x: goal.x,
                         y: goal.y,
                     });
@@ -6170,7 +6169,7 @@ impl EngineInner {
                 if let Some(entity) = self.get_entity_mut(owner) {
                     entity.position_iface_mut().set_position_map(source);
                     let elem = entity.element_data_mut();
-                    elem.set_position_map(crate::element::Point2D {
+                    elem.set_position_map(crate::coordinates::MapPoint {
                         x: source.x,
                         y: source.y,
                     });
@@ -6487,7 +6486,7 @@ impl EngineInner {
         // target's current map position onto the actor so the
         // per-tick `tick_refresh_seeks` scan can detect when the
         // target has moved > 10 units and re-route.
-        let seek_snapshot: Option<(crate::element::Point2D, Option<EntityId>)> =
+        let seek_snapshot: Option<(crate::coordinates::MapPoint, Option<EntityId>)> =
             if elem_flags.contains(crate::sequence::MoveFlags::SEEK) {
                 elem_antagonist.and_then(|id| {
                     self.get_entity(id)

@@ -37,7 +37,7 @@ impl EngineInner {
             if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
                 entity
                     .element_data_mut()
-                    .set_position_map(crate::element::Point2D {
+                    .set_position_map(crate::coordinates::MapPoint {
                         x: center.x,
                         y: center.y,
                     });

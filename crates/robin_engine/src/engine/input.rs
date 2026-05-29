@@ -1046,9 +1046,9 @@ impl EngineInner {
 
     // ─── Sector helpers for cursor selection ─────────────────────
 
-    /// Convert an element::Point2D to geo2d::Point2D (Coord<f32>).
-    pub fn elem_to_geo(p: crate::element::Point2D) -> Point2D {
-        crate::geo2d::pt(p.x, p.y)
+    /// Convert a projected map point to geo2d::Point2D (Coord<f32>).
+    pub fn elem_to_geo(p: crate::coordinates::MapPoint) -> Point2D {
+        p.to_geo()
     }
 
     /// Check whether the selected PC is in a building or on a
@@ -1816,10 +1816,10 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         pc_id: crate::element::EntityId,
-        mouse_map: crate::element::Point2D,
+        mouse_map: crate::coordinates::MapPoint,
     ) -> TrajectoryPreview {
         let target_3d = self.fast_grid.convert_2d_to_3d(
-            crate::geo2d::pt(mouse_map.x, mouse_map.y),
+            mouse_map.to_geo(),
             crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             self.sight_obstacles(assets),
         );
@@ -2153,7 +2153,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         pc_id: EntityId,
-        target_pos: crate::element::Point2D,
+        target_pos: crate::coordinates::MapPoint,
         action: crate::profiles::Action,
         target_entity: Option<EntityId>,
     ) -> bool {

@@ -835,7 +835,7 @@ impl EngineInner {
                 if !self.is_in_range_for_projectile(
                     assets,
                     actor_id,
-                    crate::element::Point2D {
+                    crate::coordinates::MapPoint {
                         x: target_3d.x,
                         y: target_3d.y,
                     },
@@ -867,7 +867,10 @@ impl EngineInner {
                 self.is_in_range_for_projectile(
                     assets,
                     actor_id,
-                    target_2d,
+                    crate::coordinates::MapPoint {
+                        x: target_2d.x,
+                        y: target_2d.y,
+                    },
                     crate::profiles::Action::WaspNest,
                     None,
                 )
@@ -893,7 +896,10 @@ impl EngineInner {
                 self.is_in_range_for_projectile(
                     assets,
                     actor_id,
-                    target_2d,
+                    crate::coordinates::MapPoint {
+                        x: target_2d.x,
+                        y: target_2d.y,
+                    },
                     crate::profiles::Action::Net,
                     None,
                 )

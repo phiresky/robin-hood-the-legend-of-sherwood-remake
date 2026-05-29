@@ -1390,7 +1390,7 @@ impl EngineInner {
                 } else {
                     entity
                         .element_data_mut()
-                        .set_position_map(crate::element::Point2D {
+                        .set_position_map(crate::coordinates::MapPoint {
                             x: flight.goal_x,
                             y: flight.goal_y,
                         });
@@ -1827,7 +1827,7 @@ impl EngineInner {
             attacker_id: EntityId,
             victim_id: EntityId,
             attacker_profile_idx: Option<u32>,
-            attacker_pos: crate::element::Point2D,
+            attacker_pos: crate::coordinates::MapPoint,
             forward: (f32, f32),
             sidewards: (f32, f32),
             current_frame: u16,

@@ -3714,11 +3714,7 @@ impl EngineInner {
                 None
             };
 
-            triggers.push((
-                sound_id as u32,
-                elem.position_map().to_geo_point(),
-                material,
-            ));
+            triggers.push((sound_id as u32, elem.position_map().to_geo(), material));
         }
 
         for (fx_id, position, material) in triggers {

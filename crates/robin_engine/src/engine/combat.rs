@@ -498,7 +498,7 @@ impl EngineInner {
             let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
                 bow_point,
-                trajectory_origin: crate::element::Point2D {
+                trajectory_origin: crate::coordinates::MapPoint {
                     x: result.shooter_position.x,
                     y: result.shooter_position.y,
                 },
@@ -2544,7 +2544,7 @@ impl EngineInner {
         // is the correct one.  If none of the projection-area obstacles
         // cover the landing, fall through to the standalone water-zone
         // scan (branch 1).
-        let landing = position_map.to_geo_point();
+        let landing = position_map.to_geo();
         let landing_obstacle = self.find_landing_water_obstacle(assets, landing);
         let resolved_material = if let Some(obs) = landing_obstacle {
             crate::water_zones::determine_water_hole_with_obstacle(obs, landing)
@@ -2561,7 +2561,7 @@ impl EngineInner {
                 if matches!(object_type, crate::element::ObjectType::Arrow) {
                     self.broadcast_noise(
                         crate::ai::NoiseType::Zonk,
-                        position_map.to_geo_point(),
+                        position_map.to_geo(),
                         layer,
                         crate::parameters_ai::NOISE_VOLUME_ZONK as u16,
                         position.z.max(0.0) as u16,
@@ -2612,7 +2612,7 @@ impl EngineInner {
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: 470,
-                position: position_map.to_geo_point(),
+                position: position_map.to_geo(),
                 material: None,
             });
 
@@ -2620,7 +2620,7 @@ impl EngineInner {
         // `parameters_ai::NOISE_VOLUME_PLOUF` (300).
         self.broadcast_noise(
             crate::ai::NoiseType::Plouf,
-            position_map.to_geo_point(),
+            position_map.to_geo(),
             layer,
             crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
             position.z.max(0.0) as u16,
@@ -2896,7 +2896,7 @@ impl EngineInner {
                                     carrier_layer,
                                 ) {
                                     let c = bbox.center();
-                                    crate::element::Point2D { x: c.x, y: c.y }
+                                    crate::coordinates::MapPoint { x: c.x, y: c.y }
                                 } else {
                                     carrier_pos
                                 }
@@ -3056,7 +3056,7 @@ impl EngineInner {
                                         .find_authorized_position(&mut bbox, helper_layer)
                                     {
                                         let c = bbox.center();
-                                        crate::element::Point2D { x: c.x, y: c.y }
+                                        crate::coordinates::MapPoint { x: c.x, y: c.y }
                                     } else {
                                         helper_pos
                                     }

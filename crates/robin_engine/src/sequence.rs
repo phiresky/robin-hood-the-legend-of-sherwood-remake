@@ -1099,7 +1099,7 @@ impl SequenceElement {
         animation_transition: OrderType,
         animation_to_replace: OrderType,
         distance_transition: f32,
-        point_start: crate::element::Point2D,
+        point_start: crate::coordinates::MapPoint,
         next_order_id: &mut u32,
     ) {
         let mut distance_remaining = if distance_transition == 0.0 {
@@ -1150,7 +1150,7 @@ impl SequenceElement {
             let dx = self.orders[order_idx].target_x;
             let dy = self.orders[order_idx].target_y;
             if !(dx == 0.0 && dy == 0.0) {
-                point = crate::element::Point2D { x: dx, y: dy };
+                point = crate::coordinates::MapPoint { x: dx, y: dy };
             }
             order_idx += 1;
         }
@@ -1171,7 +1171,7 @@ impl SequenceElement {
         animation_transition: OrderType,
         animation_to_replace: OrderType,
         distance_transition: f32,
-        point_start: crate::element::Point2D,
+        point_start: crate::coordinates::MapPoint,
         aspect_ratio: f32,
         next_order_id: &mut u32,
     ) {
@@ -3749,7 +3749,7 @@ impl SequenceManager {
     pub fn stop_movement_for_owner(
         &mut self,
         entity: EntityId,
-        owner_pos: crate::element::Point2D,
+        owner_pos: crate::coordinates::MapPoint,
         stop_priority: SequencePriority,
         resolver: &dyn Fn(&SequenceElement) -> SequencePriority,
         next_order_id: &mut u32,
@@ -4906,7 +4906,7 @@ mod tests {
         let mut next_order_id = 1u32;
         let changed = mgr.stop_movement_for_owner(
             EntityId(1),
-            crate::element::Point2D { x: 0.0, y: 0.0 },
+            crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
             &mut next_order_id,
@@ -4949,7 +4949,7 @@ mod tests {
         let mut next_order_id = 1u32;
         mgr.stop_movement_for_owner(
             EntityId(1),
-            crate::element::Point2D::default(),
+            crate::coordinates::MapPoint::default(),
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
             &mut next_order_id,
@@ -4983,7 +4983,7 @@ mod tests {
         let mut next_order_id = 1u32;
         mgr.stop_movement_for_owner(
             EntityId(1),
-            crate::element::Point2D::default(),
+            crate::coordinates::MapPoint::default(),
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
             &mut next_order_id,
@@ -5011,7 +5011,7 @@ mod tests {
         let mut next_order_id = 1u32;
         mgr.stop_movement_for_owner(
             EntityId(1),
-            crate::element::Point2D::default(),
+            crate::coordinates::MapPoint::default(),
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
             &mut next_order_id,
@@ -5032,7 +5032,7 @@ mod tests {
             OrderType::TransitionWaitingUprightWalkingUpright,
             OrderType::WalkingUpright,
             10.0,
-            crate::element::Point2D { x: 0.0, y: 0.0 },
+            crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
             &mut next_order_id,
         );
 
@@ -5056,7 +5056,7 @@ mod tests {
             OrderType::TransitionWalkingUprightWaitingUpright,
             OrderType::WalkingUpright,
             10.0,
-            crate::element::Point2D { x: 0.0, y: 0.0 },
+            crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
             1.0,
             &mut next_order_id,
         );

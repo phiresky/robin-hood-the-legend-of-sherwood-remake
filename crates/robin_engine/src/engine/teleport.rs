@@ -129,7 +129,7 @@ impl EngineInner {
         let dy = (crate::sim_rng::f32() * 2.0 - 1.0) * RANDOM_SHERWOOD_POSITION;
         let new_direction = crate::sim_rng::u32(0..16) as i16;
 
-        let new_pos = Point2D {
+        let new_pos = crate::coordinates::MapPoint {
             x: current_pos.x + dx,
             y: current_pos.y + dy,
         };
