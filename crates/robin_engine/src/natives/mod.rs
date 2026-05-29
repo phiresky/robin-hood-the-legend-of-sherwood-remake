@@ -1237,7 +1237,9 @@ impl GameHost {
                 *destination = to_pt(shot.exit);
                 *layer = shot.exit_layer;
                 *gate_id = Some(shot.door_index);
-                *flags = MoveFlags::DOOR;
+                // Original PASS_DOOR constructor uses default flags
+                // and only attaches the gate via SetGate.
+                *flags = MoveFlags::empty();
                 *sf = speed_factor;
             }
             self.record_seq_step(pass, emit_count == 0);

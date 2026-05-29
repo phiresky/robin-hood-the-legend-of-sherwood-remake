@@ -1652,9 +1652,8 @@ impl EngineInner {
                                     }
                                 };
 
-                                // Determine direction from the sequence element.
-                                // `flags` has DOOR set; `direct` is inferred from
-                                // which side the actor is on vs the door's sectors.
+                                // Determine direction from the actor's current side
+                                // of the door, matching the original PASS_DOOR path.
                                 let direct = {
                                     // Snapshot door's sector_out to avoid
                                     // overlapping borrows.

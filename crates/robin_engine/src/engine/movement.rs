@@ -2008,7 +2008,9 @@ impl EngineInner {
                 gate_id: Some(shot.door_index),
                 line_id: None,
                 element: None,
-                flags: MoveFlags::DOOR,
+                // Original PASS_DOOR constructor uses default flags
+                // and only attaches the gate via SetGate.
+                flags: MoveFlags::empty(),
                 tolerance: 0.0,
                 direction: 0,
                 action: door_action,
