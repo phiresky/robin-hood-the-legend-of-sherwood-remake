@@ -2248,7 +2248,10 @@ impl EngineInner {
                             destination: to_pt(far_side_point),
                             layer: far_side_layer,
                             sector: None,
-                            gate_id: Some(door_index),
+                            // Original AppendMoveToDoorToSequence's
+                            // trailing goal move is a plain MOVE to
+                            // ptGoal; it does not call SetGate.
+                            gate_id: None,
                             line_id: None,
                             element: None,
                             flags: trailing_flags,
