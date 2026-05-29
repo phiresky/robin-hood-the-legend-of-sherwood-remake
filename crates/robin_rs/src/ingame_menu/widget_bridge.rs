@@ -1004,6 +1004,51 @@ pub fn play_widget_noise_tracked(
     }
 }
 
+/// Play menu-widget noises for events emitted by a [`FrameWnd`], using
+/// each event's origin widget to retrieve the widget's current state.
+///
+/// This mirrors `RHWidgetNoisy::ProcessEvents2MakeNoise`: state changes
+/// reset the per-widget "already played" flag, and at most one matching
+/// sound is emitted per call.
+pub fn play_frame_widget_noise(
+    events: &[UiEvent],
+    frame: &FrameWnd,
+    noisy_id: u32,
+    sound: &mut SoundManager,
+    backend: Option<&mut dyn AudioBackend>,
+    loader: &SampleLoader,
+    tracker: &mut NoisyTracker,
+) {
+    let Some(backend) = backend else {
+        return;
+    };
+    for event in events {
+        let event_id = match event.msg_type {
+            UiMsg::WidgetActivated => WIDGET_NOISY_EVENT_ACTIVATED,
+            UiMsg::WidgetFocused
+            | UiMsg::WidgetSliderTrack
+            | UiMsg::WidgetListFocusChange
+            | UiMsg::WidgetListSelectChange => WIDGET_NOISY_EVENT_FOCUSED,
+            _ => continue,
+        };
+        let current_state = frame
+            .widget(event.origin_widget_id)
+            .map(|w| w.base().state)
+            .unwrap_or(UiState::Default);
+        let key = (event.origin_widget_id, noisy_id);
+        if let Some(&(last_state, played)) = tracker.entries.get(&key)
+            && last_state == current_state
+            && played
+        {
+            continue;
+        }
+        let sound_id = (noisy_id << 16) + event_id;
+        sound.play_menu_sound(sound_id, backend, loader);
+        tracker.entries.insert(key, (current_state, true));
+        return;
+    }
+}
+
 #[cfg(test)]
 mod noisy_tracker_tests {
     use super::*;

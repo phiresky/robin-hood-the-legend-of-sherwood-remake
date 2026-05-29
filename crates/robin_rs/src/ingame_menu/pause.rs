@@ -22,7 +22,9 @@ use crate::gfx_types::Keycode;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::short_briefings::ShortBriefings;
+use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
+use robin_engine::sound_cache::SampleLoader;
 
 use super::briefings::draw_short_briefings;
 use super::layout::{MenuRect, MenuTransform, align_bottom_right, dim_screen};
@@ -78,6 +80,7 @@ pub enum PauseMenuOutcome {
 pub struct PauseMenu {
     frame: FrameWnd,
     input_state: ModalInputState,
+    noisy_tracker: widget_bridge::NoisyTracker,
     keyboard_selection: u32,
     outcome: PauseMenuOutcome,
 }
@@ -121,6 +124,7 @@ impl PauseMenu {
         Self {
             frame,
             input_state: ModalInputState::new(),
+            noisy_tracker: widget_bridge::NoisyTracker::new(),
             keyboard_selection: PAUSE_BTN_CONTINUE,
             outcome: PauseMenuOutcome::Pending,
         }
@@ -154,6 +158,7 @@ impl PauseMenu {
     pub fn reset_after_side_menu(&mut self) {
         self.outcome = PauseMenuOutcome::Pending;
         self.input_state = ModalInputState::new();
+        self.noisy_tracker.clear();
         for widget in self.frame.widgets_mut() {
             widget.base_mut().state = crate::ui::UiState::Default;
         }
@@ -179,6 +184,21 @@ impl PauseMenu {
         event: &GameEvent,
         screen_w: i32,
         screen_h: i32,
+    ) -> PauseMenuOutcome {
+        self.handle_event_with_audio(event, screen_w, screen_h, None, None, None)
+    }
+
+    /// Feed a single event to the menu and return the updated outcome.
+    /// When audio is supplied, hover and activation events trigger the
+    /// same menu-button sounds as the original widget implementation.
+    pub fn handle_event_with_audio(
+        &mut self,
+        event: &GameEvent,
+        screen_w: i32,
+        screen_h: i32,
+        sound: Option<&mut SoundManager>,
+        audio_backend: Option<&mut dyn AudioBackend>,
+        sample_loader: Option<&SampleLoader>,
     ) -> PauseMenuOutcome {
         let transform = MenuTransform::centered(screen_w, screen_h);
 
@@ -221,6 +241,17 @@ impl PauseMenu {
         let widget_input = self.input_state.as_widget_input();
         let events = self.frame.process_input(&widget_input);
         self.input_state.end_frame();
+        if let (Some(sound), Some(sample_loader)) = (sound, sample_loader) {
+            widget_bridge::play_frame_widget_noise(
+                &events,
+                &self.frame,
+                widget_bridge::WIDGET_NOISY_BUTTON,
+                sound,
+                audio_backend,
+                sample_loader,
+                &mut self.noisy_tracker,
+            );
+        }
 
         // Sync keyboard selection with mouse hover.
         for w in self.frame.widgets() {

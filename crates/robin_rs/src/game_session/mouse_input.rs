@@ -1063,7 +1063,17 @@ pub(super) async fn handle_pause_menu_events(
         let screen_w = renderer.screen_width() as i32;
         let screen_h = renderer.screen_height() as i32;
         for event in events {
-            match menu.handle_event(event, screen_w, screen_h) {
+            let backend = audio_backend
+                .as_mut()
+                .map(|b| b as &mut dyn crate::sound::AudioBackend);
+            match menu.handle_event_with_audio(
+                event,
+                screen_w,
+                screen_h,
+                Some(&mut host.sound),
+                backend,
+                Some(sample_loader),
+            ) {
                 PauseMenuOutcome::Pending => {}
                 other => {
                     pause_outcome = Some(other);

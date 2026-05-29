@@ -28,12 +28,16 @@ use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::savegame::SaveGameManager;
+use crate::sdl_audio::{self, SdlMixerBackend};
+use crate::sound::SoundManager;
+use crate::sound_config::SoundConfig;
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
 use crate::window::GameWindow;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfile, PlayerProfileManager};
+use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
 
 pub(crate) mod credits;
@@ -110,6 +114,70 @@ const PROFILE_INFO_Y: i32 = 125;
 const PROFILE_INFO_BOX_X: i32 = 0;
 const PROFILE_INFO_BOX_W: i32 = 480;
 
+struct MainMenuAudio {
+    backend: SdlMixerBackend,
+    sound: SoundManager,
+    sample_loader: Box<SampleLoader>,
+    noisy_tracker: widget_bridge::NoisyTracker,
+}
+
+impl MainMenuAudio {
+    fn new() -> Option<Self> {
+        // Main menu starts before a `Game` exists, so it cannot see
+        // command-line sound-directory overrides yet. Keep this in
+        // lockstep with the existing main-menu options bootstrap.
+        let sound_dir = std::path::PathBuf::from("Data/Sounds");
+        let mut backend = match SdlMixerBackend::new(&sound_dir, crate::sound::NUM_CHANNELS) {
+            Ok(backend) => backend,
+            Err(e) => {
+                tracing::warn!("Main menu: failed to initialize audio: {e}");
+                return None;
+            }
+        };
+        let mut sound = SoundManager::default();
+        let sound_cfg = SoundConfig::default();
+        if let Err(e) = sound.initialize(&mut backend, sound_cfg.sound_3d) {
+            tracing::warn!("Main menu: SoundManager init failed: {e}");
+            return None;
+        }
+        sound.apply_volumes(&sound_cfg);
+
+        let menu_bank_path = crate::sbfile::resolve_case_insensitive(std::path::Path::new(
+            "Data/Sounds/Menu/menu.fxg",
+        ))
+        .unwrap_or_else(|| std::path::PathBuf::from("Data/Sounds/Menu/menu.fxg"));
+        match std::fs::read(&menu_bank_path) {
+            Ok(data) => match crate::sound_cache::parse_menu_bank(&data) {
+                Ok(entries) => sound.sound_cache.initialize_menu_cache(&entries),
+                Err(e) => tracing::warn!("Main menu: menu bank parse failed: {e}"),
+            },
+            Err(e) => tracing::warn!(
+                "Main menu: menu bank unreadable at {}: {e}",
+                menu_bank_path.display()
+            ),
+        }
+
+        Some(Self {
+            backend,
+            sound,
+            sample_loader: sdl_audio::create_sample_loader(sound_dir),
+            noisy_tracker: widget_bridge::NoisyTracker::new(),
+        })
+    }
+
+    fn play_button_noise(&mut self, events: &[crate::ui::UiEvent], frame: &FrameWnd) {
+        widget_bridge::play_frame_widget_noise(
+            events,
+            frame,
+            widget_bridge::WIDGET_NOISY_BUTTON,
+            &mut self.sound,
+            Some(&mut self.backend),
+            &*self.sample_loader,
+            &mut self.noisy_tracker,
+        );
+    }
+}
+
 /// Display the graphical main menu matching the original game.
 ///
 /// Loads the shared menu resources (button sprites + fonts + menu text
@@ -149,6 +217,7 @@ pub(crate) async fn show_main_menu(
             "Main menu: RHID_MENU_BACKGROUND_1 missing from DEFAULT.RES — rendering with no background"
         );
     }
+    let mut menu_audio = MainMenuAudio::new();
 
     // Local save manager for browsing/loading at the main menu.  The
     // session layer builds its own in `RustCallbacks::new`; both read
@@ -325,6 +394,9 @@ pub(crate) async fn show_main_menu(
         let widget_input = input_state.as_widget_input();
         let events = frame.process_input(&widget_input);
         input_state.end_frame();
+        if let Some(audio) = menu_audio.as_mut() {
+            audio.play_button_noise(&events, &frame);
+        }
 
         // Sync keyboard focus with the mouse-hovered widget so keyboard
         // + mouse don't fight each other.
