@@ -34,6 +34,7 @@ pub(crate) async fn run_main_menu_load(
         Some(cursor),
         save_manager,
         0,
+        None,
         SaveLoadMode::Load,
         None,
         None,

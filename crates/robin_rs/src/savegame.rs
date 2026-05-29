@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::campaign::Campaign;
 use crate::save_file::{self, GameSaveFile, SaveHeader, Thumbnail};
+use robin_engine::campaign::CampaignValue;
 use robin_engine::engine::Engine;
+use robin_engine::profiles::ProfileManager;
 
 /// Metadata for a single save game slot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,30 @@ pub struct SaveGame {
     pub timestamp: String,
     /// Whether this is a special slot (continue, quicksave, restart, sherwood).
     pub special: Option<SpecialSlot>,
+    /// Localized/static mission name at time of save, when profile data was available.
+    #[serde(default)]
+    pub mission_name: String,
+    /// Campaign progression percentage at time of save.
+    #[serde(default)]
+    pub campaign_progress: Option<u32>,
+    /// Number of completed missions at time of save.
+    #[serde(default)]
+    pub missions_done: Option<usize>,
+    /// Total missions known to the campaign at time of save.
+    #[serde(default)]
+    pub missions_total: Option<usize>,
+    /// Gang size at time of save.
+    #[serde(default)]
+    pub gang_size: Option<usize>,
+    /// Current ransom value at time of save.
+    #[serde(default)]
+    pub ransom: Option<i32>,
+    /// Current blazon value at time of save.
+    #[serde(default)]
+    pub blazons: Option<i32>,
+    /// Current amulet value at time of save.
+    #[serde(default)]
+    pub amulets: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +97,14 @@ impl SaveGame {
             version: 1,
             timestamp: String::new(),
             special,
+            mission_name: String::new(),
+            campaign_progress: None,
+            missions_done: None,
+            missions_total: None,
+            gang_size: None,
+            ransom: None,
+            blazons: None,
+            amulets: None,
         }
     }
 
@@ -117,8 +151,31 @@ impl SaveGameManager {
         match Self::load_index(&dir_str) {
             Ok(mgr) => mgr,
             Err(err) => {
-                tracing::info!("No save index at {dir_str} ({err}) — starting fresh");
+                tracing::info!("No save index at {dir_str} ({err}) - starting fresh");
                 Self::new(dir_str)
+            }
+        }
+    }
+
+    /// Refresh slot metadata by reading save payloads from disk.
+    ///
+    /// Older `saves.json` indices lack the extended UI metadata added
+    /// after the JSON save format landed. The menu calls this once when
+    /// opening so existing saves can still display useful details.
+    pub fn refresh_metadata_from_disk(&mut self, profiles: Option<&ProfileManager>) {
+        for index in 0..self.saves.len() {
+            if !self.slot_file_exists(index) {
+                continue;
+            }
+            let path = self.save_path(index);
+            match GameSaveFile::read_from(&path) {
+                Ok(save) => self.sync_slot_metadata_from_save(index, &save, profiles),
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to refresh save metadata for slot {index} from {}: {err:#}",
+                        path.display()
+                    );
+                }
             }
         }
     }
@@ -151,10 +208,11 @@ impl SaveGameManager {
         game: &crate::game::Game,
         engine: &Engine,
         mission_id: u32,
+        profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let idx = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue");
-        self.write_save_from_engine(host, game, idx, engine, mission_id, thumbnail)?;
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
         self.save_index_anyhow()
     }
 
@@ -166,6 +224,7 @@ impl SaveGameManager {
         game: &crate::game::Game,
         engine: &Engine,
         mission_id: u32,
+        profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         // Rotate: QuickSave → ExQuickSave
@@ -177,9 +236,19 @@ impl SaveGameManager {
                 self.ensure_special_slot(save_file::special_slots::EX_QUICK, "Previous Quick Save");
             self.copy_files(quick_idx, ex_idx)
                 .map_err(|e| anyhow::anyhow!(e))?;
+            if self.slot_file_exists(ex_idx) {
+                let path = self.save_path(ex_idx);
+                match GameSaveFile::read_from(&path) {
+                    Ok(save) => self.sync_slot_metadata_from_save(ex_idx, &save, profiles),
+                    Err(err) => tracing::warn!(
+                        "Failed to refresh rotated quick-save metadata from {}: {err:#}",
+                        path.display()
+                    ),
+                }
+            }
         }
         let idx = self.ensure_special_slot(save_file::special_slots::QUICK, "Quick Save");
-        self.write_save_from_engine(host, game, idx, engine, mission_id, thumbnail)?;
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
         self.save_index_anyhow()
     }
 
@@ -193,10 +262,11 @@ impl SaveGameManager {
         game: &crate::game::Game,
         engine: &Engine,
         mission_id: u32,
+        profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point");
-        self.write_save_from_engine(host, game, idx, engine, mission_id, thumbnail)?;
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
         self.save_index_anyhow()
     }
 
@@ -210,6 +280,7 @@ impl SaveGameManager {
         game: &crate::game::Game,
         engine: &Engine,
         mission_id: u32,
+        profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) {
         let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point");
@@ -221,10 +292,7 @@ impl SaveGameManager {
         let thumb_path = self.thumb_path(idx);
 
         // Eagerly update slot metadata so it's available immediately.
-        let slot = &mut self.saves[idx];
-        slot.mission_id = save.header.mission_id;
-        slot.version = save.header.version;
-        slot.timestamp = save.header.timestamp_unix.to_string();
+        self.sync_slot_metadata_from_save(idx, &save, profiles);
         if let Err(e) = self.save_index_anyhow() {
             tracing::warn!("Failed to save index for restart slot: {e:#}");
         }
@@ -297,10 +365,11 @@ impl SaveGameManager {
         game: &crate::game::Game,
         engine: &Engine,
         mission_id: u32,
+        profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let idx = self.ensure_special_slot(save_file::special_slots::SHERWOOD, "Sherwood");
-        self.write_save_from_engine(host, game, idx, engine, mission_id, thumbnail)?;
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
         self.save_index_anyhow()
     }
 
@@ -471,9 +540,7 @@ impl SaveGameManager {
             match GameSaveFile::read_header_only(&dst_json) {
                 Ok(header) => {
                     let slot = &mut self.saves[dst];
-                    slot.mission_id = header.mission_id;
-                    slot.version = header.version;
-                    slot.timestamp = header.timestamp_unix.to_string();
+                    Self::sync_slot_metadata_from_header(slot, &header);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -498,6 +565,7 @@ impl SaveGameManager {
         index: usize,
         engine: &Engine,
         mission_id: u32,
+        profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let display_text = self.saves[index].text.clone();
@@ -514,12 +582,49 @@ impl SaveGameManager {
             }
         }
 
-        // Sync slot metadata from the header we just wrote.
-        let slot = &mut self.saves[index];
-        slot.mission_id = save.header.mission_id;
-        slot.version = save.header.version;
-        slot.timestamp = save.header.timestamp_unix.to_string();
+        // Sync slot metadata from the save we just wrote.
+        self.sync_slot_metadata_from_save(index, &save, profiles);
         Ok(())
+    }
+
+    fn sync_slot_metadata_from_save(
+        &mut self,
+        index: usize,
+        save: &GameSaveFile,
+        profiles: Option<&ProfileManager>,
+    ) {
+        let slot = &mut self.saves[index];
+        Self::sync_slot_metadata_from_header(slot, &save.header);
+        if let Some(campaign) = save.engine.campaign() {
+            Self::sync_slot_campaign_metadata(slot, campaign, save.header.mission_id, profiles);
+        }
+    }
+
+    fn sync_slot_metadata_from_header(slot: &mut SaveGame, header: &SaveHeader) {
+        slot.mission_id = header.mission_id;
+        slot.version = header.version;
+        slot.timestamp = header.timestamp_unix.to_string();
+    }
+
+    fn sync_slot_campaign_metadata(
+        slot: &mut SaveGame,
+        campaign: &robin_engine::campaign::Campaign,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+    ) {
+        slot.missions_done = Some(campaign.get_number_of_missions_done());
+        slot.missions_total = Some(campaign.missions.len());
+        slot.gang_size = Some(campaign.gang_indices.len());
+        slot.ransom = Some(campaign.values[CampaignValue::Ransom as usize]);
+        slot.blazons = Some(campaign.values[CampaignValue::Blazon as usize]);
+        slot.amulets = Some(campaign.values[CampaignValue::Amulets as usize]);
+
+        if let Some(profiles) = profiles {
+            slot.campaign_progress = Some(campaign.get_progression(profiles));
+            if let Some(mission) = campaign.get_mission(mission_id, profiles) {
+                slot.mission_name = mission.profile(profiles).mission_name.clone();
+            }
+        }
     }
 
     /// Load the thumbnail for a slot if one exists on disk.
@@ -732,14 +837,14 @@ mod tests {
 
         // Write to a manual slot.
         let idx = mgr.create("Slot A".into(), 17);
-        mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, None)
+        mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, None, None)
             .unwrap();
         assert!(mgr.slot_file_exists(idx));
         let header = mgr.read_slot_header(idx).unwrap();
         assert_eq!(header.mission_id, 17);
 
         // Write a Continue auto-save.
-        mgr.write_continue_save(&mut host, &game, &engine, 17, None)
+        mgr.write_continue_save(&mut host, &game, &engine, 17, None, None)
             .unwrap();
         let continue_idx = mgr
             .find_by_filename(crate::save_file::special_slots::CONTINUE)
@@ -762,6 +867,37 @@ mod tests {
     }
 
     #[test]
+    fn refresh_metadata_from_disk_backfills_save_details() {
+        use tempfile::tempdir;
+
+        let tmp = tempdir().unwrap();
+        let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
+        let (engine, _assets) = fresh_engine();
+        let mut host = Host::new(800.0, 600.0);
+        let game = crate::game::Game::default();
+
+        let idx = mgr.create("Slot A".into(), 17);
+        mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, None, None)
+            .unwrap();
+
+        let slot = mgr.get_mut(idx).unwrap();
+        slot.timestamp.clear();
+        slot.missions_done = None;
+        slot.missions_total = None;
+        slot.gang_size = None;
+        slot.ransom = None;
+
+        mgr.refresh_metadata_from_disk(None);
+        let slot = mgr.get(idx).unwrap();
+        assert_eq!(slot.mission_id, 17);
+        assert!(!slot.timestamp.is_empty());
+        assert_eq!(slot.missions_done, Some(0));
+        assert_eq!(slot.missions_total, Some(1));
+        assert_eq!(slot.gang_size, Some(0));
+        assert_eq!(slot.ransom, Some(robin_engine::campaign::INITIAL_RANSOM));
+    }
+
+    #[test]
     fn quick_save_rotates_previous() {
         use tempfile::tempdir;
 
@@ -773,10 +909,10 @@ mod tests {
         let game = crate::game::Game::default();
 
         engine.test_set_frame_counter(1);
-        mgr.write_quick_save(&mut host, &game, &engine, 3, None)
+        mgr.write_quick_save(&mut host, &game, &engine, 3, None, None)
             .unwrap();
         engine.test_set_frame_counter(2);
-        mgr.write_quick_save(&mut host, &game, &engine, 3, None)
+        mgr.write_quick_save(&mut host, &game, &engine, 3, None, None)
             .unwrap();
 
         let quick_idx = mgr
@@ -830,7 +966,7 @@ mod tests {
 
         // Profile 0 saves frame=100 into QuickSave.
         engine.test_set_frame_counter(100);
-        mgr0.write_quick_save(&mut host, &game, &engine, 1, None)
+        mgr0.write_quick_save(&mut host, &game, &engine, 1, None, None)
             .unwrap();
         let q0 = mgr0.find_by_filename(special_slots::QUICK).unwrap();
         let path0 = mgr0.save_path(q0);
@@ -841,7 +977,7 @@ mod tests {
 
         // Profile 1 saves frame=200 into its own QuickSave.
         engine.test_set_frame_counter(200);
-        mgr1.write_quick_save(&mut host, &game, &engine, 1, None)
+        mgr1.write_quick_save(&mut host, &game, &engine, 1, None, None)
             .unwrap();
         let q1 = mgr1.find_by_filename(special_slots::QUICK).unwrap();
         let path1 = mgr1.save_path(q1);

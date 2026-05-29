@@ -26,6 +26,8 @@ use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::{TextFromCaretSide, WidgetInput, WidgetInputField};
+use jiff::Timestamp;
+use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
 
@@ -81,7 +83,7 @@ const THUMB_RECT: MenuRect = MenuRect {
     w: 180,
     h: 135,
 };
-const ROW_HEIGHT: i32 = 20;
+const DETAIL_ROW_HEIGHT: i32 = 36;
 
 /// Longest allowed save name — passed to the input field as its
 /// max-length cap.
@@ -111,6 +113,7 @@ pub async fn show_save_load(
     mut cursor: Option<ModalCursor<'_>>,
     save_manager: &mut SaveGameManager,
     mission_id: u32,
+    profiles: Option<&ProfileManager>,
     mode: SaveLoadMode,
     mut sound: Option<&mut SoundManager>,
     mut audio_backend: Option<&mut dyn AudioBackend>,
@@ -123,6 +126,7 @@ pub async fn show_save_load(
         SaveLoadMode::Load => LOAD_LIST_RECT,
         SaveLoadMode::Save => SAVE_LIST_RECT,
     };
+    save_manager.refresh_metadata_from_disk(profiles);
 
     let (btn_w, btn_h) = resources.button_dimensions();
     let load_save_label = resources.menu_text.get(match mode {
@@ -173,7 +177,7 @@ pub async fn show_save_load(
     // chronological order rather than insertion order.
     save_manager.sort_by_time();
     let mut visible = collect_visible_slots(save_manager, mode);
-    let visible_rows = (list_rect.h / ROW_HEIGHT).max(1) as usize;
+    let visible_rows = (list_rect.h / DETAIL_ROW_HEIGHT).max(1) as usize;
     let mut scroll_offset: usize = 0;
 
     // Name-entry state lives on a `WidgetInputField` kept in
@@ -225,12 +229,10 @@ pub async fn show_save_load(
     let empty_keyboard = crate::ui::UiKeyboard::default();
 
     let outcome = loop {
-        // Build (or rebuild) the widget frame. Button enablement depends
-        // on the current selection (and, in Save mode, on the input
-        // field being non-empty).
-        let save_text_valid = !input_widget.edit_text.trim().is_empty();
+        // Build (or rebuild) the widget frame. Save mode accepts an
+        // empty name and fills a default label on confirmation.
         let action_enabled = match (mode, selected) {
-            (SaveLoadMode::Save, Some(_)) => save_text_valid,
+            (SaveLoadMode::Save, Some(_)) => true,
             (SaveLoadMode::Load, Some(ListRow::Existing(_))) => true,
             _ => false,
         };
@@ -366,7 +368,8 @@ pub async fn show_save_load(
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
                     if list_rect.contains_virt(vx, vy) {
-                        let row_offset = ((vy - list_rect.y - 4) / ROW_HEIGHT).max(0) as usize;
+                        let row_offset =
+                            ((vy - list_rect.y - 4) / DETAIL_ROW_HEIGHT).max(0) as usize;
                         let new_selection = row_at(mode, scroll_offset + row_offset, visible.len());
                         if new_selection != selected {
                             selected = new_selection;
@@ -385,13 +388,9 @@ pub async fn show_save_load(
                             && selected.is_some()
                         {
                             // Match the action-enable rules used by the
-                            // explicit button / Enter-key path so a
-                            // double-click on a Save-mode row with an
-                            // empty name buffer is a silent no-op.
+                            // explicit button / Enter-key path.
                             let action_enabled_now = match (mode, selected) {
-                                (SaveLoadMode::Save, Some(_)) => {
-                                    !input_widget.edit_text.trim().is_empty()
-                                }
+                                (SaveLoadMode::Save, Some(_)) => true,
                                 (SaveLoadMode::Load, Some(ListRow::Existing(_))) => true,
                                 _ => false,
                             };
@@ -489,7 +488,13 @@ pub async fn show_save_load(
                 ID_CANCEL => break SaveLoadOutcome::Cancel,
                 ID_LOAD_SAVE => match (mode, selected) {
                     (SaveLoadMode::Save, Some(ListRow::New)) => {
-                        let text = input_widget.edit_text.trim().to_string();
+                        let text = accepted_save_text(
+                            &input_widget.edit_text,
+                            selected,
+                            save_manager,
+                            &visible,
+                            mission_id,
+                        );
                         let idx = save_manager.create(text, mission_id);
                         break SaveLoadOutcome::Slot(idx);
                     }
@@ -506,11 +511,19 @@ pub async fn show_save_load(
                         .await
                         {
                             // Apply edited name to the slot before overwriting.
-                            let new_text = input_widget.edit_text.trim().to_string();
-                            save_manager
-                                .get_mut(slot)
-                                .expect("visible slot must exist")
-                                .text = new_text;
+                            let new_text = accepted_save_text(
+                                &input_widget.edit_text,
+                                selected,
+                                save_manager,
+                                &visible,
+                                mission_id,
+                            );
+                            if !new_text.is_empty() {
+                                save_manager
+                                    .get_mut(slot)
+                                    .expect("visible slot must exist")
+                                    .text = new_text;
+                            }
                             break SaveLoadOutcome::Slot(slot);
                         }
                     }
@@ -583,9 +596,7 @@ pub async fn show_save_load(
             draw_input_field(renderer, resources, transform, &input_widget, caret_timer);
         }
 
-        // Rows — the original RHMenuLoadSave listbox only displays the
-        // player-facing save text. Filenames, timestamps, and mission ids
-        // stay in the save metadata rather than being rendered here.
+        // Rows.
         let total = total_rows(mode, visible.len());
         let scrollbar_w = list_scrollbar_width(resources);
         let needs_scrollbar = total > visible_rows && scrollbar_w > 0;
@@ -600,7 +611,8 @@ pub async fn show_save_load(
         // virtual menu coords, so we hit-test against the active list
         // rect directly.
         let hovered_row = if list_rect.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32) {
-            let row_offset = ((mouse_virt.y as i32 - list_rect.y - 4) / ROW_HEIGHT).max(0) as usize;
+            let row_offset =
+                ((mouse_virt.y as i32 - list_rect.y - 4) / DETAIL_ROW_HEIGHT).max(0) as usize;
             row_at(mode, scroll_offset + row_offset, visible.len())
         } else {
             None
@@ -612,10 +624,11 @@ pub async fn show_save_load(
                 break;
             }
             let row = row_at_unchecked(mode, row_index, visible.len());
-            let row_y = list_rect.y + 4 + row_offset as i32 * ROW_HEIGHT;
+            let row_y = list_rect.y + 4 + row_offset as i32 * DETAIL_ROW_HEIGHT;
             let is_selected = selected == Some(row);
             let is_focused = hovered_row == Some(row);
             let label = row_label(row, save_manager, &visible);
+            let detail = row_detail(row, save_manager, &visible);
 
             let Some(font) = resources.list_font(is_focused, is_selected) else {
                 continue;
@@ -623,6 +636,17 @@ pub async fn show_save_load(
             let fitted = truncate_to_pixel_width(font, &label, row_area_w);
             if !fitted.is_empty() {
                 render_text_virt_font(renderer, font, transform, fitted, row_area_x, row_y);
+            }
+            let detail_fitted = truncate_to_pixel_width(font, &detail, row_area_w);
+            if !detail_fitted.is_empty() {
+                render_text_virt_font(
+                    renderer,
+                    font,
+                    transform,
+                    detail_fitted,
+                    row_area_x,
+                    row_y + 16,
+                );
             }
         }
 
@@ -1061,6 +1085,88 @@ fn row_label(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) ->
     }
 }
 
+fn row_detail(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) -> String {
+    match row {
+        ListRow::New => "Name optional - creates a new save slot".to_string(),
+        ListRow::Existing(v_idx) => {
+            let slot = visible[v_idx];
+            let Some(save) = save_manager.get(slot) else {
+                return String::new();
+            };
+
+            let mut parts = vec![format!("Saved {}", format_saved_time(&save.timestamp))];
+            if save.mission_name.is_empty() {
+                parts.push(format!("Mission {}", save.mission_id));
+            } else {
+                parts.push(format!(
+                    "Mission {} ({})",
+                    save.mission_name, save.mission_id
+                ));
+            }
+            if let Some(progress) = save.campaign_progress {
+                parts.push(format!("Campaign {progress}%"));
+            }
+            if let (Some(done), Some(total)) = (save.missions_done, save.missions_total) {
+                parts.push(format!("{done}/{total} missions"));
+            }
+            if let Some(gang) = save.gang_size {
+                parts.push(format!("Gang {gang}"));
+            }
+            if let Some(ransom) = save.ransom {
+                parts.push(format!("Ransom {ransom}"));
+            }
+            if let Some(blazons) = save.blazons {
+                parts.push(format!("Blazons {blazons}"));
+            }
+            if let Some(amulets) = save.amulets {
+                parts.push(format!("Amulets {amulets}"));
+            }
+            parts.join(" | ")
+        }
+    }
+}
+
+fn accepted_save_text(
+    input_text: &str,
+    selected: Option<ListRow>,
+    save_manager: &SaveGameManager,
+    visible: &[usize],
+    mission_id: u32,
+) -> String {
+    let trimmed = input_text.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    if let Some(ListRow::Existing(v_idx)) = selected
+        && let Some(slot) = visible.get(v_idx).and_then(|&slot| save_manager.get(slot))
+        && !slot.text.trim().is_empty()
+    {
+        return slot.text.clone();
+    }
+    default_save_text(save_manager, mission_id)
+}
+
+fn default_save_text(save_manager: &SaveGameManager, mission_id: u32) -> String {
+    let saved_at = jiff::Zoned::now().strftime("%Y-%m-%d %H:%M").to_string();
+    if mission_id == 0 {
+        format!("Save {} - {saved_at}", save_manager.count() + 1)
+    } else {
+        format!("Mission {mission_id} - {saved_at}")
+    }
+}
+
+fn format_saved_time(timestamp: &str) -> String {
+    let Some(zoned) = timestamp
+        .parse::<i64>()
+        .ok()
+        .and_then(|secs| Timestamp::from_second(secs).ok())
+        .and_then(|ts| ts.in_tz("UTC").ok())
+    else {
+        return "unknown".to_string();
+    };
+    zoned.strftime("%Y-%m-%d %H:%M UTC").to_string()
+}
+
 fn hit_button(
     vx: i32,
     vy: i32,
@@ -1168,4 +1274,44 @@ fn collect_visible_slots(save_manager: &SaveGameManager, mode: SaveLoadMode) -> 
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_new_save_name_gets_default_label() {
+        let save_manager = SaveGameManager::new("/tmp/test_saves".into());
+        let text = accepted_save_text("", Some(ListRow::New), &save_manager, &[], 123);
+        assert!(text.starts_with("Mission 123 - "));
+    }
+
+    #[test]
+    fn empty_existing_save_name_preserves_slot_label() {
+        let mut save_manager = SaveGameManager::new("/tmp/test_saves".into());
+        let slot = save_manager.create("Existing Slot".into(), 123);
+        let visible = [slot];
+
+        assert_eq!(
+            accepted_save_text(
+                "   ",
+                Some(ListRow::Existing(0)),
+                &save_manager,
+                &visible,
+                123
+            ),
+            "Existing Slot"
+        );
+        assert_eq!(
+            accepted_save_text(
+                " Renamed ",
+                Some(ListRow::Existing(0)),
+                &save_manager,
+                &visible,
+                123
+            ),
+            "Renamed"
+        );
+    }
 }

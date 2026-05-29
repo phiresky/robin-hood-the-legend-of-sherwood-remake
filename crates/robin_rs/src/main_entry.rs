@@ -1204,7 +1204,15 @@ pub(crate) fn perform_pending_save_load(
                 Some(idx) => (
                     callbacks
                         .save_manager
-                        .write_save_from_engine(host, game, idx, engine, mission_id, thumb_ref)
+                        .write_save_from_engine(
+                            host,
+                            game,
+                            idx,
+                            engine,
+                            mission_id,
+                            Some(profiles),
+                            thumb_ref,
+                        )
                         .and_then(|()| {
                             callbacks
                                 .save_manager
@@ -1214,9 +1222,14 @@ pub(crate) fn perform_pending_save_load(
                     true,
                 ),
                 None => (
-                    callbacks
-                        .save_manager
-                        .write_continue_save(host, game, engine, mission_id, thumb_ref),
+                    callbacks.save_manager.write_continue_save(
+                        host,
+                        game,
+                        engine,
+                        mission_id,
+                        Some(profiles),
+                        thumb_ref,
+                    ),
                     false,
                 ),
             };
@@ -1238,9 +1251,14 @@ pub(crate) fn perform_pending_save_load(
                             | Some(crate::savegame::SpecialSlot::Restart)
                     );
                     if !is_continue_or_restart
-                        && let Err(err) = callbacks
-                            .save_manager
-                            .write_continue_save(host, game, engine, mission_id, thumb_ref)
+                        && let Err(err) = callbacks.save_manager.write_continue_save(
+                            host,
+                            game,
+                            engine,
+                            mission_id,
+                            Some(profiles),
+                            thumb_ref,
+                        )
                     {
                         tracing::warn!("Continue-mirror after save failed: {err:#}");
                     }
@@ -1326,9 +1344,14 @@ pub(crate) fn perform_pending_save_load(
                                 .unwrap_or(mission_id);
                             if !is_continue
                                 && !is_restart
-                                && let Err(err) = callbacks
-                                    .save_manager
-                                    .write_continue_save(host, game, engine, mid, thumb_ref)
+                                && let Err(err) = callbacks.save_manager.write_continue_save(
+                                    host,
+                                    game,
+                                    engine,
+                                    mid,
+                                    Some(profiles),
+                                    thumb_ref,
+                                )
                             {
                                 tracing::warn!("Continue-mirror after load failed: {err:#}");
                             }
@@ -1355,10 +1378,14 @@ pub(crate) fn perform_pending_save_load(
             } else {
                 mission_id
             };
-            if let Err(err) = callbacks
-                .save_manager
-                .write_restart_save(host, game, engine, mid, thumb_ref)
-            {
+            if let Err(err) = callbacks.save_manager.write_restart_save(
+                host,
+                game,
+                engine,
+                mid,
+                Some(profiles),
+                thumb_ref,
+            ) {
                 tracing::error!("Restart save failed: {err:#}");
             }
         }
@@ -1382,18 +1409,26 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::Continue { mission_id } => {
-            if let Err(err) = callbacks
-                .save_manager
-                .write_continue_save(host, game, engine, mission_id, thumb_ref)
-            {
+            if let Err(err) = callbacks.save_manager.write_continue_save(
+                host,
+                game,
+                engine,
+                mission_id,
+                Some(profiles),
+                thumb_ref,
+            ) {
                 tracing::error!("Continue save failed: {err:#}");
             }
         }
         SaveLoadRequest::QuickSave { mission_id } => {
-            match callbacks
-                .save_manager
-                .write_quick_save(host, game, engine, mission_id, thumb_ref)
-            {
+            match callbacks.save_manager.write_quick_save(
+                host,
+                game,
+                engine,
+                mission_id,
+                Some(profiles),
+                thumb_ref,
+            ) {
                 Err(err) => {
                     tracing::error!("Quick save failed: {err:#}");
                 }
@@ -1401,10 +1436,14 @@ pub(crate) fn perform_pending_save_load(
                     tracing::info!("Quick save written (mission={mission_id})");
                     // QuickSave is neither Continue nor Restart, so the
                     // Continue-slot mirror runs.
-                    if let Err(err) = callbacks
-                        .save_manager
-                        .write_continue_save(host, game, engine, mission_id, thumb_ref)
-                    {
+                    if let Err(err) = callbacks.save_manager.write_continue_save(
+                        host,
+                        game,
+                        engine,
+                        mission_id,
+                        Some(profiles),
+                        thumb_ref,
+                    ) {
                         tracing::warn!("Continue-mirror after quick-save failed: {err:#}");
                     }
                     callbacks.pending_save_banner = Some(SaveBannerKind::Saved);
@@ -1442,10 +1481,14 @@ pub(crate) fn perform_pending_save_load(
                                 .read_slot_header(i)
                                 .map(|h| h.mission_id)
                                 .unwrap_or(0);
-                            if let Err(err) = callbacks
-                                .save_manager
-                                .write_continue_save(host, game, engine, mid, thumb_ref)
-                            {
+                            if let Err(err) = callbacks.save_manager.write_continue_save(
+                                host,
+                                game,
+                                engine,
+                                mid,
+                                Some(profiles),
+                                thumb_ref,
+                            ) {
                                 tracing::warn!("Continue-mirror after quick-load failed: {err:#}");
                             }
                             callbacks.pending_save_banner = Some(SaveBannerKind::Loaded);
@@ -1457,10 +1500,14 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::Sherwood { mission_id } => {
-            match callbacks
-                .save_manager
-                .write_sherwood_save(host, game, engine, mission_id, thumb_ref)
-            {
+            match callbacks.save_manager.write_sherwood_save(
+                host,
+                game,
+                engine,
+                mission_id,
+                Some(profiles),
+                thumb_ref,
+            ) {
                 Err(err) => {
                     tracing::error!("Sherwood checkpoint save failed: {err:#}");
                 }

@@ -1266,6 +1266,7 @@ pub(super) async fn handle_pause_menu_events(
                         cursor,
                         &mut callbacks.save_manager,
                         mission_id,
+                        Some(&assets.profile_manager),
                         mode,
                         Some(&mut host.sound),
                         audio_backend

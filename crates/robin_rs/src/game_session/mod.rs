@@ -1176,9 +1176,14 @@ pub(crate) async fn run_mission(
             .campaign()
             .map(|c| current_mission_id(c, &assets.profile_manager))
             .unwrap_or(0);
-        callbacks
-            .save_manager
-            .write_restart_save_background(&mut host, &game, &engine, mission_id, None);
+        callbacks.save_manager.write_restart_save_background(
+            &mut host,
+            &game,
+            &engine,
+            mission_id,
+            Some(&assets.profile_manager),
+            None,
+        );
     } else {
         // Sherwood opens with the campaign-map overlay already raised
         // so the player can pick the next mission to deploy.  The
@@ -3710,6 +3715,7 @@ pub(crate) async fn run_mission(
                                     cursor,
                                     &mut callbacks.save_manager,
                                     mission_id,
+                                    Some(&assets.profile_manager),
                                     crate::ingame_menu::SaveLoadMode::Load,
                                     Some(&mut host.sound),
                                     audio_backend
