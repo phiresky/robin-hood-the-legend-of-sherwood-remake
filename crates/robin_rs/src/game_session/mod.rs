@@ -617,21 +617,18 @@ async fn confirm_quickload_cross_mission(
     if !callbacks.save_manager.slot_file_exists(idx) {
         return;
     }
-    let header = match callbacks.save_manager.read_slot_header(idx) {
-        Ok(h) => h,
-        Err(err) => {
-            tracing::warn!(
-                "QuickLoad cross-mission confirm: failed to read slot {idx} header: {err:#} — \
-                 falling through without prompt"
-            );
-            return;
-        }
+    let Some(target_mission_id) = callbacks.save_manager.slot_mission_id(idx) else {
+        tracing::warn!(
+            "QuickLoad cross-mission confirm: slot {idx} has no cached mission id — \
+             falling through without prompt"
+        );
+        return;
     };
     let current = engine
         .campaign()
         .map(|c| current_mission_id(c, profiles))
         .unwrap_or(0);
-    if current == 0 || header.mission_id == current {
+    if current == 0 || target_mission_id == current {
         return;
     }
     let Some(resources) = menu_resources.as_ref() else {

@@ -5,7 +5,7 @@
 
 use robin_engine::sbfile::SbFile;
 
-/// Trait for reading legacy binary formats (`.cpf`, save files).
+/// Trait for reading legacy CPF binary data.
 pub trait BinarySerialize {
     fn load_legacy(&mut self, file: &mut SbFile) -> Result<(), i32>;
 }

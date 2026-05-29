@@ -205,7 +205,6 @@ Shipped as examples — built on demand with `cargo run --example <name>`:
 
     cpf_to_json       — dump a character-profile .cpf file as JSON
     dump_res          — inspect a .res resource archive
-    dump_save         — inspect a saved-game file
     disasm_scb        — disassemble a compiled .scb mission script
     run_script        — run a mission script headlessly
     count_quads       — render diagnostics

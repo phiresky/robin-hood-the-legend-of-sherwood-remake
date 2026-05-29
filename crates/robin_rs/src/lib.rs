@@ -198,7 +198,6 @@ pub mod input;
 pub mod input_translator;
 pub(crate) mod json_value;
 pub mod key_config_store;
-pub mod legacy_save;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
 pub mod lua_session;

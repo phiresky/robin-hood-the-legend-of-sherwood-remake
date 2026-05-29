@@ -235,8 +235,8 @@ pub const SAVE_MAGIC: &str = "RHSG";
 
 /// Current save format version.
 ///
-/// Bumped on every incompatible change to the serialized fields.  The
-/// counter starts from 1; legacy format readers live in `legacy_save.rs`.
+/// Bumped on every incompatible change to the serialized fields.
+/// The counter starts from 1.
 ///
 /// ## History
 /// - **v1**: initial Rust format. `ElementData.sprite` was skipped; the
@@ -543,14 +543,6 @@ impl GameSaveFile {
         save.header.validate()?;
         Ok(save)
     }
-
-    /// Read only the header (for UI listings, mission-ID checks) without
-    /// decoding the full payload. Falls back to reading the full file
-    /// and returning its header.  A future optimization could stream-parse
-    /// just the header field.
-    pub fn read_header_only(path: &Path) -> Result<SaveHeader> {
-        Ok(Self::read_from(path)?.header)
-    }
 }
 
 // ─── Save directory resolution ───────────────────────────────────────
@@ -702,9 +694,6 @@ mod tests {
         let loaded = GameSaveFile::read_from(&path).unwrap();
         assert_eq!(loaded.header.mission_id, 1);
         assert_eq!(loaded.engine.frame_counter(), 999);
-
-        let header = GameSaveFile::read_header_only(&path).unwrap();
-        assert_eq!(header.mission_id, 1);
     }
 
     #[test]

@@ -14,10 +14,9 @@
 use crate::Host;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::campaign::Campaign;
 use crate::save_file::{self, GameSaveFile, SaveHeader, Thumbnail};
 use robin_engine::campaign::CampaignValue;
 use robin_engine::engine::Engine;
@@ -495,11 +494,7 @@ impl SaveGameManager {
 
     /// Delete save + thumbnail files from disk for the given slot.
     fn remove_files(&self, index: usize) {
-        let base = self.full_path(index);
-        // Remove extensionless legacy binary file
-        let _ = std::fs::remove_file(&base);
-        // Remove JSON payload
-        let _ = std::fs::remove_file(base.with_extension("json"));
+        let _ = std::fs::remove_file(self.save_path(index));
         // Remove thumbnail
         let _ = std::fs::remove_file(self.thumb_path(index));
     }
@@ -508,11 +503,6 @@ impl SaveGameManager {
     /// iterates this list forward to populate its entries.
     pub fn sort_by_time(&mut self) {
         self.saves.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-    }
-
-    /// Full file path without extension.
-    pub fn full_path(&self, index: usize) -> PathBuf {
-        Path::new(&self.save_directory).join(&self.saves[index].filename)
     }
 
     /// Thumbnail file path.
@@ -529,10 +519,9 @@ impl SaveGameManager {
 
     /// Copy save + thumbnail files from `src` slot to `dst` slot.
     ///
-    /// Copies both the JSON payload (`<name>.json`) and the
-    /// extensionless path (if it exists, for legacy binary saves), plus
-    /// any thumbnail.  Used by the quick-save rotation to preserve the
-    /// previous quick-save as ExQuickSave.
+    /// Copies both the JSON payload (`<name>.json`) and any thumbnail.
+    /// Used by the quick-save rotation to preserve the previous quick-save
+    /// as ExQuickSave.
     ///
     pub fn copy_files(&mut self, src: usize, dst: usize) -> Result<(), String> {
         // JSON payload
@@ -543,12 +532,6 @@ impl SaveGameManager {
                 std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
             }
             std::fs::copy(&src_json, &dst_json).map_err(|e| format!("copy save json: {e}"))?;
-        }
-        // Extensionless legacy binary payload
-        let src_bin = self.full_path(src);
-        let dst_bin = self.full_path(dst);
-        if src_bin.exists() {
-            std::fs::copy(&src_bin, &dst_bin).map_err(|e| format!("copy save bin: {e}"))?;
         }
         // Thumbnail (used by both formats)
         let src_thumb = self.thumb_path(src);
@@ -685,45 +668,9 @@ impl SaveGameManager {
         Ok(())
     }
 
-    /// Read only the header of a slot (for UI listings and mission-ID checks).
-    pub fn read_slot_header(&self, index: usize) -> Result<SaveHeader> {
-        let path = self.save_path(index);
-        GameSaveFile::read_header_only(&path)
-    }
-
     /// Does the save file on disk for this slot exist?
     pub fn slot_file_exists(&self, index: usize) -> bool {
         self.save_path(index).exists()
-    }
-
-    /// Legacy convenience: save only the campaign (no engine state).
-    ///
-    /// Kept for backward compatibility with older test code that doesn't
-    /// have an engine handy. New code should call
-    /// [`write_save_from_engine`](Self::write_save_from_engine).
-    pub fn write_save(&self, index: usize, campaign: &Campaign) -> Result<()> {
-        let path = self.save_path(index);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).context("creating save directory")?;
-        }
-        let json = serde_json::to_string_pretty(campaign).context("serializing campaign")?;
-        std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))
-    }
-
-    /// Legacy convenience: load only the campaign.  See [`write_save`].
-    pub fn load_save(&self, index: usize) -> Result<Campaign> {
-        let path = self.save_path(index);
-        let data = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        // Try the full save format first, fall back to legacy raw-campaign.
-        if let Ok(full) = serde_json::from_str::<GameSaveFile>(&data) {
-            return full
-                .engine
-                .campaign()
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("save file has no active campaign"));
-        }
-        serde_json::from_str(&data).with_context(|| format!("parsing {}", path.display()))
     }
 
     /// Persist the save manager index itself (the list of saves).
@@ -756,6 +703,7 @@ impl SaveGameManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_engine::campaign::Campaign;
 
     fn fresh_engine() -> (Engine, robin_engine::engine::LevelAssets) {
         let mut assets = robin_engine::engine::LevelAssets::new();
@@ -842,7 +790,10 @@ mod tests {
     fn full_and_thumb_paths() {
         let mut mgr = SaveGameManager::new("/saves/profile_1".into());
         mgr.create_with_filename("Continue".into(), "Continue".into(), 5);
-        assert_eq!(mgr.full_path(0), PathBuf::from("/saves/profile_1/Continue"));
+        assert_eq!(
+            mgr.save_path(0),
+            PathBuf::from("/saves/profile_1/Continue.json")
+        );
         assert_eq!(
             mgr.thumb_path(0),
             PathBuf::from("/saves/profile_1/Continue_thumb.png")
@@ -868,8 +819,7 @@ mod tests {
         mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, None, None)
             .unwrap();
         assert!(mgr.slot_file_exists(idx));
-        let header = mgr.read_slot_header(idx).unwrap();
-        assert_eq!(header.mission_id, 17);
+        assert_eq!(mgr.slot_mission_id(idx), Some(17));
 
         // Write a Continue auto-save.
         mgr.write_continue_save(&mut host, &game, &engine, 17, None, None)

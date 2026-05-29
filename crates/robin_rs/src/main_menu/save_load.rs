@@ -2,7 +2,7 @@
 //!
 //! Opens the shared save/load slot picker in load-only mode against the
 //! main-menu `Renderer` + `IngameMenuResources`, reads the chosen slot's
-//! header to find its mission id, and returns a
+//! cached mission id from the save index, and returns a
 //! [`crate::main_menu::MainMenuChoice::Load`] so the caller can start a
 //! session seeded with a `SaveLoadRequest::Load`.
 
@@ -47,18 +47,10 @@ pub(crate) async fn run_main_menu_load(
         SaveLoadOutcome::Cancel => return None,
     };
 
-    // Read the header to determine which mission the session must be
-    // set up for — the target mission is read from the save before the
-    // engine is re-created.
-    match save_manager.read_slot_header(slot) {
-        Ok(header) => Some(MainMenuChoice::Load {
-            slot,
-            mission_id: header.mission_id,
-        }),
-        Err(err) => {
-            tracing::error!(
-                "Load: selected slot {slot} but failed to read header: {err:#} — cancelling"
-            );
+    match save_manager.slot_mission_id(slot) {
+        Some(mission_id) => Some(MainMenuChoice::Load { slot, mission_id }),
+        None => {
+            tracing::error!("Load: selected slot {slot} has no cached mission id — cancelling");
             None
         }
     }
