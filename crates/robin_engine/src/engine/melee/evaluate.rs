@@ -622,12 +622,12 @@ impl EngineInner {
                     .get_entity(snap.principal_id)
                     .and_then(|e| e.compute_eyes_point(Some(crate::element::Posture::Upright)));
                 if let (Some(p1e), Some(p2e)) = (self_eye, opp_eye) {
-                    let p1 = crate::position_interface::Point3D {
+                    let p1 = crate::coordinates::WorldPoint3D {
                         x: p1e.x,
                         y: p1e.y,
                         z: p1e.z,
                     };
-                    let p2 = crate::position_interface::Point3D {
+                    let p2 = crate::coordinates::WorldPoint3D {
                         x: p2e.x,
                         y: p2e.y,
                         z: p2e.z,

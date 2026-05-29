@@ -533,7 +533,7 @@ pub fn choose_mouse_pointer_for_no_action(
                             let sector_dir = (angle / (2.0 * std::f32::consts::PI) * 16.0)
                                 .rem_euclid(16.0)
                                 as u16;
-                            let position = robin_engine::position_interface::Point3D {
+                            let position = robin_engine::coordinates::WorldPoint3D {
                                 x: mid_x,
                                 y: mid_y,
                                 z: mid_z,

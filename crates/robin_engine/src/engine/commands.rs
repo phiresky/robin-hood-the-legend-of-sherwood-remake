@@ -272,7 +272,7 @@ impl EngineInner {
                     let tgt_handle = crate::titbit::ElementHandle(target.0);
                     let pc_handle = crate::titbit::ElementHandle(actor.0);
                     let titbit_id = self.titbit_manager.add_titbit(
-                        crate::position_interface::Point3D {
+                        crate::coordinates::WorldPoint3D {
                             x: pos.x,
                             y: pos.y,
                             z: 0.0,
@@ -329,7 +329,7 @@ impl EngineInner {
                     // The titbit position and per-action layer (Net=0,
                     // Wasp/Purse = selected layer) arrive pre-resolved
                     // on the `PlayerCommand` so the handler just forwards.
-                    let titbit_pos = crate::position_interface::Point3D {
+                    let titbit_pos = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
                         z: target_pos.z,
@@ -396,7 +396,7 @@ impl EngineInner {
                         .map(|e| e.element_data().layer())
                         .unwrap_or(0);
                     let titbit_id = self.titbit_manager.add_titbit(
-                        crate::position_interface::Point3D {
+                        crate::coordinates::WorldPoint3D {
                             x: pos.x,
                             y: pos.y,
                             z: 0.0,
@@ -1250,7 +1250,7 @@ impl EngineInner {
             .get_entity(recording_pc)
             .map(|e| e.element_data().layer())
             .unwrap_or(0);
-        let pos3d = crate::position_interface::Point3D {
+        let pos3d = crate::coordinates::WorldPoint3D {
             x: position.x,
             y: position.y,
             z: 0.0,

@@ -2134,7 +2134,7 @@ impl EngineInner {
             if raw.position_z >= 0 {
                 sprite
                     .position_iface
-                    .set_position(crate::position_interface::Point3D {
+                    .set_position(crate::coordinates::WorldPoint3D {
                         x: raw.position_x as f32,
                         y: raw.position_y as f32 + raw.position_z as f32,
                         z: raw.position_z as f32,

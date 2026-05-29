@@ -60,7 +60,7 @@ pub const TIME_LISTEN: u32 = 5;
 /// Returns `true` when the carrier has headroom; `false` when a ceiling
 /// blocks the carried body.
 pub fn can_carry_on_shoulders(
-    carrier_position: crate::position_interface::Point3D,
+    carrier_position: crate::coordinates::WorldPoint3D,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
     use crate::sight_obstacle::SIGHTOBSTACLE_SOLID;
@@ -2753,7 +2753,7 @@ pub fn sync_carried_positions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::position_interface::Point3D;
+    use crate::coordinates::WorldPoint3D;
     use crate::sight_obstacle::ObstacleList;
 
     #[test]
@@ -2764,7 +2764,7 @@ mod tests {
             dynamic_obstacles: &[],
             static_active: &[],
         };
-        let pos = Point3D {
+        let pos = WorldPoint3D {
             x: 100.0,
             y: 100.0,
             z: 0.0,

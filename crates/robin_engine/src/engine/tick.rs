@@ -5814,12 +5814,12 @@ impl EngineInner {
 
             // HIDDEN titbit lifecycle: add on entering Spy/Tree,
             // remove on leaving.
-            use crate::position_interface::Point3D;
+            use crate::coordinates::WorldPoint3D;
             use crate::titbit::{ElementHandle, TitbitKind};
             let handle = ElementHandle(owner.0);
             if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
                 self.titbit_manager.add_titbit(
-                    Point3D::default(),
+                    WorldPoint3D::default(),
                     0,
                     TitbitKind::Hidden,
                     handle,
@@ -7338,22 +7338,22 @@ impl EngineInner {
                                       feet: crate::element::Point3D,
                                       eyes: crate::element::Point3D,
                                       layer: u16| {
-                        let feet = crate::position_interface::Point3D {
+                        let feet = crate::coordinates::WorldPoint3D {
                             x: feet.x,
                             y: feet.y,
                             z: feet.z,
                         };
-                        let eyes = crate::position_interface::Point3D {
+                        let eyes = crate::coordinates::WorldPoint3D {
                             x: eyes.x,
                             y: eyes.y,
                             z: eyes.z,
                         };
-                        let inc = crate::position_interface::Point3D {
+                        let inc = crate::coordinates::WorldPoint3D {
                             x: (eyes.x - feet.x) * 0.25,
                             y: (eyes.y - feet.y) * 0.25,
                             z: (eyes.z - feet.z) * 0.25,
                         };
-                        let mut p = crate::position_interface::Point3D {
+                        let mut p = crate::coordinates::WorldPoint3D {
                             x: feet.x - 4.0,
                             y: feet.y - 4.0,
                             z: feet.z,

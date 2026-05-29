@@ -111,6 +111,94 @@ coord2!(
     screen_pt
 );
 
+/// World-space 3D point: raw Spellbound `(x, y, z)`.
+///
+/// Project to map space with [`WorldPoint3D::to_map`], which applies the
+/// game projection `(x, y - z)`. This type is for actual 3D positions; use
+/// [`MapPoint`] for already-projected 2D map coordinates.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct WorldPoint3D {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl Default for WorldPoint3D {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl WorldPoint3D {
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    #[inline]
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    /// Project to 2D map coordinates: `(x, y - z)`.
+    #[inline]
+    pub const fn to_map(self) -> MapPoint {
+        MapPoint::new(self.x, self.y - self.z)
+    }
+
+    #[inline]
+    pub fn norm(&self) -> f32 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    #[inline]
+    pub const fn scale(self, k: f32) -> Self {
+        Self {
+            x: self.x * k,
+            y: self.y * k,
+            z: self.z * k,
+        }
+    }
+}
+
+impl std::ops::Add for WorldPoint3D {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, o: Self) -> Self {
+        Self {
+            x: self.x + o.x,
+            y: self.y + o.y,
+            z: self.z + o.z,
+        }
+    }
+}
+
+impl std::ops::AddAssign for WorldPoint3D {
+    #[inline]
+    fn add_assign(&mut self, o: Self) {
+        self.x += o.x;
+        self.y += o.y;
+        self.z += o.z;
+    }
+}
+
+impl std::ops::Sub for WorldPoint3D {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, o: Self) -> Self {
+        Self {
+            x: self.x - o.x,
+            y: self.y - o.y,
+            z: self.z - o.z,
+        }
+    }
+}
+
 impl MapPoint {
     /// Project a world-space `(x, y, z)` position into map coordinates.
     ///

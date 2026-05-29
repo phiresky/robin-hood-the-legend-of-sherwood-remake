@@ -3501,7 +3501,7 @@ impl AiContext {
 
     /// Resolve a C++ `PositionToPoint3D` style point from a sector/layer
     /// position. The returned y coordinate is screen-space (`y + z`).
-    pub fn position_to_point_3d(&self, position: Position) -> crate::position_interface::Point3D {
+    pub fn position_to_point_3d(&self, position: Position) -> crate::coordinates::WorldPoint3D {
         let z = match position.sector {
             None => 0.0,
             Some(handle) => {
@@ -3550,7 +3550,7 @@ impl AiContext {
             }
         };
 
-        crate::position_interface::Point3D {
+        crate::coordinates::WorldPoint3D {
             x: position.x,
             y: position.y + z,
             z,
@@ -3594,7 +3594,7 @@ impl AiContext {
     /// 1. viewer in a building → false
     /// 2. stretched-Y 3D distance vs. `sq_self_view_radius`
     /// 3. opaque-LOS via the context-only LOS helper.
-    pub fn is_detecting_point_360(&self, pt: crate::position_interface::Point3D) -> bool {
+    pub fn is_detecting_point_360(&self, pt: crate::coordinates::WorldPoint3D) -> bool {
         if self.in_building {
             return false;
         }
@@ -7021,7 +7021,7 @@ impl AiController {
             // Post-only friend. Try the post, then post + 15 Z; if
             // neither is visible, warn and continue into the wait
             // setup anyway.
-            let post = crate::position_interface::Point3D {
+            let post = crate::coordinates::WorldPoint3D {
                 x: target_view.initial_position.x,
                 y: target_view.initial_position.y,
                 z: target_view.elevation,
@@ -9374,7 +9374,7 @@ mod tests {
         };
 
         assert!(
-            ctx.is_detecting_point_360(crate::position_interface::Point3D {
+            ctx.is_detecting_point_360(crate::coordinates::WorldPoint3D {
                 x: 50.0,
                 y: 0.0,
                 z: 45.0,

@@ -9,7 +9,7 @@
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir::ShippingDatadir;
-use robin_engine::coordinates::{MapPoint, ScreenPoint};
+use robin_engine::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
 use robin_engine::element::{EntityId, Point3D, TrajectoryPoint};
 use robin_engine::engine::{
     DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
@@ -17,7 +17,6 @@ use robin_engine::engine::{
 use robin_engine::game_operation::GameCode;
 use robin_engine::geo2d::{Point2D, Vec2D};
 use robin_engine::markers::GroundMark;
-use robin_engine::position_interface::Point3D as PositionPoint3D;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -46,7 +45,7 @@ pub enum PrintScreenRequest {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HostTitbitPreview {
     JumpHelperGhost {
-        position: PositionPoint3D,
+        position: WorldPoint3D,
         layer: u16,
         sector_dir: u16,
         display_order: f32,

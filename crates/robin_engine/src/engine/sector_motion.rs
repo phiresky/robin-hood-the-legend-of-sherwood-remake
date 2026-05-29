@@ -81,7 +81,7 @@ impl EngineInner {
         layer: u16,
         x: f32,
         y: f32,
-    ) -> crate::position_interface::Point3D {
+    ) -> crate::coordinates::WorldPoint3D {
         let z = match sector {
             None => 0.0,
             Some(handle) => {
@@ -115,6 +115,6 @@ impl EngineInner {
                 }
             }
         };
-        crate::position_interface::Point3D { x, y: y + z, z }
+        crate::coordinates::WorldPoint3D { x, y: y + z, z }
     }
 }

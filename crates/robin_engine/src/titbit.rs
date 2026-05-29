@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::position_interface::Point3D;
+use crate::coordinates::WorldPoint3D;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -369,7 +369,7 @@ pub struct TitbitInfo {
     pub element_manager: ElementHandle,
 
     pub layer: u16,
-    pub position: Point3D,
+    pub position: WorldPoint3D,
     pub display_order: f32,
 
     pub blinking: bool,
@@ -494,7 +494,7 @@ impl TitbitManager {
     #[allow(clippy::too_many_arguments)]
     pub fn add_titbit(
         &mut self,
-        position: Point3D,
+        position: WorldPoint3D,
         layer: u16,
         kind: TitbitKind,
         element_supplier: ElementHandle,
@@ -1048,8 +1048,8 @@ pub trait TitbitUpdateQuery {
 mod tests {
     use super::*;
 
-    fn pt3(x: f32, y: f32, z: f32) -> Point3D {
-        Point3D { x, y, z }
+    fn pt3(x: f32, y: f32, z: f32) -> WorldPoint3D {
+        WorldPoint3D { x, y, z }
     }
 
     #[test]

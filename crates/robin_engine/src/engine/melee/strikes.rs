@@ -1382,7 +1382,7 @@ impl EngineInner {
                 if tracks_z {
                     entity
                         .position_iface_mut()
-                        .set_position(crate::position_interface::Point3D {
+                        .set_position(crate::coordinates::WorldPoint3D {
                             x: flight.goal_x,
                             y: flight.goal_y + flight.goal_z,
                             z: flight.goal_z,
@@ -1411,7 +1411,7 @@ impl EngineInner {
                     let new_z = cur_z + flight.increment_z;
                     entity
                         .position_iface_mut()
-                        .set_position(crate::position_interface::Point3D {
+                        .set_position(crate::coordinates::WorldPoint3D {
                             x: m.x,
                             y: m.y + new_z,
                             z: new_z,

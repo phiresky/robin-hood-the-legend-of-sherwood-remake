@@ -144,7 +144,7 @@ const RIDER_ELEVATION_BELT_UPRIGHT: f32 = 30.0;
 /// ground-plane coords (the invariant `pos.y = map.y + pos.z` is
 /// established in `position_interface::position_3d_from_map`), so x/y
 /// are kept and only z is offset.
-fn compute_belt_point(entity: &crate::element::Entity) -> crate::position_interface::Point3D {
+fn compute_belt_point(entity: &crate::element::Entity) -> crate::coordinates::WorldPoint3D {
     let pos = entity.element_data().position();
     let posture = entity.element_data().posture;
     let is_rider = entity.soldier_data().map(|s| s.rider).unwrap_or(false);
@@ -181,7 +181,7 @@ fn compute_belt_point(entity: &crate::element::Entity) -> crate::position_interf
         Posture::Undefined | Posture::Unused => HUMAN_ELEVATION_BELT_UPRIGHT,
     };
 
-    crate::position_interface::Point3D {
+    crate::coordinates::WorldPoint3D {
         x: pos.x,
         y: pos.y,
         z: pos.z + z_offset,

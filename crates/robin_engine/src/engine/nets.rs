@@ -804,12 +804,12 @@ impl EngineInner {
                 (test_y, 0.0)
             };
 
-            let p_test = crate::position_interface::Point3D {
+            let p_test = crate::coordinates::WorldPoint3D {
                 x: test_x,
                 y: test_proj_y,
                 z: test_proj_z + 20.0,
             };
-            let p_centre_high = crate::position_interface::Point3D {
+            let p_centre_high = crate::coordinates::WorldPoint3D {
                 x: landing.x,
                 y: landing.y,
                 z: centre_z + 20.0,
@@ -818,7 +818,7 @@ impl EngineInner {
                 return true;
             }
 
-            let p_drop = crate::position_interface::Point3D {
+            let p_drop = crate::coordinates::WorldPoint3D {
                 x: test_x,
                 y: test_proj_y,
                 z: test_proj_z - 40.0,
@@ -874,8 +874,8 @@ impl EngineInner {
     fn is_reachable_solid(
         &self,
         assets: &LevelAssets,
-        origin: crate::position_interface::Point3D,
-        destination: crate::position_interface::Point3D,
+        origin: crate::coordinates::WorldPoint3D,
+        destination: crate::coordinates::WorldPoint3D,
         layer: u16,
     ) -> bool {
         let obstacles = self.sight_obstacles(assets);

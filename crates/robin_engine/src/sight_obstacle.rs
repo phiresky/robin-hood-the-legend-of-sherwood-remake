@@ -1031,7 +1031,7 @@ pub fn is_reachable_3d(
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ImpactResult3D {
     /// World-space impact point.
-    pub impact: crate::position_interface::Point3D,
+    pub impact: crate::coordinates::WorldPoint3D,
     /// Index of the obstacle struck, or `None` for a ground (z = 0) impact.
     pub obstacle_index: Option<u32>,
 }
@@ -1050,13 +1050,13 @@ pub struct ImpactResult3D {
 /// `(x, y)`) short-circuit through [`is_reachable_impact_fall_3d`] or
 /// [`is_reachable_impact_up_3d`] depending on direction.
 pub fn is_reachable_impact_3d(
-    origin: crate::position_interface::Point3D,
-    destination: crate::position_interface::Point3D,
+    origin: crate::coordinates::WorldPoint3D,
+    destination: crate::coordinates::WorldPoint3D,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
     map_bbox: Option<BBox2D>,
 ) -> Option<ImpactResult3D> {
-    use crate::position_interface::Point3D;
+    use crate::coordinates::WorldPoint3D;
 
     // Vertical-segment short-circuit.
     if origin.x == destination.x && origin.y == destination.y {
@@ -1103,7 +1103,7 @@ pub fn is_reachable_impact_3d(
     }
 
     if best_t.is_finite() {
-        let impact = Point3D {
+        let impact = WorldPoint3D {
             x: origin.x + best_t * (destination.x - origin.x),
             y: origin.y + best_t * (destination.y - origin.y),
             z: origin.z + best_t * (destination.z - origin.z),
@@ -1124,13 +1124,13 @@ pub fn is_reachable_impact_3d(
 /// between `destination_altitude` and `origin.z`.  Falls back to the ground
 /// plane (`z = 0`) when `destination_altitude ≤ 0` and nothing blocks.
 pub fn is_reachable_impact_fall_3d(
-    origin: crate::position_interface::Point3D,
+    origin: crate::coordinates::WorldPoint3D,
     destination_altitude: f32,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
     map_bbox: Option<BBox2D>,
 ) -> Option<ImpactResult3D> {
-    use crate::position_interface::Point3D;
+    use crate::coordinates::WorldPoint3D;
 
     if origin.z == destination_altitude {
         return None;
@@ -1138,7 +1138,7 @@ pub fn is_reachable_impact_fall_3d(
     if origin.z < destination_altitude {
         // Going up — no downward impact possible.
         return Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: destination_altitude,
@@ -1155,7 +1155,7 @@ pub fn is_reachable_impact_fall_3d(
         && !bbox.contains_point(p2d)
     {
         return Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: 0.0,
@@ -1182,7 +1182,7 @@ pub fn is_reachable_impact_fall_3d(
 
     if hit_idx.is_some() {
         Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: max_top_z,
@@ -1192,7 +1192,7 @@ pub fn is_reachable_impact_fall_3d(
     } else if destination_altitude <= 0.0 {
         // Ground impact at z=0.
         Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: 0.0,
@@ -1210,20 +1210,20 @@ pub fn is_reachable_impact_fall_3d(
 /// whose ground polygon contains `origin`'s 2D projection) that sits
 /// between `origin.z` and `destination_altitude`.
 pub fn is_reachable_impact_up_3d(
-    origin: crate::position_interface::Point3D,
+    origin: crate::coordinates::WorldPoint3D,
     destination_altitude: f32,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
     map_bbox: Option<BBox2D>,
 ) -> Option<ImpactResult3D> {
-    use crate::position_interface::Point3D;
+    use crate::coordinates::WorldPoint3D;
 
     if origin.z == destination_altitude {
         return None;
     }
     if origin.z > destination_altitude {
         return Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: destination_altitude,
@@ -1240,7 +1240,7 @@ pub fn is_reachable_impact_up_3d(
         && !bbox.contains_point(p2d)
     {
         return Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: 0.0,
@@ -1267,7 +1267,7 @@ pub fn is_reachable_impact_up_3d(
 
     if hit_idx.is_some() {
         Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: min_bot_z,
@@ -1286,7 +1286,7 @@ pub fn is_reachable_impact_up_3d(
             destination_altitude,
         );
         Some(ImpactResult3D {
-            impact: Point3D {
+            impact: WorldPoint3D {
                 x: origin.x,
                 y: origin.y,
                 z: 0.0,
@@ -1622,18 +1622,18 @@ mod tests {
 
     // ── is_reachable_impact_3d ────────────────────────────────
 
-    use crate::position_interface::Point3D;
+    use crate::coordinates::WorldPoint3D;
 
     #[test]
     fn impact_3d_clear_path() {
         // No obstacles in the way — returns None (clear).
         let obs = make_square_obstacle();
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: 20.0,
             y: 5.0,
             z: 1.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 30.0,
             y: 5.0,
             z: 1.0,
@@ -1656,12 +1656,12 @@ mod tests {
         // the left at (-5, 5, 1) heading to (15, 5, 1).  Expected impact
         // at the first wall (x=0), z stays at 1.
         let obs = make_square_obstacle();
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: -5.0,
             y: 5.0,
             z: 1.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 15.0,
             y: 5.0,
             z: 1.0,
@@ -1685,12 +1685,12 @@ mod tests {
         // Ray from z=5 down to z=-5 at x=20 (outside any obstacle) —
         // impacts the ground plane (z=0) at the midpoint.
         let obs = make_square_obstacle();
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: 20.0,
             y: 5.0,
             z: 5.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 20.0,
             y: 5.0,
             z: -5.0,
@@ -1713,12 +1713,12 @@ mod tests {
     fn impact_3d_fall_onto_roof() {
         // Vertical fall onto the top of the square obstacle.
         let obs = make_square_obstacle();
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: 5.0,
             y: 5.0,
             z: 20.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 5.0,
             y: 5.0,
             z: 0.0,
@@ -1771,12 +1771,12 @@ mod tests {
         obs.bottom_plane_points = [[0.0, 0.0, 3.0], [10.0, 0.0, 3.0], [0.0, 10.0, 3.0]];
         obs.rebuild_geometry();
 
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: 5.0,
             y: 5.0,
             z: 0.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 5.0,
             y: 5.0,
             z: 10.0,
@@ -1799,12 +1799,12 @@ mod tests {
         // filter should miss it.
         let mut obs = make_square_obstacle();
         obs.obstacle_type = SIGHTOBSTACLE_OPAQUE;
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: -5.0,
             y: 5.0,
             z: 1.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 15.0,
             y: 5.0,
             z: 1.0,
@@ -1837,7 +1837,7 @@ mod tests {
         // Origin above (no obstacle under 2D projection), destination high
         // — `is_reachable_impact_fall_3d` returns None (clear path).
         let obs = make_square_obstacle();
-        let origin = Point3D {
+        let origin = WorldPoint3D {
             x: 20.0,
             y: 5.0,
             z: 10.0,

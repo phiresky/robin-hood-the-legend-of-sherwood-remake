@@ -447,9 +447,9 @@ fn camera_display_scroll_mutates_script_camera() {
 #[test]
 fn sprite_serialization_surface_matches_v2_contract() {
     let mut display = HostDisplayState::default();
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{ActorSoldier, ElementData, ElementKind, Entity};
     use crate::order::OrderType;
-    use crate::position_interface::Point3D as PiPoint3D;
     use std::sync::Arc;
     let mut engine = EngineInner::new();
     let mut element = ElementData {
@@ -458,7 +458,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
     };
     {
         let s = &mut element.sprite;
-        s.position_iface.set_position(PiPoint3D {
+        s.position_iface.set_position(WorldPoint3D {
             x: 123.5,
             y: 456.25,
             z: 7.0,
@@ -3265,8 +3265,8 @@ fn npc_enter_leisure_anim_completion_flips_posture_to_leisure() {
 /// and reports whether anything was removed.
 #[test]
 fn remove_quick_action_titbits_for_matches_original_signature() {
+    use crate::coordinates::WorldPoint3D;
     use crate::element::EntityId;
-    use crate::position_interface::Point3D;
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let mut engine = EngineInner::new();
@@ -3279,7 +3279,7 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
     // Add a QA titbit and wire its id into the PC's macro slot.
     let pc_handle = ElementHandle(pc.0);
     let titbit_id = engine.titbit_manager.add_titbit(
-        Point3D {
+        WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 0.0,
@@ -3329,13 +3329,13 @@ fn seed_macro_slot(
     slot: u8,
     steps: Vec<(f32, f32)>,
 ) {
+    use crate::coordinates::WorldPoint3D;
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
-    use crate::position_interface::Point3D;
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let pc_handle = ElementHandle(pc.0);
     let titbit_id = engine.titbit_manager.add_titbit(
-        Point3D {
+        WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 0.0,

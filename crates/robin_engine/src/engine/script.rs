@@ -690,7 +690,7 @@ impl EngineInner {
                         };
                         let handle = crate::titbit::ElementHandle(idx as u32);
                         self.titbit_manager.add_titbit(
-                            crate::position_interface::Point3D::default(),
+                            crate::coordinates::WorldPoint3D::default(),
                             0,
                             crate::titbit::TitbitKind::Hidden,
                             handle,
@@ -2876,7 +2876,7 @@ impl EngineInner {
                             // pass corrects both Z and map-Y from the
                             // destination's projection-area top plane.
                             let pi = entity.position_iface_mut();
-                            pi.set_position(crate::position_interface::Point3D {
+                            pi.set_position(crate::coordinates::WorldPoint3D {
                                 x,
                                 y: y + elev,
                                 z: elev,

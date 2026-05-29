@@ -1587,7 +1587,7 @@ impl FastFindGrid {
         pt2d: MapPoint,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    ) -> crate::position_interface::Point3D {
+    ) -> crate::coordinates::WorldPoint3D {
         // The 2D point is a screen-Y coordinate in map space; to
         // deproject it onto any surface whose visible pixel sits at
         // `pt2d.y`, cast the isometric-projection ray
@@ -1604,12 +1604,12 @@ impl FastFindGrid {
         // (purse, wasp nest) to a roof landed flat at `z = 0` instead
         // of on the roof.
         let world_height = (self.level.grid_height as f32) * GRID_CELL_SIZE_F;
-        let origin = crate::position_interface::Point3D {
+        let origin = crate::coordinates::WorldPoint3D {
             x: pt2d.x,
             y: world_height,
             z: world_height - pt2d.y,
         };
-        let destination = crate::position_interface::Point3D {
+        let destination = crate::coordinates::WorldPoint3D {
             x: pt2d.x,
             y: pt2d.y,
             z: 0.0,
@@ -1637,7 +1637,7 @@ impl FastFindGrid {
         &self,
         layer: u16,
         bbox: &BBox2D,
-        position: crate::position_interface::Point3D,
+        position: crate::coordinates::WorldPoint3D,
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> Vec<crate::mask::MaskIndex> {
@@ -2790,8 +2790,8 @@ impl FastFindGrid {
     /// a blocked ray.
     pub fn is_reachable_impact_3d(
         &self,
-        origin: crate::position_interface::Point3D,
-        destination: crate::position_interface::Point3D,
+        origin: crate::coordinates::WorldPoint3D,
+        destination: crate::coordinates::WorldPoint3D,
         layer: u16,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -2834,7 +2834,7 @@ impl FastFindGrid {
                     origin.y + t * (destination.y - origin.y),
                 );
                 *impact = Some(crate::sight_obstacle::ImpactResult3D {
-                    impact: crate::position_interface::Point3D {
+                    impact: crate::coordinates::WorldPoint3D {
                         x: ix,
                         y: iy,
                         z: origin.z + t * (destination.z - origin.z),
@@ -2866,7 +2866,7 @@ impl FastFindGrid {
                         origin.y + t * (destination.y - origin.y),
                     );
                     *impact = Some(crate::sight_obstacle::ImpactResult3D {
-                        impact: crate::position_interface::Point3D {
+                        impact: crate::coordinates::WorldPoint3D {
                             x: ix,
                             y: iy,
                             z: origin.z + t * (destination.z - origin.z),
@@ -2888,8 +2888,8 @@ impl FastFindGrid {
     /// instead of computing the nearest impact ratio for every candidate.
     pub fn is_reachable_3d(
         &self,
-        origin: crate::position_interface::Point3D,
-        destination: crate::position_interface::Point3D,
+        origin: crate::coordinates::WorldPoint3D,
+        destination: crate::coordinates::WorldPoint3D,
         layer: u16,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -3933,12 +3933,12 @@ mod tests {
         obs.bottom_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         let obstacles = vec![obs];
 
-        let origin = crate::position_interface::Point3D {
+        let origin = crate::coordinates::WorldPoint3D {
             x: 50.0,
             y: 60.0,
             z: 5.0,
         };
-        let dest = crate::position_interface::Point3D {
+        let dest = crate::coordinates::WorldPoint3D {
             x: 200.0,
             y: 60.0,
             z: 5.0,
@@ -3956,12 +3956,12 @@ mod tests {
         assert!(impact.is_some());
 
         // A ray well above the top plane (z = 20) clears the wall.
-        let origin_high = crate::position_interface::Point3D {
+        let origin_high = crate::coordinates::WorldPoint3D {
             x: 50.0,
             y: 60.0,
             z: 20.0,
         };
-        let dest_high = crate::position_interface::Point3D {
+        let dest_high = crate::coordinates::WorldPoint3D {
             x: 200.0,
             y: 60.0,
             z: 20.0,

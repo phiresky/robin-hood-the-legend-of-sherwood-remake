@@ -331,9 +331,8 @@ impl EngineInner {
             // For human targets, read their forecasted movement so the
             // shot leads them; FX targets pass None.
             //
-            // PositionInterface returns its own `Point3D` type
-            // (serializable), separate from `element::Point3D`; convert
-            // here.
+            // PositionInterface returns canonical world XYZ data; projectile
+            // code still carries the older element-local 3D type for now.
             let target_movement = target_is_human.then_some(result.target_forecasted_movement);
 
             // ── Compute velocity ─────────────────────────────────
@@ -1490,7 +1489,7 @@ impl EngineInner {
         blayer: u16,
     ) -> bool {
         use crate::element::ObjectType;
-        let pos = crate::position_interface::Point3D {
+        let pos = crate::coordinates::WorldPoint3D {
             x: bx,
             y: by,
             z: 2.0,
@@ -1651,7 +1650,7 @@ impl EngineInner {
     /// element supplier — stays at creation point and rises).
     pub(super) fn spawn_take_counter(
         &mut self,
-        pos: crate::position_interface::Point3D,
+        pos: crate::coordinates::WorldPoint3D,
         layer: u16,
         value: u16,
     ) {
@@ -2590,7 +2589,7 @@ impl EngineInner {
         // Plouf titbit at the landing position.
         use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
         self.titbit_manager.add_titbit(
-            crate::position_interface::Point3D {
+            crate::coordinates::WorldPoint3D {
                 x: position.x,
                 y: position.y,
                 z: position.z,

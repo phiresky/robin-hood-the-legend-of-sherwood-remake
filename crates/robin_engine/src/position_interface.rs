@@ -22,99 +22,10 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, MapVec};
+use crate::coordinates::{MapPoint, MapVec, WorldPoint3D};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
 use crate::geo2d::{self, BBox2D, Point2D, Vec2D};
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
-
-// ---------------------------------------------------------------------------
-// Shared 3D point type (serializable)
-// ---------------------------------------------------------------------------
-
-/// Simple 3D point/vector with serde support.
-///
-/// Separate from [`robin_assets::sb3d::Vec3`] which is `#[repr(C)]` but
-/// lacks serde derives.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
-)]
-pub struct Point3D {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
-impl Default for Point3D {
-    fn default() -> Self {
-        Self::ZERO
-    }
-}
-
-impl Point3D {
-    pub const ZERO: Self = Self {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-    };
-
-    #[inline]
-    pub fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
-    }
-
-    /// Project to 2D map coordinates: `(x, y - z)`.
-    #[inline]
-    pub fn to_map(self) -> MapPoint {
-        MapPoint::new(self.x, self.y - self.z)
-    }
-
-    #[inline]
-    pub fn norm(&self) -> f32 {
-        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
-    }
-
-    #[inline]
-    pub fn scale(self, k: f32) -> Self {
-        Self {
-            x: self.x * k,
-            y: self.y * k,
-            z: self.z * k,
-        }
-    }
-}
-
-impl std::ops::Add for Point3D {
-    type Output = Self;
-    #[inline]
-    fn add(self, o: Self) -> Self {
-        Self {
-            x: self.x + o.x,
-            y: self.y + o.y,
-            z: self.z + o.z,
-        }
-    }
-}
-
-impl std::ops::AddAssign for Point3D {
-    #[inline]
-    fn add_assign(&mut self, o: Self) {
-        self.x += o.x;
-        self.y += o.y;
-        self.z += o.z;
-    }
-}
-
-impl std::ops::Sub for Point3D {
-    type Output = Self;
-    #[inline]
-    fn sub(self, o: Self) -> Self {
-        Self {
-            x: self.x - o.x,
-            y: self.y - o.y,
-            z: self.z - o.z,
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Plane Z-coefficients
@@ -696,18 +607,18 @@ pub struct PositionInterface {
     computed_increment: IncrementComputed,
 
     // -- Positions --
-    position: Point3D,
+    position: WorldPoint3D,
     position_map: MapPoint,
 
-    old_position: Point3D,
+    old_position: WorldPoint3D,
     old_position_map: MapPoint,
 
     goal_map: MapPoint,
     goal_next_map: MapPoint,
-    goal: Point3D,
+    goal: WorldPoint3D,
 
     // -- Increments --
-    increment: Point3D,
+    increment: WorldPoint3D,
     increment_map: MapVec,
 
     reversed_movement: bool,
@@ -765,7 +676,7 @@ pub struct PositionInterface {
     accumulated_movement_map: MapVec,
 
     // -- Forecasted movement --
-    forecasted_movement: Point3D,
+    forecasted_movement: WorldPoint3D,
 }
 
 impl Default for PositionInterface {
@@ -780,17 +691,17 @@ impl PositionInterface {
         Self {
             computed_increment: IncrementComputed::NONE,
 
-            position: Point3D::ZERO,
+            position: WorldPoint3D::ZERO,
             position_map: MapPoint::ZERO,
 
-            old_position: Point3D::ZERO,
+            old_position: WorldPoint3D::ZERO,
             old_position_map: MapPoint::ZERO,
 
             goal_map: MapPoint::ZERO,
             goal_next_map: MapPoint::ZERO,
-            goal: Point3D::ZERO,
+            goal: WorldPoint3D::ZERO,
 
-            increment: Point3D::ZERO,
+            increment: WorldPoint3D::ZERO,
             increment_map: MapVec::ZERO,
 
             reversed_movement: false,
@@ -834,7 +745,7 @@ impl PositionInterface {
             accumulate_movement_map: false,
             accumulated_movement_map: MapVec::ZERO,
 
-            forecasted_movement: Point3D::ZERO,
+            forecasted_movement: WorldPoint3D::ZERO,
         }
     }
 
@@ -904,8 +815,8 @@ impl PositionInterface {
     // ====================================================================
 
     #[inline]
-    #[must_use = "method returns Point3D by value; `pi.get_position().x = v` silently modifies a temporary. Use `set_position` to mutate."]
-    pub fn get_position(&self) -> Point3D {
+    #[must_use = "method returns WorldPoint3D by value; `pi.get_position().x = v` silently modifies a temporary. Use `set_position` to mutate."]
+    pub fn get_position(&self) -> WorldPoint3D {
         self.position
     }
 
@@ -922,7 +833,7 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn set_position(&mut self, pt: Point3D) {
+    pub fn set_position(&mut self, pt: WorldPoint3D) {
         self.position = pt;
         self.recompute_from_3d();
     }
@@ -956,7 +867,7 @@ impl PositionInterface {
 
     // Old position
     #[inline]
-    pub fn get_old_position(&self) -> Point3D {
+    pub fn get_old_position(&self) -> WorldPoint3D {
         self.old_position
     }
     #[inline]
@@ -964,7 +875,7 @@ impl PositionInterface {
         self.old_position_map
     }
     #[inline]
-    pub fn set_old_position(&mut self, pt: Point3D) {
+    pub fn set_old_position(&mut self, pt: WorldPoint3D) {
         self.old_position = pt;
     }
     #[inline]
@@ -1009,11 +920,11 @@ impl PositionInterface {
         self.goal_next_valid = v;
     }
     #[inline]
-    pub fn get_position_goal(&self) -> Point3D {
+    pub fn get_position_goal(&self) -> WorldPoint3D {
         self.goal
     }
     #[inline]
-    pub fn set_position_goal(&mut self, pt: Point3D) {
+    pub fn set_position_goal(&mut self, pt: WorldPoint3D) {
         self.goal = pt;
         self.computed_increment = IncrementComputed::NONE;
     }
@@ -1061,7 +972,7 @@ impl PositionInterface {
     // ====================================================================
 
     #[inline]
-    pub fn get_movement(&self) -> Point3D {
+    pub fn get_movement(&self) -> WorldPoint3D {
         self.position - self.old_position
     }
 
@@ -1073,7 +984,7 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn get_increment(&self) -> Point3D {
+    pub fn get_increment(&self) -> WorldPoint3D {
         assert!(self.is_increment_3d_computed());
         self.increment
     }
@@ -1096,7 +1007,7 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn set_increment(&mut self, v: Point3D) {
+    pub fn set_increment(&mut self, v: WorldPoint3D) {
         self.computed_increment = IncrementComputed::INCREMENT;
         self.increment = v;
     }
@@ -1437,7 +1348,7 @@ impl PositionInterface {
 
     // Forecasted movement
     #[inline]
-    pub fn get_forecasted_movement(&self) -> Point3D {
+    pub fn get_forecasted_movement(&self) -> WorldPoint3D {
         self.forecasted_movement
     }
 
@@ -1446,7 +1357,7 @@ impl PositionInterface {
     }
 
     pub fn reset_forecasted_movement(&mut self) {
-        self.forecasted_movement = Point3D::ZERO;
+        self.forecasted_movement = WorldPoint3D::ZERO;
     }
 
     // ====================================================================
@@ -1459,7 +1370,7 @@ impl PositionInterface {
         self.old_position_map = self.position_map;
     }
 
-    pub fn move_position(&mut self, v: Point3D) {
+    pub fn move_position(&mut self, v: WorldPoint3D) {
         self.position += v;
         self.recompute_from_3d();
     }
@@ -2399,8 +2310,8 @@ pub fn vector_normal_iso(x: f32, y: f32, direct: bool) -> [f32; 2] {
 mod tests {
     use super::*;
 
-    fn p3(x: f32, y: f32, z: f32) -> Point3D {
-        Point3D::new(x, y, z)
+    fn p3(x: f32, y: f32, z: f32) -> WorldPoint3D {
+        WorldPoint3D::new(x, y, z)
     }
 
     #[test]

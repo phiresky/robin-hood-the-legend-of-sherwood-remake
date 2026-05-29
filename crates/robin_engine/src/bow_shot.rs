@@ -959,12 +959,12 @@ fn compute_trajectory_ballistic_impl(
             // select long-shot mode, but the arrow itself must not be
             // clipped by opaque-only sight blockers.
             let impact_3d = crate::sight_obstacle::is_reachable_impact_3d(
-                crate::position_interface::Point3D {
+                crate::coordinates::WorldPoint3D {
                     x: position.x,
                     y: position.y,
                     z: position.z,
                 },
-                crate::position_interface::Point3D {
+                crate::coordinates::WorldPoint3D {
                     x: new_position.x,
                     y: new_position.y,
                     z: new_position.z,

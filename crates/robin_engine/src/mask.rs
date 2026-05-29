@@ -240,7 +240,7 @@ impl RuntimeMask {
     /// top plane (projectiles only see the obstacle when below its roof).
     pub fn is_applied_to_point_3d(
         &self,
-        point: crate::position_interface::Point3D,
+        point: crate::coordinates::WorldPoint3D,
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> bool {
@@ -517,11 +517,11 @@ mod tests {
             bitmap: vec![0u8; 16 * 16],
         };
 
-        use crate::position_interface::Point3D;
+        use crate::coordinates::WorldPoint3D;
         // Above polyline → masked, even at high altitude (no obstacle to
         // override the 2D test).
         assert!(mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 5.0,
                 z: 1000.0
@@ -531,7 +531,7 @@ mod tests {
         ));
         // Below polyline → not masked.
         assert!(!mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 15.0,
                 z: 0.0
@@ -559,10 +559,10 @@ mod tests {
         };
         let obstacles = vec![flat_obstacle_box()];
 
-        use crate::position_interface::Point3D;
+        use crate::coordinates::WorldPoint3D;
         // Projectile at z=5 inside ground polygon, below z_top=10 → masked.
         assert!(mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 5.0,
                 z: 5.0
@@ -572,7 +572,7 @@ mod tests {
         ));
         // Projectile soaring at z=20 above z_top=10 → not masked.
         assert!(!mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 5.0,
                 z: 20.0
@@ -582,7 +582,7 @@ mod tests {
         ));
         // Projectile outside the obstacle ground polygon → not masked.
         assert!(!mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 50.0,
                 y: 5.0,
                 z: 5.0
@@ -593,7 +593,7 @@ mod tests {
         // Human at z=5 above z_bottom=0 → not masked (human falls through
         // the floor when above it; only masked when below the bottom plane).
         assert!(!mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 5.0,
                 z: 5.0
@@ -603,7 +603,7 @@ mod tests {
         ));
         // Human at z=-5 below the obstacle floor → masked.
         assert!(mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 5.0,
                 z: -5.0
@@ -630,9 +630,9 @@ mod tests {
             bitmap: vec![],
         };
         let obstacles = vec![flat_obstacle_box()];
-        use crate::position_interface::Point3D;
+        use crate::coordinates::WorldPoint3D;
         assert!(!mask.is_applied_to_point_3d(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 5.0,
                 z: 5.0

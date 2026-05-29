@@ -114,9 +114,9 @@ pub struct Point3D {
     pub z: f32,
 }
 
-impl From<crate::position_interface::Point3D> for Point3D {
+impl From<crate::coordinates::WorldPoint3D> for Point3D {
     #[inline]
-    fn from(p: crate::position_interface::Point3D) -> Self {
+    fn from(p: crate::coordinates::WorldPoint3D) -> Self {
         Self {
             x: p.x,
             y: p.y,
@@ -125,7 +125,7 @@ impl From<crate::position_interface::Point3D> for Point3D {
     }
 }
 
-impl From<Point3D> for crate::position_interface::Point3D {
+impl From<Point3D> for crate::coordinates::WorldPoint3D {
     #[inline]
     fn from(p: Point3D) -> Self {
         Self {
@@ -137,10 +137,10 @@ impl From<Point3D> for crate::position_interface::Point3D {
 }
 
 impl Point3D {
-    /// Convert to [`crate::position_interface::Point3D`] (serde-enabled).
+    /// Convert to [`crate::coordinates::WorldPoint3D`] (serde-enabled).
     #[inline]
-    pub fn to_pos_point3d(self) -> crate::position_interface::Point3D {
-        crate::position_interface::Point3D::new(self.x, self.y, self.z)
+    pub fn to_pos_point3d(self) -> crate::coordinates::WorldPoint3D {
+        crate::coordinates::WorldPoint3D::new(self.x, self.y, self.z)
     }
 }
 
@@ -325,7 +325,7 @@ impl ElementData {
     pub fn set_position(&mut self, p: Point3D) {
         self.sprite
             .position_iface
-            .set_position(crate::position_interface::Point3D {
+            .set_position(crate::coordinates::WorldPoint3D {
                 x: p.x,
                 y: p.y,
                 z: p.z,

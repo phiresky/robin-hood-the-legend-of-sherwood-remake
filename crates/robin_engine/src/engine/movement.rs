@@ -3388,7 +3388,7 @@ impl EngineInner {
         // Drained after the entity loop so `titbit_manager.add_titbit`
         // can borrow `&mut self` without colliding with the active
         // entity borrow.
-        let mut water_splash_emits: Vec<(EntityId, crate::position_interface::Point3D, u16)> =
+        let mut water_splash_emits: Vec<(EntityId, crate::coordinates::WorldPoint3D, u16)> =
             Vec::new();
         let mut movement_state_effects: Vec<(
             EntityId,
@@ -4700,7 +4700,7 @@ impl EngineInner {
                             let layer = elem.layer();
                             water_splash_emits.push((
                                 EntityId(idx as u32),
-                                crate::position_interface::Point3D {
+                                crate::coordinates::WorldPoint3D {
                                     x: pos.x,
                                     y: pos.y,
                                     z: pos.z,

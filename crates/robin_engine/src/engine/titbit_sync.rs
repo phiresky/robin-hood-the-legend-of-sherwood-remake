@@ -19,8 +19,8 @@
 
 use super::*;
 use crate::ai::{AiState, EmoticonType};
+use crate::coordinates::WorldPoint3D;
 use crate::element::{DetectableType, Entity, EntityId, Posture};
-use crate::position_interface::Point3D;
 use crate::titbit::{ElementHandle, HiddenCharacter, INVALID_ID, SpriteRow, TitbitKind};
 
 impl EngineInner {
@@ -64,7 +64,7 @@ impl EngineInner {
         let epos = entity
             .compute_stars_point()
             .unwrap_or(entity.element_data().position());
-        let pos = Point3D {
+        let pos = WorldPoint3D {
             x: epos.x,
             y: epos.y,
             z: epos.z,
@@ -121,7 +121,7 @@ impl EngineInner {
         let elem = entity.element_data();
         // X/Y are re-tracked to the entity by `refresh_titbit_positions`;
         // Z carries the rise speed.
-        let pos = Point3D {
+        let pos = WorldPoint3D {
             x: elem.position_map().x,
             y: elem.position_map().y,
             z: 2.0,
@@ -158,7 +158,7 @@ impl EngineInner {
     // for any future gun/cannon-impact path; promote to a real callsite when
     // such a path is wired.
     #[allow(dead_code)]
-    pub(super) fn add_gun_impact_titbit(&mut self, pos: Point3D, layer: u16) {
+    pub(super) fn add_gun_impact_titbit(&mut self, pos: WorldPoint3D, layer: u16) {
         let id = self.titbit_manager.add_titbit(
             pos,
             layer,
@@ -202,7 +202,7 @@ impl EngineInner {
         let epos = entity
             .compute_stars_point()
             .unwrap_or(entity.element_data().position());
-        let pos = Point3D {
+        let pos = WorldPoint3D {
             x: epos.x,
             y: epos.y,
             z: epos.z,
@@ -340,7 +340,7 @@ impl EngineInner {
                         Posture::Tree => 35.0,
                         _ => 35.0,
                     };
-                    t.position = Point3D {
+                    t.position = WorldPoint3D {
                         x: elem.position().x,
                         y: elem.position().y,
                         z: elem.position().z + z_add,
@@ -353,7 +353,7 @@ impl EngineInner {
                     t.position = if entity.is_fx_target() {
                         elem.position().into()
                     } else {
-                        Point3D {
+                        WorldPoint3D {
                             x: elem.position_map().x,
                             y: elem.position_map().y,
                             z: 0.0,
@@ -426,7 +426,7 @@ impl EngineInner {
             /// Size parameter for GrowingQuestionMark (0-15). Ignored
             /// for other emoticon types.
             size: u16,
-            position: Point3D,
+            position: WorldPoint3D,
             layer: u16,
             display_order: f32,
             show: bool,
@@ -561,7 +561,7 @@ impl EngineInner {
                     entity_id: npc_id,
                     emoticon: EmoticonType::None,
                     size: 0,
-                    position: Point3D {
+                    position: WorldPoint3D {
                         x: snap.position.x,
                         y: snap.position.y,
                         z: 0.0,
@@ -644,7 +644,7 @@ impl EngineInner {
                 entity_id: npc_id,
                 emoticon,
                 size,
-                position: Point3D {
+                position: WorldPoint3D {
                     x: snap.position.x,
                     y: snap.position.y,
                     z: 0.0,
@@ -742,7 +742,7 @@ impl EngineInner {
     fn sync_hidden_titbits(&mut self, assets: &LevelAssets) {
         struct HiddenState {
             id: EntityId,
-            position: Point3D,
+            position: WorldPoint3D,
             layer: u16,
             is_hidden: bool,
             hidden_character: HiddenCharacter,
@@ -781,7 +781,7 @@ impl EngineInner {
             let hidden_character = HiddenCharacter::for_pc(pc.pc.robin, &profile.filename);
             states.push(HiddenState {
                 id: pc_id,
-                position: Point3D {
+                position: WorldPoint3D {
                     x: pc.element.position_map().x,
                     y: pc.element.position_map().y,
                     z: 0.0,
@@ -824,7 +824,7 @@ impl EngineInner {
     fn sync_apple_smell_titbits(&mut self) {
         struct AppleState {
             id: EntityId,
-            position: Point3D,
+            position: WorldPoint3D,
             layer: u16,
             is_smelling: bool,
         }
@@ -839,7 +839,7 @@ impl EngineInner {
             }
             states.push(AppleState {
                 id: npc_id,
-                position: Point3D {
+                position: WorldPoint3D {
                     x: s.element.position_map().x,
                     y: s.element.position_map().y,
                     z: 0.0,
@@ -890,7 +890,7 @@ impl EngineInner {
         // native).
         struct SpeakState {
             id: EntityId,
-            position: Point3D,
+            position: WorldPoint3D,
             layer: u16,
             has_scroll: bool,
             force_refresh: bool,
@@ -937,7 +937,7 @@ impl EngineInner {
             let script_handle = crate::natives::GameHost::actor_handle(npc_id);
             states.push(SpeakState {
                 id: npc_id,
-                position: Point3D {
+                position: WorldPoint3D {
                     x: pos.x,
                     y: pos.y,
                     z: 0.0,
@@ -986,7 +986,7 @@ impl EngineInner {
     fn sync_danger_point_titbits(&mut self) {
         struct DangerState {
             id: EntityId,
-            position: Point3D,
+            position: WorldPoint3D,
             layer: u16,
             is_protecting: bool,
         }
@@ -1015,7 +1015,7 @@ impl EngineInner {
             };
             states.push(DangerState {
                 id: pc_id,
-                position: Point3D {
+                position: WorldPoint3D {
                     x: pc.pc.shield_danger_point.x,
                     y: pc.pc.shield_danger_point.y,
                     z: pc.pc.shield_danger_point.z,
@@ -1061,7 +1061,7 @@ impl EngineInner {
 
         struct WorkState {
             id: EntityId,
-            position: Point3D,
+            position: WorldPoint3D,
             layer: u16,
             work: WorkIcon,
         }
@@ -1076,7 +1076,7 @@ impl EngineInner {
             }
             states.push(WorkState {
                 id: pc_id,
-                position: Point3D {
+                position: WorldPoint3D {
                     x: pc.element.position_map().x,
                     y: pc.element.position_map().y,
                     z: 0.0,
