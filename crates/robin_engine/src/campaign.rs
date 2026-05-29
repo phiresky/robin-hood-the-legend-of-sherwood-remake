@@ -6,6 +6,7 @@
 //! This module covers pure state management; methods that depend on
 //! engine callbacks (sound, UI, character spawning) live elsewhere.
 
+use enum_map::{Enum, EnumMap, enum_map};
 use serde::{Deserialize, Serialize};
 
 use crate::mission::{Mission, MissionStatus};
@@ -47,7 +48,15 @@ pub enum LevelResult {
 
 #[repr(u32)]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Enum,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
 )]
 pub enum CampaignValue {
     Amulets = 0,
@@ -79,7 +88,6 @@ pub enum CampaignValue {
     Custom20 = 26,
 }
 
-pub const NUMBER_OF_VALUES: usize = 27;
 pub const INITIAL_RANSOM: i32 = 100;
 
 /// Maximum number of amulets a campaign can accumulate.  Once the
@@ -105,7 +113,7 @@ pub struct PcDescription {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct Campaign {
     // ── Values / currency ──
-    pub values: [i32; NUMBER_OF_VALUES],
+    pub values: EnumMap<CampaignValue, i32>,
     pub ares: i8,
 
     // ── Missions ──
@@ -160,8 +168,8 @@ impl Default for Campaign {
         // `mission_team_indices` stays empty until `from_profiles` /
         // `reset` runs (it's seeded from the gang, which doesn't exist
         // on a default-constructed campaign).
-        let mut values = [0; NUMBER_OF_VALUES];
-        values[CampaignValue::Ransom as usize] = INITIAL_RANSOM;
+        let mut values = enum_map! { _ => 0 };
+        values[CampaignValue::Ransom] = INITIAL_RANSOM;
         Campaign {
             values,
             ares: -1,
@@ -362,30 +370,20 @@ impl Campaign {
 
     // ── Values / currency ──
 
-    pub fn get_value(&self, idx: usize) -> i32 {
-        if idx < NUMBER_OF_VALUES {
-            self.values[idx]
-        } else {
-            0
-        }
+    pub fn get_value(&self, name: CampaignValue) -> i32 {
+        self.values[name]
     }
 
-    pub fn set_value(&mut self, idx: usize, val: i32) {
-        if idx < NUMBER_OF_VALUES {
-            self.values[idx] = val;
-        }
+    pub fn set_value(&mut self, name: CampaignValue, val: i32) {
+        self.values[name] = val;
     }
 
-    pub fn add_value(&mut self, idx: usize, amount: i32) {
-        if idx < NUMBER_OF_VALUES {
-            self.values[idx] += amount;
-        }
+    pub fn add_value(&mut self, name: CampaignValue, amount: i32) {
+        self.values[name] += amount;
     }
 
-    pub fn subtract_value(&mut self, idx: usize, amount: i32) {
-        if idx < NUMBER_OF_VALUES {
-            self.values[idx] -= amount;
-        }
+    pub fn subtract_value(&mut self, name: CampaignValue, amount: i32) {
+        self.values[name] -= amount;
     }
 
     /// Award experience to a PC's skill and pay the campaign-score
@@ -408,7 +406,7 @@ impl Campaign {
         let new_capacity = desc.status.human_status.skill(skill).capacity;
         if new_capacity != prev_capacity {
             self.add_value(
-                CampaignValue::Score as usize,
+                CampaignValue::Score,
                 crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
             );
         }
@@ -951,21 +949,21 @@ impl Campaign {
         let required = self.missions[blazon_idx]
             .profile(profiles)
             .number_of_blazons_to_win;
-        let current_blazons = self.get_value(CampaignValue::Blazon as usize);
+        let current_blazons = self.get_value(CampaignValue::Blazon);
 
         if current_blazons < required as i32 {
             return;
         }
         match current_type {
             MissionType::Attack => {
-                self.set_value(CampaignValue::Blazon as usize, 0);
+                self.set_value(CampaignValue::Blazon, 0);
             }
             MissionType::Tactical => {
                 // Auto-complete the associated blazon (PSEUDO/ATTACK)
                 // mission: zero blazons, mark the blazon mission done,
                 // and drop it from the accessible list so the won
                 // PSEUDO doesn't linger as a live candidate.
-                self.set_value(CampaignValue::Blazon as usize, 0);
+                self.set_value(CampaignValue::Blazon, 0);
                 self.set_mission_done(true, Some(blazon_idx), profiles);
                 self.remove_accessible_mission(blazon_idx);
             }
@@ -999,11 +997,11 @@ impl Campaign {
             return false;
         }
         let collectable = profile.number_of_blazons_to_win as i32;
-        let current = self.get_value(CampaignValue::Blazon as usize);
+        let current = self.get_value(CampaignValue::Blazon);
         if current < collectable {
             return false;
         }
-        self.add_value(CampaignValue::Blazon as usize, -collectable);
+        self.add_value(CampaignValue::Blazon, -collectable);
         self.set_mission_done(true, Some(blazon_idx), profiles);
         self.remove_accessible_mission(blazon_idx);
         self.next_mission_idx = None;
@@ -1022,8 +1020,8 @@ impl Campaign {
     /// caller uses that to short-circuit its post-buy update.
     pub fn buy_blazon(&mut self, mission_index: usize, profiles: &ProfileManager) -> bool {
         let price = self.missions[mission_index].get_blazon_price() as i32;
-        self.add_value(CampaignValue::Ransom as usize, -price);
-        self.add_value(CampaignValue::Blazon as usize, 1);
+        self.add_value(CampaignValue::Ransom, -price);
+        self.add_value(CampaignValue::Blazon, 1);
         self.missions[mission_index].increase_blazon_price(profiles);
         self.try_consume_blazons_for_pseudo_in_sherwood(profiles)
     }
@@ -1166,7 +1164,7 @@ impl Campaign {
 
             // Lose all blazons if this was the blazon mission
             if self.blazon_mission_idx == Some(idx) {
-                self.set_value(CampaignValue::Blazon as usize, 0);
+                self.set_value(CampaignValue::Blazon, 0);
             }
         }
         self.set_ares_conditional(ares_state);
@@ -1503,7 +1501,7 @@ impl Campaign {
         // negative `required` as "larger than any possible", so the
         // "convert all" branch is selected exactly when the original
         // would.
-        let current_blazons = self.get_value(CampaignValue::Blazon as usize);
+        let current_blazons = self.get_value(CampaignValue::Blazon);
         let required_signed = (p.number_of_blazons_to_win as i32)
             - (p.number_of_blazons_to_be_collected as i32)
             - current_blazons;
@@ -1551,7 +1549,7 @@ impl Campaign {
         profiles: &ProfileManager,
     ) -> bool {
         let p = self.missions[mission_idx].profile(profiles);
-        let current_blazons = self.get_value(CampaignValue::Blazon as usize);
+        let current_blazons = self.get_value(CampaignValue::Blazon);
         let needed =
             (p.number_of_blazons_to_win as i32) - (p.number_of_blazons_to_be_collected as i32);
 
@@ -1570,7 +1568,7 @@ impl Campaign {
     ) -> bool {
         let p = self.missions[mission_idx].profile(profiles);
         let m = &self.missions[mission_idx];
-        let current_blazons = self.get_value(CampaignValue::Blazon as usize);
+        let current_blazons = self.get_value(CampaignValue::Blazon);
         let needed =
             (p.number_of_blazons_to_win as i32) - (p.number_of_blazons_to_be_collected as i32);
 
@@ -1590,8 +1588,8 @@ impl Campaign {
     ) -> bool {
         let p = self.missions[mission_idx].profile(profiles);
         let m = &self.missions[mission_idx];
-        let current_blazons = self.get_value(CampaignValue::Blazon as usize);
-        let ransom = self.get_value(CampaignValue::Ransom as usize);
+        let current_blazons = self.get_value(CampaignValue::Blazon);
+        let ransom = self.get_value(CampaignValue::Ransom);
         let needed =
             (p.number_of_blazons_to_win as i32) - (p.number_of_blazons_to_be_collected as i32);
 
@@ -1688,10 +1686,7 @@ impl Campaign {
     /// Log campaign state using tracing::info!
     pub fn log_report(&self, profiles: &ProfileManager) {
         tracing::info!("---------- Campaign ----------");
-        tracing::info!(
-            "  Ransom: {}",
-            self.get_value(CampaignValue::Ransom as usize)
-        );
+        tracing::info!("  Ransom: {}", self.get_value(CampaignValue::Ransom));
         tracing::info!("  Gang size: {}", self.get_size_of_gang());
         tracing::info!("  ARES: {}", self.get_ares());
 
@@ -1758,8 +1753,8 @@ impl Campaign {
         self.last_pseudo_mission_status = MissionStatus::Available;
 
         // Reset values, set initial ransom
-        self.values = [0; NUMBER_OF_VALUES];
-        self.values[CampaignValue::Ransom as usize] = INITIAL_RANSOM;
+        self.values = enum_map! { _ => 0 };
+        self.values[CampaignValue::Ransom] = INITIAL_RANSOM;
 
         // Recreate missions and gang from profiles
 
@@ -2348,13 +2343,13 @@ mod tests {
     #[test]
     fn campaign_values() {
         let mut c = Campaign::new();
-        assert_eq!(c.get_value(0), 0);
-        c.set_value(0, 100);
-        assert_eq!(c.get_value(0), 100);
-        c.add_value(0, 50);
-        assert_eq!(c.get_value(0), 150);
-        c.subtract_value(0, 30);
-        assert_eq!(c.get_value(0), 120);
+        assert_eq!(c.get_value(CampaignValue::Amulets), 0);
+        c.set_value(CampaignValue::Amulets, 100);
+        assert_eq!(c.get_value(CampaignValue::Amulets), 100);
+        c.add_value(CampaignValue::Amulets, 50);
+        assert_eq!(c.get_value(CampaignValue::Amulets), 150);
+        c.subtract_value(CampaignValue::Amulets, 30);
+        assert_eq!(c.get_value(CampaignValue::Amulets), 120);
     }
 
     #[test]
@@ -2428,7 +2423,7 @@ mod tests {
     #[test]
     fn campaign_serde_round_trip() {
         let mut c = Campaign::new();
-        c.set_value(0, 42);
+        c.set_value(CampaignValue::Amulets, 42);
         c.ares = 3;
         c.peasant_names.push("Bob".into());
         c.collected_relics.push(7);
@@ -2436,7 +2431,7 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         let c2: Campaign = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(c2.get_value(0), 42);
+        assert_eq!(c2.get_value(CampaignValue::Amulets), 42);
         assert_eq!(c2.ares, 3);
         assert_eq!(c2.peasant_names, vec!["Bob"]);
         assert_eq!(c2.collected_relics, vec![7]);

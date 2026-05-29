@@ -3185,7 +3185,7 @@ pub(super) fn is_pc_takable(
     // themselves carry `Action::NoAction`.
     if obj.object_type == crate::element::ObjectType::BonusAmulet
         && let Some(campaign) = engine.campaign.as_ref()
-        && campaign.get_value(crate::campaign::CampaignValue::Amulets as usize)
+        && campaign.get_value(crate::campaign::CampaignValue::Amulets)
             >= crate::campaign::MAXIMUM_AMULETS_NUMBER
     {
         return false;
@@ -3418,7 +3418,7 @@ fn determine_use_command(
         let ransom = engine
             .campaign
             .as_ref()
-            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom as usize))
+            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
             .unwrap_or(0);
         if ransom >= crate::engine::BEGGAR_SALARY {
             return Some(Command::Pay);

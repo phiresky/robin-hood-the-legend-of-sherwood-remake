@@ -107,7 +107,7 @@ impl Mission {
         profiles: &crate::profiles::ProfileManager,
     ) -> Result<(), &'static str> {
         let p = self.profile(profiles);
-        let money = campaign.get_value(crate::campaign::CampaignValue::Ransom as usize);
+        let money = campaign.get_value(crate::campaign::CampaignValue::Ransom);
         let gang_size = campaign.get_size_of_gang() as u32;
         let ares = campaign.get_ares();
 

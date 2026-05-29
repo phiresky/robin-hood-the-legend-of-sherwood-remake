@@ -40,7 +40,7 @@ pub fn build_for_mission(
     let total = profile.number_of_blazons_to_win as u32;
     let to_be_collected = profile.number_of_blazons_to_be_collected as u32;
     let owned = campaign
-        .get_value(robin_engine::campaign::CampaignValue::Blazon as usize)
+        .get_value(robin_engine::campaign::CampaignValue::Blazon)
         .max(0) as u32;
     build_blazon_set_state(
         box_x,

@@ -514,7 +514,7 @@ async fn dispatch_convert_money(
         let mission = &campaign.missions[mission_index];
         (
             mission.get_blazon_price() as u32,
-            campaign.get_value(CampaignValue::Ransom as usize).max(0) as u32,
+            campaign.get_value(CampaignValue::Ransom).max(0) as u32,
         )
     };
 

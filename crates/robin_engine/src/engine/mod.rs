@@ -3452,7 +3452,7 @@ impl EngineInner {
             // Credit `floor(number_to_convert / quotation)` blazons.
             if quotation != 0 {
                 let credited = (number_to_convert as i32) / (quotation as i32);
-                campaign.add_value(crate::campaign::CampaignValue::Blazon as usize, credited);
+                campaign.add_value(crate::campaign::CampaignValue::Blazon, credited);
             }
         }
     }
@@ -3614,7 +3614,7 @@ impl EngineInner {
         if self.campaign.is_none() {
             return;
         }
-        self.campaign.as_mut().unwrap().values[name as usize] += amount;
+        self.campaign.as_mut().unwrap().values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_stat,
             &mut self.pending_side_effects,
@@ -3632,8 +3632,8 @@ impl EngineInner {
         if self.campaign.is_none() {
             return;
         }
-        let old = self.campaign.as_ref().unwrap().values[name as usize];
-        self.campaign.as_mut().unwrap().values[name as usize] = value;
+        let old = self.campaign.as_ref().unwrap().values[name];
+        self.campaign.as_mut().unwrap().values[name] = value;
         Self::apply_value_set_side_effects(
             &mut self.pending_side_effects,
             self.frame_counter,
@@ -3652,7 +3652,7 @@ impl EngineInner {
         name: crate::campaign::CampaignValue,
         amount: i32,
     ) {
-        campaign.values[name as usize] += amount;
+        campaign.values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_stat,
             &mut self.pending_side_effects,
@@ -3678,7 +3678,7 @@ impl EngineInner {
         if self.campaign.is_none() {
             return;
         }
-        self.campaign.as_mut().unwrap().values[name as usize] -= amount;
+        self.campaign.as_mut().unwrap().values[name] -= amount;
         if name == crate::campaign::CampaignValue::Ransom {
             self.tick_refresh_purse_disable(assets);
         }

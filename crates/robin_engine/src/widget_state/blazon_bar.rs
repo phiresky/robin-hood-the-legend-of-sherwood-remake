@@ -63,7 +63,7 @@ pub fn build_blazon_bar_state(
     let profile = campaign.missions[mission_idx].profile(profiles);
     let required = profile.number_of_blazons_to_win as u32;
     let to_be_collected = profile.number_of_blazons_to_be_collected as u32;
-    let current = campaign.get_value(CampaignValue::Blazon as usize).max(0) as u32;
+    let current = campaign.get_value(CampaignValue::Blazon).max(0) as u32;
     let additional = compute_additional_blazons(campaign, profiles, men_to_blazon_conversion);
 
     Some(BlazonBarState {

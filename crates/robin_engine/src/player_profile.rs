@@ -12,6 +12,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::campaign::CampaignValue;
 use crate::graphic_config::GraphicConfig;
 use crate::sound_config::SoundConfig;
 
@@ -452,18 +453,13 @@ pub fn synchronize_with_campaign(
         None => return,
     };
 
-    const RANSOM_VALUE: usize = 1;
-    const SCORE_VALUE: usize = 2;
-    const LIVING_SOLDIERS_VALUE: usize = 4;
-    const DEAD_SOLDIERS_VALUE: usize = 5;
-
-    profile.score = campaign.get_value(SCORE_VALUE) as u32;
-    profile.ransom = campaign.get_value(RANSOM_VALUE) as u32;
+    profile.score = campaign.get_value(CampaignValue::Score) as u32;
+    profile.ransom = campaign.get_value(CampaignValue::Ransom) as u32;
     profile.progression = campaign.get_progression(profiles);
     profile.play_time += mission_play_time_secs;
 
-    let dead = campaign.get_value(DEAD_SOLDIERS_VALUE) as u32;
-    let alive = campaign.get_value(LIVING_SOLDIERS_VALUE) as u32;
+    let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
+    let alive = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
     if dead != 0 || alive != 0 {
         profile.preserved_lives = (100.0 * alive as f32 / (dead + alive) as f32) as u32;
     } else {

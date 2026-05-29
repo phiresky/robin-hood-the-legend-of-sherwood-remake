@@ -820,7 +820,7 @@ impl EngineInner {
                 let ransom = self
                     .campaign
                     .as_ref()
-                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom as usize))
+                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or(0);
                 let purse_cost = (crate::inventory::COINS_PER_PURSE as i32)
                     * (crate::inventory::COIN_VALUE as i32);
@@ -909,7 +909,7 @@ impl EngineInner {
                 let ransom = self
                     .campaign
                     .as_ref()
-                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom as usize))
+                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or(0);
                 if ransom < crate::engine::BEGGAR_SALARY {
                     return false;

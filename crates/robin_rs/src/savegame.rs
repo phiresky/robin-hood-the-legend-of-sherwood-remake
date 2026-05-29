@@ -626,9 +626,9 @@ impl SaveGameManager {
         slot.missions_done = Some(campaign.get_number_of_missions_done());
         slot.missions_total = Some(campaign.missions.len());
         slot.gang_size = Some(campaign.gang_indices.len());
-        slot.ransom = Some(campaign.values[CampaignValue::Ransom as usize]);
-        slot.blazons = Some(campaign.values[CampaignValue::Blazon as usize]);
-        slot.amulets = Some(campaign.values[CampaignValue::Amulets as usize]);
+        slot.ransom = Some(campaign.values[CampaignValue::Ransom]);
+        slot.blazons = Some(campaign.values[CampaignValue::Blazon]);
+        slot.amulets = Some(campaign.values[CampaignValue::Amulets]);
 
         if let Some(profiles) = profiles {
             slot.campaign_progress = Some(campaign.get_progression(profiles));

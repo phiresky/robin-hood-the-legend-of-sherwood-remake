@@ -514,8 +514,8 @@ impl CampaignMapState {
     ) {
         use crate::ingame_menu::resources::{MT_STR_PRESERVED_LIFES, MT_STR_RANSOM, MT_STR_SCORE};
 
-        let living = campaign.get_value(CampaignValue::LivingSoldiers as usize) as u32;
-        let dead = campaign.get_value(CampaignValue::DeadSoldiers as usize) as u32;
+        let living = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
+        let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
 
         let preserved = if living > 0 || dead > 0 {
             100 * living / (living + dead)
@@ -523,8 +523,8 @@ impl CampaignMapState {
             0
         };
 
-        let ransom = campaign.get_value(CampaignValue::Ransom as usize);
-        let score = campaign.get_value(CampaignValue::Score as usize);
+        let ransom = campaign.get_value(CampaignValue::Ransom);
+        let score = campaign.get_value(CampaignValue::Score);
 
         let ransom_str = menu_text
             .get(MT_STR_RANSOM)
@@ -619,7 +619,7 @@ impl CampaignMapState {
         let mission = campaign.missions.get(mission_idx)?;
         let profile = mission.profile(profiles);
 
-        let current_blazons = campaign.get_value(CampaignValue::Blazon as usize) as u16;
+        let current_blazons = campaign.get_value(CampaignValue::Blazon) as u16;
 
         Some(BlazonStatus {
             required: profile.number_of_blazons_to_win,
@@ -948,10 +948,10 @@ mod tests {
     fn war_crime_text_format() {
         let mut map = CampaignMapState::new();
         let mut campaign = Campaign::default();
-        campaign.set_value(CampaignValue::Ransom as usize, 500);
-        campaign.set_value(CampaignValue::Score as usize, 1200);
-        campaign.set_value(CampaignValue::LivingSoldiers as usize, 80);
-        campaign.set_value(CampaignValue::DeadSoldiers as usize, 20);
+        campaign.set_value(CampaignValue::Ransom, 500);
+        campaign.set_value(CampaignValue::Score, 1200);
+        campaign.set_value(CampaignValue::LivingSoldiers, 80);
+        campaign.set_value(CampaignValue::DeadSoldiers, 20);
 
         map.update_war_crime_text(&campaign, &StubMenuText);
 

@@ -1161,7 +1161,7 @@ impl EngineInner {
         let ransom = self
             .campaign
             .as_ref()
-            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom as usize))
+            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
             .unwrap_or(0);
         let threshold =
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
@@ -1502,10 +1502,7 @@ impl EngineInner {
             // ── Amulet (clover): adds to amulet pool, no counter titbit ──
             ObjectType::BonusAmulet => {
                 if let Some(c) = self.campaign.as_mut() {
-                    c.add_value(
-                        crate::campaign::CampaignValue::Amulets as usize,
-                        quantity as i32,
-                    );
+                    c.add_value(crate::campaign::CampaignValue::Amulets, quantity as i32);
                 }
                 remove = true;
             }

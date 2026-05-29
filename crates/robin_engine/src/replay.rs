@@ -581,7 +581,7 @@ mod tests {
             .unwrap()
             .to_string();
         let mut campaign = Campaign::default();
-        campaign.values[CampaignValue::Score as usize] = 12_345;
+        campaign.values[CampaignValue::Score] = 12_345;
         campaign.ares = 4;
         {
             let mut rec =
@@ -593,7 +593,7 @@ mod tests {
         let data = ReplayData::from_file(&path).unwrap();
         let bytes = data.header.campaign.as_ref().expect("campaign snapshot");
         let restored: Campaign = bitcode::deserialize(bytes).unwrap();
-        assert_eq!(restored.values[CampaignValue::Score as usize], 12_345);
+        assert_eq!(restored.values[CampaignValue::Score], 12_345);
         assert_eq!(restored.ares, 4);
         assert_eq!(data.commands_for_frame(0).len(), 1);
 

@@ -941,7 +941,7 @@ mod tests {
         fn start_play_time(&mut self) {}
         fn suspend_play_time(&mut self) {}
         fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
-            campaign.get_value(crate::campaign::CampaignValue::MissionLength as usize) as u32
+            campaign.get_value(crate::campaign::CampaignValue::MissionLength) as u32
         }
     }
 
@@ -1194,13 +1194,10 @@ mod tests {
         game.finalize_mission(&mut engine, &assets, &mut campaign, &mut cb);
 
         assert_eq!(
-            campaign.get_value(crate::campaign::CampaignValue::Ransom as usize),
+            campaign.get_value(crate::campaign::CampaignValue::Ransom),
             crate::campaign::INITIAL_RANSOM
         );
-        assert_eq!(
-            campaign.get_value(crate::campaign::CampaignValue::Score as usize),
-            0
-        );
+        assert_eq!(campaign.get_value(crate::campaign::CampaignValue::Score), 0);
     }
 
     #[test]

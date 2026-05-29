@@ -248,6 +248,17 @@ impl<T: StateHash> StateHash for Vec<T> {
     }
 }
 
+impl<K, V> StateHash for enum_map::EnumMap<K, V>
+where
+    K: enum_map::EnumArray<V>,
+    V: StateHash,
+{
+    #[inline]
+    fn state_hash<H: Hasher>(&self, state: &mut H) {
+        self.as_slice().state_hash(state);
+    }
+}
+
 impl<T: StateHash> StateHash for std::collections::VecDeque<T> {
     #[inline]
     fn state_hash<H: Hasher>(&self, state: &mut H) {

@@ -101,7 +101,7 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::MissionLength as usize),
+            .get_value(CampaignValue::MissionLength),
         1
     );
 }
@@ -985,7 +985,7 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::Ransom as usize),
+            .get_value(CampaignValue::Ransom),
         crate::campaign::INITIAL_RANSOM + 250
     );
     assert_eq!(engine.mission_stat.collected_money, 250);
@@ -1011,7 +1011,7 @@ fn add_campaign_value_score_credits_mission_stat() {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::Score as usize),
+            .get_value(CampaignValue::Score),
         750
     );
     assert_eq!(engine.mission_stat.added_score, 750);
@@ -1024,7 +1024,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
     engine.frame_counter = 100;
-    engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom as usize] = 500;
+    engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 500;
     engine.mission_stat.collected_money = 200;
 
     // A purse throw (`combat.rs:2433`) issues a negative delta.
@@ -1035,7 +1035,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::Ransom as usize),
+            .get_value(CampaignValue::Ransom),
         400
     );
     // `add_campaign_value` credits the mission-stat counter
@@ -1064,7 +1064,7 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
     engine.frame_counter = 50;
-    engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom as usize] = 200;
+    engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 200;
 
     // Lower → no jingle (only growth fires the gate).
     engine.set_campaign_value(CampaignValue::Ransom, 100);
@@ -1096,7 +1096,7 @@ fn add_campaign_value_amulets_has_no_side_effects() {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::Amulets as usize),
+            .get_value(CampaignValue::Amulets),
         3
     );
     assert_eq!(engine.mission_stat.collected_money, 0);
@@ -1113,19 +1113,16 @@ fn sync_stats_to_campaign() {
     engine.mission_stat.total_soldier_count = 12;
 
     let mut campaign = Campaign::default();
-    campaign.set_value(CampaignValue::Ransom as usize, 100);
+    campaign.set_value(CampaignValue::Ransom, 100);
 
     engine.sync_stats_to_campaign(&mut campaign);
 
     // Money/score are credited during gameplay via add_campaign_value,
     // so sync at mission end must NOT re-add them — only soldier counts.
-    assert_eq!(campaign.get_value(CampaignValue::Ransom as usize), 100);
-    assert_eq!(campaign.get_value(CampaignValue::Score as usize), 0);
-    assert_eq!(
-        campaign.get_value(CampaignValue::LivingSoldiers as usize),
-        8
-    );
-    assert_eq!(campaign.get_value(CampaignValue::DeadSoldiers as usize), 4); // 12 - 8
+    assert_eq!(campaign.get_value(CampaignValue::Ransom), 100);
+    assert_eq!(campaign.get_value(CampaignValue::Score), 0);
+    assert_eq!(campaign.get_value(CampaignValue::LivingSoldiers), 8);
+    assert_eq!(campaign.get_value(CampaignValue::DeadSoldiers), 4); // 12 - 8
 }
 
 #[test]

@@ -692,7 +692,7 @@ fn game_host_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
         host.campaign
             .as_ref()
             .unwrap()
-            .get_value(crate::campaign::CampaignValue::Ransom as usize),
+            .get_value(crate::campaign::CampaignValue::Ransom),
         crate::campaign::INITIAL_RANSOM + 250
     );
     assert_eq!(host.mission_stat.collected_money, 250);
@@ -709,7 +709,7 @@ fn game_host_set_campaign_value_ransom_jingle_only_when_growing() {
     let mut host = GameHost::new();
     host.campaign = Some(crate::campaign::Campaign::default());
     host.frame_counter = 50;
-    host.campaign.as_mut().unwrap().values[crate::campaign::CampaignValue::Ransom as usize] = 200;
+    host.campaign.as_mut().unwrap().values[crate::campaign::CampaignValue::Ransom] = 200;
 
     // Lowering: no jingle.
     host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100);

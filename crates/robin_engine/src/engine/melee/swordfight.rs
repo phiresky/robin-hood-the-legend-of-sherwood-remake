@@ -1465,7 +1465,7 @@ impl EngineInner {
             && self
                 .campaign
                 .as_ref()
-                .map(|c| c.values[crate::campaign::CampaignValue::Amulets as usize] >= 1)
+                .map(|c| c.values[crate::campaign::CampaignValue::Amulets] >= 1)
                 .unwrap_or(false);
         if !has_amulets {
             return false;
@@ -1485,7 +1485,7 @@ impl EngineInner {
             if let Some(desc) = campaign.characters.get_mut(status_idx) {
                 desc.status.in_coma = true;
             }
-            campaign.values[crate::campaign::CampaignValue::Amulets as usize] -= 1;
+            campaign.values[crate::campaign::CampaignValue::Amulets] -= 1;
         }
         // Play the PC-in-coma jingle once at the coma-transition
         // site (the dominant trigger in the reference is the portrait

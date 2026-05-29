@@ -547,7 +547,7 @@ impl GameHost {
         let Some(campaign) = self.campaign.as_mut() else {
             return;
         };
-        campaign.values[name as usize] += amount;
+        campaign.values[name] += amount;
         // Mission-stat counters are credited unconditionally for
         // RANSOM/SCORE — only the CashWon jingle is gated on
         // `amount > 0 && frame_counter > 0`.
@@ -573,8 +573,8 @@ impl GameHost {
         let Some(campaign) = self.campaign.as_mut() else {
             return;
         };
-        let old = campaign.values[name as usize];
-        campaign.values[name as usize] = value;
+        let old = campaign.values[name];
+        campaign.values[name] = value;
         if name == crate::campaign::CampaignValue::Ransom && value > old && self.frame_counter > 0 {
             self.commands
                 .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
@@ -1618,14 +1618,13 @@ impl GameHost {
         // up on the next frame).
         let mut tactical_overflow: Option<u32> = None;
         if let Some(campaign) = self.campaign.as_mut() {
-            campaign.add_value(crate::campaign::CampaignValue::Blazon as usize, quantity);
+            campaign.add_value(crate::campaign::CampaignValue::Blazon, quantity);
 
             if let Some(idx) = campaign.current_mission_idx {
                 let mission_type = campaign.missions[idx]
                     .profile(&self.profile_manager)
                     .mission_type;
-                let current_blazons =
-                    campaign.get_value(crate::campaign::CampaignValue::Blazon as usize);
+                let current_blazons = campaign.get_value(crate::campaign::CampaignValue::Blazon);
                 match mission_type {
                     crate::profiles::MissionType::Attack => {
                         // ATTACK missions win as soon as the collected
@@ -1650,10 +1649,8 @@ impl GameHost {
                                 as i32;
                             if current_blazons > collectable {
                                 let exceeding = (current_blazons - collectable) as u32;
-                                campaign.set_value(
-                                    crate::campaign::CampaignValue::Blazon as usize,
-                                    collectable,
-                                );
+                                campaign
+                                    .set_value(crate::campaign::CampaignValue::Blazon, collectable);
                                 tactical_overflow = Some(exceeding);
                             }
                         }
@@ -1686,8 +1683,7 @@ impl GameHost {
 
                 let had_campaign = self.campaign.is_some();
                 if let Some(campaign) = self.campaign.as_mut() {
-                    campaign
-                        .subtract_value(crate::campaign::CampaignValue::Blazon as usize, quantity);
+                    campaign.subtract_value(crate::campaign::CampaignValue::Blazon, quantity);
                 }
                 if had_campaign {
                     // Refresh the information bars in campaign mode.
@@ -3262,7 +3258,7 @@ impl HostFunctions for GameHost {
                 GetRansomMoney => self
                     .campaign
                     .as_ref()
-                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom as usize))
+                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or_else(|| {
                         tracing::warn!("Script Error: GetRansomMoney called outside campaign mode");
                         -1
@@ -3315,8 +3311,7 @@ impl HostFunctions for GameHost {
                     // marked done.
                     let profiles = self.profile_manager.clone();
                     self.campaign.as_ref().map_or(0, |campaign| {
-                        let current =
-                            campaign.get_value(crate::campaign::CampaignValue::Blazon as usize);
+                        let current = campaign.get_value(crate::campaign::CampaignValue::Blazon);
                         let max = campaign.get_max_number_of_blazons(&profiles) as i32;
                         if current >= max { 1 } else { 0 }
                     })

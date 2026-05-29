@@ -1614,7 +1614,7 @@ impl EngineInner {
         let amulets = self
             .campaign
             .as_ref()
-            .map(|c| c.values[crate::campaign::CampaignValue::Amulets as usize])
+            .map(|c| c.values[crate::campaign::CampaignValue::Amulets])
             .unwrap_or(0);
         let char_idx = self
             .campaign
@@ -1901,7 +1901,7 @@ impl EngineInner {
             .unwrap_or(false);
         if bump_lacklandist_score && let Some(campaign) = self.campaign.as_mut() {
             campaign.add_value(
-                crate::campaign::CampaignValue::Score as usize,
+                crate::campaign::CampaignValue::Score,
                 SCORE_SOLDIER_KILLED_DURING_FIGHT,
             );
         }

@@ -3234,8 +3234,8 @@ pub(crate) fn render_ransom_amulet_overlay(
         None => return,
     };
 
-    let ransom = campaign.get_value(CampaignValue::Ransom as usize);
-    let amulets = campaign.get_value(CampaignValue::Amulets as usize);
+    let ransom = campaign.get_value(CampaignValue::Ransom);
+    let amulets = campaign.get_value(CampaignValue::Amulets);
 
     // Use localized menu-text format strings with `%d`.  The demo
     // data's English strings are "Money: £%d" and "Clover: %d"; fall

@@ -1570,7 +1570,7 @@ fn determine_use_command(
     {
         let ransom = engine
             .campaign()
-            .map(|c| c.get_value(robin_engine::campaign::CampaignValue::Ransom as usize))
+            .map(|c| c.get_value(robin_engine::campaign::CampaignValue::Ransom))
             .unwrap_or(0);
         if ransom >= robin_engine::engine::BEGGAR_SALARY {
             return Some(Command::Pay);

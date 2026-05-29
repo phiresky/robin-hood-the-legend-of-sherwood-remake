@@ -1081,7 +1081,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
         // (debriefing mission-length, profile `play_time` sync) all see
         // the campaign-owned counter.
         campaign
-            .get_value(robin_engine::campaign::CampaignValue::MissionLength as usize)
+            .get_value(robin_engine::campaign::CampaignValue::MissionLength)
             .max(0) as u32
     }
 }

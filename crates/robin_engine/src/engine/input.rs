@@ -1262,7 +1262,7 @@ impl EngineInner {
                 let ransom = self
                     .campaign
                     .as_ref()
-                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom as usize))
+                    .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                     .unwrap_or(0);
                 return if ransom >= crate::engine::BEGGAR_SALARY {
                     RHMOUSE_PAY_YES

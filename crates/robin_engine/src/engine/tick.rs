@@ -7980,7 +7980,7 @@ impl EngineInner {
         if self.frame_counter.is_multiple_of(FRAMES_PER_SECOND)
             && let Some(campaign) = self.campaign.as_mut()
         {
-            campaign.add_value(crate::campaign::CampaignValue::MissionLength as usize, 1);
+            campaign.add_value(crate::campaign::CampaignValue::MissionLength, 1);
         }
     }
 }

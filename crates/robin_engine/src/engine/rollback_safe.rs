@@ -558,7 +558,7 @@ impl Engine {
     /// the mission begins.
     pub fn campaign_reset_mission_length(&mut self) {
         if let Some(c) = self.inner.campaign.as_mut() {
-            c.set_value(crate::campaign::CampaignValue::MissionLength as usize, 0);
+            c.set_value(crate::campaign::CampaignValue::MissionLength, 0);
         }
     }
 

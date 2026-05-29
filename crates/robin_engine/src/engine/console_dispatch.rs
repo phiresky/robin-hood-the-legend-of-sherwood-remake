@@ -153,7 +153,7 @@ impl EngineInner {
             }
             GiveBlazon { amount } => {
                 self.campaign_mut_or_panic()
-                    .add_value(CampaignValue::Blazon as usize, *amount as i32);
+                    .add_value(CampaignValue::Blazon, *amount as i32);
                 // Rust HUD is immediate-mode but we still push the
                 // information-bars command so script-side consumers and
                 // the blazon-bar state recomputation see the hook —
@@ -169,7 +169,7 @@ impl EngineInner {
             }
             GiveAmulets { amount } => {
                 self.campaign_mut_or_panic()
-                    .set_value(CampaignValue::Amulets as usize, *amount as i32);
+                    .set_value(CampaignValue::Amulets, *amount as i32);
                 ConsoleResponse::Ok(format!("{amount} amulets set."))
             }
             AddPeasant => {
@@ -237,7 +237,7 @@ impl EngineInner {
                     if added > 0 {
                         tracing::info!("WIN cheat: rescued {added} PC(s)");
                     }
-                    campaign.add_value(CampaignValue::Blazon as usize, pending_blazons);
+                    campaign.add_value(CampaignValue::Blazon, pending_blazons);
                 }
                 // Rust's HUD is immediate-mode so no widget rebuild is
                 // needed, but we still push the information-bars
@@ -801,7 +801,7 @@ impl EngineInner {
                 let amulets = self
                     .campaign
                     .as_ref()
-                    .map(|c| c.get_value(CampaignValue::Amulets as usize))
+                    .map(|c| c.get_value(CampaignValue::Amulets))
                     .unwrap_or(0);
                 match (selected, amulets) {
                     (None, _) => {
@@ -1430,7 +1430,7 @@ mod tests {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::Ransom as usize);
+            .get_value(CampaignValue::Ransom);
         let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "EZB 500");
         assert_eq!(
             resp,
@@ -1440,7 +1440,7 @@ mod tests {
             .campaign
             .as_ref()
             .unwrap()
-            .get_value(CampaignValue::Ransom as usize);
+            .get_value(CampaignValue::Ransom);
         assert_eq!(after, before + 500);
     }
 

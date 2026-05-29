@@ -2379,11 +2379,11 @@ impl EngineInner {
     /// re-adding them at mission end would double-count.
     pub fn sync_stats_to_campaign(&self, campaign: &mut Campaign) {
         campaign.add_value(
-            CampaignValue::LivingSoldiers as usize,
+            CampaignValue::LivingSoldiers,
             self.mission_stat.living_soldier_count as i32,
         );
         campaign.add_value(
-            CampaignValue::DeadSoldiers as usize,
+            CampaignValue::DeadSoldiers,
             self.mission_stat
                 .total_soldier_count
                 .saturating_sub(self.mission_stat.living_soldier_count) as i32,
