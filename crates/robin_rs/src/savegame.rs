@@ -157,29 +157,6 @@ impl SaveGameManager {
         }
     }
 
-    /// Refresh slot metadata by reading save payloads from disk.
-    ///
-    /// Older `saves.json` indices lack the extended UI metadata added
-    /// after the JSON save format landed. The menu calls this once when
-    /// opening so existing saves can still display useful details.
-    pub fn refresh_metadata_from_disk(&mut self, profiles: Option<&ProfileManager>) {
-        for index in 0..self.saves.len() {
-            if !self.slot_file_exists(index) {
-                continue;
-            }
-            let path = self.save_path(index);
-            match GameSaveFile::read_from(&path) {
-                Ok(save) => self.sync_slot_metadata_from_save(index, &save, profiles),
-                Err(err) => {
-                    tracing::warn!(
-                        "Failed to refresh save metadata for slot {index} from {}: {err:#}",
-                        path.display()
-                    );
-                }
-            }
-        }
-    }
-
     /// Find the slot for one of the well-known special filenames, or
     /// create a new slot if none exists yet.  Used to manage the
     /// Continue / Restart / Sherwood / QuickSave auto-slots.
@@ -216,6 +193,33 @@ impl SaveGameManager {
         self.save_index_anyhow()
     }
 
+    /// Like [`write_continue_save`](Self::write_continue_save), but moves
+    /// the expensive JSON serialization + disk write to a background
+    /// thread. Used after load, where the player should regain control
+    /// as soon as the save has been applied.
+    pub fn write_continue_save_background(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) {
+        self.write_special_save_background(
+            save_file::special_slots::CONTINUE,
+            "Continue",
+            "continue-save",
+            "Background continue save",
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            thumbnail,
+        );
+    }
+
     /// Save the current engine state to the "QuickSave" slot.
     /// The previous quick save (if any) is rotated to "ExQuickSave".
     pub fn write_quick_save(
@@ -236,16 +240,7 @@ impl SaveGameManager {
                 self.ensure_special_slot(save_file::special_slots::EX_QUICK, "Previous Quick Save");
             self.copy_files(quick_idx, ex_idx)
                 .map_err(|e| anyhow::anyhow!(e))?;
-            if self.slot_file_exists(ex_idx) {
-                let path = self.save_path(ex_idx);
-                match GameSaveFile::read_from(&path) {
-                    Ok(save) => self.sync_slot_metadata_from_save(ex_idx, &save, profiles),
-                    Err(err) => tracing::warn!(
-                        "Failed to refresh rotated quick-save metadata from {}: {err:#}",
-                        path.display()
-                    ),
-                }
-            }
+            self.copy_display_metadata(quick_idx, ex_idx);
         }
         let idx = self.ensure_special_slot(save_file::special_slots::QUICK, "Quick Save");
         self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
@@ -283,7 +278,34 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) {
-        let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point");
+        self.write_special_save_background(
+            save_file::special_slots::RESTART,
+            "Restart Point",
+            "restart-save",
+            "Background restart save",
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            thumbnail,
+        );
+    }
+
+    fn write_special_save_background(
+        &mut self,
+        filename: &str,
+        display_text: &str,
+        thread_name: &str,
+        log_label: &'static str,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) {
+        let idx = self.ensure_special_slot(filename, display_text);
         let display_text = self.saves[idx].text.clone();
         // Capture (clone) on the main thread — fast.
         let save = GameSaveFile::capture_with_game(engine, host, game, mission_id, display_text);
@@ -302,23 +324,23 @@ impl SaveGameManager {
         // mid-mission stall, but no other path until we either offload
         // to a Web Worker or move the write off the critical path.
         let do_write = move || {
-            tracing::info!("Background restart save: writing to {}", path.display());
+            tracing::info!("{log_label}: writing to {}", path.display());
             if let Err(err) = save.write_to(&path) {
-                tracing::warn!("Background restart save failed: {err:#}");
+                tracing::warn!("{log_label} failed: {err:#}");
             }
             if let Some(thumb) = thumb_data
                 && let Err(err) = thumb.write_to(&thumb_path)
             {
-                tracing::warn!("Background restart thumbnail failed: {err:#}");
+                tracing::warn!("{log_label} thumbnail failed: {err:#}");
             }
-            tracing::info!("Background restart save complete");
+            tracing::info!("{log_label} complete");
         };
         #[cfg(not(target_arch = "wasm32"))]
         {
             std::thread::Builder::new()
-                .name("restart-save".into())
+                .name(thread_name.into())
                 .spawn(do_write)
-                .expect("failed to spawn restart-save thread");
+                .expect("failed to spawn background save thread");
         }
         #[cfg(target_arch = "wasm32")]
         do_write();
@@ -429,6 +451,13 @@ impl SaveGameManager {
         self.saves.get_mut(index)
     }
 
+    pub fn slot_mission_id(&self, index: usize) -> Option<u32> {
+        self.saves
+            .get(index)
+            .map(|save| save.mission_id)
+            .filter(|&mission_id| mission_id != 0)
+    }
+
     pub fn find_by_name(&self, text: &str) -> Option<usize> {
         self.saves.iter().position(|s| s.text == text)
     }
@@ -505,12 +534,6 @@ impl SaveGameManager {
     /// any thumbnail.  Used by the quick-save rotation to preserve the
     /// previous quick-save as ExQuickSave.
     ///
-    /// After copying, refreshes the destination slot's cached metadata
-    /// (`mission_id`, `version`, `timestamp`) by re-reading the just-copied
-    /// header.  Without this, the ExQuickSave rotation would leave the
-    /// slot's `mission_id` / `timestamp` at whatever `ensure_special_slot`
-    /// seeded (0 / "") — observable in the load/save UI which reads
-    /// these directly.
     pub fn copy_files(&mut self, src: usize, dst: usize) -> Result<(), String> {
         // JSON payload
         let src_json = self.save_path(src);
@@ -534,23 +557,28 @@ impl SaveGameManager {
             std::fs::copy(&src_thumb, &dst_thumb).map_err(|e| format!("copy thumb: {e}"))?;
         }
 
-        // Refresh dst slot's cached header fields from the file we just
-        // wrote so subsequent UI reads see the freshly-copied values.
-        if dst_json.exists() {
-            match GameSaveFile::read_header_only(&dst_json) {
-                Ok(header) => {
-                    let slot = &mut self.saves[dst];
-                    Self::sync_slot_metadata_from_header(slot, &header);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "copy_files: failed to refresh dst slot {dst} header from {}: {e:#}",
-                        dst_json.display()
-                    );
-                }
-            }
-        }
         Ok(())
+    }
+
+    fn copy_display_metadata(&mut self, src: usize, dst: usize) {
+        let Some(src) = self.saves.get(src).cloned() else {
+            return;
+        };
+        let Some(dst) = self.saves.get_mut(dst) else {
+            return;
+        };
+
+        dst.mission_id = src.mission_id;
+        dst.version = src.version;
+        dst.timestamp = src.timestamp;
+        dst.mission_name = src.mission_name;
+        dst.campaign_progress = src.campaign_progress;
+        dst.missions_done = src.missions_done;
+        dst.missions_total = src.missions_total;
+        dst.gang_size = src.gang_size;
+        dst.ransom = src.ransom;
+        dst.blazons = src.blazons;
+        dst.amulets = src.amulets;
     }
 
     /// Write a full save file (engine + campaign) to the given slot.
@@ -864,37 +892,6 @@ mod tests {
             .unwrap();
         assert_eq!(engine2.frame_counter(), 42);
         assert!(engine2.campaign().is_some());
-    }
-
-    #[test]
-    fn refresh_metadata_from_disk_backfills_save_details() {
-        use tempfile::tempdir;
-
-        let tmp = tempdir().unwrap();
-        let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
-        let (engine, _assets) = fresh_engine();
-        let mut host = Host::new(800.0, 600.0);
-        let game = crate::game::Game::default();
-
-        let idx = mgr.create("Slot A".into(), 17);
-        mgr.write_save_from_engine(&mut host, &game, idx, &engine, 17, None, None)
-            .unwrap();
-
-        let slot = mgr.get_mut(idx).unwrap();
-        slot.timestamp.clear();
-        slot.missions_done = None;
-        slot.missions_total = None;
-        slot.gang_size = None;
-        slot.ransom = None;
-
-        mgr.refresh_metadata_from_disk(None);
-        let slot = mgr.get(idx).unwrap();
-        assert_eq!(slot.mission_id, 17);
-        assert!(!slot.timestamp.is_empty());
-        assert_eq!(slot.missions_done, Some(0));
-        assert_eq!(slot.missions_total, Some(1));
-        assert_eq!(slot.gang_size, Some(0));
-        assert_eq!(slot.ransom, Some(robin_engine::campaign::INITIAL_RANSOM));
     }
 
     #[test]

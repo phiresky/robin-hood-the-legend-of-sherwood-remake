@@ -1051,8 +1051,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
     fn save_game_mission_id(&self) -> u32 {
         self.save_manager
             .find_by_filename(crate::save_file::special_slots::CONTINUE)
-            .and_then(|idx| self.save_manager.read_slot_header(idx).ok())
-            .map(|h| h.mission_id)
+            .and_then(|idx| self.save_manager.slot_mission_id(idx))
             .unwrap_or(0)
     }
     fn set_sound_mode(&mut self, mode: crate::game::SoundMode) {
@@ -1297,26 +1296,21 @@ pub(crate) fn perform_pending_save_load(
             match target {
                 Some(idx) => {
                     if mission_id != 0 {
-                        match callbacks.save_manager.read_slot_header(idx) {
-                            Ok(header) if header.mission_id != mission_id => {
-                                tracing::info!(
-                                    "Load slot {idx}: cross-mission load (header={}, current={}) — \
-                                     routing through session LevelLoad",
-                                    header.mission_id,
-                                    mission_id,
-                                );
-                                callbacks.pending_level_load = Some(PendingLevelLoad {
-                                    slot: idx,
-                                    target_mission_id: header.mission_id,
-                                });
-                                return true;
-                            }
-                            Ok(_) => {}
-                            Err(err) => {
-                                tracing::warn!(
-                                    "Load slot {idx}: failed to read header for mission-ID check: {err:#}"
-                                );
-                            }
+                        let target_mission_id = callbacks.save_manager.slot_mission_id(idx);
+                        if let Some(target_mission_id) = target_mission_id
+                            && target_mission_id != mission_id
+                        {
+                            tracing::info!(
+                                "Load slot {idx}: cross-mission load (header={}, current={}) — \
+                                 routing through session LevelLoad",
+                                target_mission_id,
+                                mission_id,
+                            );
+                            callbacks.pending_level_load = Some(PendingLevelLoad {
+                                slot: idx,
+                                target_mission_id,
+                            });
+                            return true;
                         }
                     }
                     match callbacks
@@ -1354,21 +1348,17 @@ pub(crate) fn perform_pending_save_load(
                             // don't clobber the slot we just loaded.
                             let mid = callbacks
                                 .save_manager
-                                .read_slot_header(idx)
-                                .map(|h| h.mission_id)
+                                .slot_mission_id(idx)
                                 .unwrap_or(mission_id);
-                            if !is_continue
-                                && !is_restart
-                                && let Err(err) = callbacks.save_manager.write_continue_save(
+                            if !is_continue && !is_restart {
+                                callbacks.save_manager.write_continue_save_background(
                                     host,
                                     game,
                                     engine,
                                     mid,
                                     Some(profiles),
                                     thumb_ref,
-                                )
-                            {
-                                tracing::warn!("Continue-mirror after load failed: {err:#}");
+                                );
                             }
                             // Show "Game loaded." banner unless the slot
                             // is Restart / Sherwood.
@@ -1491,21 +1481,15 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror into the Continue slot — QuickSave is
                             // neither Continue nor Restart so it always
                             // mirrors.
-                            let mid = callbacks
-                                .save_manager
-                                .read_slot_header(i)
-                                .map(|h| h.mission_id)
-                                .unwrap_or(0);
-                            if let Err(err) = callbacks.save_manager.write_continue_save(
+                            let mid = callbacks.save_manager.slot_mission_id(i).unwrap_or(0);
+                            callbacks.save_manager.write_continue_save_background(
                                 host,
                                 game,
                                 engine,
                                 mid,
                                 Some(profiles),
                                 thumb_ref,
-                            ) {
-                                tracing::warn!("Continue-mirror after quick-load failed: {err:#}");
-                            }
+                            );
                             callbacks.pending_save_banner = Some(SaveBannerKind::Loaded);
                             tracing::info!("Quick save loaded from {slot_name}");
                         }

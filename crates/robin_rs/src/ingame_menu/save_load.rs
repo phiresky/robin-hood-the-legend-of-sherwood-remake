@@ -113,7 +113,7 @@ pub async fn show_save_load(
     mut cursor: Option<ModalCursor<'_>>,
     save_manager: &mut SaveGameManager,
     mission_id: u32,
-    profiles: Option<&ProfileManager>,
+    _profiles: Option<&ProfileManager>,
     mode: SaveLoadMode,
     mut sound: Option<&mut SoundManager>,
     mut audio_backend: Option<&mut dyn AudioBackend>,
@@ -126,8 +126,6 @@ pub async fn show_save_load(
         SaveLoadMode::Load => LOAD_LIST_RECT,
         SaveLoadMode::Save => SAVE_LIST_RECT,
     };
-    save_manager.refresh_metadata_from_disk(profiles);
-
     let (btn_w, btn_h) = resources.button_dimensions();
     let load_save_label = resources.menu_text.get(match mode {
         SaveLoadMode::Save => MT_BTN_SAVE,
