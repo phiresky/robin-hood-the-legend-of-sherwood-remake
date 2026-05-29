@@ -104,10 +104,10 @@ impl EngineInner {
 
     /// Map-space per-pixel hit test for a sprite.
     ///
-    /// Builds a map-space AABB from `position_sprite + current_offset`
-    /// (where `position_sprite = position_map − sprite_center`), then
-    /// checks containment and pixel-tests the packed sprite data
-    /// against the transparent color key and night shadow color.
+    /// Builds a map-space AABB from
+    /// `floor(position_map - sprite.center) + current_offset`, then checks
+    /// containment and pixel-tests the packed sprite data against the
+    /// transparent color key and night shadow color.
     ///
     /// When `blue_pixels_are_in` is `true`, night-shadow pixels count
     /// as opaque (used for blipped entities).
@@ -129,8 +129,7 @@ impl EngineInner {
             return dx * dx + dy * dy < 400.0;
         }
 
-        // Box from position_sprite + offset to + size.
-        // position_sprite = position_map − sprite_center.
+        // Box from C++ sprite position + offset to + size.
         let offset = sprite.current_offset();
         let left = elem.position_map().x - sprite.center.x + offset.x;
         let top = elem.position_map().y - sprite.center.y + offset.y;
@@ -1873,7 +1872,6 @@ impl EngineInner {
     ) -> TrajectoryPreview {
         use crate::bow_shot;
         use crate::element::Point3D;
-        use crate::weapons::ShootMode;
 
         // Determine mass and apex based on the selected action.
         // For bow, only preview long (arced) shots.
@@ -1887,11 +1885,9 @@ impl EngineInner {
                 (bow_shot::MASS_WASP_NEST, Some(bow_shot::APEX_WASP_NEST))
             }
             crate::profiles::Action::Bow => {
-                // Only preview long (arced) shots — flat shots have no visible arc.
-                if shoot_mode != ShootMode::Long {
-                    return TrajectoryPreview::Invalid;
-                }
-                (bow_shot::MASS_ARROW_HIGH, None) // apex computed from distance
+                // Debug preview: show the projectile path for every bow mode,
+                // including direct/flat shots. C++ only displays long shots.
+                (bow_shot::arrow_mass(shoot_mode), None)
             }
             _ => return TrajectoryPreview::Invalid,
         };
@@ -1906,10 +1902,10 @@ impl EngineInner {
         // every projectile action. Bow uses ComputeBowPoint(LongShoot);
         // throwables use their own throwing animation hand point.
         let direction = {
-            let shooter_map = pc.element_data().position_map();
+            let shooter_pos = pc.element_data().position();
             crate::position_interface::vector_to_sector_0_to_15_iso(
-                target_point.x - shooter_map.x,
-                bow_ground_y(target_point) - shooter_map.y,
+                target_point.x - shooter_pos.x,
+                bow_ground_y(target_point) - bow_ground_y(shooter_pos),
             )
         };
         let throwable_source = |animation| {
@@ -1928,21 +1924,17 @@ impl EngineInner {
                     z: elevation,
                 };
                 let Some(sprite_hand_point) =
-                    bow_shot::bow_sprite_hand_point(pc, ShootMode::Long, direction)
+                    bow_shot::bow_sprite_hand_point(pc, shoot_mode, direction)
                 else {
                     tracing::warn!(
                         ?pc_id,
+                        ?shoot_mode,
                         direction,
-                        "compute_trajectory_preview_to_point: missing long-shot bow-point sprite hotspot"
+                        "compute_trajectory_preview_to_point: missing bow-point sprite hotspot"
                     );
                     return TrajectoryPreview::Invalid;
                 };
-                bow_shot::compute_bow_point(
-                    shooter_pos,
-                    ShootMode::Long,
-                    direction,
-                    sprite_hand_point,
-                )
+                bow_shot::compute_bow_point(shooter_pos, shoot_mode, direction, sprite_hand_point)
             }
             crate::profiles::Action::Apple => {
                 match throwable_source(crate::order::OrderType::ThrowingApple) {
@@ -2024,31 +2016,40 @@ impl EngineInner {
             _ => None,
         };
 
-        // Apex height: for throwables use the fixed apex constant;
-        // for arrows compute from distance.
-        let dx = target_point.x - source_point.x;
-        let dy = target_point.y - source_point.y;
-        let dz = target_point.z - source_point.z;
-        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-        let apex_height = apex_height_override.unwrap_or_else(|| (distance / 10.0).max(1.0));
-
-        let direction_vec = Point3D {
-            x: dx,
-            y: dy,
-            z: dz,
-        };
-        let flight_time = if selected_action == crate::profiles::Action::Stone {
-            1
+        let velocity = if selected_action == crate::profiles::Action::Bow {
+            let (velocity, _, _) = bow_shot::compute_shot_velocity_params(
+                source_point,
+                target_point,
+                shoot_mode,
+                target_forecasted_movement,
+            );
+            velocity
         } else {
-            0
+            // Apex height: for throwables use the fixed apex constant.
+            let dx = target_point.x - source_point.x;
+            let dy = target_point.y - source_point.y;
+            let dz = target_point.z - source_point.z;
+            let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+            let apex_height = apex_height_override.unwrap_or_else(|| (distance / 10.0).max(1.0));
+
+            let direction_vec = Point3D {
+                x: dx,
+                y: dy,
+                z: dz,
+            };
+            let flight_time = if selected_action == crate::profiles::Action::Stone {
+                1
+            } else {
+                0
+            };
+            bow_shot::compute_initial_throw_velocity(
+                direction_vec,
+                apex_height,
+                mass,
+                flight_time,
+                target_forecasted_movement,
+            )
         };
-        let velocity = bow_shot::compute_initial_throw_velocity(
-            direction_vec,
-            apex_height,
-            mass,
-            flight_time,
-            target_forecasted_movement,
-        );
 
         // Compute trajectory with obstacle checking.
         let Some(layer) = self.get_entity(pc_id).map(|e| e.element_data().layer()) else {
@@ -2073,7 +2074,7 @@ impl EngineInner {
             source_point,
             velocity,
             mass,
-            false,
+            selected_action == crate::profiles::Action::Bow && bow_shot::is_flat_shot(shoot_mode),
             if bow_fx_forest_magic_preview {
                 None
             } else {
@@ -2699,9 +2700,9 @@ impl EngineInner {
                 continue;
             }
 
-            let pos = entity.element_data().position_map();
+            let pos = entity.element_data().position();
             let dx = ground_pt.x - pos.x;
-            let dy = ground_pt.y - pos.y;
+            let dy = ground_pt.y - bow_ground_y(pos);
 
             // C++ turns toward ptFocusHotSpot before AimWithBowAt()
             // resolves Normal vs Long.  The bow LOS check uses the

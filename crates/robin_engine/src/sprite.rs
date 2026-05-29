@@ -744,9 +744,9 @@ impl Sprite {
     }
 
     /// Current-row hotspot offset — the per-row anchor stored in the
-    /// sprite script.  Caller adds this to `position_sprite` /
-    /// `position_map` to produce the current map-space hotspot, used
-    /// by `MoveUsePoint` seek-arrival.
+    /// sprite script. Caller combines this with
+    /// `Entity::cxx_position_sprite()` to produce the current map-space
+    /// hotspot, used by `MoveUsePoint` seek-arrival.
     pub fn current_hotspot(&self) -> Option<Point2D> {
         let scripts = self.current_scripts_opt()?;
         scripts.get(self.current_row as usize).map(|s| s.hotspot)
@@ -774,8 +774,8 @@ impl Sprite {
     /// The reference computes:
     /// `norm(GetPoint(animation, direction) + GetPositionSprite() - GetPositionMap())`.
     /// Rust keeps the authoritative sprite anchor in [`Self::center`], so the
-    /// legacy implementation sprite-position term is reconstructed from `position_map - center`
-    /// instead of reading `PositionInterface::position_sprite` directly.
+    /// legacy implementation sprite-position term is reconstructed from
+    /// `position_map - center`.
     pub fn action_distance(&self, animation: OrderType) -> Result<f32, String> {
         let direction = self.position_iface.get_direction().as_u8() as u16;
         let Some(point) = self.get_point(animation, direction) else {

@@ -300,14 +300,9 @@ pub(crate) async fn run_mission_headless(
             result
         };
 
-        crate::http_server::drain_global(
-            &mut manager,
-            &mut host.engine_display,
-            &assets,
-            &mut host.input,
-            &mut host.selected_view_element,
-            host.net.as_ref(),
-        );
+        let net = host.net.take();
+        crate::http_server::drain_global(&mut manager, &mut host, &assets, net.as_ref());
+        host.net = net;
         if host.pending_mission_state_popup {
             host.pending_mission_state_popup = false;
             let kind = robin_engine::player_command::ModalKind::MissionState {
@@ -3044,14 +3039,9 @@ pub(crate) async fn run_mission(
         // that just finished.  No-op when the HTTP server is disabled
         // or the mission isn't loaded yet (each handler returns an
         // `Err` that's relayed back).
-        crate::http_server::drain_global(
-            &mut manager,
-            &mut host.engine_display,
-            &assets,
-            &mut host.input,
-            &mut host.selected_view_element,
-            host.net.as_ref(),
-        );
+        let net = host.net.take();
+        crate::http_server::drain_global(&mut manager, &mut host, &assets, net.as_ref());
+        host.net = net;
 
         // ── Rollback check + rewind buffer commit ──
         // Both are post-tick bookkeeping.  Skipped on paused frames

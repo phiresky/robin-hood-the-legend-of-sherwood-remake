@@ -2703,6 +2703,20 @@ impl Entity {
         &mut self.element_data_mut().sprite.position_iface
     }
 
+    /// C++ `GetPositionSprite()` equivalent for gameplay hotspot lookups.
+    ///
+    /// `Sprite::center` is the anchor loaded from the sprite data and used by
+    /// rendering/input. C++ computes sprite position as
+    /// `position_map - sprite_center`, so reconstruct that here.
+    pub fn cxx_position_sprite(&self) -> crate::geo2d::Point2D {
+        let map = self.element_data().position_map();
+        let center = self.sprite().center;
+        crate::geo2d::Point2D {
+            x: (map.x - center.x).floor(),
+            y: (map.y - center.y).floor(),
+        }
+    }
+
     /// 2D projection of the 3D position.  Returns `(map.x, map.y + z)`
     /// where Z is the elevation from the entity's ground plane.
     pub fn position_ground(&self) -> crate::geo2d::Point2D {
@@ -2939,10 +2953,9 @@ impl Entity {
         use Posture::*;
         match e.posture {
             Lying | StuckUnderNet | Tied => {
-                //   pt_map = position_sprite + sprite_hotspot
+                //   pt_map = floor(position_map - sprite.center) + sprite_hotspot
                 //   pt_stars = (pt_map.x, pt_map.y + elev+5, elev+5)
-                // The sprite-position floor (`floor(position_map -
-                // sprite_center)`) is applied before the row hotspot
+                // The sprite-position floor is applied before the row hotspot
                 // is added, so the titbit anchor matches the rendered
                 // body.
                 //
@@ -3087,11 +3100,10 @@ impl Entity {
         // Seed X/Y from the per-frame sprite hotspot; fall back to
         // the feet point if the sprite has no script bound (headless
         // test).
-        let pi = self.position_iface();
-        let elevation = pi.get_elevation();
+        let elevation = self.position_iface().get_elevation();
         let mut hand = match self.sprite().current_hotspot() {
             Some(hp) => {
-                let ps = pi.get_position_sprite();
+                let ps = self.cxx_position_sprite();
                 Point3D {
                     x: ps.x + hp.x,
                     y: ps.y + hp.y + elevation,
@@ -3158,11 +3170,10 @@ impl Entity {
         // animation+direction (mirrors bow_shot::shoot_order_type_for_mode
         // sprite lookup pattern).  Fall back to feet point if the lookup
         // fails (e.g. unmapped animation).
-        let pi = self.position_iface();
-        let elevation = pi.get_elevation();
+        let elevation = self.position_iface().get_elevation();
         let mut hand = match self.sprite().get_point(animation, direction as u16) {
             Some(hp) => {
-                let ps = pi.get_position_sprite();
+                let ps = self.cxx_position_sprite();
                 Point3D {
                     x: ps.x + hp.x,
                     y: ps.y + hp.y + elevation,

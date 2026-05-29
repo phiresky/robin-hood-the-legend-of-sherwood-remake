@@ -358,7 +358,7 @@ pub(crate) fn bow_sprite_hand_point(
     direction: i16,
 ) -> Option<crate::geo2d::Point2D> {
     let dir = u16::try_from(direction).ok()?;
-    let sprite_pos = entity.position_iface().get_position_sprite();
+    let sprite_pos = entity.cxx_position_sprite();
     let offset = entity
         .element_data()
         .sprite
@@ -1416,17 +1416,24 @@ fn aim_transition_orders(
 
 fn bow_target_ground_position(entity: &Entity) -> ElemPoint2D {
     if entity.is_fx_target() {
-        let pos = entity.element_data().position();
-        // C++ bow facing uses the target's rendered ground position.
-        // Scripted targets store their interaction point in
-        // position_map, so use the 3D sprite position projected back
-        // onto the ground plane instead.
-        ElemPoint2D {
-            x: pos.x,
-            y: pos.y - pos.z,
-        }
+        entity
+            .compute_target_center()
+            .map(|pos| ElemPoint2D { x: pos.x, y: pos.y })
+            .unwrap_or_else(|| {
+                let pos = entity.element_data().position();
+                ElemPoint2D { x: pos.x, y: pos.y }
+            })
+    } else if entity.is_human() {
+        entity
+            .compute_belt_point()
+            .map(|pos| ElemPoint2D { x: pos.x, y: pos.y })
+            .unwrap_or_else(|| {
+                let pos = entity.element_data().position();
+                ElemPoint2D { x: pos.x, y: pos.y }
+            })
     } else {
-        entity.element_data().position_map()
+        let pos = entity.element_data().position();
+        ElemPoint2D { x: pos.x, y: pos.y }
     }
 }
 
@@ -1647,7 +1654,7 @@ pub fn begin_bow_shot(
         .get_mut(shooter_id.0 as usize)
         .and_then(|s| s.as_mut())
         .unwrap();
-    let shooter_pos = shooter.element_data().position_map();
+    let shooter_pos = shooter.element_data().position();
     let dx = tx - shooter_pos.x;
     let dy = ty - shooter_pos.y;
     shooter.element_data_mut().set_direction_goal(
@@ -1790,7 +1797,7 @@ pub fn tick_bow_shots(
             && let Some(target_id) = shot.target
             && let Some(Some(target_pos)) = target_ground_positions.get(target_id.0 as usize)
         {
-            let shooter_pos = entity.element_data().position_map();
+            let shooter_pos = entity.element_data().position();
             let dx = target_pos.x - shooter_pos.x;
             let dy = target_pos.y - shooter_pos.y;
             entity.element_data_mut().set_direction_goal(
@@ -4384,7 +4391,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_bow_shot_faces_arrow_fx_target_ground_projection() {
+    fn begin_bow_shot_faces_arrow_fx_target_cxx_ground_y() {
         let mut target = make_arrow_target(50.0, 120.0);
         target.element_data_mut().set_position(Point3D {
             x: 50.0,
@@ -4419,16 +4426,16 @@ mod tests {
         );
         assert_eq!(
             direction_goal,
-            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
         );
         assert_ne!(
             direction_goal,
-            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
         );
     }
 
     #[test]
-    fn tick_bow_shots_keeps_facing_fx_target_ground_projection() {
+    fn tick_bow_shots_keeps_facing_fx_target_cxx_ground_y() {
         let mut target = make_arrow_target(50.0, 120.0);
         target.element_data_mut().set_position(Point3D {
             x: 50.0,
@@ -4466,11 +4473,11 @@ mod tests {
         );
         assert_eq!(
             direction_goal,
-            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
         );
         assert_ne!(
             direction_goal,
-            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 20.0)
+            crate::position_interface::vector_to_sector_0_to_15_iso(50.0, -80.0)
         );
     }
 

@@ -45,6 +45,28 @@ fn apply_trajectory_preview(host: &mut Host, preview: TrajectoryPreview) {
     }
 }
 
+fn apply_debug_trajectory_preview(host: &mut Host, preview: TrajectoryPreview) {
+    match preview {
+        TrajectoryPreview::ShowArc {
+            points,
+            start,
+            crumpled,
+            layer,
+        } => {
+            host.valid_trajectory = false;
+            host.trajectory_preview_points = points;
+            host.trajectory_preview_start = start;
+            host.trajectory_preview_layer = layer;
+            host.net_crumpled = crumpled;
+        }
+        _ => {
+            host.valid_trajectory = false;
+            host.trajectory_preview_points.clear();
+            host.net_crumpled = false;
+        }
+    }
+}
+
 fn door_click_polygon_at(engine: &Engine, mouse_map: Point2D) -> Option<u32> {
     engine
         .mission_script()
@@ -981,6 +1003,17 @@ pub fn update_mouse(
 
                     // Out of range overrides everything.
                     if bow_target == BowTarget::OutOfRange {
+                        const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                        if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
+                            && host.trajectory_preview_points.is_empty()
+                        {
+                            apply_debug_trajectory_preview(
+                                host,
+                                engine.compute_trajectory_preview(
+                                    assets, pc_id, target_id, shoot_mode,
+                                ),
+                            );
+                        }
                         cursor = RHMOUSE_BOW_OUT;
                         opacity = 50;
                         shadow_color = MOUSE_BOW_NO_COLOR;

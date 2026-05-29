@@ -111,6 +111,8 @@ pub enum HttpPayload {
     Command(PlayerCommand),
     /// `GET /state` / `robin.call("state")` — compact frame/replay status.
     State,
+    /// `GET /host-debug` / `robin.call("host-debug")` — host/UI-only state.
+    HostDebug,
     /// `GET /engine-dump` — full serialized engine for ad-hoc debug.
     EngineDump,
     /// `GET /script` — class/function listing for the mission script.
@@ -343,6 +345,7 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
             (Method::Get, "/") | (Method::Get, "/info") => (200, info_json().into()),
             (Method::Get, "/natives") => (200, list_natives_json().into()),
             (Method::Get, "/state") => relay(&queue, HttpPayload::State),
+            (Method::Get, "/host-debug") => relay(&queue, HttpPayload::HostDebug),
             (Method::Get, "/engine-dump") => relay(&queue, HttpPayload::EngineDump),
             (Method::Get, "/script") => relay(&queue, HttpPayload::Script),
             (Method::Get, "/script/decompile") => {
@@ -589,6 +592,7 @@ fn info_json() -> serde_json::Value {
         "endpoints": [
             {"method": "GET",  "path": "/natives",            "desc": "list every NativeFn (index, name, params, return type)"},
             {"method": "GET",  "path": "/engine-dump",        "desc": "full serialized engine for ad-hoc debug"},
+            {"method": "GET",  "path": "/host-debug",         "desc": "host/UI state for ad-hoc debug, including trajectory preview and mouse hover fields"},
             {"method": "GET",  "path": "/script",             "desc": "mission-script class & function listing"},
             {"method": "GET",  "path": "/script/decompile",   "desc": "decompile to TypeScript-like pseudocode (?class=Foo)"},
             {"method": "POST", "path": "/native",             "desc": "invoke one native: {op, args, this?}"},
@@ -688,10 +692,8 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
 
 pub fn drain_global(
     manager: &mut robin_engine::engine_manager::EngineManager,
-    display: &mut robin_engine::engine::HostDisplayState,
+    host: &mut crate::Host,
     assets: &LevelAssets,
-    input: &mut robin_engine::engine::InputState,
-    selected_view_element: &mut Option<robin_engine::element::EntityId>,
     net: Option<&crate::multiplayer::NetChannels>,
 ) {
     let engine = &mut manager.engine;
@@ -752,14 +754,19 @@ pub fn drain_global(
                         kind: StepKind::SetPaused { paused },
                     });
             }
+            HttpPayload::HostDebug => {
+                req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
+                    engine, host, assets,
+                ))));
+            }
             other => {
                 let reply = dispatch_in_engine(
                     other,
                     engine,
-                    display,
+                    &mut host.engine_display,
                     assets,
-                    input,
-                    selected_view_element,
+                    &mut host.input,
+                    &mut host.selected_view_element,
                     net,
                 );
                 req.response_tx.send(reply);
@@ -821,6 +828,7 @@ fn dispatch_in_engine(
             Ok(ReplyBody::Json(serde_json::json!({"ok": true})))
         }
         HttpPayload::State => Ok(ReplyBody::Json(snapshot_state(engine))),
+        HttpPayload::HostDebug => Err("host-debug must be routed via drain_global".into()),
         HttpPayload::EngineDump => engine_dump_json(engine)
             .map(ReplyBody::Json)
             .map_err(|e| format!("engine serialize: {e}")),
@@ -857,6 +865,367 @@ fn snapshot_state(engine: &Engine) -> serde_json::Value {
         "frame": engine.frame_counter(),
         "map": engine.mission_map_name(),
         "replay": replay,
+    })
+}
+
+fn snapshot_host_debug(
+    engine: &Engine,
+    host: &crate::Host,
+    assets: &LevelAssets,
+) -> serde_json::Value {
+    let selected_action = engine.selected_action_for_seat(host.local_seat);
+    let selected_pc = engine.seat_selection(host.local_seat).first().copied();
+    let selected_pc_state = selected_pc.and_then(|id| {
+        engine.get_entity(id).map(|entity| {
+            serde_json::json!({
+                "id": id,
+                "kind": entity.kind(),
+                "pc_current_action": entity.pc_data().map(|pc| pc.current_action),
+                "actor_action_state": entity.actor_data().map(|actor| actor.action_state),
+                "position_map": entity.element_data().position_map(),
+                "position_3d": entity.element_data().position(),
+                "layer": entity.element_data().layer(),
+                "direction": entity.element_data().direction(),
+            })
+        })
+    });
+    let last_preview_point = host.trajectory_preview_points.last().map(|point| {
+        serde_json::json!({
+            "position": point.position,
+            "time": point.time,
+        })
+    });
+    let bow_hover = match (selected_action, selected_pc, host.input.focused_entity_id) {
+        (robin_engine::profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
+            let (target_status, shoot_mode) =
+                engine.can_shoot_with_bow_at(assets, pc_id, target_id);
+            Some(serde_json::json!({
+                "target_id": target_id,
+                "target_status": format!("{target_status:?}"),
+                "shoot_mode": format!("{shoot_mode:?}"),
+                "range_debug": bow_range_debug(engine, assets, pc_id, target_id),
+            }))
+        }
+        _ => None,
+    };
+
+    serde_json::json!({
+        "frame": engine.frame_counter(),
+        "selected_action": selected_action,
+        "selection": engine.seat_selection(host.local_seat),
+        "selected_pc": selected_pc_state,
+        "valid_trajectory": host.valid_trajectory,
+        "trajectory_preview_points_len": host.trajectory_preview_points.len(),
+        "trajectory_preview_start": host.trajectory_preview_start,
+        "trajectory_preview_last": last_preview_point,
+        "trajectory_preview_layer": host.trajectory_preview_layer,
+        "net_crumpled": host.net_crumpled,
+        "time_no_mouse_move": host.time_no_mouse_move,
+        "mouse_map_prev": host.mouse_map_prev,
+        "trajectory_mark_count": host.trajectory_mark_count,
+        "bow_hover": bow_hover,
+        "input": {
+            "focused_entity_id": host.input.focused_entity_id,
+            "target_drag": host.input.target_drag,
+            "double_status_bar_entity_id": host.input.double_status_bar_entity_id,
+            "selected_layer": host.input.selected_layer,
+            "selected_sector_idx": host.input.selected_sector_idx,
+            "selected_patch_idx": host.input.selected_patch_idx,
+            "hovered_door_idx": host.input.hovered_door_idx,
+            "valid_position_for_move": host.input.valid_position_for_move,
+            "mouse_opacity": host.input.mouse_opacity,
+            "mouse_shadow_color": host.input.mouse_shadow_color,
+            "left_mouse_down": host.input.left_mouse_down,
+            "right_mouse_down": host.input.right_mouse_down,
+            "is_dragging": host.input.is_dragging,
+            "is_alt": host.input.is_alt,
+        },
+    })
+}
+
+fn bow_debug_ground_y_raw(point: robin_engine::element::Point3D) -> f32 {
+    point.y
+}
+
+fn bow_debug_ground_y_projected(point: robin_engine::element::Point3D) -> f32 {
+    point.y - point.z
+}
+
+fn cxx_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> u8 {
+    const COS_PI_SIXTEENTH: f32 = 0.980_785_25;
+    const SIN_PI_SIXTEENTH: f32 = 0.195_090_32;
+    const TAN_PI_EIGHTH: f32 = 0.414_213_57;
+
+    let mut rotated_x = x * COS_PI_SIXTEENTH * aspect_ratio - y * SIN_PI_SIXTEENTH;
+    let mut rotated_y = x * SIN_PI_SIXTEENTH * aspect_ratio + y * COS_PI_SIXTEENTH;
+
+    let west = rotated_x < 0.0;
+    if west {
+        rotated_x = -rotated_x;
+    }
+
+    let south = rotated_y > 0.0;
+    if !south {
+        rotated_y = -rotated_y;
+    }
+
+    let east_west = rotated_y < rotated_x;
+    let skew = if east_west {
+        rotated_y > rotated_x * TAN_PI_EIGHTH
+    } else {
+        rotated_x > rotated_y * TAN_PI_EIGHTH
+    };
+
+    let mut sector = 0u8;
+    if west {
+        sector |= 8;
+    }
+    if west ^ south {
+        sector |= 4;
+    }
+    if west ^ south ^ east_west {
+        sector |= 2;
+    }
+    if west ^ south ^ east_west ^ skew {
+        sector |= 1;
+    }
+    sector
+}
+
+fn bow_profile_debug(
+    engine: &Engine,
+    assets: &LevelAssets,
+    entity_id: robin_engine::element::EntityId,
+) -> Option<serde_json::Value> {
+    let entity = engine.get_entity(entity_id)?;
+    let (bow_profile_idx, shooting_ability) = match entity {
+        robin_engine::element::Entity::Pc(pc) => {
+            let idx = usize::from(pc.pc.profile_index);
+            let profile = assets.profile_manager.characters.get(idx)?;
+            if profile.shooting_weapon_id == 0 {
+                return None;
+            }
+            (profile.shooting_weapon_id, profile.shooting as u32)
+        }
+        robin_engine::element::Entity::Soldier(soldier) => {
+            let idx = usize::from(soldier.soldier.soldier_profile_index);
+            let profile = assets.profile_manager.soldiers.get(idx)?;
+            if profile.shooting_weapon_id == 0 {
+                return None;
+            }
+            (profile.shooting_weapon_id, profile.shooting as u32)
+        }
+        _ => return None,
+    };
+
+    let bow_profile = assets.profile_manager.get_bow(bow_profile_idx)?;
+    let bow_state = robin_engine::weapons::BowState::new(bow_profile_idx, bow_profile, 1);
+    Some(serde_json::json!({
+        "bow_profile_idx": bow_profile_idx,
+        "shooting_ability": shooting_ability,
+        "normal_range": bow_profile.normal_shoot.range,
+        "long_range": bow_profile.long_shoot.range,
+        "has_long_shoot": bow_profile.has_long_shoot,
+        "max_range": bow_state.get_max_range(bow_profile),
+    }))
+}
+
+fn bow_target_points_debug(
+    engine: &Engine,
+    target_id: robin_engine::element::EntityId,
+) -> Option<serde_json::Value> {
+    let target = engine.get_entity(target_id)?;
+    let range_target = if target.is_human() {
+        target.compute_belt_point()
+    } else {
+        Some(target.element_data().position())
+    };
+    let preview_target = if target.is_human() {
+        target.compute_belt_point()
+    } else if target.is_fx_target() {
+        target.compute_target_center()
+    } else {
+        Some(target.element_data().position())
+    };
+
+    Some(serde_json::json!({
+        "id": target_id,
+        "kind": target.kind(),
+        "is_human": target.is_human(),
+        "is_fx_target": target.is_fx_target(),
+        "position_3d": target.element_data().position(),
+        "position_map": target.element_data().position_map(),
+        "belt_point": target.compute_belt_point(),
+        "eyes_point": target.compute_eyes_point(None),
+        "fx_center": target.compute_target_center(),
+        "range_target_point": range_target,
+        "preview_target_point": preview_target,
+    }))
+}
+
+fn bow_range_math_debug(
+    hand_point: robin_engine::element::Point3D,
+    target_point: robin_engine::element::Point3D,
+    max_range: f32,
+    forest_target: bool,
+) -> serde_json::Value {
+    const THROW_ANGLE_BOW: f32 = 0.3;
+    let rel_height = hand_point.z - target_point.z;
+    let base_radius = if rel_height > 0.0 {
+        max_range + rel_height * THROW_ANGLE_BOW.tan()
+    } else {
+        max_range
+    };
+    let radius = if forest_target {
+        base_radius * 2.0
+    } else {
+        base_radius
+    };
+
+    let dx = target_point.x - hand_point.x;
+    let dy_raw = bow_debug_ground_y_raw(target_point) - bow_debug_ground_y_raw(hand_point);
+    let dy_projected =
+        bow_debug_ground_y_projected(target_point) - bow_debug_ground_y_projected(hand_point);
+    let dz = target_point.z - hand_point.z;
+    let dy_range_raw = dy_raw * robin_engine::position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
+    let dy_range_projected =
+        dy_projected * robin_engine::position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
+    let square_distance_raw = dx * dx + dy_range_raw * dy_range_raw;
+    let square_distance_projected = dx * dx + dy_range_projected * dy_range_projected;
+    let radius_square = radius * radius;
+    let dist_3d_raw = (dx * dx + dy_raw * dy_raw + dz * dz).sqrt();
+    let dist_3d_projected = (dx * dx + dy_projected * dy_projected + dz * dz).sqrt();
+
+    serde_json::json!({
+        "hand_point": hand_point,
+        "target_point": target_point,
+        "target_delta": {
+            "dx": dx,
+            "dy_raw_cxx": dy_raw,
+            "dy_projected_y_minus_z": dy_projected,
+            "dz": dz,
+        },
+        "range": {
+            "max_range": max_range,
+            "rel_height": rel_height,
+            "throw_angle_bow": THROW_ANGLE_BOW,
+            "base_radius": base_radius,
+            "forest_target": forest_target,
+            "radius": radius,
+            "radius_square": radius_square,
+            "dy_raw_times_projectile_aspect": dy_range_raw,
+            "dy_projected_times_projectile_aspect": dy_range_projected,
+            "square_distance_raw_cxx_y": square_distance_raw,
+            "square_distance_projected_y_minus_z": square_distance_projected,
+            "in_range_raw_cxx_y": square_distance_raw < radius_square,
+            "in_range_projected_y_minus_z": square_distance_projected < radius_square,
+            "dist_3d_raw_cxx_y": dist_3d_raw,
+            "dist_3d_projected_y_minus_z": dist_3d_projected,
+        },
+        "direction": {
+            "rust_iso_sector_raw_cxx_y": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
+            "rust_iso_sector_projected_y_minus_z": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
+            "cxx_get_sector_aspect_raw_cxx_y": cxx_sector_0_to_15_with_aspect(
+                dx,
+                dy_raw,
+                robin_engine::position_interface::ASPECT_RATIO,
+            ),
+            "cxx_get_sector_aspect_projected_y_minus_z": cxx_sector_0_to_15_with_aspect(
+                dx,
+                dy_projected,
+                robin_engine::position_interface::ASPECT_RATIO,
+            ),
+        },
+    })
+}
+
+fn bow_range_debug(
+    engine: &Engine,
+    assets: &LevelAssets,
+    pc_id: robin_engine::element::EntityId,
+    target_id: robin_engine::element::EntityId,
+) -> serde_json::Value {
+    let Some(shooter) = engine.get_entity(pc_id) else {
+        return serde_json::json!({"error": "missing_shooter", "pc_id": pc_id});
+    };
+    let Some(target) = engine.get_entity(target_id) else {
+        return serde_json::json!({"error": "missing_target", "target_id": target_id});
+    };
+    let Some(hand_point) = shooter.compute_hand_point(None) else {
+        return serde_json::json!({"error": "missing_shooter_hand_point", "pc_id": pc_id});
+    };
+
+    let bow_profile = bow_profile_debug(engine, assets, pc_id);
+    let max_range = bow_profile
+        .as_ref()
+        .and_then(|profile| profile.get("max_range"))
+        .and_then(serde_json::Value::as_u64)
+        .map(|v| v as f32);
+    let range_target_point = if target.is_human() {
+        target.compute_belt_point()
+    } else {
+        Some(target.element_data().position())
+    };
+    let preview_target_point = if target.is_human() {
+        target.compute_belt_point()
+    } else if target.is_fx_target() {
+        target.compute_target_center()
+    } else {
+        Some(target.element_data().position())
+    };
+    let forest_target = !target.is_human() && engine.weather().is_forest_level;
+    let range_math = match (range_target_point, max_range) {
+        (Some(point), Some(max_range)) => Some(bow_range_math_debug(
+            hand_point,
+            point,
+            max_range,
+            forest_target,
+        )),
+        _ => None,
+    };
+    let preview_direction = preview_target_point.map(|point| {
+        let dx = point.x - shooter.element_data().position().x;
+        let dy_raw = point.y - shooter.element_data().position().y;
+        let dy_projected =
+            bow_debug_ground_y_projected(point) - bow_debug_ground_y_projected(shooter.element_data().position());
+        serde_json::json!({
+            "source_position_3d": shooter.element_data().position(),
+            "preview_target_point": point,
+            "dx": dx,
+            "dy_raw_cxx": dy_raw,
+            "dy_projected_y_minus_z": dy_projected,
+            "rust_iso_sector_raw_cxx_y": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
+            "rust_iso_sector_projected_y_minus_z": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
+            "cxx_get_sector_aspect_raw_cxx_y": cxx_sector_0_to_15_with_aspect(
+                dx,
+                dy_raw,
+                robin_engine::position_interface::ASPECT_RATIO,
+            ),
+            "cxx_get_sector_aspect_projected_y_minus_z": cxx_sector_0_to_15_with_aspect(
+                dx,
+                dy_projected,
+                robin_engine::position_interface::ASPECT_RATIO,
+            ),
+        })
+    });
+
+    serde_json::json!({
+        "shooter": {
+            "id": pc_id,
+            "kind": shooter.kind(),
+            "position_3d": shooter.element_data().position(),
+            "position_map": shooter.element_data().position_map(),
+            "hand_point": hand_point,
+            "direction": shooter.element_data().direction(),
+            "posture": shooter.element_data().posture,
+            "pc_current_action": shooter.pc_data().map(|pc| pc.current_action),
+            "actor_action_state": shooter.actor_data().map(|actor| actor.action_state),
+        },
+        "target": bow_target_points_debug(engine, target_id),
+        "bow_profile": bow_profile,
+        "forest_target": forest_target,
+        "range_math": range_math,
+        "preview_direction": preview_direction,
     })
 }
 
@@ -1453,6 +1822,7 @@ pub mod wasm_rpc {
         match method {
             "script" => Ok(HttpPayload::Script),
             "state" => Ok(HttpPayload::State),
+            "host-debug" => Ok(HttpPayload::HostDebug),
             "decompile" => {
                 #[derive(serde::Deserialize, Default)]
                 #[serde(default)]

@@ -1686,10 +1686,8 @@ impl EngineInner {
                 }
             }
             // `sprite.center` (loaded from the sprite info via
-            // `load_frame_info` above) is the authoritative blit anchor;
-            // `position_iface.sprite_center` is vestigial (left at 0 to
-            // match beam-me convention), so no explicit override is
-            // needed here.
+            // `load_frame_info` above) is the authoritative C++ sprite
+            // anchor used by rendering and gameplay hotspot lookups.
             sprite.apply_placement(
                 initial_position_geo.into(),
                 raw.layer,

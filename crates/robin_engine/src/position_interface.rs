@@ -717,11 +717,9 @@ pub struct PositionInterface {
 
     // -- Positions --
     position: Point3D,
-    position_sprite: Vec2,
     position_map: Vec2,
 
     old_position: Point3D,
-    old_position_sprite: Vec2,
     old_position_map: Vec2,
 
     goal_map: Vec2,
@@ -737,9 +735,6 @@ pub struct PositionInterface {
     // -- Tolerance --
     tolerance: f32,
     directional_tolerance: bool,
-
-    // -- Sprite center offset --
-    sprite_center: Vec2,
 
     // -- Pathfinder indices --
     pathfinder_index: u16,
@@ -806,11 +801,9 @@ impl PositionInterface {
             computed_increment: IncrementComputed::NONE,
 
             position: Point3D::ZERO,
-            position_sprite: Vec2::ZERO,
             position_map: Vec2::ZERO,
 
             old_position: Point3D::ZERO,
-            old_position_sprite: Vec2::ZERO,
             old_position_map: Vec2::ZERO,
 
             goal_map: Vec2::ZERO,
@@ -823,8 +816,6 @@ impl PositionInterface {
             reversed_movement: false,
             tolerance: 0.0,
             directional_tolerance: false,
-
-            sprite_center: Vec2::ZERO,
 
             pathfinder_index: u16::MAX,
             pathfinder_index_alternate: u16::MAX,
@@ -939,12 +930,6 @@ impl PositionInterface {
     }
 
     #[inline]
-    #[must_use = "method returns Point2D by value; `pi.get_position_sprite().x = v` silently modifies a temporary."]
-    pub fn get_position_sprite(&self) -> Point2D {
-        self.position_sprite.0
-    }
-
-    #[inline]
     #[must_use = "method returns Point2D by value; `pi.get_position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
     pub fn get_position_map(&self) -> Point2D {
         self.position_map.0
@@ -960,12 +945,6 @@ impl PositionInterface {
     pub fn set_position(&mut self, pt: Point3D) {
         self.position = pt;
         self.recompute_from_3d();
-    }
-
-    #[inline]
-    pub fn set_position_sprite(&mut self, pt: Point2D) {
-        self.position_sprite = Vec2(geo2d::pt(pt.x.floor(), pt.y.floor()));
-        self.recompute_from_sprite();
     }
 
     #[inline]
@@ -1455,16 +1434,6 @@ impl PositionInterface {
         }
     }
 
-    // Sprite center
-    #[inline]
-    pub fn get_sprite_center(&self) -> Vec2D {
-        self.sprite_center.0
-    }
-    #[inline]
-    pub fn set_sprite_center(&mut self, v: Vec2D) {
-        self.sprite_center = Vec2(v);
-    }
-
     // Tolerance
     #[inline]
     pub fn get_tolerance(&self) -> f32 {
@@ -1510,47 +1479,25 @@ impl PositionInterface {
         self.recompute_from_map();
     }
 
-    pub fn move_sprite(&mut self, v: Vec2D) {
-        self.position_sprite.0.x += v.x.floor();
-        self.position_sprite.0.y += v.y.floor();
-        self.recompute_from_sprite();
-    }
-
     // ====================================================================
     // Internal eager re-sync helpers
     //
-    // Every public position-mutating operation writes one authoritative
-    // field and then calls the matching `recompute_from_*` so all three
-    // coordinate systems (3D / map / sprite) stay in sync.  Callers
-    // therefore never need to worry about "which view is current".
+    // Every public position-mutating operation writes one authoritative field
+    // and then calls the matching `recompute_from_*` so map/3D coordinates stay
+    // in sync. C++ sprite position is reconstructed from Element sprite data at
+    // call sites that need it.
     // ====================================================================
 
-    /// Resync map + sprite + move_box_map from the current `position`.
+    /// Resync map + move_box_map from the current `position`.
     fn recompute_from_3d(&mut self) {
-        let sc = self.sprite_center.0;
         let map = self.position.to_map();
         self.position_map = Vec2(map);
         self.move_box_map = self.get_move_box_offset(map);
-        self.position_sprite = Vec2(geo2d::pt((map.x - sc.x).floor(), (map.y - sc.y).floor()));
     }
 
-    /// Resync 3D + sprite + move_box_map from the current `position_map`.
+    /// Resync 3D + move_box_map from the current `position_map`.
     fn recompute_from_map(&mut self) {
-        let sc = self.sprite_center.0;
         let map = self.position_map.0;
-        self.move_box_map = self.get_move_box_offset(map);
-        self.position_sprite = Vec2(geo2d::pt((map.x - sc.x).floor(), (map.y - sc.y).floor()));
-        self.position_3d_from_map();
-    }
-
-    /// Resync map + 3D + move_box_map from the current `position_sprite`.
-    fn recompute_from_sprite(&mut self) {
-        let sc = self.sprite_center.0;
-        let map = geo2d::pt(
-            self.position_sprite.0.x + sc.x,
-            self.position_sprite.0.y + sc.y,
-        );
-        self.position_map = Vec2(map);
         self.move_box_map = self.get_move_box_offset(map);
         self.position_3d_from_map();
     }
@@ -2470,18 +2417,17 @@ mod tests {
     }
 
     #[test]
-    fn test_set_position_3d_eagerly_syncs_all() {
+    fn test_set_position_3d_eagerly_syncs_map_and_move_box() {
         let mut pi = PositionInterface::new();
-        pi.set_sprite_center(geo2d::pt(16.0, 32.0));
         pi.set_position(p3(100.0, 200.0, 0.0));
 
         let map = pi.get_position_map();
         assert!((map.x - 100.0).abs() < 1e-4);
         assert!((map.y - 200.0).abs() < 1e-4);
 
-        let spr = pi.get_position_sprite();
-        assert!((spr.x - 84.0).abs() < 1e-4); // 100 - 16
-        assert!((spr.y - 168.0).abs() < 1e-4); // 200 - 32
+        let box_map = pi.get_move_box_map();
+        assert!((box_map.x_min() - 100.0).abs() < 1e-4);
+        assert!((box_map.y_min() - 200.0).abs() < 1e-4);
     }
 
     #[test]

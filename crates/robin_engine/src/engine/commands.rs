@@ -1893,10 +1893,9 @@ impl EngineInner {
             Some(e) => {
                 let pos_map = e.element_data().position_map();
                 let gating_pos = if b_use_action_point {
-                    let pi = e.position_iface();
                     match e.sprite().current_hotspot() {
                         Some(hp) => {
-                            let ps = pi.get_position_sprite();
+                            let ps = e.cxx_position_sprite();
                             crate::element::Point2D {
                                 x: ps.x + hp.x,
                                 y: ps.y + hp.y,

@@ -1146,7 +1146,7 @@ pub(crate) fn render_entities_gpu(
             shadow_level,
         ) {
             // Sprite screen position:
-            //   sprite_pos  = floor(position_map - sprite_center)
+            //   sprite_pos  = floor(position_map - sprite.center)
             //   blit_origin = sprite_pos + script_offset
             //   screen_xy   = (blit_origin - view) * zoom
             // The floor() in world space (before zoom) is critical for
@@ -2259,7 +2259,7 @@ const TRAJECTORY_DOT_INTERVAL: f32 = 7.0;
 /// Draws filled 1-pixel squares at regular intervals along the
 /// ballistic arc.
 pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer) {
-    if !host.valid_trajectory {
+    if !host.valid_trajectory && host.trajectory_preview_points.is_empty() {
         return;
     }
 
