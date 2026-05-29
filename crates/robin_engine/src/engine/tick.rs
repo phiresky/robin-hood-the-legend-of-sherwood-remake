@@ -1136,7 +1136,7 @@ impl EngineInner {
         // before the hourglass so the relaunched seek dispatches in
         // the same tick.  See [`engine/refresh_seek.rs`] for the
         // covered and still-outstanding branches.
-        self.tick_refresh_seeks();
+        self.tick_refresh_seeks(assets);
 
         // ── Actor WAIT_TIMER countdown ───────────────────────────
         // For every actor whose current sequence element is
@@ -1340,6 +1340,18 @@ impl EngineInner {
                             // every refresh because the pathfinder
                             // thinks they've already arrived.
                             let floored_seek_distance = instr_tolerance.max(4.0);
+                            if self.try_dispatch_cross_sector_entity_seek(
+                                assets,
+                                *owner,
+                                *sequence_id,
+                                *element_index,
+                                target,
+                                instr_action,
+                                instr_flags,
+                                floored_seek_distance,
+                            ) {
+                                continue;
+                            }
                             let Some(resolved) = self.resolve_entity_seek(
                                 *owner,
                                 target,

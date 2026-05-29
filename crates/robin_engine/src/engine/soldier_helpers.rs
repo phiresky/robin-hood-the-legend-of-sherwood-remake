@@ -972,7 +972,7 @@ impl EngineInner {
                     path,
                     crate::engine::movement::GoalShape::Point(crate::geo2d::pt(goal.x, goal.y)),
                     goal.level,
-                    true,
+                    crate::order::OrderType::RunningUpright,
                     true,
                     1.0,
                     MoveFlags::empty(),

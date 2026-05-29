@@ -238,6 +238,14 @@ pub(crate) fn mercenary_formation_destinations(
 pub(crate) enum GoalShape {
     /// Point-goal.  The actor walks to `Point2D` after the last gate.
     Point(Point2D),
+    /// Entity-target seek goal.  The trailing MOVE keeps the target
+    /// element, SEEK flag, and tolerance so arrival uses the same
+    /// live target-distance predicate as a plain `Command::Seek`.
+    Seek {
+        point: Point2D,
+        target: EntityId,
+        tolerance: f32,
+    },
     /// Door-goal.  The gate path's final element is the goal door
     /// itself.  `far_side_point` describes the point the actor lands
     /// at after passing through.  When the far-side sector is a
@@ -312,6 +320,7 @@ impl GoalShape {
     pub(crate) fn goal_point(&self) -> Point2D {
         match *self {
             GoalShape::Point(p) => p,
+            GoalShape::Seek { point, .. } => point,
             GoalShape::Door { far_side_point, .. } => far_side_point,
             GoalShape::Line { midpoint, .. } => midpoint,
         }
@@ -1351,7 +1360,11 @@ impl EngineInner {
                         gate_steps,
                         goal_shape,
                         effective_layer,
-                        run,
+                        if run {
+                            OrderType::RunningUpright
+                        } else {
+                            OrderType::WalkingUpright
+                        },
                         true,
                         1.0,
                         if self
@@ -1494,7 +1507,7 @@ impl EngineInner {
         gate_path: Vec<crate::gate::GatePathStep>,
         goal: GoalShape,
         goal_layer: u16,
-        run: bool,
+        base_action: OrderType,
         move_after_last_door: bool,
         speed_factor: f32,
         initial_flags: crate::sequence::MoveFlags,
@@ -1535,11 +1548,6 @@ impl EngineInner {
             }
         };
 
-        let base_action = if run {
-            OrderType::RunningUpright
-        } else {
-            OrderType::WalkingUpright
-        };
         let to_pt = |p: Point2D| crate::element::Point2D::from(p);
 
         // Snapshot all the gate data we need while we briefly hold
@@ -2027,8 +2035,14 @@ impl EngineInner {
                 .unwrap_or(false);
 
             match goal {
-                GoalShape::Point(_) => {
+                GoalShape::Point(_) | GoalShape::Seek { .. } => {
                     if move_after_last_door && !last_into_building {
+                        let (seek_target, seek_tolerance, seek_flags) = match goal {
+                            GoalShape::Seek {
+                                target, tolerance, ..
+                            } => (Some(target), tolerance, trailing_flags | MoveFlags::SEEK),
+                            _ => (None, 0.0, trailing_flags),
+                        };
                         let mut final_move = SequenceElement::new_movement(
                             level,
                             Command::Move,
@@ -2041,9 +2055,9 @@ impl EngineInner {
                             sector: None,
                             gate_id: None,
                             line_id: None,
-                            element: None,
-                            flags: trailing_flags,
-                            tolerance: 0.0,
+                            element: seek_target,
+                            flags: seek_flags,
+                            tolerance: seek_tolerance,
                             direction: 0,
                             action: base_action,
                             speed_factor,
@@ -4803,6 +4817,7 @@ impl EngineInner {
                     .map(|e| e.element_data().position_map())
                     .unwrap_or_default();
                 self.apply_seek_refresh(
+                    assets,
                     owner,
                     seq_id,
                     elem_idx,

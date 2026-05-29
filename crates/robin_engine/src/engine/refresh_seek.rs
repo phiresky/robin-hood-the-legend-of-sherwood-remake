@@ -25,6 +25,7 @@
 //! seek variants.
 
 use crate::element::{ActionState, EntityId, Point2D};
+use crate::engine::LevelAssets;
 use crate::order::OrderType;
 use crate::sequence::{
     CascadeFlags, MoveFlags, Sequence, SequenceElement, SequenceElementData, SequenceId,
@@ -180,7 +181,7 @@ impl crate::engine::EngineInner {
     ///
     /// Runs once per tick before the sequence manager hourglass so the
     /// freshly-launched seek sequence gets picked up in the same tick.
-    pub(super) fn tick_refresh_seeks(&mut self) {
+    pub(super) fn tick_refresh_seeks(&mut self, assets: &LevelAssets) {
         if self.freeze_all {
             return;
         }
@@ -288,6 +289,7 @@ impl crate::engine::EngineInner {
                 "tick_refresh_seeks: target moved >10u, re-launching seek",
             );
             self.apply_seek_refresh(
+                assets,
                 r.owner,
                 r.seq_id,
                 r.elem_idx,
@@ -312,6 +314,7 @@ impl crate::engine::EngineInner {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_seek_refresh(
         &mut self,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -345,6 +348,12 @@ impl crate::engine::EngineInner {
                 self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
                 return;
             }
+        }
+
+        if self.try_dispatch_cross_sector_entity_seek(
+            assets, owner, seq_id, elem_idx, target, action, flags, tolerance,
+        ) {
+            return;
         }
 
         let Some(resolved) = self.resolve_entity_seek(owner, target, flags, tolerance) else {
@@ -391,6 +400,165 @@ impl crate::engine::EngineInner {
         }
 
         self.relaunch_seek_replacement(owner, seq_id, elem_idx, new_elem);
+    }
+
+    /// Central entity-target Seek lowering, matching original
+    /// `RefreshSeek -> AppendMoveToSequence` for cross-sector targets.
+    ///
+    /// Returns `true` when the current Seek was fully consumed: either
+    /// replaced by a gate/lift/jump traversal sequence or marked
+    /// impossible after an authorized-position / gate-path failure.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn try_dispatch_cross_sector_entity_seek(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        target: EntityId,
+        action: OrderType,
+        flags: MoveFlags,
+        seek_distance: f32,
+    ) -> bool {
+        let (owner_pos, owner_sector, door_handle, door_direction) = match self.get_entity(owner) {
+            Some(e) => {
+                let elem = e.element_data();
+                let pi = e.position_iface();
+                (
+                    elem.position_map().to_geo_point(),
+                    elem.sector(),
+                    pi.get_door(),
+                    pi.get_door_direction(),
+                )
+            }
+            None => {
+                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                return true;
+            }
+        };
+        let (target_pos, target_sector, target_layer) = match self.get_entity(target) {
+            Some(e) => {
+                let elem = e.element_data();
+                (
+                    elem.position_map().to_geo_point(),
+                    elem.sector(),
+                    elem.layer(),
+                )
+            }
+            None => {
+                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                return true;
+            }
+        };
+        let (Some(owner_sector), Some(target_sector)) = (owner_sector, target_sector) else {
+            return false;
+        };
+        if owner_sector == target_sector {
+            return false;
+        }
+
+        let Some(resolved) = self.resolve_entity_seek(owner, target, flags, seek_distance) else {
+            self.hero_speaking(
+                assets,
+                owner,
+                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            );
+            self.stop_owner_active_mechanics(owner);
+            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            return true;
+        };
+
+        let (path_src_pos, path_src_sector) = {
+            let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
+            let adapted = host.and_then(|h| {
+                crate::engine::movement::adapt_source_to_current_door(
+                    &h.doors,
+                    door_handle,
+                    door_direction,
+                )
+            });
+            match adapted {
+                Some((adj, sector, _layer)) => (adj, sector),
+                None => (owner_pos, u16::from(owner_sector)),
+            }
+        };
+
+        let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
+        let gate_path = {
+            let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
+            host.and_then(|h| {
+                crate::gate::find_path_gates(
+                    &h.doors,
+                    (path_src_pos.x, path_src_pos.y),
+                    path_src_sector,
+                    (resolved.destination.x, resolved.destination.y),
+                    u16::from(target_sector),
+                    owner_auth.as_ref(),
+                    false,
+                    &|sector| {
+                        h.sector_kinds
+                            .get(&u16::from(sector))
+                            .and_then(|k| k.lift_type)
+                    },
+                )
+            })
+        };
+
+        let Some(gate_path) = gate_path else {
+            self.hero_speaking(
+                assets,
+                owner,
+                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+            );
+            self.stop_owner_active_mechanics(owner);
+            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            return true;
+        };
+
+        let tail_elements = self
+            .get_entity_mut(owner)
+            .and_then(|e| e.actor_data_mut())
+            .and_then(|actor| actor.post_seek_sequence.take())
+            .map(|seq| seq.elements)
+            .unwrap_or_default();
+
+        self.stop_owner_active_mechanics(owner);
+        self.sequence_manager
+            .element_interrupted(seq_id, elem_idx, CascadeFlags::NEXT_LEVEL);
+
+        self.build_gate_movement_sequence(
+            owner,
+            gate_path,
+            crate::engine::movement::GoalShape::Seek {
+                point: resolved.destination,
+                target,
+                tolerance: resolved.tolerance,
+            },
+            target_layer,
+            action,
+            true,
+            resolved.speed_factor,
+            flags,
+            Vec::new(),
+            tail_elements,
+            false,
+            true,
+        );
+
+        if resolved.stop_npc {
+            self.send_seek_stop_to_npc(target);
+        }
+
+        tracing::trace!(
+            ?owner,
+            ?target,
+            target_x = target_pos.x,
+            target_y = target_pos.y,
+            from_sector = u16::from(owner_sector),
+            to_sector = u16::from(target_sector),
+            "try_dispatch_cross_sector_entity_seek: launched gate traversal"
+        );
+        true
     }
 
     /// Point-target RefreshSeek.

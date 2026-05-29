@@ -301,7 +301,7 @@ impl EngineInner {
                     // of `apply_command`; no append here to avoid
                     // duplicating the dotted-chain step.
                 }
-                self.apply_interaction_with_seek(assets, *actor, *target, *command, *running);
+                self.apply_interaction_with_seek(*actor, *target, *command, *running);
             }
             LaunchGroundTarget {
                 actor,
@@ -1803,7 +1803,6 @@ impl EngineInner {
     /// too far away or in a different sector.
     fn apply_interaction_with_seek(
         &mut self,
-        assets: &LevelAssets,
         actor: EntityId,
         target: EntityId,
         command: Command,
@@ -1890,34 +1889,32 @@ impl EngineInner {
         // face-opponent USE_POINT flag (already on for Pay) lines
         // on-arrival positioning up with the same hotspot.
         let b_use_action_point = command == Command::Pay;
-        let (tgt_pos, tgt_sector, tgt_layer, take_tolerance_override) =
-            match self.get_entity(target) {
-                Some(e) => {
-                    let pos_map = e.element_data().position_map();
-                    let gating_pos = if b_use_action_point {
-                        let pi = e.position_iface();
-                        match e.sprite().current_hotspot() {
-                            Some(hp) => {
-                                let ps = pi.get_position_sprite();
-                                crate::element::Point2D {
-                                    x: ps.x + hp.x,
-                                    y: ps.y + hp.y,
-                                }
+        let (tgt_pos, tgt_sector, take_tolerance_override) = match self.get_entity(target) {
+            Some(e) => {
+                let pos_map = e.element_data().position_map();
+                let gating_pos = if b_use_action_point {
+                    let pi = e.position_iface();
+                    match e.sprite().current_hotspot() {
+                        Some(hp) => {
+                            let ps = pi.get_position_sprite();
+                            crate::element::Point2D {
+                                x: ps.x + hp.x,
+                                y: ps.y + hp.y,
                             }
-                            None => pos_map,
                         }
-                    } else {
-                        pos_map
-                    };
-                    (
-                        gating_pos,
-                        e.element_data().sector(),
-                        e.element_data().layer(),
-                        (command == Command::Take).then(|| take_seek_tolerance(e)),
-                    )
-                }
-                None => return,
-            };
+                        None => pos_map,
+                    }
+                } else {
+                    pos_map
+                };
+                (
+                    gating_pos,
+                    e.element_data().sector(),
+                    (command == Command::Take).then(|| take_seek_tolerance(e)),
+                )
+            }
+            None => return,
+        };
         // Per-object Take tolerance is `radius + 15` — non-trivial
         // for Purse (22), Coin (18) and Net (25 crumpled / 55
         // uncrumpled).  Fall back to the default table for every
@@ -1957,108 +1954,6 @@ impl EngineInner {
                 per_command_seek_flags |= MoveFlags::SEEK_IN_BUILDINGS;
             }
             _ => {}
-        }
-
-        // Original RefreshSeek lowers every entity-target Seek through
-        // AppendMoveToSequence.  That matters whenever the target is in
-        // another sector: the gate graph must emit lift/door/jump
-        // traversal before the post-seek interaction can run.  A plain
-        // point move from a lift rail would otherwise keep climbing
-        // directly toward e.g. a ground pickup.
-        if let (Some(pc_sector), Some(tgt_sector)) = (pc_sector, tgt_sector)
-            && pc_sector != tgt_sector
-        {
-            let Some(resolved) =
-                self.resolve_entity_seek(actor, target, per_command_seek_flags, action_distance)
-            else {
-                self.hero_speaking(
-                    assets,
-                    actor,
-                    crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                );
-                tracing::warn!(
-                    ?actor,
-                    ?target,
-                    ?command,
-                    "apply_interaction_with_seek: cross-sector Seek has no authorized seek position"
-                );
-                return;
-            };
-
-            let (door_handle, door_direction) = self
-                .get_entity(actor)
-                .map(|e| e.position_iface())
-                .map(|p| (p.get_door(), p.get_door_direction()))
-                .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
-            let (path_src_pos, path_src_sector) = {
-                let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                let adapted = host.and_then(|h| {
-                    crate::engine::movement::adapt_source_to_current_door(
-                        &h.doors,
-                        door_handle,
-                        door_direction,
-                    )
-                });
-                match adapted {
-                    Some((adj, sector, _layer)) => (adj, sector),
-                    None => (pc_pos.to_geo_point(), u16::from(pc_sector)),
-                }
-            };
-
-            let pc_auth = self.get_entity(actor).map(|e| e.actor_auth_info());
-            let gate_path = {
-                let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
-                host.and_then(|h| {
-                    crate::gate::find_path_gates(
-                        &h.doors,
-                        (path_src_pos.x, path_src_pos.y),
-                        path_src_sector,
-                        (tgt_pos.x, tgt_pos.y),
-                        u16::from(tgt_sector),
-                        pc_auth.as_ref(),
-                        false,
-                        &|sector| {
-                            h.sector_kinds
-                                .get(&u16::from(sector))
-                                .and_then(|k| k.lift_type)
-                        },
-                    )
-                })
-            };
-
-            let Some(gate_path) = gate_path else {
-                self.hero_speaking(
-                    assets,
-                    actor,
-                    crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                );
-                tracing::warn!(
-                    ?actor,
-                    ?target,
-                    ?command,
-                    from_sector = u16::from(pc_sector),
-                    to_sector = u16::from(tgt_sector),
-                    "apply_interaction_with_seek: cross-sector Seek has no gate path"
-                );
-                return;
-            };
-
-            let take = SequenceElement::new_interaction(1, command, Some(actor), Some(target));
-            self.build_gate_movement_sequence(
-                actor,
-                gate_path,
-                crate::engine::movement::GoalShape::Point(resolved.destination),
-                tgt_layer,
-                running,
-                true,
-                resolved.speed_factor,
-                MoveFlags::empty(),
-                Vec::new(),
-                vec![take],
-                false,
-                true,
-            );
-            return;
         }
 
         // ── `SEEK_IN_BUILDINGS` consumer ─────────────────────────────
@@ -2526,7 +2421,7 @@ impl EngineInner {
                 } else {
                     target_id
                 };
-                self.apply_interaction_with_seek(assets, pc_id, launch_target, cmd, false);
+                self.apply_interaction_with_seek(pc_id, launch_target, cmd, false);
             }
             return;
         }
@@ -2693,13 +2588,12 @@ impl EngineInner {
                     )
                 };
 
-                let running = matches!(action_style, OrderType::RunningUpright);
                 self.build_gate_movement_sequence(
                     pc_id,
                     path,
                     goal_shape,
                     arrival_layer,
-                    running,
+                    action_style,
                     true,
                     1.0,
                     MoveFlags::empty(),
@@ -4256,7 +4150,7 @@ mod tests {
 
     #[test]
     fn mapped_interaction_seek_tolerance_uses_sprite_action_distance() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
             pc.set_position_map(crate::element::Point2D { x: 10.0, y: 10.0 });
@@ -4271,21 +4165,21 @@ mod tests {
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-        engine.apply_interaction_with_seek(&assets, pc_id, target_id, Command::SearchCmd, false);
+        engine.apply_interaction_with_seek(pc_id, target_id, Command::SearchCmd, false);
 
         assert!((first_seek_tolerance(&engine) - 19.0).abs() < 0.001);
     }
 
     #[test]
     fn shoot_bow_interaction_launches_without_seek() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Bow, 1)]);
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
             pc.set_position_map(crate::element::Point2D { x: 10.0, y: 10.0 });
         }
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-        engine.apply_interaction_with_seek(&assets, pc_id, target_id, Command::ShootBow, false);
+        engine.apply_interaction_with_seek(pc_id, target_id, Command::ShootBow, false);
 
         assert_eq!(engine.sequence_manager.sequence_count(), 1);
         let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
@@ -4299,10 +4193,10 @@ mod tests {
 
     #[test]
     fn mapped_interaction_missing_sprite_action_distance_noops() {
-        let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 0)]);
+        let (mut engine, _assets, pc_id) = setup_pc_engine(&[(Action::Hit, 0)]);
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
-        engine.apply_interaction_with_seek(&assets, pc_id, target_id, Command::HitCmd, false);
+        engine.apply_interaction_with_seek(pc_id, target_id, Command::HitCmd, false);
 
         assert!(engine.sequence_manager.sequences_iter().next().is_none());
     }
