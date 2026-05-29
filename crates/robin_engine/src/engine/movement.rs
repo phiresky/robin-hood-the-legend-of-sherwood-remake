@@ -1838,9 +1838,7 @@ impl EngineInner {
                 level += 1;
             } else {
                 // MOVE to gate entry point on the source side.
-                let (gate_seek_target, gate_seek_tolerance) = seek_goal
-                    .map(|(target, tolerance)| (Some(target), tolerance))
-                    .unwrap_or((None, 0.0));
+                let gate_seek_target = seek_goal.map(|(target, _)| target);
                 let mut m = SequenceElement::new_movement(
                     level,
                     Command::Move,
@@ -1855,7 +1853,11 @@ impl EngineInner {
                     line_id: None,
                     element: gate_seek_target,
                     flags: gate_flags,
-                    tolerance: gate_seek_tolerance,
+                    // Original AppendMoveToSequence passes the
+                    // seek victim through to gate-approach moves but
+                    // uses tolerance 0; fTolerance belongs to the
+                    // final goal/seek move.
+                    tolerance: 0.0,
                     direction: 0,
                     action: entry_action,
                     speed_factor,
