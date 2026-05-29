@@ -738,17 +738,17 @@ pub trait GameCallbacks {
 
     // ── Play time ──
     ///
-    /// Snapshot the current monotonic tick count as the mission's start
-    /// marker.  Idempotent — a second call with a recording already in
-    /// progress is a no-op so the original start point is preserved.
+    /// Lifecycle marker retained for parity with the original game
+    /// state machine. Mission length itself advances from deterministic
+    /// simulation frames, not host wall-clock time.
     fn start_play_time(&mut self);
 
-    /// Accumulate the elapsed segment into the campaign's mission-length
-    /// counter and clear the start marker.
+    /// Lifecycle marker for pausing/stopping play-time accounting. Paused
+    /// frames do not run the simulation tick, so no explicit wall-clock
+    /// accumulation is needed.
     fn suspend_play_time(&mut self);
 
-    /// Return the mission's total elapsed play time in **seconds**
-    /// (campaign-accumulated + current in-progress segment).
+    /// Return the mission's total elapsed simulation time in **seconds**.
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32;
 }
 

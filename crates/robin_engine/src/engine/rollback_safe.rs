@@ -554,19 +554,6 @@ impl Engine {
         }
     }
 
-    /// Accumulate the just-suspended mission-play segment (in seconds)
-    /// into the campaign's `MissionLength` counter.  Called on a
-    /// mission-lifecycle boundary (quit / won / lost) while the sim
-    /// is paused.
-    pub fn campaign_add_mission_length_seconds(&mut self, secs: u32) {
-        if let Some(c) = self.inner.campaign.as_mut() {
-            c.add_value(
-                crate::campaign::CampaignValue::MissionLength as usize,
-                secs as i32,
-            );
-        }
-    }
-
     /// Reset the campaign's `MissionLength` accumulator to 0 before
     /// the mission begins.
     pub fn campaign_reset_mission_length(&mut self) {

@@ -307,7 +307,7 @@ impl EngineInner {
         // and fall through to a normal tick.
         if let Some(deadline) = self.frozen_until_frame {
             if self.frame_counter < deadline {
-                self.frame_counter += 1;
+                self.advance_mission_clock();
                 return GameCode::LevelInProgress;
             }
             self.frozen_until_frame = None;
@@ -553,7 +553,7 @@ impl EngineInner {
         }
 
         // ── Increment frame counter ──────────────────────────────
-        self.frame_counter += 1;
+        self.advance_mission_clock();
 
         // ── Skip logic if engine is locked (zoom, sequence, etc) ─
         if display.background_transform.zoom_to_up
@@ -7972,6 +7972,15 @@ impl EngineInner {
                 // Unknown commands fall through without being
                 // terminated.
             }
+        }
+    }
+
+    fn advance_mission_clock(&mut self) {
+        self.frame_counter += 1;
+        if self.frame_counter.is_multiple_of(FRAMES_PER_SECOND)
+            && let Some(campaign) = self.campaign.as_mut()
+        {
+            campaign.add_value(crate::campaign::CampaignValue::MissionLength as usize, 1);
         }
     }
 }

@@ -854,18 +854,6 @@ pub(crate) struct RustCallbacks {
     /// and re-queues a `SaveLoadRequest::Load` on the fresh engine so the
     /// first frame of the new mission applies the save.
     pub pending_level_load: Option<PendingLevelLoad>,
-    /// Tick count (ms) at which the current play-time segment started.
-    /// Set by `start_play_time` (idempotent — first call per mission
-    /// segment wins) from the SDL monotonic tick counter in
-    /// milliseconds.  Cleared by `suspend_play_time` after the segment
-    /// is accumulated into the campaign's mission-length field.
-    pub play_time_start_ms: Option<u32>,
-    /// Pending mission-length delta (seconds) queued by
-    /// `suspend_play_time`, applied to the engine-owned campaign in
-    /// [`flush_pending_callbacks`] where `&mut Engine` is in scope.
-    /// Accumulated rather than last-write-wins so a start/stop/start/
-    /// stop sequence within a single frame still adds both segments.
-    pub pending_mission_length_delta_secs: u32,
 }
 
 /// Save-slot bookkeeping passed from an in-mission "load" click through
@@ -955,8 +943,6 @@ impl RustCallbacks {
             pending_level_load: None,
             pending_save_banner: None,
             pending_reset_input: false,
-            play_time_start_ms: None,
-            pending_mission_length_delta_secs: 0,
         }
     }
 }
@@ -1033,11 +1019,10 @@ impl crate::game::GameCallbacks for RustCallbacks {
             guard.as_ref().and_then(|m| m.active_index)
         };
         if let Some(idx) = active_idx {
-            // Use `get_current_playing_time` so the *just-suspended*
-            // mission segment (whose delta is still pending-flush into
-            // the campaign's `MissionLength` counter at this point in
-            // the frame — see `flush_pending_callbacks`) is still
-            // counted in the profile's accumulated play time.
+            // Route through `get_current_playing_time` so profile sync
+            // stays coupled to the mission clock abstraction. The clock
+            // is deterministic now: `MissionLength` advances from sim
+            // frames while the mission is actually ticking.
             let mission_secs = self.get_current_playing_time(campaign);
             crate::player_profile::synchronize_with_campaign(idx, campaign, profiles, mission_secs);
         }
@@ -1083,40 +1068,21 @@ impl crate::game::GameCallbacks for RustCallbacks {
         self.debriefing_code
     }
     fn start_play_time(&mut self) {
-        // Idempotent — a second call with a recording already in
-        // progress keeps the original start point.
-        self.play_time_start_ms
-            .get_or_insert_with(crate::window::process_uptime_ms);
+        // Original C++ used GetTickCount() here. In the Rust port the
+        // campaign is rollback-hashed, so mission length advances from
+        // deterministic 25 Hz engine frames instead.
     }
     fn suspend_play_time(&mut self) {
-        // Accumulate the elapsed segment into the campaign's mission-
-        // length counter. The campaign mutation is deferred to
-        // `flush_pending_callbacks` because the callback trait boundary
-        // has no live engine access.
-        if let Some(start) = self.play_time_start_ms.take() {
-            let now = crate::window::process_uptime_ms();
-            let delta_secs = now.saturating_sub(start) / 1000;
-            self.pending_mission_length_delta_secs = self
-                .pending_mission_length_delta_secs
-                .saturating_add(delta_secs);
-        }
+        // See `start_play_time`: pausing or ending a mission stops
+        // engine ticks, which already stops mission-length advancement.
     }
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
-        // Returns seconds throughout, so all downstream consumers
-        // (debriefing mission-length, profile `play_time` sync) see
-        // one consistent unit.
-        let mut secs = campaign
+        // Returns deterministic simulation seconds. Downstream consumers
+        // (debriefing mission-length, profile `play_time` sync) all see
+        // the campaign-owned counter.
+        campaign
             .get_value(robin_engine::campaign::CampaignValue::MissionLength as usize)
-            as u32;
-        // Add any suspended-but-not-yet-flushed delta so a
-        // `get_current_playing_time` between `suspend_play_time` and
-        // the next `flush_pending_callbacks` sees the final total.
-        secs = secs.saturating_add(self.pending_mission_length_delta_secs);
-        if let Some(start) = self.play_time_start_ms {
-            let now = crate::window::process_uptime_ms();
-            secs = secs.saturating_add(now.saturating_sub(start) / 1000);
-        }
-        secs
+            .max(0) as u32
     }
 }
 
@@ -1143,11 +1109,10 @@ pub(crate) fn current_mission_id(
 pub(crate) fn flush_pending_callbacks(
     host: &mut crate::Host,
     callbacks: &mut RustCallbacks,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    _manager: &mut robin_engine::engine_manager::EngineManager,
     threaded_input: &mut crate::input::ThreadedInput,
     mut audio_backend: Option<&mut dyn crate::sound::AudioBackend>,
 ) {
-    let engine = &mut manager.engine;
     if let Some(mode) = callbacks.pending_sound_mode.take()
         && let Some(backend) = audio_backend.as_deref_mut()
     {
@@ -1174,14 +1139,6 @@ pub(crate) fn flush_pending_callbacks(
         // and clicks don't leak to the game. There's no software-cursor
         // pipeline to hide; cursor.rs renders directly from `position`.
         threaded_input.set_enabled(enabled);
-    }
-
-    // Flush any suspended play-time segment into the engine-owned
-    // campaign's mission-length accumulator. Deferred here because the
-    // callback trait boundary has no live engine handle.
-    let delta = std::mem::take(&mut callbacks.pending_mission_length_delta_secs);
-    if delta != 0 {
-        engine.campaign_add_mission_length_seconds(delta);
     }
 }
 

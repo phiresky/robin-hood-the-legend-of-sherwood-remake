@@ -81,6 +81,32 @@ fn hourglass_returns_in_progress() {
 }
 
 #[test]
+fn hourglass_advances_mission_length_from_sim_seconds() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.campaign = Some(Campaign::new());
+
+    for _ in 0..25 {
+        let result = engine
+            .perform_hourglass(&mut display, &assets, &mut dev)
+            .code;
+        assert_eq!(result, GameCode::LevelInProgress);
+    }
+
+    assert_eq!(engine.frame_counter, 25);
+    assert_eq!(
+        engine
+            .campaign
+            .as_ref()
+            .unwrap()
+            .get_value(CampaignValue::MissionLength as usize),
+        1
+    );
+}
+
+#[test]
 fn enter_helping_climb_sequence_dispatches_stealth_transition() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();

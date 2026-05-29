@@ -3667,15 +3667,10 @@ pub(crate) async fn run_mission(
                     tracing::warn!("Debriefing text lookup: level descriptors unavailable");
                     "No dynamic resources for this level...".to_string()
                 };
-                // Feed the mission-stat panel its data using
-                // `get_current_playing_time` (NOT the raw campaign
-                // `MISSION_LENGTH_VALUE`).  This matters because the
-                // debriefing fires before the Game state machine has
-                // had a chance to suspend play-time recording on the
-                // exit-code transition, so the campaign counter is
-                // still one segment behind the true elapsed time;
-                // `get_current_playing_time` adds the live segment
-                // on top.
+                // Feed the mission-stat panel through the mission-clock
+                // abstraction. The current implementation returns the
+                // deterministic campaign counter, which advances from
+                // completed sim seconds.
                 let mission_length = manager
                     .engine
                     .campaign()
