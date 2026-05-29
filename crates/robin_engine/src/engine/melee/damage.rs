@@ -1271,8 +1271,8 @@ impl EngineInner {
                 let try_y = victim_pos.y + flight_y * frac;
                 let pt_try = crate::geo2d::pt(try_x, try_y);
                 if self.fast_grid.is_straight_movement_authorized(
-                    pt_start,
-                    pt_try,
+                    pt_start.into(),
+                    pt_try.into(),
                     victim_layer,
                     &victim_move_box,
                 ) {

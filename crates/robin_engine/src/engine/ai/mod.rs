@@ -199,7 +199,7 @@ fn test_hiking_path_fine(
                 ok = false;
             }
             let hd = crate::geo2d::pt(move_box.x_max(), move_box.y_max());
-            if !grid.is_reachable_thick(p1, p2, wp.level, hd) {
+            if !grid.is_reachable_thick(p1.into(), p2.into(), wp.level, hd) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,

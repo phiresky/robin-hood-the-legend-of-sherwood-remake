@@ -2133,8 +2133,8 @@ impl FriendlyAi {
                 // stack (unit tests), accept.
                 let accepted = match grid {
                     Some(g) => g.is_straight_movement_authorized(
-                        origin_pt,
-                        crate::geo2d::pt(dest.x, dest.y),
+                        origin_pt.into(),
+                        crate::geo2d::pt(dest.x, dest.y).into(),
                         ctx.position.level,
                         &ctx.move_box,
                     ),

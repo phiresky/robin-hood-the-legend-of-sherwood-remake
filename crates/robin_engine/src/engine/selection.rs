@@ -62,7 +62,7 @@ impl EngineInner {
         } else {
             let pos = pc.element.position_map();
             let layer = pc.element.layer();
-            let pt = crate::geo2d::pt(pos.x, pos.y);
+            let pt = crate::coordinates::MapPoint::new(pos.x, pos.y);
             let hit = self.fast_grid.get_sector(pt, pt, layer);
             matches!(
                 hit,
@@ -121,7 +121,7 @@ impl EngineInner {
         }
         let elem = entity.element_data();
         let pos = elem.position_map();
-        let pt = crate::geo2d::pt(pos.x, pos.y);
+        let pt = crate::coordinates::MapPoint::new(pos.x, pos.y);
         let layer = elem.layer();
         let hit = self.fast_grid.get_sector(pt, pt, layer);
         matches!(

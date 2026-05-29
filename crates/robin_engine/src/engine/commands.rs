@@ -550,11 +550,11 @@ impl EngineInner {
                 self.update_recording_after_selection_change();
             }
             BoxSelect { pt1, pt2, shift } => {
-                self.apply_box_select(assets, input, seat, pt1.to_geo(), pt2.to_geo(), *shift);
+                self.apply_box_select(assets, input, seat, *pt1, *pt2, *shift);
                 self.update_recording_after_selection_change();
             }
             BoxUnselect { pt1, pt2 } => {
-                self.apply_box_unselect(input, seat, pt1.to_geo(), pt2.to_geo());
+                self.apply_box_unselect(input, seat, *pt1, *pt2);
                 self.update_recording_after_selection_change();
             }
             SelectAllPcs => {
@@ -3086,8 +3086,8 @@ impl EngineInner {
         assets: &LevelAssets,
         input: &mut InputState,
         seat: usize,
-        pt1: crate::geo2d::Point2D,
-        pt2: crate::geo2d::Point2D,
+        pt1: crate::coordinates::MapPoint,
+        pt2: crate::coordinates::MapPoint,
         shift: bool,
     ) {
         input.multi_selection_pt1 = pt1;
@@ -3101,8 +3101,8 @@ impl EngineInner {
         &mut self,
         input: &mut InputState,
         seat: usize,
-        pt1: crate::geo2d::Point2D,
-        pt2: crate::geo2d::Point2D,
+        pt1: crate::coordinates::MapPoint,
+        pt2: crate::coordinates::MapPoint,
     ) {
         input.multi_selection_pt1 = pt1;
         input.multi_selection_pt2 = pt2;

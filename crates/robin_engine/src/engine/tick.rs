@@ -7428,7 +7428,9 @@ impl EngineInner {
                     // block is skipped — the actor stays put but
                     // the new-position star burst still fires.
                     let dest_geo = crate::geo2d::pt(dest.x, dest.y);
-                    let probe = self.fast_grid.get_sector_screen_accessible(dest_geo);
+                    let probe = self.fast_grid.get_sector_screen_accessible(
+                        crate::coordinates::MapPoint::from_geo(dest_geo),
+                    );
                     let move_box = self
                         .get_entity(owner)
                         .map(|e| *e.position_iface().get_move_box());
@@ -8078,9 +8080,17 @@ pub(super) fn apply_drunken_path_deviation(
                 let (dx, dy) = crate::element_kinds::direction_vector_16(dir_sector);
                 let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
                 let candidate = pt(midpoint.x + dx * scale, midpoint.y + dy * scale);
-                if grid.is_straight_movement_authorized(prev, candidate, layer, move_box)
-                    && grid.is_reachable_thick(candidate, *next, layer, half_diagonal)
-                {
+                if grid.is_straight_movement_authorized(
+                    prev.into(),
+                    candidate.into(),
+                    layer,
+                    move_box,
+                ) && grid.is_reachable_thick(
+                    candidate.into(),
+                    (*next).into(),
+                    layer,
+                    half_diagonal,
+                ) {
                     inserted = Some(candidate);
                     break;
                 }

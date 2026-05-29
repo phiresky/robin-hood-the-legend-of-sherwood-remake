@@ -334,8 +334,8 @@ impl EngineInner {
                     y: source_pos.y + scatter_y,
                 };
                 if self.fast_grid.is_straight_movement_authorized(
-                    crate::geo2d::pt(corrected_2d.x, corrected_2d.y),
-                    crate::geo2d::pt(candidate.x, candidate.y),
+                    crate::geo2d::pt(corrected_2d.x, corrected_2d.y).into(),
+                    crate::geo2d::pt(candidate.x, candidate.y).into(),
                     layer,
                     &shooter_move_box,
                 ) {
@@ -358,7 +358,7 @@ impl EngineInner {
                 .position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y)
                 .into();
 
-            let goal_grid_pt = crate::geo2d::pt(goal_2d.x, goal_2d.y);
+            let goal_grid_pt = crate::coordinates::MapPoint::new(goal_2d.x, goal_2d.y);
             let target_sector = match self.fast_grid.get_sector(goal_grid_pt, goal_grid_pt, layer) {
                 SectorHit::Found { sector_number, .. } => u16::try_from(sector_number.get())
                     .ok()

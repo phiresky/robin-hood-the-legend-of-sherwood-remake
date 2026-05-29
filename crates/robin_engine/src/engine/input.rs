@@ -1068,6 +1068,7 @@ impl EngineInner {
         let pos = Self::elem_to_geo(elem.position_map());
 
         // Look up PC's current sector in the grid.
+        let pos = crate::coordinates::MapPoint::from_geo(pos);
         let hit = self.fast_grid.get_sector(pos, pos, layer);
         match hit {
             crate::fast_find_grid::SectorHit::Found { sector_idx, .. } => {
@@ -1100,10 +1101,9 @@ impl EngineInner {
             .first()
             .and_then(|&id| self.get_entity(id))
             .map(|e| Self::elem_to_geo(e.element_data().position_map()))
-            .unwrap_or_else(|| mouse_map.to_geo());
-        let hit = self
-            .fast_grid
-            .get_sector_screen(mouse_map.to_geo(), reference);
+            .map(crate::coordinates::MapPoint::from_geo)
+            .unwrap_or(mouse_map);
+        let hit = self.fast_grid.get_sector_screen(mouse_map, reference);
         match hit.sector_idx {
             Some(idx) => {
                 if let Some(sector) = self.fast_grid.level.sectors.get(usize::from(idx)) {
@@ -1824,7 +1824,7 @@ impl EngineInner {
         mouse_map: crate::coordinates::MapPoint,
     ) -> TrajectoryPreview {
         let target_3d = self.fast_grid.convert_2d_to_3d(
-            mouse_map.to_geo(),
+            mouse_map,
             crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             self.sight_obstacles(assets),
         );
@@ -2194,7 +2194,7 @@ impl EngineInner {
         //                  upper-floor surface, not z=0 ground.
         let ground_3d = || {
             let p3d = self.fast_grid.convert_2d_to_3d(
-                crate::geo2d::pt(target_pos.x, target_pos.y),
+                crate::coordinates::MapPoint::new(target_pos.x, target_pos.y),
                 crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
                 self.sight_obstacles(assets),
             );
@@ -2586,7 +2586,7 @@ impl EngineInner {
                     None => self
                         .fast_grid
                         .convert_2d_to_3d(
-                            mouse_map_geo,
+                            crate::coordinates::MapPoint::from_geo(mouse_map_geo),
                             SIGHTOBSTACLE_MOUSE,
                             self.sight_obstacles(assets),
                         )
@@ -2610,7 +2610,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         self.fast_grid
                             .convert_2d_to_3d(
-                                mouse_map_geo,
+                                crate::coordinates::MapPoint::from_geo(mouse_map_geo),
                                 SIGHTOBSTACLE_PROJECTION_AREA,
                                 self.sight_obstacles(assets),
                             )

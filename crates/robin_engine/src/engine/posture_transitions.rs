@@ -617,10 +617,12 @@ impl EngineInner {
         // unconditionally, so passing the current move box here is
         // the correct source even though the conceptual lookup is
         // for `posture_after_transition`.
-        if !self
-            .fast_grid
-            .is_reachable_thick(pt_source, pt_new_goal, layer, half_diagonal)
-        {
+        if !self.fast_grid.is_reachable_thick(
+            pt_source.into(),
+            pt_new_goal.into(),
+            layer,
+            half_diagonal,
+        ) {
             return;
         }
 
@@ -673,10 +675,12 @@ impl EngineInner {
                 );
                 break;
             }
-            if self
-                .fast_grid
-                .is_reachable_thick(src_pt, pt_new_goal, layer, half_diagonal)
-            {
+            if self.fast_grid.is_reachable_thick(
+                src_pt.into(),
+                pt_new_goal.into(),
+                layer,
+                half_diagonal,
+            ) {
                 // Delete the order at i+1.
                 {
                     let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) else {

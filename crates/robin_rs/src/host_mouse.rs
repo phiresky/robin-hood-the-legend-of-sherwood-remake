@@ -305,11 +305,17 @@ pub fn choose_mouse_pointer_for_no_action(
         .get_entity(pc_id)
         .map(|e| {
             let elem = e.element_data();
-            (elem.layer(), Engine::elem_to_geo(elem.position_map()))
+            (
+                elem.layer(),
+                robin_engine::coordinates::MapPoint::from_geo(Engine::elem_to_geo(
+                    elem.position_map(),
+                )),
+            )
         })
-        .unwrap_or((0, mouse_map));
+        .unwrap_or((0, robin_engine::coordinates::MapPoint::from_geo(mouse_map)));
 
     // Look up sector under mouse.
+    let mouse_map = robin_engine::coordinates::MapPoint::from_geo(mouse_map);
     let mouse_sector_result = engine.fast_grid().get_sector_screen(mouse_map, pc_pos);
     let pc_sector_hit = engine.fast_grid().get_sector(pc_pos, pc_pos, pc_layer);
 
@@ -719,21 +725,24 @@ pub fn update_mouse(
     // position (falling back to the cursor when no PC is selected).
     // The reference is used by `get_sector` to tie-break overlapping
     // jump sectors (nearest-mid wins).
+    let mouse_map_pt = robin_engine::coordinates::MapPoint::from_geo(mouse_map);
     let reference = engine
         .seat_selection(host.local_seat)
         .first()
         .and_then(|&id| engine.get_entity(id))
         .map(|e| {
             let p = e.element_data().position_map();
-            crate::geo2d::pt(p.x, p.y)
+            robin_engine::coordinates::MapPoint::new(p.x, p.y)
         })
-        .unwrap_or(mouse_map);
+        .unwrap_or(mouse_map_pt);
     let sector_hit = if shift_held {
         engine
             .fast_grid()
-            .get_sector_screen_hidden(mouse_map, reference)
+            .get_sector_screen_hidden(mouse_map_pt, reference)
     } else {
-        engine.fast_grid().get_sector_screen(mouse_map, reference)
+        engine
+            .fast_grid()
+            .get_sector_screen(mouse_map_pt, reference)
     };
 
     // Resolve the owning patch once per frame.  The selected patch is

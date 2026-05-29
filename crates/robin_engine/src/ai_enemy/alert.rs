@@ -88,7 +88,12 @@ impl EnemyAi {
             let py = centre.1 + sideways_index * side_50.1 + backward_index * backward_30.1;
             let slot_pt = crate::geo2d::pt(px, py);
 
-            if !grid.is_straight_movement_authorized(officer_pt, slot_pt, layer, &ctx.move_box) {
+            if !grid.is_straight_movement_authorized(
+                officer_pt.into(),
+                slot_pt.into(),
+                layer,
+                &ctx.move_box,
+            ) {
                 return None;
             }
 
@@ -534,8 +539,8 @@ impl EnemyAi {
                 'outer: for k in 0..10u16 {
                     if k > 0
                         && !grid.is_straight_movement_authorized(
-                            crate::geo2d::pt(door_pt_out.0, door_pt_out.1),
-                            crate::geo2d::pt(try_pt.0, try_pt.1),
+                            crate::geo2d::pt(door_pt_out.0, door_pt_out.1).into(),
+                            crate::geo2d::pt(try_pt.0, try_pt.1).into(),
                             outside_layer,
                             &ctx.move_box,
                         )

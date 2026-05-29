@@ -2138,7 +2138,12 @@ impl EnemyAi {
         if let Some(g) = grid {
             let pt_me = crate::geo2d::pt(my_pos.x, my_pos.y);
             let pt_goal = crate::geo2d::pt(goal_x, goal_y);
-            if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
+            if !g.is_straight_movement_authorized(
+                pt_me.into(),
+                pt_goal.into(),
+                my_pos.level,
+                &ctx.move_box,
+            ) {
                 return None;
             }
         }
@@ -2267,8 +2272,8 @@ impl EnemyAi {
                 // IsStraightMovementAutorized.
                 let clear = match grid {
                     Some(g) => g.is_straight_movement_authorized(
-                        pt_me,
-                        crate::geo2d::pt(gx, gy),
+                        pt_me.into(),
+                        crate::geo2d::pt(gx, gy).into(),
                         my_pos.level,
                         &ctx.move_box,
                     ),

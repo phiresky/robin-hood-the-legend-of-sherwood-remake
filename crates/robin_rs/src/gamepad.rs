@@ -459,7 +459,10 @@ impl GamePadState {
             } else {
                 MOVE_UNIT / norm
             };
-            let dest = robin_engine::geo2d::pt(leader_pos.x + x * scale, leader_pos.y + y * scale);
+            let dest = robin_engine::coordinates::MapPoint::new(
+                leader_pos.x + x * scale,
+                leader_pos.y + y * scale,
+            );
 
             // Validity check: probe the destination and only dispatch
             // the move when the sector is a patch (auto-valid after the
@@ -467,7 +470,7 @@ impl GamePadState {
             // Drops the move when the stick points at unreachable
             // terrain instead of letting it resolve through
             // `perform_group_move`'s snap-to-walkable fallback.
-            let leader_ref = robin_engine::geo2d::pt(leader_pos.x, leader_pos.y);
+            let leader_ref = robin_engine::coordinates::MapPoint::new(leader_pos.x, leader_pos.y);
             let hit = engine.fast_grid().get_sector_screen(dest, leader_ref);
             let hit_is_patch = hit
                 .sector_idx
@@ -476,7 +479,7 @@ impl GamePadState {
             if hit.is_valid_for_move(engine.fast_grid()) || hit_is_patch {
                 cmds.push(PlayerCommand::GroupMove {
                     actors: selected.to_vec(),
-                    destination: dest.into(),
+                    destination: dest,
                     running,
                     show_marker: false,
                     // Gamepad cursor doesn't yet plumb the patch

@@ -332,8 +332,8 @@ impl EngineInner {
         }
 
         if !self.fast_grid.is_straight_movement_authorized(
-            owner_pos,
-            new_pos,
+            owner_pos.into(),
+            new_pos.into(),
             owner_layer,
             &owner_move_box,
         ) {

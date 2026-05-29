@@ -254,10 +254,12 @@ impl EngineInner {
             let dx = crate::sim_rng::i32(-50..=50) as f32;
             let dy = crate::sim_rng::i32(-50..=50) as f32;
             let candidate = crate::geo2d::pt(pin.x + dx, pin.y + dy);
-            if self
-                .fast_grid
-                .is_reachable_thick(pin, candidate, door_snap.layer_in, hd)
-            {
+            if self.fast_grid.is_reachable_thick(
+                pin.into(),
+                candidate.into(),
+                door_snap.layer_in,
+                hd,
+            ) {
                 jitter = Some(candidate);
                 break;
             }

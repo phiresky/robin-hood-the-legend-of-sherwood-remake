@@ -174,8 +174,8 @@ fn give_money_to_beggar(
     // midpoint so the coin lands in the PC's lap; otherwise drop it at
     // the civilian's own feet.
     let los_clear = engine.fast_grid.is_straight_movement_authorized(
-        crate::geo2d::pt(npc_pos_2d.x, npc_pos_2d.y),
-        crate::geo2d::pt(beggar_pos_2d.x, beggar_pos_2d.y),
+        crate::geo2d::pt(npc_pos_2d.x, npc_pos_2d.y).into(),
+        crate::geo2d::pt(beggar_pos_2d.x, beggar_pos_2d.y).into(),
         layer,
         &move_box,
     );

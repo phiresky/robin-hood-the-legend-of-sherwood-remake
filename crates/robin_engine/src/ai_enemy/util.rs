@@ -740,7 +740,12 @@ pub fn propose_good_step_back_goal(
             if let Some(grid) = grid {
                 let me_pt = crate::geo2d::pt(pos_me.x, pos_me.y);
                 let goal_pt = crate::geo2d::pt(goal.x, goal.y);
-                if grid.is_straight_movement_authorized(me_pt, goal_pt, pos_me.level, move_box) {
+                if grid.is_straight_movement_authorized(
+                    me_pt.into(),
+                    goal_pt.into(),
+                    pos_me.level,
+                    move_box,
+                ) {
                     return Some(goal);
                 }
             } else {
@@ -826,8 +831,8 @@ pub(super) fn check_straight_movement(
 ) -> bool {
     match grid {
         Some(g) => g.is_straight_movement_authorized(
-            crate::geo2d::pt(from.x, from.y),
-            crate::geo2d::pt(to.x, to.y),
+            crate::geo2d::pt(from.x, from.y).into(),
+            crate::geo2d::pt(to.x, to.y).into(),
             from.level,
             move_box,
         ),

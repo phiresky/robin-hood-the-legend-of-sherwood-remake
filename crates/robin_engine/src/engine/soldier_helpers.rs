@@ -752,10 +752,12 @@ impl EngineInner {
                 let (dx, dy_raw) = crate::element_kinds::direction_vector_16(dd);
                 let dy = dy_raw * crate::position_interface::ASPECT_RATIO;
                 let cand = crate::geo2d::pt(center.x + dx * magnitude, center.y + dy * magnitude);
-                if self
-                    .fast_grid
-                    .is_straight_movement_authorized(center, cand, out_layer, &move_box)
-                {
+                if self.fast_grid.is_straight_movement_authorized(
+                    center.into(),
+                    cand.into(),
+                    out_layer,
+                    &move_box,
+                ) {
                     dispersed_direction = dd;
                     defender = cand;
                     attacker = crate::geo2d::pt(

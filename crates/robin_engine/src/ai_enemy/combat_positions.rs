@@ -202,7 +202,12 @@ impl EnemyAi {
         if let Some(grid) = grid {
             let me_pt = crate::geo2d::pt(ctx.position.x, ctx.position.y);
             let there_pt = crate::geo2d::pt(there.x, there.y);
-            if !grid.is_straight_movement_authorized(me_pt, there_pt, there.level, &ctx.move_box) {
+            if !grid.is_straight_movement_authorized(
+                me_pt.into(),
+                there_pt.into(),
+                there.level,
+                &ctx.move_box,
+            ) {
                 return;
             }
         }
@@ -508,8 +513,8 @@ impl EnemyAi {
                 let me_pt = crate::geo2d::pt(me_pos.x, me_pos.y);
                 let new_pt = crate::geo2d::pt(new_pos.x, new_pos.y);
                 if !grid.is_straight_movement_authorized(
-                    me_pt,
-                    new_pt,
+                    me_pt.into(),
+                    new_pt.into(),
                     new_pos.level,
                     &ctx.move_box,
                 ) {
@@ -918,7 +923,12 @@ impl EnemyAi {
         let left_accessible = grid.is_none_or(|g| {
             let anchor_pt = crate::geo2d::pt(left_pos.x, left_pos.y);
             let slot_pt = crate::geo2d::pt(pos_left.x, pos_left.y);
-            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_pos.level, &ctx.move_box)
+            g.is_straight_movement_authorized(
+                anchor_pt.into(),
+                slot_pt.into(),
+                left_pos.level,
+                &ctx.move_box,
+            )
         });
         // The reference passes `left_guy.layer` here (a copy-paste bug);
         // we use `right_pos.level` so the right-side check matches the
@@ -926,7 +936,12 @@ impl EnemyAi {
         let right_accessible = grid.is_none_or(|g| {
             let anchor_pt = crate::geo2d::pt(right_pos.x, right_pos.y);
             let slot_pt = crate::geo2d::pt(pos_right.x, pos_right.y);
-            g.is_straight_movement_authorized(anchor_pt, slot_pt, right_pos.level, &ctx.move_box)
+            g.is_straight_movement_authorized(
+                anchor_pt.into(),
+                slot_pt.into(),
+                right_pos.level,
+                &ctx.move_box,
+            )
         });
 
         let me_pos = ctx.position;
@@ -1088,8 +1103,12 @@ impl EnemyAi {
         if let Some(g) = grid {
             let bearer_pt = crate::geo2d::pt(bearer_pos.x, bearer_pos.y);
             let cover_pt = crate::geo2d::pt(behind.x, behind.y);
-            if !g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box)
-            {
+            if !g.is_straight_movement_authorized(
+                bearer_pt.into(),
+                cover_pt.into(),
+                behind.level,
+                &ctx.move_box,
+            ) {
                 return None;
             }
         }
@@ -1697,10 +1716,10 @@ impl EnemyAi {
                     let oc = crate::geo2d::pt(phalanx_center.x, phalanx_center.y);
                     let lvl = new_left.level;
                     let mb = &ctx.move_box;
-                    grid.is_straight_movement_authorized(nl, nr, lvl, mb)
-                        && (grid.is_straight_movement_authorized(ol, nl, lvl, mb)
-                            || grid.is_straight_movement_authorized(or_, nr, lvl, mb)
-                            || grid.is_straight_movement_authorized(oc, nc, lvl, mb))
+                    grid.is_straight_movement_authorized(nl.into(), nr.into(), lvl, mb)
+                        && (grid.is_straight_movement_authorized(ol.into(), nl.into(), lvl, mb)
+                            || grid.is_straight_movement_authorized(or_.into(), nr.into(), lvl, mb)
+                            || grid.is_straight_movement_authorized(oc.into(), nc.into(), lvl, mb))
                 } else {
                     true
                 };
@@ -1778,8 +1797,8 @@ impl EnemyAi {
                     let left_pt = crate::geo2d::pt(candidate_left.x, candidate_left.y);
                     let right_pt = crate::geo2d::pt(candidate_right.x, candidate_right.y);
                     if grid.is_straight_movement_authorized(
-                        left_pt,
-                        right_pt,
+                        left_pt.into(),
+                        right_pt.into(),
                         candidate_left.level,
                         &ctx.move_box,
                     ) {

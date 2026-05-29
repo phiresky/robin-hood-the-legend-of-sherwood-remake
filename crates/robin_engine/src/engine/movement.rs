@@ -902,7 +902,10 @@ impl EngineInner {
                 None,
             )
         } else {
-            let hit = self.fast_grid.get_sector_screen(click_point, reference);
+            let hit = self.fast_grid.get_sector_screen(
+                crate::coordinates::MapPoint::from_geo(click_point),
+                crate::coordinates::MapPoint::from_geo(reference),
+            );
             let is_valid = hit.is_valid_for_move(&self.fast_grid);
 
             // ── Door/Drawbridge click shortcut ──
@@ -2601,10 +2604,12 @@ impl EngineInner {
         // silently skipped rather than asserting.
         if intent.ask_obstacle && !intent.compute_direction {
             let dest = crate::geo2d::pt(intent.target_x, intent.target_y);
-            if !self
-                .fast_grid
-                .is_straight_movement_authorized(position, dest, layer, &move_box)
-            {
+            if !self.fast_grid.is_straight_movement_authorized(
+                position.into(),
+                dest.into(),
+                layer,
+                &move_box,
+            ) {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return false;
             }
@@ -6225,9 +6230,12 @@ impl EngineInner {
             || is_pass_door
             || actor_passing_door
             || source_is_lift_rail
-            || self
-                .fast_grid
-                .is_reachable_thick(source, dest, entity_layer, half_diagonal);
+            || self.fast_grid.is_reachable_thick(
+                source.into(),
+                dest.into(),
+                entity_layer,
+                half_diagonal,
+            );
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position.  This mirrors legacy implementation

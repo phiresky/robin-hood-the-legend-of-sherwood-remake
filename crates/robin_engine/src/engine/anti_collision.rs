@@ -609,9 +609,12 @@ pub fn apply_anti_collision_step(
             return naive;
         }
         let reachable = match (state.as_deref(), grid) {
-            (Some(s), Some(g)) => {
-                g.is_reachable_thick(future, s.goal_map, mover.layer, s.half_diagonal)
-            }
+            (Some(s), Some(g)) => g.is_reachable_thick(
+                future.into(),
+                s.goal_map.into(),
+                mover.layer,
+                s.half_diagonal,
+            ),
             _ => false,
         };
         if reachable {
@@ -651,8 +654,8 @@ pub fn apply_anti_collision_step(
         }
         let reachable = match grid {
             Some(g) => g.is_reachable_thick(
-                deviated_future,
-                state.goal_map,
+                deviated_future.into(),
+                state.goal_map.into(),
                 mover.layer,
                 state.half_diagonal,
             ),
@@ -683,13 +686,13 @@ pub fn apply_anti_collision_step(
     };
 
     let can_commit = grid.is_straight_movement_authorized(
-        mover.position_map,
-        deviated_future,
+        mover.position_map.into(),
+        deviated_future.into(),
         mover.layer,
         &state.move_box,
     ) && grid.is_reachable_thick(
-        deviated_future,
-        state.goal_map,
+        deviated_future.into(),
+        state.goal_map.into(),
         mover.layer,
         state.half_diagonal,
     );

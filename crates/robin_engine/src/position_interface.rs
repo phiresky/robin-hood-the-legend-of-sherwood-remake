@@ -1634,7 +1634,12 @@ impl PositionInterface {
         if self.deviated {
             if self.goal_next_valid {
                 let hd = self.get_half_diagonal();
-                grid.is_reachable_thick(map, self.goal_next_map.to_geo(), self.layer.get(), hd)
+                grid.is_reachable_thick(
+                    map.into(),
+                    self.goal_next_map.to_geo().into(),
+                    self.layer.get(),
+                    hd,
+                )
             } else if self.blocked_count == 0 {
                 self.directional_goal_check(map, goal, im)
             } else {
@@ -1872,8 +1877,8 @@ impl PositionInterface {
             if lists_empty {
                 let hd = self.get_half_diagonal();
                 if fast_grid.is_reachable_thick(
-                    pt_future_naive,
-                    self.goal_map.to_geo(),
+                    pt_future_naive.into(),
+                    self.goal_map.to_geo().into(),
                     self.layer.get(),
                     hd,
                 ) {
@@ -1924,8 +1929,8 @@ impl PositionInterface {
             if self.deviated {
                 let hd = self.get_half_diagonal();
                 if fast_grid.is_reachable_thick(
-                    pt_future,
-                    self.goal_map.to_geo(),
+                    pt_future.into(),
+                    self.goal_map.to_geo().into(),
                     self.layer.get(),
                     hd,
                 ) {
@@ -1947,14 +1952,17 @@ impl PositionInterface {
         let box_move = *self.get_move_box();
         let half_diagonal_move = self.get_half_diagonal();
 
-        let can_commit =
-            fast_grid.is_straight_movement_authorized(map, pt_future, self.layer.get(), &box_move)
-                && fast_grid.is_reachable_thick(
-                    pt_future,
-                    self.goal_map.to_geo(),
-                    self.layer.get(),
-                    half_diagonal_move,
-                );
+        let can_commit = fast_grid.is_straight_movement_authorized(
+            map.into(),
+            pt_future.into(),
+            self.layer.get(),
+            &box_move,
+        ) && fast_grid.is_reachable_thick(
+            pt_future.into(),
+            self.goal_map.to_geo().into(),
+            self.layer.get(),
+            half_diagonal_move,
+        );
 
         if can_commit {
             if self.update_box_blocked(pt_future) {

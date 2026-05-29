@@ -529,8 +529,8 @@ impl PatrolPath {
                     );
                     if scale == 0.0
                         || grid.is_straight_movement_authorized(
-                            on_path,
-                            candidate,
+                            on_path.into(),
+                            candidate.into(),
                             entry.position.level,
                             chief_move_box,
                         )

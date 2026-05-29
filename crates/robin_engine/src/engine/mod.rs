@@ -2677,7 +2677,8 @@ impl EngineInner {
             if elem.posture == crate::element::Posture::Flying {
                 continue;
             }
-            let pos = geo2d::pt(elem.position_map().x, elem.position_map().y);
+            let pos =
+                crate::coordinates::MapPoint::new(elem.position_map().x, elem.position_map().y);
             let in_building = match self.fast_grid().get_sector(pos, pos, elem.layer()) {
                 crate::fast_find_grid::SectorHit::Found { sector_idx, .. } => self
                     .fast_grid()

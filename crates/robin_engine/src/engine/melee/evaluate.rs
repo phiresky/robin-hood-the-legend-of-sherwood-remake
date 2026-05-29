@@ -250,10 +250,12 @@ impl EngineInner {
             // Must be straight-reachable.
             let p1 = crate::geo2d::pt(my_pos_map.x, my_pos_map.y);
             let p2 = crate::geo2d::pt(dest.x, dest.y);
-            if !self
-                .fast_grid
-                .is_straight_movement_authorized(p1, p2, my_layer, &my_move_box)
-            {
+            if !self.fast_grid.is_straight_movement_authorized(
+                p1.into(),
+                p2.into(),
+                my_layer,
+                &my_move_box,
+            ) {
                 return false;
             }
             self.launch_swordfight_distance_move(
@@ -336,9 +338,12 @@ impl EngineInner {
         // Reachability test.
         let p1 = crate::geo2d::pt(my_pos_map.x, my_pos_map.y);
         let p2 = crate::geo2d::pt(destination.x, destination.y);
-        let mut is_reachable =
-            self.fast_grid
-                .is_straight_movement_authorized(p1, p2, my_layer, &my_move_box);
+        let mut is_reachable = self.fast_grid.is_straight_movement_authorized(
+            p1.into(),
+            p2.into(),
+            my_layer,
+            &my_move_box,
+        );
 
         // Force-movement fallback: try to slide the destination into
         // a reachable slot via `find_authorized_position_toward`.
@@ -1033,7 +1038,7 @@ impl EngineInner {
         let p2 = crate::geo2d::pt(dest.x, dest.y);
         if !self
             .fast_grid
-            .is_straight_movement_authorized(p1, p2, layer, &move_box)
+            .is_straight_movement_authorized(p1.into(), p2.into(), layer, &move_box)
         {
             return None;
         }

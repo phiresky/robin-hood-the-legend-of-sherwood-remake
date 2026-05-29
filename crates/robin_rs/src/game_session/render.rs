@@ -15,7 +15,6 @@ use crate::game_render::{
     render_selection_outlines_gpu, render_shadow_polygon_sphere_debug, render_trajectory_preview,
     render_view_cone_overlay,
 };
-use crate::geo2d;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
@@ -767,7 +766,8 @@ pub(super) fn render_frame(
         if elem.posture == crate::element::Posture::Flying {
             continue;
         }
-        let map_pos = geo2d::pt(elem.position_map().x, elem.position_map().y);
+        let map_pos =
+            robin_engine::coordinates::MapPoint::new(elem.position_map().x, elem.position_map().y);
         let in_building = match engine
             .fast_grid()
             .get_sector(map_pos, map_pos, elem.layer())

@@ -2366,7 +2366,7 @@ pub(crate) async fn run_mission(
                                         let accessible = manager
                                             .engine
                                             .fast_grid()
-                                            .get_sector_screen_accessible(mouse_map.to_geo());
+                                            .get_sector_screen_accessible(mouse_map);
                                         if let Some(sector_idx) = accessible.sector_idx {
                                             let cmd = PlayerCommand::TeleportSelectedToPoint {
                                                 dest: mouse_map,
@@ -2396,7 +2396,7 @@ pub(crate) async fn run_mission(
                                         // host-side outside the replay
                                         // pipeline.
                                         let p3d = manager.engine.fast_grid().convert_2d_to_3d(
-                                            mouse_map.to_geo(),
+                                            mouse_map,
                                             robin_engine::sight_obstacle::SIGHTOBSTACLE_MOUSE,
                                             manager.engine.sight_obstacles(&assets),
                                         );

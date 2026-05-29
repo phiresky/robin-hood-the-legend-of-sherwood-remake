@@ -17,6 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::MapPoint;
 use crate::geo2d::{self, BBox2D, Point2D, Vec2D, pt};
 
 // ---------------------------------------------------------------------------
@@ -1570,7 +1571,7 @@ impl FastFindGrid {
         result
     }
 
-    /// Resolve a 2D mouse-map position to a 3D point on the topmost
+    /// Resolve a projected mouse-map position to a 3D point on the topmost
     /// obstacle surface that contains it.
     ///
     /// Drops a vertical ray from far above the level onto the point and
@@ -1583,7 +1584,7 @@ impl FastFindGrid {
     /// to ground (`z = 0`) when no obstacle covers the point.
     pub fn convert_2d_to_3d(
         &self,
-        pt2d: Point2D,
+        pt2d: MapPoint,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> crate::position_interface::Point3D {
@@ -1829,8 +1830,11 @@ impl FastFindGrid {
     /// a motion obstacle (MOTION without AREA), returns `SectorHit::Blocked`.
     ///
     /// `reference` is used for jump-sector tie-breaking (closest to reference wins).
-    pub fn get_sector(&self, pt: Point2D, reference: Point2D, layer: u16) -> SectorHit {
+    pub fn get_sector(&self, pt: MapPoint, reference: MapPoint, layer: u16) -> SectorHit {
         use crate::sector::SectorType;
+
+        let pt = pt.to_geo();
+        let reference = reference.to_geo();
 
         if !self.is_inside_grid_point(pt) {
             return SectorHit::None;
@@ -1959,11 +1963,14 @@ impl FastFindGrid {
         }
     }
 
-    /// Find the sector under a screen point, searching layers top-down.
+    /// Find the sector under a projected map point, searching layers top-down.
+    ///
+    /// Legacy C++ calls this "screen", but the point is the map projection
+    /// `(world.x, world.y - world.z)`, not viewport pixels.
     ///
     /// Iterates from the highest layer down to 0, returning the first hit.
     /// Resolves associated sectors to their targets (lifts / drawbridges).
-    pub fn get_sector_screen(&self, pt: Point2D, reference: Point2D) -> SectorScreenResult {
+    pub fn get_sector_screen(&self, pt: MapPoint, reference: MapPoint) -> SectorScreenResult {
         // Iterate layers top-down from `special_layer - 1`.
         for layer in (0..self.level.special_layer).rev() {
             match self.get_sector(pt, reference, layer) {
@@ -1985,7 +1992,7 @@ impl FastFindGrid {
         SectorScreenResult::invalid(0)
     }
 
-    /// Find the topmost walkable/teleportable sector under a screen
+    /// Find the topmost walkable/teleportable sector under a projected map
     /// point. Used by the F7 teleport cheat to pick the destination
     /// sector.
     ///
@@ -1999,8 +2006,8 @@ impl FastFindGrid {
     /// then bails on `0xFFFF`). An empty reference point is used so the
     /// jump tie-break falls back to distance from the origin rather
     /// than biasing toward any particular PC position.
-    pub fn get_sector_screen_accessible(&self, pt: Point2D) -> SectorScreenResult {
-        let empty_reference = crate::geo2d::pt(0.0, 0.0);
+    pub fn get_sector_screen_accessible(&self, pt: MapPoint) -> SectorScreenResult {
+        let empty_reference = MapPoint::ZERO;
         for layer in (0..self.level.special_layer).rev() {
             let hit = self.get_sector(pt, empty_reference, layer);
             let SectorHit::Found {
@@ -2044,7 +2051,11 @@ impl FastFindGrid {
     /// stashed first hit when no second hit exists, and returns an
     /// empty result when no sector is found on any layer. Called from
     /// the mouse-location update path when shift is held.
-    pub fn get_sector_screen_hidden(&self, pt: Point2D, reference: Point2D) -> SectorScreenResult {
+    pub fn get_sector_screen_hidden(
+        &self,
+        pt: MapPoint,
+        reference: MapPoint,
+    ) -> SectorScreenResult {
         let mut first_hit: Option<SectorScreenResult> = None;
 
         for layer in (0..self.level.special_layer).rev() {
@@ -2706,8 +2717,8 @@ impl FastFindGrid {
     /// `half_diagonal` is the half-diagonal of the unit's bounding box.
     pub fn is_reachable_thick(
         &self,
-        p1: Point2D,
-        p2: Point2D,
+        p1: MapPoint,
+        p2: MapPoint,
         layer: u16,
         half_diagonal: Vec2D,
     ) -> bool {
@@ -2715,10 +2726,11 @@ impl FastFindGrid {
             return true;
         }
 
-        let corridor = match Self::build_thick_move_corridor(p1, p2, half_diagonal) {
-            Some(c) => c,
-            None => return true,
-        };
+        let corridor =
+            match Self::build_thick_move_corridor(p1.to_geo(), p2.to_geo(), half_diagonal) {
+                Some(c) => c,
+                None => return true,
+            };
 
         let line_indices = self.get_active_motion_line_indices(layer, &corridor.bbox);
         if line_indices.is_empty() {
@@ -2964,8 +2976,8 @@ impl FastFindGrid {
     /// `move_box` is the 0-centered bounding box of the unit.
     pub fn is_straight_movement_authorized(
         &self,
-        p1: Point2D,
-        p2: Point2D,
+        p1: MapPoint,
+        p2: MapPoint,
         layer: u16,
         move_box: &BBox2D,
     ) -> bool {
@@ -2993,8 +3005,8 @@ impl FastFindGrid {
     /// Passing `&[]` reduces to pure static motion-line checks.
     pub fn is_reachable_thick_mobile(
         &self,
-        p1: Point2D,
-        p2: Point2D,
+        p1: MapPoint,
+        p2: MapPoint,
         layer: u16,
         half_diagonal: Vec2D,
         mobile_lines: &[GridLine],
@@ -3005,7 +3017,9 @@ impl FastFindGrid {
         if mobile_lines.is_empty() || p1 == p2 {
             return true;
         }
-        let Some(corridor) = Self::build_thick_move_corridor(p1, p2, half_diagonal) else {
+        let Some(corridor) =
+            Self::build_thick_move_corridor(p1.to_geo(), p2.to_geo(), half_diagonal)
+        else {
             return true;
         };
         for line in mobile_lines {
@@ -3413,13 +3427,28 @@ mod tests {
         let hd = pt(5.0, 5.0);
 
         // Movement entirely above the line — reachable
-        assert!(grid.is_reachable_thick(pt(50.0, 50.0), pt(200.0, 50.0), 0, hd));
+        assert!(grid.is_reachable_thick(
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(200.0, 50.0),
+            0,
+            hd
+        ));
 
         // Movement crossing the line — not reachable
-        assert!(!grid.is_reachable_thick(pt(50.0, 50.0), pt(50.0, 200.0), 0, hd));
+        assert!(!grid.is_reachable_thick(
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(50.0, 200.0),
+            0,
+            hd
+        ));
 
         // Same point — trivially reachable
-        assert!(grid.is_reachable_thick(pt(50.0, 50.0), pt(50.0, 50.0), 0, hd));
+        assert!(grid.is_reachable_thick(
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(50.0, 50.0),
+            0,
+            hd
+        ));
     }
 
     #[test]
@@ -3465,24 +3494,24 @@ mod tests {
 
         // Movement entirely above the line — authorized
         assert!(grid.is_straight_movement_authorized(
-            pt(50.0, 50.0),
-            pt(200.0, 50.0),
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(200.0, 50.0),
             0,
             &move_box
         ));
 
         // Movement crossing the line — not authorized
         assert!(!grid.is_straight_movement_authorized(
-            pt(50.0, 50.0),
-            pt(50.0, 200.0),
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(50.0, 200.0),
             0,
             &move_box
         ));
 
         // Destination on the line — not authorized (position check fails)
         assert!(!grid.is_straight_movement_authorized(
-            pt(50.0, 50.0),
-            pt(50.0, 128.0),
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(50.0, 128.0),
             0,
             &move_box
         ));
@@ -3495,15 +3524,27 @@ mod tests {
 
         // With no mobile repulsive lines the call collapses to
         // `is_reachable_thick`.
-        assert!(grid.is_reachable_thick_mobile(pt(50.0, 50.0), pt(200.0, 50.0), 0, hd, &[]));
-        assert!(!grid.is_reachable_thick_mobile(pt(50.0, 50.0), pt(50.0, 200.0), 0, hd, &[]));
+        assert!(grid.is_reachable_thick_mobile(
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(200.0, 50.0),
+            0,
+            hd,
+            &[]
+        ));
+        assert!(!grid.is_reachable_thick_mobile(
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(50.0, 200.0),
+            0,
+            hd,
+            &[]
+        ));
 
         // Mobile repulsive line added: a vertical line at x=150 that
         // the corridor from (50,50)→(200,50) must cross.
         let mobile = GridLine::new(pt(150.0, 30.0), pt(150.0, 70.0), false);
         assert!(!grid.is_reachable_thick_mobile(
-            pt(50.0, 50.0),
-            pt(200.0, 50.0),
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(200.0, 50.0),
             0,
             hd,
             std::slice::from_ref(&mobile)
@@ -3752,7 +3793,7 @@ mod tests {
         );
         grid.add_sector(jump, 0);
 
-        let res = grid.get_sector_screen(pt(60.0, 60.0), pt(60.0, 60.0));
+        let res = grid.get_sector_screen(MapPoint::new(60.0, 60.0), MapPoint::new(60.0, 60.0));
         assert!(res.is_valid());
         assert!(res.is_valid_for_move(&grid));
     }
@@ -3806,14 +3847,14 @@ mod tests {
         grid.add_sector(jump_b, 0);
 
         // Reference close to jump_a's first line midpoint (60,60).
-        let hit_a = grid.get_sector(pt(60.0, 70.0), pt(55.0, 55.0), 0);
+        let hit_a = grid.get_sector(MapPoint::new(60.0, 70.0), MapPoint::new(55.0, 55.0), 0);
         match hit_a {
             SectorHit::Found { sector_number, .. } => assert_eq!(sector_number, 20),
             _ => panic!("expected jump_a to win"),
         }
 
         // Reference close to jump_b's first line midpoint (60,90).
-        let hit_b = grid.get_sector(pt(60.0, 70.0), pt(55.0, 95.0), 0);
+        let hit_b = grid.get_sector(MapPoint::new(60.0, 70.0), MapPoint::new(55.0, 95.0), 0);
         match hit_b {
             SectorHit::Found { sector_number, .. } => assert_eq!(sector_number, 21),
             _ => panic!("expected jump_b to win"),
@@ -3824,7 +3865,7 @@ mod tests {
     fn test_get_sector_screen_invalid_has_no_sector() {
         let grid = make_empty_grid(1);
 
-        let res = grid.get_sector_screen(pt(60.0, 60.0), pt(60.0, 60.0));
+        let res = grid.get_sector_screen(MapPoint::new(60.0, 60.0), MapPoint::new(60.0, 60.0));
 
         assert!(!res.is_valid());
         assert_eq!(res.sector_idx, None);

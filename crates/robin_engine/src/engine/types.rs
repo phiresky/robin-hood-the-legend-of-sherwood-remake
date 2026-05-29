@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 // order on every client.
 use std::collections::BTreeMap;
 
+use crate::coordinates::{MapPoint, ScreenPoint};
 use crate::geo2d::{self, Point2D, Vec2D};
 use crate::natives::GameHost;
 use crate::script_manager::{ScriptInstance, ScriptManager};
@@ -1683,13 +1684,13 @@ pub struct InputState {
     pub multi_selection_active: bool,
     pub multi_unselection_active: bool,
     pub draw_multi_selection: bool,
-    pub multi_selection_pt1: Point2D,
-    pub multi_selection_pt2: Point2D,
+    pub multi_selection_pt1: MapPoint,
+    pub multi_selection_pt2: MapPoint,
 
     /// Left mouse button is currently held down.
     pub left_mouse_down: bool,
     /// Screen position where left mouse was pressed (for drag detection).
-    pub left_mouse_start_screen: Point2D,
+    pub left_mouse_start_screen: ScreenPoint,
 
     /// Whether the player is currently dragging with the left mouse.
     ///
@@ -1821,7 +1822,7 @@ impl InputState {
     }
 
     /// Start a drag-box multi-selection at the given map-space point.
-    pub fn start_multi_selection(&mut self, map_pt: Point2D) {
+    pub fn start_multi_selection(&mut self, map_pt: MapPoint) {
         self.multi_selection_active = true;
         self.draw_multi_selection = false;
         self.multi_selection_pt1 = map_pt;
@@ -1829,7 +1830,7 @@ impl InputState {
     }
 
     /// Update the drag-box endpoint during a multi-selection drag.
-    pub fn update_multi_selection(&mut self, map_pt: Point2D) {
+    pub fn update_multi_selection(&mut self, map_pt: MapPoint) {
         self.multi_selection_pt2 = map_pt;
     }
 
@@ -1840,7 +1841,7 @@ impl InputState {
     }
 
     /// Start a drag-box multi-UNselection at the given map-space point.
-    pub fn start_multi_unselection(&mut self, map_pt: Point2D) {
+    pub fn start_multi_unselection(&mut self, map_pt: MapPoint) {
         self.multi_unselection_active = true;
         self.draw_multi_selection = false;
         self.multi_selection_pt1 = map_pt;
