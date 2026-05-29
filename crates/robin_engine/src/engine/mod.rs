@@ -60,6 +60,7 @@ pub(crate) use commands::command_action_distance_animation;
 pub use commands::{coin_pickup_target, object_pickup_command};
 pub use console_dispatch::ConsoleResponse;
 pub use global_options::*;
+pub(crate) use movement::adapt_source_to_current_door;
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, LevelLoadArgs, MinimapWidgetSetup,

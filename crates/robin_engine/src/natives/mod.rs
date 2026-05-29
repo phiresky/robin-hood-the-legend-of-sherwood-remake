@@ -794,9 +794,9 @@ impl GameHost {
         &mut self,
         actor_handle: i32,
         action: OrderType,
-        source: (f32, f32),
-        source_sector: u16,
-        _source_layer: u16,
+        mut source: (f32, f32),
+        mut source_sector: u16,
+        mut _source_layer: u16,
         goal: (f32, f32),
         goal_sector: u16,
         goal_layer: u16,
@@ -821,6 +821,22 @@ impl GameHost {
 
         let owner = Self::actor_id(actor_handle);
         let to_pt = |(x, y): (f32, f32)| Point2D { x, y };
+
+        // Original AppendMoveToSequence rewrites the source when the
+        // actor is currently straddling a gate (`pTarget->GetDoor()`).
+        // Do this before the same-sector fast path and path lookup so
+        // recorded/script movement starts from the gate's far side.
+        if let Some((door_handle, door_direction)) = self.get_entity(actor_handle).map(|entity| {
+            let pi = entity.position_iface();
+            (pi.get_door(), pi.get_door_direction())
+        }) && let Some((adapted_source, adapted_sector, adapted_layer)) =
+            crate::engine::adapt_source_to_current_door(&self.doors, door_handle, door_direction)
+        {
+            source = (adapted_source.x, adapted_source.y);
+            source_sector = adapted_sector;
+            _source_layer = adapted_layer;
+        }
+
         // Counter for `record_seq_step`: the very first emission stays
         // at the caller-provided recording level; every subsequent
         // emission bumps the level (sequence-element count increments
