@@ -386,7 +386,7 @@ impl EngineInner {
                                 let p = te.element_data().position_map();
                                 crate::geo2d::pt(p.x, p.y)
                             } else {
-                                destination.to_geo()
+                                crate::geo2d::pt(destination.x, destination.y)
                             };
                             (pt, *action)
                         }

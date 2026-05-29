@@ -22,7 +22,7 @@
 //!   the net.
 
 use super::*;
-use crate::coordinates::MapPoint as ElemPoint2D;
+use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Point3D};
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -612,10 +612,8 @@ impl EngineInner {
             }
             n.element.set_position(p);
             // Recompute the 2D map projection.
-            n.element.set_position_map(ElemPoint2D {
-                x: p.x,
-                y: p.y - p.z,
-            });
+            n.element
+                .set_position_map(MapPoint::from_world_xyz(p.x, p.y, p.z));
         }
 
         // Broadcast the BONK so nearby NPCs react to the thud of the
@@ -960,10 +958,8 @@ fn advance_net_trajectory(net: &mut crate::element::ElementNet) {
     p.y += proj.velocity_increment.y;
     p.z += proj.velocity_increment.z;
     net.element.set_position(p);
-    net.element.set_position_map(ElemPoint2D {
-        x: p.x,
-        y: p.y - p.z,
-    });
+    net.element
+        .set_position_map(MapPoint::from_world_xyz(p.x, p.y, p.z));
     let vx = proj.velocity_increment.x;
     let vy = proj.velocity_increment.y;
     if vx != 0.0 || vy != 0.0 {
@@ -1002,10 +998,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(landing);
-        element.set_position_map(ElemPoint2D {
-            x: landing.x,
-            y: landing.y - landing.z,
-        });
+        element.set_position_map(MapPoint::from_world_xyz(landing.x, landing.y, landing.z));
         Entity::Net(ElementNet {
             element,
             object: ObjectData::default(),
@@ -1026,10 +1019,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(ElemPoint2D {
-            x: pos.x,
-            y: pos.y - pos.z,
-        });
+        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
         Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData::default(),
@@ -1055,10 +1045,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(ElemPoint2D {
-            x: pos.x,
-            y: pos.y - pos.z,
-        });
+        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
         Entity::Pc(ActorPc {
             element,
             actor: ActorData::default(),

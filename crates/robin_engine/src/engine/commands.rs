@@ -3810,7 +3810,7 @@ mod tests {
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
-        sprite.center = center;
+        sprite.center = crate::coordinates::SpriteAnchor::from_geo(center);
         let element = engine.get_entity_mut(id).unwrap().element_data_mut();
         let position = element.position_map();
         let direction = element.direction();

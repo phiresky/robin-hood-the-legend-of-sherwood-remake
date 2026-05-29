@@ -1220,7 +1220,7 @@ impl EngineInner {
         actor: &Entity,
         target: crate::element::Point3D,
     ) -> bool {
-        let actor_ground = actor.position_ground();
+        let actor_ground = actor.ground_position();
         let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
             target.x - actor_ground.x,
             target.y - actor_ground.y,

@@ -39,7 +39,7 @@
 //! shows the disabled bow slot automatically.
 
 use crate::combat::{self, ConcussionContext};
-use crate::coordinates::MapPoint as ElemPoint2D;
+use crate::coordinates::MapPoint;
 use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
     ObjectData, ObjectType, Point3D, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
@@ -203,7 +203,7 @@ pub fn shield_params_for_soldier(
 /// actor's facing direction, offset forward from the actor's position.
 /// Coordinate system: (x, y) in map-space, z in world height.
 pub fn compute_shield_obstacle(
-    position_map: ElemPoint2D,
+    position_map: MapPoint,
     z: f32,
     direction_sector: i16,
     params: &ShieldParams,
@@ -1038,10 +1038,7 @@ fn compute_trajectory_ballistic_impl(
                 // continuing the bounce integration.  Stop here;
                 // `maybe_splash_on_landing` marks `dive`.
                 if let Some(water_zones) = check.water_zones {
-                    let map_pt = crate::geo2d::Point2D {
-                        x: impact.x,
-                        y: impact.y - impact.z,
-                    };
+                    let map_pt = MapPoint::from_world_xyz(impact.x, impact.y, impact.z).to_geo();
                     if water_zones.determine_water_hole(map_pt).is_some() {
                         break;
                     }
@@ -1078,14 +1075,8 @@ fn compute_trajectory_ballistic_impl(
     {
         let last = trajectory[trajectory.len() - 1].position;
         let prev = trajectory[trajectory.len() - 2].position;
-        let landing_map = crate::geo2d::Point2D {
-            x: last.x,
-            y: last.y - last.z,
-        };
-        let prev_map = crate::geo2d::Point2D {
-            x: prev.x,
-            y: prev.y - prev.z,
-        };
+        let landing_map = MapPoint::from_world_xyz(last.x, last.y, last.z).to_geo();
+        let prev_map = MapPoint::from_world_xyz(prev.x, prev.y, prev.z).to_geo();
         if let Some(exit) = water_zones.find_hole_far_exit(prev_map, landing_map) {
             // Duration proportional to the 2D distance from the
             // landing point to the exit.
@@ -1109,7 +1100,11 @@ fn compute_trajectory_ballistic_impl(
             trajectory.push(TrajectoryPoint {
                 position: Point3D {
                     x: exit.x,
-                    y: exit.y + last.z,
+                    y: crate::coordinates::GroundPoint::from_map_and_z(
+                        MapPoint::from_geo(exit),
+                        last.z,
+                    )
+                    .y,
                     z: last.z,
                 },
                 time,
@@ -1414,26 +1409,26 @@ fn aim_transition_orders(
     transitions
 }
 
-fn bow_target_ground_position(entity: &Entity) -> ElemPoint2D {
+fn bow_target_ground_position(entity: &Entity) -> MapPoint {
     if entity.is_fx_target() {
         entity
             .compute_target_center()
-            .map(|pos| ElemPoint2D { x: pos.x, y: pos.y })
+            .map(|pos| MapPoint { x: pos.x, y: pos.y })
             .unwrap_or_else(|| {
                 let pos = entity.element_data().position();
-                ElemPoint2D { x: pos.x, y: pos.y }
+                MapPoint { x: pos.x, y: pos.y }
             })
     } else if entity.is_human() {
         entity
             .compute_belt_point()
-            .map(|pos| ElemPoint2D { x: pos.x, y: pos.y })
+            .map(|pos| MapPoint { x: pos.x, y: pos.y })
             .unwrap_or_else(|| {
                 let pos = entity.element_data().position();
-                ElemPoint2D { x: pos.x, y: pos.y }
+                MapPoint { x: pos.x, y: pos.y }
             })
     } else {
         let pos = entity.element_data().position();
-        ElemPoint2D { x: pos.x, y: pos.y }
+        MapPoint { x: pos.x, y: pos.y }
     }
 }
 
@@ -1679,7 +1674,7 @@ pub struct ShotTickResult {
     /// Shooter's 3D entity position (`.z` = ground elevation).
     pub shooter_position: Point3D,
     /// Target's 2D map position (for arrow direction / spawn).
-    pub target_pos: ElemPoint2D,
+    pub target_pos: MapPoint,
     /// Target's 3D belt point (for trajectory computation).
     pub target_point: Point3D,
     /// Shoot mode selected when the command was translated.
@@ -1722,7 +1717,7 @@ pub fn tick_bow_shots(
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
-    let target_ground_positions: Vec<Option<ElemPoint2D>> = entities
+    let target_ground_positions: Vec<Option<MapPoint>> = entities
         .iter()
         .map(|slot| slot.as_ref().map(bow_target_ground_position))
         .collect();
@@ -2042,9 +2037,9 @@ pub struct SpawnArrowParams {
     /// C++ `ShootWithBowAt` stores the shooter map position as
     /// `mposStartOfTrajectory` after the arrow's first `Hourglass()`.
     /// AI reactions use this origin, not the bow hand hotspot.
-    pub trajectory_origin: ElemPoint2D,
+    pub trajectory_origin: MapPoint,
     pub target: EntityId,
-    pub target_pos: ElemPoint2D,
+    pub target_pos: MapPoint,
     pub trajectory: Vec<TrajectoryPoint>,
     pub damage: u16,
     pub layer: u16,
@@ -2081,7 +2076,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         lands_in_hole,
         initial_velocity,
     } = params;
-    let map_pos = ElemPoint2D {
+    let map_pos = MapPoint {
         x: bow_point.x,
         y: bow_point.y,
     };
@@ -2188,7 +2183,7 @@ pub fn spawn_net(
     );
     let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "net");
 
-    let map_pos = ElemPoint2D {
+    let map_pos = MapPoint {
         x: throw_pos.x,
         y: throw_pos.y,
     };
@@ -2286,7 +2281,7 @@ pub fn spawn_wasp_nest(
     );
     let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "wasp_nest");
 
-    let map_pos = ElemPoint2D {
+    let map_pos = MapPoint {
         x: throw_pos.x,
         y: throw_pos.y,
     };
@@ -2350,10 +2345,7 @@ pub fn spawn_wasp(nest_id: EntityId, position: Point3D, layer: u16) -> Entity {
         posture: Posture::Undefined,
         ..ElementData::default()
     };
-    element.set_position_map(ElemPoint2D {
-        x: position.x,
-        y: position.y - position.z,
-    });
+    element.set_position_map(MapPoint::from_world_xyz(position.x, position.y, position.z));
     element.set_position(position);
     element.set_layer(layer);
 
@@ -2501,7 +2493,7 @@ fn spawn_throwable(
     let trajectory = compute_trajectory_ballistic(throw_pos, velocity, mass, false, obstacle_check);
     let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "throwable");
 
-    let map_pos = ElemPoint2D {
+    let map_pos = MapPoint {
         x: throw_pos.x,
         y: throw_pos.y,
     };
@@ -2614,7 +2606,7 @@ pub fn spawn_purse(
         compute_trajectory_ballistic(throw_pos, velocity, MASS_PURSE, false, obstacle_check);
     let end_pos = trajectory_end_or_start(&trajectory, throw_pos, "purse");
 
-    let map_pos = ElemPoint2D {
+    let map_pos = MapPoint {
         x: throw_pos.x,
         y: throw_pos.y,
     };
@@ -2713,7 +2705,7 @@ pub fn spawn_coin(
     );
     let end_pos = trajectory_end_or_start(&trajectory, source_pos, "coin");
 
-    let map_pos = ElemPoint2D {
+    let map_pos = MapPoint {
         x: source_pos.x,
         y: source_pos.y,
     };
@@ -2799,7 +2791,7 @@ pub struct ArrowTickResult {
     pub impact_fx: Option<u32>,
     /// Map-space position of the projectile at impact, for locating
     /// the impact FX sound.  Only meaningful when `impact_fx.is_some()`.
-    pub impact_pos: ElemPoint2D,
+    pub impact_pos: MapPoint,
     /// Previous 3D projectile position for C++ `SetPosition(old)` on
     /// human hits whose `HitHuman` handler returns true.  Arrows only
     /// use this in the damage branch; pass-through and ricochet keep
@@ -2936,7 +2928,7 @@ fn tick_arrows_matching(
         is_civilian: bool,
         camp: Option<crate::element::Camp>,
         holding_shield: bool,
-        position_map: ElemPoint2D,
+        position_map: MapPoint,
     }
     let human_snapshots: Vec<HumanSnapshot> = entities
         .iter()
@@ -3009,7 +3001,7 @@ fn tick_arrows_matching(
     struct FxTargetSnapshot {
         id: EntityId,
         center: Point3D,
-        position_map: ElemPoint2D,
+        position_map: MapPoint,
         action_filter: crate::element::TargetFilter,
     }
     let fx_target_snapshots: Vec<FxTargetSnapshot> = entities
@@ -3285,10 +3277,12 @@ fn tick_arrows_matching(
 
             // Update the 2D map position from 3D (project Z onto Y for
             // isometric display: map.y = pos.y - pos.z).
-            proj.element.set_position_map_preserving_3d(ElemPoint2D {
-                x: proj.element.position().x,
-                y: proj.element.position().y - proj.element.position().z,
-            });
+            proj.element
+                .set_position_map_preserving_3d(MapPoint::from_world_xyz(
+                    proj.element.position().x,
+                    proj.element.position().y,
+                    proj.element.position().z,
+                ));
         }
         // Update facing direction from velocity increment.  Use the
         // isometric Y-stretch so the flight-direction sector agrees
@@ -3613,7 +3607,7 @@ fn tick_arrows_matching(
                 Command::ActivateArrow,
             ),
         };
-        let mut fx_target_hit: Option<(EntityId, Command, ElemPoint2D)> = None;
+        let mut fx_target_hit: Option<(EntityId, Command, MapPoint)> = None;
         if !required_filter.is_empty() {
             for snap in &fx_target_snapshots {
                 if !snap.action_filter.contains(required_filter) {
@@ -3879,7 +3873,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(ElemPoint2D { x, y });
+        element.set_position_map(MapPoint { x, y });
         Entity::Pc(ActorPc {
             element,
             actor: ActorData::default(),
@@ -3904,7 +3898,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(ElemPoint2D { x, y });
+        element.set_position_map(MapPoint { x, y });
         let npc = NpcData {
             life_points: 100,
             ..Default::default()
@@ -3927,7 +3921,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(ElemPoint2D { x, y });
+        element.set_position_map(MapPoint { x, y });
         element.set_position(Point3D { x, y, z: 0.0 });
         Entity::Target(ElementTarget {
             element,
@@ -4612,9 +4606,9 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: traj,
             damage: 30,
             layer: 0,
@@ -4646,9 +4640,9 @@ mod tests {
                 y: 40.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 100.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: Point3D {
                     x: 50.0,
@@ -4717,9 +4711,9 @@ mod tests {
                     y: 0.0,
                     z: 40.0,
                 },
-                trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+                trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
                 target: EntityId(1),
-                target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+                target_pos: MapPoint { x: 50.0, y: 0.0 },
                 trajectory: traj,
                 damage: 30,
                 layer: 0,
@@ -4784,9 +4778,9 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: traj,
             damage: 30,
             layer: 0,
@@ -4815,7 +4809,7 @@ mod tests {
         }
 
         let hit = hit.expect("arrow should reach human target");
-        assert_eq!(hit.impact_pos, ElemPoint2D { x: 50.0, y: 0.0 });
+        assert_eq!(hit.impact_pos, MapPoint { x: 50.0, y: 0.0 });
         let old_pos = hit
             .human_hit_old_position
             .expect("human hit should carry previous projectile position");
@@ -4833,9 +4827,9 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: Point3D {
                     x: 50.0,
@@ -4860,9 +4854,9 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: Point3D {
                     x: 1010.0,
@@ -4927,9 +4921,9 @@ mod tests {
                 y: 0.0,
                 z: 25.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(2),
-            target_pos: ElemPoint2D { x: 100.0, y: 0.0 },
+            target_pos: MapPoint { x: 100.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: Point3D {
                     x: 100.0,
@@ -4984,7 +4978,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        arrow_element.set_position_map(ElemPoint2D { x: 50.0, y: -25.0 });
+        arrow_element.set_position_map(MapPoint { x: 50.0, y: -25.0 });
         arrow_element.set_position(Point3D {
             x: 50.0,
             y: 0.0,
@@ -5041,9 +5035,9 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: Point3D {
                     x: 50.0,
@@ -5080,7 +5074,7 @@ mod tests {
     fn tick_arrows_apple_projectile_activates_apple_target() {
         use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-        let target_pos = ElemPoint2D { x: 50.0, y: 0.0 };
+        let target_pos = MapPoint { x: 50.0, y: 0.0 };
         let mut target_element = ElementData {
             kind: ElementKind::Target,
             active: true,
@@ -5127,7 +5121,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        apple_element.set_position_map(ElemPoint2D { x: 0.0, y: 0.0 });
+        apple_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
         apple_element.set_position(Point3D {
             x: 0.0,
             y: 0.0,
@@ -5190,7 +5184,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        target_element.set_position_map(ElemPoint2D { x: 40.0, y: 0.0 });
+        target_element.set_position_map(MapPoint { x: 40.0, y: 0.0 });
         target_element.set_position(Point3D {
             x: 40.0,
             y: 0.0,
@@ -5210,7 +5204,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        arrow_element.set_position_map(ElemPoint2D { x: 0.0, y: 0.0 });
+        arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
         arrow_element.set_position(Point3D {
             x: 0.0,
             y: 0.0,
@@ -5268,7 +5262,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        target_element.set_position_map(ElemPoint2D { x: 10.0, y: 0.0 });
+        target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
         target_element.set_position(Point3D {
             x: 10.0,
             y: 0.0,
@@ -5288,7 +5282,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        arrow_element.set_position_map(ElemPoint2D { x: 0.0, y: 0.0 });
+        arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
         arrow_element.set_position(Point3D {
             x: 0.0,
             y: 0.0,
@@ -5349,9 +5343,9 @@ mod tests {
                 y: 0.0,
                 z: 40.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 3200.0, y: 0.0 },
+            target_pos: MapPoint { x: 3200.0, y: 0.0 },
             trajectory,
             damage: 30,
             layer: 0,
@@ -5395,7 +5389,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        target_element.set_position_map(ElemPoint2D { x: 50.0, y: 0.0 });
+        target_element.set_position_map(MapPoint { x: 50.0, y: 0.0 });
         target_element.set_position(Point3D {
             x: 50.0,
             y: 0.0,
@@ -5457,7 +5451,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        target_element.set_position_map(ElemPoint2D { x: 10.0, y: 0.0 });
+        target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
         let target = Entity::Target(ElementTarget {
             element: target_element,
             fx: FxData::default(),
@@ -5539,7 +5533,7 @@ mod tests {
                 active: true,
                 ..ElementData::default()
             };
-            element.set_position_map(ElemPoint2D { x: 0.0, y: 0.0 });
+            element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
             element.set_position(Point3D {
                 x: 0.0,
                 y: 0.0,
@@ -5928,9 +5922,9 @@ mod tests {
                 y: 0.0,
                 z: 25.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory,
             damage: 30,
             layer: 0,
@@ -6001,9 +5995,9 @@ mod tests {
                 y: 0.0,
                 z: 82.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 90.0, y: 0.0 },
+            target_pos: MapPoint { x: 90.0, y: 0.0 },
             trajectory,
             damage: 30,
             layer: 0,
@@ -6068,9 +6062,9 @@ mod tests {
                 y: 0.0,
                 z: 30.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(1),
-            target_pos: ElemPoint2D { x: 80.0, y: 0.0 },
+            target_pos: MapPoint { x: 80.0, y: 0.0 },
             trajectory,
             damage: 30,
             layer: 0,
@@ -6118,7 +6112,7 @@ mod tests {
                 let actor = shield_holder.actor_data_mut().unwrap();
                 actor.action_state = ActionState::HoldingShield;
                 let params = shield_params_for_soldier(20, 40);
-                let obs = compute_shield_obstacle(ElemPoint2D { x: 50.0, y: 0.0 }, 0.0, 4, &params);
+                let obs = compute_shield_obstacle(MapPoint { x: 50.0, y: 0.0 }, 0.0, 4, &params);
                 actor.shield_obstacle = Some(obs);
             }
             shield_holder.element_data_mut().set_direction_instantly(4);
@@ -6145,9 +6139,9 @@ mod tests {
                     y: 40.0,
                     z: 40.0,
                 },
-                trajectory_origin: ElemPoint2D { x: 100.0, y: 0.0 },
+                trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
                 target: EntityId(1),
-                target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+                target_pos: MapPoint { x: 50.0, y: 0.0 },
                 trajectory,
                 damage: 30,
                 layer: 0,
@@ -6231,9 +6225,9 @@ mod tests {
                     y: 0.0,
                     z: 0.0,
                 },
-                trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+                trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
                 target: EntityId(1),
-                target_pos: ElemPoint2D { x: 50.0, y: 0.0 },
+                target_pos: MapPoint { x: 50.0, y: 0.0 },
                 trajectory,
                 damage: 30,
                 layer: 0,
@@ -6291,9 +6285,9 @@ mod tests {
                 y: 0.0,
                 z: 5.0,
             },
-            trajectory_origin: ElemPoint2D { x: 0.0, y: 0.0 },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
             target: EntityId(0),
-            target_pos: ElemPoint2D { x: 10.0, y: 0.0 },
+            target_pos: MapPoint { x: 10.0, y: 0.0 },
             trajectory,
             damage: 30,
             layer: 0,

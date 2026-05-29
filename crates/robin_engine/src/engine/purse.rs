@@ -28,7 +28,7 @@
 
 use super::EngineInner;
 use crate::bow_shot::{self, COIN_SCATTER_MIN, NUMBER_OF_COINS_IN_PURSE};
-use crate::coordinates::MapPoint as ElemPoint2D;
+use crate::coordinates::MapPoint;
 use crate::element::{Animation, DetectableType, Entity, EntityId, ObjectType, Point3D};
 use crate::fast_find_grid::SectorHit;
 
@@ -224,7 +224,7 @@ impl EngineInner {
         // corrected centre as the coin-spawn source.  Falls back to the
         // raw impact when the level is invalid or no walkable spot is
         // found within search radius.
-        let mut corrected_2d = ElemPoint2D {
+        let mut corrected_2d = MapPoint {
             x: impact_pos.x,
             y: impact_pos.y,
         };
@@ -235,7 +235,7 @@ impl EngineInner {
             .find_authorized_position(&mut box_at_pos, layer)
         {
             let centre = box_at_pos.center();
-            corrected_2d = ElemPoint2D {
+            corrected_2d = MapPoint {
                 x: centre.x,
                 y: centre.y,
             };
@@ -316,7 +316,7 @@ impl EngineInner {
         let mut spawned_children: Vec<EntityId> =
             Vec::with_capacity(NUMBER_OF_COINS_IN_PURSE as usize);
         for _ in 0..NUMBER_OF_COINS_IN_PURSE {
-            let mut goal_2d = ElemPoint2D {
+            let mut goal_2d = MapPoint {
                 x: source_pos.x,
                 y: source_pos.y,
             };
@@ -329,7 +329,7 @@ impl EngineInner {
                 // Y is compressed by ASPECT_RATIO to match isometric ground.
                 let scatter_x = ux * magnitude;
                 let scatter_y = uy * magnitude * crate::position_interface::ASPECT_RATIO;
-                let candidate = ElemPoint2D {
+                let candidate = MapPoint {
                     x: source_pos.x + scatter_x,
                     y: source_pos.y + scatter_y,
                 };
@@ -548,7 +548,7 @@ mod tests {
             ..Default::default()
         };
         element.set_position(pos);
-        element.set_position_map(ElemPoint2D { x: pos.x, y: pos.y });
+        element.set_position_map(MapPoint { x: pos.x, y: pos.y });
         element.set_layer(layer);
         let entity = Entity::Projectile(ElementProjectile {
             element,

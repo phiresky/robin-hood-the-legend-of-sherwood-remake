@@ -16,7 +16,7 @@
 //!    restoration, etc.) from the returned [`AbilityTickResult`] values
 //!    *after* the mutable entity borrow is released.
 
-use crate::coordinates::MapPoint as ElemPoint2D;
+use crate::coordinates::MapPoint;
 use crate::element::{
     ActionState, Entity, EntityId, GameMaterial, ListenPhase, Posture, ReceivePursePhase,
 };
@@ -143,7 +143,7 @@ pub enum AbilityTickResult {
         /// Posture to restore on the dropped body.
         drop_posture: Posture,
         /// Position to place the dropped body at.
-        carrier_pos: ElemPoint2D,
+        carrier_pos: MapPoint,
         carrier_direction: u16,
         seq_id: SequenceId,
         elem_idx: usize,
@@ -165,7 +165,7 @@ pub enum AbilityTickResult {
     /// Robin Hood finished whistling.
     WhistleDone {
         actor_id: EntityId,
-        position: ElemPoint2D,
+        position: MapPoint,
         seq_id: SequenceId,
         elem_idx: usize,
     },
@@ -186,14 +186,14 @@ pub enum AbilityTickResult {
     ThrowNetDone {
         actor_id: EntityId,
         /// 2D target position for the net projectile.
-        target_pos: ElemPoint2D,
+        target_pos: MapPoint,
         seq_id: SequenceId,
         elem_idx: usize,
     },
     /// Stuteley finished the wasp nest throw animation.
     ThrowWaspNestDone {
         actor_id: EntityId,
-        target_pos: ElemPoint2D,
+        target_pos: MapPoint,
         seq_id: SequenceId,
         elem_idx: usize,
     },
@@ -202,7 +202,7 @@ pub enum AbilityTickResult {
     ThrowPurseDone {
         actor_id: EntityId,
         /// 2D ground target the purse arcs toward.
-        target_pos: ElemPoint2D,
+        target_pos: MapPoint,
         seq_id: SequenceId,
         elem_idx: usize,
     },
@@ -628,7 +628,7 @@ pub fn begin_climb_on_shoulders(
                     valid,
                 )
             }
-            None => (ElemPoint2D { x: 0.0, y: 0.0 }, Default::default(), false),
+            None => (MapPoint { x: 0.0, y: 0.0 }, Default::default(), false),
         };
     if !helper_valid {
         return ClimbResult::Impossible;
@@ -1487,7 +1487,7 @@ pub fn begin_throw_net(
     entities: &mut [Option<Entity>],
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    target_pos: ElemPoint2D,
+    target_pos: MapPoint,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
@@ -1671,7 +1671,7 @@ pub fn begin_throw_wasp_nest(
     entities: &mut [Option<Entity>],
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    target_pos: ElemPoint2D,
+    target_pos: MapPoint,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
@@ -1740,7 +1740,7 @@ pub fn begin_throw_purse(
     entities: &mut [Option<Entity>],
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
-    target_pos: ElemPoint2D,
+    target_pos: MapPoint,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
@@ -2318,7 +2318,7 @@ pub fn tick_abilities(
                 let target_pos = sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.current_order())
-                    .map(|o| ElemPoint2D {
+                    .map(|o| MapPoint {
                         x: o.target_x,
                         y: o.target_y,
                     })
@@ -2334,7 +2334,7 @@ pub fn tick_abilities(
                 let target_pos = sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.current_order())
-                    .map(|o| ElemPoint2D {
+                    .map(|o| MapPoint {
                         x: o.target_x,
                         y: o.target_y,
                     })
@@ -2350,7 +2350,7 @@ pub fn tick_abilities(
                 let target_pos = sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.current_order())
-                    .map(|o| ElemPoint2D {
+                    .map(|o| MapPoint {
                         x: o.target_x,
                         y: o.target_y,
                     })
@@ -2442,7 +2442,7 @@ pub fn tick_abilities(
 struct CarrierSnapshot {
     carrier_id: EntityId,
     target_id: EntityId,
-    pos: ElemPoint2D,
+    pos: MapPoint,
     carrier_dir: i16,
     layer: u16,
     /// Carrier's current sight obstacle (copied onto the carried

@@ -1097,10 +1097,9 @@ impl EngineInner {
         // per-frame counter tracked the sprite's true duration.
         if let Some(target) = finished.step.target_3d {
             let elem = entity.element_data_mut();
-            elem.set_position_map(crate::coordinates::MapPoint {
-                x: target.x,
-                y: target.y - target.z,
-            });
+            elem.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+                target.x, target.y, target.z,
+            ));
             if let Some(actor) = entity.actor_data_mut() {
                 actor.jump_z_offset = if finished.step.airborne {
                     target.z

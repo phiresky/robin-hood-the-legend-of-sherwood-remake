@@ -1661,7 +1661,7 @@ fn collect_arc_victims(
         }
         // Use ground position (which includes elevation in the Y
         // coordinate) for MOTION_DONE victim collection.
-        let pos = entity.position_ground();
+        let pos = entity.ground_position();
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         // Quick reject
@@ -1714,7 +1714,7 @@ fn collect_circle_warn_victims(
         ) {
             continue;
         }
-        let pos = entity.position_ground();
+        let pos = entity.ground_position();
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         if dx.abs().max(dy.abs()) > 150.0 {
@@ -1815,7 +1815,7 @@ fn collect_push_victims(
         }
         // Use ground position (which includes elevation in Y) for
         // MOTION_DONE victim collection.
-        let pos = entity.position_ground();
+        let pos = entity.ground_position();
         let dx = pos.x - attacker_pos.0;
         let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
         if dx.abs().max(dy.abs()) > 150.0 {
@@ -2140,10 +2140,9 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(crate::coordinates::MapPoint {
-            x: pos.x,
-            y: pos.y - pos.z,
-        });
+        element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+            pos.x, pos.y, pos.z,
+        ));
         element.set_sector(sector);
         Entity::Soldier(ActorSoldier {
             element,
@@ -2168,10 +2167,9 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(crate::coordinates::MapPoint {
-            x: pos.x,
-            y: pos.y - pos.z,
-        });
+        element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+            pos.x, pos.y, pos.z,
+        ));
         element.set_sector(sector);
         Entity::Pc(ActorPc {
             element,

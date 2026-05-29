@@ -2061,7 +2061,7 @@ impl EngineInner {
                         Ok(info) => {
                             sprite.scripts = info.scripts.clone();
                             sprite.conversion = info.conversion.clone();
-                            sprite.center = info.center;
+                            sprite.center = crate::coordinates::SpriteAnchor::from_geo(info.center);
                             sprite.frame_profile_name = raw.filename.clone();
                             sprite.profile_cache_key = cache_key;
                             let w = info.size.x as u16;

@@ -1535,7 +1535,8 @@ impl PositionInterface {
         self.position.x = map.x;
         if let Some(p) = &self.plane {
             self.position.z = p.compute_z(map.x, map.y);
-            self.position.y = map.y + self.position.z;
+            self.position.y =
+                crate::coordinates::GroundPoint::from_map_and_z(map, self.position.z).y;
         } else {
             self.position.y = map.y;
             self.position.z = 0.0;
@@ -1553,7 +1554,7 @@ impl PositionInterface {
         }
         if self.is_increment_3d_computed() {
             let inc = self.increment;
-            self.increment_map = MapVec::new(inc.x, inc.y - inc.z);
+            self.increment_map = MapVec::from_world_xyz(inc.x, inc.y, inc.z);
         } else {
             let map = self.position_map;
             let goal = self.goal_map;
@@ -1574,7 +1575,8 @@ impl PositionInterface {
         self.increment.x = im.x;
         if let Some(p) = &self.plane {
             self.increment.z = p.compute_z_increment(im.x, im.y);
-            self.increment.y = im.y + self.increment.z;
+            self.increment.y =
+                crate::coordinates::GroundVec::from_map_and_z(im, self.increment.z).y;
         } else {
             self.increment.y = im.y;
             self.increment.z = 0.0;
@@ -1600,13 +1602,14 @@ impl PositionInterface {
 
         if self.is_increment_3d_computed() {
             let inc = self.increment;
-            self.increment_map = MapVec::new(inc.x, inc.y - inc.z);
+            self.increment_map = MapVec::from_world_xyz(inc.x, inc.y, inc.z);
         } else if self.is_increment_map_computed() {
             let im = self.increment_map;
             self.increment.x = im.x;
             if let Some(p) = &self.plane {
                 self.increment.z = p.compute_z_increment(im.x, im.y);
-                self.increment.y = im.y + self.increment.z;
+                self.increment.y =
+                    crate::coordinates::GroundVec::from_map_and_z(im, self.increment.z).y;
             } else {
                 self.increment.y = im.y;
                 self.increment.z = 0.0;
@@ -1625,7 +1628,11 @@ impl PositionInterface {
                 self.increment.x = v.x;
                 if let Some(p) = &self.plane {
                     self.increment.z = p.compute_z_increment(v.x, v.y);
-                    self.increment.y = v.y + self.increment.z;
+                    self.increment.y = crate::coordinates::GroundVec::from_map_and_z(
+                        MapVec::from_geo(v),
+                        self.increment.z,
+                    )
+                    .y;
                 } else {
                     self.increment.y = v.y;
                     self.increment.z = 0.0;

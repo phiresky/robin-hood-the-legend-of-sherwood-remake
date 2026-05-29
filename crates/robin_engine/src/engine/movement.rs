@@ -3058,7 +3058,8 @@ impl EngineInner {
                                 target_is_actor,
                                 target_pos,
                                 use_point_offset,
-                                shield_destination: seek_shield.then_some(destination.to_geo()),
+                                shield_destination: seek_shield
+                                    .then_some(crate::geo2d::pt(destination.x, destination.y)),
                                 last_seek_target_position: crate::geo2d::pt(
                                     actor.last_seek_target_position.x,
                                     actor.last_seek_target_position.y,

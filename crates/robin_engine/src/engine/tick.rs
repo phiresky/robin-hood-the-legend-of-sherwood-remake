@@ -1383,11 +1383,11 @@ impl EngineInner {
                                 };
                                 actor.seek_refresh_wait = 25;
                             }
-                            stored_destination.to_geo()
+                            crate::geo2d::pt(stored_destination.x, stored_destination.y)
                         }
                     }
                 } else {
-                    stored_destination.to_geo()
+                    crate::geo2d::pt(stored_destination.x, stored_destination.y)
                 };
                 // Move (or Seek that fell through to Move) inside a
                 // building sector skips the pathfinder entirely:
@@ -7464,7 +7464,7 @@ impl EngineInner {
                         // position interface + grid cell.
                         if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
                             let pi = entity.position_iface_mut();
-                            pi.set_position_map(final_dest.to_geo());
+                            pi.set_position_map(crate::geo2d::pt(final_dest.x, final_dest.y));
                             let ed = entity.element_data_mut();
                             ed.set_position_map(crate::coordinates::MapPoint {
                                 x: final_dest.x,

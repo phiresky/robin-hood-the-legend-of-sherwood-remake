@@ -2374,11 +2374,11 @@ impl EngineInner {
                 ai.primary_target
             };
             let my_pos = match self.get_entity(npc_id) {
-                Some(e) => e.position_ground(),
+                Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
             let target_pos = match self.get_entity(EntityId(target_handle)) {
-                Some(e) => e.position_ground(),
+                Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
             let dx = target_pos.x - my_pos.x;

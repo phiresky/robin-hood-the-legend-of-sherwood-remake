@@ -110,3 +110,77 @@ coord2!(
     ScreenPoint,
     screen_pt
 );
+
+impl MapPoint {
+    /// Project a world-space `(x, y, z)` position into map coordinates.
+    ///
+    /// This is the core Spellbound/C++ projection rule: map `(x, y)` is
+    /// world `(x, y - z)`.
+    #[inline]
+    pub const fn from_world_xyz(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y: y - z }
+    }
+}
+
+impl GroundPoint {
+    /// Reconstruct ground/world-XY coordinates from a projected map point and
+    /// an elevation.
+    #[inline]
+    pub const fn from_map_and_z(map: MapPoint, z: f32) -> Self {
+        Self {
+            x: map.x,
+            y: map.y + z,
+        }
+    }
+}
+
+impl MapVec {
+    /// Project a world-space `(x, y, z)` delta into map-vector coordinates.
+    #[inline]
+    pub const fn from_world_xyz(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y: y - z }
+    }
+}
+
+impl GroundVec {
+    /// Reconstruct a world-XY delta from a projected map delta and an
+    /// elevation delta.
+    #[inline]
+    pub const fn from_map_and_z(map: MapVec, z: f32) -> Self {
+        Self {
+            x: map.x,
+            y: map.y + z,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn world_xyz_projection_is_named_and_reversible_with_z() {
+        let map = MapPoint::from_world_xyz(10.0, 25.0, 7.0);
+        assert_eq!(map, MapPoint { x: 10.0, y: 18.0 });
+
+        let ground = GroundPoint::from_map_and_z(map, 7.0);
+        assert_eq!(ground, GroundPoint { x: 10.0, y: 25.0 });
+    }
+
+    #[test]
+    fn world_xyz_delta_projection_is_named_and_reversible_with_z_delta() {
+        let map = MapVec::from_world_xyz(2.0, 9.0, 4.0);
+        assert_eq!(map, MapVec { x: 2.0, y: 5.0 });
+
+        let ground = GroundVec::from_map_and_z(map, 4.0);
+        assert_eq!(ground, GroundVec { x: 2.0, y: 9.0 });
+    }
+
+    #[test]
+    fn sprite_anchor_is_not_a_map_point_even_with_same_components() {
+        let anchor = SpriteAnchor::new(8.0, 11.0);
+        let map = MapPoint::new(8.0, 11.0);
+
+        assert_eq!(anchor.to_geo(), map.to_geo());
+    }
+}

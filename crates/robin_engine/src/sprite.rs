@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::SpriteAnchor;
 use crate::element::EntityId;
 use crate::geo2d::{Point2D, Vec2D};
 use crate::order::OrderType;
@@ -328,7 +329,7 @@ pub struct Sprite {
     /// Used to convert from entity map position to the sprite's
     /// top-left rendering origin.  Stores the active sprite anchor so
     /// engine/host geometry paths can read it directly.
-    pub center: Vec2D,
+    pub center: SpriteAnchor,
 
     /// Most recent [`MotionState`] returned by a `perform_*` advance
     /// this tick.  Set automatically by every perform method, consumed
@@ -366,7 +367,7 @@ struct SpriteSnapshotRef<'a> {
     frame_profile_name: &'a str,
     profile_cache_key: &'a str,
     alternate_profile_cache_key: &'a str,
-    center: Vec2D,
+    center: SpriteAnchor,
 }
 
 #[derive(Deserialize)]
@@ -392,7 +393,7 @@ struct SpriteSnapshot {
     frame_profile_name: String,
     profile_cache_key: String,
     alternate_profile_cache_key: String,
-    center: Vec2D,
+    center: SpriteAnchor,
 }
 
 impl Sprite {
@@ -526,7 +527,7 @@ impl Default for Sprite {
             frame_profile_name: String::new(),
             profile_cache_key: String::new(),
             alternate_profile_cache_key: String::new(),
-            center: Vec2D { x: 0.0, y: 0.0 },
+            center: SpriteAnchor::ZERO,
             last_motion_state: None,
         }
     }
@@ -1131,7 +1132,7 @@ impl Sprite {
             sprite.profile_cache_key = cache_key.to_owned();
             sprite.scripts = info.scripts.clone();
             sprite.conversion = info.conversion.clone();
-            sprite.center = info.center;
+            sprite.center = SpriteAnchor::from_geo(info.center);
         } else {
             sprite.alternate_profile_cache_key = cache_key.to_owned();
             sprite.alternate_scripts = Some(info.scripts.clone());
@@ -2075,7 +2076,7 @@ mod tests {
     #[test]
     fn test_action_distance_uses_hotspot_sprite_anchor_and_map_position() {
         let mut s = make_test_sprite();
-        s.center = Point2D { x: 8.0, y: 11.0 };
+        s.center = SpriteAnchor { x: 8.0, y: 11.0 };
         s.position_iface
             .set_position_map(crate::geo2d::pt(100.25, 200.75));
         s.position_iface

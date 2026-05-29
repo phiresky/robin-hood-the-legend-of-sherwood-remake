@@ -311,10 +311,10 @@ impl EngineInner {
             pos.y += movement.y;
             pos.z += movement.z;
             p.element.set_position(pos);
-            p.element.set_position_map(crate::coordinates::MapPoint {
-                x: pos.x,
-                y: pos.y - pos.z,
-            });
+            p.element
+                .set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+                    pos.x, pos.y, pos.z,
+                ));
         }
 
         // ── Sting commit: when a non-stinging wasp with a victim
@@ -721,7 +721,7 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::MapPoint as ElemPoint2D;
+    use crate::coordinates::MapPoint;
     use crate::element::{
         ActorData, ActorSoldier, ElementData, ElementKind, ElementProjectile, HumanData, NpcData,
         ObjectData, Posture, ProjectileData, SoldierData,
@@ -774,10 +774,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position(pos);
-        element.set_position_map(ElemPoint2D {
-            x: pos.x,
-            y: pos.y - pos.z,
-        });
+        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
         Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData::default(),

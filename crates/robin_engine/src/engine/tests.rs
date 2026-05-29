@@ -483,7 +483,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
         s.frame_profile_name = "FakeProfile".into();
         s.profile_cache_key = "FakeFile/FakeProfile".into();
         s.alternate_profile_cache_key = "FakeFile/FakeAlternate".into();
-        s.center = crate::geo2d::Vec2D { x: 32.0, y: 48.0 };
+        s.center = crate::coordinates::SpriteAnchor { x: 32.0, y: 48.0 };
         s.scripts = Arc::new(Vec::new());
         s.alternate_scripts = Some(Arc::new(Vec::new()));
         s.conversion = Arc::new(vec![0, 1, 2]);
@@ -2093,7 +2093,7 @@ fn bind_test_action_point(
     id: EntityId,
     action: crate::order::OrderType,
     hotspot: crate::geo2d::Point2D,
-    center: crate::geo2d::Point2D,
+    center: crate::coordinates::SpriteAnchor,
 ) {
     let script = crate::sprite_script::SpriteScript {
         action_id: action as u16,
@@ -3011,7 +3011,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
         rescuer,
         OrderType::WakingUp,
         crate::geo2d::pt(0.0, 0.0),
-        crate::geo2d::pt(0.0, 0.0),
+        crate::coordinates::SpriteAnchor::ZERO,
     );
 
     let elem = SequenceElement::new_interaction(1, Command::WakeUp, Some(rescuer), Some(target));

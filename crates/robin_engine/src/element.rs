@@ -91,17 +91,6 @@ impl From<crate::rhline::Vec2> for Point2D {
 }
 
 impl Point2D {
-    /// Convert to the canonical [`crate::geo2d::Point2D`] type.
-    #[inline]
-    pub fn to_geo_point(self) -> crate::geo2d::Point2D {
-        crate::geo2d::pt(self.x, self.y)
-    }
-
-    #[inline]
-    pub fn to_geo(self) -> crate::geo2d::Point2D {
-        self.to_geo_point()
-    }
-
     /// Convert to [`crate::rhline::Vec2`].
     #[inline]
     pub fn to_vec2(self) -> crate::rhline::Vec2 {
@@ -2728,12 +2717,7 @@ impl Entity {
             .get_plane()
             .map(|plane| plane.compute_z(map.x, map.y))
             .unwrap_or(0.0);
-        GroundPoint::new(map.x, map.y + z)
-    }
-
-    /// Compatibility wrapper for callers that still use `geo2d::Point2D`.
-    pub fn position_ground(&self) -> crate::geo2d::Point2D {
-        self.ground_position().to_geo()
+        GroundPoint::from_map_and_z(map, z)
     }
 
     /// Get the NPC's base AI controller, if this is an NPC with AI.
@@ -3908,10 +3892,7 @@ pub fn advance_trajectory_one_frame(
     p.y += projectile.velocity_increment.y;
     p.z += projectile.velocity_increment.z;
     element.set_position(p);
-    element.set_position_map_preserving_3d(MapPoint {
-        x: p.x,
-        y: p.y - p.z,
-    });
+    element.set_position_map_preserving_3d(MapPoint::from_world_xyz(p.x, p.y, p.z));
     let vx = projectile.velocity_increment.x;
     let vy = projectile.velocity_increment.y;
     if vx != 0.0 || vy != 0.0 {
@@ -4365,7 +4346,7 @@ mod tests {
         use std::sync::Arc;
 
         let mut sprite = Sprite {
-            center: crate::geo2d::pt(30.0, 70.0),
+            center: crate::coordinates::SpriteAnchor { x: 30.0, y: 70.0 },
             scripts: Arc::new(vec![SpriteScript {
                 hotspot: crate::geo2d::pt(46.0, 18.0),
                 ..SpriteScript::default()
