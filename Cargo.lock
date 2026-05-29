@@ -3848,6 +3848,7 @@ dependencies = [
  "robin_util",
  "serde",
  "serde_json",
+ "serde_json_any_key",
  "strum",
  "strum_macros",
  "tempfile",
@@ -4220,6 +4221,16 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_json_any_key"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b82e4b1d3a2cb67817b8c403eac7b98225c2e1c855a13ef9b80b9bac63a06c20"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

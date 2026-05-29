@@ -987,7 +987,7 @@ pub struct MissionScript {
     /// waypoint (dispatched from `execute_waypoint_script`). Each
     /// waypoint is its own VM instance so the heap persists across
     /// traversals.
-    #[serde(with = "waypoint_key_serde")]
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
 
     /// Has the script's `PostInitialize` entry point run yet?  The first
@@ -995,58 +995,6 @@ pub struct MissionScript {
     /// Sim-side so `perform_hourglass` can handle the one-shot call
     /// without a host-owned companion bool.
     pub post_initialized: bool,
-}
-
-/// Serde adapter for `BTreeMap<(u16, u8), V>`: encodes keys as
-/// `"path:waypoint"` strings so the map round-trips through JSON (which
-/// rejects non-string object keys). Used by `waypoint_instances` so the
-/// rollback debug dumper (`serde_json::to_value`) can walk the whole
-/// `EngineInner` without blowing up on the tuple key.
-mod waypoint_key_serde {
-    use super::{BTreeMap, ScriptInstance};
-    use crate::ai::PathId;
-    use serde::de::{Deserializer, Error as DeError, MapAccess, Visitor};
-    use serde::ser::{SerializeMap, Serializer};
-    use std::fmt;
-
-    pub fn serialize<S: Serializer>(
-        map: &BTreeMap<(PathId, u8), ScriptInstance>,
-        ser: S,
-    ) -> Result<S::Ok, S::Error> {
-        let mut m = ser.serialize_map(Some(map.len()))?;
-        for ((path, wp), v) in map {
-            m.serialize_entry(&format!("{path}:{wp}"), v)?;
-        }
-        m.end()
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        de: D,
-    ) -> Result<BTreeMap<(PathId, u8), ScriptInstance>, D::Error> {
-        struct MapVisitor;
-        impl<'de> Visitor<'de> for MapVisitor {
-            type Value = BTreeMap<(PathId, u8), ScriptInstance>;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("map with \"path:waypoint\" string keys")
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
-                let mut out = BTreeMap::new();
-                while let Some((k, v)) = access.next_entry::<String, ScriptInstance>()? {
-                    let (p, w) = k
-                        .split_once(':')
-                        .ok_or_else(|| DeError::custom(format!("waypoint key missing ':': {k}")))?;
-                    let path: u16 = p.parse().map_err(DeError::custom)?;
-                    let wp: u8 = w.parse().map_err(DeError::custom)?;
-                    let path = PathId::new(path).ok_or_else(|| {
-                        DeError::custom(format!("waypoint path id {path} is the reserved sentinel"))
-                    })?;
-                    out.insert((path, wp), v);
-                }
-                Ok(out)
-            }
-        }
-        de.deserialize_map(MapVisitor)
-    }
 }
 
 /// Which instance map a bound script class belongs to.

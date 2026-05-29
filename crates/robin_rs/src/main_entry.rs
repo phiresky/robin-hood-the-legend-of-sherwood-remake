@@ -1188,11 +1188,12 @@ pub(crate) fn perform_pending_save_load(
     game: &mut crate::game::Game,
     callbacks: &mut RustCallbacks,
     engine: &mut robin_engine::engine::Engine,
+    assets: &robin_engine::engine::LevelAssets,
     profiles: &robin_engine::profiles::ProfileManager,
     thumbnail: Option<crate::save_file::Thumbnail>,
-) {
+) -> bool {
     let Some(request) = callbacks.pending.take() else {
-        return;
+        return false;
     };
     let thumb_ref = thumbnail.as_ref();
     match request {
@@ -1275,7 +1276,7 @@ pub(crate) fn perform_pending_save_load(
                                     slot: idx,
                                     target_mission_id: header.mission_id,
                                 });
-                                return;
+                                return true;
                             }
                             Ok(_) => {}
                             Err(err) => {
@@ -1287,7 +1288,7 @@ pub(crate) fn perform_pending_save_load(
                     }
                     match callbacks
                         .save_manager
-                        .load_save_into_engine(idx, engine, host, game)
+                        .load_save_into_engine(idx, engine, host, game, assets)
                     {
                         Err(err) => {
                             tracing::error!("Load failed: {err:#}");
@@ -1362,7 +1363,10 @@ pub(crate) fn perform_pending_save_load(
             }
         }
         SaveLoadRequest::LoadRestart => {
-            match callbacks.save_manager.load_restart_save(host, game, engine) {
+            match callbacks
+                .save_manager
+                .load_restart_save(host, game, engine, assets)
+            {
                 Ok(true) => {
                     // Restart = never Continue slot; still sync campaign-map state.
                     callbacks.post_load_sync = Some(PostLoadSync { is_continue: false });
@@ -1420,7 +1424,7 @@ pub(crate) fn perform_pending_save_load(
                 Some(i) if callbacks.save_manager.slot_file_exists(i) => {
                     match callbacks
                         .save_manager
-                        .load_save_into_engine(i, engine, host, game)
+                        .load_save_into_engine(i, engine, host, game, assets)
                     {
                         Err(err) => {
                             tracing::error!("Quick load ({slot_name}) failed: {err:#}");
@@ -1466,6 +1470,7 @@ pub(crate) fn perform_pending_save_load(
             }
         }
     }
+    true
 }
 
 // ─── Resource helpers ───────────────────────────────────────────────

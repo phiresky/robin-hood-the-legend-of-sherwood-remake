@@ -312,8 +312,8 @@ impl RollbackCheckJob {
         // verbatim" version was 50+ MB on a real level — way too big to
         // diff by hand. The summary stays under a few hundred KB even for
         // hundreds of entities because it skips matching subtrees.
-        let live_v = crate::json_value::to_json_value(live).map_err(std::io::Error::other)?;
-        let rep_v = crate::json_value::to_json_value(replayed).map_err(std::io::Error::other)?;
+        let live_v = serde_json::to_value(live).map_err(std::io::Error::other)?;
+        let rep_v = serde_json::to_value(replayed).map_err(std::io::Error::other)?;
         let mut diffs: Vec<serde_json::Value> = Vec::new();
         collect_diffs("", &live_v, &rep_v, &mut diffs);
 

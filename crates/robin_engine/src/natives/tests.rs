@@ -119,6 +119,39 @@ fn name_lookup() {
 }
 
 #[test]
+fn npc_custom_values_round_trip_through_json() {
+    let mut host = GameHost::new();
+    host.npc_values.insert((123, 7), 456);
+    host.npc_values.insert((-5, 99), -12);
+
+    serde_json::to_value(&host).expect("save/rollback JSON value");
+    let json = serde_json::to_string(&host).expect("serialize GameHost");
+    let decoded: GameHost = serde_json::from_str(&json).expect("deserialize GameHost");
+
+    assert_eq!(decoded.npc_values.get(&(123, 7)), Some(&456));
+    assert_eq!(decoded.npc_values.get(&(-5, 99)), Some(&-12));
+}
+
+#[test]
+fn npc_custom_values_participate_in_state_hash() {
+    let mut baseline = GameHost::new();
+    let mut same = GameHost::new();
+    let mut changed = GameHost::new();
+    baseline.npc_values.insert((123, 7), 456);
+    same.npc_values.insert((123, 7), 456);
+    changed.npc_values.insert((123, 7), 457);
+
+    assert_eq!(
+        robin_util::state_hash::compute(&baseline),
+        robin_util::state_hash::compute(&same)
+    );
+    assert_ne!(
+        robin_util::state_hash::compute(&baseline),
+        robin_util::state_hash::compute(&changed)
+    );
+}
+
+#[test]
 fn door_sector_goal_resolves_click_polygon_door_index() {
     let mut host = GameHost::new();
     let mut door = Door {

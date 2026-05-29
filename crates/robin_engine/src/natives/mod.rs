@@ -151,6 +151,7 @@ pub struct GameHost {
     /// Campaign-level custom values (GetCustomCampaignValue/SetCustomCampaignValue).
     pub campaign_values: BTreeMap<i32, i32>,
     /// Per-NPC custom values keyed by (actor_handle, id).
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub npc_values: BTreeMap<(i32, i32), i32>,
     /// Incrementing sequence ID for the Then() sequence manager call.
     pub sequence_id: i32,

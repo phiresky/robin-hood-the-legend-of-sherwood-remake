@@ -275,6 +275,7 @@ impl SaveGameManager {
         host: &mut Host,
         game: &mut crate::game::Game,
         engine: &mut Engine,
+        assets: &robin_engine::engine::LevelAssets,
     ) -> Result<bool> {
         let Some(idx) = self.find_by_filename(save_file::special_slots::RESTART) else {
             return Ok(false);
@@ -282,7 +283,7 @@ impl SaveGameManager {
         if !self.slot_file_exists(idx) {
             return Ok(false);
         }
-        self.load_save_into_engine(idx, engine, host, game)?;
+        self.load_save_into_engine(idx, engine, host, game, assets)?;
         Ok(true)
     }
 
@@ -542,10 +543,12 @@ impl SaveGameManager {
         engine: &mut Engine,
         host: &mut Host,
         game: &mut crate::game::Game,
+        assets: &robin_engine::engine::LevelAssets,
     ) -> Result<()> {
         let path = self.save_path(index);
         let save = GameSaveFile::read_from(&path)?;
         save.apply_to_with_game(engine, host, game);
+        engine.attach_level_assets(assets);
         Ok(())
     }
 
@@ -721,7 +724,7 @@ mod tests {
         let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
 
         // Build a live engine with some distinctive state.
-        let (mut engine, _assets) = fresh_engine();
+        let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
         let game = crate::game::Game::default();
         engine.test_set_frame_counter(42);
@@ -752,7 +755,7 @@ mod tests {
         let mut engine2 = fresh_engine().0;
         let mut host2 = Host::new(800.0, 600.0);
         let mut game2 = crate::game::Game::default();
-        mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2)
+        mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2, &assets)
             .unwrap();
         assert_eq!(engine2.frame_counter(), 42);
         assert!(engine2.campaign().is_some());
@@ -765,7 +768,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
 
-        let (mut engine, _assets) = fresh_engine();
+        let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
         let game = crate::game::Game::default();
 
@@ -788,14 +791,14 @@ mod tests {
         let mut engine_q = fresh_engine().0;
         let mut host_q = Host::new(800.0, 600.0);
         let mut game_q = crate::game::Game::default();
-        mgr.load_save_into_engine(quick_idx, &mut engine_q, &mut host_q, &mut game_q)
+        mgr.load_save_into_engine(quick_idx, &mut engine_q, &mut host_q, &mut game_q, &assets)
             .unwrap();
         assert_eq!(engine_q.frame_counter(), 2);
 
         let mut engine_e = fresh_engine().0;
         let mut host_e = Host::new(800.0, 600.0);
         let mut game_e = crate::game::Game::default();
-        mgr.load_save_into_engine(ex_idx, &mut engine_e, &mut host_e, &mut game_e)
+        mgr.load_save_into_engine(ex_idx, &mut engine_e, &mut host_e, &mut game_e, &assets)
             .unwrap();
         assert_eq!(engine_e.frame_counter(), 1);
     }
@@ -821,7 +824,7 @@ mod tests {
         let mut mgr0 = SaveGameManager::new(p0_dir.to_string_lossy().into_owned());
         let mut mgr1 = SaveGameManager::new(p1_dir.to_string_lossy().into_owned());
 
-        let (mut engine, _assets) = fresh_engine();
+        let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
         let game = crate::game::Game::default();
 
@@ -852,14 +855,14 @@ mod tests {
         let mut engine_a = fresh_engine().0;
         let mut host_a = Host::new(800.0, 600.0);
         let mut game_a = crate::game::Game::default();
-        mgr0.load_save_into_engine(q0, &mut engine_a, &mut host_a, &mut game_a)
+        mgr0.load_save_into_engine(q0, &mut engine_a, &mut host_a, &mut game_a, &assets)
             .unwrap();
         assert_eq!(engine_a.frame_counter(), 100);
 
         let mut engine_b = fresh_engine().0;
         let mut host_b = Host::new(800.0, 600.0);
         let mut game_b = crate::game::Game::default();
-        mgr1.load_save_into_engine(q1, &mut engine_b, &mut host_b, &mut game_b)
+        mgr1.load_save_into_engine(q1, &mut engine_b, &mut host_b, &mut game_b, &assets)
             .unwrap();
         assert_eq!(engine_b.frame_counter(), 200);
     }

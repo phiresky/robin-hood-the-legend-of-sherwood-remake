@@ -2539,14 +2539,18 @@ pub(crate) async fn run_mission(
             tracing::info!("Game exited with: {:?}", exit_code);
             // Flush any pending save before returning (e.g. the
             // quit-time continue save).
-            perform_pending_save_load(
+            let save_load_processed = perform_pending_save_load(
                 &mut host,
                 &mut game,
                 callbacks,
                 &mut manager.engine,
+                assets.as_ref(),
                 profiles,
                 pending_thumbnail.clone(),
             );
+            if save_load_processed && let Some(ref mut checker) = rollback_checker {
+                checker.reset();
+            }
             if let Some(sync) = callbacks.post_load_sync.take() {
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
@@ -2554,14 +2558,18 @@ pub(crate) async fn run_mission(
             *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
             return Ok(exit_code);
         }
-        perform_pending_save_load(
+        let save_load_processed = perform_pending_save_load(
             &mut host,
             &mut game,
             callbacks,
             &mut manager.engine,
+            assets.as_ref(),
             profiles,
             pending_thumbnail,
         );
+        if save_load_processed && let Some(ref mut checker) = rollback_checker {
+            checker.reset();
+        }
 
         // ── Cross-mission load: bubble up ──
         // `perform_pending_save_load` stashes a `PendingLevelLoad` when the
