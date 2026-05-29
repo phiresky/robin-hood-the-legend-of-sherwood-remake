@@ -1729,7 +1729,10 @@ impl EngineInner {
                 line_id: None,
                 element: Some(entity_id),
                 flags: MoveFlags::empty(),
-                tolerance: 10.0,
+                // Original leading cross-sector ASSERT_POSITION uses
+                // the constructor default tolerance (0).  Gate-entry
+                // and post-pass asserts explicitly pass 10.
+                tolerance: 0.0,
                 direction: 0,
                 action: base_action,
                 speed_factor,
