@@ -1857,7 +1857,10 @@ impl EngineInner {
                     destination: to_pt(shot.entry),
                     layer: 0,
                     sector: None,
-                    gate_id: Some(shot.door_index),
+                    // Original gate-approach MOVE uses the plain
+                    // point+victim constructor and does not SetGate;
+                    // only WAIT_FREE_LIFT/PASS_DOOR carry the gate.
+                    gate_id: None,
                     line_id: None,
                     element: gate_seek_target,
                     flags: gate_flags,
