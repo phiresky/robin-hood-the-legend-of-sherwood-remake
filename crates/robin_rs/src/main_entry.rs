@@ -961,6 +961,21 @@ impl RustCallbacks {
     }
 }
 
+impl SaveLoadRequest {
+    /// Whether this request writes a save payload and should get a fresh
+    /// thumbnail from a rendered frame.
+    pub(crate) fn writes_save_payload(&self) -> bool {
+        matches!(
+            self,
+            SaveLoadRequest::Save { .. }
+                | SaveLoadRequest::Restart { .. }
+                | SaveLoadRequest::Continue { .. }
+                | SaveLoadRequest::QuickSave { .. }
+                | SaveLoadRequest::Sherwood { .. }
+        )
+    }
+}
+
 impl crate::game::GameCallbacks for RustCallbacks {
     fn serialize_save(
         &mut self,
@@ -1178,10 +1193,10 @@ pub(crate) fn flush_pending_callbacks(
 /// live access to both engine and campaign.
 ///
 /// `thumbnail` is the captured screen preview written alongside save
-/// slots, right after the main save payload.  Callers capture it via
-/// [`crate::renderer::Renderer::capture_screen_thumbnail`] *before*
-/// the next frame begins GPU rendering, using the fully composited GPU
-/// render target.  If the capture failed or the caller has no renderer
+/// slots, right after the main save payload.  Callers should render a
+/// dedicated throwaway frame and read it back, mirroring the HTTP
+/// screenshot path, so thumbnail contents never depend on stale render
+/// target state.  If the capture failed or the caller has no renderer
 /// handy, pass `None` and the save is written without a thumbnail.
 pub(crate) fn perform_pending_save_load(
     host: &mut crate::Host,

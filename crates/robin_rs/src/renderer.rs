@@ -3547,34 +3547,6 @@ impl Renderer {
         &self.gpu
     }
 
-    /// Downsampled RGB565 thumbnail of the next-to-be-presented
-    /// composite frame. Used by the savegame preview pipeline (the
-    /// `_thumb.png` sibling of every save). Walks the full RGBA readback with
-    /// nearest-neighbour subsampling.
-    pub fn capture_screen_thumbnail(&mut self, target_w: u16, target_h: u16) -> Option<Vec<u16>> {
-        if target_w == 0 || target_h == 0 {
-            return None;
-        }
-        let (sw, sh, rgba) = self.capture_frame_rgba()?;
-        let sw = sw as usize;
-        let sh = sh as usize;
-        let tw = target_w as usize;
-        let th = target_h as usize;
-        let mut out = Vec::with_capacity(tw * th);
-        for ty in 0..th {
-            let sy = ty * sh / th;
-            for tx in 0..tw {
-                let sx = tx * sw / tw;
-                let off = (sy * sw + sx) * 4;
-                let r = rgba[off];
-                let g = rgba[off + 1];
-                let b = rgba[off + 2];
-                out.push(rgb8_to_rgb565(r, g, b));
-            }
-        }
-        Some(out)
-    }
-
     /// Capture the next-to-be-presented composite frame as RGBA8.
     ///
     /// Executes the queued draws against the offscreen render target

@@ -42,8 +42,8 @@ use robin_engine::engine::Engine;
 
 /// Default thumbnail dimensions.  Downsampled to a small fixed size to
 /// keep the sibling file tiny.
-pub const THUMB_WIDTH: u16 = 160;
-pub const THUMB_HEIGHT: u16 = 120;
+pub const THUMB_WIDTH: u16 = 480;
+pub const THUMB_HEIGHT: u16 = 360;
 
 /// A small RGB565 thumbnail of the last rendered frame.
 ///
@@ -64,6 +64,53 @@ impl Thumbnail {
             return None;
         }
         Some(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    /// Build a thumbnail by nearest-neighbour downsampling an RGBA8 frame.
+    pub fn from_rgba_downscaled(
+        src_width: u32,
+        src_height: u32,
+        rgba: &[u8],
+        width: u16,
+        height: u16,
+    ) -> Result<Self> {
+        let expected = src_width as usize * src_height as usize * 4;
+        if rgba.len() != expected {
+            bail!(
+                "thumbnail source RGBA length mismatch: expected {}, got {}",
+                expected,
+                rgba.len()
+            );
+        }
+        if src_width == 0 || src_height == 0 || width == 0 || height == 0 {
+            bail!(
+                "thumbnail dimensions must be non-zero: source={}x{}, target={}x{}",
+                src_width,
+                src_height,
+                width,
+                height
+            );
+        }
+
+        let target_w = width as usize;
+        let target_h = height as usize;
+        let src_w = src_width as usize;
+        let src_h = src_height as usize;
+        let mut pixels = Vec::with_capacity(target_w * target_h);
+        for ty in 0..target_h {
+            let sy = ty * src_h / target_h;
+            for tx in 0..target_w {
+                let sx = tx * src_w / target_w;
+                let off = (sy * src_w + sx) * 4;
+                pixels.push(rgb888_to_rgb565(rgba[off], rgba[off + 1], rgba[off + 2]));
+            }
+        }
+
+        Ok(Self {
             width,
             height,
             pixels,
@@ -709,6 +756,18 @@ mod tests {
         assert!(Thumbnail::from_pixels(4, 4, vec![0; 15]).is_none());
         assert!(Thumbnail::from_pixels(4, 4, vec![0; 16]).is_some());
         assert!(Thumbnail::from_pixels(4, 4, vec![0; 17]).is_none());
+    }
+
+    #[test]
+    fn thumbnail_from_rgba_downscaled_samples_source_frame() {
+        let rgba = [
+            255, 0, 0, 255, 0, 255, 0, 255, //
+            0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let thumb = Thumbnail::from_rgba_downscaled(2, 2, &rgba, 2, 2).unwrap();
+        assert_eq!(thumb.width, 2);
+        assert_eq!(thumb.height, 2);
+        assert_eq!(thumb.pixels, vec![0xF800, 0x07E0, 0x001F, 0xFFFF]);
     }
 
     #[test]

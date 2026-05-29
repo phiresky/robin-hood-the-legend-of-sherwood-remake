@@ -81,6 +81,60 @@ pub(super) fn drain_screenshots(
     }
 }
 
+/// Render a dedicated throwaway frame for a save-slot thumbnail and
+/// return it downsampled to the configured thumbnail dimensions.
+///
+/// This mirrors the HTTP screenshot path: render intentionally, read
+/// back immediately, then clear the renderer queue so the live frame
+/// later in the loop starts clean.
+pub(super) fn capture_save_thumbnail(
+    engine: &Engine,
+    display: &robin_engine::engine::HostDisplayState,
+    host: &mut Host,
+    assets: &robin_engine::engine::LevelAssets,
+    dev: &robin_engine::engine::DevState,
+    ctx: &mut RenderContext<'_>,
+) -> Option<crate::save_file::Thumbnail> {
+    let saved_zoom = ctx.zoom_tooltip.clone();
+    let saved_corner = ctx.corner_tooltip.clone();
+    let saved_requirements = ctx.requirements_tooltip.clone();
+    let saved_blazon = ctx.blazon_tooltip.clone();
+    let saved_stature = ctx.stature_tooltip.clone();
+    let saved_sherwood = ctx.sherwood_tooltip.clone();
+    let saved_pc_action = ctx.pc_action_tooltip.clone();
+
+    render_frame(engine, display, host, assets, dev, ctx);
+
+    let thumb = match ctx.renderer.capture_frame_rgba() {
+        Some((w, h, rgba)) => crate::save_file::Thumbnail::from_rgba_downscaled(
+            w,
+            h,
+            &rgba,
+            crate::save_file::THUMB_WIDTH,
+            crate::save_file::THUMB_HEIGHT,
+        )
+        .map_err(|err| {
+            tracing::warn!("Save thumbnail capture failed: {err:#}");
+        })
+        .ok(),
+        None => {
+            tracing::warn!("Save thumbnail capture failed: renderer returned no framebuffer");
+            None
+        }
+    };
+
+    *ctx.zoom_tooltip = saved_zoom;
+    *ctx.corner_tooltip = saved_corner;
+    *ctx.requirements_tooltip = saved_requirements;
+    *ctx.blazon_tooltip = saved_blazon;
+    *ctx.stature_tooltip = saved_stature;
+    *ctx.sherwood_tooltip = saved_sherwood;
+    *ctx.pc_action_tooltip = saved_pc_action;
+    ctx.renderer.reset_render_target();
+
+    thumb
+}
+
 /// Capture the composited frame and write it to disk as a PNG.
 ///
 /// Walks `screen000..screen999` and writes to the first free slot.

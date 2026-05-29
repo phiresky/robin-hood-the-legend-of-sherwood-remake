@@ -29,7 +29,7 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    drain_print_screen_request, drain_screenshots, drain_wide_print_screen,
+    capture_save_thumbnail, drain_print_screen_request, drain_screenshots, drain_wide_print_screen,
     print_screen_request_from_modifiers, render_frame, update_mouse_and_cursor,
 };
 use replay_init::{ReplayAndRollback, init_replay_and_rollback};
@@ -2514,32 +2514,82 @@ pub(crate) async fn run_mission(
         // The Game state machine queues save/load intents on the
         // callbacks; `perform_pending_save_load` then flushes them to
         // disk with live engine access.
-        //
-        // Capture the save-slot thumbnail *before* the state machine
-        // runs, so that if a save is queued we have a valid preview
-        // of the last fully-rendered frame to write alongside the
-        // payload.  We grab the current GPU render target and store
-        // it in the `_thumb.png` sibling file (see `Thumbnail`).
-        let pending_thumbnail = if callbacks.pending.is_some() {
-            renderer
-                .capture_screen_thumbnail(
-                    crate::save_file::THUMB_WIDTH,
-                    crate::save_file::THUMB_HEIGHT,
-                )
-                .and_then(|px| {
-                    crate::save_file::Thumbnail::from_pixels(
-                        crate::save_file::THUMB_WIDTH,
-                        crate::save_file::THUMB_HEIGHT,
-                        px,
-                    )
-                })
-        } else {
-            None
-        };
         let exit_code = manager
             .engine
             .campaign()
             .and_then(|c| game.process_operation(c, profiles, callbacks));
+        let pending_thumbnail = if callbacks
+            .pending
+            .as_ref()
+            .is_some_and(|request| request.writes_save_payload())
+            && !host.skip_render
+            && !args.headless
+            && !modal_rendered_this_frame
+        {
+            pre_render_engine_setup(&mut manager, &mut host, assets.as_ref(), &mut renderer);
+            update_mouse_and_cursor(
+                &mut manager,
+                &mut host,
+                &assets,
+                &dev,
+                &mut renderer,
+                &mut cursor_res,
+                &mut cursor_renderer,
+                &threaded_input,
+                &portrait_cache,
+                shift_held,
+                &mut last_cursor_id,
+            );
+            let display_snapshot = host.engine_display.clone();
+            let mut render_ctx = RenderContext {
+                renderer: &mut renderer,
+                cursor_renderer: &mut cursor_renderer,
+                selection_mark_renderer: &mut selection_mark_renderer,
+                titbit_renderer: &mut titbit_renderer,
+                console_overlay: &mut console_overlay,
+                zoom_tooltip: &mut zoom_tooltip,
+                corner_tooltip: &mut corner_tooltip,
+                requirements_tooltip: &mut requirements_tooltip,
+                blazon_tooltip: &mut blazon_tooltip,
+                stature_tooltip: &mut stature_tooltip,
+                sherwood_tooltip: &mut sherwood_tooltip,
+                pc_action_tooltip: &mut pc_action_tooltip,
+                mouse_trail_renderer: mouse_trail_renderer.as_ref(),
+                portrait_cache: &portrait_cache,
+                menu_resources: menu_resources.as_ref(),
+                hud_fonts: hud_fonts.as_ref(),
+                short_briefing_strings: &short_briefing_strings,
+                sherwood_layout: &sherwood_layout,
+                sherwood_sprites: &sherwood_sprites,
+                zoom_layout: &zoom_layout,
+                zoom_sprites: &zoom_sprites,
+                corner_layout: &corner_layout,
+                corner_sprites: &corner_sprites,
+                stature_layout: &stature_layout,
+                stature_sprites: &stature_sprites,
+                threaded_input: &threaded_input,
+                game: &game,
+                pause_menu: pause_menu.as_ref(),
+                sherwood_enable,
+                shift_held,
+                rewind_active,
+                display_info_elapsed_secs:
+                    <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
+                        callbacks,
+                        campaign_ref,
+                    ),
+            };
+            capture_save_thumbnail(
+                &manager.engine,
+                &display_snapshot,
+                &mut host,
+                &assets,
+                &dev,
+                &mut render_ctx,
+            )
+        } else {
+            None
+        };
         if let Some(exit_code) = exit_code {
             tracing::info!("Game exited with: {:?}", exit_code);
             // Flush any pending save before returning (e.g. the
