@@ -22,7 +22,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, Point2D, Vec2D};
+use crate::coordinates::{MapPoint, MapVec};
 
 // ---------------------------------------------------------------------------
 // JumpLineIndex — nominal newtype
@@ -76,10 +76,10 @@ impl std::fmt::Display for JumpLineIndex {
 /// A jump line with 3D endpoints and paired-line / sector metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct JumpLine {
-    /// 2D position of endpoint A.
-    pub point_a: Point2D,
-    /// 2D position of endpoint B.
-    pub point_b: Point2D,
+    /// Map-space position of endpoint A.
+    pub point_a: MapPoint,
+    /// Map-space position of endpoint B.
+    pub point_b: MapPoint,
     /// Elevation at point A.
     pub z_a: f32,
     /// Elevation at point B.
@@ -110,7 +110,7 @@ impl JumpLine {
     /// Construct from raw proto data.  `jump_zone_index` is carried
     /// through in the caller since the paired-line / sector linkage
     /// is resolved after both lines of a pair are loaded.
-    pub fn new(point_a: Point2D, point_b: Point2D, z_a: f32, z_b: f32) -> Self {
+    pub fn new(point_a: MapPoint, point_b: MapPoint, z_a: f32, z_b: f32) -> Self {
         Self {
             point_a,
             point_b,
@@ -125,11 +125,8 @@ impl JumpLine {
     }
 
     /// Vector from A to B.
-    pub fn vector(&self) -> Vec2D {
-        geo2d::pt(
-            self.point_b.x - self.point_a.x,
-            self.point_b.y - self.point_a.y,
-        )
+    pub fn vector(&self) -> MapVec {
+        self.point_b - self.point_a
     }
 
     /// Squared length of the A→B segment.
@@ -144,8 +141,8 @@ impl JumpLine {
     }
 
     /// Midpoint of the line in 2D.
-    pub fn get_middle_point(&self) -> Point2D {
-        geo2d::pt(
+    pub fn get_middle_point(&self) -> MapPoint {
+        MapPoint::new(
             0.5 * (self.point_a.x + self.point_b.x),
             0.5 * (self.point_a.y + self.point_b.y),
         )
@@ -154,7 +151,7 @@ impl JumpLine {
     /// Nearest-point parameter `t ∈ [0, 1]` on the A→B segment from
     /// `pt_test`.  Clamps to the A or B endpoint when the projection
     /// falls outside the segment.
-    pub fn compute_nearest_point_param(&self, pt_test: Point2D) -> f32 {
+    pub fn compute_nearest_point_param(&self, pt_test: MapPoint) -> f32 {
         let v = self.vector();
         // if ((pt - B) · v >= 0) return 1
         let dx_b = pt_test.x - self.point_b.x;
@@ -175,10 +172,10 @@ impl JumpLine {
     /// Distance from `pt_test` to the A→B segment: the perpendicular
     /// distance when the projection falls inside the segment,
     /// otherwise the distance to the nearest endpoint.
-    pub fn compute_distance(&self, pt_test: Point2D) -> f32 {
+    pub fn compute_distance(&self, pt_test: MapPoint) -> f32 {
         let t = self.compute_nearest_point_param(pt_test);
         let v = self.vector();
-        let nearest = geo2d::pt(self.point_a.x + t * v.x, self.point_a.y + t * v.y);
+        let nearest = self.point_a + v.scale(t);
         let dx = pt_test.x - nearest.x;
         let dy = pt_test.y - nearest.y;
         (dx * dx + dy * dy).sqrt()
@@ -190,30 +187,31 @@ impl JumpLine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::map_pt;
 
     fn line(ax: f32, ay: f32, bx: f32, by: f32) -> JumpLine {
-        JumpLine::new(geo2d::pt(ax, ay), geo2d::pt(bx, by), 0.0, 0.0)
+        JumpLine::new(map_pt(ax, ay), map_pt(bx, by), 0.0, 0.0)
     }
 
     #[test]
     fn nearest_point_projection_inside() {
         // A = (0,0), B = (10,0). Point (5, 3) projects to (5, 0).
         let jl = line(0.0, 0.0, 10.0, 0.0);
-        let t = jl.compute_nearest_point_param(geo2d::pt(5.0, 3.0));
+        let t = jl.compute_nearest_point_param(map_pt(5.0, 3.0));
         assert!((t - 0.5).abs() < 1e-4);
     }
 
     #[test]
     fn nearest_point_clamps_to_a() {
         let jl = line(0.0, 0.0, 10.0, 0.0);
-        let t = jl.compute_nearest_point_param(geo2d::pt(-5.0, 2.0));
+        let t = jl.compute_nearest_point_param(map_pt(-5.0, 2.0));
         assert_eq!(t, 0.0);
     }
 
     #[test]
     fn nearest_point_clamps_to_b() {
         let jl = line(0.0, 0.0, 10.0, 0.0);
-        let t = jl.compute_nearest_point_param(geo2d::pt(15.0, 2.0));
+        let t = jl.compute_nearest_point_param(map_pt(15.0, 2.0));
         assert_eq!(t, 1.0);
     }
 
@@ -221,7 +219,7 @@ mod tests {
     fn distance_perpendicular() {
         // Inside the segment, perpendicular distance = 3.
         let jl = line(0.0, 0.0, 10.0, 0.0);
-        let d = jl.compute_distance(geo2d::pt(5.0, 3.0));
+        let d = jl.compute_distance(map_pt(5.0, 3.0));
         assert!((d - 3.0).abs() < 1e-4);
     }
 
@@ -229,7 +227,7 @@ mod tests {
     fn distance_to_endpoint() {
         // Past B, distance from (15, 2) to (10, 0) = sqrt(25+4).
         let jl = line(0.0, 0.0, 10.0, 0.0);
-        let d = jl.compute_distance(geo2d::pt(15.0, 2.0));
+        let d = jl.compute_distance(map_pt(15.0, 2.0));
         let expected = (29.0_f32).sqrt();
         assert!((d - expected).abs() < 1e-4);
     }

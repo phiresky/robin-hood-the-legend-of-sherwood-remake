@@ -1898,8 +1898,8 @@ impl EnemyAi {
         let aggressor_line = grid.level.jump_lines.get(line_idx as usize)?;
         let victim_line_idx = aggressor_line.associated_line_index?;
         let victim_line = grid.level.jump_lines.get(victim_line_idx as usize)?;
-        let t_victim =
-            victim_line.compute_nearest_point_param(crate::geo2d::pt(victim_pos.x, victim_pos.y));
+        let t_victim = victim_line
+            .compute_nearest_point_param(crate::geo2d::pt(victim_pos.x, victim_pos.y).into());
         let coeff = t_victim * victim_line.norm();
         let aggressor_vec = aggressor_line.vector();
         let aggressor_len = aggressor_line.norm().max(f32::EPSILON);

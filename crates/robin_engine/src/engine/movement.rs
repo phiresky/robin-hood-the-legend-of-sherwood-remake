@@ -539,7 +539,7 @@ pub(crate) fn build_line_jump_click_sequence(
 
     let mut final_move = SequenceElement::new_movement(3, Command::Move, Some(owner), action);
     final_move.data = SequenceElementData::Movement {
-        destination: to_pt(click_point),
+        destination: to_pt(click_point.into()),
         layer: click_layer,
         sector: None,
         gate_id: None,
@@ -4248,7 +4248,7 @@ impl EngineInner {
                 if !is_final_waypoint {
                     false
                 } else {
-                    let actor_pt = crate::geo2d::pt(elem.position_map().x, elem.position_map().y);
+                    let actor_pt = elem.position_map();
                     match self.fast_grid.level.jump_lines.get(usize::from(line_idx)) {
                         Some(jl) => {
                             let d = jl.compute_distance(actor_pt);
@@ -4644,7 +4644,7 @@ impl EngineInner {
                 // (move box, half-diagonal) + the current path goal.  The
                 // persistent state (deviated / blocked_count / box_blocked /
                 // radius) lives on the actor's PI directly now.
-                let goal_map = crate::geo2d::pt(goal.x, goal.y);
+                let goal_map = crate::coordinates::MapPoint::new(goal.x, goal.y);
                 let (move_box, half_diagonal) = {
                     let pi = entity.position_iface();
                     (*pi.get_move_box(), pi.get_half_diagonal())
@@ -4752,9 +4752,9 @@ impl EngineInner {
                 // other at the *old* position and can still overlap.
                 if let Some(Some(snap)) = anti_snapshots.get_mut(idx) {
                     let new_pos = crate::geo2d::pt(new_pos_x, new_pos_y);
-                    snap.position_map = new_pos;
+                    snap.position_map = new_pos.into();
                     if let Some(rp) = snap.repulsive_point.as_mut() {
-                        rp.position = new_pos;
+                        rp.position = new_pos.into();
                     }
                     for rp in snap.extra_repulsive_points.iter_mut() {
                         // Animal front/back points are offsets from
@@ -6454,6 +6454,8 @@ impl EngineInner {
         {
             let next_order_id = &mut self.next_order_id;
             if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+                let waypoints: Vec<crate::coordinates::MapPoint> =
+                    waypoints.iter().copied().map(Into::into).collect();
                 crate::movement::build_orders_from_path(
                     elem,
                     &waypoints,
@@ -6644,8 +6646,8 @@ mod line_jump_tests {
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
         let mut source_line = crate::jump_line::JumpLine::new(
-            crate::geo2d::pt(10.0, 20.0),
-            crate::geo2d::pt(30.0, 20.0),
+            crate::coordinates::map_pt(10.0, 20.0),
+            crate::coordinates::map_pt(30.0, 20.0),
             0.0,
             0.0,
         );
@@ -6715,8 +6717,8 @@ mod line_jump_tests {
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
         let source_line = crate::jump_line::JumpLine::new(
-            crate::geo2d::pt(10.0, 20.0),
-            crate::geo2d::pt(30.0, 20.0),
+            crate::coordinates::map_pt(10.0, 20.0),
+            crate::coordinates::map_pt(30.0, 20.0),
             0.0,
             0.0,
         );

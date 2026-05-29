@@ -12,7 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, Point2D, Vec2D};
+use crate::coordinates::{MapPoint, MapVec};
+use crate::geo2d;
 use crate::rhline;
 
 /// Repulsive point — a circular (or wedge-limited) zone of influence
@@ -24,7 +25,7 @@ use crate::rhline;
 /// (`action_radius = radius + action_radius_input`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RepulsivePoint {
-    pub position: Point2D,
+    pub position: MapPoint,
     pub radius: f32,
     /// Total action radius: `radius + action_radius_input`.
     pub action_radius: f32,
@@ -34,15 +35,15 @@ pub struct RepulsivePoint {
     // Action field. Default: total circle.
     pub is_total: bool,
     pub is_concave: bool,
-    pub limit_left: Vec2D,
-    pub limit_right: Vec2D,
+    pub limit_left: MapVec,
+    pub limit_right: MapVec,
 }
 
 impl RepulsivePoint {
     /// Build a `RepulsivePoint` with the given `SetForce` parameters.
     /// `radius` is the inner (hard) radius; `action_radius_input` is the
     /// soft falloff distance beyond it.
-    pub fn new(position: Point2D, radius: f32, action_radius_input: f32) -> Self {
+    pub fn new(position: MapPoint, radius: f32, action_radius_input: f32) -> Self {
         let (ar, r, fa, fb) = rhline::repulsive_set_force(radius, action_radius_input);
         Self {
             position,
@@ -52,33 +53,30 @@ impl RepulsivePoint {
             force_b: fb,
             is_total: true,
             is_concave: false,
-            limit_left: geo2d::pt(0.0, 0.0),
-            limit_right: geo2d::pt(0.0, 0.0),
+            limit_left: MapVec::ZERO,
+            limit_right: MapVec::ZERO,
         }
     }
 
     /// Restrict the action field to an angular wedge.
-    pub fn set_action_field(&mut self, limit_left: Vec2D, limit_right: Vec2D) {
+    pub fn set_action_field(&mut self, limit_left: MapVec, limit_right: MapVec) {
         self.is_total = false;
         self.limit_left = limit_left;
         self.limit_right = limit_right;
-        self.is_concave = geo2d::cross(limit_left, limit_right) < 0.0;
+        self.is_concave = limit_left.x * limit_right.y - limit_left.y * limit_right.x < 0.0;
     }
 
     /// Returns `Some(distance_destination)` if the future position
     /// `destination` is close enough to warrant a deviation check.
-    pub fn is_deviating(&self, destination: Point2D) -> Option<f32> {
-        let rel = geo2d::pt(
-            destination.x - self.position.x,
-            destination.y - self.position.y,
-        );
-        let distance = geo2d::length(rel);
+    pub fn is_deviating(&self, destination: MapPoint) -> Option<f32> {
+        let rel = destination - self.position;
+        let distance = rel.length();
         if distance > self.action_radius {
             return None;
         }
         if !self.is_total {
-            let left = geo2d::cross(self.limit_left, rel);
-            let right = geo2d::cross(self.limit_right, rel);
+            let left = self.limit_left.x * rel.y - self.limit_left.y * rel.x;
+            let right = self.limit_right.x * rel.y - self.limit_right.y * rel.x;
             if self.is_concave {
                 if left < 0.0 && right >= 0.0 {
                     return None;
@@ -95,12 +93,12 @@ impl RepulsivePoint {
     /// means "too far" (continue straight).
     pub fn compute_deviation(
         &self,
-        movement: Vec2D,
-        origin: Point2D,
+        movement: MapVec,
+        origin: MapPoint,
         movement_mag: f32,
         distance_destination: f32,
         actor_radius: f32,
-    ) -> Option<Vec2D> {
+    ) -> Option<MapVec> {
         let r = rhline::repulsive_point_compute_deviation(
             rhline::Vec2::new(movement.x, movement.y),
             rhline::Vec2::new(origin.x, origin.y),
@@ -117,7 +115,7 @@ impl RepulsivePoint {
             self.force_a,
             self.force_b,
         )?;
-        Some(geo2d::pt(r.x, r.y))
+        Some(MapVec::new(r.x, r.y))
     }
 }
 
@@ -128,10 +126,10 @@ impl RepulsivePoint {
 /// [`RepulsivePoint`]).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RepulsiveLine {
-    pub a: Point2D,
-    pub b: Point2D,
-    pub normal: Vec2D,
-    pub vector: Vec2D,
+    pub a: MapPoint,
+    pub b: MapPoint,
+    pub normal: MapVec,
+    pub vector: MapVec,
     pub radius: f32,
     /// Total action radius: `radius + action_radius_input`.
     pub action_radius: f32,
@@ -146,7 +144,7 @@ pub struct RepulsiveLine {
 
 impl RepulsiveLine {
     /// Build a `RepulsiveLine` from endpoints and `SetForce` parameters.
-    pub fn new(a: Point2D, b: Point2D, radius: f32, action_radius_input: f32) -> Self {
+    pub fn new(a: MapPoint, b: MapPoint, radius: f32, action_radius_input: f32) -> Self {
         let (ar, r, fa, fb) = rhline::repulsive_set_force(radius, action_radius_input);
         let dx = b.x - a.x;
         let dy = b.y - a.y;
@@ -162,8 +160,8 @@ impl RepulsiveLine {
         Self {
             a,
             b,
-            normal: geo2d::pt(nx, ny),
-            vector: geo2d::pt(vx, vy),
+            normal: MapVec::new(nx, ny),
+            vector: MapVec::new(vx, vy),
             radius: r,
             action_radius: ar,
             force_a: fa,
@@ -178,24 +176,27 @@ impl RepulsiveLine {
         self.is_area = is_area;
         if is_area {
             // `get_normal()` default = true → (-y, x)
-            self.normal = geo2d::pt(-self.vector.y, self.vector.x);
+            self.normal = MapVec::new(-self.vector.y, self.vector.x);
         } else {
-            self.normal = geo2d::pt(self.vector.y, -self.vector.x);
+            self.normal = MapVec::new(self.vector.y, -self.vector.x);
         }
     }
 
     /// True when the `destination` lies between the segment endpoints
     /// along the segment's projection axis.  Delegates to
     /// [`geo2d::point_in_segment_slab`].
-    fn is_between(&self, destination: Point2D) -> bool {
-        geo2d::point_in_segment_slab(destination, geo2d::Segment2D::new(self.a, self.b))
+    fn is_between(&self, destination: MapPoint) -> bool {
+        geo2d::point_in_segment_slab(
+            destination.to_geo(),
+            geo2d::Segment2D::new(self.a.to_geo(), self.b.to_geo()),
+        )
     }
 
     /// Returns `Some(signed_distance_destination)` if the future
     /// position `destination` is close enough to warrant a deviation
     /// check.
-    pub fn is_deviating(&self, destination: Point2D) -> Option<f32> {
-        let rel = geo2d::pt(destination.x - self.a.x, destination.y - self.a.y);
+    pub fn is_deviating(&self, destination: MapPoint) -> Option<f32> {
+        let rel = destination - self.a;
         let distance = rel.x * self.normal.x + rel.y * self.normal.y;
         if !self.is_total && distance < 0.0 {
             return None;
@@ -210,12 +211,12 @@ impl RepulsiveLine {
     /// Compute the deviated movement around this line.
     pub fn compute_deviation(
         &self,
-        movement: Vec2D,
-        origin: Point2D,
+        movement: MapVec,
+        origin: MapPoint,
         movement_mag: f32,
         distance_destination: f32,
         actor_radius: f32,
-    ) -> Option<Vec2D> {
+    ) -> Option<MapVec> {
         let r = rhline::repulsive_line_compute_deviation(
             rhline::Vec2::new(movement.x, movement.y),
             rhline::Vec2::new(origin.x, origin.y),
@@ -230,36 +231,37 @@ impl RepulsiveLine {
             rhline::Vec2::new(self.vector.x, self.vector.y),
             rhline::Vec2::new(self.a.x, self.a.y),
         )?;
-        Some(geo2d::pt(r.x, r.y))
+        Some(MapVec::new(r.x, r.y))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::map_pt;
 
     #[test]
     fn point_is_deviating_total() {
-        let p = RepulsivePoint::new(geo2d::pt(0.0, 0.0), 4.0, 12.0);
+        let p = RepulsivePoint::new(map_pt(0.0, 0.0), 4.0, 12.0);
         // Inside action radius (16 total) → Some
-        assert!(p.is_deviating(geo2d::pt(5.0, 0.0)).is_some());
+        assert!(p.is_deviating(map_pt(5.0, 0.0)).is_some());
         // Outside action radius → None
-        assert!(p.is_deviating(geo2d::pt(50.0, 0.0)).is_none());
+        assert!(p.is_deviating(map_pt(50.0, 0.0)).is_none());
     }
 
     #[test]
     fn point_new_stores_total_action_radius() {
-        let p = RepulsivePoint::new(geo2d::pt(0.0, 0.0), 4.0, 12.0);
+        let p = RepulsivePoint::new(map_pt(0.0, 0.0), 4.0, 12.0);
         assert!((p.radius - 4.0).abs() < 1e-6);
         assert!((p.action_radius - 16.0).abs() < 1e-6);
     }
 
     #[test]
     fn line_is_deviating_between() {
-        let l = RepulsiveLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(10.0, 0.0), 2.0, 5.0);
+        let l = RepulsiveLine::new(map_pt(0.0, 0.0), map_pt(10.0, 0.0), 2.0, 5.0);
         // Point near midpoint, on +normal side → Some
-        assert!(l.is_deviating(geo2d::pt(5.0, 3.0)).is_some());
+        assert!(l.is_deviating(map_pt(5.0, 3.0)).is_some());
         // Point past the segment endpoints → None
-        assert!(l.is_deviating(geo2d::pt(20.0, 3.0)).is_none());
+        assert!(l.is_deviating(map_pt(20.0, 3.0)).is_none());
     }
 }

@@ -1369,7 +1369,6 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d;
 
     #[test]
     fn trajectory_ends_at_destination() {
@@ -1401,8 +1400,18 @@ mod tests {
     #[test]
     fn long_jump_step_list_has_trajectory() {
         // Two parallel jump lines 100 apart at the same elevation.
-        let mut src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 0.0, 0.0);
-        let mut dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 0.0, 0.0);
+        let mut src = JumpLine::new(
+            crate::coordinates::map_pt(0.0, 0.0),
+            crate::coordinates::map_pt(100.0, 0.0),
+            0.0,
+            0.0,
+        );
+        let mut dst = JumpLine::new(
+            crate::coordinates::map_pt(100.0, 100.0),
+            crate::coordinates::map_pt(0.0, 100.0),
+            0.0,
+            0.0,
+        );
         src.associated_line_index = Some(0);
         dst.associated_line_index = Some(0);
 
@@ -1435,8 +1444,18 @@ mod tests {
 
     #[test]
     fn jump_up_emits_jumping_up_step() {
-        let src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 0.0, 0.0);
-        let dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 100.0, 100.0);
+        let src = JumpLine::new(
+            crate::coordinates::map_pt(0.0, 0.0),
+            crate::coordinates::map_pt(100.0, 0.0),
+            0.0,
+            0.0,
+        );
+        let dst = JumpLine::new(
+            crate::coordinates::map_pt(100.0, 100.0),
+            crate::coordinates::map_pt(0.0, 100.0),
+            100.0,
+            100.0,
+        );
 
         let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
@@ -1458,8 +1477,18 @@ mod tests {
 
     #[test]
     fn jump_down_emits_jumping_down_step() {
-        let src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 100.0, 100.0);
-        let dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 0.0, 0.0);
+        let src = JumpLine::new(
+            crate::coordinates::map_pt(0.0, 0.0),
+            crate::coordinates::map_pt(100.0, 0.0),
+            100.0,
+            100.0,
+        );
+        let dst = JumpLine::new(
+            crate::coordinates::map_pt(100.0, 100.0),
+            crate::coordinates::map_pt(0.0, 100.0),
+            0.0,
+            0.0,
+        );
 
         let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
@@ -1539,16 +1568,16 @@ mod tests {
 
         // Two paired jump lines.
         let mut jl_a = JumpLine::new(
-            crate::geo2d::pt(0.0, 0.0),
-            crate::geo2d::pt(64.0, 0.0),
+            crate::coordinates::map_pt(0.0, 0.0),
+            crate::coordinates::map_pt(64.0, 0.0),
             0.0,
             0.0,
         );
         jl_a.sector_index = crate::fast_find_grid::SectorIndex::new(0);
         jl_a.associated_line_index = Some(1);
         let mut jl_b = JumpLine::new(
-            crate::geo2d::pt(0.0, 64.0),
-            crate::geo2d::pt(64.0, 64.0),
+            crate::coordinates::map_pt(0.0, 64.0),
+            crate::coordinates::map_pt(64.0, 64.0),
             0.0,
             0.0,
         );
@@ -1648,8 +1677,18 @@ mod tests {
 
     #[test]
     fn sword_long_jump_uses_sword_variants() {
-        let src = JumpLine::new(geo2d::pt(0.0, 0.0), geo2d::pt(100.0, 0.0), 0.0, 0.0);
-        let dst = JumpLine::new(geo2d::pt(100.0, 100.0), geo2d::pt(0.0, 100.0), 0.0, 0.0);
+        let src = JumpLine::new(
+            crate::coordinates::map_pt(0.0, 0.0),
+            crate::coordinates::map_pt(100.0, 0.0),
+            0.0,
+            0.0,
+        );
+        let dst = JumpLine::new(
+            crate::coordinates::map_pt(100.0, 100.0),
+            crate::coordinates::map_pt(0.0, 100.0),
+            0.0,
+            0.0,
+        );
         let pt = crate::coordinates::MapPoint { x: 50.0, y: 0.0 };
         let steps = build_jump_steps(
             &src,

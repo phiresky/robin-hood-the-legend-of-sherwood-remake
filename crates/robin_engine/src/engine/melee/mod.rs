@@ -1163,7 +1163,7 @@ pub(crate) fn nearest_jump_line_from_sector(
             continue;
         }
 
-        let d = jump_line.compute_distance(from_position);
+        let d = jump_line.compute_distance(from_position.into());
         if d >= max_distance {
             continue;
         }
@@ -1219,7 +1219,7 @@ pub(crate) fn table_swordfight_jump_line(
     let dx = mid_aggressor.x - mid_victim.x;
     let dy = mid_aggressor.y - mid_victim.y;
     let middle_distance = (dx * dx + dy * dy).sqrt();
-    let victim_offset = victim_line.compute_distance(victim_position);
+    let victim_offset = victim_line.compute_distance(victim_position.into());
     if middle_distance + victim_offset > max_range {
         return None;
     }
@@ -1316,7 +1316,7 @@ pub(crate) fn find_position_for_table_swordfight(
     }
     let displacement = 15.0 / line_norm;
 
-    let position_current = jump_line.compute_nearest_point_param(self_position);
+    let position_current = jump_line.compute_nearest_point_param(self_position.into());
 
     // Collect the "friends" — enemies of my enemy. Every opponent of
     // `opponent` that is NOT me and shares my sector.
@@ -1331,7 +1331,7 @@ pub(crate) fn find_position_for_table_swordfight(
         if friend.element_data().sector().map(i16::from) != Some(self_sector) {
             continue;
         }
-        let friend_pos = friend.element_data().position_map().to_geo();
+        let friend_pos = friend.element_data().position_map();
         occupied.push(jump_line.compute_nearest_point_param(friend_pos));
     }
 
@@ -1343,12 +1343,12 @@ pub(crate) fn find_position_for_table_swordfight(
             } else if position_current <= 0.0 {
                 jump_line.point_a
             } else {
-                crate::geo2d::pt(
+                crate::coordinates::MapPoint::new(
                     jump_line.point_a.x + position_current * line_vec.x,
                     jump_line.point_a.y + position_current * line_vec.y,
                 )
             };
-            return Some(pt);
+            return Some(pt.to_geo());
         }
         1 => {
             let p = occupied[0];

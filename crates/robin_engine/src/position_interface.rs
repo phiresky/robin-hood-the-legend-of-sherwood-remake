@@ -1766,9 +1766,9 @@ impl PositionInterface {
         disturbing_points: Vec<RepulsivePoint>,
         disturbing_lines: Vec<RepulsiveLine>,
     ) -> bool {
-        let map = self.position_map.to_geo();
-        let im = self.increment_map.to_geo();
-        let pt_future_naive = geo2d::pt(map.x + distance * im.x, map.y + distance * im.y);
+        let map = self.position_map;
+        let im = self.increment_map;
+        let pt_future_naive = map + im.scale(distance);
         let mut pt_future = pt_future_naive;
 
         // "Deviated or not" branching.  When the actor was already
@@ -1788,13 +1788,13 @@ impl PositionInterface {
             if lists_empty {
                 let hd = self.get_half_diagonal();
                 if fast_grid.is_reachable_thick(
-                    pt_future_naive.into(),
+                    pt_future_naive.to_geo().into(),
                     self.goal_map.to_geo().into(),
                     self.layer.get(),
                     hd,
                 ) {
                     self.deviated = false;
-                    self.set_map_position(MapPoint::from_geo(pt_future_naive));
+                    self.set_map_position(pt_future_naive);
                     self.reset_increment_computed();
                     self.compute_increment_all(true);
                     return false;
@@ -1803,7 +1803,7 @@ impl PositionInterface {
                 // path (no `return` here — deliberate).
             }
         } else if lists_empty {
-            self.set_map_position(MapPoint::from_geo(pt_future_naive));
+            self.set_map_position(pt_future_naive);
             return false;
         }
 
@@ -1812,7 +1812,7 @@ impl PositionInterface {
         // when the actor is stationary (`distance * increment_map == 0`)
         // — either with neighbours pressing (lists non-empty) or in
         // the deviated-but-unreachable fall-through above.
-        let movement = geo2d::pt(pt_future.x - map.x, pt_future.y - map.y);
+        let movement = pt_future - map;
         if movement.x == 0.0 && movement.y == 0.0 {
             return true;
         }
@@ -1840,20 +1840,20 @@ impl PositionInterface {
             if self.deviated {
                 let hd = self.get_half_diagonal();
                 if fast_grid.is_reachable_thick(
-                    pt_future.into(),
+                    pt_future.to_geo().into(),
                     self.goal_map.to_geo().into(),
                     self.layer.get(),
                     hd,
                 ) {
                     self.deviated = false;
-                    self.set_map_position(MapPoint::from_geo(pt_future));
+                    self.set_map_position(pt_future);
                     self.reset_increment_computed();
                     self.compute_increment_all(true);
                     return false;
                 }
                 // !reachable: fall through.
             } else {
-                self.set_map_position(MapPoint::from_geo(pt_future));
+                self.set_map_position(pt_future);
                 return false;
             }
         }
@@ -1864,19 +1864,19 @@ impl PositionInterface {
         let half_diagonal_move = self.get_half_diagonal();
 
         let can_commit = fast_grid.is_straight_movement_authorized(
-            map.into(),
-            pt_future.into(),
+            map.to_geo().into(),
+            pt_future.to_geo().into(),
             self.layer.get(),
             &box_move,
         ) && fast_grid.is_reachable_thick(
-            pt_future.into(),
+            pt_future.to_geo().into(),
             self.goal_map.to_geo().into(),
             self.layer.get(),
             half_diagonal_move,
         );
 
         if can_commit {
-            if self.update_box_blocked(pt_future) {
+            if self.update_box_blocked(pt_future.to_geo()) {
                 let new_movement = geo2d::pt(pt_future.x - map.x, pt_future.y - map.y);
                 if new_movement.x != 0.0 || new_movement.y != 0.0 {
                     let dir = vector_to_direction(new_movement.x, new_movement.y);
@@ -1885,7 +1885,7 @@ impl PositionInterface {
                     } else {
                         self.set_direction(dir);
                     }
-                    self.set_map_position(MapPoint::from_geo(pt_future));
+                    self.set_map_position(pt_future);
                     self.reset_increment_computed();
                     self.compute_increment_all(false);
                 }
@@ -2069,12 +2069,12 @@ pub fn sort_repulsive_objects(
 /// [`PositionInterface::update_position_anti_collision`] for the full
 /// semantics.
 pub fn compute_deviated_future(
-    origin: Point2D,
-    pt_future: Point2D,
+    origin: MapPoint,
+    pt_future: MapPoint,
     actor_radius: f32,
     points: Vec<RepulsivePoint>,
     lines: Vec<RepulsiveLine>,
-) -> (Point2D, bool) {
+) -> (MapPoint, bool) {
     if points.is_empty() && lines.is_empty() {
         return (pt_future, false);
     }
@@ -2082,42 +2082,61 @@ pub fn compute_deviated_future(
     let mut points: Vec<(RepulsivePoint, f32)> = points.into_iter().map(|p| (p, 0.0)).collect();
     let mut lines: Vec<(RepulsiveLine, f32)> = lines.into_iter().map(|l| (l, 0.0)).collect();
 
-    let mut movement = geo2d::pt(pt_future.x - origin.x, pt_future.y - origin.y);
+    let origin_map = origin;
+    let mut movement = pt_future - origin;
     if movement.x == 0.0 && movement.y == 0.0 {
         return (pt_future, false);
     }
     let mut future = pt_future;
 
-    sort_repulsive_objects(origin, future, actor_radius, &mut points, &mut lines);
+    sort_repulsive_objects(
+        origin.to_geo(),
+        future.to_geo(),
+        actor_radius,
+        &mut points,
+        &mut lines,
+    );
 
     let mut deviated = false;
     loop {
         while !points.is_empty() && (lines.is_empty() || points[0].1 <= lines[0].1) {
             let (pt, _d) = points.remove(0);
-            let mag = geo2d::length(movement);
+            let mag = movement.length();
             if let Some(dist_dest) = pt.is_deviating(future)
                 && let Some(new_mov) =
-                    pt.compute_deviation(movement, origin, mag, dist_dest, actor_radius)
+                    pt.compute_deviation(movement, origin_map, mag, dist_dest, actor_radius)
             {
                 movement = new_mov;
-                future = geo2d::pt(origin.x + movement.x, origin.y + movement.y);
+                future = origin_map + movement;
                 deviated = true;
             }
-            sort_repulsive_objects(origin, future, actor_radius, &mut points, &mut lines);
+            sort_repulsive_objects(
+                origin.to_geo(),
+                future.to_geo(),
+                actor_radius,
+                &mut points,
+                &mut lines,
+            );
         }
 
         while !lines.is_empty() && (points.is_empty() || lines[0].1 < points[0].1) {
             let (line, _d) = lines.remove(0);
-            let mag = geo2d::length(movement);
+            let mag = movement.length();
             if let Some(dist_dest) = line.is_deviating(future)
                 && let Some(new_mov) =
-                    line.compute_deviation(movement, origin, mag, dist_dest, actor_radius)
+                    line.compute_deviation(movement, origin_map, mag, dist_dest, actor_radius)
             {
                 movement = new_mov;
-                future = geo2d::pt(origin.x + movement.x, origin.y + movement.y);
+                future = origin_map + movement;
                 deviated = true;
             }
-            sort_repulsive_objects(origin, future, actor_radius, &mut points, &mut lines);
+            sort_repulsive_objects(
+                origin.to_geo(),
+                future.to_geo(),
+                actor_radius,
+                &mut points,
+                &mut lines,
+            );
         }
 
         if points.is_empty() && lines.is_empty() {

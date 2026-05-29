@@ -2532,7 +2532,7 @@ impl EngineInner {
                     (
                         crate::engine::movement::GoalShape::Line {
                             line_index: aggr_idx,
-                            midpoint: mid,
+                            midpoint: mid.to_geo(),
                             tolerance: seek_tolerance,
                         },
                         jl.layer,
@@ -2680,7 +2680,7 @@ impl EngineInner {
             Some(e) => e.element_data().position_map().to_geo(),
             None => return,
         };
-        let t_victim = victim_line.compute_nearest_point_param(victim_pos_geo);
+        let t_victim = victim_line.compute_nearest_point_param(victim_pos_geo.into());
         let coeff = t_victim * victim_line.norm();
 
         let aggressor_vec = aggressor_line.vector();

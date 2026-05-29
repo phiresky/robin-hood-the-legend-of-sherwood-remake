@@ -295,17 +295,6 @@ impl std::ops::Sub for WorldVec3D {
     }
 }
 
-impl From<WorldVec3D> for WorldPoint3D {
-    #[inline]
-    fn from(v: WorldVec3D) -> Self {
-        Self {
-            x: v.x,
-            y: v.y,
-            z: v.z,
-        }
-    }
-}
-
 impl MapPoint {
     /// Project a world-space `(x, y, z)` position into map coordinates.
     ///
@@ -314,6 +303,89 @@ impl MapPoint {
     #[inline]
     pub const fn from_world_xyz(x: f32, y: f32, z: f32) -> Self {
         Self { x, y: y - z }
+    }
+}
+
+impl std::ops::Sub for MapPoint {
+    type Output = MapVec;
+
+    #[inline]
+    fn sub(self, o: Self) -> MapVec {
+        MapVec {
+            x: self.x - o.x,
+            y: self.y - o.y,
+        }
+    }
+}
+
+impl std::ops::Add<MapVec> for MapPoint {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, o: MapVec) -> Self {
+        Self {
+            x: self.x + o.x,
+            y: self.y + o.y,
+        }
+    }
+}
+
+impl std::ops::Sub<MapVec> for MapPoint {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, o: MapVec) -> Self {
+        Self {
+            x: self.x - o.x,
+            y: self.y - o.y,
+        }
+    }
+}
+
+impl std::ops::Add for MapVec {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, o: Self) -> Self {
+        Self {
+            x: self.x + o.x,
+            y: self.y + o.y,
+        }
+    }
+}
+
+impl std::ops::Sub for MapVec {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, o: Self) -> Self {
+        Self {
+            x: self.x - o.x,
+            y: self.y - o.y,
+        }
+    }
+}
+
+impl std::ops::AddAssign for MapVec {
+    #[inline]
+    fn add_assign(&mut self, o: Self) {
+        self.x += o.x;
+        self.y += o.y;
+    }
+}
+
+impl MapVec {
+    #[inline]
+    pub const fn scale(self, k: f32) -> Self {
+        Self {
+            x: self.x * k,
+            y: self.y * k,
+        }
+    }
+
+    #[inline]
+    pub fn length(self) -> f32 {
+        (self.x * self.x + self.y * self.y).sqrt()
     }
 }
 

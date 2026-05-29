@@ -8,6 +8,7 @@
 //! no live call site.
 
 use crate::ai::RepulsivePoint as StaticRepulsivePoint;
+use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
 use crate::fast_find_grid::FastFindGrid;
@@ -42,10 +43,8 @@ pub struct ActorSnapshot {
     pub is_actor: bool,
     pub is_human: bool,
     pub is_ignored_for_anti_collision: bool,
-    /// `geo2d::Point2D` (Coord<f32>) — converted from
-    /// [`crate::coordinates::MapPoint`] on capture so the downstream
-    /// math matches the rest of the geometry stack.
-    pub position_map: Point2D,
+    /// Map-space position captured at the start of the anti-collision pass.
+    pub position_map: MapPoint,
     pub layer: u16,
     pub sector: Option<crate::position_interface::SectorHandle>,
     pub posture: Posture,
@@ -107,7 +106,7 @@ pub fn snapshot_all(
                 is_ignored_for_anti_collision: actor
                     .map(|a| a.is_ignored_for_anti_collision)
                     .unwrap_or(false),
-                position_map: geo2d::pt(elem.position_map().x, elem.position_map().y),
+                position_map: elem.position_map(),
                 layer: elem.layer(),
                 sector: elem.sector(),
                 posture: elem.posture,
@@ -156,8 +155,8 @@ pub fn gather_static_repulsive_points(
         if (sp.flags & affect_bit) == 0 {
             continue;
         }
-        let p = geo2d::pt(sp.position.x, sp.position.y);
-        if !box_future.contains_point(p) {
+        let p = crate::coordinates::MapPoint::new(sp.position.x, sp.position.y);
+        if !box_future.contains_point(p.to_geo()) {
             continue;
         }
         out.push(RepulsivePoint::new(p, sp.radius, sp.action_radius));
@@ -179,7 +178,7 @@ pub fn entity_repulsive_point(
     profile_manager: &ProfileManager,
 ) -> Option<RepulsivePoint> {
     let elem = entity.element_data();
-    let pos = geo2d::pt(elem.position_map().x, elem.position_map().y);
+    let pos = elem.position_map();
     let posture = elem.posture;
 
     if !entity.is_human() {
@@ -297,7 +296,8 @@ pub fn entity_repulsive_point(
             // personal-space zone sits in front of them.
             let dir = elem.direction() as u16 & 15;
             let (dx, dy) = direction_vector(dir);
-            let offset_pos = geo2d::pt(pos.x - 10.0 * dx, pos.y - 10.0 * dy);
+            let offset_pos =
+                crate::coordinates::MapPoint::new(pos.x - 10.0 * dx, pos.y - 10.0 * dy);
             Some(RepulsivePoint::new(
                 offset_pos,
                 RADIUS_CORPSE,
@@ -328,7 +328,7 @@ pub fn entity_extra_repulsive_points(entity: &Entity) -> Vec<RepulsivePoint> {
         && !net.net.victims.is_empty()
     {
         let elem = entity.element_data();
-        let pos = geo2d::pt(elem.position_map().x, elem.position_map().y);
+        let pos = elem.position_map();
         return vec![RepulsivePoint::new(pos, 15.0, 30.0)];
     }
     Vec::new()
@@ -439,7 +439,7 @@ pub fn gather_disturbing(
                 continue;
             }
         }
-        if !box_future.contains_point(other.position_map) {
+        if !box_future.contains_point(other.position_map.to_geo()) {
             continue;
         }
         if !is_object {
@@ -474,13 +474,13 @@ pub struct AntiCollisionState<'a> {
     /// Half-diagonal used by `is_reachable_thick`.
     pub half_diagonal: geo2d::Vec2D,
     /// Current movement goal (for the break-through barge).
-    pub goal_map: Point2D,
+    pub goal_map: MapPoint,
 }
 
 impl AntiCollisionState<'_> {
-    fn update_box_blocked(&mut self, point: Point2D) -> bool {
+    fn update_box_blocked(&mut self, point: MapPoint) -> bool {
         let p = &mut *self.pi;
-        if p.box_blocked.is_somewhere() && p.box_blocked.contains_point(point) {
+        if p.box_blocked.is_somewhere() && p.box_blocked.contains_point(point.to_geo()) {
             p.blocked_count = p.blocked_count.saturating_add(1);
             if p.radius > 1.0 {
                 p.radius -= 0.2;
@@ -534,7 +534,7 @@ pub fn apply_anti_collision_step(
         return naive;
     }
 
-    let future = geo2d::pt(
+    let future = MapPoint::new(
         mover.position_map.x + naive.0,
         mover.position_map.y + naive.1,
     );
@@ -610,8 +610,8 @@ pub fn apply_anti_collision_step(
         }
         let reachable = match (state.as_deref(), grid) {
             (Some(s), Some(g)) => g.is_reachable_thick(
-                future.into(),
-                s.goal_map.into(),
+                future.to_geo().into(),
+                s.goal_map.to_geo().into(),
                 mover.layer,
                 s.half_diagonal,
             ),
@@ -654,8 +654,8 @@ pub fn apply_anti_collision_step(
         }
         let reachable = match grid {
             Some(g) => g.is_reachable_thick(
-                deviated_future.into(),
-                state.goal_map.into(),
+                deviated_future.to_geo().into(),
+                state.goal_map.to_geo().into(),
                 mover.layer,
                 state.half_diagonal,
             ),
@@ -686,13 +686,13 @@ pub fn apply_anti_collision_step(
     };
 
     let can_commit = grid.is_straight_movement_authorized(
-        mover.position_map.into(),
-        deviated_future.into(),
+        mover.position_map.to_geo().into(),
+        deviated_future.to_geo().into(),
         mover.layer,
         &state.move_box,
     ) && grid.is_reachable_thick(
-        deviated_future.into(),
-        state.goal_map.into(),
+        deviated_future.to_geo().into(),
+        state.goal_map.to_geo().into(),
         mover.layer,
         state.half_diagonal,
     );
@@ -814,7 +814,12 @@ pub fn gather_level_repulsive_lines(
         .into_iter()
         .map(|idx| {
             let g = &grid.level.lines[usize::from(idx)];
-            RepulsiveLine::new(g.a, g.b, RADIUS_OBSTACLE_LINE, ACTIONRADIUS_OBSTACLE)
+            RepulsiveLine::new(
+                g.a.into(),
+                g.b.into(),
+                RADIUS_OBSTACLE_LINE,
+                ACTIONRADIUS_OBSTACLE,
+            )
         })
         .collect()
 }
@@ -830,9 +835,12 @@ pub fn gather_level_repulsive_points(
     grid.get_level_repulsive_points(layer, box_future)
         .into_iter()
         .map(|p| {
-            let mut rp =
-                RepulsivePoint::new(p.position, RADIUS_OBSTACLE_LINE, ACTIONRADIUS_OBSTACLE);
-            rp.set_action_field(p.limit_left, p.limit_right);
+            let mut rp = RepulsivePoint::new(
+                p.position.into(),
+                RADIUS_OBSTACLE_LINE,
+                ACTIONRADIUS_OBSTACLE,
+            );
+            rp.set_action_field(p.limit_left.into(), p.limit_right.into());
             rp.is_concave = p.is_concave;
             rp
         })
@@ -842,6 +850,7 @@ pub fn gather_level_repulsive_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::map_pt;
 
     fn mk_snapshot(id: u32, x: f32, y: f32) -> ActorSnapshot {
         ActorSnapshot {
@@ -850,7 +859,7 @@ mod tests {
             is_actor: true,
             is_human: true,
             is_ignored_for_anti_collision: false,
-            position_map: geo2d::pt(x, y),
+            position_map: map_pt(x, y),
             layer: 0,
             sector: crate::position_interface::SectorHandle::new(1),
             posture: Posture::Upright,
@@ -858,7 +867,7 @@ mod tests {
             target_element: None,
             is_swordfighting: false,
             repulsive_point: Some(RepulsivePoint::new(
-                geo2d::pt(x, y),
+                map_pt(x, y),
                 RADIUS_GUY,
                 ACTIONRADIUS_GUY,
             )),
@@ -1002,7 +1011,7 @@ mod tests {
         });
 
         let point = entity_repulsive_point(&entity, &profile_manager).unwrap();
-        assert_eq!(point.position, geo2d::pt(10.0, 20.0));
+        assert_eq!(point.position, map_pt(10.0, 20.0));
         assert_eq!(point.radius, RADIUS_SWORDFIGHTING_GUY);
         assert_eq!(point.action_radius, RADIUS_SWORDFIGHTING_GUY + 25.0);
     }

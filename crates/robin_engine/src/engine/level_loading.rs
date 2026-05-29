@@ -4383,8 +4383,14 @@ impl EngineInner {
             let layer2 = zone_layer[z1];
 
             let mut jl1 = crate::jump_line::JumpLine::new(
-                crate::geo2d::pt(pair.line1.point_a.0 as f32, pair.line1.point_a.1 as f32),
-                crate::geo2d::pt(pair.line1.point_b.0 as f32, pair.line1.point_b.1 as f32),
+                crate::coordinates::map_pt(
+                    pair.line1.point_a.0 as f32,
+                    pair.line1.point_a.1 as f32,
+                ),
+                crate::coordinates::map_pt(
+                    pair.line1.point_b.0 as f32,
+                    pair.line1.point_b.1 as f32,
+                ),
                 pair.line1.point_a.2 as f32,
                 pair.line1.point_b.2 as f32,
             );
@@ -4393,8 +4399,14 @@ impl EngineInner {
             jl1.long_jump_forced = pair.jump_long;
 
             let mut jl2 = crate::jump_line::JumpLine::new(
-                crate::geo2d::pt(pair.line2.point_a.0 as f32, pair.line2.point_a.1 as f32),
-                crate::geo2d::pt(pair.line2.point_b.0 as f32, pair.line2.point_b.1 as f32),
+                crate::coordinates::map_pt(
+                    pair.line2.point_a.0 as f32,
+                    pair.line2.point_a.1 as f32,
+                ),
+                crate::coordinates::map_pt(
+                    pair.line2.point_b.0 as f32,
+                    pair.line2.point_b.1 as f32,
+                ),
                 pair.line2.point_a.2 as f32,
                 pair.line2.point_b.2 as f32,
             );

@@ -541,7 +541,7 @@ impl EngineInner {
             let n_trans = elem.num_transition_orders;
             let source_from_prev = if n_orders.saturating_sub(n_trans) > 1 && n_orders >= 2 {
                 let o = &elem.orders[n_orders - 2];
-                Some(crate::geo2d::pt(o.target_x, o.target_y))
+                Some(crate::coordinates::MapPoint::new(o.target_x, o.target_y))
             } else {
                 None
             };
@@ -585,7 +585,7 @@ impl EngineInner {
             let Some(entity) = self.get_entity(owner) else {
                 return;
             };
-            let position = entity.element_data().position_map().to_geo();
+            let position = entity.element_data().position_map();
             let layer = entity.element_data().layer();
             let hd = entity.position_iface().get_half_diagonal();
             (position, layer, hd)
@@ -607,7 +607,10 @@ impl EngineInner {
                     line_a
                 } else {
                     let t = dot_a / sq_norm;
-                    crate::geo2d::pt(line_a.x + t * line_vec.x, line_a.y + t * line_vec.y)
+                    crate::coordinates::MapPoint::new(
+                        line_a.x + t * line_vec.x,
+                        line_a.y + t * line_vec.y,
+                    )
                 }
             }
         };
@@ -618,8 +621,8 @@ impl EngineInner {
         // the correct source even though the conceptual lookup is
         // for `posture_after_transition`.
         if !self.fast_grid.is_reachable_thick(
-            pt_source.into(),
-            pt_new_goal.into(),
+            pt_source.to_geo().into(),
+            pt_new_goal.to_geo().into(),
             layer,
             half_diagonal,
         ) {
@@ -662,7 +665,7 @@ impl EngineInner {
                 let Some(order) = elem.orders.get(i as usize) else {
                     return;
                 };
-                crate::geo2d::pt(order.target_x, order.target_y)
+                crate::coordinates::MapPoint::new(order.target_x, order.target_y)
             };
             // If an order somehow carries (0, 0) we log and bail
             // rather than silently producing bogus collapse geometry.
@@ -676,8 +679,8 @@ impl EngineInner {
                 break;
             }
             if self.fast_grid.is_reachable_thick(
-                src_pt.into(),
-                pt_new_goal.into(),
+                src_pt.to_geo().into(),
+                pt_new_goal.to_geo().into(),
                 layer,
                 half_diagonal,
             ) {

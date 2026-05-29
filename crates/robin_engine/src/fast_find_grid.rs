@@ -3816,8 +3816,18 @@ mod tests {
         );
 
         // Two jump lines the grid can reference from the jump sectors.
-        let jl_a = crate::jump_line::JumpLine::new(pt(40.0, 60.0), pt(80.0, 60.0), 0.0, 0.0);
-        let jl_b = crate::jump_line::JumpLine::new(pt(40.0, 90.0), pt(80.0, 90.0), 0.0, 0.0);
+        let jl_a = crate::jump_line::JumpLine::new(
+            crate::coordinates::map_pt(40.0, 60.0),
+            crate::coordinates::map_pt(80.0, 60.0),
+            0.0,
+            0.0,
+        );
+        let jl_b = crate::jump_line::JumpLine::new(
+            crate::coordinates::map_pt(40.0, 90.0),
+            crate::coordinates::map_pt(80.0, 90.0),
+            0.0,
+            0.0,
+        );
         grid.level_mut().jump_lines.push(jl_a); // idx 0, mid = (60, 60)
         grid.level_mut().jump_lines.push(jl_b); // idx 1, mid = (60, 90)
 

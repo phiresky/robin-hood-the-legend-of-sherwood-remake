@@ -460,8 +460,9 @@ impl EnemyAi {
         {
             // Project victim onto its own line, then mirror that offset
             // back along the aggressor line (from B toward A).
-            let t_victim = victim_line
-                .compute_nearest_point_param(crate::geo2d::pt(enemy.position.x, enemy.position.y));
+            let t_victim = victim_line.compute_nearest_point_param(
+                crate::geo2d::pt(enemy.position.x, enemy.position.y).into(),
+            );
             let f_coeff = t_victim * victim_line.norm();
             let aggressor_norm = aggressor_line.norm().max(f32::EPSILON);
             let inv_norm = 1.0 / aggressor_norm;

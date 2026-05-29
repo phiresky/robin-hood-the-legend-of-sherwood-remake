@@ -5,7 +5,7 @@
 //!
 //! ## Flow
 //!
-//! 1. Pathfinder returns `Vec<Point2D>` waypoints, stored on `ActorData`.
+//! 1. Pathfinder returns `Vec<MapPoint>` waypoints, stored on `ActorData`.
 //! 2. Each frame, [`tick_movement`] advances the entity's position toward the
 //!    current waypoint using `PositionInterface`.
 //! 3. When a waypoint is reached, the index advances to the next one.
@@ -17,9 +17,9 @@
 //! animation is available. Coarse pathing helpers still provide fixed
 //! defaults for action-state-only callers.
 
+use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{ActionState, EntityId};
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self, Point2D};
 use crate::order::{Order, OrderType};
 use crate::position_interface::{PositionInterface, TargetInfo};
 use crate::sequence::{SequenceElement, SequenceId};
@@ -498,7 +498,7 @@ pub fn speed_for_order_type(order: OrderType) -> f32 {
 /// order only — the "apply tolerance & antagonist on last order" pattern.
 pub fn build_orders_from_path(
     element: &mut SequenceElement,
-    waypoints: &[Point2D],
+    waypoints: &[MapPoint],
     action: OrderType,
     tolerance: f32,
     reverse: bool,
@@ -567,7 +567,7 @@ pub fn build_orders_from_path(
 /// Returns a [`MovementResult`] indicating what happened.
 pub fn tick_movement(
     pos: &mut PositionInterface,
-    waypoints: &[Point2D],
+    waypoints: &[MapPoint],
     waypoint_index: &mut usize,
     distance: f32,
     grid: &FastFindGrid,
@@ -583,7 +583,7 @@ pub fn tick_movement(
     pos.new_move();
 
     // Set goal from current waypoint
-    pos.set_map_goal(crate::coordinates::MapPoint::from_geo(goal));
+    pos.set_map_goal(goal);
 
     // Intermediate waypoints use tolerance 0; final waypoint also uses 0
     // here because this helper takes a flat waypoint list rather than
@@ -595,7 +595,7 @@ pub fn tick_movement(
 
     // Hint the next waypoint for anti-collision lookahead
     if let Some(&next_wp) = waypoints.get(*waypoint_index + 1) {
-        pos.set_next_map_goal(crate::coordinates::MapPoint::from_geo(next_wp));
+        pos.set_next_map_goal(next_wp);
     } else {
         pos.set_goal_next_valid(false);
     }
@@ -623,11 +623,11 @@ pub fn tick_movement(
     if pos.is_goal_reached(grid, target) {
         // Snap to exact goal when not deviated
         if !pos.is_deviated() {
-            pos.set_map_position(crate::coordinates::MapPoint::from_geo(goal));
+            pos.set_map_position(goal);
         }
 
         // Zero out the movement increment
-        pos.set_increment_map(geo2d::pt(0.0, 0.0));
+        pos.set_map_increment(MapVec::ZERO);
 
         // Advance to next waypoint
         *waypoint_index += 1;
@@ -648,6 +648,7 @@ pub fn tick_movement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::map_pt;
 
     /// Helper: create a PositionInterface at a given map position.
     fn make_pos(x: f32, y: f32) -> PositionInterface {
@@ -659,7 +660,7 @@ mod tests {
     #[test]
     fn tick_idle_when_no_waypoints() {
         let mut pos = make_pos(0.0, 0.0);
-        let waypoints: Vec<Point2D> = vec![];
+        let waypoints: Vec<MapPoint> = vec![];
         let mut idx = 0;
         let grid = FastFindGrid::new();
         let result = tick_movement(&mut pos, &waypoints, &mut idx, 1.0, &grid, None);
@@ -669,7 +670,7 @@ mod tests {
     #[test]
     fn tick_idle_when_index_past_end() {
         let mut pos = make_pos(0.0, 0.0);
-        let waypoints = vec![geo2d::pt(10.0, 0.0)];
+        let waypoints = vec![map_pt(10.0, 0.0)];
         let mut idx = 1; // past end
         let grid = FastFindGrid::new();
         let result = tick_movement(&mut pos, &waypoints, &mut idx, 1.0, &grid, None);
@@ -679,7 +680,7 @@ mod tests {
     #[test]
     fn tick_moves_toward_waypoint() {
         let mut pos = make_pos(0.0, 0.0);
-        let waypoints = vec![geo2d::pt(100.0, 0.0)];
+        let waypoints = vec![map_pt(100.0, 0.0)];
         let mut idx = 0;
         let grid = FastFindGrid::new();
 
@@ -696,7 +697,7 @@ mod tests {
     fn tick_reaches_nearby_waypoint() {
         // Start very close to waypoint — should arrive in one tick
         let mut pos = make_pos(99.5, 0.0);
-        let waypoints = vec![geo2d::pt(100.0, 0.0)];
+        let waypoints = vec![map_pt(100.0, 0.0)];
         let mut idx = 0;
         let grid = FastFindGrid::new();
 
@@ -714,8 +715,8 @@ mod tests {
         // Start right on top of the first waypoint — should reach it immediately
         let mut pos = make_pos(10.0, 0.0);
         let waypoints = vec![
-            geo2d::pt(10.0, 0.0),  // Already there
-            geo2d::pt(100.0, 0.0), // Far away
+            map_pt(10.0, 0.0),  // Already there
+            map_pt(100.0, 0.0), // Far away
         ];
         let mut idx = 0;
         let grid = FastFindGrid::new();
@@ -733,11 +734,7 @@ mod tests {
     #[test]
     fn tick_full_path_traversal() {
         let mut pos = make_pos(0.0, 0.0);
-        let waypoints = vec![
-            geo2d::pt(2.0, 0.0),
-            geo2d::pt(4.0, 0.0),
-            geo2d::pt(6.0, 0.0),
-        ];
+        let waypoints = vec![map_pt(2.0, 0.0), map_pt(4.0, 0.0), map_pt(6.0, 0.0)];
         let mut idx = 0;
         let grid = FastFindGrid::new();
 
@@ -766,7 +763,7 @@ mod tests {
     #[test]
     fn tick_diagonal_movement() {
         let mut pos = make_pos(0.0, 0.0);
-        let waypoints = vec![geo2d::pt(100.0, 100.0)];
+        let waypoints = vec![map_pt(100.0, 100.0)];
         let mut idx = 0;
         let grid = FastFindGrid::new();
 
@@ -791,11 +788,7 @@ mod tests {
             crate::element::Command::Move,
             Some(crate::element::EntityId(0)),
         );
-        let waypoints = vec![
-            geo2d::pt(10.0, 20.0),
-            geo2d::pt(30.0, 40.0),
-            geo2d::pt(50.0, 60.0),
-        ];
+        let waypoints = vec![map_pt(10.0, 20.0), map_pt(30.0, 40.0), map_pt(50.0, 60.0)];
 
         let mut next_order_id = 1u32;
         build_orders_from_path(
@@ -839,7 +832,7 @@ mod tests {
         let mut next_order_id = 1u32;
         build_orders_from_path(
             &mut elem,
-            &[geo2d::pt(10.0, 20.0)],
+            &[map_pt(10.0, 20.0)],
             OrderType::WalkingUpright,
             0.0,
             false,
@@ -902,7 +895,7 @@ mod tests {
     #[test]
     fn zero_distance_does_not_move() {
         let mut pos = make_pos(50.0, 50.0);
-        let waypoints = vec![geo2d::pt(100.0, 100.0)];
+        let waypoints = vec![map_pt(100.0, 100.0)];
         let mut idx = 0;
         let grid = FastFindGrid::new();
 
