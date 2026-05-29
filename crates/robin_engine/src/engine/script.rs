@@ -2765,7 +2765,7 @@ impl EngineInner {
                         continue;
                     }
                     let pi = entity.position_iface_mut();
-                    pi.set_position_map(pt.to_geo());
+                    pi.set_map_position(pt);
                     let ed = entity.element_data_mut();
                     ed.set_position_map(pt);
                     ed.update_grid_cell();
@@ -3175,7 +3175,10 @@ impl EngineInner {
             // of mis-framing.
             if entity.actor_data().is_some() {
                 let pi = entity.position_iface_mut();
-                pi.set_position_map(crate::geo2d::pt(point_in.0, point_in.1));
+                pi.set_map_position(crate::coordinates::MapPoint {
+                    x: point_in.0,
+                    y: point_in.1,
+                });
             }
             is_pc = entity.pc_data().is_some();
             carried_handle = entity
@@ -3226,7 +3229,10 @@ impl EngineInner {
                     elem.update_grid_cell();
                     if carried_entity.actor_data().is_some() {
                         let pi = carried_entity.position_iface_mut();
-                        pi.set_position_map(crate::geo2d::pt(point_in.0, point_in.1));
+                        pi.set_map_position(crate::coordinates::MapPoint {
+                            x: point_in.0,
+                            y: point_in.1,
+                        });
                     }
                 }
                 // Push the carried into the occupants list.

@@ -1522,7 +1522,7 @@ impl EngineInner {
             sprite.position_iface.configure_for_actor(
                 0,
                 civ_half_diag,
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32),
+                crate::coordinates::MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
             sprite.apply_placement(
                 geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
@@ -1627,7 +1627,7 @@ impl EngineInner {
             sprite.position_iface.configure_for_actor(
                 pc_pathfinder_idx,
                 pc_half_diag,
-                initial_position_geo,
+                crate::coordinates::MapPoint::from_geo(initial_position_geo),
             );
             // The sector must be both motion and area; warn instead of
             // asserting so a corrupt mission file still loads.
@@ -1706,7 +1706,7 @@ impl EngineInner {
             sprite.position_iface.set_old_position(current_position);
             sprite
                 .position_iface
-                .set_old_position_map(initial_position_geo);
+                .set_old_map_position(crate::coordinates::MapPoint::from_geo(initial_position_geo));
             // Display order is computed by the host-side
             // `compute_display_order` pass (`engine/display_state.rs`)
             // that runs before render and input hit-test on every tick
@@ -1927,7 +1927,7 @@ impl EngineInner {
             sprite.position_iface.configure_for_actor(
                 soldier_pathfinder_idx,
                 soldier_half_diag,
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32),
+                crate::coordinates::MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
             sprite.apply_placement(
                 geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
@@ -2152,10 +2152,12 @@ impl EngineInner {
             // PC walks to when interacting — lives at action_position.
             let action_point =
                 geo2d::pt(raw.action_position_x as f32, raw.action_position_y as f32);
+            sprite.position_iface.set_map_position_preserving_3d(
+                crate::coordinates::MapPoint::from_geo(action_point),
+            );
             sprite
                 .position_iface
-                .set_position_map_preserving_3d(action_point);
-            sprite.position_iface.set_old_position_map(action_point);
+                .set_old_map_position(crate::coordinates::MapPoint::from_geo(action_point));
             let entity = Entity::Target(crate::element::ElementTarget {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::Target,
@@ -2951,7 +2953,7 @@ impl EngineInner {
                 sprite.position_iface.configure_for_actor(
                     pc_pathfinder_idx,
                     pc_half_diag,
-                    beam_me.position,
+                    crate::coordinates::MapPoint::from_geo(beam_me.position),
                 );
                 // Validate every beam-me's layer range and sector
                 // motion/area bits.  Warn instead of asserting so a
@@ -3044,7 +3046,9 @@ impl EngineInner {
                 // path above).
                 let current_position = sprite.position_iface.get_position();
                 sprite.position_iface.set_old_position(current_position);
-                sprite.position_iface.set_old_position_map(beam_me.position);
+                sprite
+                    .position_iface
+                    .set_old_map_position(crate::coordinates::MapPoint::from_geo(beam_me.position));
                 // Seed `disabled_actions` from per-slot ammo /
                 // purse-ransom checks so a slot whose counter is empty
                 // (or whose purse threshold isn't met) starts greyed out
@@ -3388,7 +3392,7 @@ impl EngineInner {
                     // `PositionInterface` so the move-box and pathfinder
                     // caches see the teleport.
                     let pi = &mut elem.sprite.position_iface;
-                    pi.set_position_map(point_in);
+                    pi.set_map_position(crate::coordinates::MapPoint::from_geo(point_in));
                     if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
                         pi.set_layer(layer);
                     }
@@ -5920,7 +5924,10 @@ impl EngineInner {
                         .set_sector(crate::position_interface::SectorHandle::new(sector_idx));
                     {
                         let pi = &mut pc.element.sprite.position_iface;
-                        pi.set_position_map(crate::geo2d::pt(occupant.x, occupant.y));
+                        pi.set_map_position(crate::coordinates::MapPoint {
+                            x: occupant.x,
+                            y: occupant.y,
+                        });
                     }
                 }
                 // Release the `entities` borrow before calling helpers

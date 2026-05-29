@@ -617,8 +617,9 @@ pub(super) fn handle_mouse_input(
                                         hit.slot
                                     );
                                 } else if let Some(ent) = engine.get_entity(pc_id) {
-                                    host.viewport
-                                        .center_on_point(ent.position_iface().get_position_map());
+                                    host.viewport.center_on_point(
+                                        ent.position_iface().map_position().to_geo(),
+                                    );
                                     tracing::info!(
                                         "Portrait double-click: centering on non-selectable PC"
                                     );

@@ -2564,11 +2564,11 @@ impl EngineInner {
                 return true;
             };
             let pi = entity.position_iface();
-            let pm = pi.get_position_map();
+            let pm = pi.map_position();
             (
                 *pi.get_move_box(),
                 entity.element_data().layer(),
-                crate::geo2d::pt(pm.x, pm.y),
+                pm.to_geo(),
             )
         };
 
@@ -4093,7 +4093,10 @@ impl EngineInner {
                         // PositionInterface::computed_increment here. The order
                         // target is authoritative, so reseeding mirrors the
                         // new-order setup instead of advancing with stale data.
-                        pi.set_position_goal_map(geo2d::pt(goal.x, goal.y));
+                        pi.set_map_goal(crate::coordinates::MapPoint {
+                            x: goal.x,
+                            y: goal.y,
+                        });
                         pi.set_reversed_movement(order_reverse);
                         pi.set_tolerance(
                             order_tolerance,
@@ -5523,7 +5526,10 @@ impl EngineInner {
         // position before recomputing 3D.
         if let Some(entity) = self.get_entity_mut(entity_id) {
             let pi = entity.position_iface_mut();
-            pi.set_position_map(crate::geo2d::pt(new_pos.x, new_pos.y));
+            pi.set_map_position(crate::coordinates::MapPoint {
+                x: new_pos.x,
+                y: new_pos.y,
+            });
         }
     }
 
@@ -6168,7 +6174,9 @@ impl EngineInner {
                 let center = box_element.center();
                 source = geo2d::pt(center.x, center.y);
                 if let Some(entity) = self.get_entity_mut(owner) {
-                    entity.position_iface_mut().set_position_map(source);
+                    entity
+                        .position_iface_mut()
+                        .set_map_position(crate::coordinates::MapPoint::from_geo(source));
                     let elem = entity.element_data_mut();
                     elem.set_position_map(crate::coordinates::MapPoint {
                         x: source.x,

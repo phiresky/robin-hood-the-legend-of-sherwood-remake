@@ -429,7 +429,7 @@ impl crate::engine::EngineInner {
                     .map(|e| e.element_data().position_map())
                 && let Some(owner_e) = self.get_entity_mut(owner)
             {
-                owner_e.position_iface_mut().set_position_map(pos.to_geo());
+                owner_e.position_iface_mut().set_map_position(pos);
                 self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
             }
             return true;

@@ -256,7 +256,7 @@ pub(super) fn enemies_are_blocking_my_movement(
     // Forward unit vector: (position - old_position), Y stretched by
     // `INVERSE_ASPECT_RATIO`, then normalised.
     let pt_me = entity.element_data().position_map();
-    let old = entity.position_iface().get_old_position_map();
+    let old = entity.position_iface().old_map_position().to_geo();
     let mut dir_x = pt_me.x - old.x;
     let mut dir_y = (pt_me.y - old.y) * INVERSE_ASPECT_RATIO;
     let dir_len = (dir_x * dir_x + dir_y * dir_y).sqrt();

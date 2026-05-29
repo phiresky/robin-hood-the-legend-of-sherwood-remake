@@ -910,12 +910,6 @@ impl PositionInterface {
     }
 
     #[inline]
-    #[must_use = "method returns Point2D by value; `pi.get_position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
-    pub fn get_position_map(&self) -> Point2D {
-        self.position_map.to_geo()
-    }
-
-    #[inline]
     #[must_use = "method returns MapPoint by value; use `set_map_position` to mutate."]
     pub fn map_position(&self) -> MapPoint {
         self.position_map
@@ -934,11 +928,6 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn set_position_map(&mut self, pt: Point2D) {
-        self.set_map_position(MapPoint::from_geo(pt));
-    }
-
-    #[inline]
     pub fn set_map_position(&mut self, pt: MapPoint) {
         self.position_map = pt;
         self.recompute_from_map();
@@ -952,11 +941,11 @@ impl PositionInterface {
     /// map to the action point so pathfinding seeks to the action
     /// point while rendering still happens at the elevated 3D point).
     /// Callers that want full re-derivation should use
-    /// [`Self::set_position_map`] instead.
+    /// [`Self::set_map_position`] instead.
     #[inline]
-    pub fn set_position_map_preserving_3d(&mut self, pt: Point2D) {
-        self.position_map = MapPoint::from_geo(pt);
-        self.move_box_map = self.get_move_box_offset(pt);
+    pub fn set_map_position_preserving_3d(&mut self, pt: MapPoint) {
+        self.position_map = pt;
+        self.move_box_map = self.get_move_box_offset(pt.to_geo());
     }
 
     #[inline]
@@ -971,20 +960,12 @@ impl PositionInterface {
         self.old_position
     }
     #[inline]
-    pub fn get_old_position_map(&self) -> Point2D {
-        self.old_position_map.to_geo()
-    }
-    #[inline]
     pub fn old_map_position(&self) -> MapPoint {
         self.old_position_map
     }
     #[inline]
     pub fn set_old_position(&mut self, pt: Point3D) {
         self.old_position = pt;
-    }
-    #[inline]
-    pub fn set_old_position_map(&mut self, pt: Point2D) {
-        self.old_position_map = MapPoint::from_geo(pt);
     }
     #[inline]
     pub fn set_old_map_position(&mut self, pt: MapPoint) {
@@ -1002,16 +983,8 @@ impl PositionInterface {
 
     // Goal
     #[inline]
-    pub fn get_position_goal_map(&self) -> Point2D {
-        self.goal_map.to_geo()
-    }
-    #[inline]
     pub fn map_goal(&self) -> MapPoint {
         self.goal_map
-    }
-    #[inline]
-    pub fn set_position_goal_map(&mut self, pt: Point2D) {
-        self.set_map_goal(MapPoint::from_geo(pt));
     }
     #[inline]
     pub fn set_map_goal(&mut self, pt: MapPoint) {
@@ -1019,17 +992,8 @@ impl PositionInterface {
         self.computed_increment = IncrementComputed::NONE;
     }
     #[inline]
-    pub fn get_position_goal_next_map(&self) -> Point2D {
-        self.goal_next_map.to_geo()
-    }
-    #[inline]
     pub fn next_map_goal(&self) -> MapPoint {
         self.goal_next_map
-    }
-    #[inline]
-    pub fn set_position_goal_next_map(&mut self, pt: Point2D) {
-        self.goal_next_map = MapPoint::from_geo(pt);
-        self.goal_next_valid = true;
     }
     #[inline]
     pub fn set_next_map_goal(&mut self, pt: MapPoint) {
@@ -1385,13 +1349,13 @@ impl PositionInterface {
     /// rect and doesn't panic on `bbox.center()`.
     ///
     /// `position_map` seeds the actor's spawn position; the eager
-    /// `set_position_map` setter syncs 3D / sprite so downstream code
+    /// `set_map_position` setter syncs 3D / sprite so downstream code
     /// (anti-collision, AI noise walks, elevation queries) sees a
     /// fully-initialized PI.
     pub fn for_actor(
         pathfinder_idx: u8,
         half_diagonal: Option<crate::geo2d::Vec2D>,
-        position_map: Point2D,
+        position_map: MapPoint,
     ) -> Self {
         let mut pi = Self::new();
         pi.configure_for_actor(pathfinder_idx, half_diagonal, position_map);
@@ -1406,7 +1370,7 @@ impl PositionInterface {
         &mut self,
         pathfinder_idx: u8,
         half_diagonal: Option<crate::geo2d::Vec2D>,
-        position_map: Point2D,
+        position_map: MapPoint,
     ) {
         use crate::geo2d;
         let hd = half_diagonal.unwrap_or(geo2d::pt(1.0, 1.0));
@@ -1415,7 +1379,7 @@ impl PositionInterface {
             geo2d::pt(-hd.x, -hd.y),
             geo2d::pt(hd.x, hd.y),
         ));
-        self.set_position_map(position_map);
+        self.set_map_position(position_map);
     }
 
     /// Half diagonal of the current move box (bottom-right corner).
@@ -1718,7 +1682,7 @@ impl PositionInterface {
     }
 
     pub fn initialize_average_speed_map(&mut self, pt: Point2D) {
-        let map = self.get_position_map();
+        let map = self.map_position();
         self.accumulated_movement_map = MapVec::new(map.x - pt.x, map.y - pt.y);
     }
 
@@ -1914,7 +1878,7 @@ impl PositionInterface {
                     hd,
                 ) {
                     self.deviated = false;
-                    self.set_position_map(pt_future_naive);
+                    self.set_map_position(MapPoint::from_geo(pt_future_naive));
                     self.reset_increment_computed();
                     self.compute_increment_all(true);
                     return false;
@@ -1923,7 +1887,7 @@ impl PositionInterface {
                 // path (no `return` here — deliberate).
             }
         } else if lists_empty {
-            self.set_position_map(pt_future_naive);
+            self.set_map_position(MapPoint::from_geo(pt_future_naive));
             return false;
         }
 
@@ -1966,14 +1930,14 @@ impl PositionInterface {
                     hd,
                 ) {
                     self.deviated = false;
-                    self.set_position_map(pt_future);
+                    self.set_map_position(MapPoint::from_geo(pt_future));
                     self.reset_increment_computed();
                     self.compute_increment_all(true);
                     return false;
                 }
                 // !reachable: fall through.
             } else {
-                self.set_position_map(pt_future);
+                self.set_map_position(MapPoint::from_geo(pt_future));
                 return false;
             }
         }
@@ -2002,7 +1966,7 @@ impl PositionInterface {
                     } else {
                         self.set_direction(dir);
                     }
-                    self.set_position_map(pt_future);
+                    self.set_map_position(MapPoint::from_geo(pt_future));
                     self.reset_increment_computed();
                     self.compute_increment_all(false);
                 }
@@ -2447,7 +2411,7 @@ mod tests {
         assert_eq!(pi.map_position(), MapPoint::new(10.0, 15.0));
 
         pi.set_map_position(MapPoint::new(30.0, 40.0));
-        assert_eq!(pi.get_position_map(), geo2d::pt(30.0, 40.0));
+        assert_eq!(pi.map_position(), MapPoint::new(30.0, 40.0));
         assert_eq!(pi.get_position(), p3(30.0, 40.0, 0.0));
     }
 
@@ -2468,7 +2432,7 @@ mod tests {
     fn test_set_position_3d_eagerly_syncs_map() {
         let mut pi = PositionInterface::new();
         pi.set_position(p3(100.0, 200.0, 50.0));
-        let map = pi.get_position_map();
+        let map = pi.map_position();
         assert!((map.x - 100.0).abs() < 1e-4);
         assert!((map.y - 150.0).abs() < 1e-4); // y - z
     }
@@ -2482,7 +2446,7 @@ mod tests {
         ));
         pi.set_position(p3(100.0, 200.0, 0.0));
 
-        let map = pi.get_position_map();
+        let map = pi.map_position();
         assert!((map.x - 100.0).abs() < 1e-4);
         assert!((map.y - 200.0).abs() < 1e-4);
 
@@ -2499,7 +2463,7 @@ mod tests {
             bz: 0.5,
             dz: 10.0,
         });
-        pi.set_position_map(geo2d::pt(50.0, 100.0));
+        pi.set_map_position(MapPoint::new(50.0, 100.0));
 
         let pos = pi.get_position();
         assert!((pos.x - 50.0).abs() < 1e-4);
@@ -2513,7 +2477,7 @@ mod tests {
         let mut pi = PositionInterface::new();
         pi.set_position(p3(100.0, 200.0, 50.0));
 
-        pi.set_position_map(geo2d::pt(75.0, 125.0));
+        pi.set_map_position(MapPoint::new(75.0, 125.0));
 
         let pos = pi.get_position();
         assert!((pos.x - 75.0).abs() < 1e-4);
@@ -2633,8 +2597,8 @@ mod tests {
     #[test]
     fn test_compute_increment_map_from_goal() {
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(0.0, 0.0));
-        pi.set_position_goal_map(geo2d::pt(10.0, 0.0));
+        pi.set_map_position(MapPoint::new(0.0, 0.0));
+        pi.set_map_goal(MapPoint::new(10.0, 0.0));
 
         pi.compute_increment_map();
         let im = pi.get_increment_map();
@@ -2650,8 +2614,8 @@ mod tests {
             bz: 0.0,
             dz: 0.0,
         });
-        pi.set_position_map(geo2d::pt(0.0, 0.0));
-        pi.set_position_goal_map(geo2d::pt(0.0, 10.0));
+        pi.set_map_position(MapPoint::new(0.0, 0.0));
+        pi.set_map_goal(MapPoint::new(0.0, 10.0));
         pi.compute_increment_all(true);
 
         assert!(pi.is_increment_all_computed());
@@ -2664,8 +2628,8 @@ mod tests {
     #[test]
     fn test_is_goal_reached() {
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(50.0, 50.0));
-        pi.set_position_goal_map(geo2d::pt(50.0, 50.0));
+        pi.set_map_position(MapPoint::new(50.0, 50.0));
+        pi.set_map_goal(MapPoint::new(50.0, 50.0));
         pi.increment_map = MapVec::new(0.0, 1.0);
         pi.computed_increment = IncrementComputed::ALL;
         pi.tolerance = 0.0;
@@ -2677,8 +2641,8 @@ mod tests {
     #[test]
     fn test_is_goal_reached_behind() {
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(50.0, 51.0));
-        pi.set_position_goal_map(geo2d::pt(50.0, 50.0));
+        pi.set_map_position(MapPoint::new(50.0, 51.0));
+        pi.set_map_goal(MapPoint::new(50.0, 50.0));
         // Increment points in +Y direction, goal is behind us (dot < 0)
         pi.increment_map = MapVec::new(0.0, 1.0);
         pi.computed_increment = IncrementComputed::ALL;
@@ -2718,7 +2682,7 @@ mod tests {
     #[test]
     fn test_average_speed() {
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(100.0, 200.0));
+        pi.set_map_position(MapPoint::new(100.0, 200.0));
         pi.set_increment_map(geo2d::pt(1.0, 0.0));
         pi.set_average_speed_needed(true);
         pi.initialize_average_speed_map(geo2d::pt(90.0, 200.0));
@@ -2803,7 +2767,7 @@ mod tests {
     #[test]
     fn test_grid_cell() {
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(200.0, 300.0));
+        pi.set_map_position(MapPoint::new(200.0, 300.0));
         let (cx, cy) = pi.grid_cell();
         assert_eq!(cx, 3); // 200 / 64 = 3
         assert_eq!(cy, 4); // 300 / 64 = 4
@@ -2815,10 +2779,10 @@ mod tests {
         grid.size_map(10, 10); // 10*64 = 640 pixels wide/tall
 
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(100.0, 100.0));
+        pi.set_map_position(MapPoint::new(100.0, 100.0));
         assert!(pi.is_inside_grid(&grid));
 
-        pi.set_position_map(geo2d::pt(700.0, 100.0));
+        pi.set_map_position(MapPoint::new(700.0, 100.0));
         assert!(!pi.is_inside_grid(&grid));
     }
 
@@ -2829,7 +2793,7 @@ mod tests {
         grid.allocate_layers(1);
 
         let mut pi = PositionInterface::new();
-        pi.set_position_map(geo2d::pt(100.0, 100.0));
+        pi.set_map_position(MapPoint::new(100.0, 100.0));
         // With no lines in the grid, any position is authorized
         assert!(pi.is_position_authorized(&grid));
     }

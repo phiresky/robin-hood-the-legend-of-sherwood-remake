@@ -2625,7 +2625,7 @@ pub fn sync_carried_positions(
             let pi = target.position_iface_mut();
             pi.set_obstacle(snap.obstacle_index, snap.plane);
             pi.set_material(snap.material);
-            pi.set_position_map(crate::geo2d::pt(snap.pos.x, snap.pos.y));
+            pi.set_map_position(snap.pos);
         }
 
         // ── Climb-on-shoulders branch ──────────────────────────

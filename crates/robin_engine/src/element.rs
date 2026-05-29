@@ -345,9 +345,7 @@ impl ElementData {
 
     #[inline]
     pub fn set_position_map_preserving_3d(&mut self, p: MapPoint) {
-        self.sprite
-            .position_iface
-            .set_position_map_preserving_3d(p.to_geo());
+        self.sprite.position_iface.set_map_position_preserving_3d(p);
     }
 
     #[inline]

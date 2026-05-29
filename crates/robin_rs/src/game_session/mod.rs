@@ -114,7 +114,7 @@ fn center_on_reselected_portrait_pc(
     // `MSG_CENTER_ON` before the normal `MSG_SELECT_CHARACTER_WITH_ECHO`
     // flow continues.
     host.viewport
-        .center_on_point(entity.position_iface().get_position_map());
+        .center_on_point(entity.position_iface().map_position().to_geo());
     true
 }
 

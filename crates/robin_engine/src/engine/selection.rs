@@ -437,7 +437,7 @@ impl EngineInner {
             _ => return None,
         };
         let guard = self.get_entity(guard_id)?;
-        Some(guard.position_iface().get_position_map())
+        Some(guard.position_iface().map_position().to_geo())
     }
 
     /// Return the PC entity at the given 0-based portrait slot, or `None`
@@ -1132,8 +1132,8 @@ impl EngineInner {
         let pos_iface = &elem.sprite.position_iface;
         // In-motion test:
         //   (goal != pos && goal != (0,0)) || is_moving_map.
-        let pos_map = pos_iface.get_position_map();
-        let goal_map = pos_iface.get_position_goal_map();
+        let pos_map = pos_iface.map_position().to_geo();
+        let goal_map = pos_iface.map_goal().to_geo();
         let zero = crate::geo2d::pt(0.0, 0.0);
         let in_motion = (goal_map != pos_map && goal_map != zero) || pos_iface.is_moving_map();
         let sector = elem.sector();

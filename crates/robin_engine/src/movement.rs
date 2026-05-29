@@ -583,7 +583,7 @@ pub fn tick_movement(
     pos.new_move();
 
     // Set goal from current waypoint
-    pos.set_position_goal_map(goal);
+    pos.set_map_goal(crate::coordinates::MapPoint::from_geo(goal));
 
     // Intermediate waypoints use tolerance 0; final waypoint also uses 0
     // here because this helper takes a flat waypoint list rather than
@@ -595,7 +595,7 @@ pub fn tick_movement(
 
     // Hint the next waypoint for anti-collision lookahead
     if let Some(&next_wp) = waypoints.get(*waypoint_index + 1) {
-        pos.set_position_goal_next_map(next_wp);
+        pos.set_next_map_goal(crate::coordinates::MapPoint::from_geo(next_wp));
     } else {
         pos.set_goal_next_valid(false);
     }
@@ -623,7 +623,7 @@ pub fn tick_movement(
     if pos.is_goal_reached(grid, target) {
         // Snap to exact goal when not deviated
         if !pos.is_deviated() {
-            pos.set_position_map(goal);
+            pos.set_map_position(crate::coordinates::MapPoint::from_geo(goal));
         }
 
         // Zero out the movement increment
@@ -652,7 +652,7 @@ mod tests {
     /// Helper: create a PositionInterface at a given map position.
     fn make_pos(x: f32, y: f32) -> PositionInterface {
         let mut pos = PositionInterface::new();
-        pos.set_position_map(geo2d::pt(x, y));
+        pos.set_map_position(crate::coordinates::MapPoint { x, y });
         pos
     }
 
@@ -687,7 +687,7 @@ mod tests {
         assert_eq!(result, MovementResult::Moving);
 
         // Position should have advanced toward (100, 0)
-        let map = pos.get_position_map();
+        let map = pos.map_position();
         assert!(map.x > 0.0, "should have moved in +x direction");
         assert!(map.x.abs() < 2.0, "should have moved ~1 unit");
     }
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(idx, 1);
 
         // Should have snapped to goal
-        let map = pos.get_position_map();
+        let map = pos.map_position();
         assert!((map.x - 100.0).abs() < 0.01);
     }
 
@@ -755,7 +755,7 @@ mod tests {
         assert_eq!(idx, 3);
 
         // Should be at/near the final waypoint
-        let map = pos.get_position_map();
+        let map = pos.map_position();
         assert!(
             (map.x - 6.0).abs() < 1.0,
             "should be near final waypoint, got {}",
@@ -773,7 +773,7 @@ mod tests {
         let result = tick_movement(&mut pos, &waypoints, &mut idx, 1.0, &grid, None);
         assert_eq!(result, MovementResult::Moving);
 
-        let map = pos.get_position_map();
+        let map = pos.map_position();
         // Should move diagonally — both x and y should increase
         assert!(map.x > 0.0);
         assert!(map.y > 0.0);
@@ -910,7 +910,7 @@ mod tests {
         assert_eq!(result, MovementResult::Moving);
 
         // Position should not have changed
-        let map = pos.get_position_map();
+        let map = pos.map_position();
         assert!((map.x - 50.0).abs() < 0.01);
         assert!((map.y - 50.0).abs() < 0.01);
     }

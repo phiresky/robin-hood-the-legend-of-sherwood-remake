@@ -1885,7 +1885,7 @@ impl EngineInner {
                     && entity.actor_data().is_some()
                 {
                     let pi = entity.position_iface_mut();
-                    pi.set_position_map(new_center);
+                    pi.set_map_position(crate::coordinates::MapPoint::from_geo(new_center));
                     entity
                         .element_data_mut()
                         .set_position_map(new_center.into());

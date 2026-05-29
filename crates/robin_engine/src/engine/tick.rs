@@ -1411,11 +1411,11 @@ impl EngineInner {
                     .unwrap_or(false);
                 if owner_in_building && (!is_seek || !is_last_of_seq) {
                     if let Some(entity) = self.get_entity_mut(*owner) {
-                        entity.position_iface_mut().set_position_map(dest_pt);
                         let dest_pt_elem = crate::coordinates::MapPoint {
                             x: dest_pt.x,
                             y: dest_pt.y,
                         };
+                        entity.position_iface_mut().set_map_position(dest_pt_elem);
                         entity.element_data_mut().set_position_map(dest_pt_elem);
                         entity.element_data_mut().update_grid_cell();
                     }
@@ -6221,7 +6221,10 @@ impl EngineInner {
                         elem.set_direction_instantly(dir);
                     }
                     let pi = &mut elem.sprite.position_iface;
-                    pi.set_position_map(crate::geo2d::pt(point_in.x, point_in.y));
+                    pi.set_map_position(crate::coordinates::MapPoint {
+                        x: point_in.x,
+                        y: point_in.y,
+                    });
                     pi.new_move();
                     pi.compute_increment_all(false);
                     elem.update_grid_cell();
@@ -6273,9 +6276,17 @@ impl EngineInner {
                     }
                     {
                         let pi = &mut entity.element_data_mut().sprite.position_iface;
-                        pi.set_position_map(crate::geo2d::pt(point_mid.x, point_mid.y));
-                        pi.set_old_position_map(crate::geo2d::pt(point_out.x, point_out.y));
-                        pi.set_position_goal_map(crate::geo2d::pt(point_out.x, point_out.y));
+                        let point_mid = crate::coordinates::MapPoint {
+                            x: point_mid.x,
+                            y: point_mid.y,
+                        };
+                        let point_out = crate::coordinates::MapPoint {
+                            x: point_out.x,
+                            y: point_out.y,
+                        };
+                        pi.set_map_position(point_mid);
+                        pi.set_old_map_position(point_out);
+                        pi.set_map_goal(point_out);
                         pi.compute_increment_all(true);
                     }
                     entity.element_data_mut().update_grid_cell();
@@ -7464,7 +7475,10 @@ impl EngineInner {
                         // position interface + grid cell.
                         if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
                             let pi = entity.position_iface_mut();
-                            pi.set_position_map(crate::geo2d::pt(final_dest.x, final_dest.y));
+                            pi.set_map_position(crate::coordinates::MapPoint {
+                                x: final_dest.x,
+                                y: final_dest.y,
+                            });
                             let ed = entity.element_data_mut();
                             ed.set_position_map(crate::coordinates::MapPoint {
                                 x: final_dest.x,

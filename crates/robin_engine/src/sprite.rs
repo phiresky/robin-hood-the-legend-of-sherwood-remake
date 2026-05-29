@@ -571,7 +571,7 @@ impl Sprite {
         obstacle_plane: Option<crate::position_interface::PlaneZCoeffs>,
     ) {
         let pi = &mut self.position_iface;
-        pi.set_position_map(position_map.to_geo());
+        pi.set_map_position(position_map);
         let layer = crate::position_interface::Layer::new(layer)
             .expect("layer must be < 0xFFFF; 0xFFFF is the 'no layer' sentinel");
         pi.set_layer(layer);
@@ -784,7 +784,7 @@ impl Sprite {
                 "missing sprite action point for {animation:?} direction {direction}"
             ));
         };
-        let map = self.position_iface.get_position_map();
+        let map = self.position_iface.map_position();
         let sprite_pos = Point2D {
             x: (map.x - self.center.x).floor(),
             y: (map.y - self.center.y).floor(),
@@ -1694,11 +1694,11 @@ impl Sprite {
             && self.last_processed_order_id != ctx.order_id.get()
         {
             let pi = &mut self.position_iface;
-            pi.set_position_goal_map(ctx.destination);
+            pi.set_map_goal(crate::coordinates::MapPoint::from_geo(ctx.destination));
             pi.set_reversed_movement(ctx.reverse);
             pi.set_tolerance(ctx.tolerance, ctx.directional_tolerance);
             if let Some(next) = ctx.next_destination_same_action {
-                pi.set_position_goal_next_map(next);
+                pi.set_next_map_goal(crate::coordinates::MapPoint::from_geo(next));
             } else {
                 pi.set_goal_next_valid(false);
             }
@@ -2078,7 +2078,7 @@ mod tests {
         let mut s = make_test_sprite();
         s.center = SpriteAnchor { x: 8.0, y: 11.0 };
         s.position_iface
-            .set_position_map(crate::geo2d::pt(100.25, 200.75));
+            .set_map_position(crate::coordinates::MapPoint::new(100.25, 200.75));
         s.position_iface
             .set_direction_instantly(crate::position_interface::Direction::from_raw(0));
 

@@ -1758,9 +1758,9 @@ impl EngineInner {
         if !move_box.is_somewhere() {
             return false;
         }
-        let tgt_pos = target_entity.position_iface().get_position_map();
+        let tgt_pos = target_entity.position_iface().map_position();
         let tgt_layer = target_entity.element_data().layer();
-        let mut box_at_target = move_box.translated(tgt_pos);
+        let mut box_at_target = move_box.translated(tgt_pos.to_geo());
         self.fast_grid
             .find_authorized_position(&mut box_at_target, tgt_layer)
     }
