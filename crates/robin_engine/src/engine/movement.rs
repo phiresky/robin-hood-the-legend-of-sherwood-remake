@@ -2085,6 +2085,11 @@ impl EngineInner {
                         && initial_flags.contains(MoveFlags::SEEK)
                         && let Some(last_shot) = gate_shots.last()
                     {
+                        let (seek_target, seek_tolerance, seek_flags) = seek_goal
+                            .map(|(target, tolerance)| {
+                                (Some(target), tolerance, trailing_flags | MoveFlags::SEEK)
+                            })
+                            .unwrap_or((None, 0.0, trailing_flags));
                         let point_in = {
                             let host = self.mission_script.as_ref().and_then(|s| s.game_host());
                             host.and_then(|h| h.doors.get(usize::from(last_shot.door_index)))
@@ -2103,9 +2108,9 @@ impl EngineInner {
                             sector: None,
                             gate_id: None,
                             line_id: None,
-                            element: None,
-                            flags: trailing_flags,
-                            tolerance: 0.0,
+                            element: seek_target,
+                            flags: seek_flags,
+                            tolerance: seek_tolerance,
                             direction: 0,
                             action: base_action,
                             speed_factor,
