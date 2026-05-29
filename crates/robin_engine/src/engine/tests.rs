@@ -3360,7 +3360,7 @@ fn seed_macro_slot(
             action: crate::profiles::Action::NoAction,
             position: pos,
             replay: QaReplayCommand::Move {
-                destination: pos,
+                destination: pos.into(),
                 running: false,
             },
         });

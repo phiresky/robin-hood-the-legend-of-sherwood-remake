@@ -9,6 +9,7 @@
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir::ShippingDatadir;
+use robin_engine::coordinates::{MapPoint, ScreenPoint};
 use robin_engine::element::{EntityId, Point3D, TrajectoryPoint};
 use robin_engine::engine::{
     DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
@@ -67,8 +68,8 @@ impl HostTitbitPreview {
 /// multiplayer peer.
 #[derive(Debug, Clone)]
 pub struct ViewportState {
-    pub view_position: Point2D,
-    pub old_view_position: Point2D,
+    pub view_position: MapPoint,
+    pub old_view_position: MapPoint,
     pub zoom_factor: f32,
     pub old_zoom_factor: f32,
     pub screen_size: Vec2D,
@@ -78,8 +79,8 @@ pub struct ViewportState {
 impl ViewportState {
     pub fn new(screen_width: f32, screen_height: f32) -> Self {
         Self {
-            view_position: robin_engine::geo2d::pt(0.0, 0.0),
-            old_view_position: robin_engine::geo2d::pt(0.0, 0.0),
+            view_position: MapPoint::ZERO,
+            old_view_position: MapPoint::ZERO,
             zoom_factor: 1.0,
             old_zoom_factor: 1.0,
             screen_size: robin_engine::geo2d::pt(screen_width, screen_height),
@@ -97,16 +98,16 @@ impl ViewportState {
         self.clip_view();
     }
 
-    pub fn center_on_point(&mut self, point: Point2D) {
-        self.view_position = robin_engine::geo2d::pt(
+    pub fn center_on_point(&mut self, point: MapPoint) {
+        self.view_position = MapPoint::new(
             (point.x - self.screen_size.x / (2.0 * self.zoom_factor)).floor(),
             (point.y - self.screen_size.y / (2.0 * self.zoom_factor)).floor(),
         );
         self.clip_view();
     }
 
-    pub fn sound_listen_point(&self) -> Point2D {
-        robin_engine::geo2d::pt(
+    pub fn sound_listen_point(&self) -> MapPoint {
+        MapPoint::new(
             self.view_position.x + self.screen_size.x * 0.5 / self.zoom_factor,
             self.view_position.y + (self.screen_size.y - PANNEL_HEIGHT) * 0.5 / self.zoom_factor,
         )
@@ -119,25 +120,25 @@ impl ViewportState {
         self.clip_view();
     }
 
-    pub fn zoom_by(&mut self, factor: f32, mouse_screen: Option<Point2D>) {
+    pub fn zoom_by(&mut self, factor: f32, mouse_screen: Option<ScreenPoint>) {
         let next = (self.zoom_factor * factor).clamp(0.5, 2.0);
         if (next - self.zoom_factor).abs() < f32::EPSILON {
             return;
         }
         let anchor = mouse_screen.unwrap_or_else(|| {
-            robin_engine::geo2d::pt(self.screen_size.x * 0.5, self.screen_size.y * 0.5)
+            ScreenPoint::new(self.screen_size.x * 0.5, self.screen_size.y * 0.5)
         });
         let before = self.screen_to_map_unchecked(anchor);
         self.old_zoom_factor = self.zoom_factor;
         self.zoom_factor = next;
-        self.view_position = robin_engine::geo2d::pt(
+        self.view_position = MapPoint::new(
             before.x - anchor.x / self.zoom_factor,
             before.y - anchor.y / self.zoom_factor,
         );
         self.clip_view();
     }
 
-    pub fn screen_to_map(&self, screen_pt: Point2D) -> Option<Point2D> {
+    pub fn screen_to_map(&self, screen_pt: ScreenPoint) -> Option<MapPoint> {
         let map_pt = self.screen_to_map_unchecked(screen_pt);
         if map_pt.x > 0.0
             && map_pt.y > 0.0
@@ -150,14 +151,14 @@ impl ViewportState {
         }
     }
 
-    pub fn screen_to_map_unchecked(&self, screen_pt: Point2D) -> Point2D {
-        robin_engine::geo2d::pt(
+    pub fn screen_to_map_unchecked(&self, screen_pt: ScreenPoint) -> MapPoint {
+        MapPoint::new(
             self.view_position.x + screen_pt.x / self.zoom_factor,
             self.view_position.y + screen_pt.y / self.zoom_factor,
         )
     }
 
-    pub fn map_to_screen(&self, map_pt: Point2D) -> Option<Point2D> {
+    pub fn map_to_screen(&self, map_pt: MapPoint) -> Option<ScreenPoint> {
         let screen_pt = self.map_to_screen_unclamped(map_pt);
         if screen_pt.x >= 0.0
             && screen_pt.y >= 0.0
@@ -170,8 +171,8 @@ impl ViewportState {
         }
     }
 
-    pub fn map_to_screen_unclamped(&self, map_pt: Point2D) -> Point2D {
-        robin_engine::geo2d::pt(
+    pub fn map_to_screen_unclamped(&self, map_pt: MapPoint) -> ScreenPoint {
+        ScreenPoint::new(
             (map_pt.x - self.view_position.x) * self.zoom_factor,
             (map_pt.y - self.view_position.y) * self.zoom_factor,
         )
@@ -181,7 +182,7 @@ impl ViewportState {
         let w = self.screen_size.x / self.zoom_factor;
         let h = (self.screen_size.y - PANNEL_HEIGHT) / self.zoom_factor;
         geo::Rect::new(
-            self.view_position,
+            self.view_position.to_geo(),
             robin_engine::geo2d::pt(self.view_position.x + w, self.view_position.y + h),
         )
     }
@@ -798,7 +799,7 @@ impl Host {
 
     pub fn sync_sound_listener(&mut self) {
         self.sound.set_listen_point(
-            self.viewport.sound_listen_point(),
+            self.viewport.sound_listen_point().to_geo(),
             self.viewport.zoom_factor,
         );
     }

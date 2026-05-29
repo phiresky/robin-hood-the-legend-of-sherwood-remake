@@ -1091,14 +1091,19 @@ impl EngineInner {
     /// Check whether the mouse-targeted sector is valid for ground-targeted
     /// projectile actions (purse, net, ale).  Returns false if the sector
     /// is a door or a wall/ladder lift.
-    pub fn is_mouse_sector_valid_for_ground_target(&self, mouse_map: Point2D) -> bool {
+    pub fn is_mouse_sector_valid_for_ground_target(
+        &self,
+        mouse_map: crate::coordinates::MapPoint,
+    ) -> bool {
         let reference = self.seats[0]
             .selection
             .first()
             .and_then(|&id| self.get_entity(id))
             .map(|e| Self::elem_to_geo(e.element_data().position_map()))
-            .unwrap_or(mouse_map);
-        let hit = self.fast_grid.get_sector_screen(mouse_map, reference);
+            .unwrap_or_else(|| mouse_map.to_geo());
+        let hit = self
+            .fast_grid
+            .get_sector_screen(mouse_map.to_geo(), reference);
         match hit.sector_idx {
             Some(idx) => {
                 if let Some(sector) = self.fast_grid.level.sectors.get(usize::from(idx)) {
@@ -2518,7 +2523,11 @@ impl EngineInner {
     /// aim/throw anim) is relaxed to `ActionState` matching; the
     /// sub-frame divergence is invisible in practice because the aim
     /// state always pairs with the aim animation.
-    pub(crate) fn perform_orientation(&mut self, assets: &LevelAssets, mouse_map: Point2D) {
+    pub(crate) fn perform_orientation(
+        &mut self,
+        assets: &LevelAssets,
+        mouse_map: crate::coordinates::MapPoint,
+    ) {
         use crate::profiles::Action;
         use crate::sight_obstacle::{SIGHTOBSTACLE_MOUSE, SIGHTOBSTACLE_PROJECTION_AREA};
 
@@ -2530,6 +2539,7 @@ impl EngineInner {
         }
 
         let selected_action = self.get_selected_action();
+        let mouse_map_geo = mouse_map.to_geo();
 
         // Use the current draw order for topmost-hit focus
         // resolution. The host doesn't pass its cached draw order
@@ -2552,7 +2562,7 @@ impl EngineInner {
                 let focused = self.find_focusable_entity(
                     assets,
                     &draw_order.as_ref().unwrap().ids,
-                    mouse_map,
+                    mouse_map_geo,
                     crate::element::Focus::Bow,
                 );
                 // If the focused target is a human, aim at its belt
@@ -2576,7 +2586,7 @@ impl EngineInner {
                     None => self
                         .fast_grid
                         .convert_2d_to_3d(
-                            mouse_map,
+                            mouse_map_geo,
                             SIGHTOBSTACLE_MOUSE,
                             self.sight_obstacles(assets),
                         )
@@ -2592,7 +2602,7 @@ impl EngineInner {
                 let focused = self.find_focusable_entity(
                     assets,
                     &draw_order.as_ref().unwrap().ids,
-                    mouse_map,
+                    mouse_map_geo,
                     focus,
                 );
                 let target_3d = focused
@@ -2600,7 +2610,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         self.fast_grid
                             .convert_2d_to_3d(
-                                mouse_map,
+                                mouse_map_geo,
                                 SIGHTOBSTACLE_PROJECTION_AREA,
                                 self.sight_obstacles(assets),
                             )
@@ -2789,7 +2799,7 @@ impl EngineInner {
     }
 
     /// HelpClimb branch: carrier flips 180°, climber faces the goal.
-    fn turn_selected_pcs_help_climb(&mut self, mouse_map: Point2D) {
+    fn turn_selected_pcs_help_climb(&mut self, mouse_map: crate::coordinates::MapPoint) {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15;
@@ -2839,7 +2849,7 @@ impl EngineInner {
     }
 
     /// Beggar branch: upright + idle PCs face the mouse.
-    fn turn_selected_pcs_beggar(&mut self, mouse_map: Point2D) {
+    fn turn_selected_pcs_beggar(&mut self, mouse_map: crate::coordinates::MapPoint) {
         use crate::element::{ActionState, Posture};
         use crate::position_interface::vector_to_sector_0_to_15;
 

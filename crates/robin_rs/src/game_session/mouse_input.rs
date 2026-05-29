@@ -130,7 +130,9 @@ pub(super) fn handle_mouse_input(
                         // Don't start multi-selection when clicking minimap
                     } else if !host.input.ignore_next_drag
                         && host.input.has_focus
-                        && let Some(map_pt) = host.viewport.screen_to_map(click_pt)
+                        && let Some(map_pt) = host.viewport.screen_to_map(
+                            robin_engine::coordinates::ScreenPoint::from_geo(click_pt),
+                        )
                     {
                         // Left-drag dispatch:
                         //   - `ignore_next_drag` → entire body skipped.
@@ -155,7 +157,7 @@ pub(super) fn handle_mouse_input(
                                     .map(|e| e.element_data().posture)
                                     == Some(crate::element::Posture::HelpingToClimb);
                                 if posture_ok && !is_swordfighting {
-                                    host.input.start_multi_selection(map_pt);
+                                    host.input.start_multi_selection(map_pt.to_geo());
                                 }
                             }
                             crate::profiles::Action::NoAction
@@ -163,7 +165,7 @@ pub(super) fn handle_mouse_input(
                                     && !engine.locker_active()
                                     && !is_swordfighting =>
                             {
-                                host.input.start_multi_selection(map_pt);
+                                host.input.start_multi_selection(map_pt.to_geo());
                             }
                             crate::profiles::Action::Apple
                             | crate::profiles::Action::Stone
@@ -173,7 +175,10 @@ pub(super) fn handle_mouse_input(
                             | crate::profiles::Action::Lever
                             | crate::profiles::Action::Strangle => {
                                 let cmds = crate::game_input::resolve_action_drag(
-                                    host, engine, assets, map_pt,
+                                    host,
+                                    engine,
+                                    assets,
+                                    map_pt.to_geo(),
                                 );
                                 for cmd in &cmds {
                                     frame_cmds.push(cmd.clone());
@@ -211,11 +216,11 @@ pub(super) fn handle_mouse_input(
                         && !engine.locker_active()
                         && host.input.has_focus;
                     if guard_ok
-                        && let Some(map_pt) = host
-                            .viewport
-                            .screen_to_map(geo2d::pt(_mx as f32, _my as f32))
+                        && let Some(map_pt) = host.viewport.screen_to_map(
+                            robin_engine::coordinates::ScreenPoint::new(_mx as f32, _my as f32),
+                        )
                     {
-                        host.input.start_multi_unselection(map_pt);
+                        host.input.start_multi_unselection(map_pt.to_geo());
                     }
                 }
 
@@ -257,15 +262,19 @@ pub(super) fn handle_mouse_input(
                         && !host.engine_display.minimap().drag_start()
                         && host.input.multi_selection_active
                         && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
+                        && let Some(map_pt) = host.viewport.screen_to_map(
+                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
+                        )
                     {
-                        host.input.update_multi_selection(map_pt);
+                        host.input.update_multi_selection(map_pt.to_geo());
                     }
                     if host.input.right_mouse_down
                         && host.input.multi_unselection_active
-                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
+                        && let Some(map_pt) = host.viewport.screen_to_map(
+                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
+                        )
                     {
-                        host.input.update_multi_selection(map_pt);
+                        host.input.update_multi_selection(map_pt.to_geo());
                     }
 
                     // ── Action-drag dispatch ──
@@ -282,7 +291,9 @@ pub(super) fn handle_mouse_input(
                     if host.input.left_mouse_down
                         && !host.engine_display.minimap().drag_start()
                         && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
+                        && let Some(map_pt) = host.viewport.screen_to_map(
+                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
+                        )
                     {
                         let selected_action = engine.selected_action_for_seat(local_seat);
                         if matches!(
@@ -296,7 +307,10 @@ pub(super) fn handle_mouse_input(
                                 | crate::profiles::Action::Strangle
                         ) {
                             let cmds = crate::game_input::resolve_action_drag(
-                                host, engine, assets, map_pt,
+                                host,
+                                engine,
+                                assets,
+                                map_pt.to_geo(),
                             );
                             for cmd in &cmds {
                                 frame_cmds.push(cmd.clone());
@@ -350,8 +364,8 @@ pub(super) fn handle_mouse_input(
                         // Drag was large enough — box-select all PCs in the area.
                         // Shift adds to existing selection.
                         let cmd = PlayerCommand::BoxSelect {
-                            pt1: host.input.multi_selection_pt1,
-                            pt2: host.input.multi_selection_pt2,
+                            pt1: host.input.multi_selection_pt1.into(),
+                            pt2: host.input.multi_selection_pt2.into(),
                             shift: shift_held,
                         };
                         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -564,7 +578,7 @@ pub(super) fn handle_mouse_input(
                                             tracing::info!(
                                                 "Portrait guard click: centering on guard"
                                             );
-                                            host.viewport.center_on_point(guard_pos);
+                                            host.viewport.center_on_point(guard_pos.into());
                                         }
                                     }
                                     PortraitHitArea::Trumpet => {
@@ -617,9 +631,8 @@ pub(super) fn handle_mouse_input(
                                         hit.slot
                                     );
                                 } else if let Some(ent) = engine.get_entity(pc_id) {
-                                    host.viewport.center_on_point(
-                                        ent.position_iface().map_position().to_geo(),
-                                    );
+                                    host.viewport
+                                        .center_on_point(ent.position_iface().map_position());
                                     tracing::info!(
                                         "Portrait double-click: centering on non-selectable PC"
                                     );
@@ -814,16 +827,28 @@ pub(super) fn handle_mouse_input(
                             host.input.next_left_double_is_simple = false;
 
                             if !swallow_click
-                                && let Some(map_pt) =
-                                    host.viewport.screen_to_map(geo2d::pt(mx as f32, my as f32))
+                                && let Some(map_pt) = host.viewport.screen_to_map(
+                                    robin_engine::coordinates::ScreenPoint::new(
+                                        mx as f32, my as f32,
+                                    ),
+                                )
                             {
                                 // Resolve swordfight first, then regular click
                                 let mut cmds = crate::game_input::resolve_swordfight(
-                                    host, engine, assets, map_pt, true,
+                                    host,
+                                    engine,
+                                    assets,
+                                    map_pt.to_geo(),
+                                    true,
                                 );
                                 if cmds.is_empty() {
                                     cmds = crate::game_input::resolve_left_click(
-                                        host, engine, assets, map_pt, shift_held, ctrl_held,
+                                        host,
+                                        engine,
+                                        assets,
+                                        map_pt.to_geo(),
+                                        shift_held,
+                                        ctrl_held,
                                         is_double,
                                     );
                                 }
@@ -874,8 +899,8 @@ pub(super) fn handle_mouse_input(
                     if host.input.multi_unselection_active && host.input.draw_multi_selection {
                         // Red deselection box was drawn — deselect PCs in area
                         let cmd = PlayerCommand::BoxUnselect {
-                            pt1: host.input.multi_selection_pt1,
-                            pt2: host.input.multi_selection_pt2,
+                            pt1: host.input.multi_selection_pt1.into(),
+                            pt2: host.input.multi_selection_pt2.into(),
                         };
                         dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         tracing::info!(

@@ -83,13 +83,17 @@ pub(super) fn handle_gamepad_events(
             crate::gamepad::ViewportCommand::Scroll(dir) => apply_local_viewport_scroll(host, *dir),
             crate::gamepad::ViewportCommand::ZoomIn => {
                 let mp = threaded_input.position();
-                host.viewport
-                    .zoom_by(2.0, Some(robin_engine::geo2d::pt(mp.x, mp.y)));
+                host.viewport.zoom_by(
+                    2.0,
+                    Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
+                );
             }
             crate::gamepad::ViewportCommand::ZoomOut => {
                 let mp = threaded_input.position();
-                host.viewport
-                    .zoom_by(0.5, Some(robin_engine::geo2d::pt(mp.x, mp.y)));
+                host.viewport.zoom_by(
+                    0.5,
+                    Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
+                );
             }
         }
     }

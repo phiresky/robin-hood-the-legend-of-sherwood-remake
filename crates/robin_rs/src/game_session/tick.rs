@@ -39,7 +39,7 @@ pub(super) fn tick_audio(
     if host.pending_resume_all_sources.take().is_some() {
         host.sound.resume_all_sound_sources(
             &manager.engine.sound_sim().sources,
-            host.viewport.sound_listen_point(),
+            host.viewport.sound_listen_point().to_geo(),
             host.viewport.zoom_factor,
         );
     }
@@ -94,7 +94,7 @@ pub(super) fn pre_render_engine_setup(
         host.draw_manager.update_drawing_parameters(
             0,
             robin_engine::sprite::BBox::new(
-                view,
+                view.to_geo(),
                 robin_engine::geo2d::pt(
                     view.x + (screen.x - 1.0) / zoom,
                     view.y + (screen.y - robin_engine::engine::PANNEL_HEIGHT + 1.0) / zoom,

@@ -248,7 +248,7 @@ pub(super) fn drain_wide_print_screen(
     let saved_renderer_h = ctx.renderer.screen_height();
 
     let render_h = level_h + robin_engine::engine::PANNEL_HEIGHT as u32;
-    host.viewport.view_position = robin_engine::geo2d::pt(0.0, 0.0);
+    host.viewport.view_position = robin_engine::coordinates::MapPoint::ZERO;
     host.viewport.old_view_position = host.viewport.view_position;
     host.viewport.zoom_factor = 1.0;
     host.viewport.old_zoom_factor = 1.0;
@@ -497,7 +497,12 @@ pub(super) fn update_mouse_and_cursor(
     last_cursor_id: &mut i32,
 ) {
     let mouse_screen = threaded_input.position();
-    let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) else {
+    let Some(mouse_map) =
+        host.viewport
+            .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
+                mouse_screen,
+            ))
+    else {
         return;
     };
     // `is_alt_effective()` so the permanent-alt toggle affects
@@ -508,7 +513,7 @@ pub(super) fn update_mouse_and_cursor(
         host,
         assets,
         dev,
-        mouse_map,
+        mouse_map.to_geo(),
         alt_for_cursor,
         shift_held,
     );
@@ -779,7 +784,7 @@ pub(super) fn render_frame(
             continue;
         }
         let pos = &elem.position_map();
-        let mut map_pt = geo2d::pt(pos.x, pos.y);
+        let mut map_pt = *pos;
         // Offset +(0, -50) when the PC is on shoulders.
         if elem.posture == crate::element::Posture::OnShoulders {
             map_pt.y -= 50.0;

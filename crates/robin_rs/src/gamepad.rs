@@ -476,7 +476,7 @@ impl GamePadState {
             if hit.is_valid_for_move(engine.fast_grid()) || hit_is_patch {
                 cmds.push(PlayerCommand::GroupMove {
                     actors: selected.to_vec(),
-                    destination: dest,
+                    destination: dest.into(),
                     running,
                     show_marker: false,
                     // Gamepad cursor doesn't yet plumb the patch

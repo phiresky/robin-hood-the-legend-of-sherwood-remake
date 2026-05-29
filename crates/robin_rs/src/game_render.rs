@@ -465,7 +465,7 @@ pub(crate) fn render_view_cone_overlay(
     // (engine/render.rs) — the UI panel at the bottom is excluded so the
     // overlay leaves the panel alone.
     let view_rect = BBox::new(
-        host.viewport.view_position,
+        host.viewport.view_position.to_geo(),
         geo2d::pt(
             host.viewport.view_position.x
                 + (host.viewport.screen_size.x - 1.0) / host.viewport.zoom_factor,
@@ -730,7 +730,7 @@ fn render_all_view_cones(
     }
 
     let view_rect = BBox::new(
-        host.viewport.view_position,
+        host.viewport.view_position.to_geo(),
         geo2d::pt(
             host.viewport.view_position.x
                 + (host.viewport.screen_size.x - 1.0) / host.viewport.zoom_factor,
@@ -940,7 +940,7 @@ fn render_ground_mark_set(
             &mark_world_bbox,
             mark_position,
             mark_rect,
-            view_pos,
+            view_pos.to_geo(),
             zoom,
         );
     }
@@ -1944,7 +1944,7 @@ pub(crate) fn render_minimap(
 
     // Convert camera corners to minimap pixel coordinates
     if let (Some(tl), Some(br)) = (
-        mm.real_to_map(camera_pos, level_size),
+        mm.real_to_map(camera_pos.to_geo(), level_size),
         mm.real_to_map(view_br, level_size),
     ) {
         let x1 = tl.x.floor() as i32;
@@ -2342,7 +2342,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
         render_arc(
             host.trajectory_preview_start,
             &host.trajectory_preview_points,
-            view,
+            view.to_geo(),
             zoom,
             screen_w,
             screen_h,
@@ -2547,7 +2547,7 @@ pub(crate) fn render_debug_motion_graph(
     // The bounding box is the camera viewport in world coords: origin
     // at `view_position`, dimensions `screen_size / zoom_factor`.
     let view_rect = robin_engine::geo2d::BBox2D::from_point_size(
-        view,
+        view.to_geo(),
         screen_size.x / zoom,
         screen_size.y / zoom,
     );
@@ -3358,16 +3358,28 @@ pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, rendere
     //    SDL's line drawer clips off-screen pieces. ──
     let a = host
         .viewport
-        .map_to_screen_unclamped(geo2d::pt(p1.x.min(p2.x), p1.y.min(p2.y)));
+        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+            p1.x.min(p2.x),
+            p1.y.min(p2.y),
+        ));
     let b = host
         .viewport
-        .map_to_screen_unclamped(geo2d::pt(p1.x.max(p2.x), p1.y.min(p2.y)));
+        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+            p1.x.max(p2.x),
+            p1.y.min(p2.y),
+        ));
     let c = host
         .viewport
-        .map_to_screen_unclamped(geo2d::pt(p1.x.max(p2.x), p1.y.max(p2.y)));
+        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+            p1.x.max(p2.x),
+            p1.y.max(p2.y),
+        ));
     let d = host
         .viewport
-        .map_to_screen_unclamped(geo2d::pt(p1.x.min(p2.x), p1.y.max(p2.y)));
+        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+            p1.x.min(p2.x),
+            p1.y.max(p2.y),
+        ));
 
     renderer.draw_line_screen(a.x as i32, a.y as i32, b.x as i32, b.y as i32, color);
     renderer.draw_line_screen(b.x as i32, b.y as i32, c.x as i32, c.y as i32, color);

@@ -1427,7 +1427,7 @@ pub(super) fn setup_input_and_camera(
         && let Some(entity) = engine.get_entity(pc_id)
     {
         let pos = entity.element_data().position_map();
-        host.viewport.center_on_point(geo2d::pt(pos.x, pos.y));
+        host.viewport.center_on_point(pos);
     }
 
     (threaded_input, input_translator)

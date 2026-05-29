@@ -167,7 +167,7 @@ impl EngineInner {
                 self.perform_group_move(
                     assets,
                     actors,
-                    *destination,
+                    destination.to_geo(),
                     *running,
                     *show_marker,
                     *goal_override,
@@ -507,14 +507,7 @@ impl EngineInner {
                 target_pos,
                 running,
             } => {
-                self.apply_drop_ale_at(
-                    *actor,
-                    crate::element::Point2D {
-                        x: target_pos.x,
-                        y: target_pos.y,
-                    },
-                    *running,
-                );
+                self.apply_drop_ale_at(*actor, *target_pos, *running);
             }
             ShieldSelectProtected {
                 actor: _,
@@ -557,11 +550,11 @@ impl EngineInner {
                 self.update_recording_after_selection_change();
             }
             BoxSelect { pt1, pt2, shift } => {
-                self.apply_box_select(assets, input, seat, *pt1, *pt2, *shift);
+                self.apply_box_select(assets, input, seat, pt1.to_geo(), pt2.to_geo(), *shift);
                 self.update_recording_after_selection_change();
             }
             BoxUnselect { pt1, pt2 } => {
-                self.apply_box_unselect(input, seat, *pt1, *pt2);
+                self.apply_box_unselect(input, seat, pt1.to_geo(), pt2.to_geo());
                 self.update_recording_after_selection_change();
             }
             SelectAllPcs => {
@@ -742,7 +735,7 @@ impl EngineInner {
                 layer,
                 sector,
             } => {
-                self.manage_input_process_teleport(*dest, *layer, *sector);
+                self.manage_input_process_teleport(dest.to_geo(), *layer, *sector);
             }
 
             // ── Minimap ─────────────────────────────────────────
@@ -1034,7 +1027,7 @@ impl EngineInner {
                     crate::profiles::Action::NoAction, // move → Walk/Run titbit path
                     crate::geo2d::pt(destination.x, destination.y),
                     QaReplayCommand::Move {
-                        destination: crate::geo2d::pt(destination.x, destination.y),
+                        destination: *destination,
                         running: *running,
                     },
                 )
@@ -1106,7 +1099,7 @@ impl EngineInner {
                     crate::profiles::Action::Ale,
                     pos,
                     QaReplayCommand::DropAle {
-                        target_pos: pos,
+                        target_pos: *target_pos,
                         running: *running,
                     },
                 )
@@ -1396,7 +1389,7 @@ impl EngineInner {
                     running,
                 } => PlayerCommand::GroupMove {
                     actors: vec![pc],
-                    destination,
+                    destination: destination.into(),
                     running,
                     show_marker: true,
                     // Macro replay always re-resolves via spatial lookup;
@@ -1481,7 +1474,7 @@ impl EngineInner {
                     running,
                 } => PlayerCommand::DropAleAt {
                     actor: pc,
-                    target_pos,
+                    target_pos: target_pos.into(),
                     running,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {
@@ -2834,7 +2827,7 @@ impl EngineInner {
     fn apply_drop_ale_at(
         &mut self,
         actor: EntityId,
-        target_pos: crate::element::Point2D,
+        target_pos: crate::coordinates::MapPoint,
         running: bool,
     ) {
         use crate::order::OrderType;
@@ -2872,13 +2865,9 @@ impl EngineInner {
             OrderType::WalkingUpright
         };
 
-        let mut destination_pos = crate::coordinates::MapPoint {
-            x: target_pos.x,
-            y: target_pos.y,
-        };
+        let mut destination_pos = target_pos;
         if move_box.is_somewhere() {
-            let mut box_at_target =
-                move_box.translated(crate::geo2d::pt(target_pos.x, target_pos.y));
+            let mut box_at_target = move_box.translated(target_pos.to_geo());
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_at_target, layer)
@@ -4105,7 +4094,11 @@ mod tests {
             crate::geo2d::pt(0.0, 0.0),
         );
 
-        engine.apply_drop_ale_at(pc_id, crate::element::Point2D { x: 80.0, y: 90.0 }, false);
+        engine.apply_drop_ale_at(
+            pc_id,
+            crate::coordinates::MapPoint { x: 80.0, y: 90.0 },
+            false,
+        );
 
         let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
         let seek = sequence.get(0).unwrap();

@@ -316,7 +316,7 @@ pub fn resolve_left_click(
         ));
         return vec![PlayerCommand::GroupMove {
             actors,
-            destination: waypoint,
+            destination: waypoint.into(),
             running: is_double,
             show_marker: false,
             goal_override,
@@ -331,7 +331,7 @@ pub fn resolve_left_click(
     let actors: Vec<EntityId> = selected.to_vec();
     vec![PlayerCommand::GroupMove {
         actors,
-        destination: map_pt,
+        destination: map_pt.into(),
         running: is_double,
         show_marker: true,
         goal_override: None,
@@ -734,7 +734,7 @@ fn resolve_action_left_click(
                 PlayerCommand::RaiseShieldWithDanger {
                     actor: pc_id,
                     protected_pc,
-                    danger_point: map_pt,
+                    danger_point: map_pt.into(),
                     danger_point_layer: selected_layer,
                 },
                 commit_tail(is_recording),
@@ -878,13 +878,13 @@ fn resolve_action_left_click(
             // Move → DropAle sequence; the engine tick's
             // `Command::DropAle` arm then spawns the bottle and
             // decrements `Action::Ale` ammo.
-            if !engine.is_mouse_sector_valid_for_ground_target(map_pt) {
+            if !engine.is_mouse_sector_valid_for_ground_target(map_pt.into()) {
                 return vec![];
             }
             return vec![
                 PlayerCommand::DropAleAt {
                     actor: pc_id,
-                    target_pos: map_pt,
+                    target_pos: map_pt.into(),
                     running: is_double,
                 },
                 commit_tail(is_recording),
@@ -1400,8 +1400,8 @@ pub fn resolve_swordfight(
             continue;
         }
 
-        let pc_screen = host.viewport.map_to_screen_unclamped(pos_map);
-        let pattern = host.mouse_way.evaluate(pc_screen, facing_dir);
+        let pc_screen = host.viewport.map_to_screen_unclamped(pos_map.into());
+        let pattern = host.mouse_way.evaluate(pc_screen.to_geo(), facing_dir);
         tracing::trace!(
             "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} mw_pts={}",
             host.mouse_way.len(),

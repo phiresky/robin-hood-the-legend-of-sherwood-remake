@@ -443,7 +443,6 @@ impl ReplayPlayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d;
 
     #[test]
     fn record_and_playback_roundtrip() {
@@ -465,7 +464,7 @@ mod tests {
             // Frame 50: two commands
             rec.push(PlayerCommand::GroupMove {
                 actors: vec![crate::element::EntityId(1)],
-                destination: geo2d::pt(100.0, 200.0),
+                destination: crate::coordinates::MapPoint::new(100.0, 200.0),
                 running: false,
                 show_marker: true,
                 goal_override: None,
@@ -604,7 +603,7 @@ mod tests {
     fn group_move_goal_override_serde_roundtrip() {
         let with_override = PlayerCommand::GroupMove {
             actors: vec![crate::element::EntityId(1)],
-            destination: geo2d::pt(50.0, 75.0),
+            destination: crate::coordinates::MapPoint::new(50.0, 75.0),
             running: true,
             show_marker: false,
             goal_override: Some((crate::sector::SectorNumber::new(42), 3)),

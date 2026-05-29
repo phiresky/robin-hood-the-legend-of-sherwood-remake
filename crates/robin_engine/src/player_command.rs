@@ -9,6 +9,7 @@
 //! and command types determined at resolution time.  During replay,
 //! the same commands are applied verbatim without re-resolving.
 
+use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
 use crate::geo2d;
@@ -26,7 +27,7 @@ pub enum PlayerCommand {
     /// Move a group of PCs to a destination.
     GroupMove {
         actors: Vec<EntityId>,
-        destination: geo2d::Point2D,
+        destination: MapPoint,
         running: bool,
         /// Whether to show the click marker at the destination.
         /// Defaults true so older replay records keep mouse-click behaviour.
@@ -166,7 +167,7 @@ pub enum PlayerCommand {
     /// Resolves to a compound seek→drop-ale sequence engine-side.
     DropAleAt {
         actor: EntityId,
-        target_pos: geo2d::Point2D,
+        target_pos: MapPoint,
         /// True selects `RUNNING_UPRIGHT` seek animation; comes from
         /// the double-click / record-QA matrix.
         running: bool,
@@ -194,7 +195,7 @@ pub enum PlayerCommand {
         /// first.
         protected_pc: EntityId,
         /// The danger point toward which the shield is oriented.
-        danger_point: geo2d::Point2D,
+        danger_point: MapPoint,
         /// Map layer the player was looking at when picking the danger
         /// point.  Differs from the carrier's own layer when the danger
         /// is across a chasm or off a balcony.  Stamped onto
@@ -218,13 +219,13 @@ pub enum PlayerCommand {
         pc_id: EntityId,
     },
     BoxSelect {
-        pt1: geo2d::Point2D,
-        pt2: geo2d::Point2D,
+        pt1: MapPoint,
+        pt2: MapPoint,
         shift: bool,
     },
     BoxUnselect {
-        pt1: geo2d::Point2D,
-        pt2: geo2d::Point2D,
+        pt1: MapPoint,
+        pt2: MapPoint,
     },
     SelectAllPcs,
     UnselectAllPcs,
@@ -346,7 +347,7 @@ pub enum PlayerCommand {
     /// Routed through the command pipeline so replay / rollback
     /// reproduce the same direction updates.
     PerformOrientation {
-        mouse_map: geo2d::Point2D,
+        mouse_map: MapPoint,
     },
 
     // ── Cheats ───────────────────────────────────────────────────
@@ -429,7 +430,7 @@ pub enum PlayerCommand {
     /// Routed through the command pipeline so replay / rollback
     /// reproduces the teleport deterministically.
     TeleportSelectedToPoint {
-        dest: geo2d::Point2D,
+        dest: MapPoint,
         /// Target layer (the currently selected layer).
         layer: u16,
         /// Target sector.  `None` leaves the sector unchanged — the

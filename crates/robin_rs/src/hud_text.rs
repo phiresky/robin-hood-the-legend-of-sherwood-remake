@@ -506,7 +506,7 @@ pub fn render_entity_id_overlay(
             continue;
         }
         let pos = entity.element_data().position_map();
-        let map_pt = crate::geo2d::pt(pos.x, pos.y);
+        let map_pt = pos;
         let Some(screen_pt) = camera.map_to_screen(map_pt) else {
             continue;
         };
@@ -538,7 +538,7 @@ fn render_counter_titbits_gpu(
             continue;
         }
 
-        let map_pt = crate::geo2d::pt(titbit.position.x, titbit.position.y);
+        let map_pt = robin_engine::coordinates::MapPoint::new(titbit.position.x, titbit.position.y);
         let Some(screen_pt) = camera.map_to_screen(map_pt) else {
             continue;
         };

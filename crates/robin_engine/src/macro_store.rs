@@ -16,6 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
 use crate::geo2d::{Point2D, pt};
 use crate::profiles::Action;
@@ -88,8 +89,7 @@ pub enum QaReplayCommand {
     /// Group-move to a destination — relayed as `PlayerCommand::GroupMove`
     /// with a single-element `actors` vec (the replay target PC).
     Move {
-        #[serde(with = "point2d_serde")]
-        destination: Point2D,
+        destination: MapPoint,
         running: bool,
     },
     /// Interaction with a specific target entity (attack, heal, tie, …).
@@ -128,11 +128,7 @@ pub enum QaReplayCommand {
     /// Drop-ale seek-then-drop sequence.  Replayed as
     /// `PlayerCommand::DropAleAt` so the engine rebuilds the Seek→DropAle
     /// pair from the captured destination point.
-    DropAle {
-        #[serde(with = "point2d_serde")]
-        target_pos: Point2D,
-        running: bool,
-    },
+    DropAle { target_pos: MapPoint, running: bool },
     /// Enter-swordfight engagement on a target.
     Swordfight { target: EntityId, running: bool },
     /// Direct sword strike on a target (mid-swordfight).
@@ -437,7 +433,7 @@ mod tests {
             action,
             position: pt(x, y),
             replay: QaReplayCommand::Move {
-                destination: pt(x, y),
+                destination: MapPoint::new(x, y),
                 running: false,
             },
         }

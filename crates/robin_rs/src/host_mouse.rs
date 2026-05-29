@@ -1147,7 +1147,7 @@ pub fn update_mouse(
             let pc_id = engine.seat_selection(host.local_seat).first().copied();
 
             if !engine.is_selected_pc_in_restricted_sector()
-                && engine.is_mouse_sector_valid_for_ground_target(mouse_map)
+                && engine.is_mouse_sector_valid_for_ground_target(mouse_map.into())
             {
                 let in_range = pc_id.is_some_and(|pid| {
                     engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Purse, None)
@@ -1295,7 +1295,7 @@ pub fn update_mouse(
 
             let pc_id = engine.seat_selection(host.local_seat).first().copied();
             if !engine.is_selected_pc_in_restricted_sector()
-                && engine.is_mouse_sector_valid_for_ground_target(mouse_map)
+                && engine.is_mouse_sector_valid_for_ground_target(mouse_map.into())
             {
                 let in_range = pc_id.is_some_and(|pid| {
                     engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Net, None)
@@ -1340,7 +1340,7 @@ pub fn update_mouse(
         // ── Ale ───────────────────
         Action::Ale => {
             // Validate mouse sector (no door, no wall/ladder).
-            if engine.is_mouse_sector_valid_for_ground_target(mouse_map) {
+            if engine.is_mouse_sector_valid_for_ground_target(mouse_map.into()) {
                 RHMOUSE_ALE_YES
             } else {
                 RHMOUSE_ALE_NO

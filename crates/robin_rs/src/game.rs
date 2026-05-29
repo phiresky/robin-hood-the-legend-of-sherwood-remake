@@ -552,7 +552,7 @@ impl Game {
             host.selection_mark.tick();
         }
         host.trajectory_ground_mark.tick(
-            host.viewport.view_position,
+            host.viewport.view_position.to_geo(),
             host.viewport.zoom_factor,
             host.viewport.screen_size.x as i32,
             host.viewport.screen_size.y as i32,

@@ -361,7 +361,9 @@ impl TitbitRenderer {
                 else {
                     return;
                 };
-                let map_pt = crate::geo2d::pt(position.x, position.y - position.z);
+                let map_pt = robin_engine::coordinates::MapPoint::from_world_xyz(
+                    position.x, position.y, position.z,
+                );
                 let Some(screen_pt) = host.viewport.map_to_screen(map_pt) else {
                     return;
                 };
@@ -613,7 +615,11 @@ impl TitbitRenderer {
             };
 
             // Convert 3D world position to 2D map: (x, y - z).
-            let map_pt = crate::geo2d::pt(titbit.position.x, titbit.position.y - titbit.position.z);
+            let map_pt = robin_engine::coordinates::MapPoint::from_world_xyz(
+                titbit.position.x,
+                titbit.position.y,
+                titbit.position.z,
+            );
             let Some(screen_pt) = host.viewport.map_to_screen(map_pt) else {
                 continue;
             };
