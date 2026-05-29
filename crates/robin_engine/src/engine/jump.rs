@@ -27,7 +27,8 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use crate::element::{ActionState, EntityId, Point2D, Point3D, Posture};
+use crate::coordinates::WorldPoint3D;
+use crate::element::{ActionState, EntityId, Point2D, Posture};
 use crate::engine::{EngineInner, LevelAssets};
 use crate::jump_line::JumpLine;
 use crate::order::OrderType;
@@ -62,7 +63,7 @@ pub struct JumpStep {
     pub anim: OrderType,
     /// Optional 3D destination for the step.  `None` means the animation
     /// plays in place with no position change.
-    pub target_3d: Option<Point3D>,
+    pub target_3d: Option<WorldPoint3D>,
     /// Whether this step's animation places the actor airborne.  During
     /// airborne steps the renderer lifts the sprite by `jump_z_offset`;
     /// on a ground step `jump_z_offset` is snapped to zero on arrival.
@@ -116,10 +117,10 @@ pub struct ActiveJump {
 /// and decreases `vz` by `2 * g * mass`.  When
 /// `(destination - newPosition) · direction > -0.1`, the final point is
 /// snapped to the destination and the loop ends.
-pub fn compute_trajectory_jump(start: Point3D, dest: Point3D) -> Vec<Point3D> {
+pub fn compute_trajectory_jump(start: WorldPoint3D, dest: WorldPoint3D) -> Vec<WorldPoint3D> {
     let mut trajectory = Vec::new();
 
-    let direction = Point3D {
+    let direction = WorldPoint3D {
         x: dest.x - start.x,
         y: dest.y - start.y,
         z: dest.z - start.z,
@@ -142,7 +143,7 @@ pub fn compute_trajectory_jump(start: Point3D, dest: Point3D) -> Vec<Point3D> {
             break;
         }
 
-        let new_position = Point3D {
+        let new_position = WorldPoint3D {
             x: velocity.x * 2.0 + position.x,
             y: velocity.y * 2.0 + position.y,
             z: vz * 2.0 + position.z,
@@ -247,12 +248,12 @@ pub fn build_jump_steps(
         // the sprite renders at bakes in the elevation.  Keeping this
         // convention means linear interpolation of the trajectory
         // produces the correct visual.
-        let src_3d = Point3D {
+        let src_3d = WorldPoint3D {
             x: pt_source_jump.x,
             y: pt_source_jump.y + z_source,
             z: z_source,
         };
-        let dst_3d = Point3D {
+        let dst_3d = WorldPoint3D {
             x: pt_destination.x,
             y: pt_destination.y + z_destination,
             z: z_destination,
@@ -264,7 +265,7 @@ pub fn build_jump_steps(
             // Sword variant (3 orders).
             steps.push(JumpStep {
                 anim: OrderType::TransitionWaitingSwordJumpingLongSword,
-                target_3d: Some(Point3D {
+                target_3d: Some(WorldPoint3D {
                     x: pt_source_jump.x,
                     y: pt_source_jump.y,
                     z: 0.0,
@@ -304,7 +305,7 @@ pub fn build_jump_steps(
         };
         steps.push(JumpStep {
             anim: init_anim,
-            target_3d: Some(Point3D {
+            target_3d: Some(WorldPoint3D {
                 x: pt_source_jump.x,
                 y: pt_source_jump.y,
                 z: 0.0,
@@ -421,12 +422,12 @@ pub fn build_jump_steps(
         // animation with target_3d at the apex (above the landing
         // pad), and the closing transition with target_3d at the
         // landing pad — so the sprite descends onto it.
-        let apex_3d = Point3D {
+        let apex_3d = WorldPoint3D {
             x: pt_destination_jump.x,
             y: pt_destination_jump.y + z_destination,
             z: z_destination + TELEPORT_JUMPING_UP,
         };
-        let land_3d = Point3D {
+        let land_3d = WorldPoint3D {
             x: pt_destination.x,
             y: pt_destination.y + z_destination,
             z: z_destination,
@@ -489,7 +490,7 @@ pub fn build_jump_steps(
 
     steps.push(JumpStep {
         anim: OrderType::TransitionWaitingCrouchedJumpingDown,
-        target_3d: Some(Point3D {
+        target_3d: Some(WorldPoint3D {
             x: pt_source_jump.x,
             y: pt_source_jump.y,
             z: 0.0,
@@ -498,7 +499,7 @@ pub fn build_jump_steps(
         max_frames: None,
     });
 
-    let land_3d = Point3D {
+    let land_3d = WorldPoint3D {
         x: pt_destination.x,
         y: pt_destination.y + z_destination,
         z: z_destination,
@@ -1373,12 +1374,12 @@ mod tests {
     #[test]
     fn trajectory_ends_at_destination() {
         // Horizontal jump across 300 units with a 50-unit rise.
-        let start = Point3D {
+        let start = WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 0.0,
         };
-        let dest = Point3D {
+        let dest = WorldPoint3D {
             x: 300.0,
             y: 0.0,
             z: 50.0,

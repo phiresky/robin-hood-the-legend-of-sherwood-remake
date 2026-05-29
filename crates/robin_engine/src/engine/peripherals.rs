@@ -274,7 +274,7 @@ pub struct DevState {
     pub at_least_one_qa_launched: bool,
 
     /// Cheat: free-floating shadow polygon position (developer debug).
-    pub cheat_free_shadow_polygon_pos: Option<crate::element::Point3D>,
+    pub cheat_free_shadow_polygon_pos: Option<crate::coordinates::WorldPoint3D>,
     /// Cheat: view parameters for the free shadow polygon.
     pub cheat_free_shadow_polygon_params: ViewParameters,
 

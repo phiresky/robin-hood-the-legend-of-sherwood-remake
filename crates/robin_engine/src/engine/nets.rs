@@ -23,7 +23,8 @@
 
 use super::*;
 use crate::coordinates::MapPoint;
-use crate::element::{Command, Entity, EntityId, Point3D};
+use crate::coordinates::WorldVec3D;
+use crate::element::{Command, Entity, EntityId};
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -582,7 +583,7 @@ impl EngineInner {
         //     to 0.001.
         let obstacle_idx = self.find_landing_obstacle(
             assets,
-            crate::element::Point3D {
+            crate::coordinates::WorldPoint3D {
                 x: landing_xy.0,
                 y: landing_xy.1,
                 z: 0.0,
@@ -747,7 +748,7 @@ impl EngineInner {
     pub fn predict_net_crumple_at(
         &self,
         assets: &LevelAssets,
-        landing: crate::element::Point3D,
+        landing: crate::coordinates::WorldPoint3D,
         layer: u16,
     ) -> bool {
         // No valid landing layer at all → crumple.
@@ -851,7 +852,7 @@ impl EngineInner {
     fn find_landing_obstacle(
         &self,
         assets: &LevelAssets,
-        landing: crate::element::Point3D,
+        landing: crate::coordinates::WorldPoint3D,
     ) -> Option<usize> {
         for (i, o) in assets.static_sight_obstacles.iter().enumerate() {
             if obstacle_bbox_contains(o, landing.x, landing.y) {
@@ -939,7 +940,7 @@ fn advance_net_trajectory(net: &mut crate::element::ElementNet) {
 
             let current = net.element.position();
             let factor = 1.0 / time as f32;
-            proj.velocity_increment = Point3D {
+            proj.velocity_increment = WorldVec3D {
                 x: (point.position.x - current.x) * factor,
                 y: (point.position.y - current.y) * factor,
                 z: (point.position.z - current.z) * factor,
@@ -973,6 +974,7 @@ fn advance_net_trajectory(net: &mut crate::element::ElementNet) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, ElementNet, HumanData, NetData,
         NpcData, ObjectData, PcData, Posture, ProjectileData, SoldierData,
@@ -991,7 +993,7 @@ mod tests {
         EngineInner::new()
     }
 
-    fn make_net(landing: Point3D) -> Entity {
+    fn make_net(landing: WorldPoint3D) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ObjectNet,
             active: true,
@@ -1011,7 +1013,7 @@ mod tests {
         })
     }
 
-    fn make_soldier(pos: Point3D, profile_idx: u32, rider: bool) -> Entity {
+    fn make_soldier(pos: WorldPoint3D, profile_idx: u32, rider: bool) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorSoldier,
             active: true,
@@ -1037,7 +1039,7 @@ mod tests {
         })
     }
 
-    fn make_pc(pos: Point3D, profile_idx: u32) -> Entity {
+    fn make_pc(pos: WorldPoint3D, profile_idx: u32) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorPc,
             active: true,
@@ -1094,7 +1096,7 @@ mod tests {
     fn net_captures_three_normal_soldiers() {
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
@@ -1103,7 +1105,7 @@ mod tests {
         let soldiers: Vec<EntityId> = (0..3)
             .map(|i| {
                 engine.add_entity(make_soldier(
-                    Point3D {
+                    WorldPoint3D {
                         x: LAND_X + i as f32 * 5.0,
                         y: LAND_Y,
                         z: 0.0,
@@ -1159,14 +1161,14 @@ mod tests {
         // ensures each victim is only captured once.
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let victim_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1201,14 +1203,14 @@ mod tests {
     fn net_crumples_when_only_rider_in_range() {
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let rider_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X + 5.0,
                 y: LAND_Y,
                 z: 0.0,
@@ -1235,7 +1237,7 @@ mod tests {
     fn net_crumples_on_vip_soldier_alone() {
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
@@ -1243,7 +1245,7 @@ mod tests {
         let net_id = engine.add_entity(make_net(landing));
         // Profile 1 = VIP soldier
         let vip_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1271,14 +1273,14 @@ mod tests {
         // NOT crumple, and the existing victim list is kept.
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let existing_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1287,7 +1289,7 @@ mod tests {
             false,
         ));
         let rider_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X + 5.0,
                 y: LAND_Y,
                 z: 0.0,
@@ -1322,14 +1324,14 @@ mod tests {
     fn net_skips_humans_outside_radius() {
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let near_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X + 5.0,
                 y: LAND_Y,
                 z: 0.0,
@@ -1339,7 +1341,7 @@ mod tests {
         ));
         // 200 units away in X — way outside SQUARE_RADIUS_NET_CAPTURE.
         let far_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X + 200.0,
                 y: LAND_Y,
                 z: 0.0,
@@ -1363,7 +1365,7 @@ mod tests {
     fn net_crumples_on_stuteley_pc() {
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
@@ -1371,7 +1373,7 @@ mod tests {
         let net_id = engine.add_entity(make_net(landing));
         // Character profile 1 = Stuteley (Action::Net present).
         let _ = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1393,14 +1395,14 @@ mod tests {
     fn unapply_clears_victims_and_releases_counters() {
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let victim_id = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1456,14 +1458,14 @@ mod tests {
         use crate::ai_enemy::EnemyAi;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let mut vip = make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1496,14 +1498,14 @@ mod tests {
         // `display_order_ref = Some(net_id)` + `behind = true`.
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let victim = make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,
@@ -1533,7 +1535,7 @@ mod tests {
     fn landing_registers_repulsive_points() {
         let mut engine = make_engine();
         let _assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
@@ -1573,14 +1575,14 @@ mod tests {
         use crate::sequence::SequenceElement;
         let mut engine = make_engine();
         let assets = assets_with_profiles();
-        let landing = Point3D {
+        let landing = WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: LAND_Z,
         };
         let net_id = engine.add_entity(make_net(landing));
         let pc_id = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: LAND_X,
                 y: LAND_Y,
                 z: 0.0,

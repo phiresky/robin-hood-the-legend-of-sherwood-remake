@@ -2401,7 +2401,7 @@ pub(crate) async fn run_mission(
                                             manager.engine.sight_obstacles(&assets),
                                         );
                                         dev.cheat_free_shadow_polygon_pos =
-                                            Some(robin_engine::element::Point3D {
+                                            Some(robin_engine::coordinates::WorldPoint3D {
                                                 x: p3d.x,
                                                 y: p3d.y,
                                                 z: p3d.z + 45.0,

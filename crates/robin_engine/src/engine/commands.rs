@@ -3008,7 +3008,7 @@ impl EngineInner {
             && let Some(Some(me)) = self.entities.get_mut(protector_id.0 as usize)
             && let Some(pc) = me.pc_data_mut()
         {
-            pc.shield_danger_point = crate::element::Point3D::default();
+            pc.shield_danger_point = crate::coordinates::WorldPoint3D::default();
         }
 
         if let Some(Some(me)) = self.entities.get_mut(protector_id.0 as usize)
@@ -3573,10 +3573,11 @@ pub(crate) fn interaction_distance(cmd: Command) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActorCivilian, ActorData, ActorPc, ElementBonus, ElementData, ElementKind, ElementNet,
         ElementProjectile, ElementScroll, Entity, HumanData, NetData, NpcData, ObjectData,
-        ObjectType, PcData, Point3D, Posture, ProjectileData,
+        ObjectType, PcData, Posture, ProjectileData,
     };
     use crate::engine::ScrollStatus;
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
@@ -3761,7 +3762,7 @@ mod tests {
             active: true,
             ..Default::default()
         };
-        element.set_position(Point3D::default());
+        element.set_position(WorldPoint3D::default());
         engine.add_entity(Entity::Net(ElementNet {
             element,
             object: ObjectData {

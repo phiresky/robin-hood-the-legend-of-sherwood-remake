@@ -29,7 +29,8 @@
 use super::EngineInner;
 use crate::bow_shot::{self, COIN_SCATTER_MIN, NUMBER_OF_COINS_IN_PURSE};
 use crate::coordinates::MapPoint;
-use crate::element::{Animation, DetectableType, Entity, EntityId, ObjectType, Point3D};
+use crate::coordinates::WorldPoint3D;
+use crate::element::{Animation, DetectableType, Entity, EntityId, ObjectType};
 use crate::fast_find_grid::SectorHit;
 
 /// Purse-impact FX id.
@@ -75,8 +76,8 @@ impl EngineInner {
             kind: ImpactKind,
         }
         enum ImpactKind {
-            PurseLanded { pos: Point3D, layer: u16 },
-            CoinLanded { pos: Point3D, layer: u16 },
+            PurseLanded { pos: WorldPoint3D, layer: u16 },
+            CoinLanded { pos: WorldPoint3D, layer: u16 },
         }
         let mut impacts: Vec<Impact> = Vec::new();
 
@@ -199,7 +200,7 @@ impl EngineInner {
         &mut self,
         assets: &crate::engine::LevelAssets,
         purse_id: EntityId,
-        impact_pos: Point3D,
+        impact_pos: WorldPoint3D,
         layer: u16,
     ) {
         // ── Resolve the shooter's MoveBox ──────────────────────────
@@ -240,7 +241,7 @@ impl EngineInner {
                 y: centre.y,
             };
         }
-        let source_pos = Point3D {
+        let source_pos = WorldPoint3D {
             x: corrected_2d.x,
             y: corrected_2d.y,
             z: impact_pos.z,
@@ -354,7 +355,7 @@ impl EngineInner {
                 .get_entity(purse_id)
                 .map(|e| e.position_iface().get_sector())
                 .unwrap_or(None);
-            let target_pos: Point3D = self
+            let target_pos: WorldPoint3D = self
                 .position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y)
                 .into();
 
@@ -431,7 +432,7 @@ impl EngineInner {
     /// coin as a `DETECTABLE_OBJECT` for every NPC so soldiers'
     /// `EventSeesObject` fires.  `layer` is the layer the trajectory
     /// finished at (used as fallback when no goal layer was recorded).
-    fn coin_landed(&mut self, coin_id: EntityId, impact_pos: Point3D, layer: u16) {
+    fn coin_landed(&mut self, coin_id: EntityId, impact_pos: WorldPoint3D, layer: u16) {
         if let Some(Entity::Projectile(coin)) = self
             .entities
             .get_mut(coin_id.0 as usize)
@@ -532,7 +533,7 @@ mod tests {
     /// the throw-velocity setup.
     fn spawn_landing_purse(
         engine: &mut EngineInner,
-        pos: Point3D,
+        pos: WorldPoint3D,
         layer: u16,
         thrower: Option<EntityId>,
     ) -> EntityId {
@@ -569,7 +570,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let purse_id = spawn_landing_purse(
             &mut engine,
-            Point3D {
+            WorldPoint3D {
                 x: 100.0,
                 y: 200.0,
                 z: 0.0,
@@ -623,7 +624,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let purse_id = spawn_landing_purse(
             &mut engine,
-            Point3D {
+            WorldPoint3D {
                 x: 100.0,
                 y: 200.0,
                 z: 0.0,
@@ -682,7 +683,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let purse_id = spawn_landing_purse(
             &mut engine,
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,

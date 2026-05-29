@@ -375,13 +375,13 @@ fn resolve_action_left_click(
     // projection-area surface, used by the Purse/Wasp/Net ground-
     // target arms so the recorded titbit and `*_TARGET` sequence field
     // both land on the real 3D point instead of `z=0`.
-    let convert_to_3d = |pt: geo2d::Point2D| -> robin_engine::element::Point3D {
+    let convert_to_3d = |pt: geo2d::Point2D| -> robin_engine::coordinates::WorldPoint3D {
         let p3d = engine.fast_grid().convert_2d_to_3d(
             robin_engine::coordinates::MapPoint::from_geo(pt),
             robin_engine::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             engine.sight_obstacles(assets),
         );
-        robin_engine::element::Point3D::from(p3d)
+        robin_engine::coordinates::WorldPoint3D::from(p3d)
     };
 
     // Post-launch tail for actions that deselect on launch (non-

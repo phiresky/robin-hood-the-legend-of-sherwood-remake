@@ -550,7 +550,7 @@ impl EngineInner {
                     let (pt2d, pt3d) = match properties.get(&Field::ShieldDangerPoint) {
                         Some(FieldValue::Point3D { x, y, z }) => (
                             Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                            Some(crate::element::Point3D {
+                            Some(crate::coordinates::WorldPoint3D {
                                 x: *x,
                                 y: *y,
                                 z: *z,
@@ -558,7 +558,7 @@ impl EngineInner {
                         ),
                         Some(FieldValue::Point2D { x, y }) => (
                             Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                            Some(crate::element::Point3D {
+                            Some(crate::coordinates::WorldPoint3D {
                                 x: *x,
                                 y: *y,
                                 z: 0.0,

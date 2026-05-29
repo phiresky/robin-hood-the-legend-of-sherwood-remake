@@ -22,7 +22,7 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, MapVec, WorldPoint3D};
+use crate::coordinates::{MapPoint, MapVec, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
 use crate::geo2d::{self, BBox2D, Point2D, Vec2D};
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
@@ -618,7 +618,7 @@ pub struct PositionInterface {
     goal: WorldPoint3D,
 
     // -- Increments --
-    increment: WorldPoint3D,
+    increment: WorldVec3D,
     increment_map: MapVec,
 
     reversed_movement: bool,
@@ -676,7 +676,7 @@ pub struct PositionInterface {
     accumulated_movement_map: MapVec,
 
     // -- Forecasted movement --
-    forecasted_movement: WorldPoint3D,
+    forecasted_movement: WorldVec3D,
 }
 
 impl Default for PositionInterface {
@@ -701,7 +701,7 @@ impl PositionInterface {
             goal_next_map: MapPoint::ZERO,
             goal: WorldPoint3D::ZERO,
 
-            increment: WorldPoint3D::ZERO,
+            increment: WorldVec3D::ZERO,
             increment_map: MapVec::ZERO,
 
             reversed_movement: false,
@@ -745,7 +745,7 @@ impl PositionInterface {
             accumulate_movement_map: false,
             accumulated_movement_map: MapVec::ZERO,
 
-            forecasted_movement: WorldPoint3D::ZERO,
+            forecasted_movement: WorldVec3D::ZERO,
         }
     }
 
@@ -972,7 +972,7 @@ impl PositionInterface {
     // ====================================================================
 
     #[inline]
-    pub fn get_movement(&self) -> WorldPoint3D {
+    pub fn get_movement(&self) -> WorldVec3D {
         self.position - self.old_position
     }
 
@@ -984,7 +984,7 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn get_increment(&self) -> WorldPoint3D {
+    pub fn get_increment(&self) -> WorldVec3D {
         assert!(self.is_increment_3d_computed());
         self.increment
     }
@@ -1007,7 +1007,7 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn set_increment(&mut self, v: WorldPoint3D) {
+    pub fn set_increment(&mut self, v: WorldVec3D) {
         self.computed_increment = IncrementComputed::INCREMENT;
         self.increment = v;
     }
@@ -1348,7 +1348,7 @@ impl PositionInterface {
 
     // Forecasted movement
     #[inline]
-    pub fn get_forecasted_movement(&self) -> WorldPoint3D {
+    pub fn get_forecasted_movement(&self) -> WorldVec3D {
         self.forecasted_movement
     }
 
@@ -1357,7 +1357,7 @@ impl PositionInterface {
     }
 
     pub fn reset_forecasted_movement(&mut self) {
-        self.forecasted_movement = WorldPoint3D::ZERO;
+        self.forecasted_movement = WorldVec3D::ZERO;
     }
 
     // ====================================================================
@@ -1370,7 +1370,7 @@ impl PositionInterface {
         self.old_position_map = self.position_map;
     }
 
-    pub fn move_position(&mut self, v: WorldPoint3D) {
+    pub fn move_position(&mut self, v: WorldVec3D) {
         self.position += v;
         self.recompute_from_3d();
     }

@@ -20,7 +20,8 @@
 
 use super::{EngineInner, LevelAssets};
 use crate::bow_shot::{self, NUMBER_OF_WASPS};
-use crate::element::{Animation, Camp, Entity, EntityId, ObjectType, Point3D};
+use crate::coordinates::{WorldPoint3D, WorldVec3D};
+use crate::element::{Animation, Camp, Entity, EntityId, ObjectType};
 
 /// Buzz FX id played at the nest position each frame while wasps are
 /// in the air.
@@ -77,7 +78,7 @@ impl EngineInner {
         // ── Phase 1: advance nest trajectories; collect impacts ─────
         struct NestImpact {
             id: EntityId,
-            pos: Point3D,
+            pos: WorldPoint3D,
             layer: u16,
         }
         let mut impacts: Vec<NestImpact> = Vec::new();
@@ -125,7 +126,7 @@ impl EngineInner {
         self.tick_wasps(assets);
 
         // ── Phase 4: nest Hourglass — emit buzz while wasps fly ────
-        let nest_buzzes: Vec<Point3D> = self
+        let nest_buzzes: Vec<WorldPoint3D> = self
             .entities
             .iter()
             .filter_map(|slot| match slot {
@@ -156,7 +157,7 @@ impl EngineInner {
     }
 
     /// Burst a landed wasp nest into [`NUMBER_OF_WASPS`] wasp swarmers.
-    fn burst_wasp_nest(&mut self, nest_id: EntityId, impact_pos: Point3D, layer: u16) {
+    fn burst_wasp_nest(&mut self, nest_id: EntityId, impact_pos: WorldPoint3D, layer: u16) {
         let already_burst = self
             .get_entity(nest_id)
             .map(|e| matches!(e, Entity::Projectile(p) if p.projectile.wasp.burst))
@@ -551,7 +552,7 @@ impl EngineInner {
             let rx = (crate::sim_rng::u32(0..11) as i32 - 6) as f32;
             let ry = (crate::sim_rng::u32(0..11) as i32 - 6) as f32;
             let rz = (crate::sim_rng::u32(0..11) as i32 - 6) as f32;
-            let mut mv = Point3D {
+            let mut mv = WorldVec3D {
                 x: rx,
                 y: ry,
                 z: rz,
@@ -564,7 +565,7 @@ impl EngineInner {
                     .get_mut(wasp_id.0 as usize)
                     .and_then(|s| s.as_mut())
                 {
-                    p.projectile.wasp.movement = Point3D {
+                    p.projectile.wasp.movement = WorldVec3D {
                         x: 0.0,
                         y: 0.0,
                         z: 0.0,
@@ -588,7 +589,7 @@ impl EngineInner {
             if victim_info.is_none()
                 && let Some(np) = nest_pos
             {
-                let to_nest = Point3D {
+                let to_nest = WorldPoint3D {
                     x: np.x - wasp_pos.x,
                     y: np.y - wasp_pos.y,
                     z: np.z - wasp_pos.z,
@@ -604,7 +605,7 @@ impl EngineInner {
 
             // Victim charge / attraction.
             if let Some((eyes, smelling)) = victim_info {
-                let to_victim = Point3D {
+                let to_victim = WorldPoint3D {
                     x: eyes.x - wasp_pos.x,
                     y: eyes.y - wasp_pos.y,
                     z: eyes.z - wasp_pos.z,
@@ -619,9 +620,9 @@ impl EngineInner {
                     VICTIM_CHARGE_DISTANCE
                 };
                 if d <= charge {
-                    mv = to_victim;
+                    mv = to_victim.into();
                 } else {
-                    mv = Point3D {
+                    mv = WorldVec3D {
                         x: to_victim.x * VICTIM_ATTRACTION,
                         y: to_victim.y * VICTIM_ATTRACTION,
                         z: to_victim.z * VICTIM_ATTRACTION,
@@ -639,7 +640,7 @@ impl EngineInner {
             }
 
             // Short-horizon reachability probe.
-            let estimated = Point3D {
+            let estimated = WorldPoint3D {
                 x: wasp_pos.x + mv.x * DIRECTION_CHANGE_TIMEOUT as f32,
                 y: wasp_pos.y + mv.y * DIRECTION_CHANGE_TIMEOUT as f32,
                 z: wasp_pos.z + mv.z * DIRECTION_CHANGE_TIMEOUT as f32,
@@ -766,7 +767,7 @@ mod tests {
         }
     }
 
-    fn make_soldier(pos: Point3D) -> Entity {
+    fn make_soldier(pos: WorldPoint3D) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorSoldier,
             active: true,
@@ -914,7 +915,7 @@ mod tests {
 
             // Place a soldier 20 units from the nest — inside the
             // VICTIM_DETECTION_DISTANCE of 50.
-            let soldier_pos = Point3D {
+            let soldier_pos = WorldPoint3D {
                 x: 20.0,
                 y: 0.0,
                 z: 0.0,

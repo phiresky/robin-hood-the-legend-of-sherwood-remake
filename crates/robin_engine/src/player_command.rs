@@ -76,7 +76,7 @@ pub enum PlayerCommand {
     /// engine handler never has to second-guess it.
     LaunchGroundTarget {
         actor: EntityId,
-        target_pos: crate::element::Point3D,
+        target_pos: crate::coordinates::WorldPoint3D,
         command: Command,
         /// Which sequence property field to set the target position on.
         target_field: Field,

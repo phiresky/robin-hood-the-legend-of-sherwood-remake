@@ -164,7 +164,103 @@ impl WorldPoint3D {
     }
 }
 
-impl std::ops::Add for WorldPoint3D {
+impl std::ops::Sub for WorldPoint3D {
+    type Output = WorldVec3D;
+
+    #[inline]
+    fn sub(self, o: Self) -> WorldVec3D {
+        WorldVec3D {
+            x: self.x - o.x,
+            y: self.y - o.y,
+            z: self.z - o.z,
+        }
+    }
+}
+
+impl std::ops::Add<WorldVec3D> for WorldPoint3D {
+    type Output = Self;
+
+    #[inline]
+    fn add(self, o: WorldVec3D) -> Self {
+        Self {
+            x: self.x + o.x,
+            y: self.y + o.y,
+            z: self.z + o.z,
+        }
+    }
+}
+
+impl std::ops::AddAssign<WorldVec3D> for WorldPoint3D {
+    #[inline]
+    fn add_assign(&mut self, o: WorldVec3D) {
+        self.x += o.x;
+        self.y += o.y;
+        self.z += o.z;
+    }
+}
+
+impl std::ops::Sub<WorldVec3D> for WorldPoint3D {
+    type Output = Self;
+
+    #[inline]
+    fn sub(self, o: WorldVec3D) -> Self {
+        Self {
+            x: self.x - o.x,
+            y: self.y - o.y,
+            z: self.z - o.z,
+        }
+    }
+}
+
+/// World-space 3D vector/delta: velocity, movement, or offset in raw
+/// Spellbound `(x, y, z)` axes.
+///
+/// This is intentionally distinct from [`WorldPoint3D`]: vectors can be
+/// added to points, but they are not positions and should not be projected or
+/// stored as entity locations.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct WorldVec3D {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl Default for WorldVec3D {
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl WorldVec3D {
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    #[inline]
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    #[inline]
+    pub fn norm(&self) -> f32 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    #[inline]
+    pub const fn scale(self, k: f32) -> Self {
+        Self {
+            x: self.x * k,
+            y: self.y * k,
+            z: self.z * k,
+        }
+    }
+}
+
+impl std::ops::Add for WorldVec3D {
     type Output = Self;
 
     #[inline]
@@ -177,7 +273,7 @@ impl std::ops::Add for WorldPoint3D {
     }
 }
 
-impl std::ops::AddAssign for WorldPoint3D {
+impl std::ops::AddAssign for WorldVec3D {
     #[inline]
     fn add_assign(&mut self, o: Self) {
         self.x += o.x;
@@ -186,7 +282,7 @@ impl std::ops::AddAssign for WorldPoint3D {
     }
 }
 
-impl std::ops::Sub for WorldPoint3D {
+impl std::ops::Sub for WorldVec3D {
     type Output = Self;
 
     #[inline]
@@ -195,6 +291,28 @@ impl std::ops::Sub for WorldPoint3D {
             x: self.x - o.x,
             y: self.y - o.y,
             z: self.z - o.z,
+        }
+    }
+}
+
+impl From<WorldPoint3D> for WorldVec3D {
+    #[inline]
+    fn from(p: WorldPoint3D) -> Self {
+        Self {
+            x: p.x,
+            y: p.y,
+            z: p.z,
+        }
+    }
+}
+
+impl From<WorldVec3D> for WorldPoint3D {
+    #[inline]
+    fn from(v: WorldVec3D) -> Self {
+        Self {
+            x: v.x,
+            y: v.y,
+            z: v.z,
         }
     }
 }

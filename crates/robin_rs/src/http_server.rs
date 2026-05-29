@@ -943,11 +943,11 @@ fn snapshot_host_debug(
     })
 }
 
-fn bow_debug_ground_y_raw(point: robin_engine::element::Point3D) -> f32 {
+fn bow_debug_ground_y_raw(point: robin_engine::coordinates::WorldPoint3D) -> f32 {
     point.y
 }
 
-fn bow_debug_ground_y_projected(point: robin_engine::element::Point3D) -> f32 {
+fn bow_debug_ground_y_projected(point: robin_engine::coordinates::WorldPoint3D) -> f32 {
     point.y - point.z
 }
 
@@ -1064,8 +1064,8 @@ fn bow_target_points_debug(
 }
 
 fn bow_range_math_debug(
-    hand_point: robin_engine::element::Point3D,
-    target_point: robin_engine::element::Point3D,
+    hand_point: robin_engine::coordinates::WorldPoint3D,
+    target_point: robin_engine::coordinates::WorldPoint3D,
     max_range: f32,
     forest_target: bool,
 ) -> serde_json::Value {

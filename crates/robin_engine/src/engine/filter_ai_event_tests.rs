@@ -20,9 +20,10 @@
 //!  * Side effects: the filter can observe-and-mutate state each call
 //!    (the raison d'être for on-demand vs. precompute).
 
+use crate::coordinates::WorldPoint3D;
 use crate::element::{
     ActorData, ActorPc, ActorSoldier, AiBrain, ElementData, ElementKind, Entity, EntityId,
-    HumanData, NpcData, PcData, Point3D, Posture, SoldierData,
+    HumanData, NpcData, PcData, Posture, SoldierData,
 };
 use crate::engine::EngineInner;
 use crate::engine::types::{LevelAssets, MissionScript};
@@ -188,7 +189,7 @@ fn make_pc(robin: bool) -> Entity {
         posture: Posture::Upright,
         ..ElementData::default()
     };
-    element.set_position(Point3D::default());
+    element.set_position(WorldPoint3D::default());
     Entity::Pc(ActorPc {
         element,
         actor: ActorData::default(),

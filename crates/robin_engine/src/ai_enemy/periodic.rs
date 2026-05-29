@@ -211,7 +211,7 @@ impl EnemyAi {
     pub fn refresh_ambush_points(
         &mut self,
         ctx: &AiContext,
-        eyes: crate::element::Point3D,
+        eyes: crate::coordinates::WorldPoint3D,
         ambush_points: &[crate::ai::AmbushPoint],
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) {

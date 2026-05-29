@@ -46,7 +46,7 @@ pub enum BowTarget {
 }
 
 #[inline]
-fn bow_ground_y(point: crate::element::Point3D) -> f32 {
+fn bow_ground_y(point: crate::coordinates::WorldPoint3D) -> f32 {
     // C++ `GetPositionGround()` returns `(GetPosition().mX, GetPosition().mY)`.
     // It does not project with `mY - mZ`; bow range, facing, and preview
     // source direction all use this 3D-space Y directly.
@@ -68,7 +68,7 @@ pub enum TrajectoryPreview {
     Invalid,
     ShowArc {
         points: Vec<crate::element::TrajectoryPoint>,
-        start: crate::element::Point3D,
+        start: crate::coordinates::WorldPoint3D,
         crumpled: bool,
         /// Shooter's layer — used by the host to place ground marks at
         /// the projected impact point.
@@ -1549,7 +1549,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         shooter_id: EntityId,
-        target_point: crate::element::Point3D,
+        target_point: crate::coordinates::WorldPoint3D,
         forest_target: bool,
     ) -> (BowTarget, crate::weapons::ShootMode) {
         use crate::weapons::{BowState, ShootMode};
@@ -1774,12 +1774,12 @@ impl EngineInner {
 
         // 3D midpoint of each jump line averages `point_a`/`point_b`
         // and `z_a`/`z_b`.
-        let start = crate::element::Point3D {
+        let start = crate::coordinates::WorldPoint3D {
             x: 0.5 * (line.point_a.x + line.point_b.x),
             y: 0.5 * (line.point_a.y + line.point_b.y),
             z: 0.5 * (line.z_a + line.z_b),
         };
-        let dest = crate::element::Point3D {
+        let dest = crate::coordinates::WorldPoint3D {
             x: 0.5 * (dest_line.point_a.x + dest_line.point_b.x),
             y: 0.5 * (dest_line.point_a.y + dest_line.point_b.y),
             z: 0.5 * (dest_line.z_a + dest_line.z_b),
@@ -1828,7 +1828,7 @@ impl EngineInner {
             crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             self.sight_obstacles(assets),
         );
-        let target_point = crate::element::Point3D {
+        let target_point = crate::coordinates::WorldPoint3D {
             x: target_3d.x,
             y: target_3d.y,
             z: target_3d.z,
@@ -1871,12 +1871,12 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         pc_id: crate::element::EntityId,
-        target_point: crate::element::Point3D,
+        target_point: crate::coordinates::WorldPoint3D,
         shoot_mode: crate::weapons::ShootMode,
         target_entity: Option<crate::element::EntityId>,
     ) -> TrajectoryPreview {
         use crate::bow_shot;
-        use crate::element::Point3D;
+        use crate::coordinates::WorldPoint3D;
         use crate::weapons::ShootMode;
 
         // Determine mass and apex based on the selected action.
@@ -1925,7 +1925,7 @@ impl EngineInner {
         let source_point = match selected_action {
             crate::profiles::Action::Bow => {
                 let elevation = pc.position_iface().get_elevation();
-                let shooter_pos = Point3D {
+                let shooter_pos = WorldPoint3D {
                     x: pc.element_data().position_map().x,
                     y: pc.element_data().position_map().y,
                     z: elevation,
@@ -2033,7 +2033,7 @@ impl EngineInner {
         let distance = (dx * dx + dy * dy + dz * dz).sqrt();
         let apex_height = apex_height_override.unwrap_or_else(|| (distance / 10.0).max(1.0));
 
-        let direction_vec = Point3D {
+        let direction_vec = WorldPoint3D {
             x: dx,
             y: dy,
             z: dz,
@@ -2198,7 +2198,7 @@ impl EngineInner {
                 crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
                 self.sight_obstacles(assets),
             );
-            crate::element::Point3D {
+            crate::coordinates::WorldPoint3D {
                 x: p3d.x,
                 y: p3d.y,
                 z: p3d.z,
@@ -2650,7 +2650,7 @@ impl EngineInner {
     fn turn_selected_pcs_in_bow_aim(
         &mut self,
         assets: &LevelAssets,
-        target_3d: crate::element::Point3D,
+        target_3d: crate::coordinates::WorldPoint3D,
     ) {
         use crate::element::{ActionState, Command};
         use crate::order::OrderType;

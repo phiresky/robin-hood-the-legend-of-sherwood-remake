@@ -1218,7 +1218,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         actor: &Entity,
-        target: crate::element::Point3D,
+        target: crate::coordinates::WorldPoint3D,
     ) -> bool {
         let actor_ground = actor.ground_position();
         let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -1232,7 +1232,7 @@ impl EngineInner {
         ) else {
             return false;
         };
-        let direction_vec = crate::element::Point3D {
+        let direction_vec = crate::coordinates::WorldPoint3D {
             x: target.x - source.x,
             y: target.y - source.y,
             z: target.z - source.z,
@@ -1470,14 +1470,16 @@ fn read_target_point_2d(
 fn read_target_point_3d(
     element: &SequenceElement,
     field: crate::sequence::Field,
-) -> Option<crate::element::Point3D> {
+) -> Option<crate::coordinates::WorldPoint3D> {
     match element.get_property(field)? {
-        crate::sequence::FieldValue::Point3D { x, y, z } => Some(crate::element::Point3D {
-            x: *x,
-            y: *y,
-            z: *z,
-        }),
-        crate::sequence::FieldValue::Point2D { x, y } => Some(crate::element::Point3D {
+        crate::sequence::FieldValue::Point3D { x, y, z } => {
+            Some(crate::coordinates::WorldPoint3D {
+                x: *x,
+                y: *y,
+                z: *z,
+            })
+        }
+        crate::sequence::FieldValue::Point2D { x, y } => Some(crate::coordinates::WorldPoint3D {
             x: *x,
             y: *y,
             z: 0.0,

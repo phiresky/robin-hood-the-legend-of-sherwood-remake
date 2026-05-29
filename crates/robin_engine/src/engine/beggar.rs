@@ -140,12 +140,14 @@ fn give_money_to_beggar(
         let (dx_dir, dy_dir) = crate::element::direction_vector_16(elem.direction());
         // Toss from 5 units in front of the belt so the coin leaves
         // the civilian's silhouette.
-        let belt = npc.compute_belt_point().unwrap_or(crate::element::Point3D {
-            x: elem.position_map().x,
-            y: elem.position_map().y,
-            z: 0.0,
-        });
-        let source = crate::element::Point3D {
+        let belt = npc
+            .compute_belt_point()
+            .unwrap_or(crate::coordinates::WorldPoint3D {
+                x: elem.position_map().x,
+                y: elem.position_map().y,
+                z: 0.0,
+            });
+        let source = crate::coordinates::WorldPoint3D {
             x: belt.x + dx_dir * 5.0,
             y: belt.y + dy_dir * 5.0,
             z: belt.z,
@@ -157,7 +159,7 @@ fn give_money_to_beggar(
     let beggar_pos = match engine.get_entity(beggar_id) {
         Some(e) => {
             let elem = e.element_data();
-            crate::element::Point3D {
+            crate::coordinates::WorldPoint3D {
                 x: elem.position_map().x,
                 y: elem.position_map().y,
                 z: e.compute_belt_point().map(|p| p.z).unwrap_or(0.0),
@@ -180,7 +182,7 @@ fn give_money_to_beggar(
         &move_box,
     );
     let target_pos = if los_clear {
-        crate::element::Point3D {
+        crate::coordinates::WorldPoint3D {
             x: source_pos.x + 0.5 * (beggar_pos.x - source_pos.x),
             y: source_pos.y + 0.5 * (beggar_pos.y - source_pos.y),
             z: source_pos.z + 0.5 * (beggar_pos.z - source_pos.z),

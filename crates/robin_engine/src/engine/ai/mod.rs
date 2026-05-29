@@ -1774,7 +1774,7 @@ impl EngineInner {
         // whether an NPC on the ambush point can be seen; the ID is
         // how AI scripts reference the point.
         for (idx, ap) in self.ai_global.ambush_points.iter_mut().enumerate() {
-            ap.position_3d = crate::element::Point3D {
+            ap.position_3d = crate::coordinates::WorldPoint3D {
                 x: ap.position.x,
                 y: ap.position.y,
                 z: 32.0,

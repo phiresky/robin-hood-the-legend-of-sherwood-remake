@@ -2120,9 +2120,10 @@ mod swordfight;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActiveFlight, ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, HumanData,
-        NpcData, PcData, Point3D, SoldierData,
+        NpcData, PcData, SoldierData,
     };
 
     fn make_engine() -> EngineInner {
@@ -2130,7 +2131,7 @@ mod tests {
     }
 
     fn make_soldier(
-        pos: Point3D,
+        pos: WorldPoint3D,
         sector: Option<crate::position_interface::SectorHandle>,
     ) -> Entity {
         let mut element = ElementData {
@@ -2159,7 +2160,10 @@ mod tests {
         })
     }
 
-    fn make_pc(pos: Point3D, sector: Option<crate::position_interface::SectorHandle>) -> Entity {
+    fn make_pc(
+        pos: WorldPoint3D,
+        sector: Option<crate::position_interface::SectorHandle>,
+    ) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorPc,
             active: true,
@@ -2270,7 +2274,7 @@ mod tests {
     fn completed_missed_sword_strike_adds_tiredness_once() {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2278,7 +2282,7 @@ mod tests {
             None,
         ));
         let target = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 500.0,
                 y: 100.0,
                 z: 0.0,
@@ -2310,7 +2314,7 @@ mod tests {
     fn empty_true_circle_sweep_advances_until_rotation_complete() {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2360,7 +2364,7 @@ mod tests {
     fn launching_sword_damage_does_not_add_attacker_tiredness() {
         let mut engine = make_engine();
         let attacker = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2368,7 +2372,7 @@ mod tests {
             None,
         ));
         let victim = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2406,7 +2410,7 @@ mod tests {
     fn thrust_a_promotes_clicked_secondary_opponent() {
         let mut engine = make_engine();
         let pc = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2414,7 +2418,7 @@ mod tests {
             None,
         ));
         let current = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2422,7 +2426,7 @@ mod tests {
             None,
         ));
         let clicked = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 20.0,
                 y: 100.0,
                 z: 0.0,
@@ -2488,7 +2492,7 @@ mod tests {
     fn domino_propagates_to_actors_in_flight_path() {
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2496,7 +2500,7 @@ mod tests {
             None,
         ));
         let flyer = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2504,7 +2508,7 @@ mod tests {
             None,
         ));
         let mid = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 16.0,
                 y: 100.0,
                 z: 0.0,
@@ -2512,7 +2516,7 @@ mod tests {
             None,
         ));
         let far = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 22.0,
                 y: 100.0,
                 z: 0.0,
@@ -2554,7 +2558,7 @@ mod tests {
     fn domino_skips_actors_behind_flight_direction() {
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2562,7 +2566,7 @@ mod tests {
             None,
         ));
         let flyer = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2571,7 +2575,7 @@ mod tests {
         ));
         // Sits "behind" the flyer relative to its +X motion.
         let behind = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 5.0,
                 y: 100.0,
                 z: 0.0,
@@ -2596,7 +2600,7 @@ mod tests {
     fn domino_respects_distance_radius() {
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2604,7 +2608,7 @@ mod tests {
             None,
         ));
         let flyer = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2613,7 +2617,7 @@ mod tests {
         ));
         // 16 map units away on the X axis — outside DOMINO_DISTANCE = 15.
         let far = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 26.0,
                 y: 100.0,
                 z: 0.0,
@@ -2637,7 +2641,7 @@ mod tests {
     fn domino_skips_non_upright_actors() {
         let mut engine = make_engine();
         let hitter = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2645,7 +2649,7 @@ mod tests {
             None,
         ));
         let flyer = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2653,7 +2657,7 @@ mod tests {
             None,
         ));
         let mut lying_entity = make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 16.0,
                 y: 100.0,
                 z: 0.0,
@@ -2681,7 +2685,7 @@ mod tests {
     fn no_domino_when_flight_has_no_antagonist() {
         let mut engine = make_engine();
         let _hitter = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 100.0,
                 z: 0.0,
@@ -2689,7 +2693,7 @@ mod tests {
             None,
         ));
         let flyer = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 10.0,
                 y: 100.0,
                 z: 0.0,
@@ -2697,7 +2701,7 @@ mod tests {
             None,
         ));
         let candidate = engine.add_entity(make_soldier(
-            Point3D {
+            WorldPoint3D {
                 x: 16.0,
                 y: 100.0,
                 z: 0.0,
@@ -2755,7 +2759,7 @@ mod tests {
 
         // PC with profile_index 0 — `make_pc` defaults to that.
         let pc_id = engine.add_entity(make_pc(
-            Point3D {
+            WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,

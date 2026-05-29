@@ -966,7 +966,7 @@ impl EngineInner {
                     };
                     let movement = if e.is_npc() {
                         let m = e.position_iface().get_forecasted_movement();
-                        Some(crate::element::Point3D {
+                        Some(crate::coordinates::WorldPoint3D {
                             x: m.x,
                             y: m.y,
                             z: m.z,
@@ -1039,7 +1039,7 @@ impl EngineInner {
         &self,
         actor_id: EntityId,
         context: &'static str,
-    ) -> Option<(crate::element::Point3D, u16)> {
+    ) -> Option<(crate::coordinates::WorldPoint3D, u16)> {
         let Some(entity) = self.get_entity(actor_id) else {
             tracing::warn!(?actor_id, context, "projectile throw actor missing");
             return None;
@@ -2176,7 +2176,7 @@ impl EngineInner {
     fn rewind_projectile_to_human_hit_old_position(
         &mut self,
         projectile: EntityId,
-        old_pos: crate::element::Point3D,
+        old_pos: crate::coordinates::WorldPoint3D,
     ) {
         let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.0 as usize) else {
             tracing::warn!(
@@ -3324,7 +3324,7 @@ impl EngineInner {
                         self.sequence_manager.element_terminated(seq_id, elem_idx);
                         continue;
                     };
-                    let target_3d = crate::element::Point3D {
+                    let target_3d = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
                         z: 0.0,
@@ -3376,7 +3376,7 @@ impl EngineInner {
                         self.sequence_manager.element_terminated(seq_id, elem_idx);
                         continue;
                     };
-                    let target_3d = crate::element::Point3D {
+                    let target_3d = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
                         z: 0.0,
@@ -3428,7 +3428,7 @@ impl EngineInner {
                         self.sequence_manager.element_terminated(seq_id, elem_idx);
                         continue;
                     };
-                    let target_3d = crate::element::Point3D {
+                    let target_3d = crate::coordinates::WorldPoint3D {
                         x: target_pos.x,
                         y: target_pos.y,
                         z: 0.0,

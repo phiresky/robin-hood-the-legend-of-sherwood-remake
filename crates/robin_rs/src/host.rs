@@ -10,7 +10,7 @@ use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir::ShippingDatadir;
 use robin_engine::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
-use robin_engine::element::{EntityId, Point3D, TrajectoryPoint};
+use robin_engine::element::{EntityId, TrajectoryPoint};
 use robin_engine::engine::{
     DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
 };
@@ -296,7 +296,7 @@ pub struct Host {
     // ── Trajectory preview (transient) ───────────────────────────
     pub valid_trajectory: bool,
     pub trajectory_preview_points: Vec<TrajectoryPoint>,
-    pub trajectory_preview_start: Point3D,
+    pub trajectory_preview_start: WorldPoint3D,
     /// Shooter layer captured alongside `trajectory_preview_points`.
     /// Passed to `GroundMark::add_mark` by the ground-mark drop driver
     /// as the layer argument for the trajectory display.

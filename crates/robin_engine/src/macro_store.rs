@@ -113,7 +113,7 @@ pub enum QaReplayCommand {
     /// and the caller-resolved titbit layer are captured; the target
     /// entity is *not*, since only the point is needed.
     GroundTarget {
-        target_pos: crate::element::Point3D,
+        target_pos: crate::coordinates::WorldPoint3D,
         command: Command,
         target_field: Field,
         /// Titbit layer argument forwarded from

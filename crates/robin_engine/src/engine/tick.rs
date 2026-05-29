@@ -7335,8 +7335,8 @@ impl EngineInner {
                     // Helper: emit 5 UnconsciousStar titbits from
                     // feet → eyes with the canonical phases.
                     let emit_stars = |mgr: &mut crate::titbit::TitbitManager,
-                                      feet: crate::element::Point3D,
-                                      eyes: crate::element::Point3D,
+                                      feet: crate::coordinates::WorldPoint3D,
+                                      eyes: crate::coordinates::WorldPoint3D,
                                       layer: u16| {
                         let feet = crate::coordinates::WorldPoint3D {
                             x: feet.x,
@@ -8349,9 +8349,10 @@ mod bow_command_body_parity_tests {
 #[cfg(test)]
 mod soldier_take_drink_parity_tests {
     use super::*;
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
         ActorData, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementProjectile,
-        HumanData, NpcData, ObjectData, ObjectType, Point3D, Posture, ProjectileData, SoldierData,
+        HumanData, NpcData, ObjectData, ObjectType, Posture, ProjectileData, SoldierData,
     };
     use crate::sequence::SequenceElement;
 
@@ -8362,7 +8363,7 @@ mod soldier_take_drink_parity_tests {
             posture: Posture::Upright,
             ..ElementData::default()
         };
-        element.set_position(Point3D { x, y, z: 0.0 });
+        element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
         element.set_direction_instantly(0);
         Entity::Soldier(ActorSoldier {
@@ -8380,7 +8381,7 @@ mod soldier_take_drink_parity_tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position(Point3D { x, y, z: 0.0 });
+        element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
         Entity::Projectile(ElementProjectile {
             element,
@@ -8398,7 +8399,7 @@ mod soldier_take_drink_parity_tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position(Point3D { x, y, z: 0.0 });
+        element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
         Entity::Bonus(ElementBonus {
             element,

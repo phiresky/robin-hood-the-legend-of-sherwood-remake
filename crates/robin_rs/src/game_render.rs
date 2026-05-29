@@ -426,15 +426,15 @@ pub(crate) fn render_view_cone_overlay(
     let (viewer, params, tint) = if dev.debug.free_shadow_polygon {
         // Developer cheat: anchor the cone at a stored 3D position,
         // or at the camera centre when nothing has been set yet.
-        let pos = dev
-            .cheat_free_shadow_polygon_pos
-            .unwrap_or_else(|| crate::element::Point3D {
+        let pos = dev.cheat_free_shadow_polygon_pos.unwrap_or_else(|| {
+            robin_engine::coordinates::WorldPoint3D {
                 x: host.viewport.view_position.x
                     + (host.viewport.screen_size.x / host.viewport.zoom_factor) * 0.5,
                 y: host.viewport.view_position.y
                     + (host.viewport.screen_size.y / host.viewport.zoom_factor) * 0.5,
                 z: 0.0,
-            });
+            }
+        });
         (
             geo2d::pt(pos.x, pos.y),
             dev.cheat_free_shadow_polygon_params.clone(),
@@ -1378,7 +1378,7 @@ fn transition_crenel_climb_up_mask_position(
     entity: &crate::element::Entity,
     engine: &Engine,
     assets: &LevelAssets,
-) -> Option<crate::element::Point3D> {
+) -> Option<robin_engine::coordinates::WorldPoint3D> {
     use crate::order::OrderType;
 
     let elem = entity.element_data();
@@ -1417,7 +1417,7 @@ fn transition_crenel_climb_up_mask_position(
         best_z = Some(best_z.map_or(z, |old| old.max(z)));
     }
     let z = best_z?;
-    Some(crate::element::Point3D {
+    Some(robin_engine::coordinates::WorldPoint3D {
         x: point_mid.x,
         y: point_mid.y + z,
         z,
@@ -1431,7 +1431,7 @@ fn render_sprite_mask_debug_overlay(
     renderer: &mut Renderer,
     sprite_world_bbox: &crate::geo2d::BBox2D,
     actor_position: crate::geo2d::Point2D,
-    position_3d: crate::element::Point3D,
+    position_3d: robin_engine::coordinates::WorldPoint3D,
     use_projectile_path: bool,
     mask_indices: &[robin_engine::mask::MaskIndex],
 ) {
@@ -2280,7 +2280,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
     /// Render dots along a trajectory from `start` through `points`.
     #[allow(clippy::too_many_arguments)]
     fn render_arc(
-        start: crate::element::Point3D,
+        start: robin_engine::coordinates::WorldPoint3D,
         points: &[crate::element::TrajectoryPoint],
         view: crate::geo2d::Point2D,
         zoom: f32,
@@ -2312,7 +2312,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
             let mut dot_distance = TRAJECTORY_DOT_INTERVAL - carry;
             while dot_distance <= seg_len {
                 let ratio = dot_distance / seg_len;
-                let walk = crate::element::Point3D {
+                let walk = robin_engine::coordinates::WorldPoint3D {
                     x: last.x + dx * ratio,
                     y: last.y + dy * ratio,
                     z: last.z + dz * ratio,

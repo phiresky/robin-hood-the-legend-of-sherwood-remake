@@ -735,7 +735,7 @@ impl EngineInner {
                         level: raw.level,
                     },
                     direction: 0,
-                    position_3d: crate::element::Point3D::default(),
+                    position_3d: crate::coordinates::WorldPoint3D::default(),
                     id: 0,
                 });
             }

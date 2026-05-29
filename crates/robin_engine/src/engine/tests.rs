@@ -1317,8 +1317,9 @@ fn sort_for_minimap_priority_order() {
 
 #[test]
 fn smalltalk_strike_does_not_transfer_initiative_immediately() {
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActorSoldier, Command, ElementData, ElementKind, Entity, Point3D, Posture,
+        ActorSoldier, Command, ElementData, ElementKind, Entity, Posture,
     };
     use crate::element_kinds::ActionState;
 
@@ -1333,7 +1334,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         posture: Posture::Upright,
         ..Default::default()
     };
-    attacker_element.set_position(Point3D {
+    attacker_element.set_position(WorldPoint3D {
         x: 100.0,
         y: 100.0,
         z: 0.0,
@@ -1351,7 +1352,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         posture: Posture::Upright,
         ..Default::default()
     };
-    defender_element.set_position(Point3D {
+    defender_element.set_position(WorldPoint3D {
         x: 160.0,
         y: 100.0,
         z: 0.0,
@@ -1415,9 +1416,9 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
 
 #[test]
 fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity, Point3D, Posture,
-        SmalltalkHint,
+        ActorPc, ActorSoldier, Command, ElementData, ElementKind, Entity, Posture, SmalltalkHint,
     };
     use crate::element_kinds::ActionState;
 
@@ -1429,7 +1430,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         posture: Posture::Upright,
         ..Default::default()
     };
-    pc_element.set_position(Point3D {
+    pc_element.set_position(WorldPoint3D {
         x: 100.0,
         y: 100.0,
         z: 0.0,
@@ -1446,7 +1447,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         posture: Posture::Upright,
         ..Default::default()
     };
-    soldier_element.set_position(Point3D {
+    soldier_element.set_position(WorldPoint3D {
         x: 130.0,
         y: 100.0,
         z: 0.0,
@@ -1492,8 +1493,9 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
 
 #[test]
 fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_actor() {
+    use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActorSoldier, Command, ElementData, ElementKind, Entity, Point3D, Posture, SmalltalkHint,
+        ActorSoldier, Command, ElementData, ElementKind, Entity, Posture, SmalltalkHint,
     };
     use crate::element_kinds::ActionState;
 
@@ -1505,7 +1507,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         posture: Posture::Upright,
         ..Default::default()
     };
-    hinted_element.set_position(Point3D {
+    hinted_element.set_position(WorldPoint3D {
         x: 100.0,
         y: 100.0,
         z: 0.0,
@@ -1523,7 +1525,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         posture: Posture::Upright,
         ..Default::default()
     };
-    hinted_opponent_element.set_position(Point3D {
+    hinted_opponent_element.set_position(WorldPoint3D {
         x: 160.0,
         y: 100.0,
         z: 0.0,
@@ -1541,7 +1543,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         posture: Posture::Upright,
         ..Default::default()
     };
-    free_attacker_element.set_position(Point3D {
+    free_attacker_element.set_position(WorldPoint3D {
         x: 300.0,
         y: 100.0,
         z: 0.0,
@@ -1559,7 +1561,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         posture: Posture::Upright,
         ..Default::default()
     };
-    free_defender_element.set_position(Point3D {
+    free_defender_element.set_position(WorldPoint3D {
         x: 360.0,
         y: 100.0,
         z: 0.0,
@@ -1706,7 +1708,8 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
 
 #[test]
 fn sort_for_minimap_display_then_creation_tiebreak() {
-    use crate::element::{ActorSoldier, ElementData, ElementKind, Entity, Point3D};
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{ActorSoldier, ElementData, ElementKind, Entity};
 
     let mut engine = EngineInner::new();
 
@@ -1719,7 +1722,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
             kind: ElementKind::ActorSoldier,
             ..Default::default()
         };
-        element.set_position(Point3D { x: 0.0, y, z: 0.0 });
+        element.set_position(WorldPoint3D { x: 0.0, y, z: 0.0 });
         Entity::Soldier(ActorSoldier {
             element,
             actor: Default::default(),

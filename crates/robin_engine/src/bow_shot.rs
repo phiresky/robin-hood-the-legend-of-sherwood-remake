@@ -39,10 +39,10 @@
 //! shows the disabled bow slot automatically.
 
 use crate::combat::{self, ConcussionContext};
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapPoint, WorldPoint3D, WorldVec3D};
 use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
-    ObjectData, ObjectType, Point3D, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
+    ObjectData, ObjectType, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
 };
 use crate::movement::ActiveShot;
 use crate::order::{Order, OrderType};
@@ -505,12 +505,12 @@ fn apply_bow_transition_state_side_effect(
 ///
 /// Returns the initial velocity vector.
 pub fn compute_initial_throw_velocity(
-    thrower_to_target: Point3D,
+    thrower_to_target: WorldPoint3D,
     apex_height: f32,
     mass: f32,
     mut flight_time: u16,
-    target_forecasted_movement: Option<Point3D>,
-) -> Point3D {
+    target_forecasted_movement: Option<WorldPoint3D>,
+) -> WorldPoint3D {
     debug_assert!(!(apex_height > 0.0 && mass == 0.0));
     debug_assert!(!(apex_height == 0.0 && mass > 0.0));
 
@@ -528,7 +528,7 @@ pub fn compute_initial_throw_velocity(
     }
 
     let mut velocity = if flight_time == 1 {
-        Point3D {
+        WorldPoint3D {
             x: 0.5 * thrower_to_target.x,
             y: 0.5 * thrower_to_target.y,
             z: 0.5 * thrower_to_target.z,
@@ -551,7 +551,7 @@ pub fn compute_initial_throw_velocity(
         if !vz.is_finite() {
             vz = 0.0;
         }
-        Point3D {
+        WorldPoint3D {
             x: vx,
             y: vy,
             z: vz,
@@ -600,8 +600,8 @@ pub struct TrajectoryObstacleCheck<'a> {
 /// (`TIME_FLYSEGMENT`).  The arrow advances linearly between consecutive
 /// points, giving the visual gravity arc.
 pub fn compute_trajectory_ballistic(
-    start: Point3D,
-    initial_velocity: Point3D,
+    start: WorldPoint3D,
+    initial_velocity: WorldPoint3D,
     mass: f32,
     flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -623,8 +623,8 @@ pub fn compute_trajectory_ballistic(
 /// per-material bounce coefficients on wall / top impacts.  Nets use
 /// `(0.1, 0.1)` and wasp nests use the coin bounce factors.
 pub fn compute_trajectory_ballistic_bounce(
-    start: Point3D,
-    initial_velocity: Point3D,
+    start: WorldPoint3D,
+    initial_velocity: WorldPoint3D,
     mass: f32,
     flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -655,7 +655,7 @@ struct ImpactInfo {
     /// Unit impact normal (world-space).  For `Ground`: (0,0,1).  For
     /// `Top`: cross(top_plane.v1, top_plane.v2) normalised.  For `Wall`:
     /// the outward XY normal of the crossed polygon edge.
-    normal: Point3D,
+    normal: WorldPoint3D,
     /// Per-obstacle bounce factors (vertical, horizontal).
     /// Defaults to `(1.0, 1.0)` for ground (no material factor).
     obstacle_bounce_v: f32,
@@ -664,15 +664,15 @@ struct ImpactInfo {
 
 /// Classify a trajectory impact against an obstacle (or ground if `None`).
 fn classify_impact(
-    impact: Point3D,
-    segment_from: Point3D,
-    segment_to: Point3D,
+    impact: WorldPoint3D,
+    segment_from: WorldPoint3D,
+    segment_to: WorldPoint3D,
     obstacle: Option<&crate::sight_obstacle::SightObstacle>,
 ) -> ImpactInfo {
     let Some(obs) = obstacle else {
         return ImpactInfo {
             kind: ImpactKind::Ground,
-            normal: Point3D {
+            normal: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 1.0,
@@ -710,7 +710,7 @@ fn classify_impact(
         let norm = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-6);
         return ImpactInfo {
             kind: ImpactKind::Top,
-            normal: Point3D {
+            normal: WorldPoint3D {
                 x: nx / norm,
                 y: ny / norm,
                 z: nz / norm,
@@ -773,7 +773,7 @@ fn classify_impact(
 
     ImpactInfo {
         kind: ImpactKind::Wall,
-        normal: Point3D {
+        normal: WorldPoint3D {
             x: best_nx,
             y: best_ny,
             z: 0.0,
@@ -790,15 +790,15 @@ fn classify_impact(
 /// have been after gravity for this step (used on top impacts so the
 /// bounce integrates the fractional-step gravity correction).
 fn apply_bounce_reflection(
-    velocity: Point3D,
+    velocity: WorldPoint3D,
     new_vz: f32,
     ratio: f32,
     info: ImpactInfo,
     projectile_bounce: (f32, f32),
-) -> Point3D {
+) -> WorldPoint3D {
     let (proj_bv, proj_bh) = projectile_bounce;
     match info.kind {
-        ImpactKind::Ground => Point3D {
+        ImpactKind::Ground => WorldPoint3D {
             x: velocity.x * proj_bh,
             y: velocity.y * proj_bh,
             z: -velocity.z * proj_bv,
@@ -818,7 +818,7 @@ fn apply_bounce_reflection(
             let comp_x = -2.0 * dot * n.x;
             let comp_y = -2.0 * dot * n.y;
 
-            Point3D {
+            WorldPoint3D {
                 x: info.obstacle_bounce_h * proj_bh * (velocity.x + comp_x),
                 y: ASPECT_RATIO * (info.obstacle_bounce_h * proj_bh * (velocity.y + comp_y)),
                 z: velocity.z,
@@ -842,7 +842,7 @@ fn apply_bounce_reflection(
             let comp_y = -2.0 * dot * n.y;
             let comp_z = -2.0 * dot * n.z;
 
-            Point3D {
+            WorldPoint3D {
                 x: info.obstacle_bounce_h * proj_bh * (velocity.x + comp_x),
                 y: ASPECT_RATIO * info.obstacle_bounce_h * proj_bh * (velocity.y + comp_y),
                 z: info.obstacle_bounce_v * proj_bv * (interp_vz + comp_z),
@@ -852,8 +852,8 @@ fn apply_bounce_reflection(
 }
 
 fn compute_trajectory_ballistic_impl(
-    start: Point3D,
-    initial_velocity: Point3D,
+    start: WorldPoint3D,
+    initial_velocity: WorldPoint3D,
     mass: f32,
     _flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -924,7 +924,7 @@ fn compute_trajectory_ballistic_impl(
         if let Some((bv, bh)) = bounce
             && position.z < 0.0
         {
-            velocity = Point3D {
+            velocity = WorldPoint3D {
                 x: velocity.x * bh,
                 y: velocity.y * bh,
                 z: -velocity.z * bv,
@@ -932,7 +932,7 @@ fn compute_trajectory_ballistic_impl(
             position.z = 0.0;
             last_impact = Some(ImpactInfo {
                 kind: ImpactKind::Ground,
-                normal: Point3D {
+                normal: WorldPoint3D {
                     x: 0.0,
                     y: 0.0,
                     z: 1.0,
@@ -943,7 +943,7 @@ fn compute_trajectory_ballistic_impl(
             continue;
         }
 
-        let new_position = Point3D {
+        let new_position = WorldPoint3D {
             x: velocity.x * 2.0 + position.x,
             y: velocity.y * 2.0 + position.y,
             z: velocity.z * 2.0 + position.z,
@@ -1008,7 +1008,7 @@ fn compute_trajectory_ballistic_impl(
             let obstacle = r
                 .obstacle_index
                 .and_then(|i| check.sight_obstacles.get(i as usize));
-            let impact = Point3D {
+            let impact = WorldPoint3D {
                 x: r.impact.x,
                 y: r.impact.y,
                 z: r.impact.z,
@@ -1098,7 +1098,7 @@ fn compute_trajectory_ballistic_impl(
             // space so screen depth advances while world height stays
             // flat.
             trajectory.push(TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: exit.x,
                     y: crate::coordinates::GroundPoint::from_map_and_z(
                         MapPoint::from_geo(exit),
@@ -1130,11 +1130,11 @@ fn compute_trajectory_ballistic_impl(
 /// For down shots, the bow point is shifted laterally by 20 units along
 /// the facing direction vector.
 pub fn compute_bow_point(
-    position: Point3D,
+    position: WorldPoint3D,
     shoot_mode: ShootMode,
     direction: i16,
     sprite_hand_point: crate::geo2d::Point2D,
-) -> Point3D {
+) -> WorldPoint3D {
     let elevation = position.z;
 
     // Isometric projection: elevation shifts the sprite upward on screen,
@@ -1142,12 +1142,12 @@ pub fn compute_bow_point(
     let hand_y = sprite_hand_point.y + elevation;
 
     match shoot_mode {
-        ShootMode::Long => Point3D {
+        ShootMode::Long => WorldPoint3D {
             x: sprite_hand_point.x,
             y: hand_y,
             z: elevation + BOW_Z_OFFSET_LONG,
         },
-        ShootMode::Normal => Point3D {
+        ShootMode::Normal => WorldPoint3D {
             x: sprite_hand_point.x,
             y: hand_y,
             z: elevation + BOW_Z_OFFSET_NORMAL,
@@ -1156,7 +1156,7 @@ pub fn compute_bow_point(
             // Leaning-out soldiers shift the bow point by 20 units
             // along the direction vector.
             let (dx, dy) = crate::element::direction_vector_16(direction);
-            Point3D {
+            WorldPoint3D {
                 x: sprite_hand_point.x + dx * 20.0,
                 y: hand_y + dy * 20.0,
                 z: elevation + BOW_Z_OFFSET_NORMAL,
@@ -1198,7 +1198,7 @@ pub fn apply_projectile_landing_resolution(
 ///
 /// Returns `Some(bias)` if the shot misses (caller adds to velocity),
 /// or `None` if the shot hits.
-pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Option<Point3D> {
+pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Option<WorldPoint3D> {
     let roll: u32 = crate::sim_rng::u32(1..=100);
 
     if roll <= hit_chance {
@@ -1212,7 +1212,7 @@ pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Op
     let by = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
     let bz = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
 
-    Some(Point3D {
+    Some(WorldPoint3D {
         x: bx,
         y: by,
         z: bz,
@@ -1230,7 +1230,11 @@ pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Op
 /// (from the shooter's hand/bow anchor to the first stored waypoint)
 /// is intentionally not tested — the first stored waypoint already
 /// sits one `TIME_FLYSEGMENT` integration step downrange.
-pub fn will_hit_target(trajectory: &[TrajectoryPoint], _start: Point3D, target: Point3D) -> bool {
+pub fn will_hit_target(
+    trajectory: &[TrajectoryPoint],
+    _start: WorldPoint3D,
+    target: WorldPoint3D,
+) -> bool {
     if trajectory.len() < 2 {
         return false;
     }
@@ -1287,12 +1291,12 @@ pub fn will_hit_target(trajectory: &[TrajectoryPoint], _start: Point3D, target: 
 /// movement vector (from `PositionInterface::get_forecasted_movement`)
 /// — used to lead the shot.  Pass `None` for stationary FX targets.
 pub fn compute_shot_velocity_params(
-    bow_point: Point3D,
-    target_point: Point3D,
+    bow_point: WorldPoint3D,
+    target_point: WorldPoint3D,
     shoot_mode: ShootMode,
-    target_forecasted_movement: Option<Point3D>,
-) -> (Point3D, u16, f32) {
-    let to_target = Point3D {
+    target_forecasted_movement: Option<WorldPoint3D>,
+) -> (WorldPoint3D, u16, f32) {
+    let to_target = WorldPoint3D {
         x: target_point.x - bow_point.x,
         y: target_point.y - bow_point.y,
         z: target_point.z - bow_point.z,
@@ -1672,11 +1676,11 @@ pub struct ShotTickResult {
     pub seq_id: SequenceId,
     pub elem_idx: usize,
     /// Shooter's 3D entity position (`.z` = ground elevation).
-    pub shooter_position: Point3D,
+    pub shooter_position: WorldPoint3D,
     /// Target's 2D map position (for arrow direction / spawn).
     pub target_pos: MapPoint,
     /// Target's 3D belt point (for trajectory computation).
-    pub target_point: Point3D,
+    pub target_point: WorldPoint3D,
     /// Shoot mode selected when the command was translated.
     pub shoot_mode: ShootMode,
     /// Shooter's facing direction (0–15) for bow-point computation.
@@ -1684,7 +1688,7 @@ pub struct ShotTickResult {
     /// Sprite hand anchor point (sprite position + hotspot).
     pub sprite_hand_point: crate::geo2d::Point2D,
     /// Target's forecasted movement vector for leading shots.
-    pub target_forecasted_movement: Point3D,
+    pub target_forecasted_movement: WorldPoint3D,
 }
 
 struct PendingShotTickResult {
@@ -1692,7 +1696,7 @@ struct PendingShotTickResult {
     target: EntityId,
     seq_id: SequenceId,
     elem_idx: usize,
-    shooter_position: Point3D,
+    shooter_position: WorldPoint3D,
     shoot_mode: ShootMode,
     shooter_direction: i16,
     sprite_hand_point: crate::geo2d::Point2D,
@@ -1741,7 +1745,7 @@ pub fn tick_bow_shots(
         // The element_data().position field is a dead field; the live
         // ground position is in position_map.
         let elevation = entity.position_iface().get_elevation();
-        let shooter_position = Point3D {
+        let shooter_position = WorldPoint3D {
             x: entity.element_data().position_map().x,
             y: entity.element_data().position_map().y,
             z: elevation,
@@ -2033,7 +2037,7 @@ pub fn tick_bow_shots(
 /// Parameters for spawning an arrow projectile.
 pub struct SpawnArrowParams {
     pub shooter: EntityId,
-    pub bow_point: Point3D,
+    pub bow_point: WorldPoint3D,
     /// C++ `ShootWithBowAt` stores the shooter map position as
     /// `mposStartOfTrajectory` after the arrow's first `Hourglass()`.
     /// AI reactions use this origin, not the bow hand hotspot.
@@ -2048,7 +2052,7 @@ pub struct SpawnArrowParams {
     /// seeded from the XY of this vector, not from `target - bow` —
     /// the two diverge once leading is applied to moving targets.
     ///
-    pub initial_velocity: Point3D,
+    pub initial_velocity: WorldPoint3D,
     /// Whether the precomputed trajectory ends inside a hole zone
     /// (before any far-edge fall-into-hole extension).  Pre-flags
     /// `ProjectileData::disappear` so `maybe_splash_on_landing` can
@@ -2134,9 +2138,9 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
 
 fn trajectory_end_or_start(
     trajectory: &[TrajectoryPoint],
-    start: Point3D,
+    start: WorldPoint3D,
     projectile_kind: &'static str,
-) -> Point3D {
+) -> WorldPoint3D {
     match trajectory.last() {
         Some(tp) => tp.position,
         None => {
@@ -2156,15 +2160,15 @@ fn trajectory_end_or_start(
 /// using `MASS_NET` / `APEX_NET`.
 pub fn spawn_net(
     thrower: EntityId,
-    throw_pos: Point3D,
-    target_pos: Point3D,
+    throw_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = Point3D {
+    let direction_vec = WorldPoint3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2254,15 +2258,15 @@ pub fn spawn_net(
 /// `MASS_WASP_NEST` / `APEX_WASP_NEST`.
 pub fn spawn_wasp_nest(
     thrower: EntityId,
-    throw_pos: Point3D,
-    target_pos: Point3D,
+    throw_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = Point3D {
+    let direction_vec = WorldPoint3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2338,7 +2342,7 @@ pub const NUMBER_OF_WASPS: u16 = 20;
 /// Copies the nest's position into the wasp and queues the
 /// `BonusOne` animation.  Per-frame AI (direction change / victim
 /// choice / sting) lives in `EngineInner::tick_wasp_nests`.
-pub fn spawn_wasp(nest_id: EntityId, position: Point3D, layer: u16) -> Entity {
+pub fn spawn_wasp(nest_id: EntityId, position: WorldPoint3D, layer: u16) -> Entity {
     let mut element = ElementData {
         kind: ElementKind::ObjectProjectile,
         active: true,
@@ -2392,10 +2396,10 @@ pub fn spawn_wasp(nest_id: EntityId, position: Point3D, layer: u16) -> Entity {
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_apple(
     thrower: EntityId,
-    throw_pos: Point3D,
-    target_pos: Point3D,
+    throw_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     target: Option<EntityId>,
-    target_forecasted_movement: Option<Point3D>,
+    target_forecasted_movement: Option<WorldPoint3D>,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
@@ -2429,10 +2433,10 @@ pub fn spawn_apple(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_stone(
     thrower: EntityId,
-    throw_pos: Point3D,
-    target_pos: Point3D,
+    throw_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     target: Option<EntityId>,
-    target_forecasted_movement: Option<Point3D>,
+    target_forecasted_movement: Option<WorldPoint3D>,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
@@ -2462,10 +2466,10 @@ pub fn spawn_stone(
 #[allow(clippy::too_many_arguments)]
 fn spawn_throwable(
     thrower: EntityId,
-    throw_pos: Point3D,
-    target_pos: Point3D,
+    throw_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     target: Option<EntityId>,
-    target_forecasted_movement: Option<Point3D>,
+    target_forecasted_movement: Option<WorldPoint3D>,
     layer: u16,
     mass: f32,
     apex: f32,
@@ -2477,7 +2481,7 @@ fn spawn_throwable(
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = Point3D {
+    let direction_vec = WorldPoint3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2587,15 +2591,15 @@ pub const COIN_SCATTER_ATTEMPTS: u32 = 7;
 /// into the burst routine to eject coins.
 pub fn spawn_purse(
     thrower: EntityId,
-    throw_pos: Point3D,
-    target_pos: Point3D,
+    throw_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = Point3D {
+    let direction_vec = WorldPoint3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2677,8 +2681,8 @@ pub fn spawn_purse(
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_coin(
     source_purse: Option<EntityId>,
-    source_pos: Point3D,
-    target_pos: Point3D,
+    source_pos: WorldPoint3D,
+    target_pos: WorldPoint3D,
     layer: u16,
     layer_goal: u16,
     sector_goal: Option<crate::position_interface::SectorHandle>,
@@ -2688,7 +2692,7 @@ pub fn spawn_coin(
     let dx = target_pos.x - source_pos.x;
     let dy = target_pos.y - source_pos.y;
     let dz = target_pos.z - source_pos.z;
-    let direction_vec = Point3D {
+    let direction_vec = WorldPoint3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2796,7 +2800,7 @@ pub struct ArrowTickResult {
     /// human hits whose `HitHuman` handler returns true.  Arrows only
     /// use this in the damage branch; pass-through and ricochet keep
     /// their current position/falling trajectory.
-    pub human_hit_old_position: Option<Point3D>,
+    pub human_hit_old_position: Option<WorldPoint3D>,
 }
 
 fn current_arrow_orientation_sector(proj: &ElementProjectile) -> i16 {
@@ -2831,7 +2835,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
         let (dx, dy) = crate::element::direction_vector_16(direction);
         (
             direction as u16,
-            Point3D {
+            WorldPoint3D {
                 x: dx * 30.0,
                 y: dy * ASPECT_RATIO * 30.0,
                 z: -20.0,
@@ -2842,7 +2846,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
         let (dx, dy) = crate::element::direction_vector_16(direction);
         (
             direction as u16,
-            Point3D {
+            WorldPoint3D {
                 x: dx * 30.0,
                 y: dy * ASPECT_RATIO * 10.0,
                 z: 0.0,
@@ -2918,8 +2922,8 @@ fn tick_arrows_matching(
         id: EntityId,
         /// Belt point (arrows + apples) and eyes point (stones) in 3D.
         /// Pre-computed so the per-projectile loop stays cheap.
-        belt: Point3D,
-        eyes: Point3D,
+        belt: WorldPoint3D,
+        eyes: WorldPoint3D,
         /// True when posture == LeaningOut — arrows get an eye-level
         /// re-check after the belt miss.
         leaning_out: bool,
@@ -3000,7 +3004,7 @@ fn tick_arrows_matching(
     // and the perpendicular distance to the arrow's movement line.
     struct FxTargetSnapshot {
         id: EntityId,
-        center: Point3D,
+        center: WorldPoint3D,
         position_map: MapPoint,
         action_filter: crate::element::TargetFilter,
     }
@@ -3173,7 +3177,7 @@ fn tick_arrows_matching(
                 // Compute per-frame increment toward this waypoint.
                 let current = proj.element.position();
                 let factor = 1.0 / time as f32;
-                proj.projectile.velocity_increment = Point3D {
+                proj.projectile.velocity_increment = WorldVec3D {
                     x: (point.position.x - current.x) * factor,
                     y: (point.position.y - current.y) * factor,
                     z: (point.position.z - current.z) * factor,
@@ -3353,7 +3357,7 @@ fn tick_arrows_matching(
         }
 
         let arrow_new = proj.element.position();
-        let arrow_old = primed_segment_start.unwrap_or(Point3D {
+        let arrow_old = primed_segment_start.unwrap_or(WorldPoint3D {
             x: arrow_new.x - proj.projectile.velocity_increment.x,
             y: arrow_new.y - proj.projectile.velocity_increment.y,
             z: arrow_new.z - proj.projectile.velocity_increment.z,
@@ -3464,13 +3468,13 @@ fn tick_arrows_matching(
         /// hit-radius norm and the leaning-out arrow retry's coarse
         /// `MaxNorm` gate. Return an infinite vector when the segment
         /// has zero length so callers naturally reject the line test.
-        fn point_to_line_delta(p: Point3D, a: Point3D, b: Point3D) -> Point3D {
+        fn point_to_line_delta(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> WorldPoint3D {
             let abx = b.x - a.x;
             let aby = b.y - a.y;
             let abz = b.z - a.z;
             let ab_len_sq = abx * abx + aby * aby + abz * abz;
             if ab_len_sq < 1e-6 {
-                return Point3D {
+                return WorldPoint3D {
                     x: f32::MAX,
                     y: f32::MAX,
                     z: f32::MAX,
@@ -3480,17 +3484,17 @@ fn tick_arrows_matching(
             let apy = p.y - a.y;
             let apz = p.z - a.z;
             let t = (apx * abx + apy * aby + apz * abz) / ab_len_sq;
-            Point3D {
+            WorldPoint3D {
                 x: p.x - (a.x + t * abx),
                 y: p.y - (a.y + t * aby),
                 z: p.z - (a.z + t * abz),
             }
         }
-        fn point_to_line_distance(p: Point3D, a: Point3D, b: Point3D) -> f32 {
+        fn point_to_line_distance(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> f32 {
             let delta = point_to_line_delta(p, a, b);
             (delta.x * delta.x + delta.y * delta.y + delta.z * delta.z).sqrt()
         }
-        fn distance(a: Point3D, b: Point3D) -> f32 {
+        fn distance(a: WorldPoint3D, b: WorldPoint3D) -> f32 {
             let dx = b.x - a.x;
             let dy = b.y - a.y;
             let dz = b.z - a.z;
@@ -3922,7 +3926,7 @@ mod tests {
             ..ElementData::default()
         };
         element.set_position_map(MapPoint { x, y });
-        element.set_position(Point3D { x, y, z: 0.0 });
+        element.set_position(WorldPoint3D { x, y, z: 0.0 });
         Entity::Target(ElementTarget {
             element,
             fx: FxData::default(),
@@ -4387,7 +4391,7 @@ mod tests {
     #[test]
     fn begin_bow_shot_faces_arrow_fx_target_cxx_ground_y() {
         let mut target = make_arrow_target(50.0, 120.0);
-        target.element_data_mut().set_position(Point3D {
+        target.element_data_mut().set_position(WorldPoint3D {
             x: 50.0,
             y: 120.0,
             z: 100.0,
@@ -4431,7 +4435,7 @@ mod tests {
     #[test]
     fn tick_bow_shots_keeps_facing_fx_target_cxx_ground_y() {
         let mut target = make_arrow_target(50.0, 120.0);
-        target.element_data_mut().set_position(Point3D {
+        target.element_data_mut().set_position(WorldPoint3D {
             x: 50.0,
             y: 120.0,
             z: 100.0,
@@ -4525,7 +4529,7 @@ mod tests {
 
     #[test]
     fn compute_initial_throw_velocity_flat_shot() {
-        let to_target = Point3D {
+        let to_target = WorldPoint3D {
             x: 100.0,
             y: 0.0,
             z: 0.0,
@@ -4538,7 +4542,7 @@ mod tests {
 
     #[test]
     fn compute_initial_throw_velocity_high_shot() {
-        let to_target = Point3D {
+        let to_target = WorldPoint3D {
             x: 100.0,
             y: 0.0,
             z: 0.0,
@@ -4553,13 +4557,13 @@ mod tests {
 
     #[test]
     fn compute_trajectory_produces_arc() {
-        let start = Point3D {
+        let start = WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 40.0,
         };
         let vel = compute_initial_throw_velocity(
-            Point3D {
+            WorldPoint3D {
                 x: 100.0,
                 y: 0.0,
                 z: -10.0,
@@ -4583,7 +4587,7 @@ mod tests {
     fn spawn_arrow_creates_flying_projectile_with_trajectory() {
         let traj = vec![
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 25.0,
                     y: 0.0,
                     z: 45.0,
@@ -4591,7 +4595,7 @@ mod tests {
                 time: 4,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 40.0,
@@ -4601,7 +4605,7 @@ mod tests {
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
@@ -4613,7 +4617,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4635,7 +4639,7 @@ mod tests {
     fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 100.0,
                 y: 40.0,
                 z: 40.0,
@@ -4644,7 +4648,7 @@ mod tests {
             target: EntityId(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 40.0,
                     z: 40.0,
@@ -4654,7 +4658,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4677,7 +4681,7 @@ mod tests {
         // soldier up on the final waypoint.
         let traj = vec![
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 20.0,
                     y: 0.0,
                     z: 35.0,
@@ -4685,7 +4689,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 40.0,
                     y: 0.0,
                     z: 30.0,
@@ -4693,7 +4697,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 25.0,
@@ -4706,7 +4710,7 @@ mod tests {
             Some(make_soldier(50.0, 0.0)),
             Some(spawn_arrow(SpawnArrowParams {
                 shooter: EntityId(0),
-                bow_point: Point3D {
+                bow_point: WorldPoint3D {
                     x: 0.0,
                     y: 0.0,
                     z: 40.0,
@@ -4718,7 +4722,7 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: Point3D {
+                initial_velocity: WorldPoint3D {
                     x: 1.0,
                     y: 0.0,
                     z: 0.0,
@@ -4747,7 +4751,7 @@ mod tests {
     fn tick_arrows_human_hit_reports_old_position_and_victim_impact_anchor() {
         let traj = vec![
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 20.0,
                     y: 0.0,
                     z: 35.0,
@@ -4755,7 +4759,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 40.0,
                     y: 0.0,
                     z: 30.0,
@@ -4763,7 +4767,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 25.0,
@@ -4773,7 +4777,7 @@ mod tests {
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
@@ -4785,7 +4789,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4822,7 +4826,7 @@ mod tests {
     fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
@@ -4831,7 +4835,7 @@ mod tests {
             target: EntityId(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 0.0,
@@ -4841,7 +4845,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: -0.25,
@@ -4849,7 +4853,7 @@ mod tests {
         });
         let mut other_arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 1000.0,
                 y: 0.0,
                 z: 40.0,
@@ -4858,7 +4862,7 @@ mod tests {
             target: EntityId(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 1010.0,
                     y: 0.0,
                     z: 40.0,
@@ -4868,7 +4872,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4877,7 +4881,7 @@ mod tests {
         let Entity::Projectile(p) = &mut other_arrow else {
             panic!("spawn_arrow should create projectile");
         };
-        p.projectile.launch_segment_start = Some(Point3D {
+        p.projectile.launch_segment_start = Some(WorldPoint3D {
             x: 1000.0,
             y: 0.0,
             z: 40.0,
@@ -4916,7 +4920,7 @@ mod tests {
     fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 25.0,
@@ -4925,7 +4929,7 @@ mod tests {
             target: EntityId(2),
             target_pos: MapPoint { x: 100.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 100.0,
                     y: 0.0,
                     z: 25.0,
@@ -4935,7 +4939,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4979,7 +4983,7 @@ mod tests {
             ..ElementData::default()
         };
         arrow_element.set_position_map(MapPoint { x: 50.0, y: -25.0 });
-        arrow_element.set_position(Point3D {
+        arrow_element.set_position(WorldPoint3D {
             x: 50.0,
             y: 0.0,
             z: 25.0,
@@ -4998,7 +5002,7 @@ mod tests {
                 shooter: Some(EntityId(0)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
-                    position: Point3D {
+                    position: WorldPoint3D {
                         x: 50.0,
                         y: 0.0,
                         z: 25.0,
@@ -5030,7 +5034,7 @@ mod tests {
     fn tick_arrows_without_shooter_does_not_hit_human() {
         let mut arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
@@ -5039,7 +5043,7 @@ mod tests {
             target: EntityId(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 25.0,
@@ -5049,7 +5053,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -5084,7 +5088,7 @@ mod tests {
         // `compute_target_center` reads the 3D position; real loaded
         // targets set both, but `ElementData::default()` leaves position
         // at origin so we mirror position_map.
-        target_element.set_position(Point3D {
+        target_element.set_position(WorldPoint3D {
             x: target_pos.x,
             y: target_pos.y,
             z: 0.0,
@@ -5100,7 +5104,7 @@ mod tests {
 
         let trajectory = vec![
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 25.0,
                     y: 0.0,
                     z: 10.0,
@@ -5108,7 +5112,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 0.0,
@@ -5122,7 +5126,7 @@ mod tests {
             ..ElementData::default()
         };
         apple_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-        apple_element.set_position(Point3D {
+        apple_element.set_position(WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 20.0,
@@ -5185,7 +5189,7 @@ mod tests {
             ..ElementData::default()
         };
         target_element.set_position_map(MapPoint { x: 40.0, y: 0.0 });
-        target_element.set_position(Point3D {
+        target_element.set_position(WorldPoint3D {
             x: 40.0,
             y: 0.0,
             z: 0.0,
@@ -5205,7 +5209,7 @@ mod tests {
             ..ElementData::default()
         };
         arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-        arrow_element.set_position(Point3D {
+        arrow_element.set_position(WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 0.0,
@@ -5224,7 +5228,7 @@ mod tests {
                 shooter: Some(EntityId(2)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
-                    position: Point3D {
+                    position: WorldPoint3D {
                         x: 25.0,
                         y: 0.0,
                         z: 0.0,
@@ -5263,7 +5267,7 @@ mod tests {
             ..ElementData::default()
         };
         target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
-        target_element.set_position(Point3D {
+        target_element.set_position(WorldPoint3D {
             x: 10.0,
             y: 0.0,
             z: 0.0,
@@ -5283,7 +5287,7 @@ mod tests {
             ..ElementData::default()
         };
         arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-        arrow_element.set_position(Point3D {
+        arrow_element.set_position(WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 0.0,
@@ -5302,7 +5306,7 @@ mod tests {
                 shooter: Some(EntityId(2)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
-                    position: Point3D {
+                    position: WorldPoint3D {
                         x: 0.0,
                         y: 0.0,
                         z: 0.0,
@@ -5328,7 +5332,7 @@ mod tests {
     fn tick_arrows_has_no_artificial_lifetime_timeout() {
         let trajectory = (1..=320)
             .map(|i| TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: i as f32 * 10.0,
                     y: 0.0,
                     z: 40.0,
@@ -5338,7 +5342,7 @@ mod tests {
             .collect();
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
@@ -5350,7 +5354,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -5390,7 +5394,7 @@ mod tests {
             ..ElementData::default()
         };
         target_element.set_position_map(MapPoint { x: 50.0, y: 0.0 });
-        target_element.set_position(Point3D {
+        target_element.set_position(WorldPoint3D {
             x: 50.0,
             y: 0.0,
             z: 0.0,
@@ -5405,7 +5409,7 @@ mod tests {
         });
 
         let trajectory = vec![TrajectoryPoint {
-            position: Point3D {
+            position: WorldPoint3D {
                 x: 50.0,
                 y: 0.0,
                 z: 0.0,
@@ -5475,7 +5479,7 @@ mod tests {
                 shooter: Some(EntityId(2)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
-                    position: Point3D {
+                    position: WorldPoint3D {
                         x: 10.0,
                         y: 0.0,
                         z: 0.0,
@@ -5534,7 +5538,7 @@ mod tests {
                 ..ElementData::default()
             };
             element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
-            element.set_position(Point3D {
+            element.set_position(WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,
@@ -5573,12 +5577,12 @@ mod tests {
     /// object_type and a ballistic trajectory.
     #[test]
     fn spawn_apple_creates_flying_apple_projectile() {
-        let start = Point3D {
+        let start = WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 40.0,
         };
-        let end = Point3D {
+        let end = WorldPoint3D {
             x: 100.0,
             y: 0.0,
             z: 20.0,
@@ -5849,7 +5853,7 @@ mod tests {
     #[test]
     fn compute_bow_point_offsets() {
         // 3D position: x=10, y=20 (map_y + elevation), z=0 (ground level)
-        let pos = Point3D {
+        let pos = WorldPoint3D {
             x: 10.0,
             y: 20.0,
             z: 0.0,
@@ -5871,7 +5875,7 @@ mod tests {
         // With non-zero elevation, Z should be elevation + offset,
         // and Y should have elevation added (isometric projection
         // adds elevation into the hand Y).
-        let elevated_pos = Point3D {
+        let elevated_pos = WorldPoint3D {
             x: 10.0,
             y: 50.0,
             z: 30.0,
@@ -5908,7 +5912,7 @@ mod tests {
         // Arrow trajectory aimed directly at where the belt would be
         // if the soldier were upright — but since it's lying, no hit.
         let trajectory = vec![TrajectoryPoint {
-            position: Point3D {
+            position: WorldPoint3D {
                 x: 50.0,
                 y: 0.0,
                 z: 25.0,
@@ -5917,7 +5921,7 @@ mod tests {
         }];
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 25.0,
@@ -5929,7 +5933,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -5964,7 +5968,7 @@ mod tests {
         // Arrow stays well above the soldier's belt (Z=25).
         let trajectory = vec![
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 30.0,
                     y: 0.0,
                     z: 80.0,
@@ -5972,7 +5976,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 60.0,
                     y: 0.0,
                     z: 78.0,
@@ -5980,7 +5984,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 90.0,
                     y: 0.0,
                     z: 76.0,
@@ -5990,7 +5994,7 @@ mod tests {
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 82.0,
@@ -6002,7 +6006,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -6039,7 +6043,7 @@ mod tests {
     fn tick_arrows_hits_through_belt_column() {
         let trajectory = vec![
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 25.0,
@@ -6047,7 +6051,7 @@ mod tests {
                 time: 2,
             },
             TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 80.0,
                     y: 0.0,
                     z: 20.0,
@@ -6057,7 +6061,7 @@ mod tests {
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 30.0,
@@ -6069,7 +6073,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -6125,7 +6129,7 @@ mod tests {
             // needs world.y = 40 — see `compute_bow_point` which adds
             // elevation into the hand Y the same way.
             let trajectory = vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 40.0,
                     z: 40.0,
@@ -6134,7 +6138,7 @@ mod tests {
             }];
             let arrow = spawn_arrow(SpawnArrowParams {
                 shooter: EntityId(0),
-                bow_point: Point3D {
+                bow_point: WorldPoint3D {
                     x: 100.0,
                     y: 40.0,
                     z: 40.0,
@@ -6146,7 +6150,7 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: Point3D {
+                initial_velocity: WorldPoint3D {
                     x: 1.0,
                     y: 0.0,
                     z: 0.0,
@@ -6194,7 +6198,7 @@ mod tests {
                     );
                     assert_ne!(
                         p.element.position(),
-                        (Point3D {
+                        (WorldPoint3D {
                             x: 50.0,
                             y: 40.0,
                             z: 40.0
@@ -6211,7 +6215,7 @@ mod tests {
     fn non_shield_arrow_ricochet_advances_immediately() {
         crate::sim_rng::with_seed(1, || {
             let trajectory = vec![TrajectoryPoint {
-                position: Point3D {
+                position: WorldPoint3D {
                     x: 50.0,
                     y: 0.0,
                     z: 0.0,
@@ -6220,7 +6224,7 @@ mod tests {
             }];
             let arrow = spawn_arrow(SpawnArrowParams {
                 shooter: EntityId(0),
-                bow_point: Point3D {
+                bow_point: WorldPoint3D {
                     x: 0.0,
                     y: 0.0,
                     z: 0.0,
@@ -6232,7 +6236,7 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: Point3D {
+                initial_velocity: WorldPoint3D {
                     x: 1.0,
                     y: 0.0,
                     z: 0.0,
@@ -6271,7 +6275,7 @@ mod tests {
     #[test]
     fn tick_arrows_miss_and_land_despawns() {
         let trajectory = vec![TrajectoryPoint {
-            position: Point3D {
+            position: WorldPoint3D {
                 x: 10.0,
                 y: 0.0,
                 z: 0.0,
@@ -6280,7 +6284,7 @@ mod tests {
         }];
         let arrow = spawn_arrow(SpawnArrowParams {
             shooter: EntityId(0),
-            bow_point: Point3D {
+            bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 5.0,
@@ -6292,7 +6296,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: Point3D {
+            initial_velocity: WorldPoint3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -6324,12 +6328,12 @@ mod tests {
     /// spawn — here we just assert it stops flying.
     #[test]
     fn spawn_wasp_nest_lands_and_stops_flying() {
-        let throw_pos = Point3D {
+        let throw_pos = WorldPoint3D {
             x: 0.0,
             y: 0.0,
             z: 50.0,
         };
-        let target_pos = Point3D {
+        let target_pos = WorldPoint3D {
             x: 80.0,
             y: 0.0,
             z: 0.0,

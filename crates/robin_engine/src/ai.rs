@@ -3154,7 +3154,7 @@ pub struct AmbushPoint {
     /// 3D anchor point — the 2D `position` lifted to eye height (z + 32).
     /// Used by the sight-polygon anchor for stealth / hide-in-ambush
     /// queries.
-    pub position_3d: crate::element::Point3D,
+    pub position_3d: crate::coordinates::WorldPoint3D,
     /// Unique ambush-point ID assigned at `InitAI()` time. Used by AI
     /// scripts that reference ambush points by index.
     pub id: u16,
@@ -9459,7 +9459,7 @@ mod tests {
                 level: 0,
             },
             direction: 0,
-            position_3d: crate::element::Point3D::default(),
+            position_3d: crate::coordinates::WorldPoint3D::default(),
             id: 0,
         };
         assert_eq!(ap.position_3d.z, 0.0);

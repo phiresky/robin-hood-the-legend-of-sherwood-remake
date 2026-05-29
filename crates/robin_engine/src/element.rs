@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
-use crate::coordinates::{GroundPoint, MapPoint};
+use crate::coordinates::{GroundPoint, MapPoint, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::GRID_CELL_SIZE;
 use crate::geo2d::Point2D as GeoPoint2D;
 use crate::jump_line::JumpLineIndex;
@@ -95,52 +95,6 @@ impl Point2D {
     #[inline]
     pub fn to_vec2(self) -> crate::rhline::Vec2 {
         crate::rhline::Vec2::new(self.x, self.y)
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct Point3D {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
-}
-
-impl From<crate::coordinates::WorldPoint3D> for Point3D {
-    #[inline]
-    fn from(p: crate::coordinates::WorldPoint3D) -> Self {
-        Self {
-            x: p.x,
-            y: p.y,
-            z: p.z,
-        }
-    }
-}
-
-impl From<Point3D> for crate::coordinates::WorldPoint3D {
-    #[inline]
-    fn from(p: Point3D) -> Self {
-        Self {
-            x: p.x,
-            y: p.y,
-            z: p.z,
-        }
-    }
-}
-
-impl Point3D {
-    /// Convert to [`crate::coordinates::WorldPoint3D`] (serde-enabled).
-    #[inline]
-    pub fn to_pos_point3d(self) -> crate::coordinates::WorldPoint3D {
-        crate::coordinates::WorldPoint3D::new(self.x, self.y, self.z)
     }
 }
 
@@ -312,17 +266,17 @@ impl ElementData {
     }
 
     #[inline]
-    #[must_use = "method returns Point3D by value; `elem.position().x = v` (or `+= v`) silently modifies a temporary. Use `set_position` to mutate."]
-    pub fn position(&self) -> Point3D {
+    #[must_use = "method returns WorldPoint3D by value; `elem.position().x = v` (or `+= v`) silently modifies a temporary. Use `set_position` to mutate."]
+    pub fn position(&self) -> WorldPoint3D {
         let p = self.sprite.position_iface.get_position();
-        Point3D {
+        WorldPoint3D {
             x: p.x,
             y: p.y,
             z: p.z,
         }
     }
     #[inline]
-    pub fn set_position(&mut self, p: Point3D) {
+    pub fn set_position(&mut self, p: WorldPoint3D) {
         self.sprite
             .position_iface
             .set_position(crate::coordinates::WorldPoint3D {
@@ -884,7 +838,7 @@ pub struct ActorData {
     /// Target 3D point of the currently-executing jump step.  Stashed
     /// here so [`tick_active_jumps`] can interpolate toward it on each
     /// frame without re-peeking the consumed step.
-    pub active_jump_target_3d: Option<Point3D>,
+    pub active_jump_target_3d: Option<WorldPoint3D>,
     /// Whether the currently-executing jump step is airborne (drives
     /// `jump_z_offset` during interpolation).
     pub active_jump_airborne: bool,
@@ -1164,7 +1118,7 @@ pub struct PcData {
     pub carried_posture: Posture,
 
     // Shield
-    pub shield_danger_point: Point3D,
+    pub shield_danger_point: WorldPoint3D,
     /// Map layer the player picked when raising the shield, used as the
     /// layer for the danger-point titbit.  Differs from the PC's own
     /// layer when the danger is across a chasm / off a balcony.
@@ -1258,7 +1212,7 @@ impl Default for PcData {
             fried_psykokwack: false,
             carried: None,
             carried_posture: Posture::Undefined,
-            shield_danger_point: Point3D::default(),
+            shield_danger_point: WorldPoint3D::default(),
             shield_danger_point_layer: 0,
             shield_protected: None,
             guard: None,
@@ -1926,7 +1880,7 @@ impl Default for ObjectData {
 /// the trajectory list.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct TrajectoryPoint {
-    pub position: Point3D,
+    pub position: WorldPoint3D,
     /// Number of frames to reach this point from the previous position.
     pub time: u16,
 }
@@ -1937,8 +1891,8 @@ pub struct ProjectileData {
     /// 3D launch point.  Read by the trajectory-arc debug overlay
     /// (`game_render::draw_trajectories`) to render from the launch
     /// origin rather than the current frame.
-    pub start: Point3D,
-    pub end: Point3D,
+    pub start: WorldPoint3D,
+    pub end: WorldPoint3D,
     /// X of the launch point.  Read by `EventGetArrow` (arrow hit) and
     /// `EventApple` (apple hit) so the AI stimulus anchors at the
     /// shooter's *original* position rather than the impact site.
@@ -1955,11 +1909,11 @@ pub struct ProjectileData {
     pub trajectory: Vec<TrajectoryPoint>,
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
-    pub velocity_increment: Point3D,
+    pub velocity_increment: WorldVec3D,
     /// Optional explicit start point for the next collision segment.
     /// Used when a projectile is advanced once before entering the
     /// engine list, matching C++ `pProjectile->Hourglass()` at spawn.
-    pub launch_segment_start: Option<Point3D>,
+    pub launch_segment_start: Option<WorldPoint3D>,
     /// Frames remaining in the current trajectory segment.
     /// When this reaches 0, the next `TrajectoryPoint` is popped.
     pub trajectory_frame_count: u16,
@@ -1995,8 +1949,8 @@ pub struct ProjectileData {
 impl Default for ProjectileData {
     fn default() -> Self {
         Self {
-            start: Point3D::default(),
-            end: Point3D::default(),
+            start: WorldPoint3D::default(),
+            end: WorldPoint3D::default(),
             start_of_trajectory_x: 0.0,
             start_of_trajectory_y: 0.0,
             shooter: None,
@@ -2004,7 +1958,7 @@ impl Default for ProjectileData {
             flying: false,
             disappear: false,
             trajectory: Vec::new(),
-            velocity_increment: Point3D::default(),
+            velocity_increment: WorldVec3D::default(),
             launch_segment_start: None,
             trajectory_frame_count: 0,
             damage: 0,
@@ -2111,9 +2065,8 @@ pub struct WaspData {
     /// stinging, until the sting fires).
     pub timeout: u16,
     /// On a wasp: current per-frame movement vector (3D velocity).
-    /// Stored as a `Point3D` to avoid introducing a separate Vec3 —
-    /// the math is identical.
-    pub movement: Point3D,
+    /// Current per-frame 3D vector in raw world axes.
+    pub movement: WorldVec3D,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2778,7 +2731,7 @@ impl Entity {
     /// entity's current one.  Default (None) reads `element.posture`.
     ///
     /// Returns `None` for non-Human entities (FX, objects).
-    pub fn compute_eyes_point(&self, override_posture: Option<Posture>) -> Option<Point3D> {
+    pub fn compute_eyes_point(&self, override_posture: Option<Posture>) -> Option<WorldPoint3D> {
         // Only Human actors have posture-dependent eye offsets.
         let (e, _) = match self {
             Self::Pc(e) => (&e.element, true),
@@ -2854,7 +2807,7 @@ impl Entity {
     /// - Carried: enumerated at z+25 (eyes asserts).
     ///
     /// Returns `None` for non-Human entities.
-    pub fn compute_detection_point(&self) -> Option<Point3D> {
+    pub fn compute_detection_point(&self) -> Option<WorldPoint3D> {
         let (e, _) = match self {
             Self::Pc(e) => (&e.element, true),
             Self::Soldier(e) => (&e.element, true),
@@ -2914,7 +2867,7 @@ impl Entity {
     /// - **Default**: falls through to `compute_eyes_point`
     ///
     /// Returns `None` for non-Human entities.
-    pub fn compute_stars_point(&self) -> Option<Point3D> {
+    pub fn compute_stars_point(&self) -> Option<WorldPoint3D> {
         let (e, _) = match self {
             Self::Pc(e) => (&e.element, true),
             Self::Soldier(e) => (&e.element, true),
@@ -2929,7 +2882,7 @@ impl Entity {
         let is_rider = matches!(self, Self::Soldier(s) if s.soldier.rider);
         if is_rider {
             let (dx, dy) = direction_vector_16(e.direction());
-            return Some(Point3D {
+            return Some(WorldPoint3D {
                 x: base.x - dx * 10.0,
                 y: base.y - dy * 10.0,
                 z: base.z + 65.0,
@@ -2953,7 +2906,7 @@ impl Entity {
                 let center = sprite.center;
                 let hp = sprite.hotspot_for_row(sprite.current_row);
                 let elevation = base.z;
-                Some(Point3D {
+                Some(WorldPoint3D {
                     x: (map.x - center.x).floor() + hp.x,
                     y: (map.y - center.y).floor() + hp.y + elevation + 5.0,
                     z: elevation + 5.0,
@@ -2962,7 +2915,7 @@ impl Entity {
             Dead => {
                 // Head fell forward — offset 30 units along facing.
                 let (dx, dy) = direction_vector_16(e.direction());
-                Some(Point3D {
+                Some(WorldPoint3D {
                     x: base.x + dx * 30.0,
                     y: base.y + dy * 30.0,
                     z: base.z + 5.0,
@@ -2971,7 +2924,7 @@ impl Entity {
             DeadBack => {
                 // Fell backward — offset 30 units against facing.
                 let (dx, dy) = direction_vector_16(e.direction());
-                Some(Point3D {
+                Some(WorldPoint3D {
                     x: base.x - dx * 30.0,
                     y: base.y - dy * 30.0,
                     z: base.z + 5.0,
@@ -2985,7 +2938,7 @@ impl Entity {
                 // posture is Carried the animation is always one of
                 // those two and we apply the flip unconditionally.
                 let flipped_dir = ((e.direction().wrapping_add(8)) & 15) as usize;
-                Some(Point3D {
+                Some(WorldPoint3D {
                     x: base.x + 0.5 * CRAWLING_OFFSETS_X[flipped_dir],
                     y: base.y + 0.5 * CRAWLING_OFFSETS_Y[flipped_dir],
                     z: base.z + 32.0,
@@ -2994,7 +2947,7 @@ impl Entity {
             LeaningOut => {
                 // Leaning forward out of a window — small forward offset.
                 let (dx, dy) = direction_vector_16(e.direction());
-                Some(Point3D {
+                Some(WorldPoint3D {
                     x: base.x + dx * 10.0,
                     y: base.y + dy * 10.0,
                     z: base.z + 45.0,
@@ -3008,7 +2961,7 @@ impl Entity {
     /// Compute the belt point (centre of mass) of a human actor.
     ///
     /// Returns `None` for non-Human entities (FX, objects).
-    pub fn compute_belt_point(&self) -> Option<Point3D> {
+    pub fn compute_belt_point(&self) -> Option<WorldPoint3D> {
         let (e, _) = match self {
             Self::Pc(e) => (&e.element, true),
             Self::Soldier(e) => (&e.element, true),
@@ -3051,8 +3004,8 @@ impl Entity {
     /// `position.y = map.y + position.z` (set in
     /// `position_interface::position_3d_from_map`) holds for every
     /// `compute_*_point` output.
-    fn human_feet_point_3d_with_elevation(e: &ElementData, elevation: f32) -> Point3D {
-        Point3D {
+    fn human_feet_point_3d_with_elevation(e: &ElementData, elevation: f32) -> WorldPoint3D {
+        WorldPoint3D {
             x: e.position_map().x,
             y: e.position_map().y + elevation,
             z: elevation,
@@ -3060,7 +3013,7 @@ impl Entity {
     }
 
     /// Shorthand that reads elevation from the position interface.
-    fn human_feet_point_3d(&self) -> Point3D {
+    fn human_feet_point_3d(&self) -> WorldPoint3D {
         let elevation = self.position_iface().get_elevation();
         Self::human_feet_point_3d_with_elevation(self.element_data(), elevation)
     }
@@ -3074,7 +3027,7 @@ impl Entity {
     /// `elevation + value` and the posture switch is skipped.
     ///
     /// Returns `None` for non-Human entities.
-    pub fn compute_hand_point(&self, forced_elevation: Option<f32>) -> Option<Point3D> {
+    pub fn compute_hand_point(&self, forced_elevation: Option<f32>) -> Option<WorldPoint3D> {
         let (e, _) = match self {
             Self::Pc(e) => (&e.element, true),
             Self::Soldier(e) => (&e.element, true),
@@ -3090,7 +3043,7 @@ impl Entity {
         let mut hand = match self.sprite().current_hotspot() {
             Some(hp) => {
                 let ps = self.cxx_position_sprite();
-                Point3D {
+                WorldPoint3D {
                     x: ps.x + hp.x,
                     y: ps.y + hp.y + elevation,
                     z: elevation,
@@ -3144,7 +3097,7 @@ impl Entity {
         direction: i16,
         animation: OrderType,
         posture: Posture,
-    ) -> Option<Point3D> {
+    ) -> Option<WorldPoint3D> {
         // Validate this is a human entity.
         match self {
             Self::Pc(_) | Self::Soldier(_) | Self::Civilian(_) => {}
@@ -3160,7 +3113,7 @@ impl Entity {
         let mut hand = match self.sprite().get_point(animation, direction as u16) {
             Some(hp) => {
                 let ps = self.cxx_position_sprite();
-                Point3D {
+                WorldPoint3D {
                     x: ps.x + hp.x,
                     y: ps.y + hp.y + elevation,
                     z: elevation,
@@ -3200,7 +3153,7 @@ impl Entity {
     /// Used by the Lock titbit kind to display at foot level.
     ///
     /// Returns `None` for non-Human entities.
-    pub fn compute_feet_point(&self) -> Option<Point3D> {
+    pub fn compute_feet_point(&self) -> Option<WorldPoint3D> {
         let (e, _) = match self {
             Self::Pc(e) => (&e.element, true),
             Self::Soldier(e) => (&e.element, true),
@@ -3259,13 +3212,13 @@ impl Entity {
     /// Returns `None` for non-FX-target entities — those have their own
     /// dedicated centre helpers (`compute_eyes_point`, `compute_hand_point`,
     /// etc.) that the caller should reach for instead.
-    pub fn compute_target_center(&self) -> Option<Point3D> {
+    pub fn compute_target_center(&self) -> Option<WorldPoint3D> {
         if !self.is_fx_target() {
             return None;
         }
         let elem = self.element_data();
         let half_h = elem.sprite.current_max_height() as f32 * 0.5;
-        Some(Point3D {
+        Some(WorldPoint3D {
             x: elem.position().x,
             y: elem.position().y,
             z: elem.position().z + half_h,
@@ -3303,8 +3256,8 @@ pub trait Element {
     fn is_unreachable(&self) -> bool {
         self.element_data().unreachable
     }
-    #[must_use = "method returns Point3D by value; `elem.position().x = v` silently modifies a temporary. Use `set_position` to mutate."]
-    fn position(&self) -> Point3D {
+    #[must_use = "method returns WorldPoint3D by value; `elem.position().x = v` silently modifies a temporary. Use `set_position` to mutate."]
+    fn position(&self) -> WorldPoint3D {
         self.element_data().position()
     }
     #[must_use = "method returns MapPoint by value; `elem.position_map().x = v` silently modifies a temporary. Use `set_position_map` to mutate."]
@@ -3875,7 +3828,7 @@ pub fn advance_trajectory_one_frame(
         projectile.trajectory_frame_count = time - 1;
         let current = element.position();
         let factor = 1.0 / time as f32;
-        projectile.velocity_increment = Point3D {
+        projectile.velocity_increment = WorldVec3D {
             x: (point.position.x - current.x) * factor,
             y: (point.position.y - current.y) * factor,
             z: (point.position.z - current.z) * factor,
