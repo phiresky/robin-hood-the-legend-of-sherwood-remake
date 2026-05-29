@@ -76,6 +76,19 @@ pub enum MotionMethod {
     RunWithoutAnticollision,
 }
 
+/// Order data that C++ `RHSprite::PerformMotion(RHOrder*, RHOrder*, ...)`
+/// reads when a sprite sees a motion order for the first time.
+#[derive(Debug, Clone, Copy)]
+pub struct MotionOrderContext {
+    pub order_id: std::num::NonZeroU32,
+    pub destination: Point2D,
+    pub reverse: bool,
+    pub tolerance: f32,
+    pub directional_tolerance: bool,
+    pub compute_direction: bool,
+    pub next_destination_same_action: Option<Point2D>,
+}
+
 // ---------------------------------------------------------------------------
 // FrameProgression
 // ---------------------------------------------------------------------------
@@ -1637,7 +1650,7 @@ impl Sprite {
     #[allow(clippy::too_many_arguments)]
     pub fn perform_motion(
         &mut self,
-        order_id: Option<std::num::NonZeroU32>,
+        motion_order: Option<MotionOrderContext>,
         anim: OrderType,
         direction: u16,
         progression: FrameProgression,
@@ -1645,6 +1658,7 @@ impl Sprite {
         motion_method: MotionMethod,
         dest_already_at_pos: bool,
     ) -> (MotionState, f32) {
+        let order_id = motion_order.map(|ctx| ctx.order_id);
         // Already-at-destination short-circuit: on the first tick of a
         // new order whose motion method is not `TillLastFrame` and
         // whose destination equals the current map position, set the
@@ -1673,6 +1687,22 @@ impl Sprite {
                 self.last_processed_order_id = oid.get();
                 return (self.record_motion_state(MotionState::Terminated), 0.0);
             }
+        }
+
+        if let Some(ctx) = motion_order
+            && self.last_processed_order_id != ctx.order_id.get()
+        {
+            let pi = &mut self.position_iface;
+            pi.set_position_goal_map(ctx.destination);
+            pi.set_reversed_movement(ctx.reverse);
+            pi.set_tolerance(ctx.tolerance, ctx.directional_tolerance);
+            if let Some(next) = ctx.next_destination_same_action {
+                pi.set_position_goal_next_map(next);
+            } else {
+                pi.set_goal_next_valid(false);
+            }
+            pi.compute_increment_all(ctx.compute_direction);
+            pi.reset_box_blocked();
         }
 
         let state = self.perform_action(order_id, anim, direction, progression, force_init);

@@ -6,7 +6,7 @@ use crate::geo2d::{self, Point2D};
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
-use crate::sprite::{FrameProgression, MotionMethod, MotionState};
+use crate::sprite::{FrameProgression, MotionMethod, MotionOrderContext, MotionState};
 
 /// Per-entity lift translation snapshot consumed by `tick_entity_movement`'s
 /// per-frame anim derivation.  Covers the lift cases of
@@ -3426,6 +3426,7 @@ impl EngineInner {
                 order_tolerance,
                 order_compute_direction,
                 order_reverse,
+                next_destination_same_action,
             ) = {
                 let actor = match entity.actor_data_mut() {
                     Some(a) => a,
@@ -3497,6 +3498,12 @@ impl EngineInner {
                 let order_tolerance = order.tolerance;
                 let order_compute_direction = order.compute_direction;
                 let order_reverse = order.reverse;
+                let next_destination_same_action = self
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|e| e.next_order())
+                    .filter(|next| next.order_type == order_action)
+                    .map(|next| geo2d::pt(next.target_x, next.target_y));
                 let active_move_flags = self
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
@@ -3546,6 +3553,7 @@ impl EngineInner {
                     order_tolerance,
                     order_compute_direction,
                     order_reverse,
+                    next_destination_same_action,
                 )
             };
 
@@ -3929,28 +3937,25 @@ impl EngineInner {
             // facing already matches the goal it is a no-op.
             let still_turning = elem.sprite.position_iface.turn();
             let direction = elem.direction() as u16;
-            let new_motion_order =
-                order_id.is_some_and(|oid| elem.sprite.last_processed_order_id != oid.get());
-            if is_transition_anim && new_motion_order {
-                let pi = &mut elem.sprite.position_iface;
-                pi.set_position_goal_map(geo2d::pt(goal.x, goal.y));
-                pi.set_reversed_movement(order_reverse);
-                pi.set_tolerance(
-                    order_tolerance,
-                    active_move_flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
-                );
-                pi.set_goal_next_valid(false);
-                pi.compute_increment_all(order_compute_direction);
-            }
             // The "already at destination" short-circuit needs the
             // predicate routed into `perform_motion`.  Keep a 0.01
             // epsilon to absorb any prior anti-collision jitter that
             // may have nudged the actor a tiny fraction off the
             // order's recorded destination.
             let dest_already_at_pos = motion_method != MotionMethod::TillLastFrame && dist <= 0.01;
+            let motion_order = order_id.map(|order_id| MotionOrderContext {
+                order_id,
+                destination: geo2d::pt(goal.x, goal.y),
+                reverse: order_reverse,
+                tolerance: order_tolerance,
+                directional_tolerance: active_move_flags
+                    .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
+                compute_direction: order_compute_direction,
+                next_destination_same_action,
+            });
             let sprite = &mut elem.sprite;
             let (motion_state, frame_dist_raw) = sprite.perform_motion(
-                order_id,
+                motion_order,
                 sprite_motion_order_for_nonanimation(anim),
                 direction,
                 FrameProgression::Default,
@@ -4072,7 +4077,33 @@ impl EngineInner {
                 }
                 if transition_has_map_target && speed > 0.0 && dist > 0.01 {
                     let elem = entity.element_data_mut();
-                    elem.sprite.position_iface.update_position_map_scaled(speed);
+                    let pos = elem.position_map();
+                    let pi = &mut elem.sprite.position_iface;
+                    if !pi.is_increment_map_computed() {
+                        tracing::warn!(
+                            entity = ?EntityId(idx as u32),
+                            order = ?order_action,
+                            pos_x = pos.x,
+                            pos_y = pos.y,
+                            goal_x = goal.x,
+                            goal_y = goal.y,
+                            "movement transition lost cached map increment; recomputing from order target"
+                        );
+                        // TODO: identify which mid-order state mutation clears
+                        // PositionInterface::computed_increment here. The order
+                        // target is authoritative, so reseeding mirrors the
+                        // new-order setup instead of advancing with stale data.
+                        pi.set_position_goal_map(geo2d::pt(goal.x, goal.y));
+                        pi.set_reversed_movement(order_reverse);
+                        pi.set_tolerance(
+                            order_tolerance,
+                            active_move_flags
+                                .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
+                        );
+                        pi.set_goal_next_valid(false);
+                        pi.compute_increment_all(order_compute_direction);
+                    }
+                    pi.update_position_map_scaled(speed);
                     elem.update_grid_cell();
                 }
                 if matches!(motion_state, MotionState::Terminated) {
@@ -4805,6 +4836,22 @@ impl EngineInner {
                     .unwrap_or(false);
                 if is_human {
                     self.update_roll_after_crossing(assets, entity_id);
+                }
+                let compute_direction = self
+                    .sequence_manager
+                    .in_progress_element_for_actor_matching(entity_id, |e| e.data.is_movement())
+                    .and_then(|(seq_id, elem_idx)| {
+                        self.sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .and_then(|e| e.current_order())
+                    })
+                    .map(|order| order.compute_direction);
+                if let Some(compute_direction) = compute_direction
+                    && let Some(entity) = self.get_entity_mut(entity_id)
+                {
+                    entity
+                        .position_iface_mut()
+                        .compute_increment_all(compute_direction);
                 }
             }
         }
