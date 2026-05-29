@@ -39,6 +39,9 @@ use winit::window::{Window, WindowId};
 
 use crate::gfx_types::{GameEvent, Keycode};
 
+#[cfg(not(target_arch = "wasm32"))]
+const GAME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+
 /// Wall-clock-ish millis since process start. Wraps at ~49 days,
 /// which is fine for game pacing (used as a delta between frames).
 pub fn process_uptime_ms() -> u32 {
@@ -1316,6 +1319,7 @@ where
 {
     std::thread::Builder::new()
         .name("robin-game".into())
+        .stack_size(GAME_THREAD_STACK_SIZE)
         .spawn(move || pollster::block_on(make_fut()))
         .expect("spawn game thread");
 }
