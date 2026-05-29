@@ -2259,7 +2259,7 @@ const TRAJECTORY_DOT_INTERVAL: f32 = 7.0;
 /// Draws filled 1-pixel squares at regular intervals along the
 /// ballistic arc.
 pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer) {
-    if !host.valid_trajectory && host.trajectory_preview_points.is_empty() {
+    if !host.valid_trajectory {
         return;
     }
 
