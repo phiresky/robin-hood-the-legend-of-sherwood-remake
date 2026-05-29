@@ -156,6 +156,7 @@ A list of which additional features we have added, which ones we might still wan
 - More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
+- Add autosave support.
 
 ### Code Quality
 
