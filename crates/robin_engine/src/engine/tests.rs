@@ -1318,9 +1318,7 @@ fn sort_for_minimap_priority_order() {
 #[test]
 fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     use crate::coordinates::WorldPoint3D;
-    use crate::element::{
-        ActorSoldier, Command, ElementData, ElementKind, Entity, Posture,
-    };
+    use crate::element::{ActorSoldier, Command, ElementData, ElementKind, Entity, Posture};
     use crate::element_kinds::ActionState;
 
     let mut engine = EngineInner::new();

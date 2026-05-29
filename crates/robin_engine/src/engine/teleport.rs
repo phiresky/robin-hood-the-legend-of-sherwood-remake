@@ -13,7 +13,8 @@
 //! PlayerCommand / replay pipeline.
 
 use super::EngineInner;
-use crate::element::{Command, EntityId, Point2D};
+use crate::coordinates::MapPoint;
+use crate::element::{Command, EntityId};
 use crate::geo2d;
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
@@ -38,7 +39,7 @@ impl EngineInner {
             return;
         }
 
-        let dest = Point2D {
+        let dest = MapPoint {
             x: dest.x,
             y: dest.y,
         };
@@ -64,7 +65,7 @@ impl EngineInner {
                     Some(p) => p,
                     None => continue,
                 };
-                Point2D {
+                MapPoint {
                     x: pos.x + (dest.x - first_pos.x),
                     y: pos.y + (dest.y - first_pos.y),
                 }

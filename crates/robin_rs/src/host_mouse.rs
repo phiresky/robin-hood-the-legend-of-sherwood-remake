@@ -890,7 +890,7 @@ pub fn update_mouse(
 
             if !in_restricted {
                 // Compute mouse opacity from shooting level.
-                let mouse_map_elem = robin_engine::element::Point2D {
+                let mouse_map_elem = robin_engine::coordinates::MapPoint {
                     x: mouse_map.x,
                     y: mouse_map.y,
                 };

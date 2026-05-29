@@ -1232,7 +1232,7 @@ impl EngineInner {
         ) else {
             return false;
         };
-        let direction_vec = crate::coordinates::WorldPoint3D {
+        let direction_vec = crate::coordinates::WorldVec3D {
             x: target.x - source.x,
             y: target.y - source.y,
             z: target.z - source.z,
@@ -1451,13 +1451,13 @@ fn max_norm_distance(a: &Entity, b: &Entity) -> f32 {
 fn read_target_point_2d(
     element: &SequenceElement,
     field: crate::sequence::Field,
-) -> Option<crate::element::Point2D> {
+) -> Option<crate::coordinates::MapPoint> {
     match element.get_property(field)? {
         crate::sequence::FieldValue::Point3D { x, y, .. } => {
-            Some(crate::element::Point2D { x: *x, y: *y })
+            Some(crate::coordinates::MapPoint { x: *x, y: *y })
         }
         crate::sequence::FieldValue::Point2D { x, y } => {
-            Some(crate::element::Point2D { x: *x, y: *y })
+            Some(crate::coordinates::MapPoint { x: *x, y: *y })
         }
         _ => None,
     }

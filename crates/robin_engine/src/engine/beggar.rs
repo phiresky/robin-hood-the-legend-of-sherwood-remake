@@ -167,7 +167,7 @@ fn give_money_to_beggar(
         }
         None => return,
     };
-    let beggar_pos_2d = crate::element::Point2D {
+    let beggar_pos_2d = crate::coordinates::MapPoint {
         x: beggar_pos.x,
         y: beggar_pos.y,
     };

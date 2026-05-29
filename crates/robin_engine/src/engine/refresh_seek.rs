@@ -26,7 +26,8 @@
 //! preserves door-sector and line-goal metadata when rebuilding those
 //! seek variants.
 
-use crate::element::{ActionState, EntityId, Point2D};
+use crate::coordinates::MapPoint;
+use crate::element::{ActionState, EntityId};
 use crate::engine::LevelAssets;
 use crate::order::OrderType;
 use crate::sequence::{
@@ -625,7 +626,7 @@ impl crate::engine::EngineInner {
     pub(super) fn refresh_seek_point(
         &mut self,
         owner: EntityId,
-        pt_seek: Point2D,
+        pt_seek: MapPoint,
         action: OrderType,
     ) {
         let Some(entity) = self.get_entity(owner) else {

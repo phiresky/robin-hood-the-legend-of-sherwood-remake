@@ -12,7 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::element::{ObjectType, Point2D};
+use crate::coordinates::MapPoint;
+use crate::element::ObjectType;
 use crate::pc_status::{LIFEPOINTS_PC, PcStatus};
 use crate::player_profile::DifficultyLevel;
 use crate::profiles::{Action, CharacterProfile, NUMBER_OF_PC_ACTIONS};
@@ -377,7 +378,7 @@ pub struct DroppedItem {
     pub action: Action,
     pub object_type: ObjectType,
     pub quantity: u16,
-    pub position: Point2D,
+    pub position: MapPoint,
 }
 
 /// Drop one unit of ammo from inventory onto the map.
@@ -390,7 +391,7 @@ pub fn drop_item(
     status: &mut PcStatus,
     action: Action,
     amount: u16,
-    position: Point2D,
+    position: MapPoint,
 ) -> Option<DroppedItem> {
     let removed = status.decrease_ammo(action, amount);
     if removed == 0 {
@@ -676,7 +677,7 @@ mod tests {
     fn drop_item_basic() {
         let mut status = PcStatus::default();
         status.set_ammo(Action::Apple, 4);
-        let pos = Point2D { x: 100.0, y: 200.0 };
+        let pos = MapPoint { x: 100.0, y: 200.0 };
         let dropped = drop_item(&mut status, Action::Apple, 2, pos).unwrap();
         assert_eq!(dropped.quantity, 2);
         // Dropped pickups spawn as the Bonus* variant — never the
@@ -688,7 +689,7 @@ mod tests {
     #[test]
     fn drop_item_no_ammo() {
         let mut status = PcStatus::default();
-        let pos = Point2D { x: 0.0, y: 0.0 };
+        let pos = MapPoint { x: 0.0, y: 0.0 };
         assert!(drop_item(&mut status, Action::Apple, 1, pos).is_none());
     }
 

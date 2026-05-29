@@ -620,7 +620,11 @@ impl EngineInner {
                     VICTIM_CHARGE_DISTANCE
                 };
                 if d <= charge {
-                    mv = to_victim.into();
+                    mv = crate::coordinates::WorldVec3D {
+                        x: to_victim.x,
+                        y: to_victim.y,
+                        z: to_victim.z,
+                    };
                 } else {
                     mv = WorldVec3D {
                         x: to_victim.x * VICTIM_ATTRACTION,

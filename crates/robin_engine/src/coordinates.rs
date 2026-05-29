@@ -295,17 +295,6 @@ impl std::ops::Sub for WorldVec3D {
     }
 }
 
-impl From<WorldPoint3D> for WorldVec3D {
-    #[inline]
-    fn from(p: WorldPoint3D) -> Self {
-        Self {
-            x: p.x,
-            y: p.y,
-            z: p.z,
-        }
-    }
-}
-
 impl From<WorldVec3D> for WorldPoint3D {
     #[inline]
     fn from(v: WorldVec3D) -> Self {

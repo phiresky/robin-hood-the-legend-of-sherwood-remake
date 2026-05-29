@@ -2,42 +2,8 @@
 //!
 //! Flat struct with a type tag, paired with a [`ChangeLog`] backed by a `Vec`.
 
+use crate::coordinates::{MapPoint, ScreenPoint};
 use serde::{Deserialize, Serialize};
-
-// ---------------------------------------------------------------------------
-// Local placeholder types — replace once the corresponding modules exist
-// ---------------------------------------------------------------------------
-
-/// 2D point stored in [`Change`] records. A thin, serde-friendly mirror of [`crate::geo2d::Point2D`].
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    Default,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct Point2D {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl From<crate::geo2d::Point2D> for Point2D {
-    #[inline]
-    fn from(p: crate::geo2d::Point2D) -> Self {
-        Self { x: p.x, y: p.y }
-    }
-}
-
-impl Point2D {
-    /// Convert to the canonical [`crate::geo2d::Point2D`] type.
-    #[inline]
-    pub fn to_geo_point(self) -> crate::geo2d::Point2D {
-        crate::geo2d::pt(self.x, self.y)
-    }
-}
 
 /// Axis-aligned bounding box stored in [`Change`] records.
 #[derive(
@@ -51,8 +17,8 @@ impl Point2D {
     robin_state_hash_derive::StateHash,
 )]
 pub struct BoundingBox2D {
-    pub min: Point2D,
-    pub max: Point2D,
+    pub min: ScreenPoint,
+    pub max: ScreenPoint,
 }
 
 /// Surface material for sound interaction.
@@ -125,7 +91,7 @@ pub struct Change {
     pub sound_source: Option<SoundSourceId>,
     pub sound_id: u16,
     pub material: Material,
-    pub position: Point2D,
+    pub position: MapPoint,
 }
 
 impl Change {
@@ -153,7 +119,7 @@ impl Change {
     }
 
     /// Create an FX sound change (one-shot, position-based).
-    pub fn sound_fx(sound_id: u16, position: Point2D, material: Material) -> Self {
+    pub fn sound_fx(sound_id: u16, position: MapPoint, material: Material) -> Self {
         Self {
             is_fx: true,
             sound_id,
@@ -191,7 +157,7 @@ impl Change {
             sound_source: None,
             sound_id: 0,
             material: Material::default(),
-            position: Point2D::default(),
+            position: MapPoint::default(),
         }
     }
 }
@@ -265,8 +231,8 @@ mod tests {
         let mut log = ChangeLog::new();
         log.record(Change::mouse(1, 0x10));
         log.record(Change::rectangle(BoundingBox2D {
-            min: Point2D { x: 0.0, y: 0.0 },
-            max: Point2D { x: 100.0, y: 50.0 },
+            min: ScreenPoint { x: 0.0, y: 0.0 },
+            max: ScreenPoint { x: 100.0, y: 50.0 },
         }));
 
         let undone = log.undo_last().expect("should have a change");
@@ -299,7 +265,7 @@ mod tests {
 
     #[test]
     fn sound_fx_fields() {
-        let pos = Point2D { x: 10.0, y: 20.0 };
+        let pos = MapPoint { x: 10.0, y: 20.0 };
         let mat = Material(3);
         let c = Change::sound_fx(7, pos, mat);
         assert_eq!(c.change_type, ChangeType::Sound);
@@ -332,7 +298,7 @@ mod tests {
         log.record(Change::mouse(1, 0));
         log.record(Change::sound_fx(
             10,
-            Point2D { x: 1.0, y: 2.0 },
+            MapPoint { x: 1.0, y: 2.0 },
             Material(1),
         ));
         log.record(Change::sound_stop(SoundSourceId(42)));

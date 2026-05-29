@@ -282,7 +282,7 @@ impl EngineInner {
     pub(crate) fn tick_smalltalk(&mut self, assets: &LevelAssets, suppressed_actors: &[EntityId]) {
         let mut pending_smalltalk_strikes: Vec<(EntityId, EntityId, bool)> = Vec::new();
         let mut pending_initiative_transfers: Vec<EntityId> = Vec::new();
-        let mut pending_step_backs: Vec<(EntityId, crate::element::Point2D)> = Vec::new();
+        let mut pending_step_backs: Vec<(EntityId, crate::coordinates::MapPoint)> = Vec::new();
 
         // Collect entities with smalltalk_initiative who are principal opponents
         let entity_count = self.entities.len();

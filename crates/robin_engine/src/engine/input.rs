@@ -1876,7 +1876,7 @@ impl EngineInner {
         target_entity: Option<crate::element::EntityId>,
     ) -> TrajectoryPreview {
         use crate::bow_shot;
-        use crate::coordinates::WorldPoint3D;
+        use crate::coordinates::{WorldPoint3D, WorldVec3D};
         use crate::weapons::ShootMode;
 
         // Determine mass and apex based on the selected action.
@@ -2019,11 +2019,11 @@ impl EngineInner {
             (crate::profiles::Action::Bow, Some(target_id)) => self
                 .get_entity(target_id)
                 .filter(|target| target.is_human())
-                .map(|target| target.position_iface().get_forecasted_movement().into()),
+                .map(|target| target.position_iface().get_forecasted_movement()),
             (crate::profiles::Action::Stone, Some(target_id)) => self
                 .get_entity(target_id)
                 .filter(|target| target.is_npc())
-                .map(|target| target.position_iface().get_forecasted_movement().into()),
+                .map(|target| target.position_iface().get_forecasted_movement()),
             _ => None,
         };
 
@@ -2033,7 +2033,7 @@ impl EngineInner {
         let distance = (dx * dx + dy * dy + dz * dz).sqrt();
         let apex_height = apex_height_override.unwrap_or_else(|| (distance / 10.0).max(1.0));
 
-        let direction_vec = WorldPoint3D {
+        let direction_vec = WorldVec3D {
             x: dx,
             y: dy,
             z: dz,
@@ -2279,7 +2279,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         pc_id: EntityId,
-        target_pos: crate::element::Point2D,
+        target_pos: crate::coordinates::MapPoint,
     ) -> u16 {
         let pc = match self.get_entity(pc_id) {
             Some(e) => e,

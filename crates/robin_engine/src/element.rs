@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
-use crate::coordinates::{GroundPoint, MapPoint, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{GroundPoint, MapPoint, MapVec, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::GRID_CELL_SIZE;
 use crate::geo2d::Point2D as GeoPoint2D;
 use crate::jump_line::JumpLineIndex;
@@ -57,105 +57,6 @@ pub type Animation = OrderType;
 
 pub use crate::element_kinds::*;
 pub use crate::entity_id::EntityId;
-// ═══════════════════════════════════════════════════════════════════
-//  Simple geometry types
-// ═══════════════════════════════════════════════════════════════════
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct Point2D {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl From<crate::geo2d::Point2D> for Point2D {
-    #[inline]
-    fn from(p: crate::geo2d::Point2D) -> Self {
-        Self { x: p.x, y: p.y }
-    }
-}
-
-impl From<crate::rhline::Vec2> for Point2D {
-    #[inline]
-    fn from(v: crate::rhline::Vec2) -> Self {
-        Self { x: v.x, y: v.y }
-    }
-}
-
-impl Point2D {
-    /// Convert to [`crate::rhline::Vec2`].
-    #[inline]
-    pub fn to_vec2(self) -> crate::rhline::Vec2 {
-        crate::rhline::Vec2::new(self.x, self.y)
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct Vector2D {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl From<crate::geo2d::Vec2D> for Vector2D {
-    #[inline]
-    fn from(v: crate::geo2d::Vec2D) -> Self {
-        Self { x: v.x, y: v.y }
-    }
-}
-
-impl From<crate::rhline::Vec2> for Vector2D {
-    #[inline]
-    fn from(v: crate::rhline::Vec2) -> Self {
-        Self { x: v.x, y: v.y }
-    }
-}
-
-impl Vector2D {
-    /// Convert to the canonical [`crate::geo2d::Vec2D`] type.
-    #[inline]
-    pub fn to_geo_vec(self) -> crate::geo2d::Vec2D {
-        crate::geo2d::pt(self.x, self.y)
-    }
-
-    /// Convert to [`crate::rhline::Vec2`].
-    #[inline]
-    pub fn to_vec2(self) -> crate::rhline::Vec2 {
-        crate::rhline::Vec2::new(self.x, self.y)
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Default,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct BoundingBox2D {
-    pub min: Point2D,
-    pub max: Point2D,
-}
-
 // ═══════════════════════════════════════════════════════════════════
 //  Data structs — one per hierarchy level
 // ═══════════════════════════════════════════════════════════════════
@@ -1401,7 +1302,7 @@ pub struct NpcData {
     pub number_of_arrows: u16,
 
     pub direction_old: i16,
-    pub initial_view_direction: Vector2D,
+    pub initial_view_direction: MapVec,
     pub initial_position_x: f32,
     pub initial_position_y: f32,
     pub initial_position_sector: Option<crate::position_interface::SectorHandle>,
@@ -1580,7 +1481,7 @@ impl Default for NpcData {
             // triggers.
             number_of_arrows: crate::parameters_ai::MAX_NPC_ARROWS as u16,
             direction_old: 0,
-            initial_view_direction: Vector2D::default(),
+            initial_view_direction: MapVec::default(),
             initial_position_x: 0.0,
             initial_position_y: 0.0,
             initial_position_sector: None,
@@ -1770,7 +1671,7 @@ pub struct FxData {
     /// Masking polyline for display order interleaving.  FX entities
     /// with a non-empty polyline participate in the animation merge
     /// pass of `SortForDisplay` (characters can walk behind them).
-    pub display_polyline: Vec<Point2D>,
+    pub display_polyline: Vec<MapPoint>,
     /// If this FX entity is a patch's animation element, the patch
     /// index (into `GameHost::patches`).  Used by the animation tick
     /// to apply reversed playback and detect transition completion.
@@ -1795,7 +1696,7 @@ pub struct TargetData {
     pub action_filter: TargetFilter,
     /// Action point — the position the PC walks to when interacting
     /// with this target.
-    pub action_position: Point2D,
+    pub action_position: MapPoint,
     /// Action point sector.
     pub action_sector: u16,
     /// Action point layer.
@@ -1807,7 +1708,7 @@ pub struct TargetData {
     /// Sprite profile name within the .rhs.
     pub sprite_profile_name: String,
     /// Masking polyline used for blit clipping.
-    pub display_polyline: Vec<Point2D>,
+    pub display_polyline: Vec<MapPoint>,
     /// Rendering properties (`Blocky` vs `NeedShadow`) selected from the
     /// blit type byte in the level data.
     pub rendering_properties: RenderingProperties,
@@ -1830,7 +1731,7 @@ impl Default for TargetData {
             progression: 0,
             linked_fx: Vec::new(),
             action_filter: TargetFilter::empty(),
-            action_position: Point2D::default(),
+            action_position: MapPoint::default(),
             action_sector: 0,
             action_layer: 0,
             position_z: -1,
@@ -2494,7 +2395,7 @@ impl Entity {
     /// determines whether other entities render in front of or behind
     /// them.  For Targets the polyline lives on `TargetData`; for Fx
     /// it lives on `FxData`.
-    pub fn display_polyline(&self) -> &[Point2D] {
+    pub fn display_polyline(&self) -> &[MapPoint] {
         match self {
             Self::Target(e) => &e.target.display_polyline,
             Self::Fx(e) => &e.fx.display_polyline,
@@ -3426,7 +3327,7 @@ pub trait Human: Actor {
     /// provided so the first caller gets the right behaviour rather
     /// than the ad-hoc `true`/`false` defaults that used to live on
     /// `Element`/`ActorSoldier`.
-    fn is_dangerous_as_menacer(&self, prisoner_pos: Point2D) -> bool {
+    fn is_dangerous_as_menacer(&self, prisoner_pos: MapPoint) -> bool {
         match self.action_state() {
             ActionState::Waiting
             | ActionState::AimingWithBow

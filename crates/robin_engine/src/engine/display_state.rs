@@ -934,10 +934,9 @@ impl EngineInner {
 // ─── Display order helpers ──────────────────────────────────────────
 
 use crate::coordinates::MapPoint;
-use crate::element::Point2D as DisplayPolylinePoint;
 
 /// Minimum Y coordinate of a display polyline.
-fn y_min_polyline(polyline: &[DisplayPolylinePoint]) -> f32 {
+fn y_min_polyline(polyline: &[MapPoint]) -> f32 {
     polyline.iter().map(|p| p.y).fold(f32::MAX, f32::min)
 }
 
@@ -955,7 +954,7 @@ fn y_min_polyline(polyline: &[DisplayPolylinePoint]) -> f32 {
 ///   and use the 2D cross product (determinant) to determine which side
 ///   of the segment the point is on.
 fn is_element_behind_polyline(
-    polyline: &[DisplayPolylinePoint],
+    polyline: &[MapPoint],
     fx_position_map: MapPoint,
     position_map: MapPoint,
 ) -> bool {

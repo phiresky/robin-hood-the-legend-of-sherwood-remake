@@ -6114,7 +6114,8 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        use crate::element::{ActionState, Point2D, Posture};
+        use crate::coordinates::MapPoint;
+        use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
 
         let Some((door_index, action, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
@@ -6139,15 +6140,15 @@ impl EngineInner {
                         door.layer_out,
                         door.sector_in,
                         door.sector_out,
-                        Point2D {
+                        MapPoint {
                             x: door.point_in.0,
                             y: door.point_in.1,
                         },
-                        Point2D {
+                        MapPoint {
                             x: door.point_mid.0,
                             y: door.point_mid.1,
                         },
-                        Point2D {
+                        MapPoint {
                             x: door.point_out.0,
                             y: door.point_out.1,
                         },
@@ -6338,7 +6339,8 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        use crate::element::{ActionState, Point2D, Posture};
+        use crate::coordinates::MapPoint;
+        use crate::element::{ActionState, Posture};
         use crate::order::OrderType as OT;
 
         let Some((door_index, action, is_pc)) = self.get_entity(entity_id).and_then(|entity| {
@@ -6359,7 +6361,7 @@ impl EngineInner {
                 .and_then(|s| s.game_host_mut())?;
             let door = game_host.doors.get(usize::from(door_index))?;
             let snap = match action {
-                OT::TransitionWaitingUprightClimbingWallUp => Some(Point2D {
+                OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
                     x: door.point_mid.0,
                     y: door.point_mid.1,
                 }),
@@ -7445,7 +7447,7 @@ impl EngineInner {
                                 probe.layer,
                             ) {
                                 let center = box_at.center();
-                                let dest_pt = crate::element::Point2D {
+                                let dest_pt = crate::coordinates::MapPoint {
                                     x: center.x,
                                     y: center.y,
                                 };

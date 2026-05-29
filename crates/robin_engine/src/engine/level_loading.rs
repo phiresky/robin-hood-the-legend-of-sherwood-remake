@@ -1330,7 +1330,7 @@ impl EngineInner {
                             .element_fx
                             .display_polyline
                             .iter()
-                            .map(|&(x, y)| crate::element::Point2D {
+                            .map(|&(x, y)| crate::coordinates::MapPoint {
                                 x: x as f32,
                                 y: y as f32,
                             })
@@ -1433,7 +1433,7 @@ impl EngineInner {
                         display_polyline: raw
                             .display_polyline
                             .iter()
-                            .map(|&(x, y)| crate::element::Point2D {
+                            .map(|&(x, y)| crate::coordinates::MapPoint {
                                 x: x as f32,
                                 y: y as f32,
                             })
@@ -2174,7 +2174,7 @@ impl EngineInner {
                     action_filter: crate::element::TargetFilter::from_bits_truncate(
                         raw.action_filter,
                     ),
-                    action_position: crate::element::Point2D {
+                    action_position: crate::coordinates::MapPoint {
                         x: raw.action_position_x as f32,
                         y: raw.action_position_y as f32,
                     },
@@ -2186,7 +2186,7 @@ impl EngineInner {
                     display_polyline: raw
                         .polyline
                         .iter()
-                        .map(|&(x, y)| crate::element::Point2D {
+                        .map(|&(x, y)| crate::coordinates::MapPoint {
                             x: x as f32,
                             y: y as f32,
                         })

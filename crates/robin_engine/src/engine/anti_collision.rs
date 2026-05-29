@@ -43,7 +43,7 @@ pub struct ActorSnapshot {
     pub is_human: bool,
     pub is_ignored_for_anti_collision: bool,
     /// `geo2d::Point2D` (Coord<f32>) — converted from
-    /// [`crate::element::Point2D`] on capture so the downstream
+    /// [`crate::coordinates::MapPoint`] on capture so the downstream
     /// math matches the rest of the geometry stack.
     pub position_map: Point2D,
     pub layer: u16,

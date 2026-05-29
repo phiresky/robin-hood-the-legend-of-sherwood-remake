@@ -27,8 +27,8 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::WorldPoint3D;
-use crate::element::{ActionState, EntityId, Point2D, Posture};
+use crate::coordinates::{MapPoint, MapVec, WorldPoint3D, WorldVec3D};
+use crate::element::{ActionState, EntityId, Posture};
 use crate::engine::{EngineInner, LevelAssets};
 use crate::jump_line::JumpLine;
 use crate::order::OrderType;
@@ -120,7 +120,7 @@ pub struct ActiveJump {
 pub fn compute_trajectory_jump(start: WorldPoint3D, dest: WorldPoint3D) -> Vec<WorldPoint3D> {
     let mut trajectory = Vec::new();
 
-    let direction = WorldPoint3D {
+    let direction = WorldVec3D {
         x: dest.x - start.x,
         y: dest.y - start.y,
         z: dest.z - start.z,
@@ -185,7 +185,7 @@ pub fn build_jump_steps(
 ) -> Vec<JumpStep> {
     let v_line = source.vector();
     let v_line_norm = (v_line.x * v_line.x + v_line.y * v_line.y).sqrt().max(1e-6);
-    let v_line_n = Point2D {
+    let v_line_n = MapVec {
         x: v_line.x / v_line_norm,
         y: v_line.y / v_line_norm,
     };
@@ -197,7 +197,7 @@ pub fn build_jump_steps(
 
     // Destination on the paired line at the same parametric offset:
     // `destination.point_b + dot * line_reference`.
-    let pt_destination = Point2D {
+    let pt_destination = MapPoint {
         x: destination.point_b.x + f_dot * v_line_n.x,
         y: destination.point_b.y + f_dot * v_line_n.y,
     };
@@ -221,7 +221,7 @@ pub fn build_jump_steps(
     if source.long_jump_forced || jump_height.abs() < pc_height {
         // Normal to the source line, facing the destination side.
         // The normal must point toward the destination.
-        let normal = Point2D {
+        let normal = MapVec {
             x: -v_line_n.y,
             y: v_line_n.x,
         };
@@ -233,13 +233,13 @@ pub fn build_jump_steps(
         } else {
             -1.0
         };
-        let v_normal_src = Point2D {
+        let v_normal_src = MapVec {
             x: normal.x * sign,
             y: normal.y * sign,
         };
 
         // Launch point sits 15u inside the destination side of the line.
-        let pt_source_jump = Point2D {
+        let pt_source_jump = MapPoint {
             x: pt_source.x + 15.0 * v_normal_src.x,
             y: pt_source.y + 15.0 * v_normal_src.y,
         };
@@ -348,7 +348,7 @@ pub fn build_jump_steps(
 
     // ── Jump up ────────────────────────────────────────────────────
     if jump_height > 0.0 {
-        let normal = Point2D {
+        let normal = MapVec {
             x: -v_line_n.y,
             y: v_line_n.x,
         };
@@ -363,12 +363,12 @@ pub fn build_jump_steps(
         } else {
             -1.0
         };
-        let v_normal_src = Point2D {
+        let v_normal_src = MapVec {
             x: normal.x * sign,
             y: normal.y * sign,
         };
 
-        let pt_destination_jump = Point2D {
+        let pt_destination_jump = MapPoint {
             x: pt_destination.x - 15.0 * v_normal_src.x,
             y: pt_destination.y - 15.0 * v_normal_src.y,
         };
@@ -459,7 +459,7 @@ pub fn build_jump_steps(
     }
 
     // ── Jump down ──────────────────────────────────────────────────
-    let normal = Point2D {
+    let normal = MapVec {
         x: -v_line_n.y,
         y: v_line_n.x,
     };
@@ -470,11 +470,11 @@ pub fn build_jump_steps(
     } else {
         -1.0
     };
-    let v_normal_src = Point2D {
+    let v_normal_src = MapVec {
         x: normal.x * sign,
         y: normal.y * sign,
     };
-    let pt_source_jump = Point2D {
+    let pt_source_jump = MapPoint {
         x: pt_source.x + 15.0 * v_normal_src.x,
         y: pt_source.y + 15.0 * v_normal_src.y,
     };

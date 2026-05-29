@@ -505,12 +505,12 @@ fn apply_bow_transition_state_side_effect(
 ///
 /// Returns the initial velocity vector.
 pub fn compute_initial_throw_velocity(
-    thrower_to_target: WorldPoint3D,
+    thrower_to_target: WorldVec3D,
     apex_height: f32,
     mass: f32,
     mut flight_time: u16,
-    target_forecasted_movement: Option<WorldPoint3D>,
-) -> WorldPoint3D {
+    target_forecasted_movement: Option<WorldVec3D>,
+) -> WorldVec3D {
     debug_assert!(!(apex_height > 0.0 && mass == 0.0));
     debug_assert!(!(apex_height == 0.0 && mass > 0.0));
 
@@ -528,7 +528,7 @@ pub fn compute_initial_throw_velocity(
     }
 
     let mut velocity = if flight_time == 1 {
-        WorldPoint3D {
+        WorldVec3D {
             x: 0.5 * thrower_to_target.x,
             y: 0.5 * thrower_to_target.y,
             z: 0.5 * thrower_to_target.z,
@@ -551,7 +551,7 @@ pub fn compute_initial_throw_velocity(
         if !vz.is_finite() {
             vz = 0.0;
         }
-        WorldPoint3D {
+        WorldVec3D {
             x: vx,
             y: vy,
             z: vz,
@@ -601,7 +601,7 @@ pub struct TrajectoryObstacleCheck<'a> {
 /// points, giving the visual gravity arc.
 pub fn compute_trajectory_ballistic(
     start: WorldPoint3D,
-    initial_velocity: WorldPoint3D,
+    initial_velocity: WorldVec3D,
     mass: f32,
     flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -624,7 +624,7 @@ pub fn compute_trajectory_ballistic(
 /// `(0.1, 0.1)` and wasp nests use the coin bounce factors.
 pub fn compute_trajectory_ballistic_bounce(
     start: WorldPoint3D,
-    initial_velocity: WorldPoint3D,
+    initial_velocity: WorldVec3D,
     mass: f32,
     flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -655,7 +655,7 @@ struct ImpactInfo {
     /// Unit impact normal (world-space).  For `Ground`: (0,0,1).  For
     /// `Top`: cross(top_plane.v1, top_plane.v2) normalised.  For `Wall`:
     /// the outward XY normal of the crossed polygon edge.
-    normal: WorldPoint3D,
+    normal: WorldVec3D,
     /// Per-obstacle bounce factors (vertical, horizontal).
     /// Defaults to `(1.0, 1.0)` for ground (no material factor).
     obstacle_bounce_v: f32,
@@ -672,7 +672,7 @@ fn classify_impact(
     let Some(obs) = obstacle else {
         return ImpactInfo {
             kind: ImpactKind::Ground,
-            normal: WorldPoint3D {
+            normal: WorldVec3D {
                 x: 0.0,
                 y: 0.0,
                 z: 1.0,
@@ -710,7 +710,7 @@ fn classify_impact(
         let norm = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-6);
         return ImpactInfo {
             kind: ImpactKind::Top,
-            normal: WorldPoint3D {
+            normal: WorldVec3D {
                 x: nx / norm,
                 y: ny / norm,
                 z: nz / norm,
@@ -773,7 +773,7 @@ fn classify_impact(
 
     ImpactInfo {
         kind: ImpactKind::Wall,
-        normal: WorldPoint3D {
+        normal: WorldVec3D {
             x: best_nx,
             y: best_ny,
             z: 0.0,
@@ -790,15 +790,15 @@ fn classify_impact(
 /// have been after gravity for this step (used on top impacts so the
 /// bounce integrates the fractional-step gravity correction).
 fn apply_bounce_reflection(
-    velocity: WorldPoint3D,
+    velocity: WorldVec3D,
     new_vz: f32,
     ratio: f32,
     info: ImpactInfo,
     projectile_bounce: (f32, f32),
-) -> WorldPoint3D {
+) -> WorldVec3D {
     let (proj_bv, proj_bh) = projectile_bounce;
     match info.kind {
-        ImpactKind::Ground => WorldPoint3D {
+        ImpactKind::Ground => WorldVec3D {
             x: velocity.x * proj_bh,
             y: velocity.y * proj_bh,
             z: -velocity.z * proj_bv,
@@ -818,7 +818,7 @@ fn apply_bounce_reflection(
             let comp_x = -2.0 * dot * n.x;
             let comp_y = -2.0 * dot * n.y;
 
-            WorldPoint3D {
+            WorldVec3D {
                 x: info.obstacle_bounce_h * proj_bh * (velocity.x + comp_x),
                 y: ASPECT_RATIO * (info.obstacle_bounce_h * proj_bh * (velocity.y + comp_y)),
                 z: velocity.z,
@@ -842,7 +842,7 @@ fn apply_bounce_reflection(
             let comp_y = -2.0 * dot * n.y;
             let comp_z = -2.0 * dot * n.z;
 
-            WorldPoint3D {
+            WorldVec3D {
                 x: info.obstacle_bounce_h * proj_bh * (velocity.x + comp_x),
                 y: ASPECT_RATIO * info.obstacle_bounce_h * proj_bh * (velocity.y + comp_y),
                 z: info.obstacle_bounce_v * proj_bv * (interp_vz + comp_z),
@@ -853,7 +853,7 @@ fn apply_bounce_reflection(
 
 fn compute_trajectory_ballistic_impl(
     start: WorldPoint3D,
-    initial_velocity: WorldPoint3D,
+    initial_velocity: WorldVec3D,
     mass: f32,
     _flat_shot: bool,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
@@ -924,7 +924,7 @@ fn compute_trajectory_ballistic_impl(
         if let Some((bv, bh)) = bounce
             && position.z < 0.0
         {
-            velocity = WorldPoint3D {
+            velocity = WorldVec3D {
                 x: velocity.x * bh,
                 y: velocity.y * bh,
                 z: -velocity.z * bv,
@@ -932,7 +932,7 @@ fn compute_trajectory_ballistic_impl(
             position.z = 0.0;
             last_impact = Some(ImpactInfo {
                 kind: ImpactKind::Ground,
-                normal: WorldPoint3D {
+                normal: WorldVec3D {
                     x: 0.0,
                     y: 0.0,
                     z: 1.0,
@@ -1198,7 +1198,7 @@ pub fn apply_projectile_landing_resolution(
 ///
 /// Returns `Some(bias)` if the shot misses (caller adds to velocity),
 /// or `None` if the shot hits.
-pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Option<WorldPoint3D> {
+pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Option<WorldVec3D> {
     let roll: u32 = crate::sim_rng::u32(1..=100);
 
     if roll <= hit_chance {
@@ -1212,7 +1212,7 @@ pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Op
     let by = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
     let bz = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
 
-    Some(WorldPoint3D {
+    Some(WorldVec3D {
         x: bx,
         y: by,
         z: bz,
@@ -1294,9 +1294,9 @@ pub fn compute_shot_velocity_params(
     bow_point: WorldPoint3D,
     target_point: WorldPoint3D,
     shoot_mode: ShootMode,
-    target_forecasted_movement: Option<WorldPoint3D>,
-) -> (WorldPoint3D, u16, f32) {
-    let to_target = WorldPoint3D {
+    target_forecasted_movement: Option<WorldVec3D>,
+) -> (WorldVec3D, u16, f32) {
+    let to_target = WorldVec3D {
         x: target_point.x - bow_point.x,
         y: target_point.y - bow_point.y,
         z: target_point.z - bow_point.z,
@@ -1688,7 +1688,7 @@ pub struct ShotTickResult {
     /// Sprite hand anchor point (sprite position + hotspot).
     pub sprite_hand_point: crate::geo2d::Point2D,
     /// Target's forecasted movement vector for leading shots.
-    pub target_forecasted_movement: WorldPoint3D,
+    pub target_forecasted_movement: WorldVec3D,
 }
 
 struct PendingShotTickResult {
@@ -2008,10 +2008,7 @@ pub fn tick_bow_shots(
             );
             continue;
         };
-        let target_forecasted_movement = target_entity
-            .position_iface()
-            .get_forecasted_movement()
-            .into();
+        let target_forecasted_movement = target_entity.position_iface().get_forecasted_movement();
         events.fired.push(ShotTickResult {
             shooter: result.shooter,
             target: result.target,
@@ -2052,7 +2049,7 @@ pub struct SpawnArrowParams {
     /// seeded from the XY of this vector, not from `target - bow` —
     /// the two diverge once leading is applied to moving targets.
     ///
-    pub initial_velocity: WorldPoint3D,
+    pub initial_velocity: WorldVec3D,
     /// Whether the precomputed trajectory ends inside a hole zone
     /// (before any far-edge fall-into-hole extension).  Pre-flags
     /// `ProjectileData::disappear` so `maybe_splash_on_landing` can
@@ -2168,7 +2165,7 @@ pub fn spawn_net(
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = WorldPoint3D {
+    let direction_vec = WorldVec3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2266,7 +2263,7 @@ pub fn spawn_wasp_nest(
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = WorldPoint3D {
+    let direction_vec = WorldVec3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2399,7 +2396,7 @@ pub fn spawn_apple(
     throw_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
     target: Option<EntityId>,
-    target_forecasted_movement: Option<WorldPoint3D>,
+    target_forecasted_movement: Option<WorldVec3D>,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
@@ -2436,7 +2433,7 @@ pub fn spawn_stone(
     throw_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
     target: Option<EntityId>,
-    target_forecasted_movement: Option<WorldPoint3D>,
+    target_forecasted_movement: Option<WorldVec3D>,
     layer: u16,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
@@ -2469,7 +2466,7 @@ fn spawn_throwable(
     throw_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
     target: Option<EntityId>,
-    target_forecasted_movement: Option<WorldPoint3D>,
+    target_forecasted_movement: Option<WorldVec3D>,
     layer: u16,
     mass: f32,
     apex: f32,
@@ -2481,7 +2478,7 @@ fn spawn_throwable(
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = WorldPoint3D {
+    let direction_vec = WorldVec3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2599,7 +2596,7 @@ pub fn spawn_purse(
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
-    let direction_vec = WorldPoint3D {
+    let direction_vec = WorldVec3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2692,7 +2689,7 @@ pub fn spawn_coin(
     let dx = target_pos.x - source_pos.x;
     let dy = target_pos.y - source_pos.y;
     let dz = target_pos.z - source_pos.z;
-    let direction_vec = WorldPoint3D {
+    let direction_vec = WorldVec3D {
         x: dx,
         y: dy,
         z: dz,
@@ -2835,7 +2832,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
         let (dx, dy) = crate::element::direction_vector_16(direction);
         (
             direction as u16,
-            WorldPoint3D {
+            WorldVec3D {
                 x: dx * 30.0,
                 y: dy * ASPECT_RATIO * 30.0,
                 z: -20.0,
@@ -2846,7 +2843,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
         let (dx, dy) = crate::element::direction_vector_16(direction);
         (
             direction as u16,
-            WorldPoint3D {
+            WorldVec3D {
                 x: dx * 30.0,
                 y: dy * ASPECT_RATIO * 10.0,
                 z: 0.0,
@@ -3468,13 +3465,13 @@ fn tick_arrows_matching(
         /// hit-radius norm and the leaning-out arrow retry's coarse
         /// `MaxNorm` gate. Return an infinite vector when the segment
         /// has zero length so callers naturally reject the line test.
-        fn point_to_line_delta(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> WorldPoint3D {
+        fn point_to_line_delta(p: WorldPoint3D, a: WorldPoint3D, b: WorldPoint3D) -> WorldVec3D {
             let abx = b.x - a.x;
             let aby = b.y - a.y;
             let abz = b.z - a.z;
             let ab_len_sq = abx * abx + aby * aby + abz * abz;
             if ab_len_sq < 1e-6 {
-                return WorldPoint3D {
+                return WorldVec3D {
                     x: f32::MAX,
                     y: f32::MAX,
                     z: f32::MAX,
@@ -3484,7 +3481,7 @@ fn tick_arrows_matching(
             let apy = p.y - a.y;
             let apz = p.z - a.z;
             let t = (apx * abx + apy * aby + apz * abz) / ab_len_sq;
-            WorldPoint3D {
+            WorldVec3D {
                 x: p.x - (a.x + t * abx),
                 y: p.y - (a.y + t * aby),
                 z: p.z - (a.z + t * abz),
@@ -4529,7 +4526,7 @@ mod tests {
 
     #[test]
     fn compute_initial_throw_velocity_flat_shot() {
-        let to_target = WorldPoint3D {
+        let to_target = WorldVec3D {
             x: 100.0,
             y: 0.0,
             z: 0.0,
@@ -4542,7 +4539,7 @@ mod tests {
 
     #[test]
     fn compute_initial_throw_velocity_high_shot() {
-        let to_target = WorldPoint3D {
+        let to_target = WorldVec3D {
             x: 100.0,
             y: 0.0,
             z: 0.0,
@@ -4563,7 +4560,7 @@ mod tests {
             z: 40.0,
         };
         let vel = compute_initial_throw_velocity(
-            WorldPoint3D {
+            WorldVec3D {
                 x: 100.0,
                 y: 0.0,
                 z: -10.0,
@@ -4617,7 +4614,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4658,7 +4655,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4722,7 +4719,7 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: WorldPoint3D {
+                initial_velocity: WorldVec3D {
                     x: 1.0,
                     y: 0.0,
                     z: 0.0,
@@ -4789,7 +4786,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4845,7 +4842,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: -0.25,
@@ -4872,7 +4869,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -4939,7 +4936,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -5053,7 +5050,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -5354,7 +5351,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -5933,7 +5930,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -6006,7 +6003,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -6073,7 +6070,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,
@@ -6150,7 +6147,7 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: WorldPoint3D {
+                initial_velocity: WorldVec3D {
                     x: 1.0,
                     y: 0.0,
                     z: 0.0,
@@ -6236,7 +6233,7 @@ mod tests {
                 damage: 30,
                 layer: 0,
                 lands_in_hole: false,
-                initial_velocity: WorldPoint3D {
+                initial_velocity: WorldVec3D {
                     x: 1.0,
                     y: 0.0,
                     z: 0.0,
@@ -6296,7 +6293,7 @@ mod tests {
             damage: 30,
             layer: 0,
             lands_in_hole: false,
-            initial_velocity: WorldPoint3D {
+            initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
                 z: 0.0,

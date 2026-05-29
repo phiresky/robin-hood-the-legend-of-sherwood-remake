@@ -330,7 +330,7 @@ impl EngineInner {
             (dx_s * geo_movement, dy_s * geo_movement)
         };
 
-        let mut destination = crate::element::Point2D {
+        let mut destination = crate::coordinates::MapPoint {
             x: my_pos_map.x + move_dx,
             y: my_pos_map.y + move_dy,
         };
@@ -356,7 +356,7 @@ impl EngineInner {
                 && let Some(rect) = box_at_dest.0
             {
                 let center = rect.center();
-                destination = crate::element::Point2D {
+                destination = crate::coordinates::MapPoint {
                     x: center.x,
                     y: center.y,
                 };
@@ -943,7 +943,7 @@ impl EngineInner {
         &self,
         entity_id: EntityId,
         assets: &LevelAssets,
-    ) -> Option<crate::element::Point2D> {
+    ) -> Option<crate::coordinates::MapPoint> {
         let entity = self.get_entity(entity_id)?;
 
         if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
@@ -1028,7 +1028,7 @@ impl EngineInner {
             as f32)
             .abs();
         let my_map = entity.element_data().position_map();
-        let dest = crate::element::Point2D {
+        let dest = crate::coordinates::MapPoint {
             x: my_map.x - backward_dist * dx_dir,
             y: my_map.y - backward_dist * dy_dir,
         };

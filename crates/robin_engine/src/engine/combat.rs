@@ -965,12 +965,7 @@ impl EngineInner {
                         return;
                     };
                     let movement = if e.is_npc() {
-                        let m = e.position_iface().get_forecasted_movement();
-                        Some(crate::coordinates::WorldPoint3D {
-                            x: m.x,
-                            y: m.y,
-                            z: m.z,
-                        })
+                        Some(e.position_iface().get_forecasted_movement())
                     } else {
                         None
                     };
@@ -1730,9 +1725,9 @@ fn soldier_shield_dimensions(
         .map(|w| (w.shield_width, w.shield_height))
 }
 
-fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::element::Point2D> {
+fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::MapPoint> {
     match entity {
-        Entity::Projectile(p) => Some(crate::element::Point2D {
+        Entity::Projectile(p) => Some(crate::coordinates::MapPoint {
             x: p.projectile.start_of_trajectory_x,
             y: p.projectile.start_of_trajectory_y,
         }),
@@ -2458,7 +2453,7 @@ impl EngineInner {
 
     /// Dispatch an EventApple stimulus at the origin of the thrown
     /// projectile.  Used by both apple and stone impacts on NPCs.
-    fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::element::Point2D) {
+    fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::coordinates::MapPoint) {
         let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
             tracing::warn!(
                 ?victim,
@@ -2481,7 +2476,7 @@ impl EngineInner {
     /// Dispatch an EventGetArrow stimulus at the arrow's trajectory
     /// origin — wakes the struck NPC and seeds the search toward the
     /// shot origin.
-    fn dispatch_event_get_arrow(&mut self, victim: EntityId, origin: crate::element::Point2D) {
+    fn dispatch_event_get_arrow(&mut self, victim: EntityId, origin: crate::coordinates::MapPoint) {
         let Some(layer) = self.get_entity(victim).map(|e| e.element_data().layer()) else {
             tracing::warn!(
                 ?victim,
