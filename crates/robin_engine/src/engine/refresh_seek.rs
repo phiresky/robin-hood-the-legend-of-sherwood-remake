@@ -11,13 +11,15 @@
 //! element to interrupted, and launches the new sequence at info
 //! priority.
 //!
-//! Runs once per tick for every actor holding an `InProgress`
-//! `Command::Seek` movement element with a populated `element` (target)
-//! field and the `MoveFlags::SEEK` bit set.  The entity-target seeks
-//! share a single destination resolver: `USE_POINT` seeks go to the
-//! target's current point, moving actor targets adjust tolerance/speed
-//! by chase speed, `SEEK_SHIELD` aims at the protected side point, and
-//! `SEEK_STOP_NPC` keeps the distance gate.
+//! Runs once per tick for every actor holding an `InProgress` movement
+//! element with a populated `element` (target) field and the
+//! `MoveFlags::SEEK` bit set.  Initial user-facing seeks arrive as
+//! `Command::Seek`; gate-expanded `AppendMoveToSequence`-style seek
+//! legs arrive as `Command::Move` with the same flag/target pair.  The
+//! entity-target seeks share a single destination resolver: `USE_POINT`
+//! seeks go to the target's current point, moving actor targets adjust
+//! tolerance/speed by chase speed, `SEEK_SHIELD` aims at the protected
+//! side point, and `SEEK_STOP_NPC` keeps the distance gate.
 //!
 //! The point-target overload ([`refresh_seek_point`]) uses the same
 //! interrupt-and-relaunch primitive for classical point seeks and now
@@ -213,7 +215,10 @@ impl crate::engine::EngineInner {
             let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
                 continue;
             };
-            if elem.command != crate::element::Command::Seek {
+            if !matches!(
+                elem.command,
+                crate::element::Command::Move | crate::element::Command::Seek
+            ) {
                 continue;
             }
             let SequenceElementData::Movement {
@@ -505,11 +510,10 @@ impl crate::engine::EngineInner {
         }
 
         let Some(resolved) = self.resolve_entity_seek(owner, target, flags, seek_distance) else {
-            self.hero_speaking(
-                assets,
-                owner,
-                crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-            );
+            // Original RefreshSeek marks the current movement
+            // impossible silently when FindAutorizedPosition fails.
+            // The unable-to-do bark belongs to AppendMoveToSequence's
+            // gate-path failure below.
             self.stop_owner_active_mechanics(owner);
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return true;
