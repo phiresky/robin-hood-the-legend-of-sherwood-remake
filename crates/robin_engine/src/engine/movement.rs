@@ -271,6 +271,8 @@ pub(crate) enum GoalShape {
         /// Midpoint of the line.  Used as the path target point during
         /// gate routing.
         midpoint: Point2D,
+        /// Arrival tolerance passed to the final line move.
+        tolerance: f32,
     },
 }
 
@@ -2133,7 +2135,11 @@ impl EngineInner {
                         seq.append_element(seek_move);
                     }
                 }
-                GoalShape::Line { line_index, .. } => {
+                GoalShape::Line {
+                    line_index,
+                    tolerance,
+                    ..
+                } => {
                     // Emit `Move` to the line goal with
                     // `MoveFlags::LINE` and the line id.  When the
                     // last gate landed in a building, bail out without
@@ -2153,7 +2159,7 @@ impl EngineInner {
                             line_id: Some(line_index),
                             element: None,
                             flags: trailing_flags | MoveFlags::LINE,
-                            tolerance: 0.0,
+                            tolerance,
                             direction: 0,
                             action: base_action,
                             speed_factor,

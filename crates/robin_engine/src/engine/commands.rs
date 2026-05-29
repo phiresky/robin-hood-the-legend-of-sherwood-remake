@@ -2541,6 +2541,7 @@ impl EngineInner {
                         crate::engine::movement::GoalShape::Line {
                             line_index: aggr_idx,
                             midpoint: mid,
+                            tolerance: seek_tolerance,
                         },
                         jl.layer,
                     )
