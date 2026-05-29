@@ -896,7 +896,7 @@ pub(super) fn render_frame(
 
     // ── GPU phase: trajectory preview ──
     // Draws dots along projectile arcs every 7 world units.
-    render_trajectory_preview(host, engine, renderer);
+    render_trajectory_preview(host, renderer);
 
     // ── GPU phase: Listen ability radar ping ──
     // Draws an expanding white circle at the PC's feet during the

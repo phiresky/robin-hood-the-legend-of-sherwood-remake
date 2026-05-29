@@ -2254,11 +2254,11 @@ where
 /// Distance between trajectory dots in world units.
 const TRAJECTORY_DOT_INTERVAL: f32 = 7.0;
 
-/// Draw trajectory preview dots for active projectiles.
+/// Draw trajectory preview dots.
 ///
 /// Draws filled 1-pixel squares at regular intervals along the
 /// ballistic arc.
-pub(crate) fn render_trajectory_preview(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer) {
     if !host.valid_trajectory {
         return;
     }
@@ -2342,36 +2342,6 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, engine: &Engine, render
         render_arc(
             host.trajectory_preview_start,
             &host.trajectory_preview_points,
-            view,
-            zoom,
-            screen_w,
-            screen_h,
-            cr,
-            cg,
-            cb,
-            renderer,
-        );
-    }
-
-    // Render trajectories of active projectile entities (arrows in flight).
-    for entity in engine.entities_iter() {
-        if !entity.is_projectile() || !entity.is_active() {
-            continue;
-        }
-
-        let proj = match entity {
-            crate::element::Entity::Projectile(p) => &p.projectile,
-            crate::element::Entity::Net(n) => &n.projectile,
-            _ => continue,
-        };
-
-        if proj.trajectory.is_empty() {
-            continue;
-        }
-
-        render_arc(
-            proj.start,
-            &proj.trajectory,
             view,
             zoom,
             screen_w,

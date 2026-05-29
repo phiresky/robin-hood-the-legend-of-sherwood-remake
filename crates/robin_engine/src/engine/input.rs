@@ -2159,12 +2159,20 @@ impl EngineInner {
             };
         }
 
-        // Only show the arc when the shot will MISS the target —
-        // this warns the player that the long shot won't land. The
-        // `crumpled` flag on `ShowArc` is consumed by the render
-        // layer to swap the arc colour from cyan to pink.
+        // The original bow hover path calls IsValidTrajectory from
+        // the cursor branch before RHCOMMAND_SHOOT_BOW is dispatched.
+        // Keep the same timing here: long bow shots draw their arc
+        // while the player is choosing a target, with the crumpled
+        // colour reserved for predicted misses.
         let will_hit = bow_shot::will_hit_target(&trajectory, source_point, target_point);
-        if will_hit {
+        if selected_action == crate::profiles::Action::Bow {
+            TrajectoryPreview::ShowArc {
+                points: trajectory,
+                start: source_point,
+                crumpled: !will_hit,
+                layer,
+            }
+        } else if will_hit {
             TrajectoryPreview::HitNoArc
         } else {
             TrajectoryPreview::ShowArc {
