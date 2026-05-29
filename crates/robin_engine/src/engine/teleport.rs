@@ -77,7 +77,10 @@ impl EngineInner {
                 OrderType::RunningUpright,
             );
             elem.data = SequenceElementData::Movement {
-                destination: pc_dest,
+                destination: crate::coordinates::MapPoint {
+                    x: pc_dest.x,
+                    y: pc_dest.y,
+                },
                 layer,
                 sector,
                 gate_id: None,

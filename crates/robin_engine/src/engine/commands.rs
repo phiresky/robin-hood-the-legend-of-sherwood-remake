@@ -2612,7 +2612,7 @@ impl EngineInner {
                     ..
                 } = &mut move_elem.data
                 {
-                    *destination = crate::element::Point2D { x: mid.x, y: mid.y };
+                    *destination = crate::coordinates::MapPoint { x: mid.x, y: mid.y };
                     *layer = arrival_layer;
                     *tolerance = seek_tolerance;
                     *flags |= MoveFlags::LINE;
@@ -2713,7 +2713,7 @@ impl EngineInner {
             ..
         } = &mut move_elem.data
         {
-            *destination = crate::element::Point2D {
+            *destination = crate::coordinates::MapPoint {
                 x: pt_on_line.x,
                 y: pt_on_line.y,
             };
@@ -2872,7 +2872,10 @@ impl EngineInner {
             OrderType::WalkingUpright
         };
 
-        let mut destination_pos = target_pos;
+        let mut destination_pos = crate::coordinates::MapPoint {
+            x: target_pos.x,
+            y: target_pos.y,
+        };
         if move_box.is_somewhere() {
             let mut box_at_target =
                 move_box.translated(crate::geo2d::pt(target_pos.x, target_pos.y));
@@ -2881,7 +2884,7 @@ impl EngineInner {
                 .find_authorized_position(&mut box_at_target, layer)
             {
                 let center = box_at_target.center();
-                destination_pos = crate::element::Point2D {
+                destination_pos = crate::coordinates::MapPoint {
                     x: center.x,
                     y: center.y,
                 };

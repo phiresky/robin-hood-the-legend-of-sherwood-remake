@@ -363,7 +363,7 @@ impl crate::engine::EngineInner {
             *element = Some(target);
             *t = resolved.tolerance;
             *speed_factor = resolved.speed_factor;
-            *destination = Point2D {
+            *destination = crate::coordinates::MapPoint {
                 x: resolved.destination.x,
                 y: resolved.destination.y,
             };
@@ -730,7 +730,10 @@ impl crate::engine::EngineInner {
             *element = None;
             *tolerance = cur_tolerance;
             *speed_factor = cur_speed;
-            *destination = pt_seek;
+            *destination = crate::coordinates::MapPoint {
+                x: pt_seek.x,
+                y: pt_seek.y,
+            };
             *layer = cur_layer;
             *sector = cur_sector;
             *line_id = cur_line;

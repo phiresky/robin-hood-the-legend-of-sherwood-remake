@@ -806,7 +806,7 @@ impl GameHost {
         initial_flags: crate::sequence::MoveFlags,
         speed_factor: f32,
     ) -> bool {
-        use crate::element::{Command, Point2D};
+        use crate::element::Command;
         use crate::gate::{find_path_gates, find_path_into_door};
         use crate::position_interface::SectorHandle;
         use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
@@ -821,7 +821,7 @@ impl GameHost {
         }
 
         let owner = Self::actor_id(actor_handle);
-        let to_pt = |(x, y): (f32, f32)| Point2D { x, y };
+        let to_pt = |(x, y): (f32, f32)| crate::coordinates::MapPoint { x, y };
 
         // Original AppendMoveToSequence rewrites the source when the
         // actor is currently straddling a gate (`pTarget->GetDoor()`).

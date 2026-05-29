@@ -1008,7 +1008,7 @@ impl EngineInner {
             ..
         } = &mut move_elem.data
         {
-            *destination = crate::element::Point2D {
+            *destination = crate::coordinates::MapPoint {
                 x: goal.x,
                 y: goal.y,
             };

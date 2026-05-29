@@ -223,7 +223,7 @@ impl EngineInner {
 
         let mut pass = SequenceElement::new_movement(1, Command::PassDoor, Some(new_id), action);
         pass.data = SequenceElementData::Movement {
-            destination: crate::element::Point2D {
+            destination: crate::coordinates::MapPoint {
                 x: door_snap.point_in.0,
                 y: door_snap.point_in.1,
             },
@@ -265,7 +265,7 @@ impl EngineInner {
         if let Some(target) = jitter {
             let mut mv = SequenceElement::new_movement(2, Command::Move, Some(new_id), action);
             mv.data = SequenceElementData::Movement {
-                destination: crate::element::Point2D {
+                destination: crate::coordinates::MapPoint {
                     x: target.x,
                     y: target.y,
                 },

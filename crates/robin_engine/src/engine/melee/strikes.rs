@@ -442,7 +442,10 @@ impl EngineInner {
                 crate::order::OrderType::WalkingUpright,
             );
             elem.data = crate::sequence::SequenceElementData::Movement {
-                destination: dest,
+                destination: crate::coordinates::MapPoint {
+                    x: dest.x,
+                    y: dest.y,
+                },
                 layer: self
                     .get_entity(actor_id)
                     .map(|e| e.element_data().layer())

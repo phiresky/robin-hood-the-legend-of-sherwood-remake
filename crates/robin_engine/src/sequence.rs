@@ -601,7 +601,10 @@ pub enum SequenceElementData {
 
     /// Movement-specific data.
     Movement {
-        destination: crate::element::Point2D,
+        /// Projected map-space destination. C++ `RHSequenceElementMovement`
+        /// stores this as `mptDestination` and compares it against
+        /// `GetPositionMap()`.
+        destination: crate::coordinates::MapPoint,
         layer: u16,
         /// Sector handle (`None` = no sector constraint).
         sector: Option<crate::position_interface::SectorHandle>,
@@ -738,7 +741,7 @@ impl SequenceElementData {
     /// Create a new movement element with default values.
     pub fn new_movement(action: OrderType) -> Self {
         Self::Movement {
-            destination: crate::element::Point2D::default(),
+            destination: crate::coordinates::MapPoint::default(),
             layer: 0,
             sector: None,
             gate_id: None,

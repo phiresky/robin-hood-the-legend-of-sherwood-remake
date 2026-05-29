@@ -1349,7 +1349,7 @@ impl EngineInner {
                                     ..
                                 } = &mut elem_mut.data
                             {
-                                *destination = crate::element::Point2D {
+                                *destination = crate::coordinates::MapPoint {
                                     x: resolved.destination.x,
                                     y: resolved.destination.y,
                                 };

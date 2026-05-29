@@ -258,7 +258,7 @@ impl EngineInner {
             }
             self.launch_swordfight_distance_move(
                 entity_id,
-                crate::element::Point2D {
+                crate::coordinates::MapPoint {
                     x: dest.x,
                     y: dest.y,
                 },
@@ -363,7 +363,14 @@ impl EngineInner {
             return false;
         }
 
-        self.launch_swordfight_distance_move(entity_id, destination, my_layer);
+        self.launch_swordfight_distance_move(
+            entity_id,
+            crate::coordinates::MapPoint {
+                x: destination.x,
+                y: destination.y,
+            },
+            my_layer,
+        );
         true
     }
 
@@ -373,7 +380,7 @@ impl EngineInner {
     pub(super) fn launch_swordfight_distance_move(
         &mut self,
         actor_id: EntityId,
-        destination: crate::element::Point2D,
+        destination: crate::coordinates::MapPoint,
         layer: u16,
     ) {
         let mut elem = crate::sequence::SequenceElement::new_movement(

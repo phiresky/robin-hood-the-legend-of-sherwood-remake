@@ -510,7 +510,7 @@ pub(crate) fn build_line_jump_click_sequence(
     };
 
     let mut seq = Sequence::new();
-    let to_pt = |p: Point2D| crate::element::Point2D::from(p);
+    let to_pt = crate::coordinates::MapPoint::from;
 
     let mut move_to_line = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
     move_to_line.data = SequenceElementData::Movement {
@@ -1198,7 +1198,7 @@ impl EngineInner {
                     ..
                 } = &mut move_elem.data
                 {
-                    *destination = crate::element::Point2D {
+                    *destination = crate::coordinates::MapPoint {
                         x: snapped.x,
                         y: snapped.y,
                     };
@@ -1550,7 +1550,7 @@ impl EngineInner {
             }
         };
 
-        let to_pt = |p: Point2D| crate::element::Point2D::from(p);
+        let to_pt = crate::coordinates::MapPoint::from;
 
         // Snapshot all the gate data we need while we briefly hold
         // the GameHost borrow, so the main loop can call grid /
@@ -1714,7 +1714,7 @@ impl EngineInner {
                 base_action,
             );
             leading_ap.data = SequenceElementData::Movement {
-                destination: crate::element::Point2D::default(),
+                destination: crate::coordinates::MapPoint::default(),
                 layer: 0,
                 sector: crate::position_interface::SectorHandle::new(src_sector),
                 gate_id: None,
@@ -1966,7 +1966,7 @@ impl EngineInner {
                     door_action,
                 );
                 wait.data = SequenceElementData::Movement {
-                    destination: crate::element::Point2D::default(),
+                    destination: crate::coordinates::MapPoint::default(),
                     layer: 0,
                     sector: crate::position_interface::SectorHandle::new(shot.new_sector),
                     gate_id: Some(shot.door_index),
@@ -2669,7 +2669,7 @@ impl EngineInner {
     /// entity state, build element, run arbitration + path) only
     /// happens once per actor per tick at drain time.
     fn do_launch_ai_move(&mut self, entity_id: EntityId, intent: &crate::order::AiOrderIntent) {
-        let dest = crate::element::Point2D {
+        let dest = crate::coordinates::MapPoint {
             x: intent.target_x,
             y: intent.target_y,
         };
