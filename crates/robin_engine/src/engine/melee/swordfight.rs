@@ -465,6 +465,7 @@ impl EngineInner {
         sword_hurted: bool,
         aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
+        let scratch = self.build_sim_scratch(assets);
         if opponent.0 == 0 {
             // Opponent==0 is a legitimate input upstream now — the
             // the `EnterSwordfightRequest::RaiseSword` drain branch in
@@ -549,8 +550,8 @@ impl EngineInner {
                         None,
                         self.weather.is_forest_level,
                         self.standard_view_polygon_radius,
-                        &assets.ai_entity_views(),
-                        &assets.ai_sight_obstacles(),
+                        &scratch.ai_entity_views,
+                        &scratch.ai_sight_obstacles,
                         &self.fast_grid,
                         &assets.hiking_paths,
                         &self.ai_global.all_soldier_handles,
@@ -560,8 +561,12 @@ impl EngineInner {
                     crate::ai::StimulusType::EventEnterSwordfight,
                     initiator.0,
                 );
-                let tick_data =
-                    self.build_npc_tick_data_for_target(opponent, assets, Some(initiator));
+                let tick_data = self.build_npc_tick_data_for_target(
+                    opponent,
+                    &scratch,
+                    assets,
+                    Some(initiator),
+                );
                 self.dispatch_think_with_drain(opponent, &stimulus, &ctx, &tick_data, assets);
             }
         }

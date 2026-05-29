@@ -15,6 +15,7 @@ use crate::ai::{AiContext, AiPerTickData, StimulusType};
 use crate::ai_entity_view::{self, AiEntityViewMap, SharedAiEntityViews};
 use crate::ai_vision;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId};
+use crate::engine::SimScratch;
 use crate::geo2d::{self};
 
 /// Number of arrows given to Merry Man archers in forest levels.
@@ -247,8 +248,8 @@ pub(super) fn extract_forecast_input(entity: &Entity) -> Option<crate::ai::Forec
 /// Also threads the per-tick [`SharedAiEntityViews`] map into the
 /// context so handlers can resolve arbitrary entity handles to live
 /// position / state without a mutable engine borrow.  Callers grab
-/// the map from `LevelAssets::ai_entity_views` (which is refreshed by
-/// [`EngineInner::refresh_ai_entity_views`] before each dispatch pass).
+/// the map from [`SimScratch`], built by
+/// [`EngineInner::build_sim_scratch`] before each dispatch pass.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_ai_context_from_entity(
     entity: &Entity,
@@ -658,8 +659,8 @@ pub(super) fn build_my_exit_door_info(
 /// Build the per-tick [`SharedAiEntityViews`] map from the live
 /// entity store.
 ///
-/// Called by [`EngineInner::refresh_ai_entity_views`] at the start of each
-/// AI dispatch pass so the map reflects end-of-last-tick entity
+/// Called by [`EngineInner::build_sim_scratch`] at the start of each
+/// AI dispatch pass so the map reflects current entity
 /// positions / states.  Includes every PC, soldier, civilian, and
 /// pickup-style bonus entity; skips inactive and projectile entities
 /// (they're never the target of a handle lookup in the ported AI
@@ -798,28 +799,24 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
 }
 
 impl EngineInner {
-    /// Rebuild [`AiGlobalState::entity_views`] from the live entity
-    /// store.  Call this at the top of every AI dispatch pass
-    /// (detection tick, reach-point events, combat events, …) so
-    /// handle → view lookups inside `think()` see up-to-date state.
-    pub(super) fn refresh_ai_entity_views(&mut self, assets: &LevelAssets) {
-        let map = build_entity_views(self);
-        assets.set_ai_entity_views(std::sync::Arc::new(map));
-    }
-
-    /// Snapshot static + dynamic sight obstacles into the host-side
-    /// per-dispatch cache so AI-side helpers can answer line-of-sight
-    /// queries without re-borrowing the engine. Static geometry is
-    /// reused from level assets; dynamic obstacles and active flags are
-    /// cloned from canonical engine state for a stable dispatch view.
-    pub(super) fn refresh_ai_sight_obstacles(&mut self, assets: &LevelAssets) {
-        let sight_obstacles = crate::sight_obstacle::SharedSightObstacles {
+    fn build_ai_sight_obstacles(
+        &self,
+        assets: &LevelAssets,
+    ) -> crate::sight_obstacle::SharedSightObstacles {
+        crate::sight_obstacle::SharedSightObstacles {
             static_obstacles: assets.static_sight_obstacles.clone(),
             dynamic_obstacles: std::sync::Arc::new(self.dynamic_sight_obstacles.clone()),
             static_active: std::sync::Arc::new(self.static_sight_obstacle_active.clone()),
+        }
+    }
+
+    pub(crate) fn build_sim_scratch(&self, assets: &LevelAssets) -> SimScratch {
+        let scratch = SimScratch {
+            ai_entity_views: std::sync::Arc::new(build_entity_views(self)),
+            ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         };
-        assets.set_ai_sight_obstacles(sight_obstacles.clone());
-        crate::natives::set_script_sight_obstacles(sight_obstacles);
+        crate::natives::set_script_sight_obstacles(scratch.ai_sight_obstacles.clone());
+        scratch
     }
 
     /// Build a per-NPC [`AiPerTickData`] snapshot on demand, outside
@@ -860,14 +857,16 @@ impl EngineInner {
     pub(super) fn build_npc_tick_data(
         &self,
         npc_id: crate::element::EntityId,
+        scratch: &SimScratch,
         assets: &LevelAssets,
     ) -> crate::ai::AiPerTickData {
-        self.build_npc_tick_data_for_target(npc_id, assets, None)
+        self.build_npc_tick_data_for_target(npc_id, scratch, assets, None)
     }
 
     pub(super) fn build_npc_tick_data_for_target(
         &self,
         npc_id: crate::element::EntityId,
+        scratch: &SimScratch,
         assets: &LevelAssets,
         target_override: Option<crate::element::EntityId>,
     ) -> crate::ai::AiPerTickData {
@@ -905,7 +904,7 @@ impl EngineInner {
 
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = assets.profile_manager.clone();
-        tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, assets);
+        tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch);
         // `fill_list_with_all_near_fighters` walks the global fighter
         // registry on every call.  Populate `nearby_fighters` here so
         // off-detection dispatch sites (timer events, reach-point
@@ -1128,7 +1127,7 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
         my_camp: crate::element::Camp,
-        assets: &LevelAssets,
+        scratch: &SimScratch,
     ) -> Vec<crate::ai_enemy::CampSoldierInfo> {
         // Snapshot the ticking NPC (the brawler / self) once so each
         // officer's `is_detecting_cone` cache below evaluates
@@ -1149,7 +1148,7 @@ impl EngineInner {
                 self.entity_data_inside_building(&s.element),
             )
         });
-        let obstacles_owned = assets.ai_sight_obstacles();
+        let obstacles_owned = scratch.ai_sight_obstacles.clone();
         let obstacles = obstacles_owned.list();
 
         let mut camp_soldiers = Vec::with_capacity(self.npc_ids.len().saturating_sub(1));
@@ -1729,8 +1728,7 @@ impl EngineInner {
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
         // mostly just reads self position).
-        self.refresh_ai_entity_views(assets);
-        self.refresh_ai_sight_obstacles(assets);
+        let scratch = self.build_sim_scratch(assets);
         // For "get soldier from all by id" in the AI tick: copy the
         // level's soldier load-order array onto AiGlobalState so
         // AiContext can resolve script-baked friend IDs.
@@ -1741,8 +1739,8 @@ impl EngineInner {
                 .map(|eid| eid.0)
                 .collect(),
         );
-        let entity_views = assets.ai_entity_views();
-        let sight_obstacles = assets.ai_sight_obstacles();
+        let entity_views = scratch.ai_entity_views.clone();
+        let sight_obstacles = scratch.ai_sight_obstacles.clone();
         let all_soldier_handles = self.ai_global.all_soldier_handles.clone();
 
         // Snapshot of every live human in the engine; every per-NPC
@@ -2613,9 +2611,8 @@ impl EngineInner {
         assets: &LevelAssets,
         entities: &[EntityId],
     ) {
+        let scratch = self.build_sim_scratch(assets);
         let current_frame = self.frame_counter;
-        self.refresh_ai_entity_views(assets);
-        self.refresh_ai_sight_obstacles(assets);
 
         for &entity_id in entities {
             // Build ctx in a read-only scope so we can then call
@@ -2631,8 +2628,8 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -2645,7 +2642,7 @@ impl EngineInner {
             // friend-swap candidates, avenger-on-roof wait position,
             // and a seeded enemy_sq_distances.  Non-enemy-NPC entities
             // get a stub.
-            let tick_data = self.build_npc_tick_data(entity_id, assets);
+            let tick_data = self.build_npc_tick_data(entity_id, &scratch, assets);
 
             self.dispatch_think_with_drain(entity_id, &stimulus, &ctx, &tick_data, assets);
         }
@@ -2665,9 +2662,8 @@ impl EngineInner {
         assets: &LevelAssets,
         entities: &[EntityId],
     ) {
+        let scratch = self.build_sim_scratch(assets);
         let current_frame = self.frame_counter;
-        self.refresh_ai_entity_views(assets);
-        self.refresh_ai_sight_obstacles(assets);
 
         for &entity_id in entities {
             let ctx = {
@@ -2680,8 +2676,8 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -2693,7 +2689,7 @@ impl EngineInner {
             // towards their primary target — the AI inspects the
             // target position to decide whether to begin the attack
             // pass.  Populate primary-target metadata via the builder.
-            let tick_data = self.build_npc_tick_data(entity_id, assets);
+            let tick_data = self.build_npc_tick_data(entity_id, &scratch, assets);
 
             self.dispatch_think_with_drain(entity_id, &stimulus, &ctx, &tick_data, assets);
         }
@@ -3879,16 +3875,14 @@ impl EngineInner {
         if self.freeze_all || self.ai_global.freeze {
             return;
         }
+        let scratch = self.build_sim_scratch(assets);
         self.ai_global.same_frame_target_claims.clear();
 
         // Rebuild the per-tick handle → entity view map *before* the
         // detection pass starts firing stimuli into NPC Think() calls.
         // Every `AiContext` built in this method and its callees
         // picks up the refreshed map via
-        // `assets.ai_entity_views()`.
-        self.refresh_ai_entity_views(assets);
-        self.refresh_ai_sight_obstacles(assets);
-
+        // `scratch.ai_entity_views.clone()`.
         // ── 1. Snapshot PC state. ────────────────────────────────
         let pc_snapshots = self.tick_enemy_ai_build_pc_snapshots(assets);
 
@@ -3924,6 +3918,7 @@ impl EngineInner {
         // ── 3. Per-enemy RefreshDetection loop. ──────────────────
         let (transitions, out_of_view_dispatches) = self.tick_enemy_ai_refresh_detection(
             assets,
+            &scratch,
             &pc_snapshots,
             &soldier_snapshots,
             &ko_money_fight_soldiers,
@@ -3951,13 +3946,13 @@ impl EngineInner {
         self.tick_enemy_ai_dispatch_out_of_view(out_of_view_dispatches, &pc_snapshots);
 
         // ── 6. Pursuit / approach / combat stance ────────────────
-        self.tick_enemy_ai_pursuit_approach(assets, transitions);
+        self.tick_enemy_ai_pursuit_approach(assets, &scratch, transitions);
 
         // ── 6c. Process pending AI swordfight requests. ─────────
         self.tick_enemy_ai_drain_swordfight_requests(assets);
 
         // ── 6d. Drain pending stimuli ────────────────────────────
-        self.tick_enemy_ai_drain_pending_stimuli(assets);
+        self.tick_enemy_ai_drain_pending_stimuli(assets, &scratch);
         self.ai_global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
@@ -3980,6 +3975,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
+        let scratch = self.build_sim_scratch(assets);
         // Drain pending_halt FIRST so the actor's in-progress sequence
         // (typically a Move element while running toward the target) is
         // torn down before any subsequent intent (e.g.
@@ -4605,14 +4601,14 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.standard_view_polygon_radius,
-                            &assets.ai_entity_views(),
-                            &assets.ai_sight_obstacles(),
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
                             &self.ai_global.all_soldier_handles,
                         )
                     };
-                    let tick_data = self.build_npc_tick_data(other_id, assets);
+                    let tick_data = self.build_npc_tick_data(other_id, &scratch, assets);
                     self.dispatch_filtered_stimulus(
                         assets, other_id, &stimulus, &other_ctx, &tick_data,
                     );
@@ -5021,8 +5017,8 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -5047,7 +5043,7 @@ impl EngineInner {
             .and_then(|entity| entity.ai_controller())
             .is_some_and(|ai| ai.pending_script_seek_area.is_some());
         if has_script_seek {
-            let tick_for_seek = self.build_npc_tick_data(npc_id, assets);
+            let tick_for_seek = self.build_npc_tick_data(npc_id, &scratch, assets);
             self.process_pending_script_seek_area_for(npc_id, &ctx_for_panic, &tick_for_seek);
         }
     }
@@ -5284,6 +5280,7 @@ impl EngineInner {
         civ_id: EntityId,
         runs: u8,
     ) {
+        let scratch = self.build_sim_scratch(assets);
         let idx = civ_id.0 as usize;
         let ctx = {
             let Some(Some(entity)) = self.entities.get(idx) else {
@@ -5300,8 +5297,8 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -5334,6 +5331,7 @@ impl EngineInner {
 
     #[tracing::instrument(level = "trace", skip_all, fields(source = source.0))]
     pub(crate) fn nearby_civilians_panic(&mut self, assets: &LevelAssets, source: EntityId) {
+        let scratch = self.build_sim_scratch(assets);
         let view_radius = if self.standard_view_polygon_radius > 0 {
             self.standard_view_polygon_radius as f32
         } else {
@@ -5384,7 +5382,7 @@ impl EngineInner {
         // call `los_clear` without holding an immutable borrow on
         // `self.ai_global` across the later `process_pending_*` mutable
         // borrows.
-        let obstacles_owned = assets.ai_sight_obstacles();
+        let obstacles_owned = scratch.ai_sight_obstacles.clone();
         for npc_id in npc_ids {
             let obstacles = obstacles_owned.list();
             let eligible = {
@@ -5458,8 +5456,8 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -5496,6 +5494,7 @@ impl EngineInner {
     /// }
     /// ```
     pub(crate) fn relaunch_path_at_new_speed(&mut self, assets: &LevelAssets, npc_id: EntityId) {
+        let scratch = self.build_sim_scratch(assets);
         // Re-check the gate (state may have changed between the
         // native pushing the deferred command and us draining it).
         let (has_path, substate) = {
@@ -5555,8 +5554,8 @@ impl EngineInner {
                 building_sector,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -5963,14 +5962,7 @@ impl EngineInner {
         if self.freeze_all || self.ai_global.freeze {
             return;
         }
-
-        // Refresh per-tick AI snapshots — `tick_enemy_ai` already does
-        // this when it runs first in the frame, but `tick_patrol_coordination`
-        // also dispatches stimuli (CALL_PATROL_COORDINATE) that build
-        // their own AiContext, and uses the obstacle list for the LOS
-        // gates below.  Idempotent re-refresh is cheap.
-        self.refresh_ai_entity_views(assets);
-        self.refresh_ai_sight_obstacles(assets);
+        let scratch = self.build_sim_scratch(assets);
 
         let frame = self.frame_counter;
         let npc_ids = self.npc_ids.clone();
@@ -6015,8 +6007,8 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -6151,7 +6143,7 @@ impl EngineInner {
                 let chief_pos = chief_snap.map(|s| s.position).unwrap_or_default();
                 let chief_view_radius = chief_snap.map(|s| s.view_radius as f32).unwrap_or(0.0);
                 let chief_view_radius_sq = chief_view_radius * chief_view_radius;
-                let obstacles_owned = assets.ai_sight_obstacles();
+                let obstacles_owned = scratch.ai_sight_obstacles.clone();
                 let obstacles = obstacles_owned.list();
 
                 for &member in &theoretical {
@@ -6318,7 +6310,7 @@ impl EngineInner {
             let chief_snap = snaps.get(&npc_id.0).copied();
             let missed = ai.missed_patrol_members.clone();
             let mut reacquired = Vec::new();
-            let obstacles_owned = assets.ai_sight_obstacles();
+            let obstacles_owned = scratch.ai_sight_obstacles.clone();
             let obstacles = obstacles_owned.list();
             for (i, &member) in missed.iter().enumerate() {
                 if let (Some(chief_s), Some(member_s)) = (chief_snap, snaps.get(&member))
@@ -6400,8 +6392,8 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -6419,7 +6411,7 @@ impl EngineInner {
             // populated — patrol minions can be alerted mid-patrol
             // and dispatched into battle decisions without losing
             // their primary target snapshot.
-            let mut tick_data = self.build_npc_tick_data(minion_id, assets);
+            let mut tick_data = self.build_npc_tick_data(minion_id, &scratch, assets);
             if let Some(&(chief_pos, chief_state)) = patrol_tick_map.get(&(cmd.minion)) {
                 tick_data.patrol_chief_position = chief_pos;
                 tick_data.patrol_chief_state = chief_state;
@@ -6604,6 +6596,7 @@ impl EngineInner {
     // - SetLeft/RightCombatNeighbour for phalanx linking
 
     pub(super) fn process_pending_cross_npc_actions(&mut self, assets: &LevelAssets) {
+        let scratch = self.build_sim_scratch(assets);
         // Collect all pending actions first to avoid borrow issues.
         // Both enemy (soldier) and friendly (civilian) AIs can push
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
@@ -6654,8 +6647,8 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.standard_view_polygon_radius,
-                            &assets.ai_entity_views(),
-                            &assets.ai_sight_obstacles(),
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
                             &self.ai_global.all_soldier_handles,
@@ -6674,7 +6667,7 @@ impl EngineInner {
                     // is an enemy soldier.  Build rich tick data so a
                     // subsequent think()-triggered BattleDecisions
                     // sees the target snapshot.
-                    let tick_data = self.build_npc_tick_data(target_id, assets);
+                    let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
                     let stimulus = crate::ai::Stimulus::new(StimulusType::CallInstruction);
                     self.dispatch_filtered_stimulus(assets, target_id, &stimulus, &ctx, &tick_data);
                 }
@@ -6693,8 +6686,8 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.standard_view_polygon_radius,
-                            &assets.ai_entity_views(),
-                            &assets.ai_sight_obstacles(),
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
                             &self.ai_global.all_soldier_handles,
@@ -6712,7 +6705,7 @@ impl EngineInner {
                     // CrossNpcAction::BreakPhalanx: target is an
                     // enemy soldier breaking formation — ReturnToDuty
                     // may route through BattleDecisions.
-                    let tick_data = self.build_npc_tick_data(target_id, assets);
+                    let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
                     let stimulus = crate::ai::Stimulus::new(StimulusType::EventReturnToDuty);
                     self.dispatch_filtered_stimulus(assets, target_id, &stimulus, &ctx, &tick_data);
                 }
@@ -6745,13 +6738,14 @@ impl EngineInner {
                                         None,
                                         self.weather.is_forest_level,
                                         self.standard_view_polygon_radius,
-                                        &assets.ai_entity_views(),
-                                        &assets.ai_sight_obstacles(),
+                                        &scratch.ai_entity_views,
+                                        &scratch.ai_sight_obstacles,
                                         &self.fast_grid,
                                         &assets.hiking_paths,
                                         &self.ai_global.all_soldier_handles,
                                     );
-                                    let fallback_tick = self.build_npc_tick_data(sender_id, assets);
+                                    let fallback_tick =
+                                        self.build_npc_tick_data(sender_id, &scratch, assets);
                                     self.dispatch_filtered_stimulus(
                                         assets,
                                         sender_id,
@@ -6769,8 +6763,8 @@ impl EngineInner {
                             None,
                             self.weather.is_forest_level,
                             self.standard_view_polygon_radius,
-                            &assets.ai_entity_views(),
-                            &assets.ai_sight_obstacles(),
+                            &scratch.ai_entity_views,
+                            &scratch.ai_sight_obstacles,
                             &self.fast_grid,
                             &assets.hiking_paths,
                             &self.ai_global.all_soldier_handles,
@@ -6779,7 +6773,7 @@ impl EngineInner {
                     // SendStimulus → enemy soldier target: the
                     // stimulus may be EVENT_VIEW / EVENT_REPORT /
                     // alert-forwarding which feeds BattleDecisions.
-                    let tick_data = self.build_npc_tick_data(target_id, assets);
+                    let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
                     let handled = self
                         .dispatch_filtered_stimulus(assets, target_id, &stimulus, &ctx, &tick_data);
                     // Fallback: if target couldn't handle the stimulus,
@@ -6798,14 +6792,14 @@ impl EngineInner {
                                 None,
                                 self.weather.is_forest_level,
                                 self.standard_view_polygon_radius,
-                                &assets.ai_entity_views(),
-                                &assets.ai_sight_obstacles(),
+                                &scratch.ai_entity_views,
+                                &scratch.ai_sight_obstacles,
                                 &self.fast_grid,
                                 &assets.hiking_paths,
                                 &self.ai_global.all_soldier_handles,
                             )
                         };
-                        let fallback_tick = self.build_npc_tick_data(sender_id, assets);
+                        let fallback_tick = self.build_npc_tick_data(sender_id, &scratch, assets);
                         self.dispatch_filtered_stimulus(
                             assets,
                             sender_id,
@@ -7136,6 +7130,7 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
+        let scratch = self.build_sim_scratch(assets);
         let frame = self.frame_counter;
         let stimuli: Vec<StimulusType> = {
             let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
@@ -7158,8 +7153,8 @@ impl EngineInner {
                     None,
                     self.weather.is_forest_level,
                     self.standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -7172,7 +7167,7 @@ impl EngineInner {
             // (most common — EventDone from SendCondolationCard,
             // MYTALK callbacks) or civilian.  Builder stubs for
             // non-enemy, populates for enemy.
-            let tick_data = self.build_npc_tick_data(npc_id, assets);
+            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
             self.dispatch_filtered_stimulus(assets, npc_id, &stimulus, &ctx, &tick_data);
             // The re-entered think might have queued a panic-seek
             // fallback (FleeingPanic / EventCouldntReachPoint).
@@ -7274,8 +7269,7 @@ impl EngineInner {
         //
         // Scripts may have spawned / deactivated entities, so refresh
         // the entity-views map before rebuilding per-NPC AiContexts.
-        self.refresh_ai_entity_views(assets);
-        self.refresh_ai_sight_obstacles(assets);
+        let scratch = self.build_sim_scratch(assets);
         let frame = self.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
@@ -7298,8 +7292,8 @@ impl EngineInner {
                     None,
                     is_forest_level,
                     standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -7308,7 +7302,7 @@ impl EngineInner {
             let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
             // EventAfterScriptGoOn may re-enter BattleDecisions via
             // ThinkExpectedEventCommonStuff when the AI is attacking.
-            let tick_data = self.build_npc_tick_data(npc_id, assets);
+            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
             self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
@@ -7323,6 +7317,7 @@ impl EngineInner {
         if self.freeze_all || self.ai_global.freeze {
             return;
         }
+        let scratch = self.build_sim_scratch(assets);
 
         let current_frame = self.frame_counter;
         let frame_phase = (current_frame % 16) as u8;
@@ -7355,7 +7350,7 @@ impl EngineInner {
 
             // Build the per-tick data first (uses `&self`) before the
             // mutable entity borrow.
-            let tick_data = self.build_npc_tick_data(npc_id, assets);
+            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
 
             let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
                 continue;
@@ -7371,8 +7366,8 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -7435,6 +7430,7 @@ impl EngineInner {
         if self.ai_global.ambush_points.is_empty() {
             return;
         }
+        let scratch = self.build_sim_scratch(assets);
 
         let frame = self.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
@@ -7463,8 +7459,8 @@ impl EngineInner {
                     None,
                     is_forest_level,
                     standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -7506,6 +7502,7 @@ impl EngineInner {
         if self.freeze_all || self.ai_global.freeze {
             return;
         }
+        let scratch = self.build_sim_scratch(assets);
 
         let current_frame = self.frame_counter;
 
@@ -7548,8 +7545,8 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -7626,6 +7623,7 @@ impl EngineInner {
         if self.freeze_all {
             return;
         }
+        let scratch = self.build_sim_scratch(assets);
         let npc_ids = self.npc_ids.clone();
         for npc_id in npc_ids {
             // Snapshot the gating predicates without holding a borrow.
@@ -7678,7 +7676,7 @@ impl EngineInner {
             // `force_return_to_duty == return_to_duty`.  Dispatch via
             // the AI subclass to mirror the virtual call.  Build the
             // ctx + tick data the way `tick_periodic_ai` does.
-            let tick_data = self.build_npc_tick_data(npc_id, assets);
+            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
             let frame = self.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
@@ -7690,8 +7688,8 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,

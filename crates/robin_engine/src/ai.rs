@@ -3448,7 +3448,7 @@ pub struct AiContext {
 
     /// Handle → snapshot map for **every** entity visible to the AI
     /// this tick. Populated once at the top of the AI tick by
-    /// `EngineInner::refresh_ai_entity_views` and shared into each
+    /// `EngineInner::build_sim_scratch` and shared into each
     /// `AiContext` via an [`Arc`] so cloning / re-building contexts is
     /// cheap. Used to answer per-entity field reads (position, camp,
     /// ai_state, …) for any handle the AI has stashed (antagonist,
@@ -3456,7 +3456,7 @@ pub struct AiContext {
     pub entity_views: crate::ai_entity_view::SharedAiEntityViews,
 
     /// Per-tick `Arc`-shared snapshot of the engine's sight obstacles.
-    /// Built once by `EngineInner::refresh_ai_sight_obstacles` and
+    /// Built once by `EngineInner::build_sim_scratch` and
     /// embedded into every `AiContext` so AI-side helpers can answer
     /// `ai_vision::los_clear` (opaque-LOS) without a mutable engine
     /// borrow. Use `obstacle_list()` for the borrowed `ObstacleList<'_>`

@@ -710,19 +710,6 @@ pub struct LevelAssets {
     /// not.
     pub static_sight_obstacles: std::sync::Arc<Vec<crate::sight_obstacle::SightObstacle>>,
 
-    /// Per-AI-dispatch entity-view cache rebuilt from live engine state.
-    /// This is not simulation state: it is a borrow-breaking runtime
-    /// snapshot used to feed AI contexts without serializing a duplicate
-    /// copy of every entity's AI-facing fields.
-    pub ai_entity_views:
-        std::sync::Arc<std::sync::RwLock<crate::ai_entity_view::SharedAiEntityViews>>,
-    /// Per-AI-dispatch sight-obstacle cache rebuilt from level static
-    /// obstacle geometry plus engine runtime active/dynamic obstacle
-    /// state. This is a borrow-breaking runtime snapshot, not canonical
-    /// simulation state.
-    pub ai_sight_obstacles:
-        std::sync::Arc<std::sync::RwLock<crate::sight_obstacle::SharedSightObstacles>>,
-
     // ── Script-indexed level data ─────────────────────────────────
     // Level-load-only collections that scripts index by script handle.
     // Read during script init (copied into GameHost) and during engine
@@ -798,12 +785,6 @@ impl LevelAssets {
             water_zones: crate::water_zones::WaterZones::new(),
             material_sectors: crate::material_sectors::MaterialSectors::new(),
             static_sight_obstacles: std::sync::Arc::new(Vec::new()),
-            ai_entity_views: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(
-                crate::ai_entity_view::AiEntityViewMap::new(),
-            ))),
-            ai_sight_obstacles: std::sync::Arc::new(std::sync::RwLock::new(
-                crate::sight_obstacle::SharedSightObstacles::default(),
-            )),
             script_location_count: 0,
             script_point_count: 0,
             script_location_positions: Vec::new(),
@@ -827,36 +808,26 @@ impl LevelAssets {
             % self.peasant_surnames.len()];
         Some(format!("{f} {l}"))
     }
+}
 
-    pub(crate) fn set_ai_entity_views(&self, views: crate::ai_entity_view::SharedAiEntityViews) {
-        *self
-            .ai_entity_views
-            .write()
-            .expect("ai_entity_views runtime cache lock poisoned") = views;
-    }
+/// Per-simulation-stream scratch rebuilt from canonical engine state.
+///
+/// This is deliberately outside [`LevelAssets`] and outside serialized
+/// [`super::EngineInner`] state. AI code uses these borrow-breaking
+/// snapshots while dispatching a tick, but they are derived data and
+/// must not be shared between live simulation and rollback replay.
+#[derive(Clone)]
+pub struct SimScratch {
+    pub ai_entity_views: crate::ai_entity_view::SharedAiEntityViews,
+    pub ai_sight_obstacles: crate::sight_obstacle::SharedSightObstacles,
+}
 
-    pub(crate) fn ai_entity_views(&self) -> crate::ai_entity_view::SharedAiEntityViews {
-        self.ai_entity_views
-            .read()
-            .expect("ai_entity_views runtime cache lock poisoned")
-            .clone()
-    }
-
-    pub(crate) fn set_ai_sight_obstacles(
-        &self,
-        obstacles: crate::sight_obstacle::SharedSightObstacles,
-    ) {
-        *self
-            .ai_sight_obstacles
-            .write()
-            .expect("ai_sight_obstacles runtime cache lock poisoned") = obstacles;
-    }
-
-    pub(crate) fn ai_sight_obstacles(&self) -> crate::sight_obstacle::SharedSightObstacles {
-        self.ai_sight_obstacles
-            .read()
-            .expect("ai_sight_obstacles runtime cache lock poisoned")
-            .clone()
+impl Default for SimScratch {
+    fn default() -> Self {
+        Self {
+            ai_entity_views: std::sync::Arc::new(crate::ai_entity_view::AiEntityViewMap::new()),
+            ai_sight_obstacles: crate::sight_obstacle::SharedSightObstacles::default(),
+        }
     }
 }
 

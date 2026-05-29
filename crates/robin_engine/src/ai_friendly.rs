@@ -749,7 +749,7 @@ impl FriendlyAi {
                                 //
                                 // Fixing this end-to-end requires a
                                 // synchronous CallAlert dispatch +
-                                // mid-think `refresh_ai_entity_views`
+                                // mid-think `build_sim_scratch`
                                 // helper (~200 LOC, new re-entrancy
                                 // guard, new flag).  The cosmetic
                                 // blast radius (rare path,

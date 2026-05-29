@@ -172,7 +172,7 @@ impl<'a> ObstacleList<'a> {
 /// Per-tick `Arc`-shareable snapshot of the engine's static + dynamic
 /// sight obstacles plus the static-active flag array.  Built once at
 /// the top of each AI dispatch pass by
-/// [`crate::engine::EngineInner::refresh_ai_sight_obstacles`] and
+/// [`crate::engine::EngineInner::build_sim_scratch`] and
 /// embedded into every [`crate::ai::AiContext`] so AI helpers can run
 /// `ai_vision::los_clear` without re-borrowing the engine.
 ///

@@ -114,6 +114,7 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_pursuit_approach(
         &mut self,
         assets: &LevelAssets,
+        scratch: &SimScratch,
         transitions: Vec<Detection>,
     ) {
         let current_frame = self.frame_counter;
@@ -168,6 +169,7 @@ impl EngineInner {
             self.tick_enemy_ai_pursuit_approach_timer_for_npc(
                 npc_id,
                 assets,
+                scratch,
                 current_frame,
                 &mut panic_calls,
             );
@@ -234,6 +236,7 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
+        scratch: &SimScratch,
         current_frame: u32,
         panic_calls: &mut Vec<EntityId>,
     ) {
@@ -302,7 +305,7 @@ impl EngineInner {
         // candidates, avenger-on-roof wait position, and seeded
         // enemy_sq_distances.  Matches (and supersedes) the
         // bespoke hand-roll this block used to do.
-        let tick_data = self.build_npc_tick_data(npc_id, assets);
+        let tick_data = self.build_npc_tick_data(npc_id, scratch, assets);
 
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -322,8 +325,8 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.standard_view_polygon_radius,
-                &assets.ai_entity_views(),
-                &assets.ai_sight_obstacles(),
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
                 &self.ai_global.all_soldier_handles,
@@ -375,10 +378,14 @@ impl EngineInner {
     /// `AiController::pending_stimuli` by `dispatch_ai_stimulus()`
     /// during the combat tick.  We defer them to avoid re-entrant
     /// borrow issues, then replay them now.
-    pub(super) fn tick_enemy_ai_drain_pending_stimuli(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_enemy_ai_drain_pending_stimuli(
+        &mut self,
+        assets: &LevelAssets,
+        scratch: &SimScratch,
+    ) {
         let npc_ids = self.npc_ids.clone();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, scratch);
         }
     }
 
@@ -390,6 +397,7 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
+        scratch: &SimScratch,
     ) {
         let stimuli = {
             let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
@@ -420,8 +428,8 @@ impl EngineInner {
                     building_sector,
                     self.weather.is_forest_level,
                     self.standard_view_polygon_radius,
-                    &assets.ai_entity_views(),
-                    &assets.ai_sight_obstacles(),
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
                     &self.ai_global.all_soldier_handles,
@@ -449,7 +457,8 @@ impl EngineInner {
                 }
                 _ => None,
             };
-            let tick_data = self.build_npc_tick_data_for_target(npc_id, assets, target_override);
+            let tick_data =
+                self.build_npc_tick_data_for_target(npc_id, scratch, assets, target_override);
             self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
