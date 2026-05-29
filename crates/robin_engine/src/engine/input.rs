@@ -47,9 +47,10 @@ pub enum BowTarget {
 
 #[inline]
 fn bow_ground_y(point: crate::element::Point3D) -> f32 {
-    // Rust stores sprite-space 3D points with elevation already folded into Y.
-    // C++ projects bow targets to ground before direction/range checks.
-    point.y - point.z
+    // C++ `GetPositionGround()` returns `(GetPosition().mX, GetPosition().mY)`.
+    // It does not project with `mY - mZ`; bow range, facing, and preview
+    // source direction all use this 3D-space Y directly.
+    point.y
 }
 
 /// Output of `compute_trajectory_preview*`. Host applies this to its

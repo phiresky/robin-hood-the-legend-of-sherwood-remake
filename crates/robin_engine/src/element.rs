@@ -3893,7 +3893,7 @@ pub fn advance_trajectory_one_frame(
     p.y += projectile.velocity_increment.y;
     p.z += projectile.velocity_increment.z;
     element.set_position(p);
-    element.set_position_map(Point2D {
+    element.set_position_map_preserving_3d(Point2D {
         x: p.x,
         y: p.y - p.z,
     });

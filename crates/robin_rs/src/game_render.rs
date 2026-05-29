@@ -2295,7 +2295,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
             return;
         }
         let mut last = start;
-        let mut accumulated = 0.0f32;
+        let mut carry = 0.0f32;
 
         for tp in points {
             let current = tp.position;
@@ -2309,18 +2309,14 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
                 continue;
             }
 
-            let step_x = dx * TRAJECTORY_DOT_INTERVAL / seg_len;
-            let step_y = dy * TRAJECTORY_DOT_INTERVAL / seg_len;
-            let step_z = dz * TRAJECTORY_DOT_INTERVAL / seg_len;
-
-            accumulated += seg_len;
-            let mut walk = last;
-
-            while accumulated >= TRAJECTORY_DOT_INTERVAL {
-                walk.x += step_x;
-                walk.y += step_y;
-                walk.z += step_z;
-                accumulated -= TRAJECTORY_DOT_INTERVAL;
+            let mut dot_distance = TRAJECTORY_DOT_INTERVAL - carry;
+            while dot_distance <= seg_len {
+                let ratio = dot_distance / seg_len;
+                let walk = crate::element::Point3D {
+                    x: last.x + dx * ratio,
+                    y: last.y + dy * ratio,
+                    z: last.z + dz * ratio,
+                };
 
                 // Project 3D → 2D: screen_y uses (y - z) for isometric height
                 let map_x = walk.x;
@@ -2331,8 +2327,12 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
                 if sx >= 0 && sy >= 0 && sx < screen_w && sy < screen_h {
                     renderer.render_gpu_rect(sx, sy, 2, 2, cr, cg, cb, 255);
                 }
+
+                dot_distance += TRAJECTORY_DOT_INTERVAL;
             }
 
+            let total = carry + seg_len;
+            carry = total - (total / TRAJECTORY_DOT_INTERVAL).floor() * TRAJECTORY_DOT_INTERVAL;
             last = current;
         }
     }
