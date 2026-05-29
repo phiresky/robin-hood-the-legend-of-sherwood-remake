@@ -1739,6 +1739,13 @@ impl EngineInner {
             level += 1;
         }
 
+        let seek_goal = match goal {
+            GoalShape::Seek {
+                target, tolerance, ..
+            } => Some((target, tolerance)),
+            _ => None,
+        };
+
         // Goal-point used for the trailing MOVE (if any).  For Point
         // goals this is the caller's point; for Line goals it's the
         // line's midpoint; for Door goals it's the approach point on
@@ -1853,6 +1860,9 @@ impl EngineInner {
                 level += 1;
             } else {
                 // MOVE to gate entry point on the source side.
+                let (gate_seek_target, gate_seek_tolerance) = seek_goal
+                    .map(|(target, tolerance)| (Some(target), tolerance))
+                    .unwrap_or((None, 0.0));
                 let mut m = SequenceElement::new_movement(
                     level,
                     Command::Move,
@@ -1865,9 +1875,9 @@ impl EngineInner {
                     sector: None,
                     gate_id: Some(shot.door_index),
                     line_id: None,
-                    element: None,
+                    element: gate_seek_target,
                     flags: gate_flags,
-                    tolerance: 0.0,
+                    tolerance: gate_seek_tolerance,
                     direction: 0,
                     action: entry_action,
                     speed_factor,
