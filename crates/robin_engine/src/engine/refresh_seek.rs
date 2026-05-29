@@ -324,30 +324,8 @@ impl crate::engine::EngineInner {
         tolerance: f32,
         new_target_pos: crate::element::Point2D,
     ) {
-        let same_building = self
-            .get_entity(owner)
-            .zip(self.get_entity(target))
-            .is_some_and(|(owner_e, target_e)| {
-                owner_e.element_data().sector() == target_e.element_data().sector()
-                    && self.sector_is_building(owner_e.element_data().sector())
-            });
-        if flags.contains(MoveFlags::SEEK_IN_BUILDINGS) && same_building {
-            let has_post_seek = self
-                .get_entity(owner)
-                .and_then(|e| e.actor_data())
-                .is_some_and(|a| a.post_seek_sequence.is_some());
-            if has_post_seek
-                && let Some(pos) = self
-                    .get_entity(target)
-                    .map(|e| e.element_data().position_map())
-                && let Some(owner_e) = self.get_entity_mut(owner)
-            {
-                owner_e
-                    .position_iface_mut()
-                    .set_position_map(pos.to_geo_point());
-                self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
-                return;
-            }
+        if self.try_handle_same_sector_actor_seek_wait(owner, seq_id, elem_idx, target, flags) {
+            return;
         }
 
         if self.try_dispatch_cross_sector_entity_seek(
@@ -400,6 +378,75 @@ impl crate::engine::EngineInner {
         }
 
         self.relaunch_seek_replacement(owner, seq_id, elem_idx, new_elem);
+    }
+
+    /// Original `RefreshSeek(RHElement*)` waits instead of rebuilding
+    /// a path for two actor-target cases in the same sector:
+    ///
+    /// * actor and target are both inside a building, except that
+    ///   `SEEK_IN_BUILDINGS` with a post-seek tail teleports to the
+    ///   target and starts the tail;
+    /// * target actor is currently passing a door, where the next
+    ///   refresh should see the target's post-door sector/position.
+    ///
+    /// Returns `true` when RefreshSeek should stop without normal path
+    /// re-resolution.
+    pub(super) fn try_handle_same_sector_actor_seek_wait(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        target: EntityId,
+        flags: MoveFlags,
+    ) -> bool {
+        let (owner_sector, target_sector, target_is_actor) =
+            match self.get_entity(owner).zip(self.get_entity(target)) {
+                Some((owner_e, target_e)) => (
+                    owner_e.element_data().sector(),
+                    target_e.element_data().sector(),
+                    target_e.actor_data().is_some(),
+                ),
+                None => return false,
+            };
+        if !target_is_actor || owner_sector != target_sector {
+            return false;
+        }
+
+        if self.sector_is_building(owner_sector) {
+            let has_post_seek = self
+                .get_entity(owner)
+                .and_then(|e| e.actor_data())
+                .is_some_and(|a| a.post_seek_sequence.is_some());
+            if flags.contains(MoveFlags::SEEK_IN_BUILDINGS)
+                && has_post_seek
+                && let Some(pos) = self
+                    .get_entity(target)
+                    .map(|e| e.element_data().position_map())
+                && let Some(owner_e) = self.get_entity_mut(owner)
+            {
+                owner_e
+                    .position_iface_mut()
+                    .set_position_map(pos.to_geo_point());
+                self.start_post_seek_sequence(owner, Some((seq_id, elem_idx)));
+            }
+            return true;
+        }
+
+        let target_passing_door = self
+            .get_entity(target)
+            .and_then(|e| e.actor_data())
+            .and_then(|a| {
+                a.active_movement
+                    .sequence_id
+                    .map(|seq_id| (seq_id, a.active_movement.element_index))
+            })
+            .and_then(|(seq_id, elem_idx)| self.sequence_manager.get_element(seq_id, elem_idx))
+            .is_some_and(|elem| elem.command == crate::element::Command::PassDoor);
+        if target_passing_door {
+            return true;
+        }
+
+        false
     }
 
     /// Central entity-target Seek lowering, matching original
@@ -722,5 +769,101 @@ impl crate::engine::EngineInner {
         let mut seq = Sequence::new();
         seq.append_element(new_elem);
         self.launch_sequence(seq);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::{
+        ActorData, ActorPc, Command, ElementData, ElementKind, Entity, HumanData, PcData, Posture,
+    };
+    use crate::movement::ActiveMovement;
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{SequenceElementData, SequenceState};
+
+    fn test_pc_at(x: f32, y: f32, sector: u16) -> Entity {
+        let mut pc = ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                active: true,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
+        };
+        pc.element
+            .set_position_map(crate::element::Point2D { x, y });
+        pc.element.set_sector(SectorHandle::new(sector));
+        Entity::Pc(pc)
+    }
+
+    #[test]
+    fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
+        let mut engine = crate::engine::EngineInner::new();
+        let assets = LevelAssets::new();
+        let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
+        let target = engine.add_entity(test_pc_at(80.0, 10.0, 1));
+
+        let mut seek =
+            SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
+        if let SequenceElementData::Movement {
+            flags,
+            element,
+            tolerance,
+            ..
+        } = &mut seek.data
+        {
+            *flags = MoveFlags::SEEK;
+            *element = Some(target);
+            *tolerance = 10.0;
+        }
+        let seek_seq = engine.sequence_manager.launch_element(seek);
+        engine.sequence_manager.element_in_progress(seek_seq, 0);
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(seek_seq, 0);
+
+        let pass = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(target),
+            OrderType::WalkingUpright,
+        );
+        let pass_seq = engine.sequence_manager.launch_element(pass);
+        engine.sequence_manager.element_in_progress(pass_seq, 0);
+        engine
+            .get_entity_mut(target)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_movement = ActiveMovement::new(pass_seq, 0);
+
+        engine.apply_seek_refresh(
+            &assets,
+            owner,
+            seek_seq,
+            0,
+            target,
+            OrderType::WalkingUpright,
+            MoveFlags::SEEK,
+            10.0,
+            crate::element::Point2D { x: 90.0, y: 10.0 },
+        );
+
+        assert_eq!(engine.sequence_manager.sequence_count(), 2);
+        assert_eq!(
+            engine
+                .sequence_manager
+                .get_element(seek_seq, 0)
+                .unwrap()
+                .state,
+            SequenceState::InProgress
+        );
     }
 }

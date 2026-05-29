@@ -1956,40 +1956,6 @@ impl EngineInner {
             _ => {}
         }
 
-        // ── `SEEK_IN_BUILDINGS` consumer ─────────────────────────────
-        // When both actor and target are inside the same building
-        // sector, the seek cannot resolve via normal cross-sector
-        // routing.  With `SEEK_IN_BUILDINGS` set (and a post-seek
-        // sequence attached), the actor teleports onto the target's
-        // map position and launches the post-seek sequence directly.
-        // The "post-seek sequence" here is the interaction element
-        // this helper builds, so the short-circuit collapses to
-        // "teleport + launch the level-1 interaction."  Without the
-        // flag, the seek would wait indefinitely — we preserve that
-        // by letting the usual path run, which actually succeeds
-        // because the pathfinder can route inside the building's
-        // motion area.
-        if per_command_seek_flags.contains(MoveFlags::SEEK_IN_BUILDINGS)
-            && same_sector
-            && self.sector_is_building(pc_sector)
-        {
-            tracing::trace!(
-                ?actor,
-                ?target,
-                ?command,
-                "apply_interaction_with_seek: SEEK_IN_BUILDINGS short-circuit \
-                 (teleport + direct launch)"
-            );
-            if let Some(e) = self.get_entity_mut(actor) {
-                e.position_iface_mut()
-                    .set_position_map(tgt_pos.to_geo_point());
-            }
-            let interaction =
-                SequenceElement::new_interaction(1, command, Some(actor), Some(target));
-            self.launch_element(interaction);
-            return;
-        }
-
         let needs_seek = dist > action_distance || !same_sector;
         tracing::trace!(
             ?actor,

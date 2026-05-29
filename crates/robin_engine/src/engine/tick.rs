@@ -1301,35 +1301,13 @@ impl EngineInner {
                                 self.start_post_seek_sequence(*owner, None);
                                 continue;
                             }
-                            let same_building = self
-                                .get_entity(*owner)
-                                .zip(self.get_entity(target))
-                                .is_some_and(|(owner_e, target_e)| {
-                                    owner_e.element_data().sector()
-                                        == target_e.element_data().sector()
-                                        && self.sector_is_building(owner_e.element_data().sector())
-                                });
-                            let has_post_seek = self
-                                .get_entity(*owner)
-                                .and_then(|e| e.actor_data())
-                                .is_some_and(|a| a.post_seek_sequence.is_some());
-                            if instr_flags.contains(crate::sequence::MoveFlags::SEEK_IN_BUILDINGS)
-                                && same_building
-                                && has_post_seek
-                            {
-                                if let Some(pos) = self
-                                    .get_entity(target)
-                                    .map(|e| e.element_data().position_map())
-                                    && let Some(owner_e) = self.get_entity_mut(*owner)
-                                {
-                                    owner_e
-                                        .position_iface_mut()
-                                        .set_position_map(pos.to_geo_point());
-                                }
-                                self.start_post_seek_sequence(
-                                    *owner,
-                                    Some((*sequence_id, *element_index)),
-                                );
+                            if self.try_handle_same_sector_actor_seek_wait(
+                                *owner,
+                                *sequence_id,
+                                *element_index,
+                                target,
+                                instr_flags,
+                            ) {
                                 continue;
                             }
                             // Entity-target SEEK floors the seek
