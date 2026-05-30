@@ -1560,17 +1560,6 @@ pub fn compute_deviated_future(
     (future, deviated)
 }
 
-fn offset_bbox(b: &BBox2D, pt: MapPoint) -> BBox2D {
-    if let Some(r) = b.0 {
-        BBox2D(Some(geo::Rect::new(
-            geo2d::pt(r.min().x + pt.x, r.min().y + pt.y),
-            geo2d::pt(r.max().x + pt.x, r.max().y + pt.y),
-        )))
-    } else {
-        BBox2D::new()
-    }
-}
-
 impl PositionInterface {
     // ====================================================================
     // Fast-find grid integration

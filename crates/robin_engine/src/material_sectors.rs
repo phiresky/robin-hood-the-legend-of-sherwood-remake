@@ -233,9 +233,6 @@ impl MaterialSectors {
     /// First sector containing `point`, if any.  Same first-hit scan
     /// as `material_at` but returns the sector itself so callers can
     /// query boundary distance etc.
-    pub fn containing_sector(&self, point: GeoPoint2D) -> Option<&MaterialSector> {
-        self.sectors.iter().find(|s| s.contains(point))
-    }
 
     /// Material at `point`, optionally constrained to a landing
     /// obstacle's sub-sector list.

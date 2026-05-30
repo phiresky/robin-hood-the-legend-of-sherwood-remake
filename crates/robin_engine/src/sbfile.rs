@@ -608,30 +608,7 @@ impl SbFile {
         *s = String::from_utf8_lossy(&bytes).into_owned();
         Ok(())
     }
-    pub fn skip_padding(&mut self, n: usize) -> Result<(), i32> {
-        let mut buf = vec![0u8; n];
-        self.serialize_bytes(&mut buf)
-    }
-    pub fn validate_stream(&mut self, fingerprint: &str) -> Result<(), i32> {
-        use crate::md5::Md5Ctx;
-        let mut ctx = Md5Ctx::new();
-        ctx.update(fingerprint.as_bytes());
-        ctx.finalize();
-        let expected = ctx.raw_digest_bytes();
-        let mut buf = [0u8; 16];
-        self.serialize_bytes(&mut buf)?;
-        if buf != expected {
-            // The original raised a fatal error here; we surface this as an
-            // error-level log + propagated `Err` rather than aborting the
-            // process so callers can fail the asset load instead of crashing.
-            tracing::error!(
-                "ValidateStream: digital signature mismatch for '{}'",
-                fingerprint
-            );
-            return Err(SBFILE_ERROR_READ);
-        }
-        Ok(())
-    }
+
     pub fn checkpoint(&mut self) -> Result<(), i32> {
         let mut m = 0u16;
         self.serialize_u16(&mut m)?;

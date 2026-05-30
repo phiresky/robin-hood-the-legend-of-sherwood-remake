@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
 use crate::geo2d::{BBox2D, GeoPoint2D, pt};
-use crate::ingame_menu::layout::{MenuTransform, TextAlign, VAlign, render_text_in_box_aligned};
 use crate::input::KeyboardState;
-use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use robin_engine::sprite::BBox;
@@ -1157,30 +1155,8 @@ pub enum ListboxFontSlot {
 /// the primary and alternate paths, so this function never returns
 /// the `*Selected` slots — they are preserved here as enum variants
 /// for callers that want to populate the table by structural slot.
-pub fn font_slot_for_flags(flags: u32) -> ListboxFontSlot {
-    if (flags & listbox_flags::ALTERNATE) == 0 {
-        match flags & listbox_flags::STATE_MASK {
-            listbox_flags::FOCUSED | listbox_flags::SELECTED => ListboxFontSlot::Focused,
-            _ => ListboxFontSlot::Default,
-        }
-    } else {
-        match flags & listbox_flags::STATE_MASK {
-            listbox_flags::FOCUSED | listbox_flags::SELECTED => ListboxFontSlot::FocusedAlt,
-            _ => ListboxFontSlot::DefaultAlt,
-        }
-    }
-}
 
 /// Decode the alignment subfield of a listbox item-flags word.
-fn alignment_for_flags(flags: u32) -> ListboxAlignment {
-    match flags & listbox_flags::ALIGN_MASK {
-        listbox_flags::RIGHT => ListboxAlignment::Right,
-        listbox_flags::CENTER => ListboxAlignment::Centered,
-        listbox_flags::JUSTIFY => ListboxAlignment::Justified,
-        // `LEFT` is the zero value; any unset alignment falls through to it.
-        _ => ListboxAlignment::Left,
-    }
-}
 
 impl RendererListbox {
     /// Calculate how many items can be displayed: bbox height divided

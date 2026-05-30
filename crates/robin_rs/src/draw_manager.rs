@@ -207,11 +207,6 @@ impl DrawManager {
     }
 
     /// Fill a rectangle in world coordinates, clipped to the view.
-    pub fn fill_box(&self, renderer: &mut Renderer, bbox: &BBox, color: u16) {
-        if let Some(clipped) = self.clip_box(bbox) {
-            renderer.fill_screen(Some(&clipped), color);
-        }
-    }
 
     /// Draw a dotted line between two points.
     ///

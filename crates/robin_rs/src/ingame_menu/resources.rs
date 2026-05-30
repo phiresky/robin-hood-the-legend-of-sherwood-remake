@@ -1274,11 +1274,6 @@ impl IngameMenuResources {
     /// font instead of substituting the bitmap default. This narrowed
     /// view exists for a couple of remaining bitmap-only callers
     /// (`ui.rs` widget shims) that haven't been migrated yet.
-    pub fn list_font_native(&self, focused: bool, selected: bool) -> Option<&NativeFont> {
-        self.list_font(focused, selected)
-            .and_then(|f| f.as_native())
-            .or(self.fonts.default.as_ref())
-    }
 
     /// 6-state list font lookup that preserves the `Font` enum so
     /// callers can render via either the native bitmap or the TrueType

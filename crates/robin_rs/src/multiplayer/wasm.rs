@@ -7,11 +7,11 @@
 //! can't open a listening TCP socket.  Wasm clients can only connect
 //! to a native `--server` running on a desktop / dedicated host.
 
-use super::{NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound, decode_msg, encode_msg};
+use super::{NET_PROTOCOL_VERSION, NetEvent, NetMsg, decode_msg};
 use crate::player_command::PlayerId;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Sender;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::js_sys;
@@ -32,55 +32,6 @@ pub struct ClientHandle {
     _on_close: Closure<dyn FnMut(web_sys::CloseEvent)>,
     _on_error: Closure<dyn FnMut(web_sys::Event)>,
     _socket: web_sys::WebSocket,
-}
-
-/// Schedule a 40 ms (~25 Hz) interval-driven drain of `outgoing_rx`.
-/// Each tick pulls every queued [`NetOutbound`] and pushes the
-/// encoded frames through the WebSocket.  The closure leaks
-/// intentionally — `setInterval` keeps it alive until the page
-/// closes.
-fn schedule_outgoing_pump(socket: web_sys::WebSocket, outgoing_rx: Receiver<NetOutbound>) {
-    use wasm_bindgen::closure::Closure;
-
-    let outgoing_rx = Rc::new(RefCell::new(outgoing_rx));
-    let socket = Rc::new(socket);
-    let pump = Closure::<dyn FnMut()>::new({
-        let outgoing_rx = Rc::clone(&outgoing_rx);
-        let socket = Rc::clone(&socket);
-        move || {
-            let rx = outgoing_rx.borrow();
-            while let Ok(outbound) = rx.try_recv() {
-                let frame = match outbound {
-                    NetOutbound::Input {
-                        origin_frame,
-                        command,
-                    } => encode_msg(&NetMsg::Input {
-                        origin_frame,
-                        command,
-                    }),
-                    NetOutbound::StateHash { .. } => continue, // host-only
-                    NetOutbound::InitialSnapshot { .. } => continue, // host-only
-                    NetOutbound::ReadyToSim { frame } => encode_msg(&NetMsg::ReadyToSim { frame }),
-                    NetOutbound::ModalDismiss { kind, result } => {
-                        encode_msg(&NetMsg::ModalDismiss { kind, result })
-                    }
-                };
-                if let Err(e) = socket.send_with_u8_array(&frame) {
-                    tracing::warn!("wasm-mp: send failed: {e:?}");
-                    break;
-                }
-            }
-        }
-    });
-
-    if let Some(window) = web_sys::window() {
-        let _ = window.set_interval_with_callback_and_timeout_and_arguments_0(
-            pump.as_ref().unchecked_ref(),
-            40,
-        );
-    }
-    // Leak the closure so the browser can keep invoking it.
-    pump.forget();
 }
 
 /// Server-side launch is not available in the browser.  The shape

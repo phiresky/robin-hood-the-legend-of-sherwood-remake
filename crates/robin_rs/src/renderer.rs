@@ -1171,10 +1171,6 @@ impl Renderer {
         rgb8_to_rgb565(r, g, b)
     }
 
-    pub fn create_color_15(r: u8, g: u8, b: u8) -> u16 {
-        ((r as u16 & 0xF8) << 7) | ((g as u16 & 0xF8) << 2) | ((b as u16) >> 3)
-    }
-
     /// Create a managed RGB565 surface from decoded asset pixels.
     /// This is the compatibility entry point for older widget/minimap
     /// surfaces that still need a renderer surface ID; callers should not

@@ -1767,12 +1767,6 @@ impl PathFinderRuntime {
         true
     }
 
-    /// Grid-based thick reachability check using motion lines.
-    /// Builds a movement corridor and checks for intersecting motion lines.
-    pub fn is_reachable_grid(&self, grid: &FastFindGrid, p1: MapPoint, p2: MapPoint) -> bool {
-        self.is_reachable_grid_geo(grid, p1.to_geo(), p2.to_geo())
-    }
-
     fn is_reachable_grid_geo(&self, grid: &FastFindGrid, p1: GeoPoint2D, p2: GeoPoint2D) -> bool {
         let hd = self.current_half_diagonal;
         let corridor = match FastFindGrid::build_thick_move_corridor(p1, p2, hd) {
@@ -1808,11 +1802,6 @@ impl PathFinderRuntime {
         }
 
         true
-    }
-
-    /// Check if a unit at `point` does not collide with any motion line.
-    pub fn object_position_authorized(&self, grid: &FastFindGrid, point: MapPoint) -> bool {
-        self.object_position_authorized_geo(grid, point.to_geo())
     }
 
     fn object_position_authorized_geo(&self, grid: &FastFindGrid, point: GeoPoint2D) -> bool {

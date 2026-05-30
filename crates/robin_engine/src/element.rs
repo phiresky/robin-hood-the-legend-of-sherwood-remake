@@ -2206,32 +2206,6 @@ impl Entity {
         }
     }
 
-    pub fn tie_up_unconscious_human(&mut self) -> bool {
-        fn apply(element: &mut ElementData, human: &mut HumanData) {
-            assert!(human.unconscious, "cannot tie up a conscious entity");
-            element.set_posture(Posture::Tied);
-            if human.concussion_of_the_brain < crate::combat::CONCUSSION_WAKEUP_THRESHOLD {
-                human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
-            }
-        }
-
-        match self {
-            Self::Pc(e) => {
-                apply(&mut e.element, &mut e.human);
-                true
-            }
-            Self::Soldier(e) => {
-                apply(&mut e.element, &mut e.human);
-                true
-            }
-            Self::Civilian(e) => {
-                apply(&mut e.element, &mut e.human);
-                true
-            }
-            _ => false,
-        }
-    }
-
     pub fn set_posture_stuck_under_net_for_human(&mut self) -> bool {
         match self {
             Self::Pc(e) => {
