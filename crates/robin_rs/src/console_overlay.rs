@@ -27,6 +27,7 @@ use std::collections::VecDeque;
 use crate::gfx_types::Keycode;
 
 use crate::gfx_types::GameEvent;
+use crate::ingame_menu::layout::render_text_screen;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use robin_engine::engine::{ConsoleResponse, DevState, Engine, LevelAssets};
@@ -767,7 +768,7 @@ impl ConsoleOverlay {
             let mut combined = String::with_capacity(prefix.len() + body.len());
             combined.push_str(prefix);
             combined.push_str(body);
-            crate::ingame_menu::layout::render_text_screen(renderer, font, &combined, pad_x, y);
+            render_text_screen(renderer, font, &combined, pad_x, y);
             y += line_step;
             if y > input_y - line_step {
                 break;
@@ -777,7 +778,7 @@ impl ConsoleOverlay {
         // Scroll indicator (top of panel) when scrolled up.
         if self.scroll_from_bottom > 0 {
             let label = format!("[scrolled {} lines]", self.scroll_from_bottom);
-            crate::ingame_menu::layout::render_text_screen(
+            render_text_screen(
                 renderer,
                 font,
                 &label,
@@ -789,14 +790,8 @@ impl ConsoleOverlay {
         // ── Input line ──
         let prompt = "> ";
         let prompt_w = font.text_width(prompt);
-        crate::ingame_menu::layout::render_text_screen(renderer, font, prompt, pad_x, input_y);
-        crate::ingame_menu::layout::render_text_screen(
-            renderer,
-            font,
-            &self.input,
-            pad_x + prompt_w,
-            input_y,
-        );
+        render_text_screen(renderer, font, prompt, pad_x, input_y);
+        render_text_screen(renderer, font, &self.input, pad_x + prompt_w, input_y);
 
         // Blinking caret at the cursor position (not necessarily at
         // end-of-line, since Left/Right/Home/End / Delete all reposition

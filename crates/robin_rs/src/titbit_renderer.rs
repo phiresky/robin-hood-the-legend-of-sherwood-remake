@@ -17,6 +17,7 @@ use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
 use crate::host::HostTitbitPreview;
 
+use crate::profiles::Action;
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
 use crate::resource_ids::*;
 use crate::resource_manager::ResourceManager;
@@ -536,7 +537,7 @@ impl TitbitRenderer {
                     assets
                         .profile_manager
                         .get_character(pc.profile_index)
-                        .is_some_and(|p| p.has_action(crate::profiles::Action::Bow))
+                        .is_some_and(|p| p.has_action(Action::Bow))
                 });
                 if !has_bow {
                     continue;

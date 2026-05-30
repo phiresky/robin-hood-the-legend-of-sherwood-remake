@@ -19,9 +19,12 @@ use std::collections::HashMap;
 use crate::element::Entity;
 use crate::geo2d::GeoPoint2D;
 use crate::gfx_types::Rect;
+use crate::ingame_menu::{layout, widget_bridge};
+use crate::minimap::HitMask;
 use crate::profiles::Action;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::{ResourceId, ResourceManager};
+use crate::titbit::SpriteRow;
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
@@ -355,9 +358,8 @@ impl PortraitCache {
                             .map(|c| u16::from_le_bytes([c[0], c[1]]))
                             .collect();
                         let tc = crate::renderer::TRANSPARENT_COLOR_KEY_16;
-                        self.top_scroll_hit_mask = Some(crate::minimap::HitMask::from_pixels_u16(
-                            pic.width, pic.height, &pixels, tc,
-                        ));
+                        self.top_scroll_hit_mask =
+                            Some(HitMask::from_pixels_u16(pic.width, pic.height, &pixels, tc));
                         tracing::info!("Built top scroll hit mask ({}x{})", pic.width, pic.height);
                     }
 
@@ -1014,9 +1016,9 @@ fn blit_to_screen_widget(
         )
     });
     let dst_box = dst.copied().unwrap_or(src_box);
-    crate::ingame_menu::widget_bridge::draw_picture_surface_rect(
+    widget_bridge::draw_picture_surface_rect(
         renderer,
-        crate::ingame_menu::layout::MenuTransform {
+        layout::MenuTransform {
             origin_x: 0,
             origin_y: 0,
         },
@@ -1627,7 +1629,7 @@ pub fn draw_panel(
                         let shift_px = shift_phase.round() as i32;
                         tbr.blit_ui_frame(
                             renderer,
-                            crate::titbit::SpriteRow::QuickActionTitbits,
+                            SpriteRow::QuickActionTitbits,
                             frame,
                             Rect::new(
                                 icon_x as i32 + shift_px,
@@ -2175,7 +2177,7 @@ pub fn draw_screen_tooltip(
         let box_x = mouse_x.max(0);
         let box_y = default_y.max(0);
         let box_w = (sw - box_x).max(1);
-        let wrap = crate::ingame_menu::layout::wrap_text(font, text, box_w, 3);
+        let wrap = layout::wrap_text(font, text, box_w, 3);
         // Clamp vertically if the wrapped box overflows the bottom.
         let total_h = (wrap.lines.len() as i32) * th;
         let y_top = if box_y + total_h > sh {
