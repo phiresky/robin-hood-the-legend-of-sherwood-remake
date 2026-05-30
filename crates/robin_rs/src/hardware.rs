@@ -200,6 +200,38 @@ impl Hardware {
         self.has_sse
     }
 
+    pub fn has_3dnow(&self) -> bool {
+        self.has_3dnow
+    }
+
+    pub fn has_ext_3dnow(&self) -> bool {
+        self.has_ext_3dnow
+    }
+
+    pub fn has_fpu(&self) -> bool {
+        self.has_fpu
+    }
+
+    pub fn has_altivec(&self) -> bool {
+        self.has_altivec
+    }
+
+    pub fn is_multiprocessor(&self) -> bool {
+        self.is_multiprocessor
+    }
+
+    pub fn cache_l1_data(&self) -> i16 {
+        self.cache_l1_data
+    }
+
+    pub fn cache_l1_code(&self) -> i16 {
+        self.cache_l1_code
+    }
+
+    pub fn cache_l2(&self) -> i16 {
+        self.cache_l2
+    }
+
     // -- Memory queries (stub values) --
 
     pub fn physical_memory_mb(&self) -> u16 {

@@ -192,14 +192,10 @@ enum TextureRef {
     /// through the `fs_colorize` pipeline. Hue+scale come from the
     /// `tint` field. Used by `colorize_framebuffer` / `dim_screen`.
     ColorizeFromFrozen,
-    /// Door/patch hover alpha polygon. Samples the renderer-owned
-    /// background texture at per-vertex UVs and applies the old RGB565
-    /// alpha blend in the fragment shader.
-    BackgroundAlpha,
     /// Door/patch hover alpha polygon over the current composited
     /// frame. `present()` snapshots the render target before drawing
-    /// this queue run, then feeds that snapshot to the same RGB565
-    /// alpha shader as `BackgroundAlpha`.
+    /// this queue run, then feeds that snapshot to the RGB565 alpha
+    /// shader.
     FramebufferAlpha,
     /// View-cone overlay span. Uses the white texture bind group only to
     /// satisfy the shared quad layout; `fs_view_cone_gradient` reads the
@@ -1787,7 +1783,7 @@ impl Renderer {
                         last_blend = None;
                     }
                 }
-                TextureRef::BackgroundAlpha | TextureRef::FramebufferAlpha => {
+                TextureRef::FramebufferAlpha => {
                     if last_pipeline_kind != Some("bg_alpha") {
                         pass.set_pipeline(&self.bg_alpha_pipeline);
                         last_pipeline_kind = Some("bg_alpha");
@@ -1834,7 +1830,6 @@ impl Renderer {
                 TextureRef::White => last_tex != Some("white"),
                 TextureRef::FrozenScene => last_tex != Some("frozen"),
                 TextureRef::ColorizeFromFrozen => last_tex != Some("frozen"),
-                TextureRef::BackgroundAlpha => last_tex != Some("background"),
                 TextureRef::FramebufferAlpha => last_tex != Some("alpha_source"),
                 TextureRef::ViewConeGradient => last_tex != Some("white"),
                 TextureRef::Frame(idx) => last_tex != Some("frame") || last_frame_idx != Some(idx),
@@ -1856,15 +1851,6 @@ impl Renderer {
                         if let Some((_, _, bg)) = self.frozen_scene.as_ref() {
                             pass.set_bind_group(1, bg, &[]);
                             last_tex = Some("frozen");
-                            last_frame_idx = None;
-                        } else {
-                            continue;
-                        }
-                    }
-                    TextureRef::BackgroundAlpha => {
-                        if let Some(bg) = self.background_texture.as_ref() {
-                            pass.set_bind_group(1, &bg.bind_group, &[]);
-                            last_tex = Some("background");
                             last_frame_idx = None;
                         } else {
                             continue;

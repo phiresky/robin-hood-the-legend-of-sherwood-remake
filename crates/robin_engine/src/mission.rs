@@ -18,7 +18,7 @@ pub enum MissionStatus {
 }
 
 impl MissionStatus {
-    fn from_u32(v: u32) -> Self {
+    pub fn from_u32(v: u32) -> Self {
         match v {
             1 => MissionStatus::Won,
             2 => MissionStatus::Lost,
