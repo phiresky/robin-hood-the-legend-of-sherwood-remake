@@ -1,4 +1,5 @@
-use crate::element::{Entity, ObjectType};
+use crate::element::ObjectType;
+use crate::entities::Entities;
 use crate::profiles::Action;
 use serde::{Deserialize, Serialize};
 
@@ -146,25 +147,21 @@ impl SectorProduction {
     /// live engine entities: sums quantities for active bonuses of matching
     /// action, plus one per active in-flight arrow projectile when the
     /// sector feeds `Action::Bow`.
-    pub fn get_amount_from_current_mission(&mut self, entities: &[Option<Entity>]) {
+    pub fn get_amount_from_current_mission(&mut self, entities: &Entities) {
         let Some(action) = self.associated_action() else {
             return;
         };
         let mut total: u32 = 0;
-        for slot in entities {
-            let Some(entity) = slot else { continue };
-            match entity {
-                Entity::Bonus(b) if b.element.active && b.object.associated_action == action => {
-                    total += b.object.quantity as u32;
-                }
-                Entity::Projectile(p)
-                    if action == Action::Bow
-                        && p.element.active
-                        && p.object.object_type == ObjectType::Arrow =>
-                {
+        for (_, bonus) in entities.bonuses() {
+            if bonus.element.active && bonus.object.associated_action == action {
+                total += bonus.object.quantity as u32;
+            }
+        }
+        if action == Action::Bow {
+            for (_, projectile) in entities.projectiles() {
+                if projectile.element.active && projectile.object.object_type == ObjectType::Arrow {
                     total += 1;
                 }
-                _ => {}
             }
         }
         self.amount = total.min(u16::MAX as u32) as u16;
@@ -249,7 +246,9 @@ mod tests {
         sector.production_points = vec![point(0.0, 0.0), point(10.0, 0.0), point(20.0, 0.0)];
 
         // Mission A leaves 7 arrows in the world (5 in one stack, 2 in another).
-        let entities = vec![Some(bonus_arrow(5)), Some(bonus_arrow(2))];
+        let mut entities = Entities::new();
+        entities.push(Some(bonus_arrow(5)));
+        entities.push(Some(bonus_arrow(2)));
         sector.get_amount_from_current_mission(&entities);
         assert_eq!(sector.amount, 7);
 
@@ -271,22 +270,21 @@ mod tests {
     fn arrow_projectile_counts_toward_bow_sector() {
         use crate::element::{ElementProjectile, ProjectileData};
         let mut sector = SectorProduction::new(Type::MakeArrow);
-        let entities = vec![
-            Some(bonus_arrow(3)),
-            Some(Entity::Projectile(ElementProjectile {
-                element: ElementData {
-                    kind: ElementKind::ObjectProjectile,
-                    active: true,
-                    ..Default::default()
-                },
-                object: ObjectData {
-                    object_type: ObjectType::Arrow,
-                    associated_action: Action::Bow,
-                    ..Default::default()
-                },
-                projectile: ProjectileData::default(),
-            })),
-        ];
+        let mut entities = Entities::new();
+        entities.push(Some(bonus_arrow(3)));
+        entities.push(Some(Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                active: true,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type: ObjectType::Arrow,
+                associated_action: Action::Bow,
+                ..Default::default()
+            },
+            projectile: ProjectileData::default(),
+        })));
         sector.get_amount_from_current_mission(&entities);
         assert_eq!(sector.amount, 4);
     }

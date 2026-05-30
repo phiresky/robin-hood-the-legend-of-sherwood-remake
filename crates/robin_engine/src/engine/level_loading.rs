@@ -5517,7 +5517,7 @@ impl EngineInner {
         for sector in &mut campaign.production_sectors {
             // Bonus-amount branch runs for MAKE_* / any sector with an
             // associated action; no-op for TRAIN/HEAL/RELIC.
-            sector.get_amount_from_current_mission(entities_snapshot.slots());
+            sector.get_amount_from_current_mission(entities_snapshot);
 
             // Replace occupants with the fresh snapshot: sectors
             // whose type has no zone in the new map (or whose zone

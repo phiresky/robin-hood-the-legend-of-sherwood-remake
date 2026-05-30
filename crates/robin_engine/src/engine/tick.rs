@@ -2951,7 +2951,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_carry(
-                                        self.entities.slots_mut(),
+                                        &mut self.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -2991,7 +2991,7 @@ impl EngineInner {
                         }
                         Command::DropCorpse => {
                             match abilities::begin_drop(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3037,7 +3037,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_tie(
-                                        self.entities.slots_mut(),
+                                        &mut self.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3070,7 +3070,7 @@ impl EngineInner {
                                 .and_then(|e| e.human_data())
                                 .and_then(|h| h.carrier);
                             match abilities::begin_climb_down_from_shoulders(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3117,7 +3117,7 @@ impl EngineInner {
                                 static_active: &self.static_sight_obstacle_active,
                             };
                             match abilities::begin_climb_on_shoulders(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 helper_id,
@@ -3163,7 +3163,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_heal(
-                                            self.entities.slots_mut(),
+                                            &mut self.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             target_id,
@@ -3189,7 +3189,7 @@ impl EngineInner {
                         }
                         Command::WhistleCmd => {
                             match abilities::begin_whistle(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3225,7 +3225,7 @@ impl EngineInner {
                                 continue;
                             }
                             match abilities::begin_eat(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3250,7 +3250,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_hit(
-                                        self.entities.slots_mut(),
+                                        &mut self.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3283,7 +3283,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_strangle(
-                                        self.entities.slots_mut(),
+                                        &mut self.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3325,7 +3325,7 @@ impl EngineInner {
                             match beggar {
                                 Some(beggar_id) => {
                                     match abilities::begin_pay(
-                                        self.entities.slots_mut(),
+                                        &mut self.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         beggar_id,
@@ -3357,7 +3357,7 @@ impl EngineInner {
                         }
                         Command::ReceivePurse => {
                             match abilities::begin_receive_purse(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 owner,
                                 seq_id,
                                 elem_idx,
@@ -3379,7 +3379,7 @@ impl EngineInner {
                             // (tick_abilities) → ListenDone →
                             // element_terminated in combat.rs.
                             match abilities::begin_listen(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &assets.profile_manager,
                                 &mut self.sequence_manager,
                                 owner,
@@ -3404,7 +3404,7 @@ impl EngineInner {
                             // transition animation — so we terminate
                             // the LeaveListen element immediately.
                             if abilities::begin_leave_listen(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 owner,
                                 &mut self.next_order_id,
                             ) {
@@ -3846,7 +3846,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_net(
-                                            self.entities.slots_mut(),
+                                            &mut self.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             pos,
@@ -3891,7 +3891,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_purse(
-                                            self.entities.slots_mut(),
+                                            &mut self.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             pos,
@@ -3936,7 +3936,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_wasp_nest(
-                                            self.entities.slots_mut(),
+                                            &mut self.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             pos,
@@ -4001,7 +4001,7 @@ impl EngineInner {
                             }
                             let begin = match cmd {
                                 Command::ThrowApple => abilities::begin_throw_apple(
-                                    self.entities.slots_mut(),
+                                    &mut self.entities,
                                     &mut self.sequence_manager,
                                     owner,
                                     target,
@@ -4010,7 +4010,7 @@ impl EngineInner {
                                     &mut self.next_order_id,
                                 ),
                                 Command::ThrowStone => abilities::begin_throw_stone(
-                                    self.entities.slots_mut(),
+                                    &mut self.entities,
                                     &mut self.sequence_manager,
                                     owner,
                                     target,
@@ -5533,7 +5533,7 @@ impl EngineInner {
         // campaign profile manager to look up LittleJohnCarry contextual
         // actions on the carrier.
         if self.campaign.is_some() {
-            abilities::sync_carried_positions(self.entities.slots_mut(), &assets.profile_manager);
+            abilities::sync_carried_positions(&mut self.entities, &assets.profile_manager);
         }
 
         // ── Swordfight-drag IgnoreMouseEvent bracket ────────────

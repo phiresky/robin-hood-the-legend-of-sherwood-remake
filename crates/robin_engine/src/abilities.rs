@@ -20,6 +20,7 @@ use crate::coordinates::MapPoint;
 use crate::element::{
     ActionState, Entity, EntityId, GameMaterial, ListenPhase, Posture, ReceivePursePhase,
 };
+use crate::entities::Entities;
 use crate::movement::{AbilityKind, ActiveAbility};
 use crate::order::{Order, OrderType};
 use crate::position_interface::{ObstacleHandle, PlaneZCoeffs};
@@ -337,7 +338,7 @@ pub enum AbilityTickResult {
 ///   up in a building sector is applied in the `Command::TakeCorpse`
 ///   handler in `engine/tick.rs` after `begin_carry` succeeds.
 pub fn begin_carry(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     carrier_id: EntityId,
     target_id: EntityId,
@@ -350,10 +351,7 @@ pub fn begin_carry(
     }
 
     // Validate target: must exist, be human, out-of-order, in a carryable posture.
-    let target_valid = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let target_valid = match entities.get(target_id) {
         Some(e) => {
             if !e.is_human() {
                 false
@@ -377,7 +375,7 @@ pub fn begin_carry(
     // Save target posture (Dead is mapped to DeadBack so the
     // dropped-body posture restored later carries the back-down variant).
     let target_posture = {
-        let target = entities[target_id.index() as usize].as_ref().unwrap();
+        let target = entities[target_id].as_ref().unwrap();
         let p = target.element_data().posture;
         if p == Posture::Dead {
             Posture::DeadBack
@@ -386,15 +384,12 @@ pub fn begin_carry(
         }
     };
     let target_pos = {
-        let target = entities[target_id.index() as usize].as_ref().unwrap();
+        let target = entities[target_id].as_ref().unwrap();
         target.element_data().position_map()
     };
 
     // Validate carrier: must be a living PC, not already carrying.
-    let carrier = match entities
-        .get_mut(carrier_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let carrier = match entities.get_mut(carrier_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -469,7 +464,7 @@ pub fn begin_carry(
     //   returns `Started`, so the cascade-interrupt on the target's
     //   current sequence element happens with the full engine context
     //   available.
-    if let Some(Some(target)) = entities.get_mut(target_id.index() as usize) {
+    if let Some(target) = entities.get_mut(target_id) {
         if let Some(human) = target.human_data_mut() {
             human.carrier = Some(carrier_id);
         }
@@ -503,17 +498,14 @@ pub fn begin_carry(
 ///   `BeingDroppedPeasantC` is not synchronized on the carried entity
 ///   during the drop animation.
 pub fn begin_drop(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     carrier_id: EntityId,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let carrier = match entities
-        .get_mut(carrier_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let carrier = match entities.get_mut(carrier_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -602,7 +594,7 @@ pub enum ClimbResult {
 ///   `display_order_ref = helper`.
 #[allow(clippy::too_many_arguments)]
 pub fn begin_climb_on_shoulders(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     climber_id: EntityId,
     helper_id: EntityId,
@@ -619,10 +611,7 @@ pub fn begin_climb_on_shoulders(
     // `HelpingToClimb` posture.  Snapshot the helper's position + 3D
     // position here to feed the headroom check before borrowing the
     // climber.
-    let (helper_pos_map, helper_pos_3d, helper_valid) = match entities
-        .get(helper_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let (helper_pos_map, helper_pos_3d, helper_valid) = match entities.get(helper_id) {
         Some(e) => {
             let valid =
                 e.is_pc() && !e.is_dead() && e.element_data().posture == Posture::HelpingToClimb;
@@ -647,10 +636,7 @@ pub fn begin_climb_on_shoulders(
 
     // Validate climber: must be a living PC, not already busy with an
     // ability, not already on shoulders.
-    let climber = match entities
-        .get_mut(climber_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let climber = match entities.get_mut(climber_id) {
         Some(e) => e,
         None => return ClimbResult::Impossible,
     };
@@ -690,11 +676,10 @@ pub fn begin_climb_on_shoulders(
     // Helper hasn't been touched yet, so read its direction here and
     // mirror it onto the climber for the lifetime of the climb.
     let helper_dir = entities
-        .get(helper_id.index() as usize)
-        .and_then(|s| s.as_ref())
+        .get(helper_id)
         .map(|e| e.element_data().direction())
         .unwrap_or(0);
-    if let Some(Some(climber)) = entities.get_mut(climber_id.index() as usize) {
+    if let Some(climber) = entities.get_mut(climber_id) {
         climber
             .element_data_mut()
             .set_direction_instantly((helper_dir + 8) & 15);
@@ -718,10 +703,7 @@ pub fn begin_climb_on_shoulders(
     // `pc.carried = climber` so `sync_carried_positions` can drive the
     // helper's TransitionHelpingClimbingUp sync each frame.  Also face
     // the climber.
-    let helper = match entities
-        .get_mut(helper_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let helper = match entities.get_mut(helper_id) {
         Some(e) => e,
         None => return ClimbResult::Impossible,
     };
@@ -735,11 +717,10 @@ pub fn begin_climb_on_shoulders(
     }
     // Snapshot climber pos for the facing computation.
     let climber_pos = entities
-        .get(climber_id.index() as usize)
-        .and_then(|s| s.as_ref())
+        .get(climber_id)
         .map(|e| e.element_data().position_map())
         .unwrap_or(helper_pos_map);
-    if let Some(Some(helper)) = entities.get_mut(helper_id.index() as usize) {
+    if let Some(helper) = entities.get_mut(helper_id) {
         let dx = climber_pos.x - helper_pos_map.x;
         let dy = climber_pos.y - helper_pos_map.y;
         helper.element_data_mut().set_direction_instantly(
@@ -761,7 +742,7 @@ pub fn begin_climb_on_shoulders(
 /// in the [`AbilityTickResult::ClimbDownFromShouldersDone`] consumer
 /// after the animation reaches its terminated state.
 pub fn begin_climb_down_from_shoulders(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     climber_id: EntityId,
     seq_id: SequenceId,
@@ -770,10 +751,7 @@ pub fn begin_climb_down_from_shoulders(
 ) -> BeginResult {
     // Validate climber: must be a living PC currently OnShoulders with
     // a carrier reference.
-    let carrier_id = match entities
-        .get(climber_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let carrier_id = match entities.get(climber_id) {
         Some(e) => {
             if !e.is_pc() || e.is_dead() {
                 return BeginResult::Impossible;
@@ -793,10 +771,7 @@ pub fn begin_climb_down_from_shoulders(
     };
 
     let order_id = alloc_order_id(order_id_counter);
-    let climber = match entities
-        .get_mut(climber_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let climber = match entities.get_mut(climber_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -837,7 +812,7 @@ pub fn begin_climb_down_from_shoulders(
 /// - **Reset target AI**: the target's AI isn't reset to a Wait state
 ///   after tying.
 pub fn begin_tie(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
@@ -850,10 +825,7 @@ pub fn begin_tie(
     }
 
     // Validate target: must be unconscious and lying (not already tied).
-    let target_valid = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let target_valid = match entities.get(target_id) {
         Some(e) => {
             let posture = e.element_data().posture;
             let unconscious = e.human_data().is_some_and(|h| h.unconscious);
@@ -866,15 +838,12 @@ pub fn begin_tie(
     }
 
     let target_pos = {
-        let target = entities[target_id.index() as usize].as_ref().unwrap();
+        let target = entities[target_id].as_ref().unwrap();
         target.element_data().position_map()
     };
 
     // Validate actor: must be alive, human, not already busy.
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -927,7 +896,7 @@ pub fn begin_tie(
 /// `OrderType::Eating` instead of `Healing`; the post-heal speech cue
 /// fires from the `HealDone` branch in `engine::combat`.
 pub fn begin_heal(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     healer_id: EntityId,
     target_id: EntityId,
@@ -938,10 +907,7 @@ pub fn begin_heal(
     // Validate target: living PC with HP < max, OR an FX target (which
     // just runs the animation so the target's `ActivatedByHeal` script
     // can fire on Done — see `HealDone` in `engine/combat.rs`).
-    let target_valid = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let target_valid = match entities.get(target_id) {
         Some(e) => {
             if e.kind().is_fx_target() {
                 true
@@ -959,15 +925,12 @@ pub fn begin_heal(
     }
 
     let target_pos = {
-        let target = entities[target_id.index() as usize].as_ref().unwrap();
+        let target = entities[target_id].as_ref().unwrap();
         target.element_data().position_map()
     };
 
     // Validate healer: must be alive PC.
-    let healer = match entities
-        .get_mut(healer_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let healer = match entities.get_mut(healer_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1027,17 +990,14 @@ pub fn begin_heal(
 /// expanding noise ellipse during the final `TIME_LISTEN` (5) frames
 /// (the Whistling arm of the shared Listen/Whistle ellipse render).
 pub fn begin_whistle(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1085,17 +1045,14 @@ pub fn begin_whistle(
 /// `Eating` animation order, and the post-animation effect is applied
 /// by the [`AbilityTickResult::EatDone`] handler in `engine::combat`.
 pub fn begin_eat(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1146,7 +1103,7 @@ pub fn begin_eat(
 ///
 /// [`Command::ReceiveHitDamage`]: crate::element::Command::ReceiveHitDamage
 pub fn begin_hit(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
@@ -1160,10 +1117,7 @@ pub fn begin_hit(
 
     // The completion path asserts the antagonist is human; gate on the
     // same condition up-front instead of panicking later.
-    let (target_pos, target_alive) = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let (target_pos, target_alive) = match entities.get(target_id) {
         Some(e) if e.is_human() => (e.element_data().position_map(), !e.is_dead()),
         _ => return BeginResult::Impossible,
     };
@@ -1171,10 +1125,7 @@ pub fn begin_hit(
         return BeginResult::Impossible;
     }
 
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1232,7 +1183,7 @@ pub fn begin_hit(
 ///
 /// [`Command::ReceiveDamage`]: crate::element::Command::ReceiveDamage
 pub fn begin_strangle(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
@@ -1247,18 +1198,12 @@ pub fn begin_strangle(
     // Invalid-target rejection happens in
     // `EngineInner::check_sequence_element_validity`, which runs before
     // dispatch.  This helper just rejects any non-living-human-NPC.
-    let target_pos = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let target_pos = match entities.get(target_id) {
         Some(e) if e.is_human() && !e.is_dead() && !e.is_pc() => e.element_data().position_map(),
         _ => return BeginResult::Impossible,
     };
 
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1312,7 +1257,7 @@ pub fn begin_strangle(
     // dispatch).  Push the stimulus BEFORE setting the FREEZE lock —
     // ordering matters: the stimulus is a sequence transition (earlier)
     // and the lock is part of the strangle init (later).
-    if let Some(Some(victim)) = entities.get_mut(target_id.index() as usize) {
+    if let Some(victim) = entities.get_mut(target_id) {
         victim.element_data_mut().set_direction_instantly(facing);
         let is_moving = victim
             .actor_data()
@@ -1362,7 +1307,7 @@ pub fn begin_strangle(
 ///    the engine sends `UnselectAction` and terminates the driving
 ///    sequence element.
 pub fn begin_listen(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     profiles: &crate::profiles::ProfileManager,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
@@ -1370,10 +1315,7 @@ pub fn begin_listen(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1454,14 +1396,11 @@ pub fn begin_listen(
 /// transition was armed; `false` otherwise (already exiting or not
 /// listening — safe no-op).
 pub fn begin_leave_listen(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     actor_id: EntityId,
     order_id_counter: &mut u32,
 ) -> bool {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return false,
     };
@@ -1502,7 +1441,7 @@ pub fn begin_leave_listen(
 ///   frame until the actor finishes rotating to face the target.  We
 ///   set direction instantly.
 pub fn begin_throw_net(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
@@ -1510,10 +1449,7 @@ pub fn begin_throw_net(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1565,7 +1501,7 @@ pub fn begin_throw_net(
 /// is spawned when the animation completes — see
 /// [`AbilityTickResult::ThrowAppleDone`] and the engine-side handler.
 pub fn begin_throw_apple(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target: EntityId,
@@ -1590,7 +1526,7 @@ pub fn begin_throw_apple(
 ///
 /// Called when `Command::ThrowStone` is dispatched.
 pub fn begin_throw_stone(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target: EntityId,
@@ -1617,7 +1553,7 @@ pub fn begin_throw_stone(
 /// trajectory endpoint.
 #[allow(clippy::too_many_arguments)]
 fn begin_throw_at_entity(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_id: EntityId,
@@ -1627,17 +1563,11 @@ fn begin_throw_at_entity(
     kind: AbilityKind,
     order_type: OrderType,
 ) -> BeginResult {
-    let target_pos = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let target_pos = match entities.get(target_id) {
         Some(e) => e.element_data().position_map(),
         None => return BeginResult::Impossible,
     };
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1689,7 +1619,7 @@ fn begin_throw_at_entity(
 ///
 /// Same as [`begin_throw_net`] — gradual turning not ported.
 pub fn begin_throw_wasp_nest(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
@@ -1697,10 +1627,7 @@ pub fn begin_throw_wasp_nest(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1758,7 +1685,7 @@ pub fn begin_throw_wasp_nest(
 ///
 /// Same as [`begin_throw_net`] — gradual turning not ported.
 pub fn begin_throw_purse(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     actor_id: EntityId,
     target_pos: MapPoint,
@@ -1766,10 +1693,7 @@ pub fn begin_throw_purse(
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let actor_entity = match entities
-        .get_mut(actor_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let actor_entity = match entities.get_mut(actor_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1831,7 +1755,7 @@ pub fn begin_throw_purse(
 /// dispatch time — it's cheaper to fire once at command launch than
 /// to thread a side-effect out of `tick_abilities`.
 pub fn begin_pay(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     pc_id: EntityId,
     beggar_id: EntityId,
@@ -1844,10 +1768,7 @@ pub fn begin_pay(
     }
 
     // Validate beggar: civilian, alive, conscious, non-scroll-attached.
-    let beggar_valid = match entities
-        .get(beggar_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let beggar_valid = match entities.get(beggar_id) {
         Some(e @ Entity::Civilian(c)) => {
             !e.is_dead()
                 && !c.human.unconscious
@@ -1860,17 +1781,14 @@ pub fn begin_pay(
         return BeginResult::Impossible;
     }
 
-    let beggar_direction = entities[beggar_id.index() as usize]
+    let beggar_direction = entities[beggar_id]
         .as_ref()
         .unwrap()
         .element_data()
         .direction();
 
     let order_id = alloc_order_id(order_id_counter);
-    let pc_entity = match entities
-        .get_mut(pc_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let pc_entity = match entities.get_mut(pc_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1924,16 +1842,13 @@ pub fn begin_pay(
 ///
 /// [`EngineInner::reveal_scrolls`]: crate::engine::EngineInner::reveal_scrolls
 pub fn begin_receive_purse(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     beggar_id: EntityId,
     seq_id: SequenceId,
     elem_idx: usize,
     order_id_counter: &mut u32,
 ) -> BeginResult {
-    let beggar = match entities
-        .get_mut(beggar_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let beggar = match entities.get_mut(beggar_id) {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -2011,15 +1926,14 @@ fn ability_order_type(kind: AbilityKind) -> OrderType {
 /// The engine applies cross-entity effects from these results after the
 /// mutable borrow on `entities` is released.
 pub fn tick_abilities(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &SequenceManager,
     order_id_counter: &mut u32,
 ) -> Vec<AbilityTickResult> {
     let mut results = Vec::new();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
-        let Some(entity) = slot else { continue };
-        let entity_id = crate::engine::entity_id_for_occupied_slot(idx as u32, entity);
+    for (actor_id, entity) in entities.actors_mut() {
+        let entity_id = EntityId::from(actor_id);
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -2514,17 +2428,11 @@ struct CarrierSnapshot {
 /// sprite to play the appropriate `BeingLifted*` / `BeingCarried*` /
 /// `BeingDropped*` animation depending on which carry phase the carrier
 /// is in (lift transition / waiting / walking / drop transition).
-pub fn sync_carried_positions(
-    entities: &mut [Option<Entity>],
-    profiles: &crate::profiles::ProfileManager,
-) {
+pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profiles::ProfileManager) {
     // Collect carrier snapshots first to avoid borrow conflicts.
     let mut snapshots: Vec<CarrierSnapshot> = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let Some(Entity::Pc(entity)) = slot else {
-            continue;
-        };
-        let carrier_id = EntityId::Pc(crate::entity_id::PcId(idx as u32));
+    for (pc_id, entity) in entities.pcs() {
+        let carrier_id = EntityId::Pc(pc_id);
         let pc = &entity.pc;
         let Some(target_id) = pc.carried else {
             continue;
@@ -2564,8 +2472,7 @@ pub fn sync_carried_positions(
         // the climber's `ClimbingUpOnShoulders`.  For corpse-carry this is
         // unused; the carrier-driven path overwrites these fields anyway.
         let (target_last_action, target_frame, target_frame_count) = entities
-            .get(target_id.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(target_id)
             .map(|e| {
                 let s = &e.element_data().sprite;
                 (s.last_action, s.current_frame, s.frame_count)
@@ -2597,7 +2504,7 @@ pub fn sync_carried_positions(
     for snap in snapshots {
         let on_shoulders = snap.carried_posture == Posture::OnShoulders;
 
-        let Some(Some(target)) = entities.get_mut(snap.target_id.index() as usize) else {
+        let Some(target) = entities.get_mut(snap.target_id) else {
             continue;
         };
 
@@ -2703,7 +2610,7 @@ pub fn sync_carried_positions(
                 _ => None,
             };
             if let Some(anim) = helper_anim
-                && let Some(Some(helper)) = entities.get_mut(snap.carrier_id.index() as usize)
+                && let Some(helper) = entities.get_mut(snap.carrier_id)
             {
                 let helper_dir = u16::try_from(helper.element_data().direction()).unwrap_or(0);
                 let sprite = &mut helper.element_data_mut().sprite;
