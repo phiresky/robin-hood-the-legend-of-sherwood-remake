@@ -44,8 +44,7 @@ impl EngineInner {
 
         // Periodic combat state dump (every 64 frames)
         if self.frame_counter.is_multiple_of(64) {
-            for (idx, slot) in self.entities.iter().enumerate() {
-                let Some(entity) = slot else { continue };
+            for (entity_id, entity) in self.entities_iter_with_id() {
                 let Some(human) = entity.human_data() else {
                     continue;
                 };
@@ -58,7 +57,7 @@ impl EngineInner {
                     _ => None,
                 };
                 tracing::debug!(
-                    entity = idx,
+                    entity = ?entity_id,
                     kind = ?entity.kind(),
                     opponents = ?human.opponents,
                     action_state = ?action,
@@ -285,14 +284,12 @@ impl EngineInner {
         let mut pending_initiative_transfers: Vec<EntityId> = Vec::new();
         let mut pending_step_backs: Vec<(EntityId, crate::coordinates::MapPoint)> = Vec::new();
 
-        // Collect entities with smalltalk_initiative who are principal opponents
-        let entity_count = self.entities.len();
-        for idx in 0..entity_count {
-            let entity_id = EntityId::from_raw(idx as u32);
+        // Collect entities with smalltalk_initiative who are principal opponents.
+        // The follow-up decision path mutates engine state, so keep this
+        // first pass read-only and stage typed ids.
+        let mut smalltalk_candidates = Vec::new();
+        for (entity_id, entity) in self.entities_iter_with_id() {
             let (has_initiative, opponents_empty, principal_id, action_ok, observing) = {
-                let Some(entity) = self.entities.get(idx).and_then(|s| s.as_ref()) else {
-                    continue;
-                };
                 if !entity.is_human() || entity.is_dead() {
                     continue;
                 }
@@ -336,17 +333,6 @@ impl EngineInner {
                 continue;
             }
 
-            if self.evaluate_smalltalk_hint(entity_id) {
-                continue;
-            }
-
-            if !has_initiative {
-                // No initiative: the legacy implementation waiting-sword path updates
-                // swordfight distance and returns without picking a
-                // smalltalk strike.
-                continue;
-            }
-
             // Verify mutual principal opponents
             let is_mutual = self
                 .entities
@@ -357,6 +343,20 @@ impl EngineInner {
                 .map(|opp| opp == entity_id)
                 .unwrap_or(false);
             if !is_mutual {
+                continue;
+            }
+            smalltalk_candidates.push((entity_id, principal_id, has_initiative));
+        }
+
+        for (entity_id, principal_id, has_initiative) in smalltalk_candidates {
+            if self.evaluate_smalltalk_hint(entity_id) {
+                continue;
+            }
+
+            if !has_initiative {
+                // No initiative: the legacy implementation waiting-sword path updates
+                // swordfight distance and returns without picking a
+                // smalltalk strike.
                 continue;
             }
 
@@ -373,7 +373,7 @@ impl EngineInner {
                 .map(|h| h.received_smalltalk_initiative)
                 .unwrap_or(false);
             if received {
-                if let Some(Some(entity)) = self.entities.get_mut(idx)
+                if let Some(entity) = self.get_entity_mut(entity_id)
                     && let Some(human) = entity.human_data_mut()
                 {
                     human.received_smalltalk_initiative = false;
@@ -390,7 +390,7 @@ impl EngineInner {
                     // Lose initiative and hand it to the opponent; skip
                     // striking this frame.
                     pending_initiative_transfers.push(principal_id);
-                    if let Some(Some(entity)) = self.entities.get_mut(idx)
+                    if let Some(entity) = self.get_entity_mut(entity_id)
                         && let Some(human) = entity.human_data_mut()
                     {
                         human.smalltalk_initiative = false;
@@ -599,12 +599,9 @@ impl EngineInner {
         // Pre-pass: face-track straight strikes toward their targets.
         // Done in a separate pass because the main iter_mut loop
         // can't access two entities simultaneously.
-        for idx in 0..self.entities.len() {
+        let mut pending_directions = Vec::new();
+        for (entity_id, entity) in self.entities_iter_with_id() {
             let (strike, target_id) = {
-                let entity = match &self.entities[idx] {
-                    Some(e) => e,
-                    None => continue,
-                };
                 let actor = match entity.actor_data() {
                     Some(a) => a,
                     None => continue,
@@ -617,7 +614,6 @@ impl EngineInner {
                 (s, t)
             };
             let is_straight = {
-                let entity = self.entities[idx].as_ref().unwrap();
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
                 profile_idx
                     .and_then(|pi| assets.profile_manager.get_hth_weapon(pi))
@@ -630,10 +626,13 @@ impl EngineInner {
                     .unwrap_or(true)
             };
             if is_straight && let Some(tid) = target_id {
-                let dir = direction_to(&self.entities, EntityId::from_raw(idx as u32), tid);
-                if let Some(Some(e)) = self.entities.get_mut(idx) {
-                    e.element_data_mut().set_direction_instantly(dir);
-                }
+                let dir = direction_to(&self.entities, entity_id, tid);
+                pending_directions.push((entity_id, dir));
+            }
+        }
+        for (entity_id, dir) in pending_directions {
+            if let Some(e) = self.get_entity_mut(entity_id) {
+                e.element_data_mut().set_direction_instantly(dir);
             }
         }
 
@@ -1145,11 +1144,7 @@ impl EngineInner {
         }
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (entity_id, entity) in self.entities_iter_with_id() {
             let actor = match entity.actor_data() {
                 Some(a) => a,
                 None => continue,
@@ -1157,7 +1152,7 @@ impl EngineInner {
             if let Some(sweep) = &actor.sweep_state {
                 let pos = entity.element_data().position_map();
                 sweeps.push(ActiveSweep {
-                    attacker_id: EntityId::from_raw(idx as u32),
+                    attacker_id: entity_id,
                     attacker_pos: (pos.x, pos.y),
                     sweep: sweep.clone(),
                 });
@@ -1688,12 +1683,8 @@ impl EngineInner {
                 dynamic_obstacles: &self.dynamic_sight_obstacles,
                 static_active: &self.static_sight_obstacle_active,
             };
-            let entities = &mut self.entities;
-            for idx in 0..entities.len() {
-                let entity = match &entities[idx] {
-                    Some(e) => e,
-                    None => continue,
-                };
+            let mut pending_charge_inits = Vec::new();
+            for (attacker_id, entity) in self.entities_iter_with_id() {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
                     None => continue,
@@ -1730,7 +1721,6 @@ impl EngineInner {
                 let dir = elem.direction();
                 let pos = elem.position_map();
                 let layer = elem.layer();
-                let attacker_id = EntityId::from_raw(idx as u32);
 
                 // Compute direction vectors.
                 let forward = sector_to_vector_iso(dir as u16, ASPECT_RATIO);
@@ -1760,17 +1750,12 @@ impl EngineInner {
 
                 // Collect potential victims inside the initial polygon.
                 let mut pending_victims = Vec::new();
-                for (vidx, vslot) in entities.iter().enumerate() {
-                    let victim = match vslot {
-                        Some(v) => v,
-                        None => continue,
-                    };
-                    let victim_id = EntityId::from_raw(vidx as u32);
+                for (victim_id, victim) in self.entities_iter_with_id() {
                     if victim_id == attacker_id {
                         continue;
                     }
                     if !is_possible_sword_strike_victim(
-                        entities,
+                        &self.entities,
                         attacker_id,
                         victim,
                         victim_id,
@@ -1798,10 +1783,9 @@ impl EngineInner {
                     if n > 1 { n } else { 14u16 }
                 };
 
-                if let Some(entity) = entities[idx].as_mut()
-                    && let Some(actor) = entity.actor_data_mut()
-                {
-                    actor.active_rider_charge = Some(ActiveRiderCharge {
+                pending_charge_inits.push((
+                    attacker_id,
+                    ActiveRiderCharge {
                         forward,
                         sidewards,
                         origin: pos,
@@ -1810,8 +1794,16 @@ impl EngineInner {
                         current_frame: 0,
                         total_frames,
                         initialized: true,
-                    });
-                    tracing::debug!(entity = idx, "Rider charge initialized");
+                    },
+                ));
+            }
+
+            for (attacker_id, charge) in pending_charge_inits {
+                if let Some(entity) = self.get_entity_mut(attacker_id)
+                    && let Some(actor) = entity.actor_data_mut()
+                {
+                    actor.active_rider_charge = Some(charge);
+                    tracing::debug!(entity = ?attacker_id, "Rider charge initialized");
                 }
             }
         }
@@ -2364,12 +2356,8 @@ impl EngineInner {
                 static_active: &self.static_sight_obstacle_active,
             };
             let nearby: Vec<crate::combat::NearbyVictim> = self
-                .entities
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, slot)| {
-                    let e = slot.as_ref()?;
-                    let eid = EntityId::from_raw(idx as u32);
+                .entities_iter_with_id()
+                .filter_map(|(eid, e)| {
                     if eid == attack.soldier_id {
                         return None;
                     }
