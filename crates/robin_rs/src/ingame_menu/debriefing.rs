@@ -10,6 +10,7 @@ use crate::gfx_types::Keycode;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
+use crate::widget::FrameWnd;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
@@ -499,7 +500,7 @@ struct DebriefingPageState {
     transform: MenuTransform,
     virt_x: i32,
     virt_y: i32,
-    frame: crate::widget::FrameWnd,
+    frame: FrameWnd,
     input_state: ModalInputState,
     tooltip: TooltipState,
     text_remaining: String,
@@ -528,7 +529,7 @@ impl DebriefingPageState {
         let restart_label = resources.menu_text.get(MT_BTN_RESTART);
         let load_label = resources.menu_text.get(MT_BTN_LOAD);
 
-        let mut frame = crate::widget::FrameWnd::default();
+        let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
         let btn_y = virt_y + OK_BTN_Y;

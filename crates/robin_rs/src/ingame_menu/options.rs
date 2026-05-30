@@ -12,9 +12,11 @@ use crate::gfx_types::Keycode;
 
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
+use crate::hardware::Hardware;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
+use crate::widget::FrameWnd;
 use robin_assets::keyconfig::KeyConfig;
 use robin_engine::sound_cache::SampleLoader;
 
@@ -95,7 +97,7 @@ pub async fn show_options(
         ];
         let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
 
-        let mut frame = crate::widget::FrameWnd::default();
+        let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
         for (i, mb) in menu_buttons.iter().enumerate() {
@@ -273,7 +275,7 @@ fn hardware_description(text: &super::resources::MenuText) -> String {
     let memory = text.get(MT_STR_MEMORY);
     let mhz = text.get(MT_STR_MEGA_HERZS);
     let mb = text.get(MT_STR_MEGA_BYTES);
-    let hw = crate::hardware::Hardware::detect();
+    let hw = Hardware::detect();
     let ident = hw.processor_identifier().to_string_lossy();
     format!(
         "{} : {}, {} {}\n{} : {} {}",
