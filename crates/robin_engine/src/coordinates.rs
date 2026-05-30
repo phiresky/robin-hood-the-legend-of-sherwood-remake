@@ -161,11 +161,6 @@ impl ScreenBBox {
     }
 
     #[inline]
-    pub fn from_point(point: ScreenPoint) -> Self {
-        Self(Some(Rect::new(point.to_geo(), point.to_geo())))
-    }
-
-    #[inline]
     pub fn from_point_size(origin: ScreenPoint, width: f32, height: f32) -> Self {
         Self::from_geo(geo2d::BBox2D::from_point_size(
             origin.to_geo(),

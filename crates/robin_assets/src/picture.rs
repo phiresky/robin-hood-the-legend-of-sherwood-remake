@@ -112,13 +112,6 @@ impl SixteenPacking {
 // SbFile reading helpers  (pub(crate) — shared with resource_manager)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn read_u8(file: &mut SbFile) -> Result<u8> {
-    let mut v = 0u8;
-    file.serialize_u8(&mut v)
-        .map_err(|e| anyhow!("read_u8: error {e}"))?;
-    Ok(v)
-}
-
 pub fn read_u16(file: &mut SbFile) -> Result<u16> {
     let mut v = 0u16;
     file.serialize_u16(&mut v)
@@ -209,10 +202,6 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
 }
 
 /// Skip `n` bytes forward from the current position (SEEK_CUR).
-pub(crate) fn skip_forward(file: &mut SbFile, n: u64) -> Result<()> {
-    file.skip(n as i64, 1); // 1 = SEEK_CUR
-    Ok(())
-}
 
 /// Seek to an absolute byte position (SEEK_SET).
 pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
@@ -1117,76 +1106,6 @@ impl Picture {
         self.pitch = (new_w * 2) as u16;
         self.width = new_size.0;
         self.height = new_size.1;
-        true
-    }
-
-    /// Bytes per pixel (and thus per-row-byte conversion) for the
-    /// crop / cropped routines. Returns `None` for unsupported formats.
-    /// Note: the mutating `crop` does not include the `Paletized` arm —
-    /// only the non-mutating `cropped` does.
-    fn crop_bits_per_pixel(fmt: PixelFormat, allow_paletized: bool) -> Option<u32> {
-        match fmt {
-            PixelFormat::Bw => Some(1),
-            PixelFormat::Paletized if allow_paletized => Some(8),
-            PixelFormat::Rgb15 | PixelFormat::Rgb16 => Some(16),
-            PixelFormat::Rgb24 => Some(24),
-            PixelFormat::Rgb32 => Some(32),
-            _ => None,
-        }
-    }
-
-    /// Generic 16-bit windowed median. `intensity_of` is the comparator
-    /// projection that varies between RGB16 and RGB15.
-    fn filter_median_16(&mut self, mut w: u16, mut h: u16, intensity_of: fn(u16) -> u32) -> bool {
-        if w == 0 || h == 0 {
-            return false;
-        }
-        // "Convert to zero based array": decrement width and height. The
-        // window then spans `[-(w>>1), +(w>>1)]` on the decremented value.
-        w -= 1;
-        h -= 1;
-        let win_w = w as i32;
-        let win_h = h as i32;
-        let pic_w = self.width as i32;
-        let pic_h = self.height as i32;
-        let win_size = ((win_w + 1) * (win_h + 1)) as usize;
-
-        let src_words: Vec<u16> = self
-            .data
-            .chunks_exact(2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
-            .collect();
-        let mut out = vec![0u16; (pic_w * pic_h) as usize];
-        let mut window = vec![0u16; win_size];
-
-        for y in 0..pic_h {
-            for x in 0..pic_w {
-                let mut idx = 0usize;
-                for ly in (y - (win_h >> 1))..=(y + (win_h >> 1)) {
-                    for lx in (x - (win_w >> 1))..=(x + (win_w >> 1)) {
-                        window[idx] = if lx < 0 || lx >= pic_w || ly < 0 || ly >= pic_h {
-                            0
-                        } else {
-                            // Note: this indexes with `width`, not `pitch`,
-                            // so the source must be tightly packed —
-                            // pictures coming from the Sixteen loader
-                            // satisfy that already (`pitch == width*2`).
-                            src_words[(lx + ly * pic_w) as usize]
-                        };
-                        idx += 1;
-                    }
-                }
-                window.sort_by_key(|&px| intensity_of(px));
-                out[(x + y * pic_w) as usize] = window[win_size >> 1];
-            }
-        }
-
-        let mut new_data = Vec::with_capacity(out.len() * 2);
-        for px in &out {
-            new_data.extend_from_slice(&px.to_le_bytes());
-        }
-        self.data = new_data;
-        self.pitch = (self.width as usize * 2) as u16;
         true
     }
 }

@@ -10,9 +10,6 @@ impl EngineInner {
 
     /// Read-only view of the shared script/director camera.
     /// Local player viewport projection lives in `robin_rs::Host`.
-    pub fn cutscene_camera(&self) -> &CameraState {
-        &self.cutscene_camera
-    }
 
     /// Record the loaded background's pixel dimensions.
     ///

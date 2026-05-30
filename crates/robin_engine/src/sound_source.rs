@@ -115,9 +115,6 @@ impl SoundSource {
     }
 
     /// Check if this source is part of the given ambience.
-    pub fn exists_in_ambience(&self, ambience: u32) -> bool {
-        (self.ambiences & ambience) != 0
-    }
 
     /// Convert to [`SoundSourceInfo`] for use by the geometry engine.
     pub fn to_source_info(&self) -> SoundSourceInfo {

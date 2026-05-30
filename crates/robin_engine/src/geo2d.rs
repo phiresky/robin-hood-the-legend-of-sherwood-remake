@@ -195,19 +195,6 @@ impl BBox2D {
         }
     }
 
-    /// Expand to include a line segment.
-    pub fn expand_segment(&mut self, seg: Line<f32>) {
-        self.expand_point(seg.start);
-        self.expand_point(seg.end);
-    }
-
-    /// Expand to include all points in a line string.
-    pub fn expand_line_string(&mut self, ls: &LineString<f32>) {
-        for &c in ls.coords() {
-            self.expand_point(c);
-        }
-    }
-
     /// Expand to include another bounding box.
     ///
     /// If `other` is in hyperspace this is a no-op — we early-return on
@@ -856,42 +843,6 @@ pub fn polygon_vertices_intersect_bbox(vertices: &[GeoPoint2D], bbox: &BBox2D) -
 
 /// Test if a polygon fully contains a segment (boundary counts as inside).
 ///
-/// Multi-stage: both endpoints inside → convex fast-path → edge-walk via
-/// `geo::Polygon::contains(&geo::Line)` (handles non-convex polygons) →
-/// midpoint fallback for segments that touch the boundary without
-/// crossing it transversally ([`polygon_contains_point`] is
-/// boundary-inclusive, so the midpoint test settles those cases).
-pub fn polygon_contains_segment(poly: &Polygon<f32>, seg: Line<f32>) -> bool {
-    // Stage 1: both endpoints inside (boundary-inclusive).
-    if !polygon_contains_point(poly, seg.start) || !polygon_contains_point(poly, seg.end) {
-        return false;
-    }
-    // Stage 2: convex fast-path.
-    if polygon_is_convex(poly) {
-        return true;
-    }
-    // Stage 3: geo's strict-interior Contains<Line>.
-    if poly.contains(&seg) {
-        return true;
-    }
-    // Stage 4: boundary-coincident fallback — midpoint decides when
-    // the strict-interior test rejects boundary touches.
-    let mid = pt(
-        (seg.start.x + seg.end.x) * 0.5,
-        (seg.start.y + seg.end.y) * 0.5,
-    );
-    polygon_contains_point(poly, mid)
-}
-
-/// Count the polygon's distinct vertices.
-///
-/// `geo::Polygon` always closes its exterior `LineString`, so
-/// `poly.exterior().coords_count()` returns `N+1`; this helper subtracts
-/// the duplicated terminator.
-pub fn polygon_vertex_count(poly: &Polygon<f32>) -> usize {
-    poly.exterior().0.len().saturating_sub(1)
-}
-
 /// Compute the signed area of a polygon.
 /// Positive = counter-clockwise, negative = clockwise.
 pub fn polygon_signed_area(poly: &Polygon<f32>) -> f32 {
@@ -923,36 +874,6 @@ pub fn polygon_is_convex(poly: &Polygon<f32>) -> bool {
         return true;
     }
     poly.exterior().is_convex()
-}
-
-/// Test if a polygon is "valid" (non self-intersecting).
-///
-/// Walks every pair of non-adjacent exterior edges and returns false on
-/// the first proper crossing (one that is *not* at a shared endpoint).
-/// O(n²) — only meaningful for small polygons.
-pub fn polygon_is_valid(poly: &Polygon<f32>) -> bool {
-    let edges: Vec<Line<f32>> = poly.exterior().lines().collect();
-    let n = edges.len();
-    if n == 0 {
-        return true;
-    }
-    for i in 2..n {
-        // For the closing edge, skip edge 0 because they share a vertex.
-        let j_start = if i + 1 == n { 1 } else { 0 };
-        for j in j_start..(i - 1) {
-            let s1 = edges[i];
-            let s2 = edges[j];
-            if let Intersection2D::Point(p) = segment_intersection(s1, s2)
-                && p != s1.start
-                && p != s1.end
-                && p != s2.start
-                && p != s2.end
-            {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 // ─── Intersection result ─────────────────────────────────────────
