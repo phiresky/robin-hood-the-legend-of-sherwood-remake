@@ -1,7 +1,8 @@
 //! Camera control: director work, zoom, scrolling, resize, coordinate conversion.
 
 use super::*;
-use crate::geo2d::{self, Point2D};
+use crate::coordinates::MapPoint;
+use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 
 impl EngineInner {
@@ -395,7 +396,7 @@ impl EngineInner {
     /// The listen point is the center of the visible game area (excluding the
     /// bottom UI panel).
     pub(super) fn update_sound_listener_position(&mut self) {
-        let listen_point = geo2d::pt(
+        let listen_point = MapPoint::new(
             self.cutscene_camera.view_position.x
                 + Self::director_camera_view_size().x * 0.5 / self.cutscene_camera.zoom_factor,
             self.cutscene_camera.view_position.y
@@ -413,7 +414,7 @@ impl EngineInner {
     // ─── Camera ──────────────────────────────────────────────────
 
     /// Set the shared script/director camera view position (with clamping).
-    pub(crate) fn set_view_position_for_seat(&mut self, _seat: usize, pos: Point2D) {
+    pub(crate) fn set_view_position_for_seat(&mut self, _seat: usize, pos: MapPoint) {
         self.cutscene_camera.view_position = pos;
         self.cutscene_camera.clip_view();
     }
@@ -437,7 +438,7 @@ impl EngineInner {
     /// `JumpCameraTo`, the sequence `CameraGoto` / `CameraJumpTo`
     /// commands, and `Resize` re-deriving the slide target from the
     /// stored raw `camera_wanted` script point.
-    pub(crate) fn check_location_is_valid_for_camera(&mut self, point: Point2D) -> Point2D {
+    pub(crate) fn check_location_is_valid_for_camera(&mut self, point: MapPoint) -> MapPoint {
         let screen = Self::director_camera_view_size();
         let half_w = screen.x / (2.0 * self.cutscene_camera.zoom_factor);
         let half_h = screen.y / (2.0 * self.cutscene_camera.zoom_factor);
@@ -462,7 +463,7 @@ impl EngineInner {
         if x + view_w > self.cutscene_camera.level_size.x {
             if clipped_h {
                 self.cutscene_camera.zoom_factor = 1.0;
-                return geo2d::pt(0.0, 0.0);
+                return MapPoint::ZERO;
             }
             x = self.cutscene_camera.level_size.x - view_w;
         }
@@ -471,7 +472,7 @@ impl EngineInner {
         if y + view_h > self.cutscene_camera.level_size.y {
             if clipped_v {
                 self.cutscene_camera.zoom_factor = 1.0;
-                return geo2d::pt(0.0, 0.0);
+                return MapPoint::ZERO;
             }
             y = self.cutscene_camera.level_size.y - view_h;
         }
@@ -486,7 +487,7 @@ impl EngineInner {
             debug_assert!(x >= 0.0 && y >= 0.0);
         }
 
-        geo2d::pt(x, y)
+        MapPoint::new(x, y)
     }
 
     /// Center the shared script/director camera on a map point.
@@ -502,12 +503,12 @@ impl EngineInner {
     /// `pending_side_effects.cancel_multi_selection`.  Those flags live
     /// on `InputState` which the host owns; `apply_side_effects` clears
     /// them.
-    pub(crate) fn center_on_point(&mut self, seat: usize, point: Point2D) {
+    pub(crate) fn center_on_point(&mut self, seat: usize, point: MapPoint) {
         let half_screen = geo2d::pt(
             Self::director_camera_view_size().x / (2.0 * self.cutscene_camera.zoom_factor),
             Self::director_camera_view_size().y / (2.0 * self.cutscene_camera.zoom_factor),
         );
-        let target = geo2d::pt(
+        let target = MapPoint::new(
             (point.x - half_screen.x).floor(),
             (point.y - half_screen.y).floor(),
         );
@@ -638,7 +639,7 @@ impl EngineInner {
             // apparent size per step; indistinguishable from a stretch-
             // blit ramp at 8 frames.
             self.cutscene_camera.zoom_factor = zoom_from + (zoom_to - zoom_from) * t;
-            let interp = geo2d::pt(
+            let interp = MapPoint::new(
                 view_from.x + (view_to.x - view_from.x) * t,
                 view_from.y + (view_to.y - view_from.y) * t,
             );
@@ -696,7 +697,7 @@ impl EngineInner {
         }
 
         // Re-center and clamp camera
-        let center = geo2d::pt(
+        let center = MapPoint::new(
             self.cutscene_camera.view_position.x + new_width * 0.5,
             self.cutscene_camera.view_position.y + new_height * 0.5,
         );

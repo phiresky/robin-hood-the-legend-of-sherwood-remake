@@ -24,7 +24,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiMsg, UiState,
     resource_widget_id::{
@@ -421,7 +421,7 @@ impl WidgetButton {
 
     /// Hit-test for the focus manager. Combines the bbox test with the
     /// renderer's per-pixel transparency check.
-    pub fn is_mouse_inside(&self, point: Point2D) -> bool {
+    pub fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
         self.base.is_inside(point)
     }
 }
@@ -474,7 +474,7 @@ impl WidgetGroupable for WidgetButton {
         WidgetButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: Point2D) -> bool {
+    fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
         WidgetButton::is_mouse_inside(self, point)
     }
 

@@ -21,11 +21,11 @@ use crate::geo2d::{self};
 #[derive(Clone)]
 pub(super) struct PcSnapshot {
     pub(super) id: EntityId,
-    pub(super) position: geo2d::Point2D,
+    pub(super) position: geo2d::GeoPoint2D,
     /// PC viewer eye-point XY. Differs from feet position for
     /// LeaningOut and lying/dead postures, matching C++
     /// `ComputeEyesPoint` in `SeesBlip` / bonus discovery.
-    pub(super) eye_position: geo2d::Point2D,
+    pub(super) eye_position: geo2d::GeoPoint2D,
     pub(super) layer: u16,
     pub(super) posture: crate::element::Posture,
     pub(super) action_state: crate::element::ActionState,
@@ -128,7 +128,7 @@ pub(super) struct PcSnapshot {
 #[derive(Clone)]
 pub(super) struct SoldierSnapshot {
     pub(super) id: EntityId,
-    pub(super) position: geo2d::Point2D,
+    pub(super) position: geo2d::GeoPoint2D,
     pub(super) layer: u16,
     pub(super) camp: Camp,
     pub(super) ai_state: crate::ai::AiState,
@@ -179,7 +179,7 @@ pub(super) struct SoldierSnapshot {
     pub(super) is_tower_guard: bool,
     /// AI's seek_position — where the soldier is heading. Used by
     /// `propose_good_combat_position` friend scoring.
-    pub(super) seek_position: geo2d::Point2D,
+    pub(super) seek_position: geo2d::GeoPoint2D,
     /// Handle of the shield bearer this archer is hiding behind (0 = none).
     pub(super) shield_bearer_before_me: u32,
     /// Handle of the archer hiding behind this shield bearer (0 = none).
@@ -253,7 +253,7 @@ pub(super) struct SoldierSnapshot {
 pub(super) struct Detection {
     pub(super) enemy: EntityId,
     pub(super) target: EntityId,
-    pub(super) target_pos: geo2d::Point2D,
+    pub(super) target_pos: geo2d::GeoPoint2D,
     pub(super) newly_alerted: bool,
 }
 
@@ -266,7 +266,7 @@ pub(super) struct Detection {
 /// Beggar cleanup-detectables predicate).
 #[derive(Clone, Copy)]
 pub(super) struct HumanTarget {
-    pub(super) position: geo2d::Point2D,
+    pub(super) position: geo2d::GeoPoint2D,
     pub(super) layer: u16,
     pub(super) eye_z: f32,
     pub(super) posture: crate::element::Posture,
@@ -310,7 +310,7 @@ pub(super) struct HumanTarget {
 /// computation reads.
 #[derive(Clone, Copy)]
 pub(super) struct ObjectTarget {
-    pub(super) position: geo2d::Point2D,
+    pub(super) position: geo2d::GeoPoint2D,
     pub(super) layer: u16,
     pub(super) belongs_to_beggar: bool,
     pub(super) active: bool,
@@ -784,7 +784,7 @@ impl EngineInner {
                 .npc
                 .ai_brain
                 .base()
-                .map(|ai| geo2d::Point2D {
+                .map(|ai| geo2d::GeoPoint2D {
                     x: ai.seek_position.x,
                     y: ai.seek_position.y,
                 })

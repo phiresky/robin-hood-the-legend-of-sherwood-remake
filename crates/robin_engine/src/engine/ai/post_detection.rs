@@ -14,7 +14,7 @@ impl EngineInner {
     /// PC.
     pub(super) fn tick_enemy_ai_alert_allies(&mut self, transitions: &[Detection]) {
         const VIEW_LOOK_THERE_RADIUS: f32 = 100.0;
-        let alert_calls: Vec<(EntityId, geo2d::Point2D)> = transitions
+        let alert_calls: Vec<(EntityId, geo2d::GeoPoint2D)> = transitions
             .iter()
             .filter(|d| d.newly_alerted)
             .map(|d| (d.enemy, d.target_pos))

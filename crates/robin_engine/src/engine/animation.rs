@@ -3671,7 +3671,7 @@ impl EngineInner {
 
         // Collect triggers during iteration so the sound manager mutation
         // isn't interleaved with mutable entity iteration.
-        let mut triggers: Vec<(u32, crate::geo2d::Point2D, Option<Material>)> = Vec::new();
+        let mut triggers: Vec<(u32, crate::coordinates::MapPoint, Option<Material>)> = Vec::new();
 
         for slot in self.entities.iter_mut() {
             let entity = match slot {
@@ -3714,7 +3714,7 @@ impl EngineInner {
                 None
             };
 
-            triggers.push((sound_id as u32, elem.position_map().to_geo(), material));
+            triggers.push((sound_id as u32, elem.position_map(), material));
         }
 
         for (fx_id, position, material) in triggers {

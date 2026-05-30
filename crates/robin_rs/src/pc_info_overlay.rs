@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::element::EntityId;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 #[cfg(test)]
 use crate::geo2d::pt;
 
@@ -94,7 +94,7 @@ impl PcInfoOverlay {
     pub fn show(
         &mut self,
         pc_id: EntityId,
-        mouse: Point2D,
+        mouse: GeoPoint2D,
         screen: (i32, i32),
         is_archer: bool,
         sword_capacity: u32,
@@ -151,7 +151,7 @@ impl PcInfoOverlay {
 mod tests {
     use super::*;
 
-    fn p(x: f32, y: f32) -> Point2D {
+    fn p(x: f32, y: f32) -> GeoPoint2D {
         pt(x, y)
     }
 

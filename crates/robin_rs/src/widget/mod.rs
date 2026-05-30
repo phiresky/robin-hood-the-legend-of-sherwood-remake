@@ -28,7 +28,7 @@ pub use toggle::WidgetToggleButton;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D};
+use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::ui::{
     MouseButtons, ProbeCode, RendererAlphaConstant, RendererBase, RendererBitmap, RendererListbox,
     RendererShadow, RendererText, ResourceId, UiEvent, UiEventData, UiMsg, UiProbe, UiState,
@@ -92,7 +92,7 @@ impl CaptureSlot {
 /// see [`CaptureSlot`]. Callers that don't care about capture pass
 /// `None`.
 pub struct WidgetInput<'a> {
-    pub mouse_position: Point2D,
+    pub mouse_position: GeoPoint2D,
     pub mouse_z: i16,
     pub mouse_button: MouseButtons,
     pub keyboard: &'a crate::ui::UiKeyboard,
@@ -150,7 +150,7 @@ impl WidgetRenderer {
     /// transparency test against the widget's surface (honouring an
     /// attached `AlphaMask` if the wiring layer baked one from the
     /// bound sprite — see `widget_bridge::attach_alpha_masks`).
-    pub fn is_real_point(&self, point: Point2D) -> bool {
+    pub fn is_real_point(&self, point: GeoPoint2D) -> bool {
         match self {
             Self::Alpha(r) => r.is_real_point(point),
             _ => self.base().is_some_and(|b| b.is_real_point(point)),
@@ -312,7 +312,7 @@ impl WidgetBase {
         self.renderer.set_position(bbox);
     }
 
-    pub fn set_position_point(&mut self, point: Point2D) {
+    pub fn set_position_point(&mut self, point: GeoPoint2D) {
         // Translate the existing bounding box so its top-left sits at
         // `point`, preserving width/height. If the widget has no bbox
         // yet (hyperspace), fall back to a 1×1 at `point` so we stay
@@ -342,7 +342,7 @@ impl WidgetBase {
     /// pixel-perfect hit testing (e.g. transparency check). Uses the
     /// half-open `is_boxed_point` so adjacent widgets never both claim
     /// a shared right/bottom edge column.
-    pub fn is_inside(&self, point: Point2D) -> bool {
+    pub fn is_inside(&self, point: GeoPoint2D) -> bool {
         self.bbox.is_boxed_point(point) && self.renderer.is_real_point(point)
     }
 

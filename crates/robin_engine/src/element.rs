@@ -38,7 +38,7 @@ use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
 use crate::coordinates::{GroundPoint, MapPoint, MapVec, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::GRID_CELL_SIZE;
-use crate::geo2d::Point2D as GeoPoint2D;
+use crate::geo2d::GeoPoint2D;
 use crate::jump_line::JumpLineIndex;
 use crate::movement::{ActiveMovement, ActiveShot};
 use crate::order::OrderType;
@@ -355,7 +355,7 @@ impl ElementData {
         }
     }
 
-    /// Get the map position as a `geo2d::Point2D` for use with pathfinder
+    /// Get the map position as a `geo2d::GeoPoint2D` for use with pathfinder
     /// and fast_find_grid APIs that operate on `geo::Coord<f32>`.
     pub fn position_map_geo(&self) -> GeoPoint2D {
         self.position_map().to_geo()
@@ -2552,10 +2552,10 @@ impl Entity {
     /// `Sprite::center` is the anchor loaded from the sprite data and used by
     /// rendering/input. C++ computes sprite position as
     /// `position_map - sprite_center`, so reconstruct that here.
-    pub fn cxx_position_sprite(&self) -> crate::geo2d::Point2D {
+    pub fn cxx_position_sprite(&self) -> crate::geo2d::GeoPoint2D {
         let map = self.element_data().position_map();
         let center = self.sprite().center;
-        crate::geo2d::Point2D {
+        crate::geo2d::GeoPoint2D {
             x: (map.x - center.x).floor(),
             y: (map.y - center.y).floor(),
         }

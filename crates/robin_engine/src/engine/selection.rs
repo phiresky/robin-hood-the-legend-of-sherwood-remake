@@ -340,7 +340,7 @@ impl EngineInner {
                 Some(Entity::Pc(pc)) => pc.element.position_map(),
                 _ => return,
             };
-            self.center_on_point(seat, crate::geo2d::pt(pos.x, pos.y));
+            self.center_on_point(seat, pos);
             // Initialize-from-mission path selects without the speak flag.
             self.select_pc(assets, seat, pc_id, false, false);
         }
@@ -431,13 +431,13 @@ impl EngineInner {
     /// Get the world position of a PC's guard entity (for CenterOn).
     ///
     /// Returns the guard's position if the PC has an assigned guard.
-    pub fn get_guard_position(&self, pc_id: EntityId) -> Option<crate::geo2d::Point2D> {
+    pub fn get_guard_position(&self, pc_id: EntityId) -> Option<crate::coordinates::MapPoint> {
         let guard_id = match self.get_entity(pc_id) {
             Some(Entity::Pc(pc)) => pc.pc.guard?,
             _ => return None,
         };
         let guard = self.get_entity(guard_id)?;
-        Some(guard.position_iface().map_position().to_geo())
+        Some(guard.position_iface().map_position())
     }
 
     /// Return the PC entity at the given 0-based portrait slot, or `None`
@@ -1017,11 +1017,11 @@ impl EngineInner {
         let p1 = input.multi_selection_pt1;
         let p2 = input.multi_selection_pt2;
         let box_multi_selection = crate::sprite::BBox::new(
-            crate::geo2d::Point2D {
+            crate::geo2d::GeoPoint2D {
                 x: p1.x.min(p2.x),
                 y: p1.y.min(p2.y),
             },
-            crate::geo2d::Point2D {
+            crate::geo2d::GeoPoint2D {
                 x: p1.x.max(p2.x),
                 y: p1.y.max(p2.y),
             },
@@ -1079,11 +1079,11 @@ impl EngineInner {
         let p1 = input.multi_selection_pt1;
         let p2 = input.multi_selection_pt2;
         let box_multi_selection = crate::sprite::BBox::new(
-            crate::geo2d::Point2D {
+            crate::geo2d::GeoPoint2D {
                 x: p1.x.min(p2.x),
                 y: p1.y.min(p2.y),
             },
-            crate::geo2d::Point2D {
+            crate::geo2d::GeoPoint2D {
                 x: p1.x.max(p2.x),
                 y: p1.y.max(p2.y),
             },

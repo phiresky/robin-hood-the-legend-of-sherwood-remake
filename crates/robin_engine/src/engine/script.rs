@@ -4,7 +4,6 @@ use super::*;
 use crate::ai::AiStateChangeSource;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::element::{Entity, EntityId};
-use crate::geo2d::{self};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
@@ -2419,12 +2418,15 @@ impl EngineInner {
     /// Resolve a script location handle to a map position.
     /// Script locations are points and sectors from the SCRIPT chunk,
     /// **not** entity handles. Handle 0 = null.
-    fn resolve_location_position(assets: &LevelAssets, handle: i32) -> Option<geo2d::Point2D> {
+    fn resolve_location_position(
+        assets: &LevelAssets,
+        handle: i32,
+    ) -> Option<crate::coordinates::MapPoint> {
         let idx = crate::natives::GameHost::location_index(handle)?;
         assets
             .script_location_positions
             .get(idx)
-            .map(|&(x, y)| geo2d::pt(x, y))
+            .map(|&(x, y)| crate::coordinates::MapPoint::new(x, y))
     }
 
     /// Process all deferred commands from script native calls.

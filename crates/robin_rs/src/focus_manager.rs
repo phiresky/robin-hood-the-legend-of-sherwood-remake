@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 
 // ─── SDL scancodes for navigation keys ───────────────────────────────
 
@@ -113,7 +113,7 @@ impl Default for KeyboardState {
 /// Combined UI input state for one frame.
 #[derive(Debug, Clone)]
 pub struct UiInput {
-    pub mouse_position: Point2D,
+    pub mouse_position: GeoPoint2D,
     pub keyboard: KeyboardState,
 }
 
@@ -129,7 +129,7 @@ pub trait WidgetGroupable {
     /// Whether the widget is sleeping (inactive).
     fn is_sleeping(&self) -> bool;
     /// Whether the given point is inside this widget's bounds.
-    fn is_mouse_inside(&self, point: Point2D) -> bool;
+    fn is_mouse_inside(&self, point: GeoPoint2D) -> bool;
     /// Show or hide the focus indicator.
     fn hide_focus(&mut self, hide: bool);
     /// Set group-focus state; returns resulting UI events.
@@ -220,7 +220,7 @@ pub struct FocusManager {
     shortcuts: HashMap<u16, WidgetId>,
     /// Scancodes currently held down for shortcut activation.
     pending_shortcuts: Vec<u16>,
-    old_mouse_pos: Point2D,
+    old_mouse_pos: GeoPoint2D,
 }
 
 impl FocusManager {
@@ -253,7 +253,7 @@ impl FocusManager {
             shortcuts_enabled: true,
             shortcuts: HashMap::new(),
             pending_shortcuts: Vec::new(),
-            old_mouse_pos: Point2D { x: -1.0, y: -1.0 },
+            old_mouse_pos: GeoPoint2D { x: -1.0, y: -1.0 },
         }
     }
 
@@ -677,7 +677,7 @@ impl FocusManager {
 
     /// If no groupable is currently focused and the mouse is over a
     /// groupable widget, focus that widget.
-    fn synchronize_groupable_with_mouse(&mut self, mouse_pos: Point2D) {
+    fn synchronize_groupable_with_mouse(&mut self, mouse_pos: GeoPoint2D) {
         if self.focused_groupable_idx.is_some() {
             return;
         }
@@ -848,7 +848,7 @@ mod tests {
         fn is_sleeping(&self) -> bool {
             self.sleeping
         }
-        fn is_mouse_inside(&self, point: Point2D) -> bool {
+        fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
             if let Some((x1, y1, x2, y2)) = self.mouse_rect {
                 point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2
             } else {
@@ -936,14 +936,14 @@ mod tests {
 
     fn input_with_key_down(scancode: u16) -> UiInput {
         UiInput {
-            mouse_position: Point2D { x: 0.0, y: 0.0 },
+            mouse_position: GeoPoint2D { x: 0.0, y: 0.0 },
             keyboard: keyboard_with_key_down(scancode),
         }
     }
 
     fn input_with_key_up(scancode: u16) -> UiInput {
         UiInput {
-            mouse_position: Point2D { x: 0.0, y: 0.0 },
+            mouse_position: GeoPoint2D { x: 0.0, y: 0.0 },
             keyboard: keyboard_with_key_up(scancode),
         }
     }
@@ -1407,7 +1407,7 @@ mod tests {
 
         // Mouse moves, with a non-FrameFocus event present → resets focus
         let mouse_input = UiInput {
-            mouse_position: Point2D { x: 100.0, y: 200.0 },
+            mouse_position: GeoPoint2D { x: 100.0, y: 200.0 },
             keyboard: KeyboardState::default(),
         };
         let existing = vec![UiEvent {
@@ -1430,7 +1430,7 @@ mod tests {
 
         // Mouse moves, but the only event is from an ignored widget
         let mouse_input = UiInput {
-            mouse_position: Point2D { x: 100.0, y: 200.0 },
+            mouse_position: GeoPoint2D { x: 100.0, y: 200.0 },
             keyboard: KeyboardState::default(),
         };
         let existing = vec![UiEvent {

@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{
@@ -199,7 +199,7 @@ impl WidgetToggleButton {
     /// bakes one for any widget whose `resource_id` resolves to a known
     /// sprite pack). Toggle widgets without a baked mask gracefully
     /// fall back to bbox-only.
-    pub fn is_mouse_inside(&self, point: Point2D) -> bool {
+    pub fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
         self.base.is_inside(point)
     }
 
@@ -556,7 +556,7 @@ impl WidgetGroupable for WidgetToggleButton {
         WidgetToggleButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: Point2D) -> bool {
+    fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
         WidgetToggleButton::is_mouse_inside(self, point)
     }
 
@@ -599,7 +599,7 @@ mod tests {
     }
 
     fn input<'a>(
-        pos: crate::geo2d::Point2D,
+        pos: crate::geo2d::GeoPoint2D,
         buttons: MouseButtons,
         kb: &'a UiKeyboard,
     ) -> WidgetInput<'a> {
@@ -614,7 +614,7 @@ mod tests {
     }
 
     fn input_with_capture<'a>(
-        pos: crate::geo2d::Point2D,
+        pos: crate::geo2d::GeoPoint2D,
         buttons: MouseButtons,
         kb: &'a UiKeyboard,
         capture: &'a super::super::CaptureSlot,

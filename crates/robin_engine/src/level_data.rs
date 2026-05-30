@@ -739,7 +739,7 @@ pub struct MissionHeader {
 /// Beam-me spawn point from the GOOD/SCOT chunk.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct BeamMe {
-    pub position: geo2d::Point2D,
+    pub position: geo2d::GeoPoint2D,
     pub direction: u32,
     pub action: u32,
     pub projection_area: u16,

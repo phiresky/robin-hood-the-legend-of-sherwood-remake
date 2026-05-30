@@ -21,7 +21,7 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
 use crate::gate::ActorAuthInfo;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 use crate::sector_production;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -620,7 +620,7 @@ impl ScriptSectorData {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ShadowData {
     /// 2D barycentre (centroid) of the shadow polygon.
-    pub barycentre_2d: Point2D,
+    pub barycentre_2d: GeoPoint2D,
 
     /// 3D barycentre — includes Z from the height plane at the centroid.
     pub barycentre_3d_x: f32,
@@ -634,7 +634,7 @@ pub struct ShadowData {
 impl Default for ShadowData {
     fn default() -> Self {
         Self {
-            barycentre_2d: Point2D { x: 0.0, y: 0.0 },
+            barycentre_2d: GeoPoint2D { x: 0.0, y: 0.0 },
             barycentre_3d_x: 0.0,
             barycentre_3d_y: 0.0,
             barycentre_3d_z: 0.0,
@@ -649,7 +649,7 @@ impl ShadowData {
     ///
     /// Note: the 3D barycentre requires height plane lookup and must be
     /// computed separately (see `initialize_3d`).
-    pub fn initialize_2d(&mut self, points: &[Point2D]) {
+    pub fn initialize_2d(&mut self, points: &[GeoPoint2D]) {
         assert!(!points.is_empty(), "shadow sector has no points");
         let n = points.len() as f32;
 
@@ -662,7 +662,7 @@ impl ShadowData {
         let inv_n = 1.0 / n;
         cx *= inv_n;
         cy *= inv_n;
-        self.barycentre_2d = Point2D { x: cx, y: cy };
+        self.barycentre_2d = GeoPoint2D { x: cx, y: cy };
 
         let mut total_dist = 0.0_f32;
         for p in points {

@@ -40,19 +40,19 @@ macro_rules! coord2 {
             }
 
             #[inline]
-            pub fn from_geo(p: geo2d::Point2D) -> Self {
+            pub fn from_geo(p: geo2d::GeoPoint2D) -> Self {
                 Self { x: p.x, y: p.y }
             }
 
             #[inline]
-            pub fn to_geo(self) -> geo2d::Point2D {
+            pub fn to_geo(self) -> geo2d::GeoPoint2D {
                 geo2d::pt(self.x, self.y)
             }
         }
 
-        impl From<geo2d::Point2D> for $name {
+        impl From<geo2d::GeoPoint2D> for $name {
             #[inline]
-            fn from(p: geo2d::Point2D) -> Self {
+            fn from(p: geo2d::GeoPoint2D) -> Self {
                 Self::from_geo(p)
             }
         }
@@ -104,6 +104,11 @@ coord2!(
     /// Point local to a sprite frame, such as a hand/action hotspot.
     SpriteLocalPoint,
     sprite_local_pt
+);
+coord2!(
+    /// Point local to a cursor image, used as the cursor hotspot.
+    CursorHotspot,
+    cursor_hotspot
 );
 coord2!(
     /// Screen-space point after viewport transform.

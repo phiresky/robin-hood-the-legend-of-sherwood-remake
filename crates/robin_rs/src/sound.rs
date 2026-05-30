@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, Point2D};
+use crate::geo2d::{self, GeoPoint2D};
 use crate::profiles::{ArmorMaterial, WeaponMaterial};
 use crate::sound_cache::{Material, SampleLoader, SoundCache};
 use crate::sound_config::SoundConfig;
@@ -432,7 +432,7 @@ impl SoundManager {
         0
     }
 
-    pub fn listen_point(&self) -> Point2D {
+    pub fn listen_point(&self) -> GeoPoint2D {
         self.geometry_engine.listen_point()
     }
 
@@ -630,7 +630,7 @@ impl SoundManager {
     // ── Listen point ─────────────────────────────────────────────────
 
     /// Update the listener position and zoom level.
-    pub fn set_listen_point(&mut self, position: Point2D, zoom_level: f32) {
+    pub fn set_listen_point(&mut self, position: GeoPoint2D, zoom_level: f32) {
         if self.geometry_engine.listen_point() != position {
             self.geometry_engine.set_listen_point(position);
             self.update_pending_sounds = true;
@@ -904,7 +904,7 @@ impl SoundManager {
     pub fn play_fx(
         &mut self,
         fx_id: u32,
-        position: Point2D,
+        position: GeoPoint2D,
         material: Option<Material>,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
@@ -959,7 +959,7 @@ impl SoundManager {
         strike_kind: StrikeKind,
         weapon1: WeaponMaterial,
         weapon2: WeaponMaterial,
-        position: Point2D,
+        position: GeoPoint2D,
         backend: &mut dyn AudioBackend,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
@@ -997,7 +997,7 @@ impl SoundManager {
         impact_kind: ImpactKind,
         weapon: WeaponMaterial,
         armor: ArmorMaterial,
-        position: Point2D,
+        position: GeoPoint2D,
         backend: &mut dyn AudioBackend,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
@@ -1044,7 +1044,7 @@ impl SoundManager {
         strike_kind: StrikeKind,
         weapon1: WeaponMaterial,
         weapon2: WeaponMaterial,
-        position: Point2D,
+        position: GeoPoint2D,
     ) {
         if !self.active {
             return;
@@ -1091,7 +1091,7 @@ impl SoundManager {
         impact_kind: ImpactKind,
         weapon: WeaponMaterial,
         armor: ArmorMaterial,
-        position: Point2D,
+        position: GeoPoint2D,
     ) {
         if !self.active {
             return;
@@ -1134,7 +1134,7 @@ impl SoundManager {
     /// footsteps and cloth sounds (so the bank picks the right
     /// material variant); `None` for surface-independent FX
     /// (explosions, bell rings, etc).
-    pub fn queue_fx(&mut self, fx_id: u32, position: Point2D, material: Option<Material>) {
+    pub fn queue_fx(&mut self, fx_id: u32, position: GeoPoint2D, material: Option<Material>) {
         if !self.active {
             return;
         }
@@ -1175,7 +1175,7 @@ impl SoundManager {
         profile_id: u32,
         exclamation_id: u16,
         variant: i32,
-        position: Point2D,
+        position: GeoPoint2D,
         actor_id: Option<u32>,
     ) {
         tracing::trace!(
@@ -1405,7 +1405,7 @@ impl SoundManager {
     pub fn resume_all_sound_sources(
         &mut self,
         sources: &SoundSourceManager,
-        position: Point2D,
+        position: GeoPoint2D,
         zoom: f32,
     ) {
         self.set_listen_point(position, zoom);

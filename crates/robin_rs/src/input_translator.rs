@@ -7,7 +7,7 @@ use bitflags::bitflags;
 use geo::Rect;
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::Point2D;
+use robin_engine::coordinates::ScreenPoint;
 
 // ---------------------------------------------------------------------------
 // SDL scancodes used for hardcoded key checks.
@@ -320,9 +320,9 @@ fn key_held(cur: &[u8], sc: u16) -> bool {
 /// We use `Intersects` rather than `Contains` because `geo::Contains` for
 /// `Rect` uses strict inequality and excludes boundary points — but dead zones
 /// need to cover the exact screen edges where scrolling triggers.
-fn is_in_dead_zone(dead_zones: &[Rect<f32>], point: Point2D) -> bool {
+fn is_in_dead_zone(dead_zones: &[Rect<f32>], point: ScreenPoint) -> bool {
     use geo::Intersects;
-    let p = geo::Point::from(point);
+    let p = geo::Point::new(point.x, point.y);
     dead_zones.iter().any(|dz| dz.intersects(&p))
 }
 
@@ -524,7 +524,7 @@ impl InputTranslator {
     }
 
     /// Add a rectangular dead zone defined by two corner points.
-    pub fn add_dead_zone(&mut self, a: Point2D, b: Point2D) {
+    pub fn add_dead_zone(&mut self, a: ScreenPoint, b: ScreenPoint) {
         let min_x = a.x.min(b.x);
         let max_x = a.x.max(b.x);
         let min_y = a.y.min(b.y);
@@ -549,26 +549,26 @@ impl InputTranslator {
         // Bottom-left vertical strip:
         //   ptA=(0, h-PANNEL_DEADZONE) .. ptB=(0, h-3)
         self.add_dead_zone(
-            crate::geo2d::pt(0.0, h - PANNEL_DEADZONE),
-            crate::geo2d::pt(0.0, h - 3.0),
+            ScreenPoint::new(0.0, h - PANNEL_DEADZONE),
+            ScreenPoint::new(0.0, h - 3.0),
         );
         // Bottom-left horizontal strip:
         //   ptA=(2, h-1) .. ptB=(PANNEL_DEADZONE, h-1)
         self.add_dead_zone(
-            crate::geo2d::pt(2.0, h - 1.0),
-            crate::geo2d::pt(PANNEL_DEADZONE, h - 1.0),
+            ScreenPoint::new(2.0, h - 1.0),
+            ScreenPoint::new(PANNEL_DEADZONE, h - 1.0),
         );
         // Bottom-right horizontal strip:
         //   ptA=(w-PANNEL_DEADZONE, h-1) .. ptB=(w-3, h-1)
         self.add_dead_zone(
-            crate::geo2d::pt(w - PANNEL_DEADZONE, h - 1.0),
-            crate::geo2d::pt(w - 3.0, h - 1.0),
+            ScreenPoint::new(w - PANNEL_DEADZONE, h - 1.0),
+            ScreenPoint::new(w - 3.0, h - 1.0),
         );
         // Bottom-right vertical strip:
         //   ptA=(w-1, h-3) .. ptB=(w-1, h-PANNEL_DEADZONE)
         self.add_dead_zone(
-            crate::geo2d::pt(w - 1.0, h - 3.0),
-            crate::geo2d::pt(w - 1.0, h - PANNEL_DEADZONE),
+            ScreenPoint::new(w - 1.0, h - 3.0),
+            ScreenPoint::new(w - 1.0, h - PANNEL_DEADZONE),
         );
     }
 
@@ -602,7 +602,7 @@ impl InputTranslator {
             return actions;
         }
 
-        let point = crate::geo2d::pt(x, y);
+        let point = ScreenPoint::new(x, y);
 
         if !is_in_dead_zone(&self.dead_zones, point) {
             if x <= 1.0 {
@@ -946,7 +946,7 @@ mod tests {
     #[test]
     fn mouse_dead_zone_suppresses_scroll() {
         let mut t = make_translator();
-        t.add_dead_zone(crate::geo2d::pt(0.0, 350.0), crate::geo2d::pt(50.0, 450.0));
+        t.add_dead_zone(ScreenPoint::new(0.0, 350.0), ScreenPoint::new(50.0, 450.0));
         // Point (0, 400) is in the dead zone → no scroll
         let actions = t.translate_mouse(0.0, 400.0, 0);
         assert!(!actions.contains(&GameAction::ScrollLeft));
@@ -955,7 +955,7 @@ mod tests {
     #[test]
     fn mouse_dead_zone_does_not_suppress_wheel() {
         let mut t = make_translator();
-        t.add_dead_zone(crate::geo2d::pt(0.0, 0.0), crate::geo2d::pt(1024.0, 768.0));
+        t.add_dead_zone(ScreenPoint::new(0.0, 0.0), ScreenPoint::new(1024.0, 768.0));
         // Wheel still works even inside dead zone
         let actions = t.translate_mouse(500.0, 400.0, 3);
         assert!(actions.contains(&GameAction::ZoomIn));
@@ -1075,7 +1075,7 @@ mod tests {
     #[test]
     fn clear_dead_zones() {
         let mut t = make_translator();
-        t.add_dead_zone(crate::geo2d::pt(0.0, 0.0), crate::geo2d::pt(100.0, 100.0));
+        t.add_dead_zone(ScreenPoint::new(0.0, 0.0), ScreenPoint::new(100.0, 100.0));
         assert!(!t.dead_zones.is_empty());
         t.clear_dead_zones();
         assert!(t.dead_zones.is_empty());
@@ -1125,7 +1125,7 @@ mod tests {
     #[test]
     fn serde_round_trip_translator() {
         let mut t = make_translator();
-        t.add_dead_zone(crate::geo2d::pt(10.0, 20.0), crate::geo2d::pt(30.0, 40.0));
+        t.add_dead_zone(ScreenPoint::new(10.0, 20.0), ScreenPoint::new(30.0, 40.0));
         let json = serde_json::to_string(&t).unwrap();
         let back: InputTranslator = serde_json::from_str(&json).unwrap();
         assert_eq!(back.screen_width, 1024.0);

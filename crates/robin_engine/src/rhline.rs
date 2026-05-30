@@ -134,17 +134,17 @@ impl Vec2 {
 // Conversions to/from geo2d types
 // ---------------------------------------------------------------------------
 
-impl From<crate::geo2d::Point2D> for Vec2 {
+impl From<crate::geo2d::GeoPoint2D> for Vec2 {
     #[inline]
-    fn from(p: crate::geo2d::Point2D) -> Self {
+    fn from(p: crate::geo2d::GeoPoint2D) -> Self {
         Vec2 { x: p.x, y: p.y }
     }
 }
 
 impl Vec2 {
-    /// Convert to the canonical [`crate::geo2d::Point2D`] type.
+    /// Convert to the canonical [`crate::geo2d::GeoPoint2D`] type.
     #[inline]
-    pub fn to_point2d(self) -> crate::geo2d::Point2D {
+    pub fn to_geo_point(self) -> crate::geo2d::GeoPoint2D {
         crate::geo2d::pt(self.x, self.y)
     }
 }

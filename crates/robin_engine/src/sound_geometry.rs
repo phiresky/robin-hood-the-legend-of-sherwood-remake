@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, Point2D};
+use crate::geo2d::{self, GeoPoint2D};
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ pub struct SoundSourceInfo {
     pub outer_distance: u16,
     pub inner_volume: u16,
     pub outer_volume: u16,
-    pub shape: Vec<Point2D>,
+    pub shape: Vec<GeoPoint2D>,
 }
 
 /// Sound settings passed to `get_logical_playing_params`.  The union
@@ -103,7 +103,7 @@ pub struct SoundSourceInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SoundSettings {
     pub sound_type: SoundType,
-    pub position: Point2D,
+    pub position: GeoPoint2D,
     pub identifier: u32,
     pub source: SoundSettingsSource,
 }
@@ -161,7 +161,7 @@ impl Default for PlayingParameters {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SoundGeometry {
     /// Current listener position in level coordinates.
-    listen_point: Point2D,
+    listen_point: GeoPoint2D,
     /// Current zoom level (0.5 = zoomed out, 2.0 = zoomed in).
     zoom_factor: f32,
 
@@ -182,11 +182,11 @@ pub struct SoundGeometry {
 }
 
 struct GeometryScratch {
-    decrunched_geometry: Vec<Point2D>,
+    decrunched_geometry: Vec<GeoPoint2D>,
     point_distances: Vec<f32>,
     segment_distances: Vec<f32>,
-    segment_intersections: Vec<Point2D>,
-    closest_point: Point2D,
+    segment_intersections: Vec<GeoPoint2D>,
+    closest_point: GeoPoint2D,
     source_distance: f32,
 }
 
@@ -220,11 +220,11 @@ impl SoundGeometry {
 
     // ── Accessors ──
 
-    pub fn listen_point(&self) -> Point2D {
+    pub fn listen_point(&self) -> GeoPoint2D {
         self.listen_point
     }
 
-    pub fn set_listen_point(&mut self, point: Point2D) {
+    pub fn set_listen_point(&mut self, point: GeoPoint2D) {
         self.listen_point = point;
     }
 
@@ -313,7 +313,7 @@ impl SoundGeometry {
 
     /// Compute panning for a single point relative to the listener.
     /// Returns -1.0 (full left) to 1.0 (full right), 0.0 = centered.
-    fn panning_for_point(position: Point2D, range: &SoundRange) -> f32 {
+    fn panning_for_point(position: GeoPoint2D, range: &SoundRange) -> f32 {
         let x_abs = position.x.abs();
 
         if x_abs < range.inner_distance {

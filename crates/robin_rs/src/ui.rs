@@ -8,7 +8,7 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D, pt};
+use crate::geo2d::{BBox2D, GeoPoint2D, pt};
 use crate::ingame_menu::layout::{MenuTransform, TextAlign, VAlign, render_text_in_box_aligned};
 use crate::input::{KeyboardState, MAX_SCANCODES};
 use crate::native_font::NativeFont;
@@ -337,7 +337,7 @@ impl UiKeyboard {
 /// the input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiInput {
-    pub mouse_position: Point2D,
+    pub mouse_position: GeoPoint2D,
     pub mouse_z: i16,
     pub mouse_button: u16,
 }
@@ -577,7 +577,7 @@ impl RendererBase {
         self.bbox = bbox;
     }
 
-    pub fn set_position_point(&mut self, point: Point2D) {
+    pub fn set_position_point(&mut self, point: GeoPoint2D) {
         // Actual dimensions are resolved by the concrete widget type
         // (see `widget/picture.rs` etc.), which queries `ResourceManager`
         // and calls `set_position_bbox`. This 1×1 fallback is a
@@ -626,7 +626,7 @@ impl RendererBase {
     /// When no mask is set (text labels, sliders, listboxes — anything
     /// not bound to a pre-loaded sprite pack), the bbox check stands
     /// alone.
-    pub fn is_real_point(&self, point: Point2D) -> bool {
+    pub fn is_real_point(&self, point: GeoPoint2D) -> bool {
         if !self.bbox.contains_point(point) {
             return false;
         }
@@ -740,7 +740,7 @@ impl RendererAlphaConstant {
     /// A fully-faded widget (`target_alpha == 0`) cannot receive
     /// clicks. Otherwise defer to the base renderer (bbox +
     /// pixel-alpha).
-    pub fn is_real_point(&self, point: Point2D) -> bool {
+    pub fn is_real_point(&self, point: GeoPoint2D) -> bool {
         if self.target_alpha == 0 {
             return false;
         }
@@ -1062,7 +1062,7 @@ pub struct RendererListbox {
     pub scrollbar_track_width: u16,
 
     // ── Knob (scrollbar thumb) state ──
-    pub knob_position: Point2D,
+    pub knob_position: GeoPoint2D,
     pub knob_ratio: f32,
     pub before_ratio: f32,
     pub knob_height: u16,
@@ -1095,7 +1095,7 @@ impl RendererListbox {
             surface_scrollbar: u32::MAX,
             knob_width: 0,
             scrollbar_track_width: 0,
-            knob_position: Point2D::default(),
+            knob_position: GeoPoint2D::default(),
             knob_ratio: 0.0,
             before_ratio: 0.0,
             knob_height: 0,
@@ -1497,7 +1497,7 @@ pub enum MapType {
 pub struct Layout {
     h_orientation: HorizontalOrientation,
     v_orientation: VerticalOrientation,
-    physical_origin: Point2D,
+    physical_origin: GeoPoint2D,
     /// Logical bounding box (stored as raw start/end in logical coords).
     bbox_start: LayoutPoint,
     bbox_end: LayoutPoint,
@@ -1507,7 +1507,7 @@ impl Layout {
     /// Create a layout from a physical bounding box and origin.
     pub fn new(
         bbox: &BBox2D,
-        origin: Point2D,
+        origin: GeoPoint2D,
         h_orientation: HorizontalOrientation,
         v_orientation: VerticalOrientation,
     ) -> Self {
@@ -1581,11 +1581,11 @@ impl Layout {
         self.bbox_end.y = self.bbox_start.y + h as f32;
     }
 
-    pub fn origin(&self) -> Point2D {
+    pub fn origin(&self) -> GeoPoint2D {
         self.physical_origin
     }
 
-    pub fn set_origin(&mut self, origin: Point2D) {
+    pub fn set_origin(&mut self, origin: GeoPoint2D) {
         self.physical_origin = origin;
     }
 
@@ -1658,7 +1658,7 @@ impl LayoutPoint {
     }
 
     /// Convert a physical point to logical coordinates within a layout.
-    pub fn from_physical(layout: &Layout, phys: Point2D) -> Self {
+    pub fn from_physical(layout: &Layout, phys: GeoPoint2D) -> Self {
         Self {
             x: layout.horizontal_map(phys.x, MapType::Logical),
             y: layout.vertical_map(phys.y, MapType::Logical),
@@ -1666,7 +1666,7 @@ impl LayoutPoint {
     }
 
     /// Convert this logical point back to physical coordinates.
-    pub fn to_physical(&self, layout: &Layout) -> Point2D {
+    pub fn to_physical(&self, layout: &Layout) -> GeoPoint2D {
         pt(
             layout.horizontal_map(self.x, MapType::Physical),
             layout.vertical_map(self.y, MapType::Physical),

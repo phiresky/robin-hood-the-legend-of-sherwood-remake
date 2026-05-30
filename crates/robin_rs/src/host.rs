@@ -15,7 +15,7 @@ use robin_engine::engine::{
     DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
 };
 use robin_engine::game_operation::GameCode;
-use robin_engine::geo2d::{Point2D, Vec2D};
+use robin_engine::geo2d::Vec2D;
 use robin_engine::markers::GroundMark;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -307,7 +307,7 @@ pub struct Host {
     /// swap the arc colour from cyan (default) to pink (crumpled).
     pub net_crumpled: bool,
     pub time_no_mouse_move: u32,
-    pub mouse_map_prev: Point2D,
+    pub mouse_map_prev: MapPoint,
     /// Rolling counter for the once-every-10-frames ground-mark drop
     /// performed by `DisplayTrajectory`.  Incremented each frame the
     /// trajectory-preview is valid.
@@ -386,7 +386,7 @@ pub struct Host {
     /// `(position, zoom)` set when a tick emitted a `ResumeAllSources`
     /// command. Drained by game_session before the sound hourglass
     /// runs, since it needs `&engine.sound_sim.sources`.
-    pub pending_resume_all_sources: Option<(Point2D, f32)>,
+    pub pending_resume_all_sources: Option<(MapPoint, f32)>,
 
     /// Sound-source indices the engine asked the host to activate
     /// this tick (from `SoundCommand::ActivateSource`). Drained by
@@ -714,7 +714,7 @@ impl Host {
                         profile_id,
                         exclamation_id,
                         variant,
-                        position,
+                        position.to_geo(),
                         actor_id.map(|id| id.0),
                     );
                 }
@@ -723,7 +723,7 @@ impl Host {
                     position,
                     material,
                 } => {
-                    self.sound.queue_fx(fx_id, position, material);
+                    self.sound.queue_fx(fx_id, position.to_geo(), material);
                 }
                 SoundCommand::StrikeFx {
                     strike_kind,
@@ -732,7 +732,7 @@ impl Host {
                     position,
                 } => {
                     self.sound
-                        .queue_strike_fx(strike_kind, weapon1, weapon2, position);
+                        .queue_strike_fx(strike_kind, weapon1, weapon2, position.to_geo());
                 }
                 SoundCommand::ImpactFx {
                     impact_kind,
@@ -741,7 +741,7 @@ impl Host {
                     position,
                 } => {
                     self.sound
-                        .queue_impact_fx(impact_kind, weapon, armor, position);
+                        .queue_impact_fx(impact_kind, weapon, armor, position.to_geo());
                 }
                 SoundCommand::Jingle(jingle) => {
                     self.sound.queue_jingle(jingle);

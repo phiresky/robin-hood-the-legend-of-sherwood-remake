@@ -3297,7 +3297,7 @@ impl EngineInner {
             blipped: bool,
             sector: Option<crate::position_interface::SectorHandle>,
             in_door_transit: bool,
-            position: crate::geo2d::Point2D,
+            position: crate::geo2d::GeoPoint2D,
             speech_id: u32,
             script_forbidden: bool,
             profile_name: String,
@@ -3603,7 +3603,7 @@ impl EngineInner {
                     profile_id: snap.speech_id,
                     exclamation_id: excl_id,
                     variant,
-                    position: snap.position,
+                    position: snap.position.into(),
                     actor_id: Some(crate::element::EntityId(snap.entity_id)),
                 });
             // Schedule the deterministic MYTALK finish from the
@@ -5067,7 +5067,7 @@ impl EngineInner {
     pub(crate) fn hey_folks_look_there(
         &mut self,
         source: EntityId,
-        pos: geo2d::Point2D,
+        pos: geo2d::GeoPoint2D,
         radius: f32,
     ) {
         let (source_camp, source_pos) = {
@@ -6433,7 +6433,7 @@ impl EngineInner {
     pub fn broadcast_noise(
         &mut self,
         noise_type: crate::ai::NoiseType,
-        origin: crate::geo2d::Point2D,
+        origin: crate::geo2d::GeoPoint2D,
         origin_layer: u16,
         volume: u16,
         elevation: u16,

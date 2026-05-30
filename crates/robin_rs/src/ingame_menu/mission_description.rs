@@ -249,7 +249,7 @@ pub async fn show_mission_description(
 
         let widget_input = input_state.as_widget_input();
         let events = frame.process_input(&widget_input);
-        let mouse_virt = geo2d::Point2D {
+        let mouse_virt = geo2d::GeoPoint2D {
             x: input_state.virt_x,
             y: input_state.virt_y,
         };

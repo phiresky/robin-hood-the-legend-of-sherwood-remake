@@ -492,7 +492,7 @@ impl Engine {
 
     /// Current cutscene camera view position in world coordinates.
     /// Read-only accessor for HTTP state introspection.
-    pub fn cutscene_camera_view_position(&self) -> geo2d::Point2D {
+    pub fn cutscene_camera_view_position(&self) -> crate::coordinates::MapPoint {
         self.inner.cutscene_camera().view_position
     }
 

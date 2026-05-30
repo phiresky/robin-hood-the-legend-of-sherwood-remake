@@ -17,7 +17,7 @@ use crate::Host;
 use std::collections::HashMap;
 
 use crate::element::Entity;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::{ResourceId, ResourceManager};
 use robin_assets::picture::Picture;
@@ -987,11 +987,11 @@ fn slot_left_x(screen_width: u16, slot_index: u16) -> u16 {
 
 fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
     BBox::new(
-        Point2D {
+        GeoPoint2D {
             x: x1 as f32,
             y: y1 as f32,
         },
-        Point2D {
+        GeoPoint2D {
             x: x2 as f32,
             y: y2 as f32,
         },
@@ -1007,8 +1007,8 @@ fn blit_to_screen_widget(
 ) {
     let src_box = src.copied().unwrap_or_else(|| {
         BBox::new(
-            Point2D { x: 0.0, y: 0.0 },
-            Point2D {
+            GeoPoint2D { x: 0.0, y: 0.0 },
+            GeoPoint2D {
                 x: renderer.surface_width(surface_id) as f32,
                 y: renderer.surface_height(surface_id) as f32,
             },
@@ -2247,7 +2247,7 @@ pub fn draw_pc_info_overlay(
     profiles: &robin_engine::profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    mouse: Point2D,
+    mouse: GeoPoint2D,
 ) {
     use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
 
@@ -2337,12 +2337,12 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
     // Snapshot the PC positions first — the draw call borrows engine.host
     // mutably for the draw_manager and its phase store, so we can't
     // still be iterating `engine.pc_ids()` while calling it.
-    let mut per_pc: Vec<(crate::element::EntityId, Point2D)> =
+    let mut per_pc: Vec<(crate::element::EntityId, GeoPoint2D)> =
         Vec::with_capacity(engine.pc_ids().len());
     for &pc_id in engine.pc_ids() {
         if let Some(ent) = engine.get_entity(pc_id) {
             let pos = ent.element_data().position_map();
-            per_pc.push((pc_id, Point2D { x: pos.x, y: pos.y }));
+            per_pc.push((pc_id, GeoPoint2D { x: pos.x, y: pos.y }));
         }
     }
 

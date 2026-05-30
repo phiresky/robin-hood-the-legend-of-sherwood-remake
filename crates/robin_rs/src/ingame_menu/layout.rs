@@ -1473,7 +1473,11 @@ impl TooltipState {
 
     /// Re-scan `frame` for the widget the cursor is over.  If the
     /// hover target changed, reset the idle timer.
-    pub fn update(&mut self, frame: &crate::widget::FrameWnd, mouse_virt: crate::geo2d::Point2D) {
+    pub fn update(
+        &mut self,
+        frame: &crate::widget::FrameWnd,
+        mouse_virt: crate::geo2d::GeoPoint2D,
+    ) {
         let hovered_now = frame
             .widgets()
             .iter()
@@ -1493,7 +1497,7 @@ impl TooltipState {
         font: &NativeFont,
         transform: MenuTransform,
         frame: &crate::widget::FrameWnd,
-        mouse_virt: crate::geo2d::Point2D,
+        mouse_virt: crate::geo2d::GeoPoint2D,
     ) {
         let Some(id) = self.hover_widget else { return };
         let Some(started) = self.hover_since else {

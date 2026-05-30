@@ -1,15 +1,16 @@
 //! Rendering: draw, view cone overlay, background, selection box.
 
 use super::*;
+use crate::coordinates::{MapPoint, ScreenPoint};
 use crate::element::EntityId;
-use crate::geo2d::{self, Point2D};
+use crate::geo2d::{self, GeoPoint2D};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::shadow_polygon::ViewParameters;
 use std::collections::HashMap;
 
 /// Tuple returned by `selected_view_cone_params`: (eye point, view
 /// parameters, optional RGB tint for the darkening overlay).
-pub type ViewConeParams = (Point2D, ViewParameters, Option<(u8, u8, u8)>);
+pub type ViewConeParams = (GeoPoint2D, ViewParameters, Option<(u8, u8, u8)>);
 
 /// Back-to-front entity render order plus the per-entity depth value
 /// the sort used as its key.
@@ -149,7 +150,7 @@ impl EngineInner {
                 let scroll = display.background_transform.scrolling_vector;
                 self.set_view_position_for_seat(
                     seat,
-                    geo2d::pt(
+                    MapPoint::new(
                         self.cutscene_camera.view_position.x + scroll.x,
                         self.cutscene_camera.view_position.y + scroll.y,
                     ),
@@ -206,7 +207,7 @@ impl EngineInner {
                     let zoom_level = display.background_transform.current_zoom_level;
                     let new_factor = display.background_transform.zoom_values[zoom_level as usize];
 
-                    let view_to = geo2d::pt(
+                    let view_to = MapPoint::new(
                         view_from.x + screen_vec.x / (2.0 * zoom_from)
                             - screen_vec.x / (2.0 * new_factor)
                             + mouse_bias.x,
@@ -230,7 +231,7 @@ impl EngineInner {
                     let zoom_level = display.background_transform.current_zoom_level;
                     let new_factor = display.background_transform.zoom_values[zoom_level as usize];
 
-                    let mut target = geo2d::pt(
+                    let mut target = MapPoint::new(
                         view_from.x + screen_vec.x / (2.0 * zoom_from)
                             - screen_vec.x / (2.0 * new_factor)
                             + mouse_bias.x,
@@ -381,15 +382,15 @@ impl EngineInner {
 
                 // Snapshot target position before borrowing self mutably.
                 let pos = entity.element_data().position_map();
-                let target_pt = crate::geo2d::pt(pos.x, pos.y);
+                let target_pt = pos;
                 self.seats[seat].follow_element = Some(id);
 
                 // Compute `position_screen = (target - view) * zoom`. The
                 // off-screen gate is an inside-box check in *map* space,
                 // with the bottom-right clamped to director view size -
                 // (0, PANNEL_HEIGHT) so the panel strip is excluded.
-                let compute_screen = |view: Point2D, zoom: f32| -> Point2D {
-                    crate::geo2d::pt((target_pt.x - view.x) * zoom, (target_pt.y - view.y) * zoom)
+                let compute_screen = |view: MapPoint, zoom: f32| -> ScreenPoint {
+                    ScreenPoint::new((target_pt.x - view.x) * zoom, (target_pt.y - view.y) * zoom)
                 };
                 let view = self.cutscene_camera.view_position;
                 let zoom = self.cutscene_camera.zoom_factor;
@@ -932,8 +933,6 @@ impl EngineInner {
 }
 
 // ─── Display order helpers ──────────────────────────────────────────
-
-use crate::coordinates::MapPoint;
 
 /// Minimum Y coordinate of a display polyline.
 fn y_min_polyline(polyline: &[MapPoint]) -> f32 {

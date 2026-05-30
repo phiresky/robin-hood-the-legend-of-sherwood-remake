@@ -15,7 +15,6 @@ use robin_engine::engine::input::{
     MOUSE_OPACITY_DEFAULT, TrajectoryPreview,
 };
 use robin_engine::engine::{DevState, Engine, LevelAssets};
-use robin_engine::geo2d::Point2D;
 
 /// Apply a `TrajectoryPreview` returned from engine to host's
 /// trajectory-preview fields. See `TrajectoryPreview` docs.
@@ -497,7 +496,7 @@ pub fn choose_mouse_pointer_for_no_action(
                         jump_line_idx = engine.get_nearest_jumpable_jump_line(
                             pc_id,
                             pc_pos_map,
-                            robin_engine::geo2d::pt(mouse_map.x, mouse_map.y),
+                            mouse_map.to_geo(),
                             /* test_posture */ false,
                         );
                         break;
@@ -637,7 +636,7 @@ pub fn update_mouse(
     host: &mut Host,
     assets: &LevelAssets,
     dev: &DevState,
-    mouse_map: Point2D,
+    mouse_map: MapPoint,
     alt_held: bool,
     shift_held: bool,
 ) -> i32 {
@@ -711,7 +710,7 @@ pub fn update_mouse(
     host.input.increment_cursor_animation = true;
     host.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
 
-    let mouse_map_pt = MapPoint::from_geo(mouse_map);
+    let mouse_map_pt = mouse_map;
 
     // Sector lookup for the selected sector / layer.  Used for door/
     // jump alpha overlays and cursor context.  With shift held, use

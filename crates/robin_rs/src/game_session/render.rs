@@ -460,11 +460,11 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
         return;
     }
     let rect = robin_engine::sprite::BBox::new(
-        robin_engine::geo2d::Point2D {
+        robin_engine::geo2d::GeoPoint2D {
             x: x as f32,
             y: y as f32,
         },
-        robin_engine::geo2d::Point2D {
+        robin_engine::geo2d::GeoPoint2D {
             x: (x + w) as f32,
             y: (y + h) as f32,
         },
@@ -496,12 +496,7 @@ pub(super) fn update_mouse_and_cursor(
     last_cursor_id: &mut i32,
 ) {
     let mouse_screen = threaded_input.position();
-    let Some(mouse_map) =
-        host.viewport
-            .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                mouse_screen,
-            ))
-    else {
+    let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) else {
         return;
     };
     // `is_alt_effective()` so the permanent-alt toggle affects
@@ -512,7 +507,7 @@ pub(super) fn update_mouse_and_cursor(
         host,
         assets,
         dev,
-        mouse_map.to_geo(),
+        mouse_map,
         alt_for_cursor,
         shift_held,
     );
@@ -1295,7 +1290,7 @@ pub(super) fn render_frame(
             &assets.profile_manager,
             renderer,
             portrait_cache,
-            mouse_pos,
+            mouse_pos.to_geo(),
         );
     }
 

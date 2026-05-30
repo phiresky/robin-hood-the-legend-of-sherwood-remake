@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, BBox2D, Point2D, Polygon2D, pt, segment};
+use crate::geo2d::{self, BBox2D, GeoPoint2D, Polygon2D, pt, segment};
 
 // ---------------------------------------------------------------------------
 // SightObstacleIndex — nominal newtype
@@ -234,7 +234,7 @@ pub struct ObstaclePoint {
 }
 
 impl ObstaclePoint {
-    pub fn ground_point(&self) -> Point2D {
+    pub fn ground_point(&self) -> GeoPoint2D {
         pt(self.x, self.y)
     }
 }
@@ -421,14 +421,14 @@ impl SightObstacle {
     // ---- Geometry queries ----
 
     /// Test if a ground-plane point lies inside the obstacle's polygon.
-    pub fn contains_point(&self, p: Point2D) -> bool {
+    pub fn contains_point(&self, p: GeoPoint2D) -> bool {
         geo2d::polygon_contains_point(&self.polygon, p)
     }
 
     /// Test if a screen-space point lies inside the obstacle's
     /// screen-space polygon (vertices `(x, y - z_top)`).  Used by the
     /// projection-area sector lookup.
-    pub fn contains_point_screen(&self, p: Point2D) -> bool {
+    pub fn contains_point_screen(&self, p: GeoPoint2D) -> bool {
         geo2d::polygon_contains_point(&self.polygon_screen, p)
     }
 
@@ -438,7 +438,7 @@ impl SightObstacle {
     /// Returns `true` when the obstacle is active and the segment intersects
     /// the ground-plane polygon.  The caller is responsible for filtering by
     /// bounding-box first (typically done by the fast-find grid).
-    pub fn is_blocking_sight(&self, from: Point2D, to: Point2D) -> bool {
+    pub fn is_blocking_sight(&self, from: GeoPoint2D, to: GeoPoint2D) -> bool {
         let seg = segment(from, to);
         // Quick AABB rejection before the full polygon test.
         if self.box_ground.trivially_rejects_segment(seg) {
@@ -954,7 +954,7 @@ impl RayZEquation {
         }
     }
 
-    fn z_at(&self, p: Point2D) -> f32 {
+    fn z_at(&self, p: GeoPoint2D) -> f32 {
         let coord = if self.use_x { p.x } else { p.y };
         self.slope * coord + self.intercept
     }

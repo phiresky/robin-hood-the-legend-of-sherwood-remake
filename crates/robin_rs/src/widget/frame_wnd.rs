@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D};
+use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::ui::{UiEvent, UiMsg, UiProbe};
 
 use super::{Widget, WidgetId, WidgetInput};
@@ -100,7 +100,7 @@ impl FrameWnd {
             .bbox
             .0
             .map(|r| r.min())
-            .unwrap_or(Point2D { x: 0.0, y: 0.0 });
+            .unwrap_or(GeoPoint2D { x: 0.0, y: 0.0 });
         if let Some(widget_rect) = widget.base().bbox.0 {
             let adjusted = BBox2D::from_coords(
                 widget_rect.min().x + frame_origin.x,
@@ -215,11 +215,11 @@ impl FrameWnd {
     // ── Position ───────────────────────────────────────────────────
 
     /// Get the frame's origin (top-left corner).
-    pub fn origin(&self) -> Point2D {
+    pub fn origin(&self) -> GeoPoint2D {
         self.bbox
             .0
             .map(|r| r.min())
-            .unwrap_or(Point2D { x: 0.0, y: 0.0 })
+            .unwrap_or(GeoPoint2D { x: 0.0, y: 0.0 })
     }
 
     /// Move the frame and all its widgets by a delta.
@@ -244,7 +244,7 @@ impl FrameWnd {
     }
 
     /// Move the frame to a new origin point, keeping size the same.
-    pub fn set_position_point(&mut self, point: Point2D) {
+    pub fn set_position_point(&mut self, point: GeoPoint2D) {
         if let Some(rect) = self.bbox.0 {
             let w = rect.max().x - rect.min().x;
             let h = rect.max().y - rect.min().y;

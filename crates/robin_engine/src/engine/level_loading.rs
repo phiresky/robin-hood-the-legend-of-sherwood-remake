@@ -35,7 +35,7 @@ pub struct PreDecodedMinimap {
 pub struct MinimapBitmapSetup {
     pub hit_mask: crate::minimap::HitMask,
     pub map_size: geo2d::Vec2D,
-    pub saved_position: geo2d::Point2D,
+    pub saved_position: crate::coordinates::ScreenPoint,
 }
 
 /// Look up the sprite file and profile name for a raw bonus type value.
@@ -596,7 +596,7 @@ impl EngineInner {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
                 // avoid integer-aligned vertices confusing point-in-polygon
                 // tests against actor positions on integer Y boundaries.
-                let pts: Vec<crate::geo2d::Point2D> = sec
+                let pts: Vec<crate::geo2d::GeoPoint2D> = sec
                     .polygon
                     .points
                     .iter()
@@ -969,7 +969,7 @@ impl EngineInner {
                             if raw_sector.polygon.points.len() < 3 {
                                 return None;
                             }
-                            let points: Vec<crate::geo2d::Point2D> = raw_sector
+                            let points: Vec<crate::geo2d::GeoPoint2D> = raw_sector
                                 .polygon
                                 .points
                                 .iter()
@@ -1054,7 +1054,7 @@ impl EngineInner {
                         (0, 0, 1)
                     };
 
-                let shape: Vec<crate::geo2d::Point2D> = raw
+                let shape: Vec<crate::geo2d::GeoPoint2D> = raw
                     .polyline
                     .as_ref()
                     .map(|pts| {
@@ -3342,7 +3342,7 @@ impl EngineInner {
         } else {
             0
         };
-        let building_first_door_info: Vec<(geo2d::Point2D, u16)> = loaded
+        let building_first_door_info: Vec<(geo2d::GeoPoint2D, u16)> = loaded
             .proto
             .buildings
             .iter()
@@ -3826,7 +3826,7 @@ impl EngineInner {
                 for obstacle in &area.obstacles {
                     let obs_poly = &obstacle.polygon;
                     let mut bbox = crate::geo2d::BBox2D::new();
-                    let mut poly_pts: Vec<crate::geo2d::Point2D> =
+                    let mut poly_pts: Vec<crate::geo2d::GeoPoint2D> =
                         Vec::with_capacity(obs_poly.points.len());
                     let mut line_indices: Vec<crate::fast_find_grid::LineIndex> =
                         Vec::with_capacity(obs_poly.points.len());
@@ -3886,7 +3886,7 @@ impl EngineInner {
                 }
 
                 // Store polygon vertices for point-in-area hit-testing.
-                let polygon_pts: Vec<crate::geo2d::Point2D> = area
+                let polygon_pts: Vec<crate::geo2d::GeoPoint2D> = area
                     .polygon
                     .points
                     .iter()
@@ -4224,7 +4224,7 @@ impl EngineInner {
             if is_night_or_fog && light_added > 0 {
                 // Snapshot (idx, points, layer) without holding the
                 // immutable borrow during the obstacle lookup pass.
-                let shadow_inputs: Vec<(u32, Vec<crate::geo2d::Point2D>, u16)> = self
+                let shadow_inputs: Vec<(u32, Vec<crate::geo2d::GeoPoint2D>, u16)> = self
                     .fast_grid
                     .level
                     .sectors
@@ -4558,7 +4558,7 @@ impl EngineInner {
             if zone.polygon.points.is_empty() {
                 continue;
             }
-            let points: Vec<crate::geo2d::Point2D> = zone
+            let points: Vec<crate::geo2d::GeoPoint2D> = zone
                 .polygon
                 .points
                 .iter()
@@ -5146,7 +5146,7 @@ impl EngineInner {
                 if poly.points.is_empty() {
                     return None;
                 }
-                let points: Vec<crate::geo2d::Point2D> = poly
+                let points: Vec<crate::geo2d::GeoPoint2D> = poly
                     .points
                     .iter()
                     .map(|&(x, y)| crate::geo2d::pt(x as f32, y as f32))

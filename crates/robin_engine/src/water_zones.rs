@@ -12,14 +12,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D, pt};
+use crate::geo2d::{BBox2D, GeoPoint2D, pt};
 use crate::level_data::RawMaterialSector;
 use crate::sound_cache::Material;
 
 /// A single water or hole polygon loaded from the proto material chunk.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct WaterZone {
-    pub points: Vec<Point2D>,
+    pub points: Vec<GeoPoint2D>,
     pub bounding_box: BBox2D,
     /// Either [`Material::Water`] or [`Material::Hole`].
     pub material: Material,
@@ -27,7 +27,7 @@ pub struct WaterZone {
 
 impl WaterZone {
     /// Point-in-polygon test — AABB reject, then ray casting.
-    pub fn contains(&self, p: Point2D) -> bool {
+    pub fn contains(&self, p: GeoPoint2D) -> bool {
         if self.points.len() < 3 {
             return false;
         }
@@ -82,7 +82,7 @@ impl WaterZones {
             if r.polygon.points.len() < 3 {
                 continue;
             }
-            let points: Vec<Point2D> = r
+            let points: Vec<GeoPoint2D> = r
                 .polygon
                 .points
                 .iter()
@@ -121,7 +121,7 @@ impl WaterZones {
     /// landing obstacle is known — the obstacle-anchored variant covers
     /// the cases of water lakes modelled as obstacles and holes carved
     /// into a roof.
-    pub fn determine_water_hole(&self, point: Point2D) -> Option<Material> {
+    pub fn determine_water_hole(&self, point: GeoPoint2D) -> Option<Material> {
         for z in &self.zones {
             if z.contains(point) {
                 return Some(z.material);
@@ -134,7 +134,7 @@ impl WaterZones {
     /// polygon. Used by the fall-into-hole trajectory which
     /// unconditionally marks the projectile as disappearing whenever
     /// the material at the landing is a hole.
-    pub fn landing_is_in_hole(&self, landing: Point2D) -> bool {
+    pub fn landing_is_in_hole(&self, landing: GeoPoint2D) -> bool {
         self.zones
             .iter()
             .any(|z| matches!(z.material, Material::Hole) && z.contains(landing))
@@ -159,7 +159,7 @@ impl WaterZones {
     /// is intentionally screen-Y–anchored rather than
     /// trajectory-aligned because projectiles visually "fly into" the
     /// screen along +Y in isometric view.
-    pub fn find_hole_far_exit(&self, entry: Point2D, landing: Point2D) -> Option<Point2D> {
+    pub fn find_hole_far_exit(&self, entry: GeoPoint2D, landing: GeoPoint2D) -> Option<GeoPoint2D> {
         // Find the hole polygon that contains the landing point.
         let hole = self
             .zones
@@ -169,7 +169,7 @@ impl WaterZones {
         // The disappear point is seeded at landing + (0, 2000) and
         // improved downward toward landing whenever a closer candidate
         // is found.  We keep just the y-value and the winning point.
-        let mut best: Option<Point2D> = None;
+        let mut best: Option<GeoPoint2D> = None;
         let mut best_y = landing.y + 2000.0;
         let n = hole.points.len();
         for i in 0..n {
@@ -206,7 +206,7 @@ impl WaterZones {
 /// for sub-sector overrides like any other non-water obstacle.
 pub fn determine_water_hole_with_obstacle(
     obstacle: &crate::sight_obstacle::SightObstacle,
-    point: Point2D,
+    point: GeoPoint2D,
 ) -> Option<Material> {
     use crate::element::GameMaterial;
 
@@ -243,11 +243,11 @@ pub fn determine_water_hole_with_obstacle(
 /// lies strictly inside the segment, else `None`.  Parallel / colinear
 /// lines are treated as no intersection.
 fn segment_line_intersection(
-    line_a: Point2D,
-    line_b: Point2D,
-    seg_a: Point2D,
-    seg_b: Point2D,
-) -> Option<Point2D> {
+    line_a: GeoPoint2D,
+    line_b: GeoPoint2D,
+    seg_a: GeoPoint2D,
+    seg_b: GeoPoint2D,
+) -> Option<GeoPoint2D> {
     let rx = line_b.x - line_a.x;
     let ry = line_b.y - line_a.y;
     let sx = seg_b.x - seg_a.x;

@@ -15,8 +15,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D};
+use crate::geo2d::BBox2D;
 use crate::gfx_types::{GameEvent, Keycode};
+use robin_engine::coordinates::ScreenPoint;
 
 /// Maximum SDL scancodes (matches `SDL_NUM_SCANCODES`).
 pub const MAX_SCANCODES: usize = 512;
@@ -69,7 +70,7 @@ impl KeyboardState {
 pub struct ThreadedInput {
     keyboard_state: KeyboardState,
     wheel_delta: i16,
-    position: Point2D,
+    position: ScreenPoint,
     has_position: bool,
     clipping: BBox2D,
     ended: bool,
@@ -86,7 +87,7 @@ impl Default for ThreadedInput {
         Self {
             keyboard_state: KeyboardState::default(),
             wheel_delta: 0,
-            position: Point2D::default(),
+            position: ScreenPoint::default(),
             has_position: false,
             clipping: BBox2D::default(),
             ended: false,
@@ -103,7 +104,7 @@ impl ThreadedInput {
 
     // ── Mouse position ──
 
-    pub fn position(&self) -> Point2D {
+    pub fn position(&self) -> ScreenPoint {
         self.position
     }
 
@@ -156,8 +157,8 @@ impl ThreadedInput {
     /// (returns `false`), otherwise teleports `position` to `target`,
     /// enqueues a `MouseMove` event with the full delta as `xrel/yrel`,
     /// and returns `true`.
-    pub fn reach_position(&mut self, target: Point2D) -> bool {
-        if self.clipping.is_somewhere() && !self.clipping.contains_point(target) {
+    pub fn reach_position(&mut self, target: ScreenPoint) -> bool {
+        if self.clipping.is_somewhere() && !self.clipping.contains_point(target.to_geo()) {
             return false;
         }
 
@@ -374,7 +375,6 @@ impl ThreadedInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::pt;
 
     #[test]
     fn keyboard_state_default_all_released() {
@@ -470,7 +470,7 @@ mod tests {
         ti.set_clipping(BBox2D::from_coords(0.0, 0.0, 800.0, 600.0));
 
         // Inside clip — teleport, returns true.
-        assert!(ti.reach_position(pt(500.0, 400.0)));
+        assert!(ti.reach_position(ScreenPoint::new(500.0, 400.0)));
         assert_eq!(ti.position().x, 500.0);
         assert_eq!(ti.position().y, 400.0);
         let evs = ti.drain_synthetic_events();
@@ -485,7 +485,7 @@ mod tests {
         ));
 
         // Outside clip — refuses, position unchanged.
-        assert!(!ti.reach_position(pt(900.0, 400.0)));
+        assert!(!ti.reach_position(ScreenPoint::new(900.0, 400.0)));
         assert_eq!(ti.position().x, 500.0);
         assert!(ti.drain_synthetic_events().is_empty());
     }

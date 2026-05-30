@@ -13,7 +13,6 @@ use crate::Host;
 use crate::campaign::Campaign;
 use crate::game::{Game, GameCallbacks};
 use crate::game_operation::GameCode;
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu, PauseMenuOutcome};
@@ -119,7 +118,8 @@ pub(super) fn handle_mouse_input(
                     // start of every left-drag.
                     host.mouse_way.clear();
 
-                    let click_pt = geo2d::pt(mx as f32, my as f32);
+                    let click_pt =
+                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
 
                     if on_minimap {
@@ -131,9 +131,7 @@ pub(super) fn handle_mouse_input(
                         // Don't start multi-selection when clicking minimap
                     } else if !host.input.ignore_next_drag
                         && host.input.has_focus
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(click_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(click_pt)
                     {
                         // Left-drag dispatch:
                         //   - `ignore_next_drag` → entire body skipped.
@@ -224,7 +222,7 @@ pub(super) fn handle_mouse_input(
 
                 // Mouse move: update minimap drag or multi-select box
                 GameEvent::MouseMove { x, y, .. } => {
-                    let mouse_pt = geo2d::pt(x as f32, y as f32);
+                    let mouse_pt = robin_engine::coordinates::ScreenPoint::new(x as f32, y as f32);
 
                     // While a left drag is in progress and the player
                     // has a swordfighting PC selected (and isn't
@@ -239,7 +237,7 @@ pub(super) fn handle_mouse_input(
                             == crate::profiles::Action::NoAction
                         && engine.is_seat_selection_swordfighting(local_seat)
                     {
-                        host.mouse_way.add_point(mouse_pt);
+                        host.mouse_way.add_point(mouse_pt.to_geo());
                     }
 
                     // ── Minimap hover / drag update ──
@@ -260,17 +258,13 @@ pub(super) fn handle_mouse_input(
                         && !host.engine_display.minimap().drag_start()
                         && host.input.multi_selection_active
                         && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
                     {
                         host.input.update_multi_selection(map_pt);
                     }
                     if host.input.right_mouse_down
                         && host.input.multi_unselection_active
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
                     {
                         host.input.update_multi_selection(map_pt);
                     }
@@ -289,9 +283,7 @@ pub(super) fn handle_mouse_input(
                     if host.input.left_mouse_down
                         && !host.engine_display.minimap().drag_start()
                         && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
                     {
                         let selected_action = engine.selected_action_for_seat(local_seat);
                         if matches!(
@@ -335,7 +327,8 @@ pub(super) fn handle_mouse_input(
                     // to open or center-on-click.  Also handles drag
                     // release outside the minimap (cleans up drag
                     // state so it doesn't linger).
-                    let click_pt = geo2d::pt(mx as f32, my as f32);
+                    let click_pt =
+                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
                     let minimap_handled = on_minimap || host.engine_display.minimap().drag_start();
                     if minimap_handled {
@@ -573,7 +566,7 @@ pub(super) fn handle_mouse_input(
                                             tracing::info!(
                                                 "Portrait guard click: centering on guard"
                                             );
-                                            host.viewport.center_on_point(guard_pos.into());
+                                            host.viewport.center_on_point(guard_pos);
                                         }
                                     }
                                     PortraitHitArea::Trumpet => {
@@ -915,10 +908,9 @@ pub(super) fn handle_mouse_input(
 
                         // Right-click on minimap closes it.
                         if host.engine_display.minimap().is_displayed()
-                            && host
-                                .engine_display
-                                .minimap()
-                                .is_over_widget(geo2d::pt(mx as f32, my as f32))
+                            && host.engine_display.minimap().is_over_widget(
+                                robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32),
+                            )
                         {
                             let cmd = PlayerCommand::MinimapRightClick;
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -1193,7 +1185,7 @@ pub(super) async fn handle_pause_menu_events(
                         input_translator.install_hud_dead_zones();
                         if host.minimap_corner_size.x > 0.0 {
                             let cmd = PlayerCommand::MinimapResize {
-                                base: geo2d::pt(w - 83.0, 38.0),
+                                base: robin_engine::coordinates::ScreenPoint::new(w - 83.0, 38.0),
                                 corner_size: host.minimap_corner_size,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);

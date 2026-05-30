@@ -183,7 +183,7 @@ impl EngineInner {
             let Some(_) = ent.actor_data() else {
                 return;
             };
-            let remaining: Vec<crate::geo2d::Point2D> = self
+            let remaining: Vec<crate::geo2d::GeoPoint2D> = self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .map(|e| {

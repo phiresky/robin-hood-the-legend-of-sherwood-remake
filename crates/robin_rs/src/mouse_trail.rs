@@ -43,7 +43,7 @@
 //! and the per-frame alpha decay (`DISMISHING_SPEED = 300`) all
 //! match the original behaviour.
 
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 use crate::mouse_way::MouseWay;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16};
 use robin_assets::picture::{Picture, PixelFormat};
@@ -228,7 +228,7 @@ impl MouseTrailRenderer {
     ///
     /// Picks the alpha-level surface, clips to the bottom of the
     /// screen, and additively blends it in.
-    fn draw_column(&self, pos: Point2D, alpha_level: f32, renderer: &mut Renderer) {
+    fn draw_column(&self, pos: GeoPoint2D, alpha_level: f32, renderer: &mut Renderer) {
         let Some(idx) = Self::alpha_index(alpha_level) else {
             return;
         };
@@ -265,9 +265,9 @@ impl MouseTrailRenderer {
     /// column positions along the dominant axis.
     fn draw_interpolated(
         &self,
-        start: Point2D,
+        start: GeoPoint2D,
         start_alpha: f32,
-        end: Point2D,
+        end: GeoPoint2D,
         end_alpha: f32,
         renderer: &mut Renderer,
     ) {
@@ -302,7 +302,7 @@ impl MouseTrailRenderer {
             let x_lo = x_start as i32;
             let x_hi = x_end as i32;
             for px_x in x_lo..x_hi {
-                self.draw_column(Point2D { x: px_x as f32, y }, alpha, renderer);
+                self.draw_column(GeoPoint2D { x: px_x as f32, y }, alpha, renderer);
                 y += dy_step;
                 alpha += alpha_step;
             }
@@ -341,13 +341,13 @@ impl MouseTrailRenderer {
             let y_end_i = y_end as u32;
             let mut uw_y = y_start_i;
             while uw_y < y_end_i {
-                self.draw_column(Point2D { x, y: uw_y as f32 }, alpha, renderer);
+                self.draw_column(GeoPoint2D { x, y: uw_y as f32 }, alpha, renderer);
                 x += dx_step;
                 alpha += alpha_step;
                 uw_y += TRAIL_HEIGHT as u32;
             }
             if uw_y > y_end_i {
-                self.draw_column(Point2D { x, y: uw_y as f32 }, alpha, renderer);
+                self.draw_column(GeoPoint2D { x, y: uw_y as f32 }, alpha, renderer);
             }
         }
     }

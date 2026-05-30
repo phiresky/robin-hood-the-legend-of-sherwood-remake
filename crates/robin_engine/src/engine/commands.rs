@@ -830,7 +830,7 @@ impl EngineInner {
                             let usable = crate::minimap::usable_area(&display.minimap.map_box);
                             let level_size = self.cutscene_camera.level_size;
                             let world_pt = display.minimap.map_to_real(*click_pt, level_size);
-                            if usable.contains_point(*click_pt)
+                            if usable.contains_point(click_pt.to_geo())
                                 && let Some(world_pt) = world_pt
                             {
                                 // Gate the recenter on `is_zoom_possible`
@@ -987,10 +987,10 @@ impl EngineInner {
                 .unwrap_or(crate::profiles::Action::NoAction)
         };
 
-        // Helper: entity map position as geo2d::Point2D (the macro
-        // store's coord type) — `element::Point2D` and
-        // `geo2d::Point2D` are sibling types with the same layout.
-        let entity_pos = |engine: &EngineInner, id: EntityId| -> Option<crate::geo2d::Point2D> {
+        // Helper: entity map position as geo2d::GeoPoint2D (the macro
+        // store's coord type) — `element::GeoPoint2D` and
+        // `geo2d::GeoPoint2D` are sibling types with the same layout.
+        let entity_pos = |engine: &EngineInner, id: EntityId| -> Option<crate::geo2d::GeoPoint2D> {
             engine.get_entity(id).map(|e| {
                 let p = e.element_data().position_map();
                 crate::geo2d::pt(p.x, p.y)
@@ -1009,7 +1009,7 @@ impl EngineInner {
         let (actor, action, position, replay): (
             EntityId,
             crate::profiles::Action,
-            crate::geo2d::Point2D,
+            crate::geo2d::GeoPoint2D,
             QaReplayCommand,
         ) = match cmd {
             GroupMove {
@@ -3784,7 +3784,7 @@ mod tests {
         id: EntityId,
         action: crate::order::OrderType,
         hotspot: crate::coordinates::SpriteLocalPoint,
-        center: crate::geo2d::Point2D,
+        center: crate::geo2d::GeoPoint2D,
     ) {
         let script = SpriteScript {
             action_id: action as u16,

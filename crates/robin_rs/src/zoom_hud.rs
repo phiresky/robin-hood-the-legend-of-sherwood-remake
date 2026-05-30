@@ -277,11 +277,11 @@ pub fn draw_with_sprites(
 
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
             let dst = robin_engine::sprite::BBox::new(
-                crate::geo2d::Point2D {
+                crate::geo2d::GeoPoint2D {
                     x: rect.x() as f32,
                     y: rect.y() as f32,
                 },
-                crate::geo2d::Point2D {
+                crate::geo2d::GeoPoint2D {
                     x: (rect.x() + rect.width() as i32) as f32,
                     y: (rect.y() + rect.height() as i32) as f32,
                 },

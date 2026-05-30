@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
-use crate::geo2d::{Point2D, pt};
+use crate::geo2d::{GeoPoint2D, pt};
 use crate::profiles::Action;
 use crate::sequence::Field;
 
@@ -160,21 +160,21 @@ pub struct QuickActionStep {
     pub action: Action,
     /// Captured world position of the interaction target (the titbit's
     /// recorded position).  Drives the dotted chain.
-    #[serde(with = "point2d_serde")]
-    pub position: Point2D,
+    #[serde(with = "geo_point_serde")]
+    pub position: GeoPoint2D,
     /// The command to dispatch at playback time.
     pub replay: QaReplayCommand,
 }
 
-mod point2d_serde {
-    use super::Point2D;
+mod geo_point_serde {
+    use super::GeoPoint2D;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer>(p: &Point2D, s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(p: &GeoPoint2D, s: S) -> Result<S::Ok, S::Error> {
         (p.x, p.y).serialize(s)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Point2D, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<GeoPoint2D, D::Error> {
         let (x, y) = <(f32, f32)>::deserialize(d)?;
         Ok(super::pt(x, y))
     }
@@ -411,9 +411,9 @@ impl MacroStore {
 /// each into `DrawManager::draw_dotted_line` with `DISTANCE_DOT` spacing
 /// and the global titbit dotted-start phase (one per game).
 pub fn dotted_chain_segments(
-    pc_position_map: Point2D,
+    pc_position_map: GeoPoint2D,
     slot: &QuickActionSlot,
-) -> Vec<(Point2D, Point2D)> {
+) -> Vec<(GeoPoint2D, GeoPoint2D)> {
     let mut segs = Vec::with_capacity(slot.steps.len());
     let mut from = pc_position_map;
     for step in &slot.steps {

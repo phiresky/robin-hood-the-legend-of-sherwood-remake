@@ -3,7 +3,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::EntityId;
-use crate::geo2d::{self, Point2D};
+use crate::geo2d::{self, GeoPoint2D};
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
@@ -77,7 +77,7 @@ fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
     }
 }
 
-fn door_click_polygon_at(game_host: &crate::natives::GameHost, click: Point2D) -> Option<u32> {
+fn door_click_polygon_at(game_host: &crate::natives::GameHost, click: GeoPoint2D) -> Option<u32> {
     game_host
         .doors
         .iter()
@@ -561,7 +561,7 @@ impl EngineInner {
     pub(super) fn lift_endpoint_points(
         &self,
         sector_number: crate::sector::SectorNumber,
-    ) -> (Point2D, Point2D) {
+    ) -> (GeoPoint2D, GeoPoint2D) {
         let sector = self
             .grid_sector_by_number(sector_number)
             .expect("DetermineMovementAnimation: missing lift sector");
@@ -1933,7 +1933,7 @@ impl EngineInner {
                 let mut turn = SequenceElement::new_generic(level, Command::Turn, Some(entity_id));
                 turn.set_property(
                     Field::CameraPoint,
-                    FieldValue::Point2D {
+                    FieldValue::GeoPoint2D {
                         x: camera_pt.x,
                         y: camera_pt.y,
                     },
@@ -2314,7 +2314,7 @@ impl EngineInner {
                             SequenceElement::new_generic(level, Command::Turn, Some(entity_id));
                         turn.set_property(
                             Field::CameraPoint,
-                            FieldValue::Point2D {
+                            FieldValue::GeoPoint2D {
                                 x: cam_pt.x,
                                 y: cam_pt.y,
                             },
@@ -3322,12 +3322,12 @@ impl EngineInner {
         // after the entity loop so `check_for_line_crossing` can borrow
         // `self` for the fast-grid query and obstacle swap.
         // Each entry is `(entity_id, old_pos, new_pos, layer)`; positions
-        // are `geo2d::Point2D` since the fast-grid query works in that
+        // are `geo2d::GeoPoint2D` since the fast-grid query works in that
         // coordinate type.
         let mut line_cross_checks: Vec<(
             EntityId,
-            crate::geo2d::Point2D,
-            crate::geo2d::Point2D,
+            crate::geo2d::GeoPoint2D,
+            crate::geo2d::GeoPoint2D,
             u16,
         )> = Vec::new();
         // Patch-line (`LINE_PATCH`) crossings detected for PC actors.
@@ -3337,8 +3337,8 @@ impl EngineInner {
         // processing.  Covers the `LINE_PATCH` PC-only crossing arm.
         let mut patch_cross_checks: Vec<(
             EntityId,
-            crate::geo2d::Point2D,
-            crate::geo2d::Point2D,
+            crate::geo2d::GeoPoint2D,
+            crate::geo2d::GeoPoint2D,
             u16,
         )> = Vec::new();
         // Sound-line (`LINE_SOUND`) crossings detected for any actor.
@@ -3350,8 +3350,8 @@ impl EngineInner {
         // gated on PC.
         let mut sound_cross_checks: Vec<(
             EntityId,
-            crate::geo2d::Point2D,
-            crate::geo2d::Point2D,
+            crate::geo2d::GeoPoint2D,
+            crate::geo2d::GeoPoint2D,
             u16,
         )> = Vec::new();
         // Seek elements whose end-of-walk arrival put a
@@ -5325,7 +5325,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         layer: u16,
-        pos: Point2D,
+        pos: GeoPoint2D,
     ) -> Option<u16> {
         self.find_plane_obstacle_split(assets, layer, pos, pos)
     }
@@ -5341,8 +5341,8 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         layer: u16,
-        bbox_at: Point2D,
-        polygon_at: Point2D,
+        bbox_at: GeoPoint2D,
+        polygon_at: GeoPoint2D,
     ) -> Option<u16> {
         for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
             if !obs.is_projection_area() {
@@ -5415,7 +5415,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
         line_idx: crate::fast_find_grid::LineIndex,
-        new_pos: Point2D,
+        new_pos: GeoPoint2D,
         increment_map: crate::geo2d::Vec2D,
     ) {
         let line = match self.fast_grid.level.lines.get(usize::from(line_idx)) {
@@ -5538,8 +5538,8 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: crate::geo2d::Point2D,
-        new_pos: crate::geo2d::Point2D,
+        old_pos: crate::geo2d::GeoPoint2D,
+        new_pos: crate::geo2d::GeoPoint2D,
         layer: u16,
     ) -> bool {
         // Early-out: exact same position means no crossing at all.
@@ -5644,8 +5644,8 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: crate::geo2d::Point2D,
-        new_pos: crate::geo2d::Point2D,
+        old_pos: crate::geo2d::GeoPoint2D,
+        new_pos: crate::geo2d::GeoPoint2D,
         layer: u16,
     ) {
         if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
@@ -5793,8 +5793,8 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: crate::geo2d::Point2D,
-        new_pos: crate::geo2d::Point2D,
+        old_pos: crate::geo2d::GeoPoint2D,
+        new_pos: crate::geo2d::GeoPoint2D,
         layer: u16,
     ) {
         if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
@@ -6089,7 +6089,6 @@ impl EngineInner {
             }
             _ => {}
         }
-        let dest_geo = dest.to_geo();
         move_action =
             self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
         // Write the rewritten action back onto the movement sequence
@@ -6291,7 +6290,7 @@ impl EngineInner {
         // build a two-point "path" that the downstream emission loop
         // turns into a single walking order to `dest`.
         let mut waypoints = if straight_ok {
-            vec![source, dest_geo]
+            vec![MapPoint::from_geo(source), dest]
         } else {
             let path = self.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
@@ -6299,8 +6298,8 @@ impl EngineInner {
                 entity_layer,
                 entity_sector,
                 pf_idx,
-                source,
-                dest_geo,
+                MapPoint::from_geo(source),
+                dest,
                 use_first_point,
             );
             match path {
@@ -6350,8 +6349,10 @@ impl EngineInner {
                     .map(|e| e.position_iface())
                     .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
                     .unwrap_or_default();
+                let geo_waypoints: Vec<crate::geo2d::GeoPoint2D> =
+                    waypoints.iter().copied().map(MapPoint::to_geo).collect();
                 waypoints = apply_drunken_path_deviation(
-                    waypoints,
+                    geo_waypoints,
                     source,
                     blood_alcohol,
                     move_action == OrderType::RunningUpright,
@@ -6360,7 +6361,10 @@ impl EngineInner {
                     half_diag,
                     &self.fast_grid,
                     &mut self.rng,
-                );
+                )
+                .into_iter()
+                .map(MapPoint::from_geo)
+                .collect();
             }
         }
 
@@ -6436,8 +6440,6 @@ impl EngineInner {
         {
             let next_order_id = &mut self.next_order_id;
             if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
-                let waypoints: Vec<crate::coordinates::MapPoint> =
-                    waypoints.iter().copied().map(Into::into).collect();
                 crate::movement::build_orders_from_path(
                     elem,
                     &waypoints,

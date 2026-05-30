@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{
@@ -322,7 +322,7 @@ impl WidgetRadioButton {
     /// wiring layer attached one — see
     /// `widget_bridge::attach_alpha_masks`). Falls back to bbox-only
     /// when no mask is attached.
-    pub fn is_mouse_inside(&self, point: Point2D) -> bool {
+    pub fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
         self.base.is_inside(point)
     }
 }
@@ -370,7 +370,7 @@ impl WidgetGroupable for WidgetRadioButton {
         WidgetRadioButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: Point2D) -> bool {
+    fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
         WidgetRadioButton::is_mouse_inside(self, point)
     }
 

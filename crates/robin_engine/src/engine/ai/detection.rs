@@ -19,7 +19,7 @@ use crate::geo2d::{self};
 #[derive(Clone)]
 struct NpcTarget {
     id: EntityId,
-    position: geo2d::Point2D,
+    position: geo2d::GeoPoint2D,
     layer: u16,
     posture: crate::element::Posture,
     action_state: crate::element::ActionState,
@@ -36,7 +36,7 @@ struct NpcTarget {
     obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
-fn human_eye_point_for_visibility(entity: &Entity) -> (geo2d::Point2D, f32) {
+fn human_eye_point_for_visibility(entity: &Entity) -> (geo2d::GeoPoint2D, f32) {
     let Some(eye) = entity.compute_eyes_point(None) else {
         let position = entity.element_data().position();
         let position_map = entity.element_data().position_map();
@@ -51,7 +51,7 @@ fn human_eye_point_for_visibility(entity: &Entity) -> (geo2d::Point2D, f32) {
 }
 
 struct SoldierSightContext {
-    eye: geo2d::Point2D,
+    eye: geo2d::GeoPoint2D,
     eye_z: f32,
     dir: i16,
     layer: u16,
@@ -67,7 +67,7 @@ struct SoldierSightContext {
     sector: Option<crate::position_interface::SectorHandle>,
     alert_status: crate::ai::AlertLevel,
     blipped: bool,
-    position_map: geo2d::Point2D,
+    position_map: geo2d::GeoPoint2D,
     camp: Camp,
     is_rider: bool,
     ignore_bodies: bool,
@@ -184,7 +184,7 @@ impl EngineInner {
         // will flip it back to `Waiting`.
         #[derive(Clone, Copy)]
         struct FiringListener {
-            position: geo2d::Point2D,
+            position: geo2d::GeoPoint2D,
             layer: u16,
             position_z: f32,
             pc_id: EntityId,
@@ -912,7 +912,7 @@ impl EngineInner {
         // are disjoint fields on `self`, so the split borrow is
         // valid.  We scope the mut access so we can push to
         // `transitions` afterwards without conflict.
-        let mut commit: Option<(EntityId, geo2d::Point2D, bool)> = None;
+        let mut commit: Option<(EntityId, geo2d::GeoPoint2D, bool)> = None;
         {
             // Build the obstacle view from individual disjoint
             // fields so the borrow checker can split it from the
@@ -999,7 +999,7 @@ impl EngineInner {
             // replaces it.
             let mut sum_sharpness_new: u32 = 0;
             let mut any_seen_now = false;
-            let mut best_target: Option<(EntityId, geo2d::Point2D, u32)> = None;
+            let mut best_target: Option<(EntityId, geo2d::GeoPoint2D, u32)> = None;
             let mut max_visibility_raw: f32 = 0.0;
 
             for det in detectables.iter_mut() {
@@ -2458,7 +2458,7 @@ impl EngineInner {
         }
 
         let mut to_reveal: Vec<EntityId> = Vec::new();
-        let mut royalist_alert_calls: Vec<(EntityId, geo2d::Point2D)> = Vec::new();
+        let mut royalist_alert_calls: Vec<(EntityId, geo2d::GeoPoint2D)> = Vec::new();
         let royalist_ids = self.npc_ids.clone();
 
         for npc_id in royalist_ids {
@@ -2507,7 +2507,7 @@ impl EngineInner {
         golden_eye: bool,
         is_forest_level: bool,
         to_reveal: &mut Vec<EntityId>,
-        royalist_alert_calls: &mut Vec<(EntityId, geo2d::Point2D)>,
+        royalist_alert_calls: &mut Vec<(EntityId, geo2d::GeoPoint2D)>,
     ) {
         // -- Read royalist soldier viewer state --
         let viewer = {
@@ -2604,7 +2604,7 @@ impl EngineInner {
         let _ = current_state; // (state no longer gates Royalist detection)
 
         // -- Mutating pass: detectable list + suspects --
-        let mut commit_target: Option<(EntityId, geo2d::Point2D)> = None;
+        let mut commit_target: Option<(EntityId, geo2d::GeoPoint2D)> = None;
         {
             // Build the obstacle view from individual fields
             // so the borrow checker can disjoint-split it
@@ -2644,7 +2644,7 @@ impl EngineInner {
 
             let mut sum_sharpness_new: u32 = 0;
             let mut any_seen_now = false;
-            let mut best_target: Option<(EntityId, geo2d::Point2D)> = None;
+            let mut best_target: Option<(EntityId, geo2d::GeoPoint2D)> = None;
 
             for det in detectables.iter_mut() {
                 let Some(target_id) = det.element else {
@@ -3663,7 +3663,7 @@ impl EngineInner {
 /// from the soldier's npc/element state at the start of the per-NPC
 /// pass; nothing here mutates.
 struct ViewContext<'a> {
-    eye: geo2d::Point2D,
+    eye: geo2d::GeoPoint2D,
     eye_z: f32,
     dir: i16,
     layer: u16,

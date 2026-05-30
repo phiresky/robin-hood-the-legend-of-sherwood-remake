@@ -1656,7 +1656,7 @@ pub(crate) async fn run_mission(
                 // Reposition minimap.
                 if host.minimap_corner_size.x > 0.0 {
                     let cmd = PlayerCommand::MinimapResize {
-                        base: geo2d::pt(w - 83.0, 38.0),
+                        base: robin_engine::coordinates::ScreenPoint::new(w - 83.0, 38.0),
                         corner_size: host.minimap_corner_size,
                     };
                     dispatch_local_command(
@@ -2352,9 +2352,7 @@ pub(crate) async fn run_mission(
                                 // F7 cheat — teleport every selected
                                 // PC to the current mouse map point.
                                 let mouse_screen = threaded_input.position();
-                                if let Some(mouse_map) = host.viewport.screen_to_map(
-                                    robin_engine::coordinates::ScreenPoint::from_geo(mouse_screen),
-                                ) {
+                                if let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) {
                                     if !manager.engine.seat_selection(host.local_seat).is_empty() {
                                         // Resolve destination sector/layer
                                         // via `get_sector_screen_accessible`
@@ -2952,11 +2950,7 @@ pub(crate) async fn run_mission(
             && !rewind_active
             && !paused
             && manager.engine.locker_active()
-            && let Some(mouse_map) =
-                host.viewport
-                    .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                        threaded_input.position(),
-                    ))
+            && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
             && let Some(id) = manager.engine.find_focusable_npc(
                 &assets,
                 mouse_map,
@@ -2985,11 +2979,7 @@ pub(crate) async fn run_mission(
         if replay_player.is_none()
             && !rewind_active
             && !paused
-            && let Some(mouse_map) =
-                host.viewport
-                    .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                        threaded_input.position(),
-                    ))
+            && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
         {
             let bow_armed = manager.engine.selected_action_for_seat(host.local_seat)
                 == robin_engine::profiles::Action::Bow;
