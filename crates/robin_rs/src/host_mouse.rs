@@ -684,13 +684,8 @@ pub fn update_mouse(
             && let Some(dest) = host.trajectory_preview_points.last()
         {
             let layer = host.trajectory_preview_layer;
-            // Use `y - z` so the mark lands on the isometric floor
-            // beneath the impact.
-            host.trajectory_ground_mark.add_mark(
-                dest.position.x,
-                dest.position.y - dest.position.z,
-                layer,
-            );
+            let mark = dest.position.to_map();
+            host.trajectory_ground_mark.add_mark(mark.x, mark.y, layer);
         }
     } else {
         host.trajectory_mark_count = 0;

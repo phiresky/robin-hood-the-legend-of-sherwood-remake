@@ -960,7 +960,7 @@ fn bow_debug_ground_y_raw(point: engine_coordinates::WorldPoint3D) -> f32 {
 }
 
 fn bow_debug_ground_y_projected(point: engine_coordinates::WorldPoint3D) -> f32 {
-    point.y - point.z
+    point.to_map().y
 }
 
 fn cxx_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> u8 {

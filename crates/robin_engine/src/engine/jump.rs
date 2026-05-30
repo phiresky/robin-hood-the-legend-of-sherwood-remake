@@ -1282,10 +1282,9 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
     state.frames_elapsed = state.frames_elapsed.saturating_add(1);
 
     if let Some(target) = target_3d {
-        // Target Y in map coords = target.y - target.z (isometric).
-        let target_map_y = target.y - target.z;
+        let target_map = target.to_map();
         let full_dx = target.x - state.start_x;
-        let full_dy = target_map_y - state.start_y;
+        let full_dy = target_map.y - state.start_y;
         let full_dist = (full_dx * full_dx + full_dy * full_dy).sqrt();
 
         // Read this frame's distance from the sprite's distance table.
@@ -1304,8 +1303,8 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
             let travelled_new = (new_x - state.start_x) * dir_x + (new_y - state.start_y) * dir_y;
             if travelled_new >= full_dist {
                 elem.set_position_map(crate::coordinates::MapPoint {
-                    x: target.x,
-                    y: target_map_y,
+                    x: target_map.x,
+                    y: target_map.y,
                 });
             } else {
                 elem.set_position_map(crate::coordinates::MapPoint { x: new_x, y: new_y });

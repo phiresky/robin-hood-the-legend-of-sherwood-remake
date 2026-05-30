@@ -49,7 +49,7 @@ fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
     // `SBGeoPoint3D` eye/detection points directly. Rust visibility
     // currently consumes projected `MapPoint`s; audit before changing
     // that behavior.
-    (MapPoint::new(eye.x, eye.y - ground_z), eye.z)
+    (MapPoint::from_world_xyz(eye.x, eye.y, ground_z), eye.z)
 }
 
 struct SoldierSightContext {

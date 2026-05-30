@@ -36,9 +36,8 @@ use serde::{Deserialize, Serialize};
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
-use crate::coordinates::{GroundPoint, MapPoint, MapVec, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{GroundPoint, MapPoint, MapVec, SpriteTopLeft, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::GRID_CELL_SIZE;
-use crate::geo2d::GeoPoint2D;
 use crate::jump_line::JumpLineIndex;
 use crate::movement::{ActiveMovement, ActiveShot};
 use crate::order::OrderType;
@@ -337,12 +336,6 @@ impl ElementData {
             // direction.
             sprite.switch_alternate_profile(direction & 15);
         }
-    }
-
-    /// Get the map position as a `geo2d::GeoPoint2D` for use with pathfinder
-    /// and fast_find_grid APIs that operate on `geo::Coord<f32>`.
-    pub fn position_map_geo(&self) -> GeoPoint2D {
-        self.position_map().to_geo()
     }
 
     /// Initialise outline colours based on entity kind.
@@ -2496,13 +2489,10 @@ impl Entity {
     /// `Sprite::center` is the anchor loaded from the sprite data and used by
     /// rendering/input. C++ computes sprite position as
     /// `position_map - sprite_center`, so reconstruct that here.
-    pub fn cxx_position_sprite(&self) -> crate::geo2d::GeoPoint2D {
+    pub fn cxx_position_sprite(&self) -> SpriteTopLeft {
         let map = self.element_data().position_map();
         let center = self.sprite().center;
-        crate::geo2d::GeoPoint2D {
-            x: (map.x - center.x).floor(),
-            y: (map.y - center.y).floor(),
-        }
+        SpriteTopLeft::new((map.x - center.x).floor(), (map.y - center.y).floor())
     }
 
     /// Ground/world-XY position: `(world.x, world.y)`.
@@ -4074,19 +4064,6 @@ mod tests {
         data.update_grid_cell();
         // 200/64 = 3, 300/64 = 4
         assert_eq!(data.grid_cell, Some((3, 4)));
-    }
-
-    #[test]
-    fn entity_position_map_geo_conversion() {
-        let mut data = ElementData {
-            kind: ElementKind::ActorSoldier,
-            ..ElementData::default()
-        };
-        data.set_position_map(MapPoint { x: 42.5, y: 99.0 });
-
-        let geo_pt = data.position_map_geo();
-        assert!((geo_pt.x - 42.5).abs() < 1e-6);
-        assert!((geo_pt.y - 99.0).abs() < 1e-6);
     }
 
     #[test]

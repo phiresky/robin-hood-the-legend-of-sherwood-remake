@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::geo2d::{self, BBox2D, GeoPoint2D, Polygon2D, pt, segment};
 
 // ---------------------------------------------------------------------------
@@ -451,7 +452,7 @@ impl SightObstacle {
         let coords: Vec<geo::Coord<f32>> = self
             .obstacle_points
             .iter()
-            .map(|op| pt(op.x, op.y))
+            .map(|op| GroundPoint::new(op.x, op.y).to_geo())
             .collect();
 
         self.polygon = Polygon2D::new(geo::LineString::from(coords), vec![]);
@@ -462,14 +463,15 @@ impl SightObstacle {
         let coords_screen: Vec<geo::Coord<f32>> = self
             .obstacle_points
             .iter()
-            .map(|op| pt(op.x, op.y - op.z_top))
+            .map(|op| MapPoint::from_world_xyz(op.x, op.y, op.z_top).to_geo())
             .collect();
         self.polygon_projection = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
 
         // Rebuild 2D ground bbox.
         self.box_ground = BBox2D::new();
         for op in &self.obstacle_points {
-            self.box_ground.expand_point(pt(op.x, op.y));
+            self.box_ground
+                .expand_point(GroundPoint::new(op.x, op.y).to_geo());
         }
 
         // Rebuild 3D bbox.
@@ -489,9 +491,10 @@ impl SightObstacle {
         // Rebuild projected bbox (isometric: projected_y = y - z_top).
         self.box_projection = BBox2D::new();
         for op in &self.obstacle_points {
-            self.box_projection.expand_point(pt(op.x, op.y - op.z_top));
             self.box_projection
-                .expand_point(pt(op.x, op.y - op.z_bottom));
+                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_top).to_geo());
+            self.box_projection
+                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_bottom).to_geo());
         }
 
         // Check on_ground.

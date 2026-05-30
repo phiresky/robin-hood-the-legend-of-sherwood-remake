@@ -2344,11 +2344,9 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
                     z: last.z + dz * ratio,
                 };
 
-                // Project 3D → 2D: screen_y uses (y - z) for isometric height
-                let map_x = walk.x;
-                let map_y = walk.y - walk.z;
-                let sx = ((map_x - view.x) * zoom) as i32;
-                let sy = ((map_y - view.y) * zoom) as i32;
+                let walk_map = walk.to_map();
+                let sx = ((walk_map.x - view.x) * zoom) as i32;
+                let sy = ((walk_map.y - view.y) * zoom) as i32;
 
                 if sx >= 0 && sy >= 0 && sx < screen_w && sy < screen_h {
                     renderer.render_gpu_rect(sx, sy, 2, 2, cr, cg, cb, 255);
@@ -2862,8 +2860,9 @@ pub(crate) fn render_debug_surfaces_outline(
         let pos = entity.element_data().position();
         // Top: where the sprite is drawn.  Bottom: same map (x, y)
         // but at z = 0.
-        let top_x_w = pos.x;
-        let top_y_w = pos.y - pos.z;
+        let top_map = pos.to_map();
+        let top_x_w = top_map.x;
+        let top_y_w = top_map.y;
         let bot_x_w = pos.x;
         let bot_y_w = pos.y;
         let top = (

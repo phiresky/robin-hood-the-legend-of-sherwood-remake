@@ -1075,21 +1075,19 @@ impl EngineInner {
         ry *= 100.0;
         rz *= 100.0;
 
-        // Map projection: Y component includes Z for isometric.
-        let map_x = rx;
-        let map_y = ry - rz;
+        let push_map = crate::coordinates::MapVec::from_world_xyz(rx, ry, rz);
 
         // If the entity is already moving against the roll direction
         // (dot product negative), refuse to redirect it.
         if check_increment && let Some(pi) = Some(entity.position_iface()) {
             let inc = pi.get_increment_map();
-            if inc.x * map_x + inc.y * map_y < 0.0 {
+            if inc.x * push_map.x + inc.y * push_map.y < 0.0 {
                 return None;
             }
         }
 
-        let dest_x = pos.x + map_x;
-        let dest_y = pos.y + map_y;
+        let dest_x = pos.x + push_map.x;
+        let dest_y = pos.y + push_map.y;
 
         // Build a lying-posture box at the roll destination and call
         // `find_authorized_position_straight`, which **mutates the

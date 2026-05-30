@@ -490,14 +490,11 @@ impl EngineInner {
             // the last waypoint to the hole's far edge, so we inspect
             // the last two points — one of them is the original
             // pre-extension landing.
-            let lands_in_hole = trajectory.iter().rev().take(2).any(|tp| {
-                assets
-                    .water_zones
-                    .landing_is_in_hole(crate::coordinates::MapPoint::new(
-                        tp.position.x,
-                        tp.position.y - tp.position.z,
-                    ))
-            });
+            let lands_in_hole = trajectory
+                .iter()
+                .rev()
+                .take(2)
+                .any(|tp| assets.water_zones.landing_is_in_hole(tp.position.to_map()));
             let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
                 bow_point,

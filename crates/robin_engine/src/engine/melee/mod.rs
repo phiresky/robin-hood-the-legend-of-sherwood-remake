@@ -198,7 +198,8 @@ fn compute_upright_eye_point_map_space(entity: &crate::element::Entity) -> [f32;
     // `compute_eyes_point` returns render-space Y (`map_y + elevation`).
     // C++ `ComputeEyesPoint` / `IsReachable` uses map-space XY with Z
     // separate, so strip the feet elevation before the obstacle raycast.
-    [eye.x, eye.y - ground_z, eye.z]
+    let eye_map = crate::coordinates::MapPoint::from_world_xyz(eye.x, eye.y, ground_z);
+    [eye_map.x, eye_map.y, eye.z]
 }
 
 /// Number of frames per parry.
