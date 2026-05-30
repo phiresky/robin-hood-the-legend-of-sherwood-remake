@@ -484,13 +484,18 @@ pub struct PendingBgBlitDecal {
     pub shadow_color: u16,
 }
 
+/// Build the typed stable ID for a known occupied entity-table slot.
+pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> EntityId {
+    EntityId::new(index, entity.entity_id_kind())
+}
+
 /// Iterate occupied entity table slots with their typed stable IDs.
 pub(crate) fn occupied_entity_slots(
     entities: &[Option<Entity>],
 ) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
     entities.iter().enumerate().filter_map(|(idx, slot)| {
         slot.as_ref()
-            .map(|e| (EntityId::new(idx as u32, e.entity_id_kind()), e))
+            .map(|e| (entity_id_for_occupied_slot(idx as u32, e), e))
     })
 }
 
@@ -500,7 +505,7 @@ pub(crate) fn occupied_entity_slots_mut(
 ) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
     entities.iter_mut().enumerate().filter_map(|(idx, slot)| {
         slot.as_mut()
-            .map(|e| (EntityId::new(idx as u32, e.entity_id_kind()), e))
+            .map(|e| (entity_id_for_occupied_slot(idx as u32, e), e))
     })
 }
 
@@ -1195,7 +1200,7 @@ impl EngineInner {
 
     /// Add an entity to the world. Returns its EntityId.
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
-        let id = EntityId::new(self.entities.len() as u32, entity.entity_id_kind());
+        let id = entity_id_for_occupied_slot(self.entities.len() as u32, &entity);
 
         // Initialise outline colours based on entity kind.  For
         // soldiers, route the VIP flag (cached on `EnemyAi.is_vip` from
@@ -1284,7 +1289,7 @@ impl EngineInner {
         self.entities
             .get(index as usize)
             .and_then(|slot| slot.as_ref())
-            .map(|entity| EntityId::new(index, entity.entity_id_kind()))
+            .map(|entity| entity_id_for_occupied_slot(index, entity))
     }
 
     /// Resolve a legacy raw entity-table index and panic when the slot is not

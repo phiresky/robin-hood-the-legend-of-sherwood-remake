@@ -3532,7 +3532,6 @@ impl EngineInner {
                 )
             };
 
-            let entity_id = EntityId::new(idx as u32, entity.entity_id_kind());
             let elem = entity.element_data_mut();
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
