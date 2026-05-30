@@ -1299,7 +1299,7 @@ impl EngineInner {
                     if target_handle != 0
                         && let Some(pc) = pc_snapshots
                             .iter()
-                            .find(|p| p.id == EntityId::Pc(target_handle))
+                            .find(|p| p.id == EntityId::Pc(crate::entity_id::PcId(target_handle)))
                     {
                         (
                             Some(crate::ai::Position {

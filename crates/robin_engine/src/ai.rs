@@ -5622,7 +5622,7 @@ impl AiController {
         self.checkpoint_charly = target;
         if target != 0 {
             self.pending_add_detectables.push((
-                crate::element::EntityId::Soldier(target),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
                 DetectableType::MissedFriend,
             ));
         } else {
@@ -5661,8 +5661,10 @@ impl AiController {
                 }
                 // Unconditional `DeleteDetectable(body, BODY)` —
                 // fires whether or not UPDATE_BODIES is set.
-                self.pending_delete_detectable_entity
-                    .push((EntityId::Soldier(body), DetectableType::Body));
+                self.pending_delete_detectable_entity.push((
+                    EntityId::Soldier(crate::entity_id::SoldierId(body)),
+                    DetectableType::Body,
+                ));
             }
         }
 
@@ -5673,7 +5675,7 @@ impl AiController {
         {
             self.my_reconnaissance_report.charly = other.charly;
             self.pending_add_detectables.push((
-                EntityId::Soldier(other.charly),
+                EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
                 DetectableType::MissedFriend,
             ));
         }
@@ -9187,8 +9189,8 @@ mod tests {
             sector_index: 42,
             ..House::default()
         };
-        let a = EntityId::Pc(1);
-        let b = EntityId::Pc(2);
+        let a = EntityId::Pc(crate::entity_id::PcId(1));
+        let b = EntityId::Pc(crate::entity_id::PcId(2));
 
         // Enter A, then B
         if !h.occupant_ids.contains(&a) {
@@ -9220,11 +9222,11 @@ mod tests {
         use crate::element::EntityId;
         let mut h = House::default();
         assert_eq!(h.occupant_count(), 0);
-        h.occupant_ids.push(EntityId::Pc(1));
-        h.occupant_ids.push(EntityId::Pc(2));
+        h.occupant_ids.push(EntityId::Pc(crate::entity_id::PcId(1)));
+        h.occupant_ids.push(EntityId::Pc(crate::entity_id::PcId(2)));
         assert_eq!(h.occupant_count(), 2);
-        assert!(h.contains_occupant(EntityId::Pc(1)));
-        assert!(!h.contains_occupant(EntityId::Pc(99)));
+        assert!(h.contains_occupant(EntityId::Pc(crate::entity_id::PcId(1))));
+        assert!(!h.contains_occupant(EntityId::Pc(crate::entity_id::PcId(99))));
     }
 
     #[test]

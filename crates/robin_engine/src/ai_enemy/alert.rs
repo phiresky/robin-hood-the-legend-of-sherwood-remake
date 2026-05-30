@@ -942,7 +942,7 @@ impl EnemyAi {
         self.base.antagonist = officer_handle;
         // Track the officer so the soldier can detect them on the way.
         self.base.pending_add_detectables.push((
-            crate::element::EntityId::Soldier(officer_handle),
+            crate::element::EntityId::Soldier(crate::entity_id::SoldierId(officer_handle)),
             crate::element::DetectableType::Friend,
         ));
         self.gather_position = officer_target_pos;
@@ -1032,7 +1032,7 @@ impl EnemyAi {
             });
         if let Some(h) = patrol_head {
             self.base.pending_add_detectables.push((
-                crate::element::EntityId::Soldier(h),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
                 crate::element::DetectableType::Friend,
             ));
         }
@@ -1056,7 +1056,7 @@ impl EnemyAi {
                 continue;
             }
             self.base.pending_add_detectables.push((
-                crate::element::EntityId::Soldier(cs.handle),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(cs.handle)),
                 crate::element::DetectableType::Friend,
             ));
         }

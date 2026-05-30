@@ -287,7 +287,9 @@ impl EnemyAi {
                         use crate::element::Command;
                         use crate::sequence::{Sequence, SequenceElement};
                         let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Bonus(obj));
+                        let antagonist = Some(crate::element::EntityId::Bonus(
+                            crate::entity_id::BonusId(obj),
+                        ));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,
@@ -431,7 +433,9 @@ impl EnemyAi {
                                 use crate::element::Command;
                                 use crate::sequence::{Sequence, SequenceElement};
                                 let owner = self.base.owner_entity_id;
-                                let antagonist = Some(crate::element::EntityId::Bonus(obj));
+                                let antagonist = Some(crate::element::EntityId::Bonus(
+                                    crate::entity_id::BonusId(obj),
+                                ));
                                 let mut seq = Sequence::new();
                                 seq.append_element(SequenceElement::new_interaction(
                                     1,
@@ -934,7 +938,9 @@ impl EnemyAi {
                         self.set_state(AiState::Seeking, Substate::SeekingBodyAwakeningSleeperr);
                         self.base.stop_all();
                         let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Soldier(body_handle));
+                        let antagonist = Some(crate::element::EntityId::Soldier(
+                            crate::entity_id::SoldierId(body_handle),
+                        ));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,
@@ -1630,7 +1636,9 @@ impl EnemyAi {
                         // re-react when detecting it later.
                         if let StimulusInfo::Human(body_handle) = stimulus.info {
                             self.base.pending_add_detectables.push((
-                                crate::element::EntityId::Soldier(body_handle),
+                                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(
+                                    body_handle,
+                                )),
                                 crate::element::DetectableType::Body,
                             ));
                         }
@@ -3674,7 +3682,9 @@ impl EnemyAi {
                         use crate::element::Command;
                         use crate::sequence::{Sequence, SequenceElement};
                         let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Bonus(obj));
+                        let antagonist = Some(crate::element::EntityId::Bonus(
+                            crate::entity_id::BonusId(obj),
+                        ));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,
@@ -3959,7 +3969,9 @@ impl EnemyAi {
                         self.set_state(AiState::Wondering, Substate::WonderingLooting);
                         self.base.stop_all();
                         let owner = self.base.owner_entity_id;
-                        let antagonist = Some(crate::element::EntityId::Soldier(body));
+                        let antagonist = Some(crate::element::EntityId::Soldier(
+                            crate::entity_id::SoldierId(body),
+                        ));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,
@@ -4357,7 +4369,9 @@ impl EnemyAi {
                                 self.set_state(AiState::Seeking, Substate::SeekingTakingNet);
                                 self.base.stop_all();
                                 let owner = self.base.owner_entity_id;
-                                let antagonist = Some(crate::element::EntityId::Net(net_obj));
+                                let antagonist = Some(crate::element::EntityId::Net(
+                                    crate::entity_id::NetId(net_obj),
+                                ));
                                 let mut seq = crate::sequence::Sequence::new();
                                 seq.append_element(
                                     crate::sequence::SequenceElement::new_interaction(
@@ -5054,8 +5068,9 @@ impl EnemyAi {
                             use crate::element::Command;
                             use crate::sequence::{Sequence, SequenceElement};
                             let owner = self.base.owner_entity_id;
-                            let antagonist =
-                                Some(crate::element::EntityId::Soldier(self.base.primary_target));
+                            let antagonist = Some(crate::element::EntityId::Soldier(
+                                crate::entity_id::SoldierId(self.base.primary_target),
+                            ));
                             let mut seq = Sequence::new();
                             seq.append_element(SequenceElement::new_interaction(
                                 1,
@@ -5262,7 +5277,9 @@ impl EnemyAi {
                             break;
                         }
                         // Is it free (or already owned by me)?
-                        let me = crate::entity_id::EntityId::Soldier(self.base.me);
+                        let me = crate::entity_id::EntityId::Soldier(crate::entity_id::SoldierId(
+                            self.base.me,
+                        ));
                         let owner = point.owner;
                         if owner.is_none() || owner == Some(me) {
                             // Occupy + transition + GoTo.
@@ -5476,7 +5493,9 @@ impl EnemyAi {
                     let owner = self.base.owner_entity_id;
                     let body = self.base.detected_body;
                     if body != 0 {
-                        let antagonist = Some(crate::element::EntityId::Soldier(body));
+                        let antagonist = Some(crate::element::EntityId::Soldier(
+                            crate::entity_id::SoldierId(body),
+                        ));
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new_interaction(
                             1,

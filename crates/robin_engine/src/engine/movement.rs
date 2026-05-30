@@ -2872,7 +2872,7 @@ impl EngineInner {
                 // which can differ from opponents[0].
                 entity
                     .ai_controller()
-                    .map(|c| EntityId::Pc(c.primary_target))
+                    .map(|c| EntityId::Pc(crate::entity_id::PcId(c.primary_target)))
                     .filter(|id| id.index() != 0)
             } else {
                 None
@@ -6587,7 +6587,7 @@ mod line_jump_tests {
 
     #[test]
     fn line_jump_click_sequence_moves_to_line_then_jumps_then_moves_to_click() {
-        let owner = EntityId::Pc(7);
+        let owner = EntityId::Pc(crate::entity_id::PcId(7));
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
         let mut source_line = crate::jump_line::JumpLine::new(
@@ -6658,7 +6658,7 @@ mod line_jump_tests {
 
     #[test]
     fn force_sword_movement_marks_all_movement_elements() {
-        let owner = EntityId::Pc(7);
+        let owner = EntityId::Pc(crate::entity_id::PcId(7));
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
         let source_line = crate::jump_line::JumpLine::new(

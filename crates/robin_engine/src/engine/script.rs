@@ -2178,9 +2178,9 @@ impl EngineInner {
         };
 
         let source = match stimulus.info {
-            crate::ai::StimulusInfo::Human(h) => {
-                crate::natives::GameHost::actor_handle(crate::element::EntityId::Soldier(h))
-            }
+            crate::ai::StimulusInfo::Human(h) => crate::natives::GameHost::actor_handle(
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
+            ),
             _ => 0,
         };
 
@@ -2329,9 +2329,9 @@ impl EngineInner {
                 let source = match source_kind {
                     AiStateChangeSource::SelfActor => handle,
                     AiStateChangeSource::Null => 0,
-                    AiStateChangeSource::Human(h) => {
-                        crate::natives::GameHost::actor_handle(crate::element::EntityId::Soldier(h))
-                    }
+                    AiStateChangeSource::Human(h) => crate::natives::GameHost::actor_handle(
+                        crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
+                    ),
                 };
                 notifications.push((handle, source, code));
             }

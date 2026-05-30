@@ -71,7 +71,7 @@ impl EngineInner {
 
                     if let Some(handle) = ctx.animation_entity_handle
                         && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
-                            .map(|i| crate::element::EntityId::Fx(i as u32))
+                            .map(|i| crate::element::EntityId::Fx(crate::entity_id::FxId(i as u32)))
                     {
                         if applied {
                             // Bake the last transition frame into the
@@ -115,7 +115,7 @@ impl EngineInner {
                     // re-compose affected mask textures.
                     if let Some(handle) = ctx.animation_entity_handle
                         && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
-                            .map(|i| crate::element::EntityId::Fx(i as u32))
+                            .map(|i| crate::element::EntityId::Fx(crate::entity_id::FxId(i as u32)))
                     {
                         self.queue_restore_fx_bg(entity_id);
                     }

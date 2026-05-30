@@ -56,7 +56,10 @@ pub type Animation = OrderType;
 // ═══════════════════════════════════════════════════════════════════
 
 pub use crate::element_kinds::*;
-pub use crate::entity_id::{EntityId, EntityIdKind};
+pub use crate::entity_id::{
+    ActorId, BonusId, CivilianId, EntityId, EntityIdKind, FxId, HumanId, NetId, NpcId, ObjectId,
+    PcId, ProjectileId, ScrollId, SoldierId, TargetId,
+};
 // ═══════════════════════════════════════════════════════════════════
 //  Data structs — one per hierarchy level
 // ═══════════════════════════════════════════════════════════════════
@@ -4143,7 +4146,7 @@ mod tests {
         use crate::ai::AiState;
         use crate::ai_enemy::EnemyAi;
 
-        let entity_id = EntityId::Pc(42);
+        let entity_id = EntityId::Pc(crate::entity_id::PcId(42));
         let mut enemy_ai = EnemyAi::new(7);
         enemy_ai.base.owner_entity_id = Some(entity_id);
         assert_eq!(enemy_ai.base.me, 7);

@@ -540,7 +540,8 @@ pub(super) fn build_friend_swap_candidates(
             0 => continue,
             h => h,
         };
-        let friend_target_id = crate::element::EntityId::Pc(friend_target_handle);
+        let friend_target_id =
+            crate::element::EntityId::Pc(crate::entity_id::PcId(friend_target_handle));
         let friend_target = entities
             .get(friend_target_id.index() as usize)
             .and_then(|ts| ts.as_ref());
@@ -891,7 +892,9 @@ impl EngineInner {
             .map(|id| id.index())
             .unwrap_or(ai.primary_target);
         let target_id = if primary_target_handle != 0 {
-            Some(crate::element::EntityId::Pc(primary_target_handle))
+            Some(crate::element::EntityId::Pc(crate::entity_id::PcId(
+                primary_target_handle,
+            )))
         } else {
             None
         };
@@ -3254,7 +3257,10 @@ impl EngineInner {
                 && let Some(npc) = entity.npc_data_mut()
             {
                 if ai_primary_target != 0 {
-                    ai_vision::focus_entity(npc, EntityId::Pc(ai_primary_target));
+                    ai_vision::focus_entity(
+                        npc,
+                        EntityId::Pc(crate::entity_id::PcId(ai_primary_target)),
+                    );
                 } else {
                     ai_vision::unfocus(npc);
                 }
@@ -3593,7 +3599,9 @@ impl EngineInner {
                 self.pending_side_effects
                     .sounds
                     .push(super::SoundCommand::StopExclamation {
-                        actor_id: crate::element::EntityId::Soldier(snap.entity_id),
+                        actor_id: crate::element::EntityId::Soldier(crate::entity_id::SoldierId(
+                            snap.entity_id,
+                        )),
                     });
                 self.sound_sim
                     .playing_exclamations
@@ -3611,7 +3619,9 @@ impl EngineInner {
                     exclamation_id: excl_id,
                     variant,
                     position: snap.position.into(),
-                    actor_id: Some(crate::element::EntityId::Soldier(snap.entity_id)),
+                    actor_id: Some(crate::element::EntityId::Soldier(
+                        crate::entity_id::SoldierId(snap.entity_id),
+                    )),
                 });
             // Schedule the deterministic MYTALK finish from the
             // host-populated sample-duration table. Missing entries fall
@@ -4172,7 +4182,7 @@ impl EngineInner {
         // torn down before the engine-side ENTER_SWORDFIGHT sequence
         // runs.
         if let Some(target_handle) = stop_target {
-            let target_id = EntityId::Pc(target_handle);
+            let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
             self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
         }
 
@@ -4197,7 +4207,7 @@ impl EngineInner {
                     self.launch_element(elem);
                 }
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
-                    let target_id = EntityId::Pc(target_handle);
+                    let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
                     let aggressor_jl = enter_jl.and_then(crate::jump_line::JumpLineIndex::new);
                     self.enter_swordfight_with_jump_line(
                         assets,
@@ -4212,7 +4222,7 @@ impl EngineInner {
 
         // Process set_as_new_principal_opponent.
         if let Some(opponent_handle) = set_principal {
-            let opponent_id = EntityId::Pc(opponent_handle);
+            let opponent_id = EntityId::Pc(crate::entity_id::PcId(opponent_handle));
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
@@ -4230,7 +4240,7 @@ impl EngineInner {
 
         // Process pending bow shot.
         if let Some(target_handle) = shoot {
-            let target_id = EntityId::Pc(target_handle);
+            let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
             self.shoot_bow_at(assets, npc_id, target_id);
         }
 
@@ -4248,7 +4258,10 @@ impl EngineInner {
         if let Some(target_handle) = do_focus
             && let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize)
         {
-            crate::ai_vision::focus_entity(&mut s.npc, EntityId::Pc(target_handle));
+            crate::ai_vision::focus_entity(
+                &mut s.npc,
+                EntityId::Pc(crate::entity_id::PcId(target_handle)),
+            );
             focus_channel_fired = true;
         }
 
@@ -4659,7 +4672,7 @@ impl EngineInner {
         // other_actor)` call as used by the enemy beggar-identify
         // cascade.
         for (target_handle, cmd) in launch_on_target {
-            let target_id = EntityId::Pc(target_handle);
+            let target_id = EntityId::Pc(crate::entity_id::PcId(target_handle));
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
             self.launch_element(elem);
         }
@@ -6406,7 +6419,7 @@ impl EngineInner {
         // ── Phase 6: Dispatch CALL_PATROL_COORDINATE to minions ──
         let patrol_frame = self.frame_counter;
         for cmd in patrol_cmds {
-            let minion_id = EntityId::Soldier(cmd.minion);
+            let minion_id = EntityId::Soldier(crate::entity_id::SoldierId(cmd.minion));
             let ctx = {
                 let Some(Some(entity)) = self.entities.get_mut(cmd.minion as usize) else {
                     continue;
@@ -6659,7 +6672,7 @@ impl EngineInner {
                     position,
                     direction,
                 } => {
-                    let target_id = EntityId::Soldier(target);
+                    let target_id = EntityId::Soldier(crate::entity_id::SoldierId(target));
                     let ctx = {
                         let Some(Some(entity @ Entity::Soldier(_))) =
                             self.entities.get_mut(target as usize)
@@ -6698,7 +6711,7 @@ impl EngineInner {
                 }
 
                 crate::ai::CrossNpcAction::BreakPhalanx { target } => {
-                    let target_id = EntityId::Soldier(target);
+                    let target_id = EntityId::Soldier(crate::entity_id::SoldierId(target));
                     let ctx = {
                         let Some(Some(entity @ Entity::Soldier(_))) =
                             self.entities.get_mut(target as usize)
@@ -6742,7 +6755,7 @@ impl EngineInner {
                     fallback_to_sender,
                     to_whole_patrol,
                 } => {
-                    let target_id = EntityId::Soldier(target);
+                    let target_id = EntityId::Soldier(crate::entity_id::SoldierId(target));
                     let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
                     stimulus.info = info;
                     stimulus.to_whole_patrol = to_whole_patrol;
@@ -6753,7 +6766,8 @@ impl EngineInner {
                         else {
                             // Target missing → try fallback directly below.
                             if let Some(sender) = fallback_to_sender {
-                                let sender_id = EntityId::Soldier(sender);
+                                let sender_id =
+                                    EntityId::Soldier(crate::entity_id::SoldierId(sender));
                                 if let Some(Some(entity @ Entity::Soldier(_))) =
                                     self.entities.get(sender as usize)
                                 {
@@ -6804,7 +6818,7 @@ impl EngineInner {
                     // Fallback: if target couldn't handle the stimulus,
                     // redeliver to the sender (e.g. conversation chains).
                     if !handled && let Some(sender) = fallback_to_sender {
-                        let sender_id = EntityId::Soldier(sender);
+                        let sender_id = EntityId::Soldier(crate::entity_id::SoldierId(sender));
                         let ctx2 = {
                             let Some(Some(entity @ Entity::Soldier(_))) =
                                 self.entities.get(sender as usize)

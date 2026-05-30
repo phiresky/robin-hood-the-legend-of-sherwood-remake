@@ -2033,12 +2033,12 @@ mod tests {
 
     #[test]
     fn damage_event_constructors() {
-        let sword = DamageEvent::sword(EntityId::Pc(1), SwordStrike::A);
+        let sword = DamageEvent::sword(EntityId::Pc(crate::entity_id::PcId(1)), SwordStrike::A);
         assert_eq!(sword.kind, DamageKind::Sword);
-        assert_eq!(sword.origin, Some(EntityId::Pc(1)));
+        assert_eq!(sword.origin, Some(EntityId::Pc(crate::entity_id::PcId(1))));
         assert_eq!(sword.sword_strike, Some(SwordStrike::A));
 
-        let arrow = DamageEvent::arrow(EntityId::Pc(2), 30);
+        let arrow = DamageEvent::arrow(EntityId::Pc(crate::entity_id::PcId(2)), 30);
         assert_eq!(arrow.kind, DamageKind::Arrow);
         assert_eq!(arrow.damage, 30);
 
@@ -2047,11 +2047,11 @@ mod tests {
         assert_eq!(stone.damage, 15);
         assert_eq!(stone.concussion, 5);
 
-        let hit = DamageEvent::hit(EntityId::Pc(3), 40, true);
+        let hit = DamageEvent::hit(EntityId::Pc(crate::entity_id::PcId(3)), 40, true);
         assert_eq!(hit.kind, DamageKind::Hit);
         assert!(hit.is_harder_hit);
 
-        let net = DamageEvent::net(EntityId::Pc(4));
+        let net = DamageEvent::net(EntityId::Pc(crate::entity_id::PcId(4)));
         assert_eq!(net.kind, DamageKind::Net);
 
         let r#gen = DamageEvent::generic(10, 20);
