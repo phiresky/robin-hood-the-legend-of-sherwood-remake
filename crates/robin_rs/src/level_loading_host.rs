@@ -402,13 +402,10 @@ impl EngineLevelLoadExt for Engine {
             view.x + (screen.x / zoom),
             view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
         );
-        let src = BBox::new(src_min.to_geo(), src_max.to_geo());
+        let src = BBox::from_coords(src_min.x, src_min.y, src_max.x, src_max.y);
 
         let dst_bbox = ScreenBBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
-        let dst = BBox::new(
-            dst_bbox.top_left().to_geo(),
-            dst_bbox.bottom_right().to_geo(),
-        );
+        let dst = BBox::new(dst_bbox.top_left(), dst_bbox.bottom_right());
 
         renderer.render_background_texture(Some(&src), Some(&dst));
     }

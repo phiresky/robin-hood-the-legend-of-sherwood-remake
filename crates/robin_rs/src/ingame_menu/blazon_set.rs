@@ -126,12 +126,11 @@ pub fn render(
                     BlazonSlotKind::Empty => Renderer::create_color_16(90, 70, 40),
                 };
                 let (sx, sy) = transform.to_screen(vx, vy);
-                let dst = engine_sprite::BBox::new(
-                    crate::geo2d::pt(sx as f32, sy as f32),
-                    crate::geo2d::pt(
-                        (sx + state.slot_w as i32) as f32,
-                        (sy + state.slot_h as i32) as f32,
-                    ),
+                let dst = engine_sprite::BBox::from_coords(
+                    sx as f32,
+                    sy as f32,
+                    (sx + state.slot_w as i32) as f32,
+                    (sy + state.slot_h as i32) as f32,
                 );
                 renderer.fill_screen(Some(&dst), color);
             }

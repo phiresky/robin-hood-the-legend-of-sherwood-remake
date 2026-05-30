@@ -15,7 +15,6 @@ use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::engine::GlobalOptions;
 use robin_engine::sprite::BBox;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::main_entry::picture_to_surface;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
@@ -108,11 +107,8 @@ pub(crate) async fn show_credits(
             let (bw, bh) = bg_dims.unwrap();
             let bx = (screen_w - bw) / 2;
             let by = (screen_h - bh) / 2;
-            let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(bw as f32, bh as f32));
-            let dst = BBox::new(
-                geo2d::pt(bx as f32, by as f32),
-                geo2d::pt((bx + bw) as f32, (by + bh) as f32),
-            );
+            let src = BBox::from_coords(0.0, 0.0, bw as f32, bh as f32);
+            let dst = BBox::from_coords(bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32);
             renderer.blit_to_screen(bg, Some(&src), Some(&dst), 0);
         }
 
@@ -125,13 +121,13 @@ pub(crate) async fn show_credits(
             let src_top = 0;
             let src_bottom = screen_h + offset; // = credit visible height so far
             if src_bottom > 0 {
-                let src = BBox::new(
-                    geo2d::pt(0.0, src_top as f32),
-                    geo2d::pt(credit_width as f32, src_bottom as f32),
-                );
-                let dst = BBox::new(
-                    geo2d::pt(margin_x as f32, dst_top as f32),
-                    geo2d::pt((margin_x + credit_width) as f32, dst_bottom as f32),
+                let src =
+                    BBox::from_coords(0.0, src_top as f32, credit_width as f32, src_bottom as f32);
+                let dst = BBox::from_coords(
+                    margin_x as f32,
+                    dst_top as f32,
+                    (margin_x + credit_width) as f32,
+                    dst_bottom as f32,
                 );
                 renderer.blit_with_shadow(
                     credits_surface,
@@ -145,13 +141,17 @@ pub(crate) async fn show_credits(
             }
         } else if offset + screen_h < credit_height {
             // Fully scrolling.
-            let src = BBox::new(
-                geo2d::pt(0.0, offset as f32),
-                geo2d::pt(credit_width as f32, (offset + screen_h) as f32),
+            let src = BBox::from_coords(
+                0.0,
+                offset as f32,
+                credit_width as f32,
+                (offset + screen_h) as f32,
             );
-            let dst = BBox::new(
-                geo2d::pt(margin_x as f32, 0.0),
-                geo2d::pt((margin_x + credit_width) as f32, screen_h as f32),
+            let dst = BBox::from_coords(
+                margin_x as f32,
+                0.0,
+                (margin_x + credit_width) as f32,
+                screen_h as f32,
             );
             renderer.blit_with_shadow(
                 credits_surface,
@@ -166,13 +166,17 @@ pub(crate) async fn show_credits(
             // Tail — the bottom of the roll is within the screen.
             let remaining = credit_height - offset;
             if remaining > 0 {
-                let src = BBox::new(
-                    geo2d::pt(0.0, offset as f32),
-                    geo2d::pt(credit_width as f32, credit_height as f32),
+                let src = BBox::from_coords(
+                    0.0,
+                    offset as f32,
+                    credit_width as f32,
+                    credit_height as f32,
                 );
-                let dst = BBox::new(
-                    geo2d::pt(margin_x as f32, 0.0),
-                    geo2d::pt((margin_x + credit_width) as f32, remaining as f32),
+                let dst = BBox::from_coords(
+                    margin_x as f32,
+                    0.0,
+                    (margin_x + credit_width) as f32,
+                    remaining as f32,
                 );
                 renderer.blit_with_shadow(
                     credits_surface,

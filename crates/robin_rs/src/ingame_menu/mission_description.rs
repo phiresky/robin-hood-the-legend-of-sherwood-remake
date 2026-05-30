@@ -26,7 +26,6 @@ use robin_engine::engine::Engine;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::native_font::Font;
 use crate::renderer::Renderer;
@@ -332,12 +331,11 @@ pub async fn show_mission_description(
         } else {
             let (sx, sy) = transform.to_screen(win_x, win_y);
             renderer.fill_screen(
-                Some(&BBox::new(
-                    geo2d::pt(sx as f32, sy as f32),
-                    geo2d::pt(
-                        (sx + layout_consts::WINDOW_WIDTH) as f32,
-                        (sy + layout_consts::WINDOW_HEIGHT) as f32,
-                    ),
+                Some(&BBox::from_coords(
+                    sx as f32,
+                    sy as f32,
+                    (sx + layout_consts::WINDOW_WIDTH) as f32,
+                    (sy + layout_consts::WINDOW_HEIGHT) as f32,
                 )),
                 Renderer::create_color_16(40, 30, 20),
             );

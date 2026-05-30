@@ -5,12 +5,11 @@
 //!
 //! Runtime primitives queue GPU overlay draws.
 
-use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::GeoPoint2D;
 use crate::{gfx_types::Rect, renderer::Renderer};
-use robin_engine::coordinates::{MapPoint, ScreenPoint};
+use robin_engine::coordinates::{MapBBox, MapPoint, ScreenPoint};
+use robin_engine::sprite::BBox;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -30,7 +29,7 @@ pub const GAUGE_HEIGHT: f32 = 14.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrawManager {
     /// The current camera view rectangle in world coordinates.
-    view_rect: BBox,
+    view_rect: MapBBox,
     /// Current zoom factor (1.0 = normal, 0.5 = zoomed out, 2.0 = zoomed in).
     zoom_factor: f32,
     /// ID of the current render target surface.
@@ -42,7 +41,7 @@ pub struct DrawManager {
 impl Default for DrawManager {
     fn default() -> Self {
         Self {
-            view_rect: BBox::default(),
+            view_rect: MapBBox::default(),
             zoom_factor: 1.0,
             surface_id: 0,
             color_depth: 16,
@@ -60,7 +59,7 @@ impl DrawManager {
 
     // -- Accessors --
 
-    pub fn view_rect(&self) -> &BBox {
+    pub fn view_rect(&self) -> &MapBBox {
         &self.view_rect
     }
 
@@ -80,7 +79,7 @@ impl DrawManager {
     pub fn update_drawing_parameters(
         &mut self,
         surface_id: u32,
-        view_rect: BBox,
+        view_rect: MapBBox,
         zoom_factor: f32,
     ) {
         self.surface_id = surface_id;
@@ -118,8 +117,8 @@ impl DrawManager {
     /// Transform a projected map point to screen coordinates.
     pub fn map_to_screen(&self, point: MapPoint) -> ScreenPoint {
         let mut result = ScreenPoint {
-            x: point.x - self.view_rect.min.x,
-            y: point.y - self.view_rect.min.y,
+            x: point.x - self.view_rect.x_min(),
+            y: point.y - self.view_rect.y_min(),
         };
         if self.zoom_factor != 1.0 {
             result.x *= self.zoom_factor;
@@ -150,20 +149,26 @@ impl DrawManager {
     }
 
     /// Clip a bounding box to the view rect and transform to screen coords.
-    pub fn clip_box(&self, bbox: &BBox) -> Option<BBox> {
+    pub fn clip_box(&self, bbox: &MapBBox) -> Option<BBox> {
         // Intersect with view rect
-        let min_x = bbox.min.x.max(self.view_rect.min.x);
-        let min_y = bbox.min.y.max(self.view_rect.min.y);
-        let max_x = bbox.max.x.min(self.view_rect.max.x);
-        let max_y = bbox.max.y.min(self.view_rect.max.y);
+        let min_x = bbox.x_min().max(self.view_rect.x_min());
+        let min_y = bbox.y_min().max(self.view_rect.y_min());
+        let max_x = bbox.x_max().min(self.view_rect.x_max());
+        let max_y = bbox.y_max().min(self.view_rect.y_max());
 
         if min_x >= max_x || min_y >= max_y {
             return None;
         }
 
         let mut result = screen_bbox(
-            ScreenPoint::new(min_x - self.view_rect.min.x, min_y - self.view_rect.min.y),
-            ScreenPoint::new(max_x - self.view_rect.min.x, max_y - self.view_rect.min.y),
+            ScreenPoint::new(
+                min_x - self.view_rect.x_min(),
+                min_y - self.view_rect.y_min(),
+            ),
+            ScreenPoint::new(
+                max_x - self.view_rect.x_min(),
+                max_y - self.view_rect.y_min(),
+            ),
         );
 
         if self.zoom_factor != 1.0 {
@@ -230,15 +235,11 @@ impl DrawManager {
         *start = spacing - remaining + (num_dots as f32 * spacing);
 
         for _ in 0..=num_dots {
-            let dot_box = BBox::new(
-                GeoPoint2D {
-                    x: point.x - thickness,
-                    y: point.y - thickness,
-                },
-                GeoPoint2D {
-                    x: point.x + thickness,
-                    y: point.y + thickness,
-                },
+            let dot_box = MapBBox::from_coords(
+                point.x - thickness,
+                point.y - thickness,
+                point.x + thickness,
+                point.y + thickness,
             );
 
             if let Some(clipped) = self.clip_box(&dot_box) {
@@ -497,16 +498,16 @@ const RIGHT: u8 = 2;
 const BOTTOM: u8 = 4;
 const TOP: u8 = 8;
 
-fn compute_map_outcode(p: MapPoint, bbox: &BBox) -> u8 {
+fn compute_map_outcode(p: MapPoint, bbox: &MapBBox) -> u8 {
     let mut code = INSIDE;
-    if p.x < bbox.min.x {
+    if p.x < bbox.x_min() {
         code |= LEFT;
-    } else if p.x > bbox.max.x {
+    } else if p.x > bbox.x_max() {
         code |= RIGHT;
     }
-    if p.y < bbox.min.y {
+    if p.y < bbox.y_min() {
         code |= TOP;
-    } else if p.y > bbox.max.y {
+    } else if p.y > bbox.y_max() {
         code |= BOTTOM;
     }
     code
@@ -517,7 +518,7 @@ fn compute_map_outcode(p: MapPoint, bbox: &BBox) -> u8 {
 fn clip_map_line_to_box(
     mut a: MapPoint,
     mut b: MapPoint,
-    bbox: &BBox,
+    bbox: &MapBBox,
 ) -> Option<(MapPoint, MapPoint)> {
     let mut code_a = compute_map_outcode(a, bbox);
     let mut code_b = compute_map_outcode(b, bbox);
@@ -538,18 +539,18 @@ fn clip_map_line_to_box(
 
         let (x, y);
         if code_out & TOP != 0 {
-            x = a.x + dx * (bbox.min.y - a.y) / dy;
-            y = bbox.min.y;
+            x = a.x + dx * (bbox.y_min() - a.y) / dy;
+            y = bbox.y_min();
         } else if code_out & BOTTOM != 0 {
-            x = a.x + dx * (bbox.max.y - a.y) / dy;
-            y = bbox.max.y;
+            x = a.x + dx * (bbox.y_max() - a.y) / dy;
+            y = bbox.y_max();
         } else if code_out & RIGHT != 0 {
-            y = a.y + dy * (bbox.max.x - a.x) / dx;
-            x = bbox.max.x;
+            y = a.y + dy * (bbox.x_max() - a.x) / dx;
+            x = bbox.x_max();
         } else {
             // LEFT
-            y = a.y + dy * (bbox.min.x - a.x) / dx;
-            x = bbox.min.x;
+            y = a.y + dy * (bbox.x_min() - a.x) / dx;
+            x = bbox.x_min();
         }
 
         if code_out == code_a {
@@ -581,15 +582,12 @@ mod tests {
     #[test]
     fn test_update_drawing_parameters() {
         let mut dm = DrawManager::new(16);
-        let view = BBox::new(
-            GeoPoint2D { x: 100.0, y: 200.0 },
-            GeoPoint2D { x: 900.0, y: 800.0 },
-        );
+        let view = MapBBox::from_coords(100.0, 200.0, 900.0, 800.0);
         dm.update_drawing_parameters(42, view, 0.5);
 
         assert_eq!(dm.surface_id(), 42);
         assert_eq!(dm.zoom_factor(), 0.5);
-        assert_eq!(dm.view_rect().min.x, 100.0);
+        assert_eq!(dm.view_rect().x_min(), 100.0);
     }
 
     #[test]
@@ -624,14 +622,7 @@ mod tests {
     #[test]
     fn test_map_to_screen() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            0,
-            BBox::new(
-                GeoPoint2D { x: 100.0, y: 200.0 },
-                GeoPoint2D { x: 900.0, y: 800.0 },
-            ),
-            1.0,
-        );
+        dm.update_drawing_parameters(0, MapBBox::from_coords(100.0, 200.0, 900.0, 800.0), 1.0);
 
         let screen = dm.map_to_screen(MapPoint::new(150.0, 250.0));
         assert_eq!(screen.x, 50.0);
@@ -641,14 +632,7 @@ mod tests {
     #[test]
     fn test_map_to_screen_zoomed() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            0,
-            BBox::new(
-                GeoPoint2D { x: 100.0, y: 200.0 },
-                GeoPoint2D { x: 900.0, y: 800.0 },
-            ),
-            2.0,
-        );
+        dm.update_drawing_parameters(0, MapBBox::from_coords(100.0, 200.0, 900.0, 800.0), 2.0);
 
         let screen = dm.map_to_screen(MapPoint::new(150.0, 250.0));
         assert_eq!(screen.x, 100.0); // (150-100) * 2
@@ -658,14 +642,7 @@ mod tests {
     #[test]
     fn test_clip_segment_inside() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            0,
-            BBox::new(
-                GeoPoint2D { x: 0.0, y: 0.0 },
-                GeoPoint2D { x: 100.0, y: 100.0 },
-            ),
-            1.0,
-        );
+        dm.update_drawing_parameters(0, MapBBox::from_coords(0.0, 0.0, 100.0, 100.0), 1.0);
 
         let result = dm.clip_segment(MapPoint::new(10.0, 10.0), MapPoint::new(90.0, 90.0));
         assert!(result.is_some());
@@ -674,14 +651,7 @@ mod tests {
     #[test]
     fn test_clip_segment_outside() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            0,
-            BBox::new(
-                GeoPoint2D { x: 0.0, y: 0.0 },
-                GeoPoint2D { x: 100.0, y: 100.0 },
-            ),
-            1.0,
-        );
+        dm.update_drawing_parameters(0, MapBBox::from_coords(0.0, 0.0, 100.0, 100.0), 1.0);
 
         // Completely outside
         let result = dm.clip_segment(MapPoint::new(200.0, 200.0), MapPoint::new(300.0, 300.0));
@@ -691,19 +661,9 @@ mod tests {
     #[test]
     fn test_clip_box_partial() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            0,
-            BBox::new(
-                GeoPoint2D { x: 0.0, y: 0.0 },
-                GeoPoint2D { x: 100.0, y: 100.0 },
-            ),
-            1.0,
-        );
+        dm.update_drawing_parameters(0, MapBBox::from_coords(0.0, 0.0, 100.0, 100.0), 1.0);
 
-        let bbox = BBox::new(
-            GeoPoint2D { x: -10.0, y: -10.0 },
-            GeoPoint2D { x: 50.0, y: 50.0 },
-        );
+        let bbox = MapBBox::from_coords(-10.0, -10.0, 50.0, 50.0);
         let clipped = dm.clip_box(&bbox);
         assert!(clipped.is_some());
         let c = clipped.unwrap();
@@ -716,28 +676,15 @@ mod tests {
     #[test]
     fn test_clip_box_outside() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            0,
-            BBox::new(
-                GeoPoint2D { x: 0.0, y: 0.0 },
-                GeoPoint2D { x: 100.0, y: 100.0 },
-            ),
-            1.0,
-        );
+        dm.update_drawing_parameters(0, MapBBox::from_coords(0.0, 0.0, 100.0, 100.0), 1.0);
 
-        let bbox = BBox::new(
-            GeoPoint2D { x: 200.0, y: 200.0 },
-            GeoPoint2D { x: 300.0, y: 300.0 },
-        );
+        let bbox = MapBBox::from_coords(200.0, 200.0, 300.0, 300.0);
         assert!(dm.clip_box(&bbox).is_none());
     }
 
     #[test]
     fn test_cohen_sutherland_clipping() {
-        let bbox = BBox::new(
-            GeoPoint2D { x: 0.0, y: 0.0 },
-            GeoPoint2D { x: 100.0, y: 100.0 },
-        );
+        let bbox = MapBBox::from_coords(0.0, 0.0, 100.0, 100.0);
 
         // Line crossing through the box
         let result = clip_map_line_to_box(
@@ -767,14 +714,7 @@ mod tests {
     #[test]
     fn test_draw_manager_serde_roundtrip() {
         let mut dm = DrawManager::new(16);
-        dm.update_drawing_parameters(
-            5,
-            BBox::new(
-                GeoPoint2D { x: 10.0, y: 20.0 },
-                GeoPoint2D { x: 800.0, y: 600.0 },
-            ),
-            0.5,
-        );
+        dm.update_drawing_parameters(5, MapBBox::from_coords(10.0, 20.0, 800.0, 600.0), 0.5);
 
         let json = serde_json::to_string(&dm).unwrap();
         let back: DrawManager = serde_json::from_str(&json).unwrap();
@@ -782,7 +722,7 @@ mod tests {
         assert_eq!(back.surface_id(), 5);
         assert_eq!(back.zoom_factor(), 0.5);
         assert_eq!(back.color_depth(), 16);
-        assert_eq!(back.view_rect().min.x, 10.0);
+        assert_eq!(back.view_rect().x_min(), 10.0);
     }
 
     #[test]

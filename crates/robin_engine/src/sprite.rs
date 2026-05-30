@@ -216,6 +216,13 @@ impl BBox {
         }
     }
 
+    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+        Self {
+            min: ScreenPoint::new(x_min, y_min),
+            max: ScreenPoint::new(x_max, y_max),
+        }
+    }
+
     pub fn width(&self) -> f32 {
         self.max.x - self.min.x
     }

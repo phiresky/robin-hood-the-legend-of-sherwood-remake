@@ -1,7 +1,7 @@
 //! Main-menu multiplayer lobby.
 
 use crate::campaign::Campaign;
-use crate::geo2d;
+
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, dim_screen, draw_screen_background,
@@ -795,9 +795,11 @@ fn truncate_to_pixel_width<'a>(font: &Font, text: &'a str, max_w: i32) -> &'a st
 fn draw_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
     let (sx, sy) = transform.to_screen(rect.x, rect.y);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + rect.w) as f32, (sy + rect.h) as f32),
+        Some(&BBox::from_coords(
+            sx as f32,
+            sy as f32,
+            (sx + rect.w) as f32,
+            (sy + rect.h) as f32,
         )),
         Renderer::create_color_16(28, 24, 16),
     );
@@ -821,9 +823,11 @@ fn fill_virtual_rect(
 ) {
     let (sx, sy) = transform.to_screen(x, y);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + w) as f32, (sy + h) as f32),
+        Some(&BBox::from_coords(
+            sx as f32,
+            sy as f32,
+            (sx + w) as f32,
+            (sy + h) as f32,
         )),
         color,
     );

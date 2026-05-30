@@ -17,7 +17,7 @@ use robin_engine::sprite::BBox;
 
 use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
-use crate::geo2d;
+
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
@@ -324,13 +324,12 @@ pub(crate) async fn show_main_menu(
         renderer.begin_gpu_frame_clear();
         let bg_x = (MENU_W - bg.width) / 2;
         let bg_y = (MENU_H - bg.height) / 2;
-        let src = BBox::new(
-            geo2d::pt(0.0, 0.0),
-            geo2d::pt(bg.width as f32, bg.height as f32),
-        );
-        let dst = BBox::new(
-            geo2d::pt(bg_x as f32, bg_y as f32),
-            geo2d::pt((bg_x + bg.width) as f32, (bg_y + bg.height) as f32),
+        let src = BBox::from_coords(0.0, 0.0, bg.width as f32, bg.height as f32);
+        let dst = BBox::from_coords(
+            bg_x as f32,
+            bg_y as f32,
+            (bg_x + bg.width) as f32,
+            (bg_y + bg.height) as f32,
         );
         renderer.blit_to_screen(bg.id, Some(&src), Some(&dst), 0);
         renderer.present();
@@ -466,13 +465,12 @@ pub(crate) async fn show_main_menu(
         if let Some(bg) = bg {
             let bg_x = (MENU_W - bg.width) / 2;
             let bg_y = (MENU_H - bg.height) / 2;
-            let src = BBox::new(
-                geo2d::pt(0.0, 0.0),
-                geo2d::pt(bg.width as f32, bg.height as f32),
-            );
-            let dst = BBox::new(
-                geo2d::pt(bg_x as f32, bg_y as f32),
-                geo2d::pt((bg_x + bg.width) as f32, (bg_y + bg.height) as f32),
+            let src = BBox::from_coords(0.0, 0.0, bg.width as f32, bg.height as f32);
+            let dst = BBox::from_coords(
+                bg_x as f32,
+                bg_y as f32,
+                (bg_x + bg.width) as f32,
+                (bg_y + bg.height) as f32,
             );
             renderer.blit_to_screen(bg.id, Some(&src), Some(&dst), 0);
         }
@@ -491,11 +489,9 @@ pub(crate) async fn show_main_menu(
             let bw = (rect.max().x - rect.min().x) as i32;
             let bh = (rect.max().y - rect.min().y) as i32;
             if let Some(surf) = menu_resources.button_surface(state_idx) {
-                let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(bw as f32, bh as f32));
-                let dst = BBox::new(
-                    geo2d::pt(bx as f32, by as f32),
-                    geo2d::pt((bx + bw) as f32, (by + bh) as f32),
-                );
+                let src = BBox::from_coords(0.0, 0.0, bw as f32, bh as f32);
+                let dst =
+                    BBox::from_coords(bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32);
                 renderer.blit_to_screen(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
             }
         }

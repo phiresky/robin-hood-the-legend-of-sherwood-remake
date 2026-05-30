@@ -150,6 +150,15 @@ coord2!(
     minimap_size
 );
 coord2!(
+    /// Listener-relative sound geometry vector.
+    ///
+    /// Sound sources are transformed from projected map coordinates into
+    /// listener-relative coordinates with the isometric Y aspect correction
+    /// applied before panning/fading calculations.
+    SoundVec,
+    sound_vec
+);
+coord2!(
     /// Half diagonal of a movement box in projected map space.
     ///
     /// C++ `GetHalfDiagonal()` returns `GetMoveBox(...).GetBottomRight()`.
@@ -574,8 +583,8 @@ impl ScreenBBox {
     }
 
     #[inline]
-    pub fn translated(&self, v: geo2d::Vec2D) -> Self {
-        Self::from_geo(self.to_geo().translated(v))
+    pub fn translated(&self, v: ScreenVec) -> Self {
+        Self::from_geo(self.to_geo().translated(v.to_geo()))
     }
 }
 

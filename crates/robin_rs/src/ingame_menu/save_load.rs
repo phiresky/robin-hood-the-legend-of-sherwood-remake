@@ -24,7 +24,6 @@ use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
@@ -891,9 +890,11 @@ fn draw_preview(
 fn draw_fallback_rect(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
     let (sx, sy) = transform.to_screen(rect.x, rect.y);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + rect.w) as f32, (sy + rect.h) as f32),
+        Some(&BBox::from_coords(
+            sx as f32,
+            sy as f32,
+            (sx + rect.w) as f32,
+            (sy + rect.h) as f32,
         )),
         Renderer::create_color_16(30, 25, 15),
     );

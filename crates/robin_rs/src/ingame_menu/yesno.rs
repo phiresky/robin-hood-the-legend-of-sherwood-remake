@@ -14,7 +14,6 @@ use crate::gfx_types::Keycode;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::sprite::BBox;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 
@@ -196,9 +195,11 @@ impl YesNoModalState {
         } else {
             let (sx, sy) = self.transform.to_screen(self.win_x, self.win_y);
             renderer.fill_screen(
-                Some(&BBox::new(
-                    geo2d::pt(sx as f32, sy as f32),
-                    geo2d::pt((sx + WIN_W) as f32, (sy + WIN_H) as f32),
+                Some(&BBox::from_coords(
+                    sx as f32,
+                    sy as f32,
+                    (sx + WIN_W) as f32,
+                    (sy + WIN_H) as f32,
                 )),
                 Renderer::create_color_16(30, 25, 15),
             );

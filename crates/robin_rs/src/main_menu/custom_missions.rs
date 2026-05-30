@@ -15,7 +15,6 @@
 use robin_engine::sprite::BBox;
 use std::path::{Path, PathBuf};
 
-use crate::geo2d;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
@@ -302,9 +301,8 @@ fn draw_list(
     let (sx0, sy0) = transform.to_screen(LIST_X, LIST_Y);
     let (sx1, sy1) = transform.to_screen(LIST_X + LIST_W, LIST_Y + LIST_H);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(sx0 as f32, sy0 as f32),
-            geo2d::pt(sx1 as f32, sy1 as f32),
+        Some(&BBox::from_coords(
+            sx0 as f32, sy0 as f32, sx1 as f32, sy1 as f32,
         )),
         Renderer::create_color_16(20, 15, 10),
     );
@@ -327,9 +325,8 @@ fn draw_list(
             let (sx0, sy0) = transform.to_screen(LIST_X + 2, row_y - 2);
             let (sx1, sy1) = transform.to_screen(LIST_X + LIST_W - 2, row_y + ROW_HEIGHT - 4);
             renderer.fill_screen(
-                Some(&BBox::new(
-                    geo2d::pt(sx0 as f32, sy0 as f32),
-                    geo2d::pt(sx1 as f32, sy1 as f32),
+                Some(&BBox::from_coords(
+                    sx0 as f32, sy0 as f32, sx1 as f32, sy1 as f32,
                 )),
                 Renderer::create_color_16(60, 50, 30),
             );
@@ -401,9 +398,8 @@ fn draw_detail_pane(
     let (sx0, sy0) = transform.to_screen(DETAIL_X, DETAIL_Y);
     let (sx1, sy1) = transform.to_screen(DETAIL_X + DETAIL_W, DETAIL_Y + DETAIL_H);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(sx0 as f32, sy0 as f32),
-            geo2d::pt(sx1 as f32, sy1 as f32),
+        Some(&BBox::from_coords(
+            sx0 as f32, sy0 as f32, sx1 as f32, sy1 as f32,
         )),
         Renderer::create_color_16(20, 15, 10),
     );

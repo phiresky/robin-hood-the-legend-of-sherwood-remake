@@ -2626,7 +2626,7 @@ impl EngineInner {
             if !obs.box_ground.contains_point(landing) {
                 continue;
             }
-            if !polygon_contains_point(&obs.polygon, landing.to_geo()) {
+            if !polygon_contains_point(obs.polygon.as_geo(), landing.to_geo()) {
                 continue;
             }
             let height = obs.compute_top_z(landing.x, landing.y);

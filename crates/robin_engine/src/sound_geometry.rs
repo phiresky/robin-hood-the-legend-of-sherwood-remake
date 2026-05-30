@@ -5,8 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
-use crate::geo2d::{self, GeoPoint2D};
+use crate::coordinates::{MapPoint, SoundVec};
+use crate::geo2d;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -183,11 +183,11 @@ pub struct SoundGeometry {
 }
 
 struct GeometryScratch {
-    decrunched_geometry: Vec<GeoPoint2D>,
+    decrunched_geometry: Vec<SoundVec>,
     point_distances: Vec<f32>,
     segment_distances: Vec<f32>,
-    segment_intersections: Vec<GeoPoint2D>,
-    closest_point: GeoPoint2D,
+    segment_intersections: Vec<SoundVec>,
+    closest_point: SoundVec,
     source_distance: f32,
 }
 
@@ -306,7 +306,7 @@ impl SoundGeometry {
 
     /// Compute panning for a single point relative to the listener.
     /// Returns -1.0 (full left) to 1.0 (full right), 0.0 = centered.
-    fn panning_for_point(position: GeoPoint2D, range: &SoundRange) -> f32 {
+    fn panning_for_point(position: SoundVec, range: &SoundRange) -> f32 {
         let x_abs = position.x.abs();
 
         if x_abs < range.inner_distance {
@@ -364,7 +364,7 @@ impl SoundGeometry {
     /// Same as panning but with X and Y swapped.
     fn fading_for_sound_source(scratch: &GeometryScratch, range: &SoundRange) -> f32 {
         if scratch.decrunched_geometry.len() == 1 {
-            let swapped = geo2d::pt(scratch.closest_point.y, scratch.closest_point.x);
+            let swapped = SoundVec::new(scratch.closest_point.y, scratch.closest_point.x);
             return Self::panning_for_point(swapped, range);
         }
 
@@ -377,7 +377,7 @@ impl SoundGeometry {
                     return 0.0;
                 }
                 let p = scratch.decrunched_geometry[i];
-                let swapped = geo2d::pt(p.y, p.x);
+                let swapped = SoundVec::new(p.y, p.x);
                 fading += Self::panning_for_point(swapped, range)
                     * Self::volume_for_distance(dist, range);
                 count += 1;
@@ -390,7 +390,7 @@ impl SoundGeometry {
                     return 0.0;
                 }
                 let p = scratch.segment_intersections[i];
-                let swapped = geo2d::pt(p.y, p.x);
+                let swapped = SoundVec::new(p.y, p.x);
                 fading += Self::panning_for_point(swapped, range)
                     * Self::volume_for_distance(dist, range);
                 count += 1;
@@ -414,18 +414,18 @@ impl SoundGeometry {
         let n = source.shape.len();
 
         let mut scratch = GeometryScratch {
-            decrunched_geometry: vec![geo2d::pt(0.0, 0.0); n],
+            decrunched_geometry: vec![SoundVec::ZERO; n],
             point_distances: vec![0.0; n],
             segment_distances: vec![-1.0; n.saturating_sub(1)],
-            segment_intersections: vec![geo2d::pt(0.0, 0.0); n.saturating_sub(1)],
-            closest_point: geo2d::pt(0.0, 0.0),
+            segment_intersections: vec![SoundVec::ZERO; n.saturating_sub(1)],
+            closest_point: SoundVec::ZERO,
             source_distance: 1_000_000.0,
         };
 
         // Transform each point to listener-relative coords with aspect correction
         for i in 0..n {
             let raw = source.shape[i];
-            let point = geo2d::pt(
+            let point = SoundVec::new(
                 raw.x - self.listen_point.x,
                 (raw.y - self.listen_point.y) * INVERSE_ASPECT_RATIO,
             );
@@ -454,7 +454,7 @@ impl SoundGeometry {
             let seg_idx = i - 1;
 
             // Project origin onto line defined by segment [point_a, point_b]
-            let ab = geo2d::pt(point_b.x - point_a.x, point_b.y - point_a.y);
+            let ab = SoundVec::new(point_b.x - point_a.x, point_b.y - point_a.y);
             let len_sq = ab.x * ab.x + ab.y * ab.y;
 
             if len_sq > geo2d::PRECISION * geo2d::PRECISION {
@@ -463,7 +463,7 @@ impl SoundGeometry {
 
                 if (0.0..=1.0).contains(&t) {
                     // Projection falls within the segment
-                    let proj = geo2d::pt(point_a.x + t * ab.x, point_a.y + t * ab.y);
+                    let proj = SoundVec::new(point_a.x + t * ab.x, point_a.y + t * ab.y);
                     let dist = (proj.x * proj.x + proj.y * proj.y).sqrt();
 
                     if dist < scratch.source_distance {
@@ -566,7 +566,7 @@ impl SoundGeometry {
                 inner_volume: 1.0,
             };
 
-            let rel = geo2d::pt(
+            let rel = SoundVec::new(
                 settings.position.x - self.listen_point.x,
                 (settings.position.y - self.listen_point.y) * INVERSE_ASPECT_RATIO,
             );
@@ -703,7 +703,7 @@ mod tests {
         };
 
         // Inside inner distance → centered
-        let p = SoundGeometry::panning_for_point(geo2d::pt(50.0, 0.0), &range);
+        let p = SoundGeometry::panning_for_point(SoundVec::new(50.0, 0.0), &range);
         assert_eq!(p, 0.0);
     }
 
@@ -718,19 +718,19 @@ mod tests {
 
         // Beyond outer distance → full left/right
         assert_eq!(
-            SoundGeometry::panning_for_point(geo2d::pt(500.0, 0.0), &range),
+            SoundGeometry::panning_for_point(SoundVec::new(500.0, 0.0), &range),
             1.0
         );
         assert_eq!(
-            SoundGeometry::panning_for_point(geo2d::pt(-500.0, 0.0), &range),
+            SoundGeometry::panning_for_point(SoundVec::new(-500.0, 0.0), &range),
             -1.0
         );
 
         // Midpoint → proportional
-        let p = SoundGeometry::panning_for_point(geo2d::pt(250.0, 0.0), &range);
+        let p = SoundGeometry::panning_for_point(SoundVec::new(250.0, 0.0), &range);
         assert!((p - 0.5).abs() < 1e-6, "p = {}", p);
 
-        let p = SoundGeometry::panning_for_point(geo2d::pt(-250.0, 0.0), &range);
+        let p = SoundGeometry::panning_for_point(SoundVec::new(-250.0, 0.0), &range);
         assert!((p - -0.5).abs() < 1e-6, "p = {}", p);
     }
 

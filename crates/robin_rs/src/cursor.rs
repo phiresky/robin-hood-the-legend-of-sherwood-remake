@@ -7,7 +7,6 @@
 //! Cursor pictures are loaded from `.res` resource files as `CUR ` entries.
 //! When no resource is available a simple arrow fallback is drawn.
 
-use crate::geo2d;
 use crate::gfx_types::BlendMode;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16, rgb565_to_rgb8};
 use crate::resource_manager::{ResourceId, ResourceManager};
@@ -338,13 +337,12 @@ impl CursorRenderer {
         let dst_x = mouse_x - self.hotspot_x;
         let dst_y = mouse_y - self.hotspot_y;
 
-        let src_box = BBox::new(
-            geo2d::pt(0.0, 0.0),
-            geo2d::pt(frame.width as f32, frame.height as f32),
-        );
-        let dst_box = BBox::new(
-            geo2d::pt(dst_x, dst_y),
-            geo2d::pt(dst_x + frame.width as f32, dst_y + frame.height as f32),
+        let src_box = BBox::from_coords(0.0, 0.0, frame.width as f32, frame.height as f32);
+        let dst_box = BBox::from_coords(
+            dst_x,
+            dst_y,
+            dst_x + frame.width as f32,
+            dst_y + frame.height as f32,
         );
 
         if opacity > 0

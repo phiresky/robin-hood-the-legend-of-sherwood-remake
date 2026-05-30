@@ -10,7 +10,7 @@ use crate::campaign::CampaignValue;
 use crate::element::{
     ElementKind, Entity, GameMaterial, ListenPhase, OutlineColorName, Posture, RenderingProperties,
 };
-use crate::geo2d::{self, BBox2D};
+use crate::geo2d::BBox2D;
 use crate::gfx_types::Rect;
 use crate::hud_text::{self, HudFonts};
 use crate::ingame_menu::layout;
@@ -21,7 +21,7 @@ use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{GroundPoint, MapPoint, ScreenPoint};
+use robin_engine::coordinates::{GroundPoint, MapPoint};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Ambiance, DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
@@ -492,14 +492,13 @@ pub(crate) fn render_view_cone_overlay(
     // World-space view rectangle, matching `update_draw_manager_params`
     // (engine/render.rs) — the UI panel at the bottom is excluded so the
     // overlay leaves the panel alone.
-    let view_rect = BBox::new(
-        host.viewport.view_position.to_geo(),
-        geo2d::pt(
-            host.viewport.view_position.x
-                + (host.viewport.screen_size.x - 1.0) / host.viewport.zoom_factor,
-            host.viewport.view_position.y
-                + (host.viewport.screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport.zoom_factor,
-        ),
+    let view_rect = engine_coordinates::MapBBox::from_coords(
+        host.viewport.view_position.x,
+        host.viewport.view_position.y,
+        host.viewport.view_position.x
+            + (host.viewport.screen_size.x - 1.0) / host.viewport.zoom_factor,
+        host.viewport.view_position.y
+            + (host.viewport.screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport.zoom_factor,
     );
 
     let alpha = params.alpha.min(crate::shadow_polygon::alpha_for_ambiance(
@@ -511,12 +510,6 @@ pub(crate) fn render_view_cone_overlay(
     // Collect character masks whose world-space bbox intersects the view
     // rect — these building silhouettes clear the tint inside the cone
     // in `render_darken_inside_gpu`'s mask post-pass.
-    let view_bbox = engine_coordinates::MapBBox::from_coords(
-        view_rect.min.x,
-        view_rect.min.y,
-        view_rect.max.x,
-        view_rect.max.y,
-    );
     let cone_masks: Vec<&engine_mask::RuntimeMask> = engine
         .fast_grid()
         .level
@@ -529,7 +522,7 @@ pub(crate) fn render_view_cone_overlay(
             engine_mask::MaskIndex::new(*idx as u32)
                 .is_some_and(|mi| engine.fast_grid().is_mask_active(mi))
                 && m.is_character()
-                && m.bbox.intersects_bbox(&view_bbox)
+                && m.bbox.intersects_bbox(&view_rect)
         })
         .map(|(_, m)| m)
         .collect();
@@ -759,14 +752,13 @@ fn render_all_view_cones(
         return;
     }
 
-    let view_rect = BBox::new(
-        host.viewport.view_position.to_geo(),
-        geo2d::pt(
-            host.viewport.view_position.x
-                + (host.viewport.screen_size.x - 1.0) / host.viewport.zoom_factor,
-            host.viewport.view_position.y
-                + (host.viewport.screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport.zoom_factor,
-        ),
+    let view_rect = engine_coordinates::MapBBox::from_coords(
+        host.viewport.view_position.x,
+        host.viewport.view_position.y,
+        host.viewport.view_position.x
+            + (host.viewport.screen_size.x - 1.0) / host.viewport.zoom_factor,
+        host.viewport.view_position.y
+            + (host.viewport.screen_size.y - PANNEL_HEIGHT + 1.0) / host.viewport.zoom_factor,
     );
 
     let obstacles_view = engine.sight_obstacles(assets);
@@ -785,11 +777,13 @@ fn render_all_view_cones(
         .filter(|(viewer, params, _)| {
             let r = params.radius;
             let z = params.viewer_z.max(0.0);
-            let cone_bbox = BBox::new(
-                ScreenPoint::new(viewer.x - r, viewer.y - z - r),
-                ScreenPoint::new(viewer.x + r, viewer.y + r),
+            let cone_bbox = engine_coordinates::MapBBox::from_coords(
+                viewer.x - r,
+                viewer.y - z - r,
+                viewer.x + r,
+                viewer.y + r,
             );
-            view_rect.is_intersecting(&cone_bbox)
+            view_rect.intersects_bbox(&cone_bbox)
         })
         .collect();
     if visible_params.is_empty() {
@@ -815,17 +809,20 @@ fn render_all_view_cones(
                         .into_iter()
                         .filter(|p| p.len() >= 3)
                         .filter(move |p| {
-                            let mut bbox = BBox::new(
-                                ScreenPoint::new(p[0].x, p[0].y),
-                                ScreenPoint::new(p[0].x, p[0].y),
-                            );
+                            let mut x_min = p[0].x;
+                            let mut y_min = p[0].y;
+                            let mut x_max = p[0].x;
+                            let mut y_max = p[0].y;
                             for &point in &p[1..] {
-                                bbox.min.x = bbox.min.x.min(point.x);
-                                bbox.min.y = bbox.min.y.min(point.y);
-                                bbox.max.x = bbox.max.x.max(point.x);
-                                bbox.max.y = bbox.max.y.max(point.y);
+                                x_min = x_min.min(point.x);
+                                y_min = y_min.min(point.y);
+                                x_max = x_max.max(point.x);
+                                y_max = y_max.max(point.y);
                             }
-                            view_rect_for_filter.is_intersecting(&bbox)
+                            let bbox = engine_coordinates::MapBBox::from_coords(
+                                x_min, y_min, x_max, y_max,
+                            );
+                            view_rect_for_filter.intersects_bbox(&bbox)
                         })
                         .map(move |p| {
                             (
@@ -939,10 +936,12 @@ fn render_ground_mark_set(
             continue;
         }
 
-        let src_box = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(fw as f32, fh as f32));
-        let dst_box = BBox::new(
-            geo2d::pt(dst_x as f32, dst_y as f32),
-            geo2d::pt((dst_x + scaled_w) as f32, (dst_y + scaled_h) as f32),
+        let src_box = BBox::from_coords(0.0, 0.0, fw as f32, fh as f32);
+        let dst_box = BBox::from_coords(
+            dst_x as f32,
+            dst_y as f32,
+            (dst_x + scaled_w) as f32,
+            (dst_y + scaled_h) as f32,
         );
 
         renderer.blit_with_shadow(
@@ -1923,8 +1922,8 @@ pub(crate) fn render_minimap(
             if surface != 0 {
                 let tl = mm.button_box().top_left();
                 let br = mm.button_box().bottom_right();
-                let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(br.x - tl.x, br.y - tl.y));
-                let dst = BBox::new(geo2d::pt(tl.x, tl.y), geo2d::pt(br.x, br.y));
+                let src = BBox::from_coords(0.0, 0.0, br.x - tl.x, br.y - tl.y);
+                let dst = BBox::from_coords(tl.x, tl.y, br.x, br.y);
                 renderer.blit_to_screen(surface, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
             }
         }
@@ -1946,11 +1945,8 @@ pub(crate) fn render_minimap(
     let map_h = map_size.y;
 
     // Blit the minimap bitmap to the screen
-    let src_box = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(map_w, map_h));
-    let dst_box = BBox::new(
-        geo2d::pt(map_tl.x, map_tl.y),
-        geo2d::pt(map_tl.x + map_w, map_tl.y + map_h),
-    );
+    let src_box = BBox::from_coords(0.0, 0.0, map_w, map_h);
+    let dst_box = BBox::from_coords(map_tl.x, map_tl.y, map_tl.x + map_w, map_tl.y + map_h);
 
     renderer.blit_to_screen(
         host.map_surface,
@@ -2121,17 +2117,13 @@ fn refresh_dot(
         return;
     }
 
-    let src_box = BBox::new(
-        geo2d::pt(src_x_min, src_y_min),
-        geo2d::pt(
-            src_x_min + (dst_x_max - dst_x_min),
-            src_y_min + (dst_y_max - dst_y_min),
-        ),
+    let src_box = BBox::from_coords(
+        src_x_min,
+        src_y_min,
+        src_x_min + (dst_x_max - dst_x_min),
+        src_y_min + (dst_y_max - dst_y_min),
     );
-    let dst_box = BBox::new(
-        geo2d::pt(dst_x_min, dst_y_min),
-        geo2d::pt(dst_x_max, dst_y_max),
-    );
+    let dst_box = BBox::from_coords(dst_x_min, dst_y_min, dst_x_max, dst_y_max);
 
     renderer.blit_to_screen(
         surface,

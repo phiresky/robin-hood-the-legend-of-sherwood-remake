@@ -14,10 +14,9 @@ use crate::rollback_checker::RollbackChecker;
 use crate::sdl_audio::SdlMixerBackend;
 use crate::sound::AlertStatus;
 use crate::sound_cache::SampleLoader;
+use robin_engine::coordinates::MapBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine_manager as engine_manager_api;
-use robin_engine::geo2d as engine_geo2d;
-use robin_engine::sprite as engine_sprite;
 
 /// Per-frame audio tick.
 ///
@@ -102,12 +101,11 @@ pub(super) fn pre_render_engine_setup(
         // overlay uses it.
         host.draw_manager.update_drawing_parameters(
             0,
-            engine_sprite::BBox::new(
-                view.to_geo(),
-                engine_geo2d::pt(
-                    view.x + (screen.x - 1.0) / zoom,
-                    view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
-                ),
+            MapBBox::from_coords(
+                view.x,
+                view.y,
+                view.x + (screen.x - 1.0) / zoom,
+                view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
             ),
             zoom,
         );

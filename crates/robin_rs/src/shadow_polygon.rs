@@ -30,10 +30,9 @@ use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
-use robin_engine::coordinates::{GroundBBox, GroundPoint};
+use robin_engine::coordinates::{GroundBBox, GroundPoint, MapBBox};
 use robin_engine::mask as engine_mask;
 use robin_engine::position_interface as engine_position_interface;
-use robin_engine::sprite::BBox;
 
 // Shared constants + types from the engine side.
 pub use robin_engine::shadow_polygon::{
@@ -294,7 +293,14 @@ pub fn project_and_clip_to_projection_area(
         y: p.y - projection_plane.compute_z(p.x, p.y),
     };
 
-    if projection_area.polygon_projection.exterior().0.len() < 3 {
+    if projection_area
+        .polygon_projection
+        .as_geo()
+        .exterior()
+        .0
+        .len()
+        < 3
+    {
         tracing::warn!(
             "projection-area obstacle {} has no projected polygon for view-cone clipping",
             projection_area.id
@@ -305,8 +311,8 @@ pub fn project_and_clip_to_projection_area(
     let mut rings = Vec::new();
     let blockers: Vec<geo::Polygon<f32>> = occluding_projection_areas
         .iter()
-        .filter(|obs| obs.polygon_projection.exterior().0.len() >= 3)
-        .map(|obs| obs.polygon_projection.clone())
+        .filter(|obs| obs.polygon_projection.as_geo().exterior().0.len() >= 3)
+        .map(|obs| obs.polygon_projection.as_geo().clone())
         .collect();
     let blocker_union = (!blockers.is_empty()).then(|| unary_union(&blockers));
     for poly in visible_polygons {
@@ -314,7 +320,7 @@ pub fn project_and_clip_to_projection_area(
         let Some(projected_poly) = points_to_polygon(&projected) else {
             continue;
         };
-        let clipped = projected_poly.intersection(&projection_area.polygon_projection);
+        let clipped = projected_poly.intersection(projection_area.polygon_projection.as_geo());
         let clipped = if let Some(blocker_union) = &blocker_union {
             clipped.difference(blocker_union)
         } else {
@@ -603,7 +609,7 @@ fn compute_shadow_polygon(
 #[allow(clippy::too_many_arguments)]
 pub fn render_darken_inside(
     renderer: &mut Renderer,
-    view_rect: &BBox,
+    view_rect: &MapBBox,
     zoom: f32,
     visible_polygons: &[Vec<GroundPoint>],
     tint: (u8, u8, u8),
@@ -641,7 +647,7 @@ pub fn render_darken_inside(
 #[allow(clippy::too_many_arguments)]
 fn render_darken_inside_gpu_spans(
     renderer: &mut Renderer,
-    view_rect: &BBox,
+    view_rect: &MapBBox,
     zoom: f32,
     visible_polygons: &[Vec<GroundPoint>],
     tint: (u8, u8, u8),
@@ -660,8 +666,8 @@ fn render_darken_inside_gpu_spans(
             .map(|plane| plane.compute_z(p.x, p.y))
             .unwrap_or(0.0);
         let projected_y = p.y - z;
-        let sx = (p.x - view_rect.min.x) * zoom;
-        let sy = (projected_y - view_rect.min.y) * zoom;
+        let sx = (p.x - view_rect.x_min()) * zoom;
+        let sy = (projected_y - view_rect.y_min()) * zoom;
         [sx, sy]
     };
 
@@ -735,14 +741,14 @@ fn render_darken_inside_gpu_spans(
 
 fn mask_spans_for_row(
     masks: &[&engine_mask::RuntimeMask],
-    view_rect: &BBox,
+    view_rect: &MapBBox,
     zoom: f32,
     inv_zoom: f32,
     sy: i32,
     screen_w: i32,
 ) -> Vec<(i32, i32)> {
     let mut spans = Vec::new();
-    let world_y = view_rect.min.y + (sy as f32 + 0.5) * inv_zoom;
+    let world_y = view_rect.y_min() + (sy as f32 + 0.5) * inv_zoom;
 
     for mask in masks {
         if !mask.is_character() {
@@ -760,7 +766,7 @@ fn mask_spans_for_row(
             continue;
         }
 
-        let sx_min = ((mask_origin_x - view_rect.min.x) * zoom).floor() as i32;
+        let sx_min = ((mask_origin_x - view_rect.x_min()) * zoom).floor() as i32;
         let sx_max = sx_min + (mw as f32 * zoom).ceil() as i32;
         let sx_from = sx_min.max(0);
         let sx_to = sx_max.min(screen_w);
@@ -771,7 +777,7 @@ fn mask_spans_for_row(
         let bitmap_row = by as usize * mw as usize;
         let mut run_start: Option<i32> = None;
         for sx in sx_from..sx_to {
-            let world_x = view_rect.min.x + (sx as f32 + 0.5) * inv_zoom;
+            let world_x = view_rect.x_min() + (sx as f32 + 0.5) * inv_zoom;
             let bx = (world_x - mask_origin_x).floor() as i32;
             let covered = bx >= 0 && bx < mw && mask.bitmap[bitmap_row + bx as usize] != 0;
             match (run_start, covered) {
@@ -846,7 +852,7 @@ fn cone_alpha_at_screen(
 /// own tint and distance fade, so overlapping cones blend naturally.
 fn render_tinted_cones_gpu(
     renderer: &mut Renderer,
-    view_rect: &BBox,
+    view_rect: &MapBBox,
     zoom: f32,
     cones: &[TintedCone],
 ) {
@@ -878,7 +884,7 @@ pub fn alpha_for_ambiance(is_night_or_fog: bool) -> u8 {
 /// Render each cone filled with its own tint colour (for `--view-cones`).
 pub fn render_tinted_cones(
     renderer: &mut Renderer,
-    view_rect: &BBox,
+    view_rect: &MapBBox,
     zoom: f32,
     cones: &[TintedCone],
 ) {

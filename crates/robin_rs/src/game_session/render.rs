@@ -34,7 +34,6 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 use robin_engine::engine_manager as engine_manager_api;
-use robin_engine::geo2d as engine_geo2d;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
@@ -473,16 +472,7 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
     if w <= 0 || h <= 0 {
         return;
     }
-    let rect = engine_sprite::BBox::new(
-        engine_geo2d::GeoPoint2D {
-            x: x as f32,
-            y: y as f32,
-        },
-        engine_geo2d::GeoPoint2D {
-            x: (x + w) as f32,
-            y: (y + h) as f32,
-        },
-    );
+    let rect = engine_sprite::BBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     renderer.fill_screen(Some(&rect), color);
 }
 

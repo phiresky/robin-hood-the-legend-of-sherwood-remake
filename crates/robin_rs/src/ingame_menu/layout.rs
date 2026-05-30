@@ -6,7 +6,6 @@
 //! orphan avoidance (used by the debriefing modal for the justified
 //! mission summary).
 
-use crate::geo2d;
 use crate::native_font::{Font, NativeFont};
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates as engine_coordinates;
@@ -232,13 +231,12 @@ pub fn draw_background(
     virt_h: i32,
 ) {
     let (sx, sy) = transform.to_screen(virt_x, virt_y);
-    let src = BBox::new(
-        geo2d::pt(0.0, 0.0),
-        geo2d::pt(surface.width as f32, surface.height as f32),
-    );
-    let dst = BBox::new(
-        geo2d::pt(sx as f32, sy as f32),
-        geo2d::pt((sx + virt_w) as f32, (sy + virt_h) as f32),
+    let src = BBox::from_coords(0.0, 0.0, surface.width as f32, surface.height as f32);
+    let dst = BBox::from_coords(
+        sx as f32,
+        sy as f32,
+        (sx + virt_w) as f32,
+        (sy + virt_h) as f32,
     );
     renderer.blit_to_screen(surface.id, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
 }
@@ -248,16 +246,12 @@ pub fn draw_background(
 /// This is the screen-level background layer: it covers the whole
 /// screen rather than the centered 640x480 menu window.
 pub fn draw_screen_background(renderer: &mut Renderer, surface: &super::resources::MenuSurface) {
-    let src = BBox::new(
-        geo2d::pt(0.0, 0.0),
-        geo2d::pt(surface.width as f32, surface.height as f32),
-    );
-    let dst = BBox::new(
-        geo2d::pt(0.0, 0.0),
-        geo2d::pt(
-            renderer.screen_width() as f32,
-            renderer.screen_height() as f32,
-        ),
+    let src = BBox::from_coords(0.0, 0.0, surface.width as f32, surface.height as f32);
+    let dst = BBox::from_coords(
+        0.0,
+        0.0,
+        renderer.screen_width() as f32,
+        renderer.screen_height() as f32,
     );
     renderer.blit_to_screen(surface.id, Some(&src), Some(&dst), 0);
 }
@@ -288,9 +282,11 @@ pub fn draw_fallback_rect(renderer: &mut Renderer, x: i32, y: i32, w: i32, h: i3
         Renderer::create_color_16(40, 35, 25)
     };
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(x as f32, y as f32),
-            geo2d::pt((x + w) as f32, (y + h) as f32),
+        Some(&BBox::from_coords(
+            x as f32,
+            y as f32,
+            (x + w) as f32,
+            (y + h) as f32,
         )),
         bg,
     );
@@ -314,9 +310,11 @@ pub fn draw_slider(
     // Track
     let bg = Renderer::create_color_16(25, 20, 10);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(x as f32, (y + rect.h / 2 - 3) as f32),
-            geo2d::pt((x + rect.w) as f32, (y + rect.h / 2 + 3) as f32),
+        Some(&BBox::from_coords(
+            x as f32,
+            (y + rect.h / 2 - 3) as f32,
+            (x + rect.w) as f32,
+            (y + rect.h / 2 + 3) as f32,
         )),
         bg,
     );
@@ -336,9 +334,11 @@ pub fn draw_slider(
     let thumb_w = 12;
     let thumb_x = x + ((rect.w - thumb_w) as f32 * t) as i32;
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(thumb_x as f32, y as f32),
-            geo2d::pt((thumb_x + thumb_w) as f32, (y + rect.h) as f32),
+        Some(&BBox::from_coords(
+            thumb_x as f32,
+            y as f32,
+            (thumb_x + thumb_w) as f32,
+            (y + rect.h) as f32,
         )),
         Renderer::create_color_16(220, 200, 140),
     );
@@ -357,14 +357,13 @@ pub fn draw_slider(
         let sh = resources.slider_h.min(rect.h);
         let sx = thumb_x + (thumb_w - sw) / 2;
         let sy = y + (rect.h - sh) / 2;
-        let src = BBox::new(
-            geo2d::pt(0.0, 0.0),
-            geo2d::pt(resources.slider_w as f32, resources.slider_h as f32),
+        let src = BBox::from_coords(
+            0.0,
+            0.0,
+            resources.slider_w as f32,
+            resources.slider_h as f32,
         );
-        let dst = BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + sw) as f32, (sy + sh) as f32),
-        );
+        let dst = BBox::from_coords(sx as f32, sy as f32, (sx + sw) as f32, (sy + sh) as f32);
         renderer.blit_to_screen(sprite, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
 }

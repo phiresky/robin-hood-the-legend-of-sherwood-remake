@@ -12,7 +12,6 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::geo2d::pt;
 use crate::input::KeyboardState;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -855,7 +854,7 @@ impl RendererAlphaConstant {
         let dst_rect: Option<BBox> = self.base.bbox.0.map(|r| {
             let mn = r.min();
             let mx = r.max();
-            BBox::new(pt(mn.x, mn.y), pt(mx.x, mx.y))
+            BBox::from_coords(mn.x, mn.y, mx.x, mx.y)
         });
 
         if self.mixing_in_progress {

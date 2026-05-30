@@ -28,7 +28,6 @@ use web_time::Instant;
 
 use crate::gfx_types::Keycode;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::resource_ids;
@@ -1066,14 +1065,8 @@ fn draw_portrait_frame_alpha(
     let frame_h = portrait.height;
     let fx = (mouth_frame as i32 % FRAMES) * frame_w;
 
-    let src = BBox::new(
-        geo2d::pt(fx as f32, 0.0),
-        geo2d::pt((fx + frame_w) as f32, frame_h as f32),
-    );
-    let dst = BBox::new(
-        geo2d::pt(sx as f32, sy as f32),
-        geo2d::pt((sx + vw) as f32, (sy + vh) as f32),
-    );
+    let src = BBox::from_coords(fx as f32, 0.0, (fx + frame_w) as f32, frame_h as f32);
+    let dst = BBox::from_coords(sx as f32, sy as f32, (sx + vw) as f32, (sy + vh) as f32);
 
     if alpha_percent >= 100 {
         renderer.blit_to_screen(

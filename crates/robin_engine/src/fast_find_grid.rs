@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{GroundBBox, MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
-use crate::geo2d::{self, BBox2D, Vec2D, pt};
+use crate::geo2d::{self, BBox2D, pt};
 
 // ---------------------------------------------------------------------------
 // SectorIndex — nominal newtype
@@ -80,7 +80,7 @@ pub const GRID_CELL_SIZE: i32 = 64;
 pub const GRID_CELL_SIZE_F: f32 = 64.0;
 
 /// Grid cell diagonal vector (used for bounding box of a cell).
-pub const GRID_CELL_DIAGONAL: Vec2D = Vec2D { x: 64.0, y: 64.0 };
+pub const GRID_CELL_DIAGONAL: MapVec = MapVec { x: 64.0, y: 64.0 };
 
 // ─── QueryVisited ────────────────────────────────────────────────
 
@@ -3595,8 +3595,8 @@ mod tests {
     }
 
     fn square_sector(
-        min: geo2d::GeoPoint2D,
-        max: geo2d::GeoPoint2D,
+        min: MapPoint,
+        max: MapPoint,
         sector_type: crate::sector::SectorType,
         layer: u16,
         sector_number: i16,
@@ -3632,8 +3632,8 @@ mod tests {
     }
 
     fn square_projection_obstacle(
-        min: geo2d::GeoPoint2D,
-        max: geo2d::GeoPoint2D,
+        min: MapPoint,
+        max: MapPoint,
         layer: u16,
         sector: u16,
     ) -> crate::sight_obstacle::SightObstacle {
@@ -3681,8 +3681,8 @@ mod tests {
         let mut grid = make_empty_grid(2);
         grid.add_sector(
             square_sector(
-                pt(0.0, 0.0),
-                pt(128.0, 128.0),
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(128.0, 128.0),
                 SectorType::MOTION | SectorType::AREA,
                 1,
                 12,
@@ -3690,8 +3690,8 @@ mod tests {
             1,
         );
         let obstacles = [square_projection_obstacle(
-            pt(0.0, 0.0),
-            pt(128.0, 128.0),
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(128.0, 128.0),
             1,
             12,
         )];
@@ -3715,8 +3715,8 @@ mod tests {
         let mut grid = make_empty_grid(3);
         grid.add_sector(
             square_sector(
-                pt(0.0, 0.0),
-                pt(128.0, 128.0),
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(128.0, 128.0),
                 SectorType::MOTION | SectorType::AREA,
                 2,
                 22,
@@ -3724,8 +3724,8 @@ mod tests {
             2,
         );
         let obstacles = [
-            square_projection_obstacle(pt(0.0, 0.0), pt(128.0, 128.0), 1, 11),
-            square_projection_obstacle(pt(0.0, 0.0), pt(128.0, 128.0), 2, 22),
+            square_projection_obstacle(MapPoint::new(0.0, 0.0), MapPoint::new(128.0, 128.0), 1, 11),
+            square_projection_obstacle(MapPoint::new(0.0, 0.0), MapPoint::new(128.0, 128.0), 2, 22),
         ];
 
         let resolution = grid.resolve_projectile_landing_with_obstacle(
@@ -3746,8 +3746,8 @@ mod tests {
         let mut grid = make_empty_grid(1);
         grid.add_sector(
             square_sector(
-                pt(0.0, 0.0),
-                pt(128.0, 128.0),
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(128.0, 128.0),
                 SectorType::MOTION | SectorType::AREA,
                 0,
                 5,
@@ -3755,7 +3755,13 @@ mod tests {
             0,
         );
         grid.add_sector(
-            square_sector(pt(48.0, 48.0), pt(80.0, 80.0), SectorType::MOTION, 0, 6),
+            square_sector(
+                MapPoint::new(48.0, 48.0),
+                MapPoint::new(80.0, 80.0),
+                SectorType::MOTION,
+                0,
+                6,
+            ),
             0,
         );
 
@@ -3775,16 +3781,16 @@ mod tests {
         let mut grid = make_empty_grid(1);
         // Motion area under the jump overlay.
         let area = square_sector(
-            pt(32.0, 32.0),
-            pt(96.0, 96.0),
+            MapPoint::new(32.0, 32.0),
+            MapPoint::new(96.0, 96.0),
             SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
             0,
             1,
         );
         grid.add_sector(area, 0);
         let jump = square_sector(
-            pt(40.0, 40.0),
-            pt(80.0, 80.0),
+            MapPoint::new(40.0, 40.0),
+            MapPoint::new(80.0, 80.0),
             SectorType::MOUSE | SectorType::JUMP,
             0,
             2,
@@ -3804,8 +3810,8 @@ mod tests {
         // Motion area covering (0..128, 0..128).
         grid.add_sector(
             square_sector(
-                pt(0.0, 0.0),
-                pt(128.0, 128.0),
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(128.0, 128.0),
                 SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
                 0,
                 10,
@@ -3831,8 +3837,8 @@ mod tests {
 
         // Two overlapping jump sectors covering the same click point.
         let mut jump_a = square_sector(
-            pt(32.0, 32.0),
-            pt(96.0, 96.0),
+            MapPoint::new(32.0, 32.0),
+            MapPoint::new(96.0, 96.0),
             SectorType::MOUSE | SectorType::JUMP,
             0,
             20,
@@ -3843,8 +3849,8 @@ mod tests {
         grid.add_sector(jump_a, 0);
 
         let mut jump_b = square_sector(
-            pt(32.0, 32.0),
-            pt(96.0, 96.0),
+            MapPoint::new(32.0, 32.0),
+            MapPoint::new(96.0, 96.0),
             SectorType::MOUSE | SectorType::JUMP,
             0,
             21,

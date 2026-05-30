@@ -8,7 +8,7 @@
 //! layout helpers drive the *rendering*.
 
 use crate::cursor::CursorRenderer;
-use crate::geo2d;
+
 use crate::gfx_types::GameEvent;
 use crate::input::KeyboardState;
 use crate::native_font::NativeFont;
@@ -579,11 +579,8 @@ pub fn draw_widget_button(
     };
 
     let sprite_drawn = if let Some(surf) = sprite {
-        let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(w as f32, h as f32));
-        let dst = BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + w) as f32, (sy + h) as f32),
-        );
+        let src = BBox::from_coords(0.0, 0.0, w as f32, h as f32);
+        let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
         // `blit_with_shadow` multiply-darkens shadow-key pixels (key
         // 0x1F, intensity 50) in the source bitmap so the drop-shadow
         // ring around each button blends instead of rendering opaque
@@ -784,14 +781,13 @@ fn draw_widget_surface_id(
     };
     let (src_x, src_y, src_w, src_h) = source_rect.unwrap_or((0, 0, w, h));
     let (sx, sy) = transform.to_screen(vx, vy);
-    let src = BBox::new(
-        geo2d::pt(src_x as f32, src_y as f32),
-        geo2d::pt((src_x + src_w) as f32, (src_y + src_h) as f32),
+    let src = BBox::from_coords(
+        src_x as f32,
+        src_y as f32,
+        (src_x + src_w) as f32,
+        (src_y + src_h) as f32,
     );
-    let dst = BBox::new(
-        geo2d::pt(sx as f32, sy as f32),
-        geo2d::pt((sx + w) as f32, (sy + h) as f32),
-    );
+    let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
     let flags = if transparent {
         crate::renderer::BLIT_SOURCE_TRANSPARENT
     } else {
@@ -822,11 +818,8 @@ pub fn draw_widget_radio(
     use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 
     if let Some(surf) = resources.input_field_surface(selected) {
-        let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(w as f32, h as f32));
-        let dst = BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + w) as f32, (sy + h) as f32),
-        );
+        let src = BBox::from_coords(0.0, 0.0, w as f32, h as f32);
+        let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
         renderer.blit_to_screen(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
     } else {
         let bg = if selected {
@@ -837,9 +830,11 @@ pub fn draw_widget_radio(
             Renderer::create_color_16(30, 25, 15)
         };
         renderer.fill_screen(
-            Some(&engine_sprite::BBox::new(
-                geo2d::pt(sx as f32, sy as f32),
-                geo2d::pt((sx + w) as f32, (sy + h) as f32),
+            Some(&engine_sprite::BBox::from_coords(
+                sx as f32,
+                sy as f32,
+                (sx + w) as f32,
+                (sy + h) as f32,
             )),
             bg,
         );

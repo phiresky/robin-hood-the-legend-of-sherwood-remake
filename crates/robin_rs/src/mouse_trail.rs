@@ -247,13 +247,12 @@ impl MouseTrailRenderer {
             return;
         }
 
-        let src = engine_sprite::BBox::new(
-            crate::geo2d::pt(0.0, 0.0),
-            crate::geo2d::pt(1.0, height as f32),
-        );
-        let dst = engine_sprite::BBox::new(
-            crate::geo2d::pt(x as f32, y as f32),
-            crate::geo2d::pt((x + 1) as f32, (y + height) as f32),
+        let src = engine_sprite::BBox::from_coords(0.0, 0.0, 1.0, height as f32);
+        let dst = engine_sprite::BBox::from_coords(
+            x as f32,
+            y as f32,
+            (x + 1) as f32,
+            (y + height) as f32,
         );
         renderer.render_gpu_image(&self.images[idx], Some(&src), Some(&dst), BlendMode::Add);
     }

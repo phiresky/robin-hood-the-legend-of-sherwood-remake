@@ -9,7 +9,6 @@
 use crate::gfx_types::Keycode;
 use robin_engine::sprite::BBox;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
@@ -536,9 +535,11 @@ fn difficulty_label(resources: &IngameMenuResources, d: DifficultyLevel) -> Stri
 fn draw_fallback_rect(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
     let (sx, sy) = transform.to_screen(rect.x, rect.y);
     renderer.fill_screen(
-        Some(&BBox::new(
-            geo2d::pt(sx as f32, sy as f32),
-            geo2d::pt((sx + rect.w) as f32, (sy + rect.h) as f32),
+        Some(&BBox::from_coords(
+            sx as f32,
+            sy as f32,
+            (sx + rect.w) as f32,
+            (sy + rect.h) as f32,
         )),
         Renderer::create_color_16(30, 25, 15),
     );
@@ -984,13 +985,12 @@ async fn run_name_prompt(
         };
         if let Some(surf) = resources.input_field_selected_surface() {
             let (x, y) = transform.to_screen(input_rect.x, input_rect.y);
-            let src = BBox::new(
-                geo2d::pt(0.0, 0.0),
-                geo2d::pt(input_rect.w as f32, input_rect.h as f32),
-            );
-            let dst = BBox::new(
-                geo2d::pt(x as f32, y as f32),
-                geo2d::pt((x + input_rect.w) as f32, (y + input_rect.h) as f32),
+            let src = BBox::from_coords(0.0, 0.0, input_rect.w as f32, input_rect.h as f32);
+            let dst = BBox::from_coords(
+                x as f32,
+                y as f32,
+                (x + input_rect.w) as f32,
+                (y + input_rect.h) as f32,
             );
             renderer.blit_to_screen(
                 surf,

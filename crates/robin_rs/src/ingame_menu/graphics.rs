@@ -490,12 +490,11 @@ fn draw_preset_list(
         if is_selected {
             let (rx, ry) = transform.to_screen(PRESET_LIST_X + 1, y + 1);
             renderer.fill_screen(
-                Some(&engine_sprite::BBox::new(
-                    crate::geo2d::pt(rx as f32, ry as f32),
-                    crate::geo2d::pt(
-                        (rx + PRESET_LIST_W - 2) as f32,
-                        (ry + PRESET_LIST_ROW_H - 1) as f32,
-                    ),
+                Some(&engine_sprite::BBox::from_coords(
+                    rx as f32,
+                    ry as f32,
+                    (rx + PRESET_LIST_W - 2) as f32,
+                    (ry + PRESET_LIST_ROW_H - 1) as f32,
                 )),
                 Renderer::create_color_16(80, 60, 35),
             );

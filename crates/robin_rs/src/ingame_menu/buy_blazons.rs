@@ -19,7 +19,6 @@
 use crate::gfx_types::Keycode;
 use robin_engine::sprite::BBox;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::resource_ids;
@@ -247,9 +246,11 @@ pub async fn show_buy_blazons(
         } else {
             let (sx, sy) = transform.to_screen(win_x, win_y);
             renderer.fill_screen(
-                Some(&BBox::new(
-                    geo2d::pt(sx as f32, sy as f32),
-                    geo2d::pt((sx + WIN_W) as f32, (sy + WIN_H) as f32),
+                Some(&BBox::from_coords(
+                    sx as f32,
+                    sy as f32,
+                    (sx + WIN_W) as f32,
+                    (sy + WIN_H) as f32,
                 )),
                 Renderer::create_color_16(30, 25, 15),
             );

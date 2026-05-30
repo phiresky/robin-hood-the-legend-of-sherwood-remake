@@ -334,9 +334,11 @@ pub async fn show_shortcuts(
         } else {
             let (sx, sy) = transform.to_screen(LIST_RECT.x, LIST_RECT.y);
             renderer.fill_screen(
-                Some(&engine_sprite::BBox::new(
-                    crate::geo2d::pt(sx as f32, sy as f32),
-                    crate::geo2d::pt((sx + LIST_RECT.w) as f32, (sy + LIST_RECT.h) as f32),
+                Some(&engine_sprite::BBox::from_coords(
+                    sx as f32,
+                    sy as f32,
+                    (sx + LIST_RECT.w) as f32,
+                    (sy + LIST_RECT.h) as f32,
                 )),
                 Renderer::create_color_16(30, 25, 15),
             );

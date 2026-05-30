@@ -240,6 +240,48 @@ impl ObstaclePoint {
     }
 }
 
+/// Ground-plane obstacle polygon, matching C++ `RHSightObstacle::mPolygon`.
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct GroundPolygon(Polygon2D<f32>);
+
+impl GroundPolygon {
+    pub fn empty() -> Self {
+        Self(Polygon2D::new(geo::LineString::new(vec![]), vec![]))
+    }
+
+    pub fn from_ground_points(points: impl IntoIterator<Item = GroundPoint>) -> Self {
+        let coords: Vec<geo::Coord<f32>> = points.into_iter().map(GroundPoint::to_geo).collect();
+        Self(Polygon2D::new(geo::LineString::from(coords), vec![]))
+    }
+
+    pub fn as_geo(&self) -> &Polygon2D<f32> {
+        &self.0
+    }
+}
+
+/// Projected obstacle polygon with vertices `(x, y - z_top)`.
+///
+/// This is separate from [`GroundPolygon`] because the original C++ keeps
+/// `mPolygon` in ground coordinates while `mBoxScreen` is projected.  Rust
+/// also stores a projected polygon for projection-area clipping/lookup.
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct ProjectionPolygon(Polygon2D<f32>);
+
+impl ProjectionPolygon {
+    pub fn empty() -> Self {
+        Self(Polygon2D::new(geo::LineString::new(vec![]), vec![]))
+    }
+
+    pub fn from_projected_points(points: impl IntoIterator<Item = MapPoint>) -> Self {
+        let coords: Vec<geo::Coord<f32>> = points.into_iter().map(MapPoint::to_geo).collect();
+        Self(Polygon2D::new(geo::LineString::from(coords), vec![]))
+    }
+
+    pub fn as_geo(&self) -> &Polygon2D<f32> {
+        &self.0
+    }
+}
+
 // ---- SightObstacle ----
 
 /// A 3D sight obstacle that blocks line of sight for AI detection.
@@ -274,14 +316,14 @@ pub struct SightObstacle {
     pub obstacle_points: Vec<ObstaclePoint>,
 
     /// Ground-plane polygon (CCW winding, convex).
-    pub polygon: Polygon2D<f32>,
+    pub polygon: GroundPolygon,
 
     /// Projected polygon — vertices `(x, y - z_top)`.  Used to
     /// discriminate candidate projection-area obstacles by
     /// point-in-polygon at the position's projected map coordinates.
     /// Only meaningful when `is_projection_area()` is set; for
     /// ground-flat obstacles it coincides with `polygon`.
-    pub polygon_projection: Polygon2D<f32>,
+    pub polygon_projection: ProjectionPolygon,
 
     /// Top plane defined by three points `[origin, p1, p2]` (each `[x,y,z]`).
     /// Stored as raw triples so we don't depend on sb3d serde.
@@ -348,8 +390,8 @@ impl SightObstacle {
             box_ground: GroundBBox::new(),
             box_projection: MapBBox::new(),
             obstacle_points: Vec::new(),
-            polygon: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
-            polygon_projection: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
+            polygon: GroundPolygon::empty(),
+            polygon_projection: ProjectionPolygon::empty(),
             top_plane_points: [[0.0; 3]; 3],
             bottom_plane_points: [[0.0; 3]; 3],
             on_ground: true,
@@ -418,14 +460,14 @@ impl SightObstacle {
 
     /// Test if a ground-plane point lies inside the obstacle's polygon.
     pub fn contains_point(&self, p: GroundPoint) -> bool {
-        geo2d::polygon_contains_point(&self.polygon, p.to_geo())
+        geo2d::polygon_contains_point(self.polygon.as_geo(), p.to_geo())
     }
 
     /// Test if a projected map point lies inside the obstacle's
     /// projected polygon (vertices `(x, y - z_top)`).  Used by the
     /// projection-area sector lookup.
     pub fn contains_point_projection(&self, p: MapPoint) -> bool {
-        geo2d::polygon_contains_point(&self.polygon_projection, p.to_geo())
+        geo2d::polygon_contains_point(self.polygon_projection.as_geo(), p.to_geo())
     }
 
     /// Test if a sight line (segment from `from` to `to` on the ground plane)
@@ -440,7 +482,7 @@ impl SightObstacle {
         if self.box_ground.trivially_rejects_segment(seg) {
             return false;
         }
-        geo2d::segment_intersects_polygon(seg, &self.polygon)
+        geo2d::segment_intersects_polygon(seg, self.polygon.as_geo())
     }
 
     // ---- Polygon / bounding-box construction helpers ----
@@ -449,23 +491,21 @@ impl SightObstacle {
     /// Call this after populating or mutating `obstacle_points`.
     pub fn rebuild_geometry(&mut self) {
         // Build polygon from ground projections.
-        let coords: Vec<geo::Coord<f32>> = self
+        let coords = self
             .obstacle_points
             .iter()
-            .map(|op| GroundPoint::new(op.x, op.y).to_geo())
-            .collect();
+            .map(|op| GroundPoint::new(op.x, op.y));
 
-        self.polygon = Polygon2D::new(geo::LineString::from(coords), vec![]);
+        self.polygon = GroundPolygon::from_ground_points(coords);
 
         // Build projected polygon (vertices `(x, y - z_top)`). Used
         // for projected point-in-polygon discrimination by the
         // projection-area sector lookup.
-        let coords_screen: Vec<geo::Coord<f32>> = self
+        let coords_screen = self
             .obstacle_points
             .iter()
-            .map(|op| MapPoint::from_world_xyz(op.x, op.y, op.z_top).to_geo())
-            .collect();
-        self.polygon_projection = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
+            .map(|op| MapPoint::from_world_xyz(op.x, op.y, op.z_top));
+        self.polygon_projection = ProjectionPolygon::from_projected_points(coords_screen);
 
         // Rebuild 2D ground bbox.
         self.box_ground = GroundBBox::new();
@@ -621,7 +661,7 @@ impl SightObstacle {
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
                     if self.box_ground.contains_point(GroundPoint::from_geo(ip))
-                        && geo2d::polygon_contains_point(&self.polygon, ip)
+                        && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                     {
                         return true;
                     }
@@ -664,7 +704,8 @@ impl SightObstacle {
                     if let geo2d::Intersection2D::Point(ip) =
                         geo2d::segment_intersection(ray_seg, edge)
                     {
-                        let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
+                        let ip_ground = GroundPoint::from_geo(ip);
+                        let ray_z = ray_eq.z_at(ip_ground);
                         let top_z = self.compute_top_z(ip.x, ip.y);
                         let bot_z = self.compute_bottom_z(ip.x, ip.y);
                         if top_z >= ray_z && bot_z <= ray_z {
@@ -687,7 +728,7 @@ impl SightObstacle {
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
                     if self.box_ground.contains_point(GroundPoint::from_geo(ip))
-                        && geo2d::polygon_contains_point(&self.polygon, ip)
+                        && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                     {
                         return true;
                     }
@@ -705,7 +746,7 @@ impl SightObstacle {
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
                     if self.box_ground.contains_point(GroundPoint::from_geo(ip))
-                        && geo2d::polygon_contains_point(&self.polygon, ip)
+                        && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                     {
                         return true;
                     }
@@ -769,7 +810,8 @@ impl SightObstacle {
             if geo2d::segments_intersect(ray_seg, edge)
                 && let geo2d::Intersection2D::Point(ip) = geo2d::segment_intersection(ray_seg, edge)
             {
-                let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
+                let ip_ground = GroundPoint::from_geo(ip);
+                let ray_z = ray_eq.z_at(ip_ground);
                 let top_z = self.compute_top_z(ip.x, ip.y);
                 let blocked = if self.on_ground {
                     if !origin_above_top && !dest_above_top {
@@ -806,7 +848,7 @@ impl SightObstacle {
                 let iy = origin[1] + t_plane * (destination[1] - origin[1]);
                 let ip = pt(ix, iy);
                 if self.box_ground.contains_point(GroundPoint::from_geo(ip))
-                    && geo2d::polygon_contains_point(&self.polygon, ip)
+                    && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                 {
                     let t = t_plane.clamp(0.0, 1.0);
                     min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
@@ -834,7 +876,7 @@ impl SightObstacle {
                     let iy = origin[1] + t_plane * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
                     if self.box_ground.contains_point(GroundPoint::from_geo(ip))
-                        && geo2d::polygon_contains_point(&self.polygon, ip)
+                        && geo2d::polygon_contains_point(self.polygon.as_geo(), ip)
                     {
                         let t = t_plane.clamp(0.0, 1.0);
                         min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
