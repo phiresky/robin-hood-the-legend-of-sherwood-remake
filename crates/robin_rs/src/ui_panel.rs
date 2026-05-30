@@ -18,8 +18,11 @@ use std::collections::HashMap;
 
 use crate::element::Entity;
 use crate::geo2d::Point2D;
+use crate::gfx_types::Rect;
+use crate::profiles::Action;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::{ResourceId, ResourceManager};
+use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::engine::Engine;
@@ -1630,7 +1633,7 @@ pub fn draw_panel(
                             renderer,
                             crate::titbit::SpriteRow::QuickActionTitbits,
                             frame,
-                            crate::gfx_types::Rect::new(
+                            Rect::new(
                                 icon_x as i32 + shift_px,
                                 qa_strip_y as i32,
                                 iw as u32,
@@ -1890,7 +1893,7 @@ pub fn draw_requirements_bar(
             icon_y + REQ_BAR_ICON_H as i32,
         );
         let (icon_sid, status, selected) = match slot {
-            crate::widget::requirements::RequirementSlot::RequiredCharacter {
+            RequirementSlot::RequiredCharacter {
                 character_profile_idx,
                 status,
                 selected,
@@ -1906,7 +1909,7 @@ pub fn draw_requirements_bar(
                     *selected,
                 )
             }
-            crate::widget::requirements::RequirementSlot::RequiredAction {
+            RequirementSlot::RequiredAction {
                 action,
                 status,
                 selected,
@@ -1918,7 +1921,7 @@ pub fn draw_requirements_bar(
                     *selected,
                 )
             }
-            crate::widget::requirements::RequirementSlot::OptionalCharacter {
+            RequirementSlot::OptionalCharacter {
                 character_profile_idx,
             } => {
                 let slot_kind = character_profile_idx
@@ -1940,8 +1943,8 @@ pub fn draw_requirements_bar(
         // Its size comes from the `RHID_YES_NO` resource's native dimensions.
         if let Some(st) = status {
             let overlay = match st {
-                crate::widget::requirements::RequirementStatus::Fulfilled => portraits.req_yes,
-                crate::widget::requirements::RequirementStatus::Missing => portraits.req_no,
+                RequirementStatus::Fulfilled => portraits.req_yes,
+                RequirementStatus::Missing => portraits.req_no,
             };
             if let Some(sid) = overlay {
                 let w = renderer.surface_width(sid) as i32;
@@ -1986,15 +1989,9 @@ pub fn requirements_slot_tooltip_mt_id(
         MT_INFOBULLE_QG_NEEDED_ACTION, MT_INFOBULLE_QG_NEEDED_PC, MT_INFOBULLE_QG_OTHER_PC,
     };
     match slot {
-        crate::widget::requirements::RequirementSlot::RequiredCharacter { .. } => {
-            MT_INFOBULLE_QG_NEEDED_PC
-        }
-        crate::widget::requirements::RequirementSlot::RequiredAction { .. } => {
-            MT_INFOBULLE_QG_NEEDED_ACTION
-        }
-        crate::widget::requirements::RequirementSlot::OptionalCharacter { .. } => {
-            MT_INFOBULLE_QG_OTHER_PC
-        }
+        RequirementSlot::RequiredCharacter { .. } => MT_INFOBULLE_QG_NEEDED_PC,
+        RequirementSlot::RequiredAction { .. } => MT_INFOBULLE_QG_NEEDED_ACTION,
+        RequirementSlot::OptionalCharacter { .. } => MT_INFOBULLE_QG_OTHER_PC,
     }
 }
 
@@ -2274,7 +2271,7 @@ pub fn draw_pc_info_overlay(
     let _ = campaign;
     let is_archer = profiles
         .get_character(pc.pc.profile_index)
-        .map(|p| p.actions.contains(&crate::profiles::Action::Bow))
+        .map(|p| p.actions.contains(&Action::Bow))
         .unwrap_or(false);
 
     let sw = renderer.screen_width() as i32;

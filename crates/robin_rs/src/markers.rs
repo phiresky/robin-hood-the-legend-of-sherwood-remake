@@ -8,6 +8,7 @@ pub use robin_engine::markers::{
     GroundMark, GroundMarkEntry, NUMBER_OF_GROUND_FRAMES, SelectionMark,
 };
 
+use crate::gfx_types::Rect;
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
 use crate::resource_manager::ResourceManager;
 use robin_assets::picture::Picture;
@@ -106,7 +107,7 @@ impl SelectionMarkRenderer {
         let dst_x = screen_x - sw as i32 / 2;
         let dst_y = screen_y - sh as i32 / 2;
 
-        let dst_rect = crate::gfx_types::Rect::new(dst_x, dst_y, sw as u32, sh as u32);
+        let dst_rect = Rect::new(dst_x, dst_y, sw as u32, sh as u32);
         renderer.enqueue_external_texture(
             &frame.view,
             dst_rect,
