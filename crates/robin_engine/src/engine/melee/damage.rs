@@ -1545,40 +1545,59 @@ impl EngineInner {
         self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
     }
 
-    /// Finish a projectile death after the projectile helper already
-    /// subtracted HP.
+    /// Launch and synchronously dispatch a projectile damage sequence.
     ///
-    /// Projectile collision is resolved outside the sequence manager,
-    /// but lethal hits still need the normal death machinery so old
-    /// wait/move sequences are interrupted and the dying/corpse orders
-    /// become the victim's current animation.  Use zero damage here:
-    /// the actual HP/concussion change has already happened.
-    pub(crate) fn handle_projectile_death(
+    /// This mirrors the original `RHElementArrow::HitHuman` /
+    /// `RHElementStone::HitHuman` flow: collision creates a
+    /// `Receive*Damage` sequence element, and that element applies HP
+    /// damage, death side effects, and hit/death animations.
+    pub(crate) fn launch_projectile_damage_now(
         &mut self,
         assets: &LevelAssets,
         victim_id: EntityId,
         shooter_id: EntityId,
         command: crate::element::Command,
-    ) {
+        damage: u16,
+        concussion: u16,
+        flight_direction: Option<i16>,
+    ) -> bool {
         debug_assert!(matches!(
             command,
             crate::element::Command::ReceiveArrowDamage
                 | crate::element::Command::ReceiveStoneDamage
         ));
+        let was_alive = self
+            .get_entity(victim_id)
+            .map(|e| get_life_points(e) > 0)
+            .unwrap_or(false);
+
+        if let Some(direction) = flight_direction
+            && let Some(Some(victim)) = self.entities.get_mut(victim_id.0 as usize)
+        {
+            victim
+                .element_data_mut()
+                .set_direction_instantly(direction ^ 8);
+        }
+
         let elem = crate::sequence::SequenceElement::new_damage(
             1,
             command,
             Some(victim_id),
             Some(shooter_id),
-            0,
-            0,
+            damage,
+            concussion,
         );
         let seq_id = self.launch_element(elem);
         let elem_idx = 0;
         if !self.arbitrate_instruct(seq_id, elem_idx) {
-            return;
+            return false;
         }
         self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
+        was_alive
+            && self
+                .get_entity(victim_id)
+                .map(|e| get_life_points(e) <= 0)
+                .unwrap_or(false)
     }
 
     /// Internal entry point for `handle_death` that accepts the active

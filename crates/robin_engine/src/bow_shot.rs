@@ -25,7 +25,10 @@
 //!    along its precomputed ballistic trajectory (popping waypoints
 //!    from the trajectory list, interpolating between them).  When the
 //!    arrow comes within [`HIT_DISTANCE`] of any human, or the
-//!    trajectory runs out, the hit is applied via [`apply_arrow_hit`].
+//!    trajectory runs out, it returns an [`ArrowTickResult`].  The
+//!    engine layer turns that into a `ReceiveArrowDamage` sequence
+//!    element so damage and death animations follow the normal
+//!    sequence-manager path.
 //!
 //! ## UI action-slot refresh
 //!

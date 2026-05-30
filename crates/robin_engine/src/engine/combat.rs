@@ -2086,12 +2086,14 @@ impl EngineInner {
                             );
                             continue;
                         }
-                        let died = bow_shot::apply_arrow_hit(
-                            &mut self.entities,
+                        let died = self.launch_projectile_damage_now(
+                            assets,
                             victim,
                             shooter,
+                            Command::ReceiveArrowDamage,
                             damage,
-                            arrow_flight_direction,
+                            damage,
+                            Some(arrow_flight_direction),
                         );
                         tracing::debug!(
                             arrow = ?result.arrow,
@@ -2131,15 +2133,8 @@ impl EngineInner {
                         }
 
                         if died {
-                            self.handle_projectile_death(
-                                assets,
-                                victim,
-                                shooter,
-                                Command::ReceiveArrowDamage,
-                            );
                             self.award_bow_kill_xp(shooter);
                         }
-                        self.add_damage_number(victim, damage);
                     }
                 }
             }
@@ -2279,31 +2274,15 @@ impl EngineInner {
                 );
                 return;
             }
-            // Apply stone damage: damage=10, concussion=100 — heavy
-            // KO potential.
-            let Some(flight_direction) =
-                self.get_entity(stone).map(|e| e.element_data().direction())
-            else {
-                tracing::warn!(
-                    ?stone,
-                    ?victim,
-                    "stone hit missing projectile direction; skipping damage"
-                );
-                return;
-            };
-            let died = bow_shot::apply_projectile_hit(
-                &mut self.entities,
+            self.launch_projectile_damage_now(
+                assets,
                 victim,
                 _shooter,
+                Command::ReceiveStoneDamage,
                 STONE_DAMAGE,
                 STONE_CONCUSSION,
-                flight_direction,
+                None,
             );
-            self.add_damage_number(victim, STONE_DAMAGE);
-            if died {
-                self.handle_projectile_death(assets, victim, _shooter, Command::ReceiveStoneDamage);
-                self.award_bow_kill_xp(_shooter);
-            }
         } else if is_npc {
             // VIP / armored-soldier dodge: treated similarly to an
             // apple hit.
