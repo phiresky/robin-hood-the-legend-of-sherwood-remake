@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::GeoPoint2D;
+use crate::coordinates::MapPoint;
 
 // ---------------------------------------------------------------------------
 // PatchIndex — nominal newtype
@@ -228,7 +228,7 @@ pub struct Patch {
     /// Map sector this patch belongs to.
     pub sector: u16,
     /// Waypoint position for this patch.
-    pub waypoint: GeoPoint2D,
+    pub waypoint: MapPoint,
     /// Indices of doors controlled by this patch (into the GameHost
     /// doors array).  Mirrors the C++ `RHPatch::maDoors` list: populated
     /// only for `triggers_door` patches.  When `PatchEffect::SwapDoors`
@@ -298,7 +298,7 @@ impl Default for Patch {
             pathfinder_changing_obstacles: 0,
             layer: 0,
             sector: 0,
-            waypoint: GeoPoint2D { x: 0.0, y: 0.0 },
+            waypoint: MapPoint::new(0.0, 0.0),
             door_indices: Vec::new(),
             old_sight_obstacle_indices: Vec::new(),
             new_sight_obstacle_indices: Vec::new(),

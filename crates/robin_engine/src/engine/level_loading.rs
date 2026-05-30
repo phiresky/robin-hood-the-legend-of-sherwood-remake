@@ -1,6 +1,7 @@
 //! Level loading, entity spawning, and background initialization.
 
 use super::*;
+use crate::coordinates::MapPoint;
 use crate::element::{BonusItemTypeExt, Entity};
 use crate::geo2d;
 
@@ -646,10 +647,7 @@ impl EngineInner {
                     );
                 }
 
-                let pts: Vec<crate::coordinates::MapPoint> = pts
-                    .into_iter()
-                    .map(crate::coordinates::MapPoint::from_geo)
-                    .collect();
+                let pts: Vec<MapPoint> = pts.into_iter().map(MapPoint::from_geo).collect();
                 let grid_idx = self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
@@ -956,12 +954,11 @@ impl EngineInner {
                 // rather than panicking — we don't want to crash the
                 // renderer over a bad asset reference, but the issue
                 // should still surface.
-                obs.material_sectors = raw
-                    .material_indices
-                    .iter()
-                    .filter_map(|&idx| {
-                        let raw_sector =
-                            loaded
+                obs.material_sectors =
+                    raw.material_indices
+                        .iter()
+                        .filter_map(|&idx| {
+                            let raw_sector = loaded
                                 .proto
                                 .material_sectors
                                 .get(idx as usize)
@@ -975,36 +972,36 @@ impl EngineInner {
                                     );
                                     None
                                 })?;
-                        if raw_sector.polygon.points.len() < 3 {
-                            return None;
-                        }
-                        let points: Vec<crate::coordinates::MapPoint> = raw_sector
-                            .polygon
-                            .points
-                            .iter()
-                            .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
-                            .collect();
-                        let mut bbox = crate::geo2d::BBox2D::new();
-                        for &p in &points {
-                            bbox.expand_point(p.to_geo());
-                        }
-                        // Same material-code → GameMaterial mapping
-                        // as `MaterialSectors::build_from_raw` (clamp
-                        // out-of-range / LIGHT_SHADOW to default).
-                        const N_MATERIALS: u32 = 9;
-                        let code = raw_sector.material as u32;
-                        let material = if code >= N_MATERIALS {
-                            crate::element::GameMaterial::from_u32(default_material_code)
-                        } else {
-                            crate::element::GameMaterial::from_u32(code)
-                        };
-                        Some(crate::material_sectors::MaterialSector {
-                            points,
-                            bounding_box: bbox,
-                            material,
+                            if raw_sector.polygon.points.len() < 3 {
+                                return None;
+                            }
+                            let points: Vec<MapPoint> = raw_sector
+                                .polygon
+                                .points
+                                .iter()
+                                .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+                                .collect();
+                            let mut bbox = crate::geo2d::BBox2D::new();
+                            for &p in &points {
+                                bbox.expand_point(p.to_geo());
+                            }
+                            // Same material-code → GameMaterial mapping
+                            // as `MaterialSectors::build_from_raw` (clamp
+                            // out-of-range / LIGHT_SHADOW to default).
+                            const N_MATERIALS: u32 = 9;
+                            let code = raw_sector.material as u32;
+                            let material = if code >= N_MATERIALS {
+                                crate::element::GameMaterial::from_u32(default_material_code)
+                            } else {
+                                crate::element::GameMaterial::from_u32(code)
+                            };
+                            Some(crate::material_sectors::MaterialSector {
+                                points,
+                                bounding_box: bbox,
+                                material,
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
                 // Capture vertices 0/1/2 as (point3, point1, point2) and
                 // seed the top/bottom planes from (point1, point2, point3).
                 // Orientation flip is skipped because `compute_plane_z` is
@@ -1296,10 +1293,10 @@ impl EngineInner {
                 // Determine initial active state from start_animation_valid.
                 let initially_active = raw.start_animation_valid;
                 sprite.apply_placement(
-                    crate::coordinates::MapPoint {
-                        x: raw.element_fx.sprite.position_x as f32,
-                        y: raw.element_fx.sprite.position_y as f32,
-                    },
+                    MapPoint::new(
+                        raw.element_fx.sprite.position_x as f32,
+                        raw.element_fx.sprite.position_y as f32,
+                    ),
                     0,
                     None,
                     0,
@@ -1339,10 +1336,7 @@ impl EngineInner {
                             .element_fx
                             .display_polyline
                             .iter()
-                            .map(|&(x, y)| crate::coordinates::MapPoint {
-                                x: x as f32,
-                                y: y as f32,
-                            })
+                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect(),
                         patch_index: crate::patch::PatchIndex::new(patch_idx as u32),
                         // `rendering_properties = (blit_type != 0) ? NeedShadow : Blocky`.
@@ -1417,10 +1411,7 @@ impl EngineInner {
                     }
                 }
                 sprite.apply_placement(
-                    crate::coordinates::MapPoint {
-                        x: raw.sprite.position_x as f32,
-                        y: raw.sprite.position_y as f32,
-                    },
+                    MapPoint::new(raw.sprite.position_x as f32, raw.sprite.position_y as f32),
                     0,
                     None,
                     0,
@@ -1442,10 +1433,7 @@ impl EngineInner {
                         display_polyline: raw
                             .display_polyline
                             .iter()
-                            .map(|&(x, y)| crate::coordinates::MapPoint {
-                                x: x as f32,
-                                y: y as f32,
-                            })
+                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect(),
                         patch_index: None, // background animations aren't patches
                         // `rendering_properties = (blit_type != 0) ? NeedShadow : Blocky`.
@@ -1531,10 +1519,10 @@ impl EngineInner {
             sprite.position_iface.configure_for_actor(
                 0,
                 civ_half_diag,
-                crate::coordinates::MapPoint::new(raw.position_x as f32, raw.position_y as f32),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
             sprite.apply_placement(
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
@@ -1632,11 +1620,11 @@ impl EngineInner {
                 ),
                 None => (0, None),
             };
-            let initial_position_geo = geo2d::pt(raw.position_x as f32, raw.position_y as f32);
+            let initial_position = MapPoint::new(raw.position_x as f32, raw.position_y as f32);
             sprite.position_iface.configure_for_actor(
                 pc_pathfinder_idx,
                 pc_half_diag,
-                crate::coordinates::MapPoint::from_geo(initial_position_geo),
+                initial_position,
             );
             // The sector must be both motion and area; warn instead of
             // asserting so a corrupt mission file still loads.
@@ -1662,7 +1650,6 @@ impl EngineInner {
             // screen box.  Warn instead of aborting so a corrupt mission
             // stream still loads.
             if raw.obstacle_index != 0xFFFF {
-                let pos = geo2d::pt(raw.position_x as f32, raw.position_y as f32);
                 match assets
                     .static_sight_obstacles
                     .get(raw.obstacle_index as usize)
@@ -1682,7 +1669,7 @@ impl EngineInner {
                                 raw.obstacle_index,
                             );
                         }
-                        if !obs.box_screen.contains_point(pos) {
+                        if !obs.box_screen.contains_point(initial_position.to_geo()) {
                             tracing::warn!(
                                 "Rescue PC profile {} at ({},{}) map position not lying in projection area screen box (obstacle {})",
                                 raw.profile_index,
@@ -1698,7 +1685,7 @@ impl EngineInner {
             // `load_frame_info` above) is the authoritative C++ sprite
             // anchor used by rendering and gameplay hotspot lookups.
             sprite.apply_placement(
-                initial_position_geo.into(),
+                initial_position,
                 raw.layer,
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
@@ -1713,9 +1700,7 @@ impl EngineInner {
             // first post-spawn tick.
             let current_position = sprite.position_iface.get_position();
             sprite.position_iface.set_old_position(current_position);
-            sprite
-                .position_iface
-                .set_old_map_position(crate::coordinates::MapPoint::from_geo(initial_position_geo));
+            sprite.position_iface.set_old_map_position(initial_position);
             // Display order is computed by the host-side
             // `compute_display_order` pass (`engine/display_state.rs`)
             // that runs before render and input hit-test on every tick
@@ -1936,10 +1921,10 @@ impl EngineInner {
             sprite.position_iface.configure_for_actor(
                 soldier_pathfinder_idx,
                 soldier_half_diag,
-                crate::coordinates::MapPoint::new(raw.position_x as f32, raw.position_y as f32),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
             sprite.apply_placement(
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 crate::position_interface::SectorHandle::new(raw.sector),
                 // Apply initial facing from level data (0-15 sector).
@@ -2121,7 +2106,7 @@ impl EngineInner {
                 // so the plane projection can derive a baseline 3D
                 // location. The map is later overwritten with the action
                 // point (see below).
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 crate::position_interface::SectorHandle::new(raw.sector),
                 // Apply initial facing from level data (0-15 sector).
@@ -2160,13 +2145,11 @@ impl EngineInner {
             // at the sprite position but its action point — the spot the
             // PC walks to when interacting — lives at action_position.
             let action_point =
-                geo2d::pt(raw.action_position_x as f32, raw.action_position_y as f32);
-            sprite.position_iface.set_map_position_preserving_3d(
-                crate::coordinates::MapPoint::from_geo(action_point),
-            );
+                MapPoint::new(raw.action_position_x as f32, raw.action_position_y as f32);
             sprite
                 .position_iface
-                .set_old_map_position(crate::coordinates::MapPoint::from_geo(action_point));
+                .set_map_position_preserving_3d(action_point);
+            sprite.position_iface.set_old_map_position(action_point);
             let entity = Entity::Target(crate::element::ElementTarget {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::Target,
@@ -2183,10 +2166,10 @@ impl EngineInner {
                     action_filter: crate::element::TargetFilter::from_bits_truncate(
                         raw.action_filter,
                     ),
-                    action_position: crate::coordinates::MapPoint {
-                        x: raw.action_position_x as f32,
-                        y: raw.action_position_y as f32,
-                    },
+                    action_position: MapPoint::new(
+                        raw.action_position_x as f32,
+                        raw.action_position_y as f32,
+                    ),
                     action_sector: raw.action_sector,
                     action_layer: raw.action_layer,
                     position_z: raw.position_z,
@@ -2195,10 +2178,7 @@ impl EngineInner {
                     display_polyline: raw
                         .polyline
                         .iter()
-                        .map(|&(x, y)| crate::coordinates::MapPoint {
-                            x: x as f32,
-                            y: y as f32,
-                        })
+                        .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                         .collect(),
                     rendering_properties,
                     // Per-target script class name. Empty string = no
@@ -2318,7 +2298,7 @@ impl EngineInner {
                 sprite.force_random_sprite_frame(&mut self.rng);
             }
             sprite.apply_placement(
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 crate::position_interface::SectorHandle::new(raw.sector),
                 // Apply initial facing from level data (0-15 sector).
@@ -2420,7 +2400,7 @@ impl EngineInner {
                 raw.presence.get(difficulty_idx).copied().unwrap_or(false)
             };
             sprite.apply_placement(
-                geo2d::pt(raw.position_x as f32, raw.position_y as f32).into(),
+                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 crate::position_interface::SectorHandle::new(raw.sector),
                 (raw.direction & 15) as i16,
@@ -2962,7 +2942,7 @@ impl EngineInner {
                 sprite.position_iface.configure_for_actor(
                     pc_pathfinder_idx,
                     pc_half_diag,
-                    crate::coordinates::MapPoint::from_geo(beam_me.position),
+                    beam_me.position,
                 );
                 // Validate every beam-me's layer range and sector
                 // motion/area bits.  Warn instead of asserting so a
@@ -3025,7 +3005,7 @@ impl EngineInner {
                                     beam_me.projection_area,
                                 );
                             }
-                            if !obs.box_screen.contains_point(beam_me.position) {
+                            if !obs.box_screen.contains_point(beam_me.position.to_geo()) {
                                 tracing::warn!(
                                     "Beam-me {} at ({},{}) map position not lying in projection area screen box (obstacle {})",
                                     bm_idx,
@@ -3038,7 +3018,7 @@ impl EngineInner {
                     }
                 }
                 sprite.apply_placement(
-                    beam_me.position.into(),
+                    beam_me.position,
                     beam_me.layer,
                     crate::position_interface::SectorHandle::new(beam_me.sector),
                     // Apply initial facing from the beam-me point (0-15 sector).
@@ -3055,9 +3035,7 @@ impl EngineInner {
                 // path above).
                 let current_position = sprite.position_iface.get_position();
                 sprite.position_iface.set_old_position(current_position);
-                sprite
-                    .position_iface
-                    .set_old_map_position(crate::coordinates::MapPoint::from_geo(beam_me.position));
+                sprite.position_iface.set_old_map_position(beam_me.position);
                 // Seed `disabled_actions` from per-slot ammo /
                 // purse-ransom checks so a slot whose counter is empty
                 // (or whose purse threshold isn't met) starts greyed out
@@ -3351,7 +3329,7 @@ impl EngineInner {
         } else {
             0
         };
-        let building_first_door_info: Vec<(geo2d::GeoPoint2D, u16)> = loaded
+        let building_first_door_info: Vec<(MapPoint, u16)> = loaded
             .proto
             .buildings
             .iter()
@@ -3361,7 +3339,7 @@ impl EngineInner {
             })
             .map(|door| {
                 (
-                    geo2d::pt(door.point_in.0 as f32, door.point_in.1 as f32),
+                    MapPoint::new(door.point_in.0 as f32, door.point_in.1 as f32),
                     door.sector_in,
                 )
             })
@@ -3401,7 +3379,7 @@ impl EngineInner {
                     // `PositionInterface` so the move-box and pathfinder
                     // caches see the teleport.
                     let pi = &mut elem.sprite.position_iface;
-                    pi.set_map_position(crate::coordinates::MapPoint::from_geo(point_in));
+                    pi.set_map_position(point_in);
                     if let Some(layer) = crate::position_interface::Layer::new(lift_layer) {
                         pi.set_layer(layer);
                     }
@@ -3739,8 +3717,8 @@ impl EngineInner {
             let left = to_idx(raw.left_obstacle_index);
             let right = to_idx(raw.right_obstacle_index);
             let line = crate::fast_find_grid::GridLine::new_elevation(
-                crate::coordinates::MapPoint::new(raw.point_a.0 as f32, raw.point_a.1 as f32),
-                crate::coordinates::MapPoint::new(raw.point_b.0 as f32, raw.point_b.1 as f32),
+                MapPoint::new(raw.point_a.0 as f32, raw.point_a.1 as f32),
+                MapPoint::new(raw.point_b.0 as f32, raw.point_b.1 as f32),
                 left,
                 right,
             );
@@ -3774,8 +3752,8 @@ impl EngineInner {
                     let (x1, y1) = poly.points[i];
                     let (x2, y2) = poly.points[(i + 1) % poly.points.len()];
                     let mut line = crate::fast_find_grid::GridLine::new(
-                        crate::coordinates::MapPoint::new(x1 as f32, y1 as f32),
-                        crate::coordinates::MapPoint::new(x2 as f32, y2 as f32),
+                        MapPoint::new(x1 as f32, y1 as f32),
+                        MapPoint::new(x2 as f32, y2 as f32),
                         true, // is_motion
                     );
                     line.initialize_motion_normal(true);
@@ -3802,9 +3780,7 @@ impl EngineInner {
                             let is_concave = crate::geo2d::cross(limit_left, limit_right) < 0.0;
                             self.fast_grid.level_mut().level_repulsive_points.push(
                                 crate::fast_find_grid::LevelRepulsivePoint {
-                                    position: crate::coordinates::MapPoint::new(
-                                        bx as f32, by as f32,
-                                    ),
+                                    position: MapPoint::new(bx as f32, by as f32),
                                     layer: layer_idx as u16,
                                     limit_left,
                                     limit_right,
@@ -3845,8 +3821,8 @@ impl EngineInner {
                         let (x1, y1) = obs_poly.points[i];
                         let (x2, y2) = obs_poly.points[(i + 1) % obs_poly.points.len()];
                         let mut line = crate::fast_find_grid::GridLine::new(
-                            crate::coordinates::MapPoint::new(x1 as f32, y1 as f32),
-                            crate::coordinates::MapPoint::new(x2 as f32, y2 as f32),
+                            MapPoint::new(x1 as f32, y1 as f32),
+                            MapPoint::new(x2 as f32, y2 as f32),
                             true,
                         );
                         line.initialize_motion_normal(false);
@@ -3875,9 +3851,7 @@ impl EngineInner {
                                 let is_concave = crate::geo2d::cross(limit_left, limit_right) < 0.0;
                                 self.fast_grid.level_mut().level_repulsive_points.push(
                                     crate::fast_find_grid::LevelRepulsivePoint {
-                                        position: crate::coordinates::MapPoint::new(
-                                            ox as f32, oy as f32,
-                                        ),
+                                        position: MapPoint::new(ox as f32, oy as f32),
                                         layer: layer_idx as u16,
                                         limit_left,
                                         limit_right,
@@ -3966,7 +3940,7 @@ impl EngineInner {
                         .polygon
                         .points
                         .iter()
-                        .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
+                        .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                         .collect();
                     let mut bbox = crate::geo2d::BBox2D::new();
                     for &p in &pts {
@@ -4003,7 +3977,7 @@ impl EngineInner {
                             .polygon
                             .points
                             .iter()
-                            .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
+                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect();
                         let mut obs_bbox = crate::geo2d::BBox2D::new();
                         for &p in &obs_pts {
@@ -4177,7 +4151,7 @@ impl EngineInner {
                     .polygon
                     .points
                     .iter()
-                    .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                     .collect();
                 let mut bbox = crate::geo2d::BBox2D::new();
                 for &p in &pts {
@@ -4237,7 +4211,7 @@ impl EngineInner {
             if is_night_or_fog && light_added > 0 {
                 // Snapshot (idx, points, layer) without holding the
                 // immutable borrow during the obstacle lookup pass.
-                let shadow_inputs: Vec<(u32, Vec<crate::coordinates::MapPoint>, u16)> = self
+                let shadow_inputs: Vec<(u32, Vec<MapPoint>, u16)> = self
                     .fast_grid
                     .level
                     .sectors
@@ -4572,11 +4546,11 @@ impl EngineInner {
             if zone.polygon.points.is_empty() {
                 continue;
             }
-            let points: Vec<crate::coordinates::MapPoint> = zone
+            let points: Vec<MapPoint> = zone
                 .polygon
                 .points
                 .iter()
-                .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
+                .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                 .collect();
             let mut bbox = crate::geo2d::BBox2D::new();
             for &p in &points {
@@ -5006,7 +4980,7 @@ impl EngineInner {
                 let pts: Vec<_> = door
                     .click_polygon
                     .iter()
-                    .map(|&(x, y)| crate::coordinates::MapPoint::new(x, y))
+                    .map(|&(x, y)| MapPoint::new(x, y))
                     .collect();
                 let bbox = door.click_bbox;
                 // Start with layer_out; bump to layer_in iff it's
@@ -5082,10 +5056,7 @@ impl EngineInner {
                     .map(|prev| prev.point_in.1)
                     .is_none_or(|prev_y| door.point_in.1 > prev_y);
                 if lowest {
-                    gs.low_exit_point = Some(crate::coordinates::MapPoint::new(
-                        door.point_in.0,
-                        door.point_in.1,
-                    ));
+                    gs.low_exit_point = Some(MapPoint::new(door.point_in.0, door.point_in.1));
                     gs.lowest_door_index = Some(door_idx);
                 }
                 let highest = gs
@@ -5093,10 +5064,7 @@ impl EngineInner {
                     .map(|prev| prev.y)
                     .is_none_or(|prev_y| door.point_in.1 < prev_y);
                 if highest {
-                    gs.high_exit_point = Some(crate::coordinates::MapPoint::new(
-                        door.point_in.0,
-                        door.point_in.1,
-                    ));
+                    gs.high_exit_point = Some(MapPoint::new(door.point_in.0, door.point_in.1));
                 }
             }
         }
@@ -5166,10 +5134,10 @@ impl EngineInner {
                 if poly.points.is_empty() {
                     return None;
                 }
-                let points: Vec<crate::coordinates::MapPoint> = poly
+                let points: Vec<MapPoint> = poly
                     .points
                     .iter()
-                    .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                     .collect();
                 let mut bbox = crate::geo2d::BBox2D::new();
                 for &p in &points {
@@ -5340,7 +5308,7 @@ impl EngineInner {
                 // and `mpSelectedPatch->GetLayer()`.
                 layer: raw.final_layer,
                 sector: raw.sector,
-                waypoint: crate::geo2d::pt(raw.waypoint.0 as f32, raw.waypoint.1 as f32),
+                waypoint: MapPoint::new(raw.waypoint.0 as f32, raw.waypoint.1 as f32),
                 old_sight_obstacle_indices: old_sight,
                 new_sight_obstacle_indices: new_sight,
                 old_sector_indices,
@@ -5810,7 +5778,7 @@ impl EngineInner {
                     }
                     sprite.force_random_sprite_frame(&mut self.rng);
                     sprite.apply_placement(
-                        crate::geo2d::pt(point.x, point.y).into(),
+                        MapPoint::new(point.x, point.y),
                         point.layer,
                         crate::position_interface::SectorHandle::new(point.sector),
                         0,
@@ -5872,7 +5840,7 @@ impl EngineInner {
                     }
                     sprite.force_random_sprite_frame(&mut self.rng);
                     sprite.apply_placement(
-                        crate::geo2d::pt(point.x, point.y).into(),
+                        MapPoint::new(point.x, point.y),
                         point.layer,
                         crate::position_interface::SectorHandle::new(point.sector),
                         0,
@@ -5947,19 +5915,14 @@ impl EngineInner {
                 if let Some(Some(crate::element::Entity::Pc(pc))) =
                     self.entities.get_mut(entity_idx)
                 {
-                    pc.element.set_position_map(crate::coordinates::MapPoint {
-                        x: occupant.x,
-                        y: occupant.y,
-                    });
+                    pc.element
+                        .set_position_map(MapPoint::new(occupant.x, occupant.y));
                     pc.element.set_layer(layer);
                     pc.element
                         .set_sector(crate::position_interface::SectorHandle::new(sector_idx));
                     {
                         let pi = &mut pc.element.sprite.position_iface;
-                        pi.set_map_position(crate::coordinates::MapPoint {
-                            x: occupant.x,
-                            y: occupant.y,
-                        });
+                        pi.set_map_position(MapPoint::new(occupant.x, occupant.y));
                     }
                 }
                 // Release the `entities` borrow before calling helpers
