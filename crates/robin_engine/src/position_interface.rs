@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{MapPoint, MapVec, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
-use crate::geo2d::{self, BBox2D, Point2D, Vec2D};
+use crate::geo2d::{self, BBox2D, Vec2D};
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 
 // ---------------------------------------------------------------------------
@@ -856,7 +856,7 @@ impl PositionInterface {
     #[inline]
     pub fn set_map_position_preserving_3d(&mut self, pt: MapPoint) {
         self.position_map = pt;
-        self.move_box_map = self.get_move_box_offset(pt.to_geo());
+        self.move_box_map = self.get_move_box_offset(pt);
     }
 
     #[inline]
@@ -1394,13 +1394,13 @@ impl PositionInterface {
     fn recompute_from_3d(&mut self) {
         let map = self.position.to_map();
         self.position_map = map;
-        self.move_box_map = self.get_move_box_offset(map.to_geo());
+        self.move_box_map = self.get_move_box_offset(map);
     }
 
     /// Resync 3D + move_box_map from the current `position_map`.
     fn recompute_from_map(&mut self) {
         let map = self.position_map;
-        self.move_box_map = self.get_move_box_offset(map.to_geo());
+        self.move_box_map = self.get_move_box_offset(map);
         self.position_3d_from_map();
     }
 
@@ -1538,19 +1538,14 @@ impl PositionInterface {
     /// live).  Passing `None` for `target` disables the blocked-count
     /// radius-slack branch.
     pub fn is_goal_reached(&self, grid: &FastFindGrid, target: Option<TargetInfo>) -> bool {
-        let map = self.position_map.to_geo();
-        let goal = self.goal_map.to_geo();
-        let im = self.increment_map.to_geo();
+        let map = self.position_map;
+        let goal = self.goal_map;
+        let im = self.increment_map;
 
         if self.deviated {
             if self.goal_next_valid {
                 let hd = self.get_half_diagonal();
-                grid.is_reachable_thick(
-                    map.into(),
-                    self.goal_next_map.to_geo().into(),
-                    self.layer.get(),
-                    hd,
-                )
+                grid.is_reachable_thick(map, self.goal_next_map, self.layer.get(), hd)
             } else if self.blocked_count == 0 {
                 self.directional_goal_check(map, goal, im)
             } else {
@@ -1560,7 +1555,7 @@ impl PositionInterface {
                 // horse-mount shortcut (tight 10-unit threshold for
                 // ridable animals) is omitted because no animals ship
                 // in the game.
-                let to_goal = geo2d::pt(goal.x - map.x, goal.y - map.y);
+                let to_goal = goal - map;
                 if let Some(t) = target {
                     let slack = self.radius + t.radius + 10.0;
                     if to_goal.x.abs().max(to_goal.y.abs()) < slack {
@@ -1574,13 +1569,12 @@ impl PositionInterface {
         }
     }
 
-    fn directional_goal_check(&self, map: Point2D, goal: Point2D, im: Vec2D) -> bool {
-        let to_goal = geo2d::pt(goal.x - map.x, goal.y - map.y);
+    fn directional_goal_check(&self, map: MapPoint, goal: MapPoint, im: MapVec) -> bool {
+        let to_goal = goal - map;
         if !self.directional_tolerance {
-            geo2d::dot(im, to_goal) <= self.tolerance
+            im.x * to_goal.x + im.y * to_goal.y <= self.tolerance
         } else {
-            let stretched = geo2d::pt(to_goal.x, to_goal.y * INVERSE_ASPECT_RATIO);
-            geo2d::dot(im, stretched) <= self.tolerance
+            im.x * to_goal.x + im.y * to_goal.y * INVERSE_ASPECT_RATIO <= self.tolerance
         }
     }
 
@@ -1597,7 +1591,7 @@ impl PositionInterface {
         self.accumulate_movement_map = v;
     }
 
-    pub fn initialize_average_speed_map(&mut self, pt: Point2D) {
+    pub fn initialize_average_speed_map(&mut self, pt: MapPoint) {
         let map = self.map_position();
         self.accumulated_movement_map = MapVec::new(map.x - pt.x, map.y - pt.y);
     }
@@ -1608,13 +1602,13 @@ impl PositionInterface {
         self.accumulated_movement_map.y += distance * im.y;
     }
 
-    pub fn update_average_speed_map_vector(&mut self, v: Vec2D) {
+    pub fn update_average_speed_map_vector(&mut self, v: MapVec) {
         self.accumulated_movement_map.x += v.x;
         self.accumulated_movement_map.y += v.y;
     }
 
-    pub fn get_average_speed_map(&mut self) -> Vec2D {
-        let avg = geo2d::pt(
+    pub fn get_average_speed_map(&mut self) -> MapVec {
+        let avg = MapVec::new(
             self.accumulated_movement_map.x * 0.1,
             self.accumulated_movement_map.y * 0.1,
         );
@@ -1659,8 +1653,8 @@ impl PositionInterface {
     }
 
     /// Track whether the entity is stuck in a small area.
-    pub fn update_box_blocked(&mut self, point: Point2D) -> bool {
-        if self.box_blocked.is_somewhere() && self.box_blocked.contains_point(point) {
+    pub fn update_box_blocked(&mut self, point: MapPoint) -> bool {
+        if self.box_blocked.is_somewhere() && self.box_blocked.contains_point(point.to_geo()) {
             self.blocked_count += 1;
             if self.radius > 1.0 {
                 self.radius -= 0.2;
@@ -1693,8 +1687,8 @@ impl PositionInterface {
 
     pub fn get_anticollision_data(&self) -> AnticollisionData {
         AnticollisionData {
-            map: self.position_map.to_geo(),
-            increment_map: self.increment_map.to_geo(),
+            map: self.position_map,
+            increment_map: self.increment_map,
             deviated: self.deviated,
             box_blocked: self.box_blocked,
             blocked_count: self.blocked_count,
@@ -1703,9 +1697,9 @@ impl PositionInterface {
     }
 
     pub fn set_anticollision_data(&mut self, d: &AnticollisionData) {
-        self.position_map = MapPoint::from_geo(d.map);
+        self.position_map = d.map;
         self.recompute_from_map();
-        self.increment_map = MapVec::from_geo(d.increment_map);
+        self.increment_map = d.increment_map;
         self.deviated = d.deviated;
         self.box_blocked = d.box_blocked;
         self.blocked_count = d.blocked_count;
@@ -1724,17 +1718,11 @@ impl PositionInterface {
     /// that supplies the actor's origin and radius from `self`.
     pub fn sort_repulsive_objects(
         &self,
-        pt_future: Point2D,
+        pt_future: MapPoint,
         points: &mut Vec<(RepulsivePoint, f32)>,
         lines: &mut Vec<(RepulsiveLine, f32)>,
     ) {
-        sort_repulsive_objects(
-            self.position_map.to_geo(),
-            pt_future,
-            self.radius,
-            points,
-            lines,
-        );
+        sort_repulsive_objects(self.position_map, pt_future, self.radius, points, lines);
     }
 
     /// Apply actor-vs-actor anti-collision to the pending movement.
@@ -1788,8 +1776,8 @@ impl PositionInterface {
             if lists_empty {
                 let hd = self.get_half_diagonal();
                 if fast_grid.is_reachable_thick(
-                    pt_future_naive.to_geo().into(),
-                    self.goal_map.to_geo().into(),
+                    pt_future_naive,
+                    self.goal_map,
                     self.layer.get(),
                     hd,
                 ) {
@@ -1839,12 +1827,7 @@ impl PositionInterface {
         if !deviated_in_loop {
             if self.deviated {
                 let hd = self.get_half_diagonal();
-                if fast_grid.is_reachable_thick(
-                    pt_future.to_geo().into(),
-                    self.goal_map.to_geo().into(),
-                    self.layer.get(),
-                    hd,
-                ) {
+                if fast_grid.is_reachable_thick(pt_future, self.goal_map, self.layer.get(), hd) {
                     self.deviated = false;
                     self.set_map_position(pt_future);
                     self.reset_increment_computed();
@@ -1869,15 +1852,15 @@ impl PositionInterface {
             self.layer.get(),
             &box_move,
         ) && fast_grid.is_reachable_thick(
-            pt_future.to_geo().into(),
-            self.goal_map.to_geo().into(),
+            pt_future,
+            self.goal_map,
             self.layer.get(),
             half_diagonal_move,
         );
 
         if can_commit {
-            if self.update_box_blocked(pt_future.to_geo()) {
-                let new_movement = geo2d::pt(pt_future.x - map.x, pt_future.y - map.y);
+            if self.update_box_blocked(pt_future) {
+                let new_movement = pt_future - map;
                 if new_movement.x != 0.0 || new_movement.y != 0.0 {
                     let dir = vector_to_direction(new_movement.x, new_movement.y);
                     if is_backwards {
@@ -1901,14 +1884,11 @@ impl PositionInterface {
         // Break-through path — when stuck too long, try to barge
         // straight toward the goal.  Active when `blocked_count > 0`.
         if self.blocked_count > 0 {
-            let to_goal = geo2d::pt(
-                self.goal_map.x - self.position_map.x,
-                self.goal_map.y - self.position_map.y,
-            );
-            let n = geo2d::normalize(to_goal);
-            let mut barge_movement = geo2d::pt(n.x * distance, n.y * distance);
+            let to_goal = self.goal_map - self.position_map;
+            let n = geo2d::normalize(to_goal.to_geo());
+            let mut barge_movement = MapVec::new(n.x * distance, n.y * distance);
             self.set_direction(vector_to_direction(barge_movement.x, barge_movement.y));
-            let mut barge_future = geo2d::pt(
+            let mut barge_future = MapPoint::new(
                 self.position_map.x + barge_movement.x,
                 self.position_map.y + barge_movement.y,
             );
@@ -1927,7 +1907,7 @@ impl PositionInterface {
                 &offset_bbox(&box_move_inset, barge_future),
                 self.layer.get(),
             ) {
-                self.position_map = MapPoint::from_geo(barge_future);
+                self.position_map = barge_future;
                 self.recompute_from_map();
             } else {
                 // Try slowing down.
@@ -1937,13 +1917,13 @@ impl PositionInterface {
                         &offset_bbox(&box_move_inset, barge_future),
                         self.layer.get(),
                     ) {
-                        self.position_map = MapPoint::from_geo(barge_future);
+                        self.position_map = barge_future;
                         self.recompute_from_map();
                         break;
                     }
                     slower *= 0.8;
-                    barge_movement = geo2d::pt(barge_movement.x * 0.8, barge_movement.y * 0.8);
-                    barge_future = geo2d::pt(
+                    barge_movement = barge_movement.scale(0.8);
+                    barge_future = MapPoint::new(
                         self.position_map.x + barge_movement.x,
                         self.position_map.y + barge_movement.y,
                     );
@@ -1954,7 +1934,7 @@ impl PositionInterface {
                     // grid can nudge the box into a clear cell,
                     // teleport the actor to that cell's centre.
                     let mut widened =
-                        offset_bbox(&self.get_move_box_offset(barge_future), geo2d::pt(0.0, 0.0));
+                        offset_bbox(&self.get_move_box_offset(barge_future), MapPoint::ZERO);
                     if let Some(r) = widened.0 {
                         widened = BBox2D(Some(geo::Rect::new(
                             geo2d::pt(r.min().x - 0.2, r.min().y - 0.2),
@@ -2007,19 +1987,19 @@ fn bubble_sort_ascending_by_f32<T>(v: &mut [(T, f32)]) {
 /// algorithm relies on its deterministic tie-break behaviour for
 /// replay stability.
 pub fn sort_repulsive_objects(
-    origin: Point2D,
-    pt_future: Point2D,
+    origin: MapPoint,
+    pt_future: MapPoint,
     actor_radius: f32,
     points: &mut Vec<(RepulsivePoint, f32)>,
     lines: &mut Vec<(RepulsiveLine, f32)>,
 ) {
-    let motion = geo2d::pt(pt_future.x - origin.x, pt_future.y - origin.y);
-    let motion_unit = geo2d::normalize(motion);
+    let motion = pt_future - origin;
+    let motion_unit = geo2d::normalize(motion.to_geo());
     // Direct normal (default direct=true): (-y, x).
-    let motion_unit_normal = geo2d::pt(-motion_unit.y, motion_unit.x);
+    let motion_unit_normal = MapVec::new(-motion_unit.y, motion_unit.x);
 
     points.retain_mut(|(pt, dist)| {
-        let rel = geo2d::pt(origin.x - pt.position.x, origin.y - pt.position.y);
+        let rel = origin - pt.position;
         let projected = rel.x * motion_unit_normal.x + rel.y * motion_unit_normal.y;
         let d = projected - actor_radius - pt.radius;
         if d <= pt.action_radius {
@@ -2031,8 +2011,8 @@ pub fn sort_repulsive_objects(
     });
 
     lines.retain_mut(|(line, dist)| {
-        let rel_origin = geo2d::pt(origin.x - line.a.x, origin.y - line.a.y);
-        let rel_future = geo2d::pt(pt_future.x - line.a.x, pt_future.y - line.a.y);
+        let rel_origin = origin - line.a;
+        let rel_future = pt_future - line.a;
         let d_origin = rel_origin.x * line.normal.x + rel_origin.y * line.normal.y
             - actor_radius
             - line.radius;
@@ -2089,13 +2069,7 @@ pub fn compute_deviated_future(
     }
     let mut future = pt_future;
 
-    sort_repulsive_objects(
-        origin.to_geo(),
-        future.to_geo(),
-        actor_radius,
-        &mut points,
-        &mut lines,
-    );
+    sort_repulsive_objects(origin, future, actor_radius, &mut points, &mut lines);
 
     let mut deviated = false;
     loop {
@@ -2110,13 +2084,7 @@ pub fn compute_deviated_future(
                 future = origin_map + movement;
                 deviated = true;
             }
-            sort_repulsive_objects(
-                origin.to_geo(),
-                future.to_geo(),
-                actor_radius,
-                &mut points,
-                &mut lines,
-            );
+            sort_repulsive_objects(origin, future, actor_radius, &mut points, &mut lines);
         }
 
         while !lines.is_empty() && (points.is_empty() || lines[0].1 < points[0].1) {
@@ -2130,13 +2098,7 @@ pub fn compute_deviated_future(
                 future = origin_map + movement;
                 deviated = true;
             }
-            sort_repulsive_objects(
-                origin.to_geo(),
-                future.to_geo(),
-                actor_radius,
-                &mut points,
-                &mut lines,
-            );
+            sort_repulsive_objects(origin, future, actor_radius, &mut points, &mut lines);
         }
 
         if points.is_empty() && lines.is_empty() {
@@ -2147,7 +2109,7 @@ pub fn compute_deviated_future(
     (future, deviated)
 }
 
-fn offset_bbox(b: &BBox2D, pt: Point2D) -> BBox2D {
+fn offset_bbox(b: &BBox2D, pt: MapPoint) -> BBox2D {
     if let Some(r) = b.0 {
         BBox2D(Some(geo::Rect::new(
             geo2d::pt(r.min().x + pt.x, r.min().y + pt.y),
@@ -2200,7 +2162,7 @@ impl PositionInterface {
     // ====================================================================
 
     /// Offset the move box to a map position.
-    fn get_move_box_offset(&self, pt: Point2D) -> BBox2D {
+    fn get_move_box_offset(&self, pt: MapPoint) -> BBox2D {
         if self.move_box.is_somewhere() {
             BBox2D::from_corners(
                 geo2d::pt(self.move_box.x_min() + pt.x, self.move_box.y_min() + pt.y),
@@ -2218,8 +2180,8 @@ impl PositionInterface {
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct AnticollisionData {
-    pub map: Point2D,
-    pub increment_map: Vec2D,
+    pub map: MapPoint,
+    pub increment_map: MapVec,
     pub deviated: bool,
     pub box_blocked: BBox2D,
     pub blocked_count: u16,
@@ -2594,15 +2556,15 @@ mod tests {
     fn test_update_box_blocked() {
         let mut pi = PositionInterface::new();
         // First point: expands box, returns true
-        assert!(pi.update_box_blocked(geo2d::pt(10.0, 10.0)));
+        assert!(pi.update_box_blocked(MapPoint::new(10.0, 10.0)));
         assert_eq!(pi.blocked_count, 0);
 
         // Same point: inside box, returns false (blocked)
-        assert!(!pi.update_box_blocked(geo2d::pt(10.0, 10.0)));
+        assert!(!pi.update_box_blocked(MapPoint::new(10.0, 10.0)));
         assert_eq!(pi.blocked_count, 1);
 
         // Far away point: expands box, returns true
-        assert!(pi.update_box_blocked(geo2d::pt(100.0, 100.0)));
+        assert!(pi.update_box_blocked(MapPoint::new(100.0, 100.0)));
         assert_eq!(pi.blocked_count, 0);
     }
 
@@ -2623,7 +2585,7 @@ mod tests {
         pi.set_map_position(MapPoint::new(100.0, 200.0));
         pi.set_increment_map(geo2d::pt(1.0, 0.0));
         pi.set_average_speed_needed(true);
-        pi.initialize_average_speed_map(geo2d::pt(90.0, 200.0));
+        pi.initialize_average_speed_map(MapPoint::new(90.0, 200.0));
 
         // Accumulated = (100-90, 0) = (10, 0)
         let avg = pi.get_average_speed_map();
