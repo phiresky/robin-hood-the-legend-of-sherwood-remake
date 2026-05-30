@@ -260,8 +260,8 @@ fn filter_allows_when_script_returns_nonzero_for_actual_source() {
     // source — the stimulus info encodes a 0-based human handle, so
     // `filter_stimulus` will translate it to `robin_handle` before
     // passing to the script.
-    let robin_human =
-        crate::natives::GameHost::actor_index(robin_handle).expect("valid robin handle") as u32;
+    let robin_human = crate::natives::GameHost::actor_handle_index(robin_handle)
+        .expect("valid robin handle") as u32;
     let stim = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, robin_human);
 
     let allowed = engine.filter_stimulus(&LevelAssets::new(), sensitive_handle, &stim);
@@ -349,7 +349,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
 
     // Snapshot AI state pre-dispatch.
     let sensitive_idx =
-        crate::natives::GameHost::actor_index(sensitive_handle).expect("valid test handle");
+        crate::natives::GameHost::actor_handle_index(sensitive_handle).expect("valid test handle");
     let before_state = engine
         .entities
         .get_at_index(sensitive_idx as u32)

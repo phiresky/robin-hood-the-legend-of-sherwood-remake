@@ -1202,6 +1202,13 @@ impl EngineInner {
         self.entities.id_at_index(index)
     }
 
+    /// Resolve a script actor handle to the typed ID variant for the entity
+    /// currently stored in that slot.
+    pub(crate) fn entity_id_for_actor_handle(&self, handle: i32) -> Option<EntityId> {
+        crate::natives::GameHost::actor_handle_index(handle)
+            .and_then(|idx| self.entity_id_for_index(idx as u32))
+    }
+
     /// Resolve a legacy raw entity-table index and panic when the slot is not
     /// present.  Use this for script/AI boundaries that are expected to carry
     /// live entity handles; missing slots indicate corrupted sim state or an

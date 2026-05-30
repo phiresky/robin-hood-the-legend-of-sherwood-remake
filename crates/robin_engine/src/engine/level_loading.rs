@@ -5978,7 +5978,7 @@ impl EngineInner {
 
                 // Set the work icon for the production type.
                 let pt = plan.prod_type;
-                self.apply_production_work_icon(entity_idx, pt, true);
+                self.apply_production_work_icon(entity_id, pt, true);
 
                 // XP / heal on the live PC.
                 if plan.xp_gain > 0 {

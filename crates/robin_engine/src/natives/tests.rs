@@ -207,15 +207,15 @@ fn then_outside_recording_returns_zero() {
 // --- Actor comparison & state queries ---
 
 #[test]
-fn script_actor_handle_maps_back_to_zero_based_entity_id() {
-    assert_eq!(GameHost::actor_id(0), None);
+fn script_actor_handle_maps_back_to_zero_based_entity_index() {
+    assert_eq!(GameHost::actor_handle_index(0), None);
     assert_eq!(
-        GameHost::actor_id(GameHost::actor_handle_from_index(0)),
-        Some(EntityId::Soldier(crate::entity_id::SoldierId(0)))
+        GameHost::actor_handle_index(GameHost::actor_handle_from_index(0)),
+        Some(0)
     );
     assert_eq!(
-        GameHost::actor_id(GameHost::actor_handle_from_index(70)),
-        Some(EntityId::Soldier(crate::entity_id::SoldierId(70)))
+        GameHost::actor_handle_index(GameHost::actor_handle_from_index(70)),
+        Some(70)
     );
 }
 
