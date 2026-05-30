@@ -179,11 +179,9 @@ impl EngineInner {
         candidate_small_flag: bool,
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
-        for (id, actor) in self.entities_iter_with_id() {
+        for (id, actor) in self.entities.humans() {
+            let id = EntityId::from(id);
             if id == corpse {
-                continue;
-            }
-            if !actor.is_human() {
                 continue;
             }
             let Some(human) = actor.human_data() else {

@@ -555,10 +555,11 @@ impl EngineInner {
                 // which drops them back to conscious via the normal
                 // threshold transition in `set_concussion`.
                 let ids: Vec<EntityId> = self
-                    .entities_iter_with_id()
+                    .entities
+                    .npcs()
                     .filter_map(|(id, e)| {
-                        if e.is_npc() && e.human_data().map(|h| h.unconscious).unwrap_or(false) {
-                            Some(id)
+                        if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
+                            Some(EntityId::from(id))
                         } else {
                             None
                         }

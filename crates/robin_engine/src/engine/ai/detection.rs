@@ -247,16 +247,14 @@ impl EngineInner {
         // `IElementTargetScript::ActivatedByListenable`.
         let mut to_hear: Vec<(usize, EntityId)> = Vec::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            let elem = entity.element_data();
-
-            // ── FX target Heard() check. ─────────────────────
-            // Independent of the blip state — targets are always
-            // eligible for Heard() regardless of `blipped`.
-            if entity.kind().is_fx_target() && !firing_listeners.is_empty() {
-                let target_pos = elem.position_map();
-                let target_layer = elem.layer();
-                let target_z = elem.position().z;
+        // ── FX target Heard() check. ─────────────────────
+        // Independent of the blip state — targets are always
+        // eligible for Heard() regardless of `blipped`.
+        if !firing_listeners.is_empty() {
+            for (entity_id, target) in self.entities.targets() {
+                let target_pos = target.element.position_map();
+                let target_layer = target.element.layer();
+                let target_z = target.element.position().z;
                 for pc in &firing_listeners {
                     if pc.layer != target_layer {
                         continue;
@@ -267,20 +265,30 @@ impl EngineInner {
                     let dz = target_z - pc.position_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
                     if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        to_hear.push((entity_id.index() as usize, pc.pc_id));
+                        to_hear.push((entity_id.0 as usize, pc.pc_id));
                         break;
                     }
                 }
             }
+        }
+
+        for (entity_id, entity) in self
+            .entities
+            .npcs()
+            .map(|(id, entity)| (EntityId::from(id), entity))
+            .chain(
+                self.entities
+                    .objects()
+                    .map(|(id, entity)| (EntityId::from(id), entity)),
+            )
+        {
+            let elem = entity.element_data();
 
             if !elem.blipped {
                 continue;
             }
-            let is_npc = entity.is_npc(); // soldier or civilian
+            let is_npc = entity.npc_data().is_some(); // soldier or civilian
             let is_object = entity.is_object();
-            if !is_npc && !is_object {
-                continue;
-            }
 
             // Royalist soldiers: auto-reveal.
             if entity.is_soldier()

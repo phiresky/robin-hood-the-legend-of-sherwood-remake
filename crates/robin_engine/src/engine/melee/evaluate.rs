@@ -428,8 +428,9 @@ impl EngineInner {
         // stored hint suppresses all normal swordfight evaluation for
         // this frame.
         let mut hint_actors = Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            if !entity.is_human() || entity.is_dead() {
+        for (entity_id, entity) in self.entities.humans() {
+            let entity_id = EntityId::from(entity_id);
+            if entity.is_dead() {
                 continue;
             }
             let Some(human) = entity.human_data() else {
@@ -483,8 +484,9 @@ impl EngineInner {
             self_layer: u16,
         }
         let mut snaps: Vec<Snap> = Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            if !entity.is_human() || entity.is_dead() {
+        for (entity_id, entity) in self.entities.humans() {
+            let entity_id = EntityId::from(entity_id);
+            if entity.is_dead() {
                 continue;
             }
             let Some(human) = entity.human_data() else {
@@ -807,8 +809,10 @@ impl EngineInner {
             static_active: &self.static_sight_obstacle_active,
         };
         let nearby: Vec<crate::combat::NearbyVictim> = self
-            .entities_iter_with_id()
+            .entities
+            .humans()
             .filter_map(|(eid, e)| {
+                let eid = EntityId::from(eid);
                 if eid == pc_id {
                     return None;
                 }
@@ -1259,8 +1263,10 @@ impl EngineInner {
             };
             let target_id_for_nearby = principal_opponent.unwrap_or(attacker_id);
             let nearby: Vec<crate::combat::NearbyVictim> = self
-                .entities_iter_with_id()
+                .entities
+                .humans()
                 .filter_map(|(eid, e)| {
+                    let eid = EntityId::from(eid);
                     if eid == victim_id {
                         return None;
                     }
@@ -1522,9 +1528,11 @@ impl EngineInner {
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
         let attacker_pos_geo = victim_pos.to_geo();
         let nearby: Vec<crate::combat::NearbyVictim> = self
-            .entities_iter_with_id()
+            .entities
+            .humans()
             .filter_map(|(eid, e)| {
-                if eid == victim_id || !e.is_human() || !e.is_active() || e.is_dead() {
+                let eid = EntityId::from(eid);
+                if eid == victim_id || !e.is_active() || e.is_dead() {
                     return None;
                 }
                 if e.human_data().map(|h| h.unconscious).unwrap_or(false) {

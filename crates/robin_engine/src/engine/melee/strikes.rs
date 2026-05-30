@@ -44,7 +44,8 @@ impl EngineInner {
 
         // Periodic combat state dump (every 64 frames)
         if self.frame_counter.is_multiple_of(64) {
-            for (entity_id, entity) in self.entities_iter_with_id() {
+            for (entity_id, entity) in self.entities.humans() {
+                let entity_id = EntityId::from(entity_id);
                 let Some(human) = entity.human_data() else {
                     continue;
                 };
@@ -288,9 +289,10 @@ impl EngineInner {
         // The follow-up decision path mutates engine state, so keep this
         // first pass read-only and stage typed ids.
         let mut smalltalk_candidates = Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.humans() {
+            let entity_id = EntityId::from(entity_id);
             let (has_initiative, opponents_empty, principal_id, action_ok, observing) = {
-                if !entity.is_human() || entity.is_dead() {
+                if entity.is_dead() {
                     continue;
                 }
                 let Some(human) = entity.human_data() else {
@@ -600,7 +602,8 @@ impl EngineInner {
         // Done in a separate pass because the main iter_mut loop
         // can't access two entities simultaneously.
         let mut pending_directions = Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let (strike, target_id) = {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
@@ -1144,7 +1147,8 @@ impl EngineInner {
         }
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let actor = match entity.actor_data() {
                 Some(a) => a,
                 None => continue,
@@ -1683,7 +1687,8 @@ impl EngineInner {
                 static_active: &self.static_sight_obstacle_active,
             };
             let mut pending_charge_inits = Vec::new();
-            for (attacker_id, entity) in self.entities_iter_with_id() {
+            for (attacker_id, entity) in self.entities.actors() {
+                let attacker_id = EntityId::from(attacker_id);
                 let actor = match entity.actor_data() {
                     Some(a) => a,
                     None => continue,
@@ -1749,7 +1754,8 @@ impl EngineInner {
 
                 // Collect potential victims inside the initial polygon.
                 let mut pending_victims = Vec::new();
-                for (victim_id, victim) in self.entities_iter_with_id() {
+                for (victim_id, victim) in self.entities.humans() {
+                    let victim_id = EntityId::from(victim_id);
                     if victim_id == attacker_id {
                         continue;
                     }
@@ -2352,8 +2358,10 @@ impl EngineInner {
                 static_active: &self.static_sight_obstacle_active,
             };
             let nearby: Vec<crate::combat::NearbyVictim> = self
-                .entities_iter_with_id()
+                .entities
+                .humans()
                 .filter_map(|(eid, e)| {
+                    let eid = EntityId::from(eid);
                     if eid == attack.soldier_id {
                         return None;
                     }

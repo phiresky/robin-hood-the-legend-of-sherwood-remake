@@ -2158,11 +2158,7 @@ pub(crate) fn render_patch_fx_gpu(
     _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
-    let patch_ids: Vec<_> = engine
-        .entities_iter_with_id()
-        .filter(|(_, entity)| entity.fx_data().is_some_and(|fx| fx.patch_index.is_some()))
-        .map(|(id, _)| id)
-        .collect();
+    let patch_ids = engine.patch_fx_ids();
     if patch_ids.is_empty() {
         return;
     }

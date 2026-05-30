@@ -195,14 +195,14 @@ impl EngineInner {
         // Snapshot wasp ids up-front so we can mutate `self.entities`
         // from inside the per-wasp loop without iterator invalidation.
         let wasp_ids: Vec<EntityId> = self
-            .entities_iter_with_id()
-            .filter_map(|(id, entity)| match entity {
-                Entity::Projectile(p)
-                    if p.element.active && p.object.object_type == ObjectType::Wasp =>
-                {
-                    Some(id)
+            .entities
+            .projectiles()
+            .filter_map(|(id, projectile)| {
+                if projectile.element.active && projectile.object.object_type == ObjectType::Wasp {
+                    Some(EntityId::from(id))
+                } else {
+                    None
                 }
-                _ => None,
             })
             .collect();
 
@@ -872,10 +872,11 @@ mod tests {
             // Force-kill every wasp (mirrors what the per-wasp AI does
             // once each sting fires or each retry budget is exhausted).
             let wasp_ids: Vec<EntityId> = engine
-                .entities_iter_with_id()
-                .filter_map(|(id, entity)| match entity {
-                    Entity::Projectile(p) if p.object.object_type == ObjectType::Wasp => Some(id),
-                    _ => None,
+                .entities
+                .projectiles()
+                .filter_map(|(id, projectile)| {
+                    (projectile.object.object_type == ObjectType::Wasp)
+                        .then_some(EntityId::from(id))
                 })
                 .collect();
             for w in wasp_ids {

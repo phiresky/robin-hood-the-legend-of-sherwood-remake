@@ -41,7 +41,8 @@ struct PotentialDetectable {
 /// pass.
 fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
-    for (id, entity) in engine.entities_iter_with_id() {
+    for (id, entity) in engine.entities.humans() {
+        let id = EntityId::from(id);
         if !entity.element_data().active {
             continue;
         }
@@ -1158,17 +1159,12 @@ impl EngineInner {
         let obstacles = obstacles_owned.list();
 
         let mut camp_soldiers =
-            Vec::with_capacity(self.entities.npc_ids().count().saturating_sub(1));
-        for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
+            Vec::with_capacity(self.entities.soldiers().count().saturating_sub(1));
+        for (other_id, s) in self.entities.soldiers() {
+            let other_id = EntityId::from(other_id);
             if other_id == npc_id {
                 continue;
             }
-            let Some(Some(entity_ref)) = self.entities.get(other_id.index() as usize) else {
-                continue;
-            };
-            let Entity::Soldier(s) = entity_ref else {
-                continue;
-            };
             if s.soldier.cached_camp != my_camp || !s.element.active || s.human.unconscious {
                 continue;
             }
@@ -1184,23 +1180,33 @@ impl EngineInner {
                     .and_then(|ms| ms.game_host())
                     .map(|h| h.doors.as_slice())
                     .unwrap_or(&[]);
-                if let Some(input) = extract_forecast_input(entity_ref) {
-                    crate::ai::forecast_destination_for_ia(
-                        &input,
-                        doors,
-                        &self.fast_grid.level.sectors,
-                        &self.fast_grid.level.sector_number_map,
-                    )
-                    .position
-                } else {
-                    let pos_now = s.element.position_map();
-                    crate::ai::Position {
-                        x: pos_now.x,
-                        y: pos_now.y,
-                        sector: s.element.sector(),
-                        level: s.element.layer(),
-                    }
-                }
+                let pos_now = s.element.position_map();
+                let door_pass = s
+                    .actor
+                    .active_door_pass
+                    .as_ref()
+                    .map(|dp| (dp.door_index, dp.direct));
+                let input = crate::ai::ForecastInput {
+                    position_map_x: pos_now.x,
+                    position_map_y: pos_now.y,
+                    sector: s.element.sector().map(u16::from).unwrap_or(0),
+                    layer: s.element.layer(),
+                    direction: s.element.direction() as u16,
+                    forecasted_movement_z: s
+                        .element
+                        .sprite
+                        .position_iface
+                        .get_forecasted_movement()
+                        .z,
+                    door_pass,
+                };
+                crate::ai::forecast_destination_for_ia(
+                    &input,
+                    doors,
+                    &self.fast_grid.level.sectors,
+                    &self.fast_grid.level.sector_number_map,
+                )
+                .position
             };
             let position = s.element.position_map();
             // Snapshot the soldier's `DETECTABLE_BODY` list — handles of
@@ -1568,14 +1574,11 @@ impl EngineInner {
         // camp fighter registries when rebuilding the us/them lists;
         // using the persisted per-AI lists here made combat-position
         // cleanup blind to same-camp fighters and allowed dogpiles.
-        for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
+        for (other_id, s) in self.entities.soldiers() {
+            let other_id = EntityId::from(other_id);
             if other_id.index() == me_handle {
                 continue;
             }
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(other_id.index() as usize)
-            else {
-                continue;
-            };
             if s.element.layer() != my_layer {
                 continue;
             }
@@ -2316,10 +2319,8 @@ impl EngineInner {
             Vec<EntityId>,
         > = std::collections::HashMap::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            if entity.actor_data().is_none() {
-                continue;
-            }
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let elem = entity.element_data();
             let sector_raw = match elem.sector() {
                 Some(s) => crate::sector::SectorNumber::new(u16::from(s) as i16),
@@ -2417,15 +2418,8 @@ impl EngineInner {
         // soldiers here and clear after consumption.  Non-soldier flags
         // are ignored to match the soldier-only gate.
         let mut any_instant_change = false;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
-        for &npc_id in &npc_ids {
-            let Some(entity) = self.get_entity_mut(npc_id) else {
-                continue;
-            };
-            if !entity.is_soldier() {
-                continue;
-            }
-            let Some(ai) = entity.ai_controller_mut() else {
+        for (_, soldier) in self.entities.soldiers_mut() {
+            let Some(ai) = soldier.npc.ai_brain.base_mut() else {
                 continue;
             };
             match ai.current_music_alert_status {
@@ -4846,8 +4840,8 @@ impl EngineInner {
             use crate::element_kinds::ObjectType;
             let det_idx = DetectableType::Object as usize;
             let mut to_add: Vec<EntityId> = Vec::new();
-            for (entity_id, entity) in self.entities_iter_with_id() {
-                if !entity.is_object() || !entity.is_active() {
+            for (entity_id, entity) in self.entities.objects() {
+                if !entity.is_active() {
                     continue;
                 }
                 let Some(obj) = entity.object_data() else {
@@ -4859,7 +4853,7 @@ impl EngineInner {
                     _ => false,
                 };
                 if restore_this {
-                    to_add.push(entity_id);
+                    to_add.push(EntityId::from(entity_id));
                 }
             }
             if !to_add.is_empty()

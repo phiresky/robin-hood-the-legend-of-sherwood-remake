@@ -2134,16 +2134,14 @@ impl EngineInner {
     /// instead of installing the cross-element link.
     pub(super) fn propagate_done_to_current_orders(&mut self) {
         let done_actors: Vec<crate::element::EntityId> = self
-            .entities_iter_with_id()
+            .entities
+            .actors()
             .filter_map(|(entity_id, entity)| {
-                if !entity.is_actor() {
-                    return None;
-                }
                 matches!(
                     entity.element_data().sprite.last_motion_state,
                     Some(crate::sprite::MotionState::Done)
                 )
-                .then_some(entity_id)
+                .then_some(EntityId::from(entity_id))
             })
             .collect();
 
@@ -2547,12 +2545,15 @@ impl EngineInner {
         self.entities.iter().flatten()
     }
 
-    /// Iterate over all live entities paired with their `EntityId`.
-    /// Same order as [`Self::entities_iter`], with the slot index
-    /// exposed so overlays / debug renderers can label entities
-    /// without a reverse lookup.
-    pub fn entities_iter_with_id(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.entities.occupied()
+    /// Active entity positions for debug overlays.
+    pub fn active_entity_positions(
+        &self,
+    ) -> impl Iterator<Item = (EntityId, crate::coordinates::MapPoint)> + '_ {
+        self.entities.occupied().filter_map(|(id, entity)| {
+            entity
+                .is_active()
+                .then_some((id, entity.element_data().position_map()))
+        })
     }
 
     /// All player characters (portrait order).
@@ -2688,6 +2689,14 @@ impl EngineInner {
         self.entities
             .fxs()
             .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(EntityId::from(id)))
+            .collect()
+    }
+
+    /// Patch FX entity ids.
+    pub fn patch_fx_ids(&self) -> Vec<EntityId> {
+        self.entities
+            .fxs()
+            .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(EntityId::from(id)))
             .collect()
     }
 

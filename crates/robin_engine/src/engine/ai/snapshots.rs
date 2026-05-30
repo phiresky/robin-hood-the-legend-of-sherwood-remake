@@ -615,10 +615,8 @@ impl EngineInner {
     ) -> Vec<SoldierSnapshot> {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
             Vec::with_capacity(self.entities.soldiers().count());
-        for (npc_id, entity_ref) in self.entities.occupied() {
-            let Entity::Soldier(s) = entity_ref else {
-                continue;
-            };
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             if !s.element.active || s.human.unconscious {
                 continue;
             }
@@ -812,23 +810,33 @@ impl EngineInner {
                     .and_then(|ms| ms.game_host())
                     .map(|h| h.doors.as_slice())
                     .unwrap_or(&[]);
-                if let Some(input) = extract_forecast_input(entity_ref) {
-                    crate::ai::forecast_destination_for_ia(
-                        &input,
-                        doors,
-                        &self.fast_grid.level.sectors,
-                        &self.fast_grid.level.sector_number_map,
-                    )
-                    .position
-                } else {
-                    let pos_now = s.element.position_map();
-                    crate::ai::Position {
-                        x: pos_now.x,
-                        y: pos_now.y,
-                        sector: None,
-                        level: s.element.layer(),
-                    }
-                }
+                let pos_now = s.element.position_map();
+                let door_pass = s
+                    .actor
+                    .active_door_pass
+                    .as_ref()
+                    .map(|dp| (dp.door_index, dp.direct));
+                let input = crate::ai::ForecastInput {
+                    position_map_x: pos_now.x,
+                    position_map_y: pos_now.y,
+                    sector: s.element.sector().map(u16::from).unwrap_or(0),
+                    layer: s.element.layer(),
+                    direction: s.element.direction() as u16,
+                    forecasted_movement_z: s
+                        .element
+                        .sprite
+                        .position_iface
+                        .get_forecasted_movement()
+                        .z,
+                    door_pass,
+                };
+                crate::ai::forecast_destination_for_ia(
+                    &input,
+                    doors,
+                    &self.fast_grid.level.sectors,
+                    &self.fast_grid.level.sector_number_map,
+                )
+                .position
             };
             let able_to_help = crate::ai_enemy::soldier_is_able_to_help_state(
                 able_to_fight,
@@ -943,7 +951,7 @@ impl EngineInner {
     /// we keep this side-list separate.
     pub(super) fn tick_enemy_ai_build_ko_money_fight_soldiers(&self) -> Vec<(EntityId, Camp)> {
         let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
-            Vec::with_capacity(self.entities.npc_ids().count());
+            Vec::with_capacity(self.entities.soldiers().count());
         for (npc_id, s) in self.entities.soldiers() {
             let npc_id = EntityId::from(npc_id);
             if !s.element.active {

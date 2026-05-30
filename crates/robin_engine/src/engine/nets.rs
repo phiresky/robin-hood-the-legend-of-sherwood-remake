@@ -99,10 +99,11 @@ impl EngineInner {
         // 3D position with a Y-stretched isometric square-norm is used
         // for the proximity test.
         let candidates: Vec<EntityId> = self
-            .entities_iter_with_id()
+            .entities
+            .humans()
             .filter_map(|(id, e)| {
-                if e.is_active() && e.is_human() {
-                    Some(id)
+                if e.is_active() {
+                    Some(EntityId::from(id))
                 } else {
                     None
                 }
@@ -509,11 +510,11 @@ impl EngineInner {
         // Done in a separate read pass so we can borrow victim
         // entities.
         let mut wriggle_updates: Vec<(EntityId, crate::element::Animation)> = Vec::new();
-        for (id, entity) in self.entities_iter_with_id() {
-            let net = match entity {
-                Entity::Net(n) if n.element.active && !n.projectile.flying => n,
-                _ => continue,
-            };
+        for (id, net) in self.entities.nets() {
+            let id = EntityId::from(id);
+            if !net.element.active || net.projectile.flying {
+                continue;
+            }
             if !matches!(
                 net.object.animation,
                 crate::element::Animation::NetMoving | crate::element::Animation::ObjectLying

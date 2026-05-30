@@ -1165,8 +1165,9 @@ impl EngineInner {
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
         let ransom_ok = ransom >= threshold;
         let pcs: Vec<EntityId> = self
-            .entities_iter_with_id()
-            .filter_map(|(id, entity)| matches!(entity, Entity::Pc(_)).then_some(id))
+            .entities
+            .pcs()
+            .map(|(id, _)| EntityId::from(id))
             .collect();
         for pc_id in pcs {
             // Only PCs that have the Purse action in their profile
@@ -1366,7 +1367,8 @@ impl EngineInner {
             })
             .collect();
 
-        for (bonus_id, entity) in self.entities_iter_with_id() {
+        for (bonus_id, entity) in self.entities.objects() {
+            let bonus_id = EntityId::from(bonus_id);
             // Match either a regular Bonus or a landed coin/purse
             // projectile (post-burst).  Coins and purses are projectiles
             // but the pickup switch dispatches by `ObjectType`.
@@ -2313,10 +2315,8 @@ impl EngineInner {
     /// The associated titbit is auto-removed by
     /// `sync_apple_smell_titbits` once the counter reaches 0.
     pub(super) fn tick_apple_smell(&mut self) {
-        for (_, entity) in self.entities.occupied_mut() {
-            if let Entity::Soldier(s) = entity
-                && s.soldier.apple_smell > 0
-            {
+        for (_, s) in self.entities.soldiers_mut() {
+            if s.soldier.apple_smell > 0 {
                 s.soldier.apple_smell -= 1;
             }
         }
@@ -2331,8 +2331,8 @@ impl EngineInner {
     /// tracking a moving PC between Think stimuli.
     pub(super) fn tick_soldier_track_primary_target(&mut self) {
         use crate::ai::Substate;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
-        for npc_id in npc_ids {
+        let soldier_ids: Vec<_> = self.entities.soldier_ids().collect();
+        for npc_id in soldier_ids {
             let target_handle = {
                 let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
                 else {
@@ -2687,8 +2687,9 @@ impl EngineInner {
         let mut set_obstacles = Vec::new();
         let mut dynamic_sight_obstacles = Vec::new();
 
-        for (id, entity) in self.entities_iter_with_id() {
-            if !entity.is_human() || !entity.is_active() || entity.is_dead() {
+        for (id, entity) in self.entities.humans() {
+            let id = EntityId::from(id);
+            if !entity.is_active() || entity.is_dead() {
                 continue;
             }
             let actor = match entity.actor_data() {
@@ -3713,7 +3714,8 @@ impl EngineInner {
         // Collect (carrier_id, victim_id) pairs first to avoid
         // overlapping borrows with launch_element.
         let mut drops: Vec<(crate::element::EntityId, crate::element::EntityId)> = Vec::new();
-        for (carrier_id, entity) in self.entities_iter_with_id() {
+        for (carrier_id, entity) in self.entities.humans() {
+            let carrier_id = EntityId::from(carrier_id);
             let elem = entity.element_data();
             if elem.posture != crate::element::Posture::CarryingOnShoulders {
                 continue;
@@ -3728,7 +3730,8 @@ impl EngineInner {
             // Find the shouldered victim — the human whose `carrier`
             // back-pointer references this carrier.  We track the
             // relationship from the victim side only.
-            let victim_id = self.entities_iter_with_id().find_map(|(victim_id, v)| {
+            let victim_id = self.entities.humans().find_map(|(victim_id, v)| {
+                let victim_id = EntityId::from(victim_id);
                 let hd = v.human_data()?;
                 if hd.carrier == Some(carrier_id) {
                     Some(victim_id)
