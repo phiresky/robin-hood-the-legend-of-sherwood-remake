@@ -176,10 +176,7 @@ pub(super) fn handle_mouse_input(
                             | crate::profiles::Action::Lever
                             | crate::profiles::Action::Strangle => {
                                 let cmds = crate::game_input::resolve_action_drag(
-                                    host,
-                                    engine,
-                                    assets,
-                                    map_pt.to_geo(),
+                                    host, engine, assets, map_pt,
                                 );
                                 for cmd in &cmds {
                                     frame_cmds.push(cmd.clone());
@@ -308,10 +305,7 @@ pub(super) fn handle_mouse_input(
                                 | crate::profiles::Action::Strangle
                         ) {
                             let cmds = crate::game_input::resolve_action_drag(
-                                host,
-                                engine,
-                                assets,
-                                map_pt.to_geo(),
+                                host, engine, assets, map_pt,
                             );
                             for cmd in &cmds {
                                 frame_cmds.push(cmd.clone());
@@ -836,20 +830,11 @@ pub(super) fn handle_mouse_input(
                             {
                                 // Resolve swordfight first, then regular click
                                 let mut cmds = crate::game_input::resolve_swordfight(
-                                    host,
-                                    engine,
-                                    assets,
-                                    map_pt.to_geo(),
-                                    true,
+                                    host, engine, assets, map_pt, true,
                                 );
                                 if cmds.is_empty() {
                                     cmds = crate::game_input::resolve_left_click(
-                                        host,
-                                        engine,
-                                        assets,
-                                        map_pt.to_geo(),
-                                        shift_held,
-                                        ctrl_held,
+                                        host, engine, assets, map_pt, shift_held, ctrl_held,
                                         is_double,
                                     );
                                 }

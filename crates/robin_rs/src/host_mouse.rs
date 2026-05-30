@@ -8,6 +8,7 @@
 //! earlier in the frame so replay / rollback can record them.
 
 use crate::Host;
+use robin_engine::coordinates::MapPoint;
 use robin_engine::element::Entity;
 use robin_engine::engine::input::{
     BowTarget, MOUSE_BOW_CIVIL_COLOR, MOUSE_BOW_NO_COLOR, MOUSE_BOW_VIP_COLOR,
@@ -45,7 +46,7 @@ fn apply_trajectory_preview(host: &mut Host, preview: TrajectoryPreview) {
     }
 }
 
-fn door_click_polygon_at(engine: &Engine, mouse_map: Point2D) -> Option<u32> {
+fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
     engine
         .mission_script()
         .and_then(|s| s.game_host())
@@ -77,7 +78,7 @@ pub fn update_pc_popup_information(
     engine: &Engine,
     host: &mut Host,
     assets: &LevelAssets,
-    mouse_map: Point2D,
+    mouse_map: MapPoint,
 ) {
     let drag_active = host.input.multi_selection_active || host.input.multi_unselection_active;
 
@@ -110,7 +111,7 @@ pub fn choose_mouse_pointer_for_no_action(
     engine: &mut Engine,
     host: &mut Host,
     assets: &LevelAssets,
-    mouse_map: Point2D,
+    mouse_map: MapPoint,
     shift_held: bool,
 ) -> i32 {
     use robin_engine::element::Focus;
@@ -135,7 +136,7 @@ pub fn choose_mouse_pointer_for_no_action(
     let num_selected = selected.len();
 
     // Outside of grid → can't go there.
-    if !engine.fast_grid().is_inside_grid_point(mouse_map) {
+    if !engine.fast_grid().is_inside_grid_point(mouse_map.to_geo()) {
         return RHMOUSE_CANTGOTHERE;
     }
 
@@ -305,17 +306,11 @@ pub fn choose_mouse_pointer_for_no_action(
         .get_entity(pc_id)
         .map(|e| {
             let elem = e.element_data();
-            (
-                elem.layer(),
-                robin_engine::coordinates::MapPoint::from_geo(Engine::elem_to_geo(
-                    elem.position_map(),
-                )),
-            )
+            (elem.layer(), elem.position_map())
         })
-        .unwrap_or((0, robin_engine::coordinates::MapPoint::from_geo(mouse_map)));
+        .unwrap_or((0, mouse_map));
 
     // Look up sector under mouse.
-    let mouse_map = robin_engine::coordinates::MapPoint::from_geo(mouse_map);
     let mouse_sector_result = engine.fast_grid().get_sector_screen(mouse_map, pc_pos);
     let pc_sector_hit = engine.fast_grid().get_sector(pc_pos, pc_pos, pc_layer);
 
@@ -716,6 +711,8 @@ pub fn update_mouse(
     host.input.increment_cursor_animation = true;
     host.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
 
+    let mouse_map_pt = MapPoint::from_geo(mouse_map);
+
     // Sector lookup for the selected sector / layer.  Used for door/
     // jump alpha overlays and cursor context.  With shift held, use
     // the "peek under" helper that returns the sector under the
@@ -725,7 +722,6 @@ pub fn update_mouse(
     // position (falling back to the cursor when no PC is selected).
     // The reference is used by `get_sector` to tie-break overlapping
     // jump sectors (nearest-mid wins).
-    let mouse_map_pt = robin_engine::coordinates::MapPoint::from_geo(mouse_map);
     let reference = engine
         .seat_selection(host.local_seat)
         .first()
@@ -777,7 +773,7 @@ pub fn update_mouse(
     host.input.selected_sector_idx = final_sector_idx;
     host.input.selected_layer = final_layer;
     host.input.selected_patch_idx = selected_patch_idx;
-    host.input.hovered_door_idx = door_click_polygon_at(engine, mouse_map);
+    host.input.hovered_door_idx = door_click_polygon_at(engine, mouse_map_pt);
 
     // Refresh `Patch::display_doors` for the currently-selected
     // patch. This is render-only state (`GameHost.patches` is not
@@ -806,10 +802,10 @@ pub fn update_mouse(
     // Alt → view cursor.
     if alt_held {
         let focus_id = engine
-            .find_focusable_npc(assets, mouse_map, Focus::View)
+            .find_focusable_npc(assets, mouse_map_pt, Focus::View)
             .or_else(|| {
                 if dev.debug.pc_sight {
-                    engine.find_focusable_pc(assets, mouse_map, Focus::Select)
+                    engine.find_focusable_pc(assets, mouse_map_pt, Focus::Select)
                 } else {
                     None
                 }
@@ -832,7 +828,7 @@ pub fn update_mouse(
     // set, hovering an NPC lets the player pick the follow target;
     // clicking snaps the camera to track it.
     if engine.locker_active() {
-        if let Some(id) = engine.find_focusable_npc(assets, mouse_map, Focus::View) {
+        if let Some(id) = engine.find_focusable_npc(assets, mouse_map_pt, Focus::View) {
             host.input.focused_entity_id = Some(id);
         }
         return RHMOUSE_VIEW;
@@ -844,11 +840,11 @@ pub fn update_mouse(
         // ── NoAction ───────────────
         Action::NoAction => {
             let cursor =
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map, shift_held);
+                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held);
             // Dispatches MSG_SHOW_PC_INFORMATION /
             // MSG_HIDE_PC_INFORMATION based on whether the mouse is
             // over a selectable PC.
-            update_pc_popup_information(engine, host, assets, mouse_map);
+            update_pc_popup_information(engine, host, assets, mouse_map_pt);
             cursor
         }
 
@@ -871,7 +867,7 @@ pub fn update_mouse(
                 if let Some(target_id) = engine.find_focusable_entity(
                     assets,
                     &host.draw_order.ids,
-                    mouse_map,
+                    mouse_map_pt,
                     Focus::Bow,
                 ) {
                     host.input.focused_entity_id = Some(target_id);
@@ -890,19 +886,15 @@ pub fn update_mouse(
 
             if !in_restricted {
                 // Compute mouse opacity from shooting level.
-                let mouse_map_elem = robin_engine::coordinates::MapPoint {
-                    x: mouse_map.x,
-                    y: mouse_map.y,
-                };
                 opacity = engine
-                    .calculate_shooting_level(assets, pc_id, mouse_map_elem)
+                    .calculate_shooting_level(assets, pc_id, mouse_map_pt)
                     .max(MOUSE_OPACITY_DEFAULT);
                 shadow_color = 0;
 
                 if let Some(target_id) = engine.find_focusable_entity(
                     assets,
                     &host.draw_order.ids,
-                    mouse_map,
+                    mouse_map_pt,
                     Focus::Bow,
                 ) {
                     host.input.focused_entity_id = Some(target_id);
@@ -1011,8 +1003,12 @@ pub fn update_mouse(
 
         // ── Hit ───────────────────
         Action::Hit | Action::HitHard => {
-            let focused =
-                engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map, Focus::Hit);
+            let focused = engine.find_focusable_entity(
+                assets,
+                &host.draw_order.ids,
+                mouse_map_pt,
+                Focus::Hit,
+            );
             if let Some(eid) = focused {
                 host.input.focused_entity_id = Some(eid);
                 RHMOUSE_HIT_YES
@@ -1030,7 +1026,7 @@ pub fn update_mouse(
                 if let Some(target_id) = engine.find_focusable_entity(
                     assets,
                     &host.draw_order.ids,
-                    mouse_map,
+                    mouse_map_pt,
                     Focus::Apple,
                 ) {
                     // Range check.
@@ -1090,7 +1086,7 @@ pub fn update_mouse(
                 if let Some(target_id) = engine.find_focusable_entity(
                     assets,
                     &host.draw_order.ids,
-                    mouse_map,
+                    mouse_map_pt,
                     Focus::Stone,
                 ) {
                     let target_pos = engine
@@ -1149,14 +1145,11 @@ pub fn update_mouse(
         // ── Purse ─────────────────
         Action::Purse => {
             let mut cursor = RHMOUSE_PURSE_NO;
-            let mouse_elem = robin_engine::coordinates::MapPoint {
-                x: mouse_map.x,
-                y: mouse_map.y,
-            };
+            let mouse_elem = mouse_map_pt;
             let pc_id = engine.seat_selection(host.local_seat).first().copied();
 
             if !engine.is_selected_pc_in_restricted_sector()
-                && engine.is_mouse_sector_valid_for_ground_target(mouse_map.into())
+                && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
             {
                 let in_range = pc_id.is_some_and(|pid| {
                     engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Purse, None)
@@ -1186,8 +1179,12 @@ pub fn update_mouse(
 
         // ── Heal ──────────────────
         Action::Heal => {
-            let focused =
-                engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map, Focus::Heal);
+            let focused = engine.find_focusable_entity(
+                assets,
+                &host.draw_order.ids,
+                mouse_map_pt,
+                Focus::Heal,
+            );
             if let Some(eid) = focused {
                 host.input.focused_entity_id = Some(eid);
                 RHMOUSE_HEAL_YES
@@ -1199,10 +1196,7 @@ pub fn update_mouse(
         // ── WaspNest ─────────────
         Action::WaspNest => {
             let mut cursor = RHMOUSE_WASP_NEST_NO;
-            let mouse_elem = robin_engine::coordinates::MapPoint {
-                x: mouse_map.x,
-                y: mouse_map.y,
-            };
+            let mouse_elem = mouse_map_pt;
             let pc_id = engine.seat_selection(host.local_seat).first().copied();
 
             if !engine.is_selected_pc_in_restricted_sector() {
@@ -1250,10 +1244,10 @@ pub fn update_mouse(
             if !engine.is_selected_pc_in_restricted_sector()
                 && posture == Posture::CarryingOnShoulders
             {
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map, shift_held)
+                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
             } else if posture == Posture::HelpingToClimb {
                 // Already helping → NoAction cursor.
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map, shift_held)
+                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
             } else {
                 RHMOUSE_OK
             }
@@ -1271,7 +1265,7 @@ pub fn update_mouse(
 
             // Check the shield-protected flag.
             if engine.shield().is_protected {
-                let focused = engine.find_focusable_pc(assets, mouse_map, Focus::Shield);
+                let focused = engine.find_focusable_pc(assets, mouse_map_pt, Focus::Shield);
                 if let Some(eid) = focused {
                     host.input.focused_entity_id = Some(eid);
                     if is_big {
@@ -1297,14 +1291,11 @@ pub fn update_mouse(
         // ── Net ───────────────────
         Action::Net => {
             let mut cursor = RHMOUSE_NET_NO;
-            let mouse_elem = robin_engine::coordinates::MapPoint {
-                x: mouse_map.x,
-                y: mouse_map.y,
-            };
+            let mouse_elem = mouse_map_pt;
 
             let pc_id = engine.seat_selection(host.local_seat).first().copied();
             if !engine.is_selected_pc_in_restricted_sector()
-                && engine.is_mouse_sector_valid_for_ground_target(mouse_map.into())
+                && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
             {
                 let in_range = pc_id.is_some_and(|pid| {
                     engine.is_in_range_for_projectile(assets, pid, mouse_elem, Action::Net, None)
@@ -1336,8 +1327,12 @@ pub fn update_mouse(
 
         // ── Lever ─────────────────
         Action::Lever => {
-            let focused =
-                engine.find_focusable_entity(assets, &host.draw_order.ids, mouse_map, Focus::Lever);
+            let focused = engine.find_focusable_entity(
+                assets,
+                &host.draw_order.ids,
+                mouse_map_pt,
+                Focus::Lever,
+            );
             if let Some(eid) = focused {
                 host.input.focused_entity_id = Some(eid);
                 RHMOUSE_LEVER_YES
@@ -1349,7 +1344,7 @@ pub fn update_mouse(
         // ── Ale ───────────────────
         Action::Ale => {
             // Validate mouse sector (no door, no wall/ladder).
-            if engine.is_mouse_sector_valid_for_ground_target(mouse_map.into()) {
+            if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
                 RHMOUSE_ALE_YES
             } else {
                 RHMOUSE_ALE_NO
@@ -1361,7 +1356,7 @@ pub fn update_mouse(
             let focused = engine.find_focusable_entity(
                 assets,
                 &host.draw_order.ids,
-                mouse_map,
+                mouse_map_pt,
                 Focus::Strangle,
             );
             if let Some(eid) = focused {
@@ -1381,7 +1376,7 @@ pub fn update_mouse(
                 .map(|e| e.element_data().posture)
                 .unwrap_or(Posture::Undefined);
             if posture == Posture::SimulatingBeggar {
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map, shift_held)
+                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
             } else {
                 RHMOUSE_OK
             }
@@ -1397,7 +1392,7 @@ pub fn update_mouse(
                 .map(|a| a.action_state)
                 .unwrap_or(robin_engine::element::ActionState::Waiting);
             if action_state == robin_engine::element::ActionState::Listening {
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map, shift_held)
+                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
             } else {
                 RHMOUSE_OK
             }

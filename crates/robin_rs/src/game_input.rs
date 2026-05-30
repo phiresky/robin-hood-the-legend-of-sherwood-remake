@@ -15,6 +15,7 @@ use crate::player_command::{PlayerCommand, PlayerId};
 use crate::profiles::Action;
 use crate::sequence::Field;
 use crate::shadow_polygon::ASPECT_RATIO;
+use robin_engine::coordinates::MapPoint;
 use robin_engine::engine::{Engine, LevelAssets};
 
 // ─── Left-click resolution ──────────────────────────────────────────
@@ -26,7 +27,7 @@ pub fn resolve_left_click(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
-    map_pt: geo2d::Point2D,
+    map_pt: MapPoint,
     shift_held: bool,
     ctrl_held: bool,
     is_double: bool,
@@ -357,7 +358,7 @@ fn resolve_action_left_click(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
-    map_pt: geo2d::Point2D,
+    map_pt: MapPoint,
     local_seat: PlayerId,
     action: Action,
     is_double: bool,
@@ -375,9 +376,9 @@ fn resolve_action_left_click(
     // projection-area surface, used by the Purse/Wasp/Net ground-
     // target arms so the recorded titbit and `*_TARGET` sequence field
     // both land on the real 3D point instead of `z=0`.
-    let convert_to_3d = |pt: geo2d::Point2D| -> robin_engine::coordinates::WorldPoint3D {
+    let convert_to_3d = |pt: MapPoint| -> robin_engine::coordinates::WorldPoint3D {
         let p3d = engine.fast_grid().convert_2d_to_3d(
-            robin_engine::coordinates::MapPoint::from_geo(pt),
+            pt,
             robin_engine::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             engine.sight_obstacles(assets),
         );
@@ -909,7 +910,7 @@ pub fn resolve_action_drag(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
-    map_pt: geo2d::Point2D,
+    map_pt: MapPoint,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.local_seat;
     if host.input.ignore_next_drag {
@@ -1357,7 +1358,7 @@ pub fn resolve_swordfight(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
-    map_pt: geo2d::Point2D,
+    map_pt: MapPoint,
     is_left_button: bool,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.local_seat;

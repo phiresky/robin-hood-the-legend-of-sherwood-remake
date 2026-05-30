@@ -2959,7 +2959,7 @@ pub(crate) async fn run_mission(
                     ))
             && let Some(id) = manager.engine.find_focusable_npc(
                 &assets,
-                mouse_map.to_geo(),
+                mouse_map,
                 robin_engine::element::Focus::View,
             )
         {
