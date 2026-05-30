@@ -332,10 +332,12 @@ impl EngineInner {
                 let move_box_map_geo = move_box_map.to_geo();
                 let crushed = move_box_map.is_somewhere()
                     && appeared.iter().any(|obs| {
+                        let obs_polygon_geo: Vec<_> =
+                            obs.polygon.iter().map(|p| p.to_geo()).collect();
                         obs.bounding_box.is_somewhere()
-                            && obs.bounding_box.intersects_bbox(&move_box_map_geo)
+                            && obs.bounding_box.intersects_bbox(&move_box_map)
                             && crate::geo2d::polygon_vertices_intersect_bbox(
-                                &obs.polygon,
+                                &obs_polygon_geo,
                                 &move_box_map_geo,
                             )
                     });

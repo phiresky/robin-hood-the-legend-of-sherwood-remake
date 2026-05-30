@@ -1094,9 +1094,9 @@ impl EngineInner {
         // box** by iteratively pushing it off intersecting motion
         // lines (two 50-iter passes).  The roll endpoint is the
         // *adjusted* box centre, not `pos + direction`.
-        let mut dest_box = crate::geo2d::BBox2D::from_corners(
-            crate::geo2d::pt(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
-            crate::geo2d::pt(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
+        let mut dest_box = crate::coordinates::MapBBox::from_corners(
+            crate::coordinates::MapPoint::new(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
+            crate::coordinates::MapPoint::new(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
         );
         let pt_start = pos;
         if !self
@@ -1105,8 +1105,7 @@ impl EngineInner {
         {
             return None;
         }
-        let center = dest_box.center();
-        Some(crate::coordinates::MapPoint::new(center.x, center.y))
+        Some(dest_box.center())
     }
 
     /// Queue a rolling animation after a fall if the entity is on a steep slope.

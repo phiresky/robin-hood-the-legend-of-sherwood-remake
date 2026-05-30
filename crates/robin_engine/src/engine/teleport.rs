@@ -139,7 +139,9 @@ impl EngineInner {
         };
         let bbox_at_new = move_box.translated(geo2d::pt(new_pos.x, new_pos.y));
 
-        let authorized = self.fast_grid.is_position_authorized(&bbox_at_new, layer)
+        let authorized = self
+            .fast_grid
+            .is_position_authorized(&crate::coordinates::MapBBox::from_geo(bbox_at_new), layer)
             && self
                 .fast_grid
                 .is_reachable_thin(current_pos, new_pos, layer);

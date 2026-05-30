@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{GroundPoint, MapPoint};
+use crate::coordinates::{GroundBBox, GroundPoint, MapBBox, MapPoint};
 use crate::geo2d::{self, BBox2D, GeoPoint2D, Polygon2D, pt, segment};
 
 // ---------------------------------------------------------------------------
@@ -265,10 +265,10 @@ pub struct SightObstacle {
     pub box_3d_max: [f32; 3],
 
     /// 2D ground-plane bounding box.
-    pub box_ground: BBox2D,
+    pub box_ground: GroundBBox,
 
     /// 2D projected bounding box (Y shifted by Z for isometric projection).
-    pub box_projection: BBox2D,
+    pub box_projection: MapBBox,
 
     /// Per-vertex obstacle data (x, y, z_top, z_bottom).
     pub obstacle_points: Vec<ObstaclePoint>,
@@ -345,8 +345,8 @@ impl SightObstacle {
             obstacle_type,
             box_3d_min: [0.0; 3],
             box_3d_max: [0.0; 3],
-            box_ground: BBox2D::new(),
-            box_projection: BBox2D::new(),
+            box_ground: GroundBBox::new(),
+            box_projection: MapBBox::new(),
             obstacle_points: Vec::new(),
             polygon: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
             polygon_projection: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
@@ -468,10 +468,9 @@ impl SightObstacle {
         self.polygon_projection = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
 
         // Rebuild 2D ground bbox.
-        self.box_ground = BBox2D::new();
+        self.box_ground = GroundBBox::new();
         for op in &self.obstacle_points {
-            self.box_ground
-                .expand_point(GroundPoint::new(op.x, op.y).to_geo());
+            self.box_ground.expand_point(GroundPoint::new(op.x, op.y));
         }
 
         // Rebuild 3D bbox.
@@ -489,12 +488,12 @@ impl SightObstacle {
         self.box_3d_max = max;
 
         // Rebuild projected bbox (isometric: projected_y = y - z_top).
-        self.box_projection = BBox2D::new();
+        self.box_projection = MapBBox::new();
         for op in &self.obstacle_points {
             self.box_projection
-                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_top).to_geo());
+                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_top));
             self.box_projection
-                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_bottom).to_geo());
+                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_bottom));
         }
 
         // Check on_ground.
@@ -621,7 +620,7 @@ impl SightObstacle {
                     let ix = origin[0] + t * (destination[0] - origin[0]);
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         return true;
@@ -687,7 +686,7 @@ impl SightObstacle {
                     let ix = origin[0] + t * (destination[0] - origin[0]);
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         return true;
@@ -705,7 +704,7 @@ impl SightObstacle {
                     let ix = origin[0] + t * (destination[0] - origin[0]);
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         return true;
@@ -806,7 +805,7 @@ impl SightObstacle {
                 let ix = origin[0] + t_plane * (destination[0] - origin[0]);
                 let iy = origin[1] + t_plane * (destination[1] - origin[1]);
                 let ip = pt(ix, iy);
-                if self.box_ground.contains_point(ip)
+                if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                     && geo2d::polygon_contains_point(&self.polygon, ip)
                 {
                     let t = t_plane.clamp(0.0, 1.0);
@@ -834,7 +833,7 @@ impl SightObstacle {
                     let ix = origin[0] + t_plane * (destination[0] - origin[0]);
                     let iy = origin[1] + t_plane * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         let t = t_plane.clamp(0.0, 1.0);
@@ -1121,7 +1120,7 @@ pub fn is_reachable_impact_fall_3d(
         if !obstacles.is_active(idx) || obs.obstacle_type & type_filter == 0 {
             continue;
         }
-        if !obs.box_ground.contains_point(p2d.to_geo()) || !obs.contains_point(p2d) {
+        if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
             continue;
         }
         let top = obs.compute_top_z(origin.x, origin.y);
@@ -1206,7 +1205,7 @@ pub fn is_reachable_impact_up_3d(
         if !obstacles.is_active(idx) || obs.obstacle_type & type_filter == 0 {
             continue;
         }
-        if !obs.box_ground.contains_point(p2d.to_geo()) || !obs.contains_point(p2d) {
+        if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
             continue;
         }
         let bot = obs.compute_bottom_z(origin.x, origin.y);

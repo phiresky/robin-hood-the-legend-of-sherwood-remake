@@ -3416,13 +3416,12 @@ impl AiContext {
                 }
 
                 let point = MapPoint::new(position.x, position.y);
-                let point_geo = point.to_geo();
                 let mut best: Option<(f32, f32)> = None;
                 for (_, obstacle) in self.sight_obstacles.list().iter_indexed() {
                     if !obstacle.is_projection_area()
                         || obstacle.sector != handle.get()
                         || obstacle.layer != position.level
-                        || !obstacle.box_projection.contains_point(point_geo)
+                        || !obstacle.box_projection.contains_point(point)
                         || !obstacle.contains_point_projection(point)
                     {
                         continue;
@@ -9051,7 +9050,7 @@ mod tests {
         let mut level = crate::fast_find_grid::LevelGrid::default();
         level.sectors.push(crate::fast_find_grid::GridSector {
             points,
-            bounding_box: bbox,
+            bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
             sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
             layer: 2,
             sector_number,

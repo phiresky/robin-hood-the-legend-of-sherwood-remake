@@ -183,7 +183,7 @@ fn test_hiking_path_fine(
             // Split the authorized check into its two components
             // (destination-box auth check, then thick-corridor check) so
             // diagnostics pinpoint which half of the test rejects.
-            let dest_box = move_box.translated(p2.to_geo());
+            let dest_box = crate::coordinates::MapBBox::from_geo(move_box.translated(p2.to_geo()));
             if !grid.is_position_authorized(&dest_box, wp.level) {
                 tracing::debug!(
                     wp_idx = i,
@@ -1884,7 +1884,8 @@ impl EngineInner {
         // If the NPC's move-box overlaps the playable area, attempt to
         // push it to an authorized position via `find_authorized_position`.
         if is_enemy && let Some(move_box) = move_box_opt {
-            let mut abs_box = move_box.translated(pos_map.to_geo());
+            let mut abs_box =
+                crate::coordinates::MapBBox::from_geo(move_box.translated(pos_map.to_geo()));
             if !self.fast_grid.is_position_authorized(&abs_box, layer)
                 && self.fast_grid.find_authorized_position(&mut abs_box, layer)
             {
@@ -1892,7 +1893,7 @@ impl EngineInner {
                 if let Some(Some(entity)) = self.entities.get_mut(slot)
                     && entity.actor_data().is_some()
                 {
-                    let new_center_map = MapPoint::from_geo(new_center);
+                    let new_center_map = new_center;
                     let pi = entity.position_iface_mut();
                     pi.set_map_position(new_center_map);
                     entity.element_data_mut().set_position_map(new_center_map);

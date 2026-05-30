@@ -150,6 +150,91 @@ impl Default for MapBBox {
     }
 }
 
+/// Ground/world-XY axis-aligned bounding box.
+///
+/// This wraps the same optional rectangle storage as `BBox2D`, but accepts
+/// [`GroundPoint`] so ground obstacle checks cannot accidentally consume
+/// projected map points.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct GroundBBox(pub Option<Rect<f32>>);
+
+impl Default for GroundBBox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GroundBBox {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    #[inline]
+    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
+        Self(bbox.0)
+    }
+
+    #[inline]
+    pub fn to_geo(self) -> geo2d::BBox2D {
+        geo2d::BBox2D(self.0)
+    }
+
+    #[inline]
+    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
+    }
+
+    #[inline]
+    pub fn is_somewhere(&self) -> bool {
+        self.0.is_some()
+    }
+
+    #[inline]
+    pub fn x_min(&self) -> f32 {
+        self.0.unwrap().min().x
+    }
+
+    #[inline]
+    pub fn y_min(&self) -> f32 {
+        self.0.unwrap().min().y
+    }
+
+    #[inline]
+    pub fn x_max(&self) -> f32 {
+        self.0.unwrap().max().x
+    }
+
+    #[inline]
+    pub fn y_max(&self) -> f32 {
+        self.0.unwrap().max().y
+    }
+
+    #[inline]
+    pub fn contains_point(&self, point: GroundPoint) -> bool {
+        self.to_geo().contains_point(point.to_geo())
+    }
+
+    #[inline]
+    pub fn trivially_rejects_segment(&self, seg: geo::Line<f32>) -> bool {
+        self.to_geo().trivially_rejects_segment(seg)
+    }
+
+    #[inline]
+    pub fn intersects_bbox(&self, other: &GroundBBox) -> bool {
+        self.to_geo().intersects_bbox(&other.to_geo())
+    }
+
+    #[inline]
+    pub fn expand_point(&mut self, point: GroundPoint) {
+        let mut bbox = self.to_geo();
+        bbox.expand_point(point.to_geo());
+        *self = Self::from_geo(bbox);
+    }
+}
+
 impl MapBBox {
     #[inline]
     pub const fn new() -> Self {
@@ -169,6 +254,20 @@ impl MapBBox {
     #[inline]
     pub fn from_corners(min: MapPoint, max: MapPoint) -> Self {
         Self(Some(Rect::new(min.to_geo(), max.to_geo())))
+    }
+
+    #[inline]
+    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
+    }
+
+    #[inline]
+    pub fn from_point_size(origin: MapPoint, width: f32, height: f32) -> Self {
+        Self::from_geo(geo2d::BBox2D::from_point_size(
+            origin.to_geo(),
+            width,
+            height,
+        ))
     }
 
     #[inline]
@@ -202,8 +301,28 @@ impl MapBBox {
     }
 
     #[inline]
+    pub fn center(&self) -> MapPoint {
+        MapPoint::from_geo(self.to_geo().center())
+    }
+
+    #[inline]
+    pub fn top_left(&self) -> MapPoint {
+        MapPoint::from_geo(self.to_geo().top_left())
+    }
+
+    #[inline]
+    pub fn bottom_right(&self) -> MapPoint {
+        MapPoint::from_geo(self.to_geo().bottom_right())
+    }
+
+    #[inline]
     pub fn contains_point(&self, point: MapPoint) -> bool {
         self.to_geo().contains_point(point.to_geo())
+    }
+
+    #[inline]
+    pub fn intersects_bbox(&self, other: &MapBBox) -> bool {
+        self.to_geo().intersects_bbox(&other.to_geo())
     }
 
     #[inline]
@@ -211,6 +330,18 @@ impl MapBBox {
         let mut bbox = self.to_geo();
         bbox.expand_point(point.to_geo());
         *self = Self::from_geo(bbox);
+    }
+
+    #[inline]
+    pub fn translate(&mut self, v: MapVec) {
+        let mut bbox = self.to_geo();
+        bbox.translate(v.to_geo());
+        *self = Self::from_geo(bbox);
+    }
+
+    #[inline]
+    pub fn translated(&self, v: MapVec) -> Self {
+        Self::from_geo(self.to_geo().translated(v.to_geo()))
     }
 }
 

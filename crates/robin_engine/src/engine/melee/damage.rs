@@ -20,9 +20,9 @@ impl EngineInner {
             Some(e) => (e.element_data().position_map(), e.element_data().layer()),
             None => return,
         };
-        let mut bbox = crate::geo2d::BBox2D::from_corners(
-            crate::geo2d::pt(start.x - BOX_LYING_X, start.y - BOX_LYING_Y),
-            crate::geo2d::pt(start.x + BOX_LYING_X, start.y + BOX_LYING_Y),
+        let mut bbox = crate::coordinates::MapBBox::from_corners(
+            crate::coordinates::MapPoint::new(start.x - BOX_LYING_X, start.y - BOX_LYING_Y),
+            crate::coordinates::MapPoint::new(start.x + BOX_LYING_X, start.y + BOX_LYING_Y),
         );
         // Use the click-biased `find_authorized_position_toward` so
         // the box stays pulled toward the actor's original spot; the

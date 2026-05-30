@@ -35,17 +35,17 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::EntityId;
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self, BBox2D, GeoPoint2D, Vec2D, pt};
+use crate::geo2d::{self, BBox2D, Vec2D, pt};
 use robin_util::static_arc::StaticArc;
 
 // ─── Geometry helpers ────────────────────────────────────────────
 
-/// Ray-casting point-in-polygon test.
+/// Ray-casting point-in-polygon test in projected map space.
 /// Returns `true` if `pt` is inside the polygon defined by `vertices`.
-fn point_in_polygon(pt: GeoPoint2D, vertices: &[GeoPoint2D]) -> bool {
+fn point_in_polygon(pt: MapPoint, vertices: &[MapPoint]) -> bool {
     if vertices.len() < 3 {
         return false;
     }
@@ -276,9 +276,9 @@ pub struct MotionObstacle {
     /// movement.
     pub active: bool,
     /// Axis-aligned bounding box of `polygon` for fast intersection.
-    pub bounding_box: crate::geo2d::BBox2D,
+    pub bounding_box: MapBBox,
     /// Polygon vertices defining the obstacle footprint.
-    pub polygon: Vec<GeoPoint2D>,
+    pub polygon: Vec<MapPoint>,
     /// Grid-line indices emitted from this obstacle's perimeter when
     /// the level was loaded. We store the mapping up front so state
     /// transitions can flip the grid's `line_active` flags without a
@@ -298,9 +298,9 @@ pub struct MotionObstacle {
 #[derive(Debug, Clone)]
 pub struct AppearedObstacle {
     /// Bounding box of the obstacle polygon (cheap pre-filter).
-    pub bounding_box: crate::geo2d::BBox2D,
+    pub bounding_box: MapBBox,
     /// Polygon vertices of the obstacle footprint.
-    pub polygon: Vec<GeoPoint2D>,
+    pub polygon: Vec<MapPoint>,
 }
 
 /// A motion area within a layer — the walkable polygon and its skeleton.
@@ -312,7 +312,7 @@ pub struct MotionArea {
     /// Polygon vertices defining this motion area's walkable boundary.
     /// Used for point-in-polygon hit-testing (sector hit-test) to
     /// determine which motion area a click falls in.
-    pub polygon: Vec<GeoPoint2D>,
+    pub polygon: Vec<MapPoint>,
 
     /// Motion obstacles within this area. The total length is fixed at
     /// level load; state transitions flip the `active` flag per entry.
@@ -437,7 +437,6 @@ impl PathGraph {
     /// Uses the standard ray-casting point-in-polygon test on each
     /// area's stored polygon.
     pub fn find_area_at_point(&self, layer: usize, point: MapPoint) -> Option<usize> {
-        let point = point.to_geo();
         let areas = self.static_data.move_layers.get(layer)?;
         for (area_idx, area) in areas.iter().enumerate() {
             if point_in_polygon(point, &area.polygon) {
@@ -959,7 +958,7 @@ impl PathFinder {
         )
     }
 
-    pub fn draw_graph<F>(&self, graph: &PathGraph, view: BBox2D, half_diagonal_idx: u16, draw: F)
+    pub fn draw_graph<F>(&self, graph: &PathGraph, view: MapBBox, half_diagonal_idx: u16, draw: F)
     where
         F: FnMut(MapPoint, MapPoint, u16),
     {
@@ -967,7 +966,7 @@ impl PathFinder {
             .draw_graph(view, half_diagonal_idx, draw);
     }
 
-    pub fn draw_nodes<F>(&self, graph: &PathGraph, view: BBox2D, half_diagonal_idx: u16, draw: F)
+    pub fn draw_nodes<F>(&self, graph: &PathGraph, view: MapBBox, half_diagonal_idx: u16, draw: F)
     where
         F: FnMut(MapPoint, MapPoint, u16),
     {
@@ -1767,7 +1766,7 @@ impl PathFinderRuntime {
             self.current_layer,
             corridor.seg1,
             corridor.seg2,
-            &corridor.bbox,
+            &corridor.bbox.to_geo(),
         );
 
         if line_indices.is_empty() {
@@ -1820,7 +1819,7 @@ impl PathFinderRuntime {
             }
         }
 
-        grid.is_position_authorized(&bbox, self.current_layer)
+        grid.is_position_authorized(&MapBBox::from_geo(bbox), self.current_layer)
     }
 
     /// Check if it is useful to visit a node from a given point.
@@ -2046,7 +2045,7 @@ impl PathFinderRuntime {
     /// the GPU framebuffer).
     pub fn draw_graph<F: FnMut(MapPoint, MapPoint, u16)>(
         &self,
-        view_rect: BBox2D,
+        view_rect: MapBBox,
         half_diagonal_idx: u16,
         mut emit: F,
     ) {
@@ -2087,6 +2086,7 @@ impl PathFinderRuntime {
                                 let p2 =
                                     self.docking_point(link.next_node, dest_place, half_diagonal);
                                 if !view_rect
+                                    .to_geo()
                                     .intersects_segment(geo2d::segment(p1.to_geo(), p2.to_geo()))
                                 {
                                     continue;
@@ -2109,7 +2109,7 @@ impl PathFinderRuntime {
     /// `BOTTOM_RIGHT`→(10,10). All stubs are white (`0xFFFF`).
     pub fn draw_nodes<F: FnMut(MapPoint, MapPoint, u16)>(
         &self,
-        view_rect: BBox2D,
+        view_rect: MapBBox,
         half_diagonal_idx: u16,
         mut emit: F,
     ) {
@@ -2126,7 +2126,7 @@ impl PathFinderRuntime {
                 for obstacle in area {
                     for &node_idx in obstacle {
                         let node = &self.graph.nodes[node_idx.0 as usize];
-                        if !view_rect.contains_point(node.position.to_geo()) {
+                        if !view_rect.contains_point(node.position) {
                             continue;
                         }
                         let Some(&config) = node.configurations.get(hd_idx) else {
@@ -2375,7 +2375,7 @@ mod tests {
         let make_obstacle = || MotionObstacle {
             state_id: 0,
             active: false,
-            bounding_box: crate::geo2d::BBox2D::default(),
+            bounding_box: MapBBox::default(),
             polygon: Vec::new(),
             grid_line_indices: Vec::new(),
         };

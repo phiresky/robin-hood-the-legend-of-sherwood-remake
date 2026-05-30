@@ -223,17 +223,14 @@ impl EngineInner {
             x: impact_pos.x,
             y: impact_pos.y,
         };
-        let mut box_at_pos =
-            shooter_move_box.translated(crate::geo2d::pt(impact_pos.x, impact_pos.y));
+        let mut box_at_pos = crate::coordinates::MapBBox::from_geo(
+            shooter_move_box.translated(crate::geo2d::pt(impact_pos.x, impact_pos.y)),
+        );
         if self
             .fast_grid
             .find_authorized_position(&mut box_at_pos, layer)
         {
-            let centre = box_at_pos.center();
-            corrected_2d = MapPoint {
-                x: centre.x,
-                y: centre.y,
-            };
+            corrected_2d = box_at_pos.center();
         }
         let source_pos = WorldPoint3D {
             x: corrected_2d.x,

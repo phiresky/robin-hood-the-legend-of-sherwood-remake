@@ -512,7 +512,7 @@ pub(crate) fn render_view_cone_overlay(
     // Collect character masks whose world-space bbox intersects the view
     // rect — these building silhouettes clear the tint inside the cone
     // in `render_darken_inside_gpu`'s mask post-pass.
-    let view_bbox = BBox2D::from_coords(
+    let view_bbox = engine_coordinates::MapBBox::from_coords(
         view_rect.min.x,
         view_rect.min.y,
         view_rect.max.x,
@@ -620,7 +620,8 @@ fn view_cone_polys_for_render(
     for (projection_idx, projection_area) in active_obstacles.iter().copied().filter(|(_, o)| {
         o.is_projection_area()
             && o.is_showing_shadow_polygon()
-            && o.box_ground.intersects_bbox(&cone_bbox)
+            && o.box_ground
+                .intersects_bbox(&engine_coordinates::GroundBBox::from_geo(cone_bbox))
     }) {
         let obstacles: Vec<&crate::sight_obstacle::SightObstacle> = active_obstacles
             .iter()
@@ -1469,11 +1470,16 @@ fn render_sprite_mask_debug_overlay(
     } else {
         0xf81f
     };
-    draw_world_bbox_outline(host, renderer, sprite_world_bbox, sprite_color);
+    draw_map_bbox_outline(
+        host,
+        renderer,
+        &engine_coordinates::MapBBox::from_geo(*sprite_world_bbox),
+        sprite_color,
+    );
 
     for &mask_idx in mask_indices {
         let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
-        draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
+        draw_map_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
     }
 
     draw_map_cross(host, renderer, actor_position, 0x07e0);
@@ -1492,10 +1498,10 @@ fn render_sprite_mask_debug_overlay(
     }
 }
 
-fn draw_world_bbox_outline(
+fn draw_map_bbox_outline(
     host: &Host,
     renderer: &mut Renderer,
-    bbox: &crate::geo2d::BBox2D,
+    bbox: &engine_coordinates::MapBBox,
     color: u16,
 ) {
     if !bbox.is_somewhere() {
@@ -2568,8 +2574,8 @@ pub(crate) fn render_debug_motion_graph(
 
     // The bounding box is the camera viewport in world coords: origin
     // at `view_position`, dimensions `screen_size / zoom_factor`.
-    let view_rect = engine_geo2d::BBox2D::from_point_size(
-        view.to_geo(),
+    let view_rect = engine_coordinates::MapBBox::from_point_size(
+        view,
         screen_size.x / zoom,
         screen_size.y / zoom,
     );
@@ -2654,10 +2660,10 @@ fn locate_surface(graph: &engine_pathfinder::PathGraph, pt: MapPoint) -> Option<
 }
 
 /// Draw a closed polyline outline on the GPU layer.
-fn draw_polygon_outline_world(
+fn draw_polygon_outline_map(
     renderer: &mut Renderer,
-    verts: &[engine_geo2d::GeoPoint2D],
-    world_to_screen: &dyn Fn(engine_geo2d::GeoPoint2D) -> (i32, i32),
+    verts: &[MapPoint],
+    map_to_screen: &dyn Fn(MapPoint) -> (i32, i32),
     r: u8,
     g: u8,
     b: u8,
@@ -2668,8 +2674,8 @@ fn draw_polygon_outline_world(
     for i in 0..verts.len() {
         let a = verts[i];
         let bp = verts[(i + 1) % verts.len()];
-        let (x1, y1) = world_to_screen(a);
-        let (x2, y2) = world_to_screen(bp);
+        let (x1, y1) = map_to_screen(a);
+        let (x2, y2) = map_to_screen(bp);
         renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
     }
 }
@@ -2681,10 +2687,10 @@ fn draw_polygon_outline_world(
 /// boundaries are routinely concave (e.g. ground areas wrapping around
 /// buildings), and a fan from vertex 0 produces giant bowtie triangles
 /// that fan across empty space.
-fn fill_polygon_world(
+fn fill_polygon_map(
     renderer: &mut Renderer,
-    verts: &[engine_geo2d::GeoPoint2D],
-    world_to_screen: &dyn Fn(engine_geo2d::GeoPoint2D) -> (f32, f32),
+    verts: &[MapPoint],
+    map_to_screen: &dyn Fn(MapPoint) -> (f32, f32),
     r: u8,
     g: u8,
     b: u8,
@@ -2703,9 +2709,9 @@ fn fill_polygon_world(
         Err(_) => return,
     };
     for tri in indices.chunks_exact(3) {
-        let p0 = world_to_screen(verts[tri[0]]);
-        let p1 = world_to_screen(verts[tri[1]]);
-        let p2 = world_to_screen(verts[tri[2]]);
+        let p0 = map_to_screen(verts[tri[0]]);
+        let p1 = map_to_screen(verts[tri[1]]);
+        let p2 = map_to_screen(verts[tri[2]]);
         renderer.render_gpu_triangle([p0, p1, p2], r, g, b, a);
     }
 }
@@ -2747,9 +2753,8 @@ pub(crate) fn render_debug_surfaces_fill(
     if zoom <= 0.0 || screen_size.x <= 0.0 || screen_size.y <= 0.0 {
         return;
     }
-    let to_screen_f = move |p: engine_geo2d::GeoPoint2D| -> (f32, f32) {
-        ((p.x - view.x) * zoom, (p.y - view.y) * zoom)
-    };
+    let to_screen_f =
+        move |p: MapPoint| -> (f32, f32) { ((p.x - view.x) * zoom, (p.y - view.y) * zoom) };
     let graph = assets.pathfinder_graph.as_ref();
     let Some((sel_layer, sel_area)) = selected_surface(host, engine, graph) else {
         return;
@@ -2762,7 +2767,7 @@ pub(crate) fn render_debug_surfaces_fill(
     else {
         return;
     };
-    fill_polygon_world(renderer, &area.polygon, &to_screen_f, 255, 255, 0, 80);
+    fill_polygon_map(renderer, &area.polygon, &to_screen_f, 255, 255, 0, 80);
 }
 
 /// Outline + path pass for the surface debug overlay.  Drawn after
@@ -2787,7 +2792,7 @@ pub(crate) fn render_debug_surfaces_outline(
         return;
     }
 
-    let to_screen_i = move |p: engine_geo2d::GeoPoint2D| -> (i32, i32) {
+    let to_screen_i = move |p: MapPoint| -> (i32, i32) {
         let (sx, sy) = ((p.x - view.x) * zoom, (p.y - view.y) * zoom);
         (sx.round() as i32, sy.round() as i32)
     };
@@ -2801,12 +2806,12 @@ pub(crate) fn render_debug_surfaces_outline(
     for (layer_idx, areas) in move_layers.iter().enumerate() {
         for (area_idx, area) in areas.iter().enumerate() {
             let (r, g, b) = surface_color(layer_idx, area_idx);
-            draw_polygon_outline_world(renderer, &area.polygon, &to_screen_i, r, g, b);
+            draw_polygon_outline_map(renderer, &area.polygon, &to_screen_i, r, g, b);
             for obstacle in &area.motion_obstacles {
                 if !obstacle.active {
                     continue;
                 }
-                draw_polygon_outline_world(renderer, &obstacle.polygon, &to_screen_i, 200, 40, 40);
+                draw_polygon_outline_map(renderer, &obstacle.polygon, &to_screen_i, 200, 40, 40);
             }
         }
     }
@@ -2818,7 +2823,7 @@ pub(crate) fn render_debug_surfaces_outline(
             .get(sel_layer)
             .and_then(|areas| areas.get(sel_area))
     {
-        draw_polygon_outline_world(renderer, &area.polygon, &to_screen_i, 255, 255, 0);
+        draw_polygon_outline_map(renderer, &area.polygon, &to_screen_i, 255, 255, 0);
     }
 
     // Pass 3: committed path polyline, colored per segment by the
@@ -2834,14 +2839,12 @@ pub(crate) fn render_debug_surfaces_outline(
             .unwrap_or(waypoints[0]);
         let mut prev = start;
         for &wp in &waypoints {
-            let prev_geo = prev.to_geo();
-            let wp_geo = wp.to_geo();
             let (r, g, b) = match locate_surface(graph, wp) {
                 Some((l, a)) => surface_color(l, a),
                 None => (255, 255, 255),
             };
-            let (x1, y1) = to_screen_i(prev_geo);
-            let (x2, y2) = to_screen_i(wp_geo);
+            let (x1, y1) = to_screen_i(prev);
+            let (x2, y2) = to_screen_i(wp);
             renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
             const M: i32 = 4;
             renderer.render_gpu_line(x2 - M, y2 - M, x2 + M, y2 + M, r, g, b);

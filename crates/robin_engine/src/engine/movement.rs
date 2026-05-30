@@ -1,7 +1,7 @@
 //! Movement ticking, pathfinding dispatch, and order processing.
 
 use super::*;
-use crate::coordinates::{MapPoint, MapVec};
+use crate::coordinates::{MapBBox, MapPoint, MapVec};
 use crate::element::EntityId;
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;
@@ -789,16 +789,15 @@ impl EngineInner {
             .move_box_half_diagonals
             .get(half_diagonal_idx)
             .copied()?;
-        let mut bbox = crate::geo2d::BBox2D::from_corners(
-            crate::geo2d::pt(candidate.x - hd.x, candidate.y - hd.y),
-            crate::geo2d::pt(candidate.x + hd.x, candidate.y + hd.y),
+        let mut bbox = MapBBox::from_corners(
+            MapPoint::new(candidate.x - hd.x, candidate.y - hd.y),
+            MapPoint::new(candidate.x + hd.x, candidate.y + hd.y),
         );
         if self
             .fast_grid
             .find_authorized_position_toward(&mut bbox, reference, layer)
         {
-            let center = bbox.center();
-            Some(MapPoint::new(center.x, center.y))
+            Some(bbox.center())
         } else {
             None
         }
@@ -2574,12 +2573,12 @@ impl EngineInner {
         if intent.find_accessible {
             let dest = MapPoint::new(intent.target_x, intent.target_y);
             let mut bbox = if move_box.is_somewhere() {
-                crate::geo2d::BBox2D::from_corners(
-                    crate::geo2d::pt(move_box.x_min() + dest.x, move_box.y_min() + dest.y),
-                    crate::geo2d::pt(move_box.x_max() + dest.x, move_box.y_max() + dest.y),
+                MapBBox::from_corners(
+                    MapPoint::new(move_box.x_min() + dest.x, move_box.y_min() + dest.y),
+                    MapPoint::new(move_box.x_max() + dest.x, move_box.y_max() + dest.y),
                 )
             } else {
-                crate::geo2d::BBox2D::new()
+                MapBBox::new()
             };
             if !self.fast_grid.find_authorized_position(&mut bbox, layer) {
                 self.set_ai_couldnt_reachpoint(entity_id);
@@ -4194,11 +4193,7 @@ impl EngineInner {
                     | crate::element::Posture::CarryingCorpse
                     | crate::element::Posture::CarryingOnShoulders
                     | crate::element::Posture::HelpingToClimb
-            ) && self
-                .fast_grid
-                .level
-                .map_bbox
-                .contains_point(old_pos.to_geo());
+            ) && self.fast_grid.level.map_bbox.contains_point(old_pos);
 
             // LINE-snap early arrival: when the active element
             // carries `MoveFlags::LINE` + `line_id` and the actor is
@@ -4737,12 +4732,7 @@ impl EngineInner {
             // LINE_PATCH handling is gated to PCs only.
             if eligible_for_crossing {
                 let new_pos = entity.element_data().position_map();
-                if self
-                    .fast_grid
-                    .level
-                    .map_bbox
-                    .contains_point(new_pos.to_geo())
-                {
+                if self.fast_grid.level.map_bbox.contains_point(new_pos) {
                     line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     if entity.is_pc() {
                         patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
@@ -5313,7 +5303,7 @@ impl EngineInner {
             if obs.layer != layer {
                 continue;
             }
-            if !obs.box_projection.contains_point(bbox_at.to_geo()) {
+            if !obs.box_projection.contains_point(bbox_at) {
                 continue;
             }
             if !obs.contains_point_projection(polygon_at) {
@@ -6115,10 +6105,11 @@ impl EngineInner {
         // on the unexpanded move box when pathfinding is needed.
         if !self
             .fast_grid
-            .is_position_authorized(&move_box_map.to_geo(), entity_layer)
+            .is_position_authorized(&move_box_map, entity_layer)
         {
-            let mut box_element =
-                Self::expand_move_box_for_command_extraction(move_box_map.to_geo());
+            let mut box_element = MapBBox::from_geo(Self::expand_move_box_for_command_extraction(
+                move_box_map.to_geo(),
+            ));
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)
@@ -6200,9 +6191,9 @@ impl EngineInner {
             && !skip_source_extraction
             && !self
                 .fast_grid
-                .is_position_authorized(&move_box_map.to_geo(), entity_layer)
+                .is_position_authorized(&move_box_map, entity_layer)
         {
-            let mut box_element = move_box_map.to_geo();
+            let mut box_element = move_box_map;
             if !self
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)

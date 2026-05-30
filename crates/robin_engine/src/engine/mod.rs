@@ -747,10 +747,7 @@ impl EngineInner {
                 continue;
             }
             let move_box = elem.sprite.position_iface.get_move_box_map();
-            if !self
-                .fast_grid
-                .is_position_authorized(&move_box.to_geo(), layer)
-            {
+            if !self.fast_grid.is_position_authorized(move_box, layer) {
                 tracing::warn!(
                     "Actor at ({:.1},{:.1}) lies inside an obstacle on layer {}",
                     pos.x,

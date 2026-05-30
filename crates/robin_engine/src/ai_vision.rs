@@ -1414,7 +1414,8 @@ mod tests {
         grid.allocate_layers(4);
         for (idx, obs) in obstacles.iter().enumerate() {
             let idx = crate::sight_obstacle::SightObstacleIndex::new(idx as u32).unwrap();
-            grid.add_obstacle_index(idx, obs.layer, &obs.box_ground);
+            let box_ground = obs.box_ground.to_geo();
+            grid.add_obstacle_index(idx, obs.layer, &box_ground);
         }
         Box::leak(Box::new(grid))
     }

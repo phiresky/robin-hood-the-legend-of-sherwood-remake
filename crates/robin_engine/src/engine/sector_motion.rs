@@ -33,7 +33,6 @@ impl EngineInner {
         point: crate::coordinates::MapPoint,
     ) -> Option<u16> {
         let mut best: Option<(u16, f32)> = None;
-        let point_geo = point.to_geo();
         for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
             if !obs.is_projection_area() {
                 continue;
@@ -41,7 +40,7 @@ impl EngineInner {
             if obs.sector != sector || obs.layer != layer {
                 continue;
             }
-            if !obs.box_projection.contains_point(point_geo) {
+            if !obs.box_projection.contains_point(point) {
                 continue;
             }
             if !obs.contains_point_projection(point) {

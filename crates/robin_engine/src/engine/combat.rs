@@ -3,7 +3,7 @@
 use super::input::BowTarget;
 use super::*;
 use crate::bow_shot::{self};
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::{Command, Entity, EntityId};
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
@@ -1682,12 +1682,12 @@ impl EngineInner {
         }
         let layer = entity.element_data().layer();
         let hand_xy = crate::coordinates::MapPoint::new(hand.x, hand.y);
-        let mut bbox = move_box.translated(hand_xy.to_geo());
+        let mut bbox = MapBBox::from_geo(move_box.translated(hand_xy.to_geo()));
         if self
             .fast_grid
             .find_authorized_position_toward(&mut bbox, hand_xy, layer)
         {
-            Some(bbox.center())
+            Some(bbox.center().to_geo())
         } else {
             None
         }
@@ -2641,7 +2641,10 @@ impl EngineInner {
             if obs.material != WATER_MATERIAL_CODE && obs.material_sectors.is_empty() {
                 continue;
             }
-            if !obs.box_ground.contains_point(landing) {
+            if !obs
+                .box_ground
+                .contains_point(crate::coordinates::GroundPoint::from_geo(landing))
+            {
                 continue;
             }
             if !polygon_contains_point(&obs.polygon, landing) {
@@ -2871,14 +2874,13 @@ impl EngineInner {
                             .filter(|b| b.is_somewhere());
                         match target_box {
                             Some(b) => {
-                                let mut bbox = b.translated(carrier_pos_geo);
+                                let mut bbox = MapBBox::from_geo(b.translated(carrier_pos_geo));
                                 if self.fast_grid.find_authorized_position_toward(
                                     &mut bbox,
                                     carrier_pos,
                                     carrier_layer,
                                 ) {
-                                    let c = bbox.center();
-                                    crate::coordinates::MapPoint { x: c.x, y: c.y }
+                                    bbox.center()
                                 } else {
                                     carrier_pos
                                 }
@@ -3032,13 +3034,12 @@ impl EngineInner {
                                 .filter(|b| b.is_somewhere());
                             match climber_box {
                                 Some(b) => {
-                                    let mut bbox = b.translated(climber_pos_geo);
+                                    let mut bbox = MapBBox::from_geo(b.translated(climber_pos_geo));
                                     if self
                                         .fast_grid
                                         .find_authorized_position(&mut bbox, helper_layer)
                                     {
-                                        let c = bbox.center();
-                                        crate::coordinates::MapPoint { x: c.x, y: c.y }
+                                        bbox.center()
                                     } else {
                                         helper_pos
                                     }

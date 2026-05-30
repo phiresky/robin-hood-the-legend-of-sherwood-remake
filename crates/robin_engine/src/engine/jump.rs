@@ -1527,7 +1527,7 @@ mod tests {
                 let mut b = BBox2D::new();
                 b.expand_point(pt(0.0, 0.0));
                 b.expand_point(pt(64.0, 64.0));
-                b
+                crate::coordinates::MapBBox::from_geo(b)
             },
             sector_type: SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
             layer: 0,

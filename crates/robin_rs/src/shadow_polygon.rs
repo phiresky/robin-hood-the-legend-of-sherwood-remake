@@ -27,8 +27,7 @@ use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
-use robin_engine::coordinates::GroundPoint;
-use robin_engine::geo2d as engine_geo2d;
+use robin_engine::coordinates::{GroundBBox, GroundPoint};
 use robin_engine::mask as engine_mask;
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::sprite::BBox;
@@ -341,7 +340,7 @@ pub fn project_and_clip_to_projection_area(
 /// directions (not scaled by radius).
 fn is_box_inside_field(
     viewer: GeoPoint2D,
-    box_ground: &engine_geo2d::BBox2D,
+    box_ground: &GroundBBox,
     left_side: [f32; 2],
     right_side: [f32; 2],
 ) -> bool {

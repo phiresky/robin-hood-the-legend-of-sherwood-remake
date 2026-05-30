@@ -8,7 +8,7 @@
 //! no live call site.
 
 use crate::ai::RepulsivePoint as StaticRepulsivePoint;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
 use crate::fast_find_grid::FastFindGrid;
@@ -747,14 +747,20 @@ pub fn apply_anti_collision_step(
             }
         };
 
-        if grid.is_position_authorized(&offset(&box_inset, barge_future), mover.layer) {
+        if grid.is_position_authorized(
+            &MapBBox::from_geo(offset(&box_inset, barge_future)),
+            mover.layer,
+        ) {
             state.pi.deviated = true;
             return (barge.x, barge.y);
         }
 
         let mut slower = speed;
         while slower > 0.1 {
-            if grid.is_position_authorized(&offset(&box_inset, barge_future), mover.layer) {
+            if grid.is_position_authorized(
+                &MapBBox::from_geo(offset(&box_inset, barge_future)),
+                mover.layer,
+            ) {
                 state.pi.deviated = true;
                 return (barge.x, barge.y);
             }
@@ -776,7 +782,9 @@ pub fn apply_anti_collision_step(
                 geo2d::pt(r.max().x + 0.2, r.max().y + 0.2),
             )));
         }
-        if grid.find_authorized_position(&mut widened, mover.layer) {
+        let mut widened_map = MapBBox::from_geo(widened);
+        if grid.find_authorized_position(&mut widened_map, mover.layer) {
+            widened = widened_map.to_geo();
             let c = widened.center();
             state.pi.deviated = true;
             return (c.x - mover.position_map.x, c.y - mover.position_map.y);
@@ -803,7 +811,7 @@ pub fn gather_level_repulsive_lines(
     layer: u16,
     box_future: &BBox2D,
 ) -> Vec<RepulsiveLine> {
-    let indices = grid.get_active_repulsive_line_indices(layer, box_future);
+    let indices = grid.get_active_repulsive_line_indices(layer, &MapBBox::from_geo(*box_future));
     indices
         .into_iter()
         .map(|idx| {

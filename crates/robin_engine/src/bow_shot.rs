@@ -693,7 +693,7 @@ fn classify_impact(
     let is_top = (impact.z - top_z).abs() <= TOP_EPS
         && obs
             .box_ground
-            .contains_point(GroundPoint::new(impact.x, impact.y).to_geo());
+            .contains_point(GroundPoint::new(impact.x, impact.y));
 
     if is_top {
         // Top-plane normal from the three plane-defining points.
@@ -973,7 +973,7 @@ fn compute_trajectory_ballistic_impl(
                 },
                 crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
                 check.sight_obstacles,
-                Some(check.fast_find_grid.level.map_bbox),
+                Some(check.fast_find_grid.level.map_bbox.to_geo()),
             );
 
             // Compute the 3D impact ratio relative to the current

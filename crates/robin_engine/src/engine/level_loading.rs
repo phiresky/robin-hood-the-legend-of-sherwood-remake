@@ -652,7 +652,7 @@ impl EngineInner {
                 let grid_idx = self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
-                        bounding_box: bbox,
+                        bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
                         sector_type,
                         layer: sec.layer,
                         sector_number: crate::sector::SectorNumber::new(-1), // script sectors don't have proto sector numbers
@@ -982,9 +982,9 @@ impl EngineInner {
                                 .iter()
                                 .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                                 .collect();
-                            let mut bbox = crate::geo2d::BBox2D::new();
+                            let mut bbox = crate::coordinates::MapBBox::new();
                             for &p in &points {
-                                bbox.expand_point(p.to_geo());
+                                bbox.expand_point(p);
                             }
                             // Same material-code → GameMaterial mapping
                             // as `MaterialSectors::build_from_raw` (clamp
@@ -1669,7 +1669,7 @@ impl EngineInner {
                                 raw.obstacle_index,
                             );
                         }
-                        if !obs.box_projection.contains_point(initial_position.to_geo()) {
+                        if !obs.box_projection.contains_point(initial_position) {
                             tracing::warn!(
                                 "Rescue PC profile {} at ({},{}) map position not lying in projection area screen box (obstacle {})",
                                 raw.profile_index,
@@ -3005,7 +3005,7 @@ impl EngineInner {
                                     beam_me.projection_area,
                                 );
                             }
-                            if !obs.box_projection.contains_point(beam_me.position.to_geo()) {
+                            if !obs.box_projection.contains_point(beam_me.position) {
                                 tracing::warn!(
                                     "Beam-me {} at ({},{}) map position not lying in projection area screen box (obstacle {})",
                                     bm_idx,
@@ -3252,7 +3252,7 @@ impl EngineInner {
 
                     let inside = (raw.x as f32, raw.y as f32);
                     let (border, outside) = crate::natives::compute_border_point_bbox(
-                        map_bbox,
+                        map_bbox.to_geo(),
                         inside,
                         raw.direction as i16,
                     );
@@ -3666,7 +3666,7 @@ impl EngineInner {
         let obstacle_metadata: Vec<(u32, u16, crate::geo2d::BBox2D)> = self
             .sight_obstacles(assets)
             .iter_indexed()
-            .map(|(idx, obs)| (idx, obs.layer, obs.box_ground))
+            .map(|(idx, obs)| (idx, obs.layer, obs.box_ground.to_geo()))
             .collect();
         for (obs_idx, layer, box_ground) in obstacle_metadata {
             if let Some(idx) = crate::sight_obstacle::SightObstacleIndex::new(obs_idx) {
@@ -3816,9 +3816,8 @@ impl EngineInner {
                 let mut obstacles = Vec::new();
                 for obstacle in &area.obstacles {
                     let obs_poly = &obstacle.polygon;
-                    let mut bbox = crate::geo2d::BBox2D::new();
-                    let mut poly_pts: Vec<crate::geo2d::GeoPoint2D> =
-                        Vec::with_capacity(obs_poly.points.len());
+                    let mut bbox = crate::coordinates::MapBBox::new();
+                    let mut poly_pts: Vec<MapPoint> = Vec::with_capacity(obs_poly.points.len());
                     let mut line_indices: Vec<crate::fast_find_grid::LineIndex> =
                         Vec::with_capacity(obs_poly.points.len());
                     for i in 0..obs_poly.points.len() {
@@ -3833,7 +3832,7 @@ impl EngineInner {
                         line.set_repulsive(true);
                         let line_idx = self.fast_grid.add_line(line, layer_idx as u16);
                         line_indices.push(line_idx);
-                        let p = crate::geo2d::pt(x1 as f32, y1 as f32);
+                        let p = MapPoint::new(x1 as f32, y1 as f32);
                         bbox.expand_point(p);
                         poly_pts.push(p);
                     }
@@ -3877,11 +3876,11 @@ impl EngineInner {
                 }
 
                 // Store polygon vertices for point-in-area hit-testing.
-                let polygon_pts: Vec<crate::geo2d::GeoPoint2D> = area
+                let polygon_pts: Vec<MapPoint> = area
                     .polygon
                     .points
                     .iter()
-                    .map(|&(x, y)| crate::geo2d::pt(x as f32, y as f32))
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                     .collect();
 
                 move_areas.push(crate::pathfinder::MotionArea {
@@ -3954,7 +3953,7 @@ impl EngineInner {
                     self.fast_grid.add_sector(
                         crate::fast_find_grid::GridSector {
                             points: pts,
-                            bounding_box: bbox,
+                            bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
                             sector_type: area_type,
                             layer: layer_idx as u16,
                             sector_number,
@@ -3991,7 +3990,7 @@ impl EngineInner {
                         self.fast_grid.add_sector(
                             crate::fast_find_grid::GridSector {
                                 points: obs_pts,
-                                bounding_box: obs_bbox,
+                                bounding_box: crate::coordinates::MapBBox::from_geo(obs_bbox),
                                 sector_type: SectorType::MOTION,
                                 layer: layer_idx as u16,
                                 sector_number,
@@ -4103,7 +4102,7 @@ impl EngineInner {
                 self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: Vec::new(),
-                        bounding_box: crate::geo2d::BBox2D::new(),
+                        bounding_box: crate::coordinates::MapBBox::new(),
                         sector_type: SectorType::MOTION | SectorType::AREA | SectorType::BUILDING,
                         layer: building_lift_layer,
                         sector_number: sn_wrapped,
@@ -4164,7 +4163,7 @@ impl EngineInner {
                 self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
-                        bounding_box: bbox,
+                        bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
                         sector_type: SectorType::SHADOW,
                         layer: raw.layer,
                         sector_number,
@@ -4226,8 +4225,7 @@ impl EngineInner {
                     .collect();
                 for (sector_idx, points, layer) in shadow_inputs {
                     let mut shadow = crate::sector::ShadowData::default();
-                    let points_geo: Vec<_> = points.iter().map(|p| p.to_geo()).collect();
-                    shadow.initialize_2d(&points_geo);
+                    shadow.initialize_2d(&points);
 
                     // Inline projection-area lookup.  Every plane sector
                     // wraps exactly one projection-area obstacle, so
@@ -4243,10 +4241,10 @@ impl EngineInner {
                         if obs.layer != layer {
                             continue;
                         }
-                        if !obs.box_ground.contains_point(bary) {
+                        if !obs.box_projection.contains_point(bary) {
                             continue;
                         }
-                        if !obs.contains_point(crate::coordinates::GroundPoint::from_geo(bary)) {
+                        if !obs.contains_point_projection(bary) {
                             continue;
                         }
                         found_top_plane = Some(obs.top_plane_points);
@@ -4562,7 +4560,7 @@ impl EngineInner {
             }
             let gs = crate::fast_find_grid::GridSector {
                 points,
-                bounding_box: bbox,
+                bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
                 sector_type: crate::sector::SectorType::MOUSE | crate::sector::SectorType::JUMP,
                 layer: zone.layer,
                 sector_number: crate::sector::SectorNumber::new(-1),
@@ -4997,7 +4995,7 @@ impl EngineInner {
                 let door_active = door.active;
                 let idx = self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector { points: pts,
-                    bounding_box: bbox,
+                    bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
                     sector_type: SectorType::DOOR | SectorType::MOUSE,
                     layer,
                     sector_number: crate::sector::SectorNumber::new(-1), /* Doors don't have motion sector numbers */
@@ -5149,7 +5147,7 @@ impl EngineInner {
                 }
                 let gs = crate::fast_find_grid::GridSector {
                     points,
-                    bounding_box: bbox,
+                    bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
                     sector_type,
                     layer,
                     sector_number: crate::sector::SectorNumber::new(-1), /* Patch sectors don't have motion sector numbers */

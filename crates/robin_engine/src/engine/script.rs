@@ -201,7 +201,7 @@ impl EngineInner {
         game_host.sound_source_count = self.sound_sim.sources.num_sources();
         // Map bounding box, needed by RecordEnterGame / RecordLeaveGame
         // to compute map-edge spawn/exit points.
-        game_host.map_bbox = self.fast_grid.level.map_bbox;
+        game_host.map_bbox = self.fast_grid.level.map_bbox.to_geo();
         // Sector type/lift/door snapshot — needed by record-time
         // `append_move_to_sequence` to handle the building / ladder /
         // door-goal branches without holding a back-reference to
@@ -234,7 +234,7 @@ impl EngineInner {
                 .script_zone_polygons
                 .push(crate::natives::ScriptZonePolygon {
                     layer: gs.layer,
-                    bounding_box: gs.bounding_box,
+                    bounding_box: gs.bounding_box.to_geo(),
                     points: gs.points.clone(),
                 });
         }
