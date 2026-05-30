@@ -25,8 +25,9 @@ use crate::ingame_menu::yesno::show_yesno;
 use crate::player_profile::{DifficultyLevel, PlayerProfile, PlayerProfileManager};
 use crate::renderer::Renderer;
 use crate::resource_ids;
+use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::ui_screens::MAX_PLAYER_NAME_LENGTH;
-use crate::widget::{WidgetInput, WidgetInputField};
+use crate::widget::{FrameWnd, Widget, WidgetInput, WidgetInputField};
 use robin_engine::sprite::BBox;
 
 /// Maximum number of player profiles that can coexist on disk.
@@ -105,7 +106,7 @@ pub(crate) async fn show_select_player(
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_sdl(event_pump, transform);
 
-    let mut frame = crate::widget::FrameWnd::default();
+    let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
     for (id, label, x, y) in &btn_positions {
@@ -697,7 +698,7 @@ async fn run_name_prompt(
     let mut difficulty = initial_difficulty.unwrap_or(DifficultyLevel::Medium);
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_sdl(event_pump, transform);
-    let empty_keyboard = crate::ui::UiKeyboard::default();
+    let empty_keyboard = UiKeyboard::default();
 
     crate::window::start_text_input();
     let outcome = loop {
@@ -705,7 +706,7 @@ async fn run_name_prompt(
         // is reflected on the radio buttons via their enabled-but-pressed
         // style (the "selected" sub-picture).  The OK and Cancel buttons
         // sit below.
-        let mut frame = crate::widget::FrameWnd::default();
+        let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
 
@@ -749,7 +750,7 @@ async fn run_name_prompt(
                     diff_btn_h,
                 );
                 if *level == difficulty
-                    && let crate::widget::Widget::Button(button) = &mut widget
+                    && let Widget::Button(button) = &mut widget
                 {
                     let _ = button.set_group_selected(true);
                 }
@@ -873,13 +874,13 @@ async fn run_name_prompt(
         let field_input = WidgetInput {
             mouse_position: widget_input.mouse_position,
             mouse_z: widget_input.mouse_z,
-            mouse_button: crate::ui::MouseButtons::empty(),
+            mouse_button: MouseButtons::empty(),
             keyboard: &empty_keyboard,
             text_input: widget_input.text_input,
             capture: None,
         };
         let _field_events = input_widget.process_input(&field_input);
-        if input_widget.base.state != crate::ui::UiState::SelectedEditable {
+        if input_widget.base.state != UiState::SelectedEditable {
             input_widget.enter_edit_mode();
         }
         input_state.end_frame();
