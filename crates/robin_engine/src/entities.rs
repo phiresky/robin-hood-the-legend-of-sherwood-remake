@@ -40,10 +40,6 @@ impl Entities {
         &self.0
     }
 
-    pub fn slots_mut(&mut self) -> &mut [Option<Entity>] {
-        &mut self.0
-    }
-
     pub fn swap_slots_with(&mut self, slots: &mut Vec<Option<Entity>>) {
         std::mem::swap(&mut self.0, slots);
     }
