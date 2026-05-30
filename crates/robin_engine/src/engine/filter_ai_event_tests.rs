@@ -350,10 +350,10 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     // Snapshot AI state pre-dispatch.
     let sensitive_idx =
         crate::natives::GameHost::actor_handle_index(sensitive_handle).expect("valid test handle");
+    let sensitive_entity_id = EntityId::Pc(crate::entity_id::PcId(sensitive_idx as u32));
     let before_state = engine
         .entities
-        .get_at_index(sensitive_idx as u32)
-        .map(|(_, entity)| entity)
+        .get(sensitive_entity_id)
         .and_then(|e| e.ai_controller())
         .map(|ai| (ai.current_state, ai.current_substate));
 
@@ -361,7 +361,6 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     let ctx = crate::ai::AiContext::default();
     let tick_data = crate::ai::AiPerTickData::stub();
-    let sensitive_entity_id = EntityId::Pc(crate::entity_id::PcId(sensitive_idx as u32));
 
     let handled = engine.dispatch_filtered_stimulus(
         &LevelAssets::new(),
@@ -375,8 +374,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     // State should be unchanged (think() never ran).
     let after_state = engine
         .entities
-        .get_at_index(sensitive_idx as u32)
-        .map(|(_, entity)| entity)
+        .get(sensitive_entity_id)
         .and_then(|e| e.ai_controller())
         .map(|ai| (ai.current_state, ai.current_substate));
     assert_eq!(
