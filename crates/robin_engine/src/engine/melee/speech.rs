@@ -385,13 +385,11 @@ impl EngineInner {
 
     /// Per-frame refresh of all PCs' forbidden expression list counters.
     pub(super) fn tick_refresh_hero_mouth(&mut self) {
-        for (_, entity) in self.entities.occupied_mut() {
-            if let Entity::Pc(pc) = entity {
-                pc.pc.forbidden_expressions.retain_mut(|(_, timer)| {
-                    *timer = timer.saturating_sub(1);
-                    *timer > 0
-                });
-            }
+        for (_, pc) in self.entities.pcs_mut() {
+            pc.pc.forbidden_expressions.retain_mut(|(_, timer)| {
+                *timer = timer.saturating_sub(1);
+                *timer > 0
+            });
         }
     }
 
@@ -433,8 +431,8 @@ impl EngineInner {
             m
         };
 
-        for (id, entity) in self.entities.occupied_mut() {
-            let Entity::Pc(pc) = entity else { continue };
+        for (id, pc) in self.entities.pcs_mut() {
+            let id = EntityId::from(id);
             let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
                 None => (0, None, None),
@@ -538,13 +536,14 @@ impl EngineInner {
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
     pub(super) fn tick_tiredness(&mut self, assets: &LevelAssets) {
         let frame = self.frame_counter;
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.humans_mut() {
+            let id = EntityId::from(id);
             let idx = id.index();
             // Spread the work — only every 64 frames per entity
             if (frame & 63) != (idx & 31) {
                 continue;
             }
-            if !entity.is_human() || entity.is_dead() {
+            if entity.is_dead() {
                 continue;
             }
             let is_swordfighting = entity

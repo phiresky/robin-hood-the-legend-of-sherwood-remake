@@ -245,6 +245,16 @@ impl Entities {
             })
     }
 
+    pub fn scrolls_mut(&mut self) -> impl Iterator<Item = (ScrollId, &mut ElementScroll)> + '_ {
+        self.0
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Scroll(entity)) => Some((ScrollId(idx as u32), entity)),
+                _ => None,
+            })
+    }
+
     pub fn projectiles(&self) -> impl Iterator<Item = (ProjectileId, &ElementProjectile)> + '_ {
         self.0
             .iter()

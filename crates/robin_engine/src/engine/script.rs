@@ -1252,10 +1252,8 @@ impl EngineInner {
         // (it gets swapped into the script manager below), so the list
         // of ready-to-fire scrolls is captured first.
         let mut ready: Vec<i32> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
-            let crate::element::Entity::Scroll(s) = entity else {
-                continue;
-            };
+        for (id, s) in self.entities.scrolls_mut() {
+            let id = EntityId::from(id);
             if !s.element.active {
                 continue;
             }
@@ -2299,7 +2297,8 @@ impl EngineInner {
 
         // Collect state changes: (npc_handle, source_handle, state_change_code).
         let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.npcs_mut() {
+            let id = EntityId::from(id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };

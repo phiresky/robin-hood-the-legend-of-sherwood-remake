@@ -475,26 +475,6 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
     EntityId::new(index, entity.entity_id_kind())
 }
 
-/// Iterate occupied entity table slots with their typed stable IDs.
-pub(crate) fn occupied_entity_slots(
-    entities: &[Option<Entity>],
-) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-    entities.iter().enumerate().filter_map(|(idx, slot)| {
-        slot.as_ref()
-            .map(|e| (entity_id_for_occupied_slot(idx as u32, e), e))
-    })
-}
-
-/// Mutable variant of [`occupied_entity_slots`].
-pub(crate) fn occupied_entity_slots_mut(
-    entities: &mut [Option<Entity>],
-) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
-    entities.iter_mut().enumerate().filter_map(|(idx, slot)| {
-        slot.as_mut()
-            .map(|e| (entity_id_for_occupied_slot(idx as u32, e), e))
-    })
-}
-
 impl EngineInner {
     pub(crate) fn pc_description_index_for_pc_data(
         &self,
@@ -764,14 +744,8 @@ impl EngineInner {
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
         let rng = &mut self.rng;
-        for (_, entity) in self.entities.occupied_mut() {
-            if !matches!(entity, Entity::Scroll(_)) {
-                continue;
-            }
-            entity
-                .element_data_mut()
-                .sprite
-                .force_random_sprite_frame(rng);
+        for (_, scroll) in self.entities.scrolls_mut() {
+            scroll.element.sprite.force_random_sprite_frame(rng);
         }
     }
 

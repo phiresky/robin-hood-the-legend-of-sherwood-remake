@@ -1853,12 +1853,12 @@ impl GameHost {
         };
 
         // Scan all entities for a matching active bonus object
-        for (id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
-            if let Entity::Bonus(e) = entity
-                && e.element.active
-                && e.object.object_type == object_type
+        for (idx, slot) in self.entities.iter().enumerate() {
+            if let Some(Entity::Bonus(bonus)) = slot
+                && bonus.element.active
+                && bonus.object.object_type == object_type
             {
-                return Self::actor_handle_from_index(id.index() as usize);
+                return Self::actor_handle_from_index(idx);
             }
         }
         0 // not found
@@ -6098,13 +6098,14 @@ impl HostFunctions for GameHost {
                         }
                     } else if is_npc {
                         let target_idx = Self::actor_index(actor);
-                        for (id, entity) in
-                            crate::engine::occupied_entity_slots_mut(&mut self.entities)
-                        {
+                        for (idx, slot) in self.entities.iter_mut().enumerate() {
+                            let Some(entity) = slot else {
+                                continue;
+                            };
                             let Some(ai) = entity.ai_controller_mut() else {
                                 continue;
                             };
-                            ai.debug_view_cone_enabled = Some(id.index() as usize) == target_idx;
+                            ai.debug_view_cone_enabled = Some(idx) == target_idx;
                         }
                     }
                     0

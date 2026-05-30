@@ -931,7 +931,8 @@ impl EngineInner {
         // tag. Splitting them through a local re-borrow.
         let next_order_id = &mut self.next_order_id;
         let sequence_manager = &self.sequence_manager;
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(entity_id);
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };
@@ -1042,7 +1043,7 @@ impl EngineInner {
         // Drain pending_jump_done — terminate sequence elements for
         // jumps that finished this tick.
         let mut to_terminate: Vec<(SequenceId, usize)> = Vec::new();
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };

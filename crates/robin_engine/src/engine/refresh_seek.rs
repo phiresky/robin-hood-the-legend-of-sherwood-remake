@@ -267,7 +267,7 @@ impl crate::engine::EngineInner {
 
         // Decrement `seek_refresh_wait` for every actor with an active
         // seek, regardless of whether it triggered.
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };

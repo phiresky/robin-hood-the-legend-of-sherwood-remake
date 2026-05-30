@@ -284,7 +284,7 @@ impl EngineInner {
         };
         let pc_pos = pc.element_data().position_map();
 
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.entities.objects_mut() {
             let pos = entity.element_data().position_map();
             let dist = (pc_pos.x - pos.x).abs().max((pc_pos.y - pos.y).abs());
             if dist >= NEAR_COINS_RADIUS {

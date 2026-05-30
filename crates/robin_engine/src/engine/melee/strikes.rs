@@ -95,7 +95,8 @@ impl EngineInner {
         let mut terminate_low_parry: Vec<(crate::sequence::SequenceId, usize, EntityId)> =
             Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.humans_mut() {
+            let entity_id = EntityId::from(entity_id);
             let is_parrying = entity
                 .actor_data()
                 .map(|a| {
@@ -640,7 +641,8 @@ impl EngineInner {
         }
 
         // Phase 1: advance timers and collect hits
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(entity_id);
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
 
@@ -1340,7 +1342,8 @@ impl EngineInner {
         // termination.
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(entity_id);
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -1828,8 +1831,8 @@ impl EngineInner {
         let mut hits: Vec<ChargeHit> = Vec::new();
         let mut finished_charges: Vec<EntityId> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
-            let attacker_id = entity_id;
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let attacker_id = EntityId::from(entity_id);
             let (elem_pos, _elem_layer, attacker_profile_idx) = {
                 let elem = entity.element_data();
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -2581,8 +2584,9 @@ impl EngineInner {
         // `crate::order::alloc_order_id` while still holding
         // `self.entities.iter_mut()`.
         let next_order_id = &mut self.next_order_id;
-        for (entity_id, entity) in self.entities.occupied_mut() {
-            if !entity.is_human() || entity.is_dead() {
+        for (entity_id, entity) in self.entities.humans_mut() {
+            let entity_id = EntityId::from(entity_id);
+            if entity.is_dead() {
                 continue;
             }
 

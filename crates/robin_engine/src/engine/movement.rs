@@ -2961,7 +2961,8 @@ impl EngineInner {
             vec![None; self.entities.len()];
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
-        for (entity_id, entity) in self.entities.occupied() {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let idx = entity_id.index() as usize;
             let Some(actor) = entity.actor_data() else {
                 continue;
@@ -3076,14 +3077,13 @@ impl EngineInner {
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
         let mut drunk_turn_overrides: Vec<Option<i16>> = vec![None; self.entities.len()];
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, soldier) in self.entities.soldiers_mut() {
+            let entity_id = EntityId::from(entity_id);
             let idx = entity_id.index() as usize;
-            if !matches!(entity, crate::element::Entity::Soldier(_)) {
-                continue;
-            }
-            let is_drunk = entity
-                .npc_data()
-                .and_then(|n| n.ai_brain.base())
+            let is_drunk = soldier
+                .npc
+                .ai_brain
+                .base()
                 .map(|b| b.blood_alcohol > 0)
                 .unwrap_or(false);
             if !is_drunk {
@@ -3093,9 +3093,7 @@ impl EngineInner {
             // an active movement path — idle drunk soldiers don't
             // wobble.  Goal is read from the actor's Move element's
             // current order (authoritative path source).
-            let Some(actor) = entity.actor_data() else {
-                continue;
-            };
+            let actor = &soldier.actor;
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
@@ -3104,7 +3102,7 @@ impl EngineInner {
                 continue;
             };
             let goal = crate::geo2d::pt(order.target_x, order.target_y);
-            let pos = entity.element_data().position_map();
+            let pos = soldier.element.position_map();
             let dx = goal.x - pos.x;
             let dy = goal.y - pos.y;
             if dx * dx + dy * dy < 0.01 {
@@ -3118,8 +3116,8 @@ impl EngineInner {
             // turn — `TurnDrunken` reads the direction goal but never
             // writes it.
             let order_compute_direction = order.compute_direction;
-            if entity.actor_data().is_some() {
-                let pi = entity.position_iface_mut();
+            {
+                let pi = &mut soldier.element.sprite.position_iface;
                 let current_dir = pi.get_direction();
                 let goal_for_turn = if order_compute_direction {
                     pi.set_direction(crate::position_interface::Direction::from_raw(
@@ -3369,7 +3367,8 @@ impl EngineInner {
             crate::element::ActionState,
         )> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(entity_id);
             let idx = entity_id.index() as usize;
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state

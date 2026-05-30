@@ -81,13 +81,11 @@ impl EngineInner {
         }
         let mut impacts: Vec<Impact> = Vec::new();
 
-        for (id, entity) in self.entities.occupied_mut() {
-            if !entity.element_data().active {
+        for (id, proj) in self.entities.projectiles_mut() {
+            let id = EntityId::from(id);
+            if !proj.element.active {
                 continue;
             }
-            let Entity::Projectile(proj) = entity else {
-                continue;
-            };
             let object_type = proj.object.object_type;
             if !matches!(object_type, ObjectType::Purse | ObjectType::Coin) {
                 continue;

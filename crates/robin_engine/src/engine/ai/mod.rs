@@ -17,6 +17,7 @@ use crate::ai_vision;
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId};
 use crate::engine::SimScratch;
+use crate::entities::Entities;
 use crate::geo2d::{self};
 
 /// Number of arrows given to Merry Man archers in forest levels.
@@ -507,15 +508,13 @@ pub(super) fn lookup_primary_target_metadata(
 /// `ATTACKING_CHARGING_ENEMY`) with a live primary target are
 /// eligible.
 pub(super) fn build_friend_swap_candidates(
-    entities: &[Option<Entity>],
+    entities: &Entities,
     me_id: crate::element::EntityId,
     my_camp: crate::element::Camp,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
     let mut out = Vec::new();
-    for (friend_id, entity) in occupied_entity_slots(entities) {
-        let Entity::Soldier(s) = entity else {
-            continue;
-        };
+    for (friend_id, s) in entities.soldiers() {
+        let friend_id = EntityId::from(friend_id);
         if friend_id == me_id {
             continue;
         }
@@ -686,10 +685,8 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     // Net radius: 10 when crumpled, else 40.
     let mut nets_by_victim: std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> =
         std::collections::HashMap::new();
-    for (net_id, entity) in crate::engine::occupied_entity_slots(&engine.entities) {
-        let Entity::Net(net) = entity else {
-            continue;
-        };
+    for (net_id, net) in engine.entities.nets() {
+        let net_id = EntityId::from(net_id);
         if !net.element.active {
             continue;
         }
@@ -713,7 +710,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     }
 
     let mut map = AiEntityViewMap::with_capacity(engine.entities.len());
-    for (entity_id, entity) in crate::engine::occupied_entity_slots(&engine.entities) {
+    for (entity_id, entity) in engine.entities.occupied() {
         let elem = entity.element_data();
         if !elem.active {
             continue;
@@ -2963,7 +2960,8 @@ impl EngineInner {
         }
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.npcs_mut() {
+            let id = EntityId::from(id);
             let Some(npc) = entity.npc_data_mut() else {
                 continue;
             };
@@ -3101,7 +3099,8 @@ impl EngineInner {
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.npcs_mut() {
+            let id = EntityId::from(id);
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
