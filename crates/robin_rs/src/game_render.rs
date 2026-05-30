@@ -957,7 +957,7 @@ fn render_ground_mark_set(
             BLIT_SOURCE_TRANSPARENT,
         );
 
-        let mark_world_bbox = BBox2D::from_coords(
+        let mark_world_bbox = engine_coordinates::MapBBox::from_coords(
             mark.x + ox as f32,
             mark.y + oy as f32,
             mark.x + ox as f32 + fw as f32,
@@ -986,7 +986,7 @@ fn render_character_masks_clipped(
     engine: &Engine,
     renderer: &mut Renderer,
     layer: u16,
-    world_bbox: &crate::geo2d::BBox2D,
+    world_bbox: &engine_coordinates::MapBBox,
     position: engine_coordinates::MapPoint,
     clip_rect: Rect,
     view: crate::geo2d::GeoPoint2D,
@@ -1274,7 +1274,7 @@ pub(crate) fn render_entities_gpu(
             // of the sprite.  Where the mask is set the building
             // pixels reappear in front of the actor; elsewhere the
             // texture is transparent and the sprite stays visible.
-            let sprite_world_bbox = BBox2D::from_coords(
+            let sprite_world_bbox = engine_coordinates::MapBBox::from_coords(
                 sprite_x,
                 sprite_y,
                 sprite_x + sw as f32,
@@ -1459,7 +1459,7 @@ fn render_sprite_mask_debug_overlay(
     host: &Host,
     engine: &Engine,
     renderer: &mut Renderer,
-    sprite_world_bbox: &crate::geo2d::BBox2D,
+    sprite_world_bbox: &engine_coordinates::MapBBox,
     actor_position: engine_coordinates::MapPoint,
     position_3d: engine_coordinates::WorldPoint3D,
     use_projectile_path: bool,
@@ -1474,12 +1474,7 @@ fn render_sprite_mask_debug_overlay(
     } else {
         0xf81f
     };
-    draw_map_bbox_outline(
-        host,
-        renderer,
-        &engine_coordinates::MapBBox::from_geo(*sprite_world_bbox),
-        sprite_color,
-    );
+    draw_map_bbox_outline(host, renderer, sprite_world_bbox, sprite_color);
 
     for &mask_idx in mask_indices {
         let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];

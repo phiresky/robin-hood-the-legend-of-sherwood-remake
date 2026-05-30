@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{GroundBBox, GroundPoint, MapBBox, MapPoint};
-use crate::geo2d::{self, BBox2D, GeoPoint2D, Polygon2D, pt, segment};
+use crate::geo2d::{self, Polygon2D, pt, segment};
 
 // ---------------------------------------------------------------------------
 // SightObstacleIndex — nominal newtype
@@ -600,7 +600,7 @@ impl SightObstacle {
                     if let geo2d::Intersection2D::Point(ip) =
                         geo2d::segment_intersection(ray_seg, edge)
                     {
-                        let ray_z = ray_eq.z_at(ip);
+                        let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
                         let top_z = self.compute_top_z(ip.x, ip.y);
                         if top_z >= ray_z {
                             return true;
@@ -664,7 +664,7 @@ impl SightObstacle {
                     if let geo2d::Intersection2D::Point(ip) =
                         geo2d::segment_intersection(ray_seg, edge)
                     {
-                        let ray_z = ray_eq.z_at(ip);
+                        let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
                         let top_z = self.compute_top_z(ip.x, ip.y);
                         let bot_z = self.compute_bottom_z(ip.x, ip.y);
                         if top_z >= ray_z && bot_z <= ray_z {
@@ -769,7 +769,7 @@ impl SightObstacle {
             if geo2d::segments_intersect(ray_seg, edge)
                 && let geo2d::Intersection2D::Point(ip) = geo2d::segment_intersection(ray_seg, edge)
             {
-                let ray_z = ray_eq.z_at(ip);
+                let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
                 let top_z = self.compute_top_z(ip.x, ip.y);
                 let blocked = if self.on_ground {
                     if !origin_above_top && !dest_above_top {
@@ -930,7 +930,7 @@ impl RayZEquation {
         }
     }
 
-    fn z_at(&self, p: GeoPoint2D) -> f32 {
+    fn z_at(&self, p: GroundPoint) -> f32 {
         let coord = if self.use_x { p.x } else { p.y };
         self.slope * coord + self.intercept
     }
@@ -1004,7 +1004,7 @@ pub fn is_reachable_impact_3d(
     destination: crate::coordinates::WorldPoint3D,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
-    map_bbox: Option<BBox2D>,
+    map_bbox: Option<MapBBox>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1078,7 +1078,7 @@ pub fn is_reachable_impact_fall_3d(
     destination_altitude: f32,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
-    map_bbox: Option<BBox2D>,
+    map_bbox: Option<MapBBox>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1102,7 +1102,7 @@ pub fn is_reachable_impact_fall_3d(
     // Out-of-map guard: when origin is outside the playable rectangle,
     // force an impact at the ground plane with no obstacle.
     if let Some(bbox) = map_bbox
-        && !bbox.contains_point(p2d.to_geo())
+        && !bbox.contains_point(MapPoint::new(p2d.x, p2d.y))
     {
         return Some(ImpactResult3D {
             impact: WorldPoint3D {
@@ -1164,7 +1164,7 @@ pub fn is_reachable_impact_up_3d(
     destination_altitude: f32,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
-    map_bbox: Option<BBox2D>,
+    map_bbox: Option<MapBBox>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1187,7 +1187,7 @@ pub fn is_reachable_impact_up_3d(
     // Out-of-map guard: when origin is outside the playable rectangle,
     // force a ground-impact with no obstacle.
     if let Some(bbox) = map_bbox
-        && !bbox.contains_point(p2d.to_geo())
+        && !bbox.contains_point(MapPoint::new(p2d.x, p2d.y))
     {
         return Some(ImpactResult3D {
             impact: WorldPoint3D {

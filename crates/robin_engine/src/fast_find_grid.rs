@@ -1479,7 +1479,7 @@ impl FastFindGrid {
     pub fn get_masks_applied_to_character(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
         position: MapPoint,
     ) -> Vec<crate::mask::MaskIndex> {
         let rect = match bbox.0 {
@@ -1513,7 +1513,7 @@ impl FastFindGrid {
                     if !self.is_mask_active(mask_idx) || !mask.is_character() {
                         continue;
                     }
-                    if !mask.bbox.intersects_bbox(&MapBBox::from_geo(*bbox)) {
+                    if !mask.bbox.intersects_bbox(bbox) {
                         continue;
                     }
                     if mask.is_applied_to_point_character(position) {
@@ -1573,7 +1573,7 @@ impl FastFindGrid {
             destination,
             type_filter,
             obstacles,
-            Some(self.level.map_bbox.to_geo()),
+            Some(self.level.map_bbox),
         )
         .map(|hit| hit.impact)
         .unwrap_or(destination)
@@ -1590,7 +1590,7 @@ impl FastFindGrid {
     pub fn get_masks_applied_to_projectile(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
         position: crate::coordinates::WorldPoint3D,
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -1626,7 +1626,7 @@ impl FastFindGrid {
                     if !self.is_mask_active(mask_idx) || !mask.is_projectile() {
                         continue;
                     }
-                    if !mask.bbox.intersects_bbox(&MapBBox::from_geo(*bbox)) {
+                    if !mask.bbox.intersects_bbox(bbox) {
                         continue;
                     }
                     if mask.is_applied_to_point_3d(position, is_human, obstacles) {
@@ -2752,7 +2752,7 @@ impl FastFindGrid {
             destination,
             type_filter,
             obstacles,
-            Some(self.level.map_bbox.to_geo()),
+            Some(self.level.map_bbox),
         );
 
         // Ground-level motion line intersection: the corridor between

@@ -973,7 +973,7 @@ fn compute_trajectory_ballistic_impl(
                 },
                 crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
                 check.sight_obstacles,
-                Some(check.fast_find_grid.level.map_bbox.to_geo()),
+                Some(check.fast_find_grid.level.map_bbox),
             );
 
             // Compute the 3D impact ratio relative to the current
