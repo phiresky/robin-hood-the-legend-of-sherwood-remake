@@ -96,7 +96,7 @@ pub struct SoundSourceInfo {
     pub outer_distance: u16,
     pub inner_volume: u16,
     pub outer_volume: u16,
-    pub shape: Vec<GeoPoint2D>,
+    pub shape: Vec<MapPoint>,
 }
 
 /// Sound settings passed to `get_logical_playing_params`.  The union
@@ -849,7 +849,7 @@ mod tests {
             outer_distance: 500,
             inner_volume: 255,
             outer_volume: 0,
-            shape: vec![geo2d::pt(300.0, 0.0)],
+            shape: vec![MapPoint::new(300.0, 0.0)],
         };
 
         let settings = SoundSettings {
@@ -928,7 +928,7 @@ mod tests {
             outer_distance: 500,
             inner_volume: 255,
             outer_volume: 0,
-            shape: vec![geo2d::pt(100.0, 0.0), geo2d::pt(200.0, 0.0)],
+            shape: vec![MapPoint::new(100.0, 0.0), MapPoint::new(200.0, 0.0)],
         };
 
         let settings = SoundSettings {

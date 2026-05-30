@@ -1008,12 +1008,8 @@ impl EngineInner {
                     .find(|(id, _, _, _)| *id == *pc_id)
                     .map(|(_, p, _, _)| *p)
                     .unwrap_or(*dest);
-                let source_line_idx = self.get_nearest_jumpable_jump_line(
-                    *pc_id,
-                    pc_pos.to_geo(),
-                    effective_click.to_geo(),
-                    false,
-                );
+                let source_line_idx =
+                    self.get_nearest_jumpable_jump_line(*pc_id, pc_pos, effective_click, false);
                 let Some(source_line_idx) =
                     source_line_idx.and_then(crate::jump_line::JumpLineIndex::new)
                 else {

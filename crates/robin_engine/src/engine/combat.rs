@@ -37,15 +37,14 @@ impl EngineInner {
         assets: &LevelAssets,
         projectile_id: EntityId,
     ) -> Option<crate::fast_find_grid::ProjectileLandingResolution> {
-        let landing_screen = {
+        let landing_map = {
             let entity = self.get_entity(projectile_id)?;
             let pos = entity.element_data().position();
-            crate::geo2d::pt(pos.x, pos.y - pos.z)
+            pos.to_map()
         };
-        let resolution = self.fast_grid.resolve_projectile_landing(
-            crate::coordinates::MapPoint::from_geo(landing_screen),
-            self.sight_obstacles(assets),
-        );
+        let resolution = self
+            .fast_grid
+            .resolve_projectile_landing(landing_map, self.sight_obstacles(assets));
         if let Some(entity) = self
             .entities
             .get_mut(projectile_id.index() as usize)

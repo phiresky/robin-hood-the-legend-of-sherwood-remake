@@ -1689,12 +1689,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::Source,
-            position: src
-                .shape
-                .first()
-                .copied()
-                .map(MapPoint::from_geo)
-                .unwrap_or(MapPoint::ZERO),
+            position: src.shape.first().copied().unwrap_or(MapPoint::ZERO),
             identifier: src.id,
             source: SoundSettingsSource::SoundSource {
                 info: src.to_source_info(),

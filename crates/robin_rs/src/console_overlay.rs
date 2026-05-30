@@ -88,6 +88,7 @@ const COMPLETION_KEYWORDS_DEV: &[&str] = &[
     "HIGHLANDER2",
     "HONOLULU",
     "I",
+    "IDS",
     "KOLKOZ",
     "LAST",
     "LEVEL",

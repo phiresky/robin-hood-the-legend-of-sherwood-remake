@@ -20,7 +20,6 @@ use robin_engine::engine::input::{
 };
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::fast_find_grid as engine_fast_find_grid;
-use robin_engine::geo2d as engine_geo2d;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sector as engine_sector;
 use robin_engine::weapons as engine_weapons;
@@ -491,13 +490,9 @@ pub fn choose_mouse_pointer_for_no_action(
                         };
                         jumper_on_shoulders =
                             entity.element_data().posture == engine_element::Posture::OnShoulders;
-                        let p = entity.element_data().position_map();
-                        let pc_pos_map = engine_geo2d::pt(p.x, p.y);
+                        let pc_pos_map = entity.element_data().position_map();
                         jump_line_idx = engine.get_nearest_jumpable_jump_line(
-                            pc_id,
-                            pc_pos_map,
-                            mouse_map.to_geo(),
-                            /* test_posture */ false,
+                            pc_id, pc_pos_map, mouse_map, /* test_posture */ false,
                         );
                         break;
                     }

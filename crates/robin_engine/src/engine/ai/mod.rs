@@ -17,7 +17,6 @@ use crate::ai_vision;
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId};
 use crate::engine::SimScratch;
-use crate::geo2d::{self};
 
 /// Number of arrows given to Merry Man archers in forest levels.
 const MERRY_MAN_ARROWS: u16 = 3;
@@ -169,11 +168,9 @@ fn test_hiking_path_fine(
     let mut prev = &waypoints[0];
     for (i, wp) in waypoints.iter().enumerate().skip(1) {
         if wp.level == prev.level && wp.sector == prev.sector {
-            let p1 = geo2d::pt(prev.x as f32, prev.y as f32);
-            let p2 = geo2d::pt(wp.x as f32, wp.y as f32);
-            let p1_map = crate::coordinates::MapPoint::from_geo(p1);
-            let p2_map = crate::coordinates::MapPoint::from_geo(p2);
-            if !grid.is_reachable_thin(p1_map, p2_map, wp.level) {
+            let p1 = MapPoint::new(prev.x as f32, prev.y as f32);
+            let p2 = MapPoint::new(wp.x as f32, wp.y as f32);
+            if !grid.is_reachable_thin(p1, p2, wp.level) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,
@@ -186,7 +183,7 @@ fn test_hiking_path_fine(
             // Split the authorized check into its two components
             // (destination-box auth check, then thick-corridor check) so
             // diagnostics pinpoint which half of the test rejects.
-            let dest_box = move_box.translated(p2);
+            let dest_box = move_box.translated(p2.to_geo());
             if !grid.is_position_authorized(&dest_box, wp.level) {
                 tracing::debug!(
                     wp_idx = i,
@@ -200,7 +197,7 @@ fn test_hiking_path_fine(
                 ok = false;
             }
             let hd = crate::geo2d::pt(move_box.x_max(), move_box.y_max());
-            if !grid.is_reachable_thick(p1_map, p2_map, wp.level, hd) {
+            if !grid.is_reachable_thick(p1, p2, wp.level, hd) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,
@@ -1884,7 +1881,7 @@ impl EngineInner {
         // If the NPC's move-box overlaps the playable area, attempt to
         // push it to an authorized position via `find_authorized_position`.
         if is_enemy && let Some(move_box) = move_box_opt {
-            let mut abs_box = move_box.translated(geo2d::pt(pos_map.x, pos_map.y));
+            let mut abs_box = move_box.translated(pos_map.to_geo());
             if !self.fast_grid.is_position_authorized(&abs_box, layer)
                 && self.fast_grid.find_authorized_position(&mut abs_box, layer)
             {
@@ -1892,11 +1889,10 @@ impl EngineInner {
                 if let Some(Some(entity)) = self.entities.get_mut(slot)
                     && entity.actor_data().is_some()
                 {
+                    let new_center_map = MapPoint::from_geo(new_center);
                     let pi = entity.position_iface_mut();
-                    pi.set_map_position(crate::coordinates::MapPoint::from_geo(new_center));
-                    entity
-                        .element_data_mut()
-                        .set_position_map(new_center.into());
+                    pi.set_map_position(new_center_map);
+                    entity.element_data_mut().set_position_map(new_center_map);
                 }
             }
         }

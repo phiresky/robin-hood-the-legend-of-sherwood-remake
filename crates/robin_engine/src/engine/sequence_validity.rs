@@ -1214,12 +1214,9 @@ impl EngineInner {
         let Some(landing) = trajectory.last() else {
             return false;
         };
-        let landing_screen =
-            crate::geo2d::pt(landing.position.x, landing.position.y - landing.position.z);
-        let resolution = self.fast_grid.resolve_projectile_landing(
-            crate::coordinates::MapPoint::from_geo(landing_screen),
-            self.sight_obstacles(assets),
-        );
+        let resolution = self
+            .fast_grid
+            .resolve_projectile_landing(landing.position.to_map(), self.sight_obstacles(assets));
         resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle
     }
 }

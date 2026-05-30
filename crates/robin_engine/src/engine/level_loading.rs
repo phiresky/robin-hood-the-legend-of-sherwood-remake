@@ -1060,12 +1060,12 @@ impl EngineInner {
                         (0, 0, 1)
                     };
 
-                let shape: Vec<crate::geo2d::GeoPoint2D> = raw
+                let shape: Vec<MapPoint> = raw
                     .polyline
                     .as_ref()
                     .map(|pts| {
                         pts.iter()
-                            .map(|&(x, y)| crate::geo2d::pt(x as f32, y as f32))
+                            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect()
                     })
                     .unwrap_or_default();

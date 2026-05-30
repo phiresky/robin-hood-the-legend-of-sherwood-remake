@@ -1674,31 +1674,31 @@ impl FastFindGrid {
     }
 
     /// Resolve the obstacle/layer/sector for a projectile that has just
-    /// landed at `landing_screen` (screen-space `(x, y - z)`).
+    /// landed at `landing_map` (projected map-space `(x, y - z)`).
     ///
     /// The reference behavior starts from the impact obstacle when one
     /// was struck, then queries motion sectors at that layer to find the
     /// containing motion area. Call
     /// [`Self::resolve_projectile_landing_with_obstacle`] when the
     /// trajectory impact carried exact obstacle identity; this wrapper
-    /// keeps the legacy screen-polygon fallback for callers that only
+    /// keeps the legacy projection-polygon fallback for callers that only
     /// know the landing footprint.
     pub fn resolve_projectile_landing(
         &self,
-        landing_screen: MapPoint,
+        landing_map: MapPoint,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
-        self.resolve_projectile_landing_with_obstacle(landing_screen, None, sight_obstacles)
+        self.resolve_projectile_landing_with_obstacle(landing_map, None, sight_obstacles)
     }
 
     /// Resolve projectile landing membership, preferring an exact
     /// obstacle index captured by the trajectory impact when available.
     /// This preserves the legacy implementation pointer identity behavior for overlapping
     /// projection areas; callers without trajectory obstacle identity
-    /// still fall back to the screen polygon lookup.
+    /// still fall back to the projected polygon lookup.
     pub fn resolve_projectile_landing_with_obstacle(
         &self,
-        landing_screen: MapPoint,
+        landing_map: MapPoint,
         exact_obstacle_index: Option<crate::position_interface::ObstacleHandle>,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
@@ -1725,7 +1725,7 @@ impl FastFindGrid {
         for (idx, obstacle) in projection_iter.by_ref() {
             if !sight_obstacles.is_active(idx as usize)
                 || !obstacle.is_projection_area()
-                || !obstacle.contains_point_screen(landing_screen.to_geo())
+                || !obstacle.contains_point_screen(landing_map.to_geo())
             {
                 continue;
             }
@@ -1747,16 +1747,16 @@ impl FastFindGrid {
         }
 
         let mut sector = None;
-        if self.is_inside_grid_point(landing_screen) {
-            let block_idx = self.get_block_index(landing_screen, layer);
+        if self.is_inside_grid_point(landing_map) {
+            let block_idx = self.get_block_index(landing_map, layer);
             for (_, motion_sector) in self.get_sectors_at_block(block_idx, SectorType::MOTION) {
                 if motion_sector.sector_type.is_area() {
-                    if motion_sector.contains_point(landing_screen) {
+                    if motion_sector.contains_point(landing_map) {
                         sector = u16::try_from(i16::from(motion_sector.sector_number))
                             .ok()
                             .and_then(crate::position_interface::SectorHandle::new);
                     }
-                } else if motion_sector.contains_point(landing_screen) {
+                } else if motion_sector.contains_point(landing_map) {
                     return ProjectileLandingResolution {
                         obstacle_index,
                         obstacle_plane,

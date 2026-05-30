@@ -204,6 +204,7 @@ fn parse_dev(tokens: &[&str]) -> Option<ConsoleCommand> {
         "ASSERTFALSE" => Some(ConsoleCommand::AssertFalse),
         "BABYLON" => Some(ConsoleCommand::Babylon),
         "BIG" if tokens.get(1) == Some(&"BROTHER") => Some(ConsoleCommand::BigBrother),
+        "IDS" => Some(ConsoleCommand::BigBrother),
         "BUD" if tokens.get(1) == Some(&"SPENCER") => Some(ConsoleCommand::BudSpencer),
         "CALL" if tokens.len() >= 3 => Some(ConsoleCommand::Call {
             actor: tokens[1].to_string(),
@@ -396,6 +397,7 @@ mod tests {
         assert_eq!(parse("GOLDENEYE"), Some(ConsoleCommand::Goldeneye));
         assert_eq!(parse("FREEZE"), Some(ConsoleCommand::Freeze));
         assert_eq!(parse("FULLHOUSE"), Some(ConsoleCommand::GiveAmmo));
+        assert_eq!(parse("IDS"), Some(ConsoleCommand::BigBrother));
     }
 
     #[test]

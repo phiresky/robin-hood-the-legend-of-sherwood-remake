@@ -73,7 +73,6 @@ pub(crate) fn render_door_overlays(
 ) {
     use crate::element::Posture;
     use crate::gate::DoorType;
-    use crate::geo2d::pt;
     use crate::profiles::Action;
     use crate::sector::SectorType;
 
@@ -315,16 +314,13 @@ pub(crate) fn render_door_overlays(
                 }
                 let pc_pos = engine
                     .get_entity(pc_id)
-                    .map(|e| {
-                        let p = e.element_data().position_map();
-                        pt(p.x, p.y)
-                    })
-                    .unwrap_or(pt(0.0, 0.0));
+                    .map(|e| e.element_data().position_map())
+                    .unwrap_or(MapPoint::ZERO);
                 paint = engine
                     .get_nearest_jumpable_jump_line(
                         pc_id,
                         pc_pos,
-                        pt(0.0, 0.0),
+                        MapPoint::ZERO,
                         /* test_posture */ false,
                     )
                     .is_some();
@@ -469,7 +465,7 @@ pub(crate) fn render_view_cone_overlay(
                     z: 0.0,
                 });
         (
-            geo2d::pt(pos.x, pos.y),
+            pos.to_map().to_geo(),
             dev.cheat_free_shadow_polygon_params.clone(),
             None,
         )
@@ -961,7 +957,7 @@ fn render_ground_mark_set(
             mark.x + ox as f32 + fw as f32,
             mark.y + oy as f32 + fh as f32,
         );
-        let mark_position = crate::geo2d::pt(
+        let mark_position = MapPoint::new(
             mark.x + ox as f32 + fw as f32 * 0.5,
             mark.y + oy as f32 + fh as f32 * 0.5,
         );
@@ -971,7 +967,7 @@ fn render_ground_mark_set(
             renderer,
             mark.layer,
             &mark_world_bbox,
-            engine_coordinates::MapPoint::from_geo(mark_position),
+            mark_position,
             mark_rect,
             view_pos.to_geo(),
             zoom,
@@ -2651,11 +2647,7 @@ fn surface_color(layer: usize, area: usize) -> (u8, u8, u8) {
 /// layer.  Both indices are vec positions in
 /// `move_layers[layer][area]` — matches `PathGraph::find_area_at_point`,
 /// which is the canonical lookup.
-fn locate_surface(
-    graph: &engine_pathfinder::PathGraph,
-    pt: engine_geo2d::GeoPoint2D,
-) -> Option<(usize, usize)> {
-    let pt = engine_coordinates::MapPoint::from_geo(pt);
+fn locate_surface(graph: &engine_pathfinder::PathGraph, pt: MapPoint) -> Option<(usize, usize)> {
     (0..graph.static_data.move_layers.len())
         .find_map(|l| graph.find_area_at_point(l, pt).map(|a| (l, a)))
 }
@@ -2837,25 +2829,23 @@ pub(crate) fn render_debug_surfaces_outline(
     {
         let start = engine
             .get_entity(pc_id)
-            .map(|e| {
-                let pm = e.element_data().position_map();
-                engine_geo2d::pt(pm.x, pm.y)
-            })
-            .unwrap_or_else(|| waypoints[0].to_geo());
+            .map(|e| e.element_data().position_map())
+            .unwrap_or(waypoints[0]);
         let mut prev = start;
         for &wp in &waypoints {
+            let prev_geo = prev.to_geo();
             let wp_geo = wp.to_geo();
-            let (r, g, b) = match locate_surface(graph, wp_geo) {
+            let (r, g, b) = match locate_surface(graph, wp) {
                 Some((l, a)) => surface_color(l, a),
                 None => (255, 255, 255),
             };
-            let (x1, y1) = to_screen_i(prev);
+            let (x1, y1) = to_screen_i(prev_geo);
             let (x2, y2) = to_screen_i(wp_geo);
             renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
             const M: i32 = 4;
             renderer.render_gpu_line(x2 - M, y2 - M, x2 + M, y2 + M, r, g, b);
             renderer.render_gpu_line(x2 - M, y2 + M, x2 + M, y2 - M, r, g, b);
-            prev = wp_geo;
+            prev = wp;
         }
     }
 

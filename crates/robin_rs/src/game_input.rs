@@ -311,7 +311,6 @@ pub fn resolve_left_click(
             }
         }
         let actors: Vec<EntityId> = selected.to_vec();
-        let waypoint = geo2d::pt(patch.waypoint.x, patch.waypoint.y);
         // Mirror C++'s `update_mouse` substitution
         // (`mpSelectedSector = mFastGrid.GetSector(patch.sector)` /
         // `muwSelectedLayer = patch.layer`): pass the patch's
@@ -325,7 +324,7 @@ pub fn resolve_left_click(
         ));
         return vec![PlayerCommand::GroupMove {
             actors,
-            destination: waypoint.into(),
+            destination: patch.waypoint,
             running: is_double,
             show_marker: false,
             goal_override,
@@ -1378,7 +1377,7 @@ pub fn resolve_swordfight(
             let h = entity.human_data()?;
             let is_sword = !h.opponents.is_empty();
             let elem = entity.element_data();
-            let pos = geo2d::pt(elem.position_map().x, elem.position_map().y);
+            let pos = elem.position_map();
             let dir_sector = elem.direction();
             let dir_arr = crate::shadow_polygon::sector_to_direction(dir_sector);
             let facing = geo2d::pt(dir_arr[0], dir_arr[1] * ASPECT_RATIO);
