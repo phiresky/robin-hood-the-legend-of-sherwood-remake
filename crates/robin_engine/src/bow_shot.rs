@@ -47,6 +47,7 @@ use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
     ObjectData, ObjectType, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
 };
+use crate::entities::Entities;
 use crate::movement::ActiveShot;
 use crate::order::{Order, OrderType};
 use crate::profiles::Action;
@@ -1464,7 +1465,7 @@ pub enum BeginShotResult {
 /// shooter or target is not in a valid state.
 #[allow(clippy::too_many_arguments)]
 pub fn begin_bow_shot(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
     shooter_id: EntityId,
     target_id: EntityId,
@@ -1482,10 +1483,7 @@ pub fn begin_bow_shot(
     if shooter_id == target_id {
         return BeginShotResult::Impossible;
     }
-    let target_valid = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let target_valid = match entities.get(target_id) {
         Some(e) if e.is_human() => !e.is_dead() && e.is_active(),
         Some(Entity::Target(t)) => {
             t.element.active && t.target.action_filter.contains(TargetFilter::ARROW)
@@ -1498,10 +1496,7 @@ pub fn begin_bow_shot(
     }
 
     // Read target ground position for direction/order selection.
-    let (tx, ty) = match entities
-        .get(target_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let (tx, ty) = match entities.get(target_id) {
         Some(e) => {
             let position = bow_target_ground_position(e);
             (position.x, position.y)
@@ -1510,10 +1505,7 @@ pub fn begin_bow_shot(
     };
 
     // Validate shooter.  Read posture before the mutable borrow.
-    let (shooter_valid, shooter_posture, current_state) = match entities
-        .get(shooter_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    {
+    let (shooter_valid, shooter_posture, current_state) = match entities.get(shooter_id) {
         Some(e) if e.is_human() && !e.is_dead() => {
             let posture = e.element_data().posture;
             let Some(actor) = e.actor_data() else {
@@ -1535,10 +1527,7 @@ pub fn begin_bow_shot(
         return BeginShotResult::Impossible;
     }
 
-    let shooter = match entities
-        .get_mut(shooter_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let shooter = match entities.get_mut(shooter_id) {
         Some(e) => e,
         None => return BeginShotResult::Impossible,
     };
@@ -1656,10 +1645,7 @@ pub fn begin_bow_shot(
     // Face the target via the normal direction-goal path.  C++ sets the
     // shoot animation's facing at initialization, then freezes the first
     // frame while Turn() rotates toward it; do not snap instantly here.
-    let shooter = entities
-        .get_mut(shooter_id.index() as usize)
-        .and_then(|s| s.as_mut())
-        .unwrap();
+    let shooter = entities.get_mut(shooter_id).unwrap();
     let shooter_pos = shooter.element_data().position();
     let dx = tx - shooter_pos.x;
     let dy = ty - shooter_pos.y;
@@ -1723,19 +1709,18 @@ pub struct BowTickEvents {
 /// the shoot animation completes the actor returns to the
 /// AimingWithBow action state.
 pub fn tick_bow_shots(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
     let target_ground_positions: Vec<Option<MapPoint>> = entities
-        .iter()
+        .iter_slots()
         .map(|slot| slot.as_ref().map(bow_target_ground_position))
         .collect();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
-        let Some(entity) = slot else { continue };
-        let shooter_id = crate::engine::entity_id_for_occupied_slot(idx as u32, entity);
+    for (actor_id, entity) in entities.actors_mut() {
+        let shooter_id = EntityId::from(actor_id);
         let idx = shooter_id.index() as usize;
         let actor = match entity.actor_data() {
             Some(a) => a,
@@ -1976,7 +1961,7 @@ pub fn tick_bow_shots(
 
     // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
     for result in pending_fired {
-        let Some(Some(target_entity)) = entities.get(result.target.index() as usize) else {
+        let Some(target_entity) = entities.get(result.target) else {
             tracing::warn!(
                 shooter = ?result.shooter,
                 target = ?result.target,
@@ -2885,7 +2870,7 @@ pub(crate) fn make_arrow_falling_down(proj: &mut ElementProjectile, thrown_away_
 /// or the trajectory runs out, the arrow is flagged for despawn and
 /// the engine applies damage.
 pub fn tick_arrows(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
     tick_arrows_matching(entities, sight_obstacles, None, false)
@@ -2897,7 +2882,7 @@ pub fn tick_arrows(
 /// `ShootWithBowAt`, which calls `pArrow->Hourglass()` before the
 /// arrow enters the engine element list.
 pub fn tick_arrow(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     arrow_id: EntityId,
 ) -> Vec<ArrowTickResult> {
@@ -2905,7 +2890,7 @@ pub fn tick_arrow(
 }
 
 fn tick_arrows_matching(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     only_arrow_id: Option<EntityId>,
     primed_segment_already_advanced: bool,
@@ -2938,11 +2923,9 @@ fn tick_arrows_matching(
         position_map: MapPoint,
     }
     let human_snapshots: Vec<HumanSnapshot> = entities
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, slot)| {
-            let e = slot.as_ref()?;
-            let entity_id = crate::engine::entity_id_for_occupied_slot(idx as u32, e);
+        .humans()
+        .filter_map(|(human_id, e)| {
+            let entity_id = EntityId::from(human_id);
             if !e.is_human() || !e.is_active() {
                 return None;
             }
@@ -3013,13 +2996,9 @@ fn tick_arrows_matching(
         action_filter: crate::element::TargetFilter,
     }
     let fx_target_snapshots: Vec<FxTargetSnapshot> = entities
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, slot)| {
-            let Some(Entity::Target(e)) = slot.as_ref() else {
-                return None;
-            };
-            let entity_id = EntityId::Target(crate::entity_id::TargetId(idx as u32));
+        .targets()
+        .filter_map(|(target_id, e)| {
+            let entity_id = EntityId::Target(target_id);
             if !e.element.active {
                 return None;
             }
@@ -3033,7 +3012,7 @@ fn tick_arrows_matching(
             ) {
                 return None;
             }
-            let Some(center) = slot.as_ref()?.compute_target_center() else {
+            let Some(center) = Entity::Target(e.clone()).compute_target_center() else {
                 tracing::warn!(
                     entity = entity_id.index(),
                     "Projectile hit snapshot skipped: FX target missing center hotspot"
@@ -3060,11 +3039,9 @@ fn tick_arrows_matching(
         obstacle: crate::sight_obstacle::SightObstacle,
     }
     let shield_snapshots: Vec<ShieldSnapshot> = entities
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, slot)| {
-            let e = slot.as_ref()?;
-            let entity_id = crate::engine::entity_id_for_occupied_slot(idx as u32, e);
+        .actors()
+        .filter_map(|(actor_id, e)| {
+            let entity_id = EntityId::from(actor_id);
             if !e.is_active() || e.is_dead() {
                 return None;
             }
@@ -3084,10 +3061,8 @@ fn tick_arrows_matching(
         })
         .collect();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
-        let Some(Entity::Projectile(entity)) = slot else {
-            continue;
-        };
+    for (projectile_id, entity) in entities.projectiles_mut() {
+        let idx = projectile_id.0 as usize;
         let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(idx as u32));
         if let Some(only_arrow_id) = only_arrow_id
             && only_arrow_id != arrow_id
@@ -3698,7 +3673,7 @@ fn tick_arrows_matching(
 ///
 /// Returns `true` if the victim died from the hit.
 pub fn apply_arrow_hit(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     victim_id: EntityId,
     shooter_id: EntityId,
     damage: u16,
@@ -3721,7 +3696,7 @@ pub fn apply_arrow_hit(
 /// distinct concussion (e.g. damage=10, concussion=100 for stones —
 /// much higher KO potential than arrows).
 pub fn apply_projectile_hit(
-    entities: &mut [Option<Entity>],
+    entities: &mut Entities,
     victim_id: EntityId,
     shooter_id: EntityId,
     damage: u16,
@@ -3731,10 +3706,7 @@ pub fn apply_projectile_hit(
     // Resolve shooter PC-ness before the victim mutable borrow. C++
     // projectile damage carries a real origin pointer; missing shooter
     // state is invalid and must not become "not a PC" silently.
-    let Some(shooter) = entities
-        .get(shooter_id.index() as usize)
-        .and_then(|s| s.as_ref())
-    else {
+    let Some(shooter) = entities.get(shooter_id) else {
         tracing::warn!(
             ?victim_id,
             ?shooter_id,
@@ -3744,10 +3716,7 @@ pub fn apply_projectile_hit(
     };
     let shooter_is_pc = shooter.is_pc();
 
-    let victim = match entities
-        .get_mut(victim_id.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    let victim = match entities.get_mut(victim_id) {
         Some(e) => e,
         None => {
             tracing::warn!(
@@ -3874,6 +3843,14 @@ mod tests {
     use crate::geo2d::{GeoPoint2D, Vec2D};
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
+    fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
+        let mut entities = Entities::new();
+        for slot in slots {
+            entities.push(slot);
+        }
+        entities
+    }
+
     fn make_pc(x: f32, y: f32) -> Entity {
         let mut element = ElementData {
             kind: ElementKind::ActorPc,
@@ -3996,8 +3973,8 @@ mod tests {
 
     #[test]
     fn begin_bow_shot_sets_shooter_state() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4016,7 +3993,12 @@ mod tests {
         );
         assert_eq!(result, BeginShotResult::Started);
 
-        let actor = entities[0].as_ref().unwrap().actor_data().unwrap();
+        let actor = entities
+            .slot(0)
+            .and_then(|slot| slot.as_ref())
+            .unwrap()
+            .actor_data()
+            .unwrap();
         assert_eq!(
             actor.action_state,
             ActionState::Waiting,
@@ -4034,8 +4016,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4068,8 +4050,9 @@ mod tests {
         assert!(events.fired.is_empty());
         assert!(events.completed.is_empty());
         assert!(
-            !entities[0]
-                .as_ref()
+            !entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .actor_data()
                 .unwrap()
@@ -4081,8 +4064,8 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4116,8 +4099,9 @@ mod tests {
         assert!(events.fired.is_empty());
         assert!(events.completed.is_empty());
         assert!(
-            entities[0]
-                .as_ref()
+            entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .actor_data()
                 .unwrap()
@@ -4129,9 +4113,12 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        bind_test_bow_release_rows(
+            entities.slot_mut(0).and_then(|slot| slot.as_mut()).unwrap(),
+            OrderType::ShootingWithBow,
+        );
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4172,8 +4159,9 @@ mod tests {
             let events = tick_bow_shots(&mut entities, &mut sm);
             fired.extend(events.fired);
             completed.extend(events.completed);
-            if !entities[0]
-                .as_ref()
+            if !entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .actor_data()
                 .unwrap()
@@ -4187,8 +4175,9 @@ mod tests {
         assert_eq!(fired.len(), 1);
         assert!(completed.is_empty());
         assert!(
-            !entities[0]
-                .as_ref()
+            !entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .actor_data()
                 .unwrap()
@@ -4209,8 +4198,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "active bow shot missing resolved shoot mode")]
     fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4229,7 +4218,7 @@ mod tests {
         );
         assert_eq!(result, BeginShotResult::Started);
         let facing = crate::position_interface::vector_to_sector_0_to_15_iso(50.0, 0.0);
-        let shooter = entities[0].as_mut().unwrap();
+        let shooter = entities.slot_mut(0).and_then(|slot| slot.as_mut()).unwrap();
         shooter.element_data_mut().set_direction_instantly(facing);
         shooter.actor_data_mut().unwrap().active_shot.shoot_mode = None;
 
@@ -4238,10 +4227,11 @@ mod tests {
 
     #[test]
     fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        entities[0]
-            .as_mut()
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        entities
+            .slot_mut(0)
+            .and_then(|slot| slot.as_mut())
             .unwrap()
             .actor_data_mut()
             .unwrap()
@@ -4271,7 +4261,12 @@ mod tests {
         );
 
         assert_eq!(result, BeginShotResult::Started);
-        let actor = entities[0].as_ref().unwrap().actor_data().unwrap();
+        let actor = entities
+            .slot(0)
+            .and_then(|slot| slot.as_ref())
+            .unwrap()
+            .actor_data()
+            .unwrap();
         assert_eq!(actor.action_state, ActionState::AimingWithBow);
         assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Long));
         let orders: Vec<OrderType> = sm
@@ -4287,8 +4282,8 @@ mod tests {
 
     #[test]
     fn begin_bow_shot_uses_action_state_after_transition_for_setup_orders() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4331,9 +4326,9 @@ mod tests {
 
     #[test]
     fn begin_bow_shot_rejects_dead_target() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        if let Some(Some(Entity::Soldier(s))) = entities.get_mut(1) {
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        if let Some(Some(Entity::Soldier(s))) = entities.slot_mut(1) {
             s.npc.life_points = 0; // dead
         }
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
@@ -4357,8 +4352,10 @@ mod tests {
 
     #[test]
     fn begin_bow_shot_accepts_arrow_fx_target() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_arrow_target(50.0, 0.0))];
+        let mut entities = entity_table(vec![
+            Some(make_pc(0.0, 0.0)),
+            Some(make_arrow_target(50.0, 0.0)),
+        ]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4377,8 +4374,9 @@ mod tests {
         );
         assert_eq!(result, BeginShotResult::Started);
         assert_eq!(
-            entities[0]
-                .as_ref()
+            entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .actor_data()
                 .unwrap()
@@ -4390,10 +4388,10 @@ mod tests {
 
     #[test]
     fn begin_bow_shot_uses_anonymous_shoot_orders() {
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_anonymous_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
-        ];
+        ]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4432,7 +4430,7 @@ mod tests {
             y: 120.0,
             z: 100.0,
         });
-        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 100.0)), Some(target)];
+        let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4453,8 +4451,9 @@ mod tests {
 
         assert_eq!(result, BeginShotResult::Started);
         let direction_goal = i16::from(
-            entities[0]
-                .as_ref()
+            entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .element_data()
                 .sprite
@@ -4479,8 +4478,11 @@ mod tests {
             y: 120.0,
             z: 100.0,
         });
-        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 100.0)), Some(target)];
-        bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
+        let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
+        bind_test_bow_release_rows(
+            entities.slot_mut(0).and_then(|slot| slot.as_mut()).unwrap(),
+            OrderType::ShootingWithBow,
+        );
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4503,8 +4505,9 @@ mod tests {
         tick_bow_shots(&mut entities, &mut sm);
 
         let direction_goal = i16::from(
-            entities[0]
-                .as_ref()
+            entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .element_data()
                 .sprite
@@ -4523,9 +4526,12 @@ mod tests {
 
     #[test]
     fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        bind_test_bow_release_rows(
+            entities.slot_mut(0).and_then(|slot| slot.as_mut()).unwrap(),
+            OrderType::ShootingWithBow,
+        );
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -4566,7 +4572,12 @@ mod tests {
         assert_eq!(r.target_pos.x, 50.0);
 
         // Shooter should now be in AimingWithBow (sustained aim).
-        let actor = entities[0].as_ref().unwrap().actor_data().unwrap();
+        let actor = entities
+            .slot(0)
+            .and_then(|slot| slot.as_ref())
+            .unwrap()
+            .actor_data()
+            .unwrap();
         assert_eq!(actor.action_state, ActionState::AimingWithBow);
         assert!(actor.active_shot.is_active());
         assert!(actor.active_shot.released);
@@ -4750,7 +4761,7 @@ mod tests {
                 time: 2,
             },
         ];
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
             Some(spawn_arrow(SpawnArrowParams {
@@ -4773,7 +4784,7 @@ mod tests {
                     z: 0.0,
                 },
             })),
-        ];
+        ]);
 
         let mut hit = None;
         for _ in 0..20 {
@@ -4844,11 +4855,11 @@ mod tests {
                 z: 0.0,
             },
         });
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
             Some(arrow),
-        ];
+        ]);
 
         let mut hit = None;
         for _ in 0..20 {
@@ -4936,12 +4947,12 @@ mod tests {
             z: 40.0,
         });
 
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_pc(0.0, 0.0)),
             Some(make_arrow_target(50.0, 0.0)),
             Some(arrow),
             Some(other_arrow),
-        ];
+        ]);
 
         let results = tick_arrow(
             &mut entities,
@@ -4962,7 +4973,7 @@ mod tests {
             ))
         );
 
-        let Some(Entity::Projectile(p)) = entities[3].as_ref() else {
+        let Some(Entity::Projectile(p)) = entities.slot(3).and_then(|slot| slot.as_ref()) else {
             panic!("other arrow should remain present");
         };
         assert!(
@@ -5000,7 +5011,7 @@ mod tests {
                 z: 0.0,
             },
         });
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_soldier_with_camp(
                 0.0,
                 0.0,
@@ -5017,7 +5028,7 @@ mod tests {
                 crate::element::Camp::Lacklandists,
             )),
             Some(arrow),
-        ];
+        ]);
 
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         assert!(
@@ -5072,7 +5083,7 @@ mod tests {
                 ..ProjectileData::default()
             },
         });
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_pc(0.0, 0.0)),
             Some(make_soldier_with_camp(
                 50.0,
@@ -5080,7 +5091,7 @@ mod tests {
                 crate::element::Camp::Lacklandists,
             )),
             Some(arrow),
-        ];
+        ]);
 
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         assert!(
@@ -5121,8 +5132,7 @@ mod tests {
         if let Entity::Projectile(proj) = &mut arrow {
             proj.projectile.shooter = None;
         }
-        let mut entities: Vec<Option<Entity>> =
-            vec![None, Some(make_soldier(50.0, 0.0)), Some(arrow)];
+        let mut entities = entity_table(vec![None, Some(make_soldier(50.0, 0.0)), Some(arrow)]);
 
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         assert!(
@@ -5208,8 +5218,7 @@ mod tests {
             },
         });
 
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))];
+        let mut entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
 
         let mut activation = None;
         let mut impact = None;
@@ -5302,8 +5311,7 @@ mod tests {
             },
         });
 
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))];
+        let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
         assert!(
@@ -5385,8 +5393,7 @@ mod tests {
             },
         });
 
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))];
+        let mut entities = entity_table(vec![Some(target), Some(arrow), Some(make_pc(0.0, 0.0))]);
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
 
         assert!(
@@ -5427,7 +5434,7 @@ mod tests {
                 z: 0.0,
             },
         });
-        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, -100.0)), Some(arrow)];
+        let mut entities = entity_table(vec![Some(make_pc(0.0, -100.0)), Some(arrow)]);
 
         let mut despawn_frame = None;
         for frame in 0..260 {
@@ -5442,7 +5449,7 @@ mod tests {
             despawn_frame, None,
             "C++ projectile lifetime is trajectory-driven, not capped at 250 frames"
         );
-        match entities[1].as_ref().unwrap() {
+        match entities.slot(1).and_then(|slot| slot.as_ref()).unwrap() {
             Entity::Projectile(p) => assert!(p.projectile.flying),
             _ => panic!("expected projectile"),
         }
@@ -5503,7 +5510,7 @@ mod tests {
             },
         });
 
-        let mut entities: Vec<Option<Entity>> = vec![Some(target), Some(apple)];
+        let mut entities = entity_table(vec![Some(target), Some(apple)]);
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         assert!(
             results.is_empty(),
@@ -5556,8 +5563,7 @@ mod tests {
                 ..ProjectileData::default()
             },
         });
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))];
+        let mut entities = entity_table(vec![Some(target), Some(apple), Some(make_pc(0.0, 0.0))]);
 
         // First tick: apple reaches target, bursts.
         let impact_results =
@@ -5568,7 +5574,7 @@ mod tests {
                 .any(|r| r.fx_target_hit.is_some() && !r.despawn),
             "apple must NOT despawn on impact frame — it bursts first"
         );
-        let proj_after = entities[1].as_ref().unwrap();
+        let proj_after = entities.slot(1).and_then(|slot| slot.as_ref()).unwrap();
         match proj_after {
             Entity::Projectile(p) => {
                 assert!(!p.projectile.flying);
@@ -5628,10 +5634,10 @@ mod tests {
         }
 
         let fx_for = |obj: ObjectType| -> Option<u32> {
-            let mut entities: Vec<Option<Entity>> = vec![
+            let mut entities = entity_table(vec![
                 Some(spawn_projectile_at_impact(obj)),
                 Some(make_pc(100.0, 0.0)),
-            ];
+            ]);
             let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
             results.into_iter().find_map(|r| r.impact_fx)
         };
@@ -5685,8 +5691,8 @@ mod tests {
 
     #[test]
     fn apply_arrow_hit_wounds_soldier() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let died = apply_arrow_hit(
             &mut entities,
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -5696,7 +5702,7 @@ mod tests {
         );
         assert!(!died, "30 damage shouldn't kill a 100hp soldier");
 
-        let life = match entities[1].as_ref().unwrap() {
+        let life = match entities.slot(1).and_then(|slot| slot.as_ref()).unwrap() {
             Entity::Soldier(s) => s.npc.life_points,
             _ => unreachable!(),
         };
@@ -5705,9 +5711,9 @@ mod tests {
 
     #[test]
     fn apply_arrow_hit_kills_soldier_at_low_hp() {
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        if let Some(Some(Entity::Soldier(s))) = entities.get_mut(1) {
+        let mut entities =
+            entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        if let Some(Some(Entity::Soldier(s))) = entities.slot_mut(1) {
             s.npc.life_points = 5;
         }
         let died = apply_arrow_hit(
@@ -5718,7 +5724,7 @@ mod tests {
             0,
         );
         assert!(died);
-        let life = match entities[1].as_ref().unwrap() {
+        let life = match entities.slot(1).and_then(|slot| slot.as_ref()).unwrap() {
             Entity::Soldier(s) => s.npc.life_points,
             _ => unreachable!(),
         };
@@ -5910,7 +5916,7 @@ mod tests {
         bind_test_bow_release_rows(&mut pc, OrderType::ShootingWithBowLeaningOut);
         let mut target = make_soldier(50.0, 0.0);
         target.element_data_mut().posture = Posture::LeaningOut;
-        let mut entities: Vec<Option<Entity>> = vec![Some(pc), Some(target)];
+        let mut entities = entity_table(vec![Some(pc), Some(target)]);
         let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
             EntityId::Pc(crate::entity_id::PcId(0)),
             EntityId::Pc(crate::entity_id::PcId(1)),
@@ -5938,12 +5944,18 @@ mod tests {
         }
         assert_eq!(fired.len(), 1);
         assert_eq!(
-            entities[0].as_ref().unwrap().element_data().posture,
+            entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
+                .unwrap()
+                .element_data()
+                .posture,
             Posture::LeaningOut
         );
         assert_eq!(
-            entities[0]
-                .as_ref()
+            entities
+                .slot(0)
+                .and_then(|slot| slot.as_ref())
                 .unwrap()
                 .actor_data()
                 .unwrap()
@@ -6042,8 +6054,7 @@ mod tests {
             },
         });
 
-        let mut entities: Vec<Option<Entity>> =
-            vec![Some(make_pc(0.0, 0.0)), Some(soldier), Some(arrow)];
+        let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(soldier), Some(arrow)]);
 
         let mut any_hit = None;
         for _ in 0..10 {
@@ -6115,11 +6126,11 @@ mod tests {
             },
         });
 
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
             Some(arrow),
-        ];
+        ]);
 
         let mut any_hit = None;
         for _ in 0..20 {
@@ -6181,11 +6192,11 @@ mod tests {
                 z: 0.0,
             },
         });
-        let mut entities: Vec<Option<Entity>> = vec![
+        let mut entities = entity_table(vec![
             Some(make_pc(0.0, 0.0)),
             Some(make_soldier(20.0, 0.0)),
             Some(arrow),
-        ];
+        ]);
         let mut hit = None;
         for _ in 0..20 {
             for r in tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty()) {
@@ -6259,8 +6270,11 @@ mod tests {
                 },
             });
 
-            let mut entities: Vec<Option<Entity>> =
-                vec![Some(make_pc(100.0, 0.0)), Some(shield_holder), Some(arrow)];
+            let mut entities = entity_table(vec![
+                Some(make_pc(100.0, 0.0)),
+                Some(shield_holder),
+                Some(arrow),
+            ]);
 
             // Advance ticks until the shield_hit fires.
             let mut shield_hit = None;
@@ -6288,7 +6302,7 @@ mod tests {
 
             // The projectile should be flagged as falling, and the hit
             // check must now skip (falling arrows pass through bodies).
-            match entities[2].as_ref().unwrap() {
+            match entities.slot(2).and_then(|slot| slot.as_ref()).unwrap() {
                 Entity::Projectile(p) => {
                     assert!(
                         p.projectile.falling,
@@ -6405,7 +6419,7 @@ mod tests {
             },
         });
         // No other humans in range — arrow will fly out and land.
-        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 0.0)), Some(arrow)];
+        let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(arrow)]);
 
         let mut despawn = false;
         for _ in 0..10 {
@@ -6460,7 +6474,7 @@ mod tests {
             _ => panic!("expected projectile"),
         }
 
-        let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 0.0)), Some(nest)];
+        let mut entities = entity_table(vec![Some(make_pc(0.0, 0.0)), Some(nest)]);
         // Wasp nests are skipped by `tick_arrows` (their impact burst +
         // swarm spawn lives on the engine in `tick_wasp_nests`).  Drive
         // the trajectory directly here via `advance_trajectory_one_frame`;
@@ -6468,14 +6482,15 @@ mod tests {
         // (~100 ticks at TIME_FLYSEGMENT=2), so 300 iterations is a
         // generous bound.
         for _ in 0..300 {
-            if let Some(Entity::Projectile(p)) = entities[1].as_mut() {
+            if let Some(Entity::Projectile(p)) = entities.slot_mut(1).and_then(|slot| slot.as_mut())
+            {
                 if !p.projectile.flying {
                     break;
                 }
                 p.advance_trajectory_one_frame();
             }
         }
-        let p = match entities[1].as_ref().unwrap() {
+        let p = match entities.slot(1).and_then(|slot| slot.as_ref()).unwrap() {
             Entity::Projectile(p) => p,
             _ => panic!("nest entity lost"),
         };

@@ -1592,7 +1592,7 @@ impl EngineInner {
                             }
 
                             match bow_shot::begin_bow_shot(
-                                self.entities.slots_mut(),
+                                &mut self.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 target,

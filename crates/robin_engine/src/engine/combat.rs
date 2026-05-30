@@ -228,8 +228,7 @@ impl EngineInner {
         if self.freeze_all {
             return;
         }
-        let events =
-            bow_shot::tick_bow_shots(self.entities.slots_mut(), &mut self.sequence_manager);
+        let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(
@@ -1855,7 +1854,7 @@ impl EngineInner {
             dynamic_obstacles: &self.dynamic_sight_obstacles,
             static_active: &self.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrows(self.entities.slots_mut(), sight_obstacles);
+        let results = bow_shot::tick_arrows(&mut self.entities, sight_obstacles);
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -1869,7 +1868,7 @@ impl EngineInner {
             dynamic_obstacles: &self.dynamic_sight_obstacles,
             static_active: &self.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrow(self.entities.slots_mut(), sight_obstacles, arrow_id);
+        let results = bow_shot::tick_arrow(&mut self.entities, sight_obstacles, arrow_id);
         self.process_projectile_tick_results(assets, results);
     }
 
