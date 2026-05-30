@@ -5,7 +5,7 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
-use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
+use crate::position_interface::INVERSE_ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------
 // Task priority constants

@@ -10,7 +10,7 @@
 
 use crate::element::{Command, Entity, EntityId, ObjectType, Posture};
 use crate::engine::{EngineInner, LevelAssets};
-use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceElementData};
+use crate::sequence::{Field, FieldValue, SequenceElement, SequenceElementData};
 
 use super::input::BowTarget;
 use super::scroll_reveal::ScrollStatus;

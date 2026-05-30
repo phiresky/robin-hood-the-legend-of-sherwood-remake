@@ -3,7 +3,7 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
-use crate::element::{Command, Entity, EntityId, Posture};
+use crate::element::{Command, Entity, EntityId};
 
 impl EngineInner {
     // ─── Speech / sound effects ─────────────────────────────────────
