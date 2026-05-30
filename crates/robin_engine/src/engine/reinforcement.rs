@@ -13,6 +13,7 @@
 //! `Sprite::load_frame_info_cached` call here always hits.
 
 use super::EngineInner;
+use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{
     ActorData, ActorPc, Command, Detectable, DetectableType, ElementData, ElementKind, Entity,
     EntityId, HULK_LENGTH, HumanData, PcData,
@@ -63,8 +64,8 @@ impl EngineInner {
                 return;
             };
             DoorSnapshot {
-                point_out: door.point_out,
-                point_in: door.point_in,
+                point_out: MapPoint::new(door.point_out.0, door.point_out.1),
+                point_in: MapPoint::new(door.point_in.0, door.point_in.1),
                 layer_out: door.layer_out,
                 layer_in: door.layer_in,
                 sector_out: u16::from(door.sector_out),
@@ -166,7 +167,7 @@ impl EngineInner {
                 assets,
                 door_snap.sector_out,
                 door_snap.layer_out,
-                crate::coordinates::MapPoint::new(door_snap.point_out.0, door_snap.point_out.1),
+                door_snap.point_out,
             )
         };
         let spawn_sector = crate::position_interface::SectorHandle::new(door_snap.sector_out);
@@ -176,10 +177,7 @@ impl EngineInner {
             sprite,
             ..Default::default()
         };
-        element.set_position_map(crate::coordinates::MapPoint {
-            x: door_snap.point_out.0,
-            y: door_snap.point_out.1,
-        });
+        element.set_position_map(door_snap.point_out);
         element.set_layer(door_snap.layer_out);
         element.set_sector(spawn_sector);
         if let Some(obs) = obstacle_index.and_then(crate::position_interface::ObstacleHandle::new) {
@@ -223,10 +221,7 @@ impl EngineInner {
 
         let mut pass = SequenceElement::new_movement(1, Command::PassDoor, Some(new_id), action);
         pass.data = SequenceElementData::Movement {
-            destination: crate::coordinates::MapPoint {
-                x: door_snap.point_in.0,
-                y: door_snap.point_in.1,
-            },
+            destination: door_snap.point_in,
             layer: door_snap.layer_in,
             sector: None,
             gate_id: Some(door_index),
@@ -243,23 +238,21 @@ impl EngineInner {
 
         // Find a jitter point near the inside of the door: up to ten
         // tries, ±50 in each axis.
-        let pin = crate::geo2d::pt(door_snap.point_in.0, door_snap.point_in.1);
+        let pin = door_snap.point_in;
         let hd = self
             .get_entity(new_id)
             .map(|e| e.position_iface())
             .map(|pi| pi.get_half_diagonal())
             .unwrap_or_else(|| crate::geo2d::pt(12.0, 8.0));
-        let mut jitter: Option<crate::geo2d::GeoPoint2D> = None;
+        let mut jitter: Option<MapPoint> = None;
         for _ in 0..10 {
             let dx = crate::sim_rng::i32(-50..=50) as f32;
             let dy = crate::sim_rng::i32(-50..=50) as f32;
-            let candidate = crate::geo2d::pt(pin.x + dx, pin.y + dy);
-            if self.fast_grid.is_reachable_thick(
-                pin.into(),
-                candidate.into(),
-                door_snap.layer_in,
-                hd,
-            ) {
+            let candidate = pin + MapVec::new(dx, dy);
+            if self
+                .fast_grid
+                .is_reachable_thick(pin, candidate, door_snap.layer_in, hd)
+            {
                 jitter = Some(candidate);
                 break;
             }
@@ -267,10 +260,7 @@ impl EngineInner {
         if let Some(target) = jitter {
             let mut mv = SequenceElement::new_movement(2, Command::Move, Some(new_id), action);
             mv.data = SequenceElementData::Movement {
-                destination: crate::coordinates::MapPoint {
-                    x: target.x,
-                    y: target.y,
-                },
+                destination: target,
                 layer: door_snap.layer_in,
                 sector: None,
                 gate_id: None,
@@ -372,8 +362,8 @@ impl EngineInner {
 }
 
 struct DoorSnapshot {
-    point_out: (f32, f32),
-    point_in: (f32, f32),
+    point_out: MapPoint,
+    point_in: MapPoint,
     layer_out: u16,
     layer_in: u16,
     sector_out: u16,

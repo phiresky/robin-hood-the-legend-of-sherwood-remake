@@ -1191,8 +1191,13 @@ impl PositionInterface {
         } else {
             let map = self.position_map;
             let goal = self.goal_map;
-            let v = geo2d::pt(goal.x - map.x, goal.y - map.y);
-            self.increment_map = MapVec::from_geo(geo2d::normalize(v));
+            let v = goal - map;
+            let len = v.length();
+            self.increment_map = if len > f32::EPSILON {
+                v.scale(1.0 / len)
+            } else {
+                MapVec::ZERO
+            };
         }
         self.set_increment_map_computed(true);
     }
@@ -1222,22 +1227,19 @@ impl PositionInterface {
         } else {
             let map = self.position_map;
             let goal = self.goal_map;
-            let mut v = geo2d::pt(goal.x - map.x, goal.y - map.y);
+            let v = goal - map;
 
             very_small = v.x.abs().max(v.y.abs()) < 1.0;
 
             if v.x != 0.0 || v.y != 0.0 {
-                v = geo2d::normalize(v);
-                self.increment_map = MapVec::from_geo(v);
+                let v = v.scale(1.0 / v.length());
+                self.increment_map = v;
 
                 self.increment.x = v.x;
                 if let Some(p) = &self.plane {
                     self.increment.z = p.compute_z_increment(v.x, v.y);
-                    self.increment.y = crate::coordinates::GroundVec::from_map_and_z(
-                        MapVec::from_geo(v),
-                        self.increment.z,
-                    )
-                    .y;
+                    self.increment.y =
+                        crate::coordinates::GroundVec::from_map_and_z(v, self.increment.z).y;
                 } else {
                     self.increment.y = v.y;
                     self.increment.z = 0.0;

@@ -7,7 +7,7 @@
 use super::movement::GoalShape;
 use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{Command, Entity, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
@@ -698,9 +698,9 @@ impl EngineInner {
                 return;
             };
             (
-                door.point_in,
-                door.point_out,
-                door.point_mid,
+                MapPoint::new(door.point_in.0, door.point_in.1),
+                MapPoint::new(door.point_out.0, door.point_out.1),
+                MapPoint::new(door.point_mid.0, door.point_mid.1),
                 door.layer_out,
             )
         };
@@ -709,8 +709,8 @@ impl EngineInner {
         // Battle center = door.point_out; facing = sector(point_out -
         // point_mid) via `vector_to_sector_0_to_15_iso` on the door
         // vector.
-        let center = crate::geo2d::pt(point_out.0, point_out.1);
-        let dir_vec = crate::geo2d::pt(point_out.0 - point_mid.0, point_out.1 - point_mid.1);
+        let center = point_out;
+        let dir_vec = point_out - point_mid;
         let base_direction =
             crate::position_interface::vector_to_sector_0_to_15_iso(dir_vec.x, dir_vec.y);
 
@@ -739,19 +739,15 @@ impl EngineInner {
                 // iso-compressed offset.
                 let (dx, dy_raw) = crate::element_kinds::direction_vector_16(dd);
                 let dy = dy_raw * crate::position_interface::ASPECT_RATIO;
-                let cand = crate::geo2d::pt(center.x + dx * magnitude, center.y + dy * magnitude);
-                if self.fast_grid.is_straight_movement_authorized(
-                    center.into(),
-                    cand.into(),
-                    out_layer,
-                    &move_box,
-                ) {
+                let offset = MapVec::new(dx * magnitude, dy * magnitude);
+                let cand = center + offset;
+                if self
+                    .fast_grid
+                    .is_straight_movement_authorized(center, cand, out_layer, &move_box)
+                {
                     dispersed_direction = dd;
                     defender = cand;
-                    attacker = crate::geo2d::pt(
-                        center.x + dx * magnitude * 0.5,
-                        center.y + dy * magnitude * 0.5,
-                    );
+                    attacker = center + offset.scale(0.5);
                     found = true;
                     break;
                 }
