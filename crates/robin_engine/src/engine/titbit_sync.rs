@@ -400,10 +400,9 @@ impl EngineInner {
 
         // Pre-compute NPC IDs to avoid conflicts with point_building_sector.
         let all_ids: Vec<EntityId> = self
-            .npc_ids
-            .iter()
-            .chain(self.pc_ids.iter())
-            .copied()
+            .entities
+            .npc_ids()
+            .chain(self.pc_ids.iter().copied())
             .collect();
 
         for npc_id in all_ids {
@@ -684,7 +683,7 @@ impl EngineInner {
         use crate::ai::Substate;
 
         // Only soldiers can enter the apple-sauce substate.
-        let npc_ids: Vec<EntityId> = self.npc_ids.clone();
+        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
                 continue;
@@ -794,10 +793,8 @@ impl EngineInner {
         }
 
         let mut states: Vec<AppleState> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
                 continue;
             }
@@ -878,10 +875,8 @@ impl EngineInner {
             .unwrap_or_default();
 
         let mut states: Vec<SpeakState> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        for (npc_id, entity) in self.entities.npcs() {
+            let npc_id = EntityId::from(npc_id);
             let (pos, layer, active) = match entity {
                 Entity::Soldier(s) => (
                     s.element.position_map(),

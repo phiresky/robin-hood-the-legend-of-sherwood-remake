@@ -243,8 +243,6 @@ pub struct EngineInner {
     pub(crate) entities: Entities,
     /// Indices of player characters.
     pub(crate) pc_ids: Vec<EntityId>,
-    /// Indices of NPCs (soldiers + civilians).
-    pub(crate) npc_ids: Vec<EntityId>,
     /// Floating indicator manager (titbits: stars, emoticons, smoke, splashes, etc.).
     pub(crate) titbit_manager: crate::titbit::TitbitManager,
     /// Per-seat sim-tracked state (selection, hotgroups). Indexed by
@@ -631,7 +629,6 @@ impl EngineInner {
 
             entities: Entities::new(),
             pc_ids: Vec::new(),
-            npc_ids: Vec::new(),
             titbit_manager: crate::titbit::TitbitManager::new(),
             seats: vec![SeatState::default()],
             ai_global: AiGlobalState::default(),
@@ -926,9 +923,8 @@ impl EngineInner {
         const SCORE_SOLDIER_TIED_AND_UNCONSCIOUS: i32 = 70;
 
         let mut score = 0;
-        for &npc_id in &self.npc_ids {
-            if let Some(Entity::Soldier(s)) = self.get_entity(npc_id)
-                && s.camp() == Camp::Lacklandists
+        for (_, s) in self.entities.soldiers() {
+            if s.camp() == Camp::Lacklandists
                 && s.life_points() > 0
                 && (s.is_tied() || s.is_unconscious())
             {
@@ -949,10 +945,8 @@ impl EngineInner {
 
         let mut living = 0u32;
         let mut dead = 0u32;
-        for &npc_id in &self.npc_ids {
-            if let Some(Entity::Soldier(s)) = self.get_entity(npc_id)
-                && s.camp() == Camp::Lacklandists
-            {
+        for (_, s) in self.entities.soldiers() {
+            if s.camp() == Camp::Lacklandists {
                 if s.life_points() > 0 {
                     living += 1;
                 } else {
@@ -1212,12 +1206,8 @@ impl EngineInner {
             Entity::Pc(_) => {
                 self.pc_ids.push(id);
             }
-            Entity::Soldier(_) => {
-                self.npc_ids.push(id);
-            }
-            Entity::Civilian(_) => {
-                self.npc_ids.push(id);
-            }
+            Entity::Soldier(_) => {}
+            Entity::Civilian(_) => {}
             Entity::Fx(_) => {}
             Entity::Target(_) | Entity::Net(_) | Entity::Scroll(_) | Entity::Projectile(_) => {}
             Entity::Bonus(_) => {}
@@ -2435,7 +2425,7 @@ impl EngineInner {
         if self.freeze_all {
             return;
         }
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let busy = self.is_very_very_busy(npc_id);
             if let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize)
@@ -2571,8 +2561,8 @@ impl EngineInner {
     }
 
     /// All NPCs (soldiers + civilians).
-    pub fn npc_ids(&self) -> &[EntityId] {
-        &self.npc_ids
+    pub fn npc_ids(&self) -> Vec<EntityId> {
+        self.entities.npc_ids().collect()
     }
 
     /// Currently selected PC ids for the [`PlayerId::HOST`] seat.
@@ -3269,7 +3259,6 @@ impl EngineInner {
         }
         // Remove from index lists
         self.pc_ids.retain(|&i| i != id);
-        self.npc_ids.retain(|&i| i != id);
         self.seats[0].selection.retain(|&i| i != id);
         // Any pending path request for this actor is cancelled when
         // the element tears down.  Entity removal implies all its
@@ -3881,7 +3870,7 @@ impl EngineInner {
     /// renderer is a host-side `&EngineInner` pass, so the clear runs
     /// here.
     pub(crate) fn clear_npc_double_status_bar_flags(&mut self) {
-        let ids = self.npc_ids.clone();
+        let ids = self.entities.npc_ids().collect::<Vec<_>>();
         for id in ids {
             if let Some(e) = self.get_entity_mut(id)
                 && let Some(npc) = e.npc_data_mut()

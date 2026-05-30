@@ -737,7 +737,7 @@ impl EngineInner {
                             .to_string(),
                     );
                 };
-                let ids: Vec<EntityId> = self.npc_ids.clone();
+                let ids: Vec<EntityId> = self.entities.npc_ids().collect::<Vec<_>>();
                 for id in ids {
                     if id == keep {
                         continue;

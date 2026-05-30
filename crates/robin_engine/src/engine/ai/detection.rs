@@ -556,7 +556,7 @@ impl EngineInner {
         const DETECTION_FREQUENCY_SOUNDS: u32 = 3;
 
         let universal_frame = self.frame_counter;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // Read NPC state (layer, position, current_state, active).
             let (layer, position, elevation, current_state, active, expects_pc_detectables) = {
@@ -771,7 +771,7 @@ impl EngineInner {
         let is_forest_level = self.weather.is_forest_level;
         let sq_view_radius =
             (self.standard_view_polygon_radius as f32) * (self.standard_view_polygon_radius as f32);
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             self.tick_enemy_ai_refresh_detection_for_npc(
@@ -2409,7 +2409,8 @@ impl EngineInner {
 
         // Build target list from alive Lacklandist soldiers.
         let mut npc_targets: Vec<NpcTarget> = Vec::new();
-        for &npc_id in &self.npc_ids {
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             let (
                 pos,
                 layer,
@@ -2423,10 +2424,6 @@ impl EngineInner {
                 obstacle_idx,
                 direction,
             ) = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                else {
-                    continue;
-                };
                 if s.soldier.cached_camp != Camp::Lacklandists {
                     continue;
                 }
@@ -2473,7 +2470,7 @@ impl EngineInner {
 
         let mut to_reveal: Vec<EntityId> = Vec::new();
         let mut royalist_alert_calls: Vec<(EntityId, MapPoint)> = Vec::new();
-        let royalist_ids = self.npc_ids.clone();
+        let royalist_ids = self.entities.npc_ids().collect::<Vec<_>>();
 
         for npc_id in royalist_ids {
             self.tick_enemy_ai_royalist_detection_for_npc(
@@ -2902,7 +2899,7 @@ impl EngineInner {
     ) {
         let universal_frame = self.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.tick_enemy_ai_refresh_per_type_for_npc(
                 npc_id,

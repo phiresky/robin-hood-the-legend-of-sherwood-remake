@@ -708,7 +708,7 @@ impl EngineInner {
             return;
         }
         let waker_camp = waker.camp();
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == waker_id {
                 continue;

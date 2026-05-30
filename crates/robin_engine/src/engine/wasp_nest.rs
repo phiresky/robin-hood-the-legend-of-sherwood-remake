@@ -430,7 +430,13 @@ impl EngineInner {
         let mut clean: Vec<(u32, EntityId)> = Vec::new();
         let mut vip_remarks: Vec<EntityId> = Vec::new();
 
-        let npc_ids: Vec<EntityId> = self.npc_ids.iter().copied().rev().collect();
+        let npc_ids: Vec<EntityId> = self
+            .entities
+            .npc_ids()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         for npc_id in npc_ids {
             let entity = match self.get_entity(npc_id) {
                 Some(e) => e,

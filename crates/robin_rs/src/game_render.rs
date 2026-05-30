@@ -1716,7 +1716,7 @@ pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, render
     // consumers elsewhere clear it after rendering.  We only *read* it
     // here to keep this function `&Engine`; the clearing happens in
     // `clear_display_flags`.
-    for &npc_id in engine.npc_ids() {
+    for npc_id in engine.npc_ids() {
         let Some(e) = engine.get_entity(npc_id) else {
             continue;
         };
@@ -3125,7 +3125,7 @@ pub(crate) fn render_debug_whatsup_overlay(host: &Host, engine: &Engine, rendere
         (sx, sy)
     };
 
-    for &npc_id in engine.npc_ids() {
+    for npc_id in engine.npc_ids() {
         let Some(entity) = engine.get_entity(npc_id) else {
             continue;
         };

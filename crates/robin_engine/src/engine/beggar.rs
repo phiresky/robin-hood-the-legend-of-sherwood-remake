@@ -239,7 +239,7 @@ impl EngineInner {
     /// ([`can_give_money_to_beggar`]) passes. Called each tick while
     /// `beggar_id` wears the `SimulatingBeggar` disguise.
     fn bid_for_money(&mut self, assets: &crate::engine::LevelAssets, beggar_id: EntityId) {
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if can_give_money_to_beggar(self, npc_id, beggar_id) {
                 give_money_to_beggar(self, assets, npc_id, beggar_id);

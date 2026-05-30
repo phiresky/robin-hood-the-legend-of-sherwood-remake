@@ -5152,7 +5152,7 @@ impl EngineInner {
     /// halt happens on the same call stack as the new element launch,
     /// `StopAll` / `FaceTo` halt the actor inline.
     pub(super) fn process_pending_ai_orders(&mut self) {
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.launch_pending_orders_for_npc(npc_id);
         }

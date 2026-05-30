@@ -1157,8 +1157,9 @@ impl EngineInner {
         let obstacles_owned = scratch.ai_sight_obstacles.clone();
         let obstacles = obstacles_owned.list();
 
-        let mut camp_soldiers = Vec::with_capacity(self.npc_ids.len().saturating_sub(1));
-        for &other_id in &self.npc_ids {
+        let mut camp_soldiers =
+            Vec::with_capacity(self.entities.npc_ids().count().saturating_sub(1));
+        for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
             if other_id == npc_id {
                 continue;
             }
@@ -1567,7 +1568,7 @@ impl EngineInner {
         // camp fighter registries when rebuilding the us/them lists;
         // using the persisted per-AI lists here made combat-position
         // cleanup blind to same-camp fighters and allowed dogpiles.
-        for &other_id in &self.npc_ids {
+        for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
             if other_id.index() == me_handle {
                 continue;
             }
@@ -1734,7 +1735,7 @@ impl EngineInner {
         self.ai_global.teleport_seek_points_inside_doors();
 
         // Initialize each NPC's AI.
-        let npc_ids: Vec<EntityId> = self.npc_ids.clone();
+        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
         let hiking_paths = assets.hiking_paths.clone();
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
@@ -2416,7 +2417,7 @@ impl EngineInner {
         // soldiers here and clear after consumption.  Non-soldier flags
         // are ignored to match the soldier-only gate.
         let mut any_instant_change = false;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for &npc_id in &npc_ids {
             let Some(entity) = self.get_entity_mut(npc_id) else {
                 continue;
@@ -2509,10 +2510,7 @@ impl EngineInner {
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS
         };
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs_mut() {
             if let Some(npc) = entity.npc_data_mut() {
                 npc.view_radius_base = r;
                 npc.view_radius_goal = r;
@@ -2571,10 +2569,8 @@ impl EngineInner {
         // frames of "standing alerted" before the enemy starts
         // running).
         let mut updates: Vec<(crate::element::EntityId, i16)> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        for (npc_id, entity) in self.entities.npcs() {
+            let npc_id = EntityId::from(npc_id);
             let Some((_, _, front)) = self.sequence_manager.current_order_for_actor(npc_id) else {
                 continue;
             };
@@ -3016,7 +3012,7 @@ impl EngineInner {
         // `get_worst_detected_type` never climbs past DETECTABLE_FRIEND
         // for civilians, dropping their emoticon / alert reactions to
         // nearby bodies.
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         let det_idx = DetectableType::Body as usize;
         for friend_id in npc_ids {
             if friend_id == body_id {
@@ -3082,7 +3078,7 @@ impl EngineInner {
     pub(super) fn delete_beggar_detectable_for_all_npc(&mut self, beggar_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Beggar as usize;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for friend_id in npc_ids {
             let Some(Some(entity)) = self.entities.get_mut(friend_id.index() as usize) else {
                 continue;
@@ -3146,7 +3142,7 @@ impl EngineInner {
     pub(super) fn broadcast_resurrection(&mut self, resurrected_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for friend_id in npc_ids {
             if friend_id == resurrected_id {
                 continue;
@@ -3170,7 +3166,7 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // ── Phase 1: read-only — gather context ──
             let (ctx, ai_primary_target, ai_last_synced_focus) = {
@@ -3318,11 +3314,8 @@ impl EngineInner {
         }
         let mut snaps: Vec<SpeechSnap> = Vec::new();
 
-        for &npc_id in self.npc_ids.iter() {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
-
+        for (npc_id, entity) in self.entities.npcs_mut() {
+            let npc_id = EntityId::from(npc_id);
             let (npc, is_soldier, is_vip, blipped, sector, in_door_transit, pos) = match entity {
                 crate::element::Entity::Soldier(s) => (
                     &mut s.npc,
@@ -4551,7 +4544,7 @@ impl EngineInner {
                 };
                 let sq_vr = vr * vr;
                 let charly_is_self = charly_handle == npc_id.index();
-                for other_id in self.npc_ids.clone() {
+                for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
                     if other_id == npc_id {
                         continue;
                     }
@@ -5113,7 +5106,7 @@ impl EngineInner {
         };
 
         let radius_sq = radius * radius;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == source {
                 continue;
@@ -5410,7 +5403,7 @@ impl EngineInner {
             level: 0,
         };
 
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         // Clone the Arc-shared snapshot so the per-civilian filter can
         // call `los_clear` without holding an immutable borrow on
         // `self.ai_global` across the later `process_pending_*` mutable
@@ -5998,7 +5991,7 @@ impl EngineInner {
         let scratch = self.build_sim_scratch(assets);
 
         let frame = self.frame_counter;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         // ── Phase 0: Drain pending CMD_PATROL_DIRECTION broadcasts ──
         // `instruct_patrol_direction_to_patrol_members` —
@@ -6522,7 +6515,7 @@ impl EngineInner {
         const HEARING_FACTOR: f32 = 1.0;
 
         let frame = self.frame_counter;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         // `get_hear_volume` shifts the origin Y by elevation and
         // keeps elevation as Z, so an elevated noise source
@@ -6641,10 +6634,7 @@ impl EngineInner {
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
         // `CALL_REPORT` to soldiers via `AiController` on their base.
         let mut all_actions: Vec<crate::ai::CrossNpcAction> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs_mut() {
             if let Some(ai) = entity.ai_controller_mut() {
                 all_actions.extend(ai.take_pending_cross_npc_actions());
             }
@@ -7152,7 +7142,7 @@ impl EngineInner {
     /// early-return — so a stimulus queued late in tick N is guaranteed
     /// to fire at the start of tick N+1.
     pub(super) fn drain_pending_self_stimuli(&mut self, assets: &LevelAssets) {
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.drain_self_stimuli_for_npc(npc_id, assets);
         }
@@ -7239,10 +7229,8 @@ impl EngineInner {
         // swapping engine state into the script host.  Always take the
         // `Option` so we don't leave stale state when scripts are off.
         let mut requests: Vec<(crate::element::EntityId, crate::ai::PathId, u8)> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
+        for (npc_id, entity) in self.entities.npcs_mut() {
+            let npc_id = EntityId::from(npc_id);
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
@@ -7362,7 +7350,7 @@ impl EngineInner {
         let current_frame = self.frame_counter;
         let frame_phase = (current_frame % 16) as u8;
 
-        for &npc_id in &self.npc_ids {
+        for npc_id in self.entities.npc_ids().collect::<Vec<_>>() {
             // Stagger: each NPC runs on a different frame within the
             // 16-frame window, matching per-actor `hourglass` phasing.
             if (npc_id.index() % 16) != frame_phase as u32 {
@@ -7475,7 +7463,7 @@ impl EngineInner {
         let frame = self.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             // Phase 1: read-only — gather context + eyes point + LOS scope.
@@ -7551,7 +7539,7 @@ impl EngineInner {
         // (engine/mod.rs:1081-1096) — both kinds execute waypoint
         // macros, even if the soldier-only opcodes SBError on
         // civilians.
-        let npc_ids: Vec<EntityId> = self.npc_ids.clone();
+        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             // Read macro-timer state without holding a borrow.
@@ -7628,7 +7616,7 @@ impl EngineInner {
     // it strictly greater than `current_frame`, preventing a fire.
     pub(super) fn tick_npc_locked_frame_timer_bumps(&mut self) {
         let frozen = self.freeze_all;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
                 continue;
@@ -7664,7 +7652,7 @@ impl EngineInner {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // Snapshot the gating predicates without holding a borrow.
             let on_ladder = match self.entities.get(npc_id.index() as usize) {

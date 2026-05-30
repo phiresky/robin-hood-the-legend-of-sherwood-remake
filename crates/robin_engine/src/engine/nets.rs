@@ -375,7 +375,7 @@ impl EngineInner {
     fn delete_body_detectable_for_all_npc(&mut self, body_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for friend_id in npc_ids {
             if friend_id == body_id {
                 continue;

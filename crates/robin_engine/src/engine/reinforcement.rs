@@ -320,7 +320,7 @@ impl EngineInner {
                 e.is_human(),
             )
         });
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // For DETECTABLE_ENEMY, only push if the NPC's camp/rank
             // arm accepts the target.  Other arms unconditionally push.

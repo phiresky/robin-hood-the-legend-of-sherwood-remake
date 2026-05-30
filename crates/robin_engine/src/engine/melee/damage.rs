@@ -1626,7 +1626,7 @@ impl EngineInner {
         kind: crate::element::DetectableType,
     ) {
         let det_idx = kind as usize;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == subject {
                 continue;

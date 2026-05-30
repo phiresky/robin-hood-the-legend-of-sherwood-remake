@@ -1907,9 +1907,8 @@ impl EngineInner {
             };
 
             let friend_ids: Vec<EntityId> = self
-                .npc_ids
-                .iter()
-                .copied()
+                .entities
+                .npc_ids()
                 .filter(|&id| id != soldier_id)
                 .filter(|&id| {
                     let Some(Some(Entity::Soldier(s))) = self.entities.get(id.index() as usize)

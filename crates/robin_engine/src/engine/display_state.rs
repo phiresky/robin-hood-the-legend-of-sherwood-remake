@@ -517,10 +517,7 @@ impl EngineInner {
         use crate::shadow_polygon::ALPHA_DAY;
 
         let mut result = Vec::new();
-        for &id in &self.npc_ids {
-            let Some(entity) = self.get_entity(id) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs() {
             if !entity.is_active() || entity.is_dead() {
                 continue;
             }

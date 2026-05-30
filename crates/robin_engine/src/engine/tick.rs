@@ -602,16 +602,11 @@ impl EngineInner {
 
             // Check if any civilian was killed (not by accident) → mission failure
             let mut killed_civilian = None;
-            for &npc_id in &self.npc_ids {
-                if let Some(Some(entity)) = self.entities.get(npc_id.index() as usize)
-                    && entity.is_civilian()
-                    && entity.is_dead()
-                {
+            for (npc_id, civilian) in self.entities.civilians() {
+                if civilian.element.posture.is_dead() {
+                    let npc_id = EntityId::from(npc_id);
                     // Check killed_by_accident via the civilian's human data
-                    let accident = match entity {
-                        Entity::Civilian(c) => c.human.killed_by_accident,
-                        _ => false,
-                    };
+                    let accident = civilian.human.killed_by_accident;
                     if !accident {
                         killed_civilian = Some(npc_id);
                         break;

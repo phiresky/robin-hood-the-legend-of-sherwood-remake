@@ -2331,7 +2331,7 @@ impl EngineInner {
     /// tracking a moving PC between Think stimuli.
     pub(super) fn tick_soldier_track_primary_target(&mut self) {
         use crate::ai::Substate;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let target_handle = {
                 let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)

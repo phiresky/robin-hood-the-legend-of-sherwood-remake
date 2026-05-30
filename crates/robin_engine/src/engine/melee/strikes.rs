@@ -1481,10 +1481,9 @@ impl EngineInner {
         // (soldiers / civilians) then PCs.  Animals live in a
         // separate list and are excluded.
         let candidate_ids: Vec<EntityId> = self
-            .npc_ids
-            .iter()
-            .chain(self.pc_ids.iter())
-            .copied()
+            .entities
+            .npc_ids()
+            .chain(self.pc_ids.iter().copied())
             .collect();
         let mut victims: Vec<EntityId> = Vec::new();
         for candidate_id in candidate_ids {
@@ -2017,9 +2016,9 @@ impl EngineInner {
         // Collecting flagged-npcs first so we can query the sequence
         // manager and then mutate the AI without aliasing `self`.
         let mut flagged: Vec<EntityId> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.index() as usize)
-                && let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
+        for (npc_id, soldier) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
+            if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
                 && ai.pending_special_strike
             {
                 flagged.push(npc_id);
@@ -2060,14 +2059,11 @@ impl EngineInner {
         // Tired-soldier `SwordstrikeTired` elements collected here and
         // launched after the npc-iter loop ends — `launch_element` needs
         // `&mut self` and we still hold an immutable borrow on
-        // `self.npc_ids`.
+        // `self.entities`.
         let mut pending_tired: Vec<EntityId> = Vec::new();
 
-        for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.index() as usize)
-            else {
-                continue;
-            };
+        for (npc_id, soldier) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
 
             // Must be in swordfight substate and alive.
             //

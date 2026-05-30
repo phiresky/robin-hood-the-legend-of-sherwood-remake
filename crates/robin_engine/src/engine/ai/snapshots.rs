@@ -561,9 +561,8 @@ impl EngineInner {
     ) -> std::collections::BTreeMap<EntityId, u32> {
         let mut primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32> =
             std::collections::BTreeMap::new();
-        for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                && let Some(ai) = s.npc.ai_brain.base()
+        for (_, s) in self.entities.soldiers() {
+            if let Some(ai) = s.npc.ai_brain.base()
                 && ai.primary_target != 0
                 && ai.current_substate.is_any_swordfight()
             {
@@ -583,10 +582,10 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> std::collections::HashMap<EntityId, Option<u32>> {
         let mut npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>> =
-            std::collections::HashMap::with_capacity(self.npc_ids.len());
-        for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                && let Some(ai) = s.npc.ai_brain.enemy()
+            std::collections::HashMap::with_capacity(self.entities.soldiers().count());
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
+            if let Some(ai) = s.npc.ai_brain.enemy()
                 && ai.base.primary_target != 0
             {
                 let jl = crate::engine::melee::is_table_swordfight_needed(
@@ -614,11 +613,9 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
     ) -> Vec<SoldierSnapshot> {
-        let mut soldier_snapshots: Vec<SoldierSnapshot> = Vec::with_capacity(self.npc_ids.len());
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity_ref)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        let mut soldier_snapshots: Vec<SoldierSnapshot> =
+            Vec::with_capacity(self.entities.soldiers().count());
+        for (npc_id, entity_ref) in self.entities.occupied() {
             let Entity::Soldier(s) = entity_ref else {
                 continue;
             };
@@ -946,11 +943,9 @@ impl EngineInner {
     /// we keep this side-list separate.
     pub(super) fn tick_enemy_ai_build_ko_money_fight_soldiers(&self) -> Vec<(EntityId, Camp)> {
         let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
-            Vec::with_capacity(self.npc_ids.len());
-        for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+            Vec::with_capacity(self.entities.npc_ids().count());
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             if !s.element.active {
                 continue;
             }
@@ -1005,15 +1000,12 @@ impl EngineInner {
         // Collect every entity referenced by any human-typed
         // detectable list (Body / Friend / MissedFriend / Beggar)
         // across all NPCs, plus every object-typed list.  One pass
-        // over `npc_ids`; one pass over `entities` for each set.
+        // over NPCs; one pass over `entities` for each set.
         let mut human_ids: std::collections::HashSet<EntityId> =
             std::collections::HashSet::with_capacity(self.entities.len());
         let mut object_ids: std::collections::HashSet<EntityId> =
             std::collections::HashSet::with_capacity(self.entities.len());
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs() {
             let Some(npc) = entity.npc_data() else {
                 continue;
             };
