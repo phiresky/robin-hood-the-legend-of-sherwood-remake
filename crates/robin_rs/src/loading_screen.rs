@@ -18,6 +18,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::gfx_types::GameEvent;
 use crate::loading_dissolve_gpu::LoadingDissolveTextures;
 use crate::native_font::Font;
 use crate::renderer::Renderer;
@@ -592,16 +593,14 @@ impl LoadingScreenRenderer {
             let cfg = font_config.as_ref()?;
             match crate::native_font::load_font_by_name(cfg, name) {
                 Ok(font) if font.is_renderable() => Some(font),
-                Ok(crate::native_font::Font::TrueType(tt)) => {
+                Ok(Font::TrueType(tt)) => {
                     tracing::info!(
                         "Loading screen: {name} TrueType font '{}' has no loaded face",
                         tt.truetype_name_str()
                     );
                     None
                 }
-                Ok(crate::native_font::Font::Native(f)) => {
-                    Some(crate::native_font::Font::Native(f))
-                }
+                Ok(Font::Native(f)) => Some(Font::Native(f)),
                 Err(e) => {
                     tracing::debug!("Loading screen: {name} font not available: {e}");
                     None
@@ -666,7 +665,7 @@ impl LoadingScreenRenderer {
         // pushing frames until focus returns (`refresh` short-circuits
         // while `window_focused == false`).
         for ev in event_pump.poll_events() {
-            if let crate::gfx_types::GameEvent::WindowFocusChanged(focused) = ev {
+            if let GameEvent::WindowFocusChanged(focused) = ev {
                 self.window_focused = focused;
             }
         }

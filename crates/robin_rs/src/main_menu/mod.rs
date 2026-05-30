@@ -10,6 +10,7 @@
 use crate::gfx_types::Keycode;
 
 use crate::campaign::Campaign;
+use crate::cursor::CursorRenderer;
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::IngameMenuResources;
@@ -227,7 +228,7 @@ pub(crate) async fn show_main_menu(
     // Cursor — hide the OS cursor and render the in-game arrow sprite
     // (the default cursor is set at start-up, before the menu comes up).
     // Reuses the DEFAULT.RES already opened by `IngameMenuResources`.
-    let mut cursor_renderer = crate::cursor::CursorRenderer::new();
+    let mut cursor_renderer = CursorRenderer::new();
     cursor_renderer.init(&mut renderer);
     if !cursor_renderer.load_cursor(
         resource_ids::RHMOUSE_DEFAULT,
@@ -528,7 +529,7 @@ async fn prompt_first_launch_new_player(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    cursor_renderer: &mut CursorRenderer,
 ) {
     let needs_prompt = {
         let guard = PlayerProfileManager::global();
@@ -619,7 +620,7 @@ async fn dispatch_click(
     renderer: &mut Renderer,
     menu_resources: &mut IngameMenuResources,
     save_manager: &mut SaveGameManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    cursor_renderer: &mut CursorRenderer,
     campaign: &Campaign,
     profiles: &robin_engine::profiles::ProfileManager,
     shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,

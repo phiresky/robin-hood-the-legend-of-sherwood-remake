@@ -2149,7 +2149,7 @@ mod tests {
         // `get_mission_text` returns the "Unable to find..." sentinel
         // when the level descriptor is missing, without touching the
         // resource manager.
-        let mut text_res = crate::resource_manager::ResourceManager::new();
+        let mut text_res = ResourceManager::new();
         let text = MissionDescriptionScreen::get_mission_text(None, &mut text_res, 0);
         assert!(text.contains("Unable to find"));
     }
