@@ -232,7 +232,7 @@ impl EngineInner {
             };
             let dest = match find_position_for_table_swordfight(
                 &self.entities,
-                crate::geo2d::pt(my_pos_map.x, my_pos_map.y),
+                my_pos_map,
                 my_sector,
                 entity_id,
                 principal_id,
@@ -248,11 +248,9 @@ impl EngineInner {
                 return false;
             }
             // Must be straight-reachable.
-            let p1 = crate::geo2d::pt(my_pos_map.x, my_pos_map.y);
-            let p2 = crate::geo2d::pt(dest.x, dest.y);
             if !self.fast_grid.is_straight_movement_authorized(
-                p1.into(),
-                p2.into(),
+                my_pos_map,
+                dest,
                 my_layer,
                 &my_move_box,
             ) {

@@ -6316,11 +6316,9 @@ impl EngineInner {
                     .map(|e| e.position_iface())
                     .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
                     .unwrap_or_default();
-                let geo_waypoints: Vec<crate::geo2d::GeoPoint2D> =
-                    waypoints.iter().copied().map(MapPoint::to_geo).collect();
                 waypoints = apply_drunken_path_deviation(
-                    geo_waypoints,
-                    source,
+                    waypoints,
+                    source.into(),
                     blood_alcohol,
                     move_action == OrderType::RunningUpright,
                     entity_layer,
@@ -6328,10 +6326,7 @@ impl EngineInner {
                     half_diag,
                     &self.fast_grid,
                     &mut self.rng,
-                )
-                .into_iter()
-                .map(MapPoint::from_geo)
-                .collect();
+                );
             }
         }
 

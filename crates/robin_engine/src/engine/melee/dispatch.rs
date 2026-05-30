@@ -283,7 +283,7 @@ impl EngineInner {
             let Some(sector) = e.element_data().sector() else {
                 return TableFightMove::Ok;
             };
-            let pos = e.element_data().position_map().to_geo();
+            let pos = e.element_data().position_map();
             let layer = e.element_data().layer();
             let mb = *e.position_iface().get_move_box();
             (i16::from(sector), pos, layer, mb)
@@ -332,8 +332,8 @@ impl EngineInner {
         }
 
         if !self.fast_grid.is_straight_movement_authorized(
-            owner_pos.into(),
-            new_pos.into(),
+            owner_pos,
+            new_pos,
             owner_layer,
             &owner_move_box,
         ) {

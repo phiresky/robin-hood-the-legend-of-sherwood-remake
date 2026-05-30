@@ -233,7 +233,7 @@ impl EngineInner {
             .unwrap_or((0, 0));
         self.broadcast_noise(
             crate::ai::NoiseType::Aaargh,
-            position.to_geo(),
+            position,
             layer,
             crate::parameters_ai::NOISE_VOLUME_AAARGH as u16,
             elevation,

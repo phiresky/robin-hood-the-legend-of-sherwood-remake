@@ -2536,8 +2536,8 @@ impl FastFindGrid {
     /// This matches the repeated corridor-construction pattern in
     /// `IsReachableThick`, `IsReachableGrid`, etc.
     pub fn build_thick_move_corridor(
-        p1: GeoPoint2D,
-        p2: GeoPoint2D,
+        p1: MapPoint,
+        p2: MapPoint,
         half_diagonal: Vec2D,
     ) -> Option<ThickMoveCorridor> {
         let move_vec = pt(p2.x - p1.x, p2.y - p1.y);
@@ -2680,11 +2680,10 @@ impl FastFindGrid {
             return true;
         }
 
-        let corridor =
-            match Self::build_thick_move_corridor(p1.to_geo(), p2.to_geo(), half_diagonal) {
-                Some(c) => c,
-                None => return true,
-            };
+        let corridor = match Self::build_thick_move_corridor(p1, p2, half_diagonal) {
+            Some(c) => c,
+            None => return true,
+        };
 
         let line_indices = self.get_active_motion_line_indices(layer, &corridor.bbox);
         if line_indices.is_empty() {
@@ -2702,7 +2701,7 @@ impl FastFindGrid {
         // Check if any line endpoint lies inside the corridor
         for &idx in &line_indices {
             let p = self.level.lines[usize::from(idx)].a;
-            if corridor.point_inside(p.to_geo()) {
+            if corridor.point_inside(p) {
                 return false;
             }
         }
@@ -2767,8 +2766,8 @@ impl FastFindGrid {
         // obstacle wall loop for on-ground obstacles. Motion lines live
         // on the fast grid and sight obstacles on the engine, so we
         // query each store separately and pick the earliest impact.
-        let origin_2d = crate::geo2d::pt(origin.x, origin.y);
-        let dest_2d = crate::geo2d::pt(destination.x, destination.y);
+        let origin_2d = MapPoint::new(origin.x, origin.y);
+        let dest_2d = MapPoint::new(destination.x, destination.y);
         let motion_t = self.impact_intersection_ratio(origin_2d, dest_2d, layer);
 
         // Pick the nearest impact and report it.  Return false (blocked)
@@ -2854,8 +2853,8 @@ impl FastFindGrid {
             return false;
         }
 
-        let origin_2d = crate::geo2d::pt(origin.x, origin.y);
-        let dest_2d = crate::geo2d::pt(destination.x, destination.y);
+        let origin_2d = MapPoint::new(origin.x, origin.y);
+        let dest_2d = MapPoint::new(destination.x, destination.y);
         self.impact_intersection_ratio(origin_2d, dest_2d, layer)
             .is_none()
     }
@@ -2872,14 +2871,14 @@ impl FastFindGrid {
     /// where P intersects Q.
     pub fn impact_intersection_ratio(
         &self,
-        origin: GeoPoint2D,
-        destination: GeoPoint2D,
+        origin: MapPoint,
+        destination: MapPoint,
         layer: u16,
     ) -> Option<f32> {
-        let seg = geo2d::segment(origin, destination);
+        let seg = geo2d::segment(origin.to_geo(), destination.to_geo());
         let mut bbox = BBox2D::new();
-        bbox.expand_point(origin);
-        bbox.expand_point(destination);
+        bbox.expand_point(origin.to_geo());
+        bbox.expand_point(destination.to_geo());
 
         let mut min_t: Option<f32> = None;
 
@@ -2964,9 +2963,7 @@ impl FastFindGrid {
         if mobile_lines.is_empty() || p1 == p2 {
             return true;
         }
-        let Some(corridor) =
-            Self::build_thick_move_corridor(p1.to_geo(), p2.to_geo(), half_diagonal)
-        else {
+        let Some(corridor) = Self::build_thick_move_corridor(p1, p2, half_diagonal) else {
             return true;
         };
         for line in mobile_lines {
@@ -2979,7 +2976,7 @@ impl FastFindGrid {
             if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
                 return false;
             }
-            if corridor.point_inside(line.a.to_geo()) {
+            if corridor.point_inside(line.a) {
                 return false;
             }
         }
@@ -3277,7 +3274,7 @@ impl ThickMoveCorridor {
     /// The point is inside iff the determinant of each edge vector with
     /// `(point - edge_start)` is positive for all four edges.
     #[inline]
-    pub fn point_inside(&self, p: GeoPoint2D) -> bool {
+    pub fn point_inside(&self, p: MapPoint) -> bool {
         let d1 = geo2d::cross(
             self.vec1,
             pt(p.x - self.seg1.start.x, p.y - self.seg1.start.y),
@@ -3408,21 +3405,28 @@ mod tests {
         let hd = pt(10.0, 10.0);
 
         // Right + down
-        let corridor =
-            FastFindGrid::build_thick_move_corridor(pt(100.0, 100.0), pt(200.0, 200.0), hd)
-                .unwrap();
+        let corridor = FastFindGrid::build_thick_move_corridor(
+            MapPoint::new(100.0, 100.0),
+            MapPoint::new(200.0, 200.0),
+            hd,
+        )
+        .unwrap();
         assert!(corridor.bbox.is_somewhere());
 
         // A point clearly inside the corridor
-        assert!(corridor.point_inside(pt(150.0, 150.0)));
+        assert!(corridor.point_inside(MapPoint::new(150.0, 150.0)));
 
         // A point far outside
-        assert!(!corridor.point_inside(pt(0.0, 0.0)));
+        assert!(!corridor.point_inside(MapPoint::new(0.0, 0.0)));
 
         // Zero movement
         assert!(
-            FastFindGrid::build_thick_move_corridor(pt(100.0, 100.0), pt(100.0, 100.0), hd)
-                .is_none()
+            FastFindGrid::build_thick_move_corridor(
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(100.0, 100.0),
+                hd,
+            )
+            .is_none()
         );
     }
 

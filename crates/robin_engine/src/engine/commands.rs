@@ -2515,7 +2515,7 @@ impl EngineInner {
                 &self.fast_grid,
                 i16::from(pcs),
                 i16::from(ts),
-                crate::geo2d::pt(target_pos.x, target_pos.y),
+                target_pos,
                 seek_tolerance,
             );
             let swordfight_line_idx =

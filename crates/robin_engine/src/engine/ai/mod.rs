@@ -6468,7 +6468,7 @@ impl EngineInner {
     pub fn broadcast_noise(
         &mut self,
         noise_type: crate::ai::NoiseType,
-        origin: crate::geo2d::GeoPoint2D,
+        origin: crate::coordinates::MapPoint,
         origin_layer: u16,
         volume: u16,
         elevation: u16,
@@ -6554,7 +6554,7 @@ impl EngineInner {
                 if unconscious {
                     continue;
                 }
-                (elem.position_map().to_geo(), elem.position().z)
+                (elem.position_map(), elem.position().z)
             };
 
             // `noise()` does NOT filter by layer; every in-camp NPC

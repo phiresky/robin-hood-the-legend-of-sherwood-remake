@@ -7033,7 +7033,7 @@ impl EngineInner {
                 let pos3d = elem.position();
                 (
                     remark,
-                    elem.position_map().to_geo(),
+                    elem.position_map(),
                     elem.layer(),
                     pos3d.z.max(0.0) as u16,
                 )
@@ -8054,8 +8054,8 @@ impl EngineInner {
 /// `sim_rng`, so replays reproduce the same deviation sequence.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_path_deviation(
-    mut waypoints: Vec<crate::geo2d::GeoPoint2D>,
-    origin: crate::geo2d::GeoPoint2D,
+    mut waypoints: Vec<crate::coordinates::MapPoint>,
+    origin: crate::coordinates::MapPoint,
     blood_alcohol: u8,
     is_running: bool,
     layer: u16,
@@ -8063,9 +8063,7 @@ pub(super) fn apply_drunken_path_deviation(
     half_diagonal: crate::geo2d::Vec2D,
     grid: &crate::fast_find_grid::FastFindGrid,
     rng: &mut fastrand::Rng,
-) -> Vec<crate::geo2d::GeoPoint2D> {
-    use crate::geo2d::{GeoPoint2D, pt};
-
+) -> Vec<crate::coordinates::MapPoint> {
     const DRUNKEN_DEVIATION_FACTOR: f32 = 0.03;
 
     // Max of (30, blood_alcohol) — the minimum ensures even mildly
@@ -8079,14 +8077,18 @@ pub(super) fn apply_drunken_path_deviation(
 
     let mut iterator = 0u8;
     while iterator < blood_alcohol {
-        let mut new_path: Vec<GeoPoint2D> = Vec::with_capacity(waypoints.len() * 2);
+        let mut new_path: Vec<crate::coordinates::MapPoint> =
+            Vec::with_capacity(waypoints.len() * 2);
         let mut prev = origin;
         for next in &waypoints {
-            let straight = pt(next.x - prev.x, next.y - prev.y);
+            let straight = crate::geo2d::pt(next.x - prev.x, next.y - prev.y);
             let max_norm = straight.x.abs().max(straight.y.abs());
             // Midpoint of the current segment.
-            let midpoint = pt(prev.x + 0.5 * straight.x, prev.y + 0.5 * straight.y);
-            let mut inserted: Option<GeoPoint2D> = None;
+            let midpoint = crate::coordinates::MapPoint::new(
+                prev.x + 0.5 * straight.x,
+                prev.y + 0.5 * straight.y,
+            );
+            let mut inserted: Option<crate::coordinates::MapPoint> = None;
             for _try in 0..3 {
                 // `rand() & 15` — pick a random 16-sector direction
                 // and scale by another 0..15 random magnitude.
@@ -8094,18 +8096,13 @@ pub(super) fn apply_drunken_path_deviation(
                 let magnitude = rng.u32(0..16) as f32;
                 let (dx, dy) = crate::element_kinds::direction_vector_16(dir_sector);
                 let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
-                let candidate = pt(midpoint.x + dx * scale, midpoint.y + dy * scale);
-                if grid.is_straight_movement_authorized(
-                    prev.into(),
-                    candidate.into(),
-                    layer,
-                    move_box,
-                ) && grid.is_reachable_thick(
-                    candidate.into(),
-                    (*next).into(),
-                    layer,
-                    half_diagonal,
-                ) {
+                let candidate = crate::coordinates::MapPoint::new(
+                    midpoint.x + dx * scale,
+                    midpoint.y + dy * scale,
+                );
+                if grid.is_straight_movement_authorized(prev, candidate, layer, move_box)
+                    && grid.is_reachable_thick(candidate, *next, layer, half_diagonal)
+                {
                     inserted = Some(candidate);
                     break;
                 }
