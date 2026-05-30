@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::element::{ActionState, Command, Entity, EyeStatus, Posture};
+use crate::entities::EntitySlots;
 use crate::order::OrderCompletion;
 use crate::sprite::{FrameProgression, MotionState};
 
@@ -2732,18 +2733,15 @@ impl EngineInner {
                     .collect()
             })
             .unwrap_or_default();
-        let mut frames_from_now_till_action_done: Vec<Option<i16>> =
-            vec![None; self.entities.len()];
-        let mut active_entity_flags: Vec<bool> = vec![false; self.entities.len()];
-        let mut door_pass_crenel_transition_dirs: Vec<Option<i16>> =
-            vec![None; self.entities.len()];
+        let mut frames_from_now_till_action_done = EntitySlots::filled(self.entities.len(), None);
+        let mut active_entity_flags = EntitySlots::filled(self.entities.len(), false);
+        let mut door_pass_crenel_transition_dirs = EntitySlots::filled(self.entities.len(), None);
         for (entity_id, entity) in self.entities.occupied() {
-            let entity_idx = entity_id.index() as usize;
             let sprite = &entity.element_data().sprite;
-            frames_from_now_till_action_done[entity_idx] =
+            frames_from_now_till_action_done[entity_id] =
                 safe_frames_from_now_till_action_done(sprite);
-            active_entity_flags[entity_idx] = entity.is_active();
-            door_pass_crenel_transition_dirs[entity_idx] = (|| {
+            active_entity_flags[entity_id] = entity.is_active();
+            door_pass_crenel_transition_dirs[entity_id] = (|| {
                 let dp = entity.actor_data()?.active_door_pass.as_ref()?;
                 let reverse_direction = match dp.current_action {
                     OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel => false,
@@ -2782,8 +2780,6 @@ impl EngineInner {
         let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
 
         for (entity_id, entity) in self.entities.occupied_mut() {
-            let entity_idx = entity_id.index() as usize;
-
             if !entity.is_active() {
                 continue;
             }
@@ -2940,7 +2936,7 @@ impl EngineInner {
                         continue;
                     }
                     tracing::trace!(
-                        entity = entity_idx,
+                        entity = entity_id.index(),
                         ?anim_type,
                         order_id,
                         ?cur_command,
@@ -2992,7 +2988,7 @@ impl EngineInner {
                                 | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
                         )
                         && let Some(direction) = door_pass_crenel_transition_dirs
-                            .get(entity_idx)
+                            .get(entity_id)
                             .copied()
                             .flatten()
                     {
@@ -3002,10 +2998,7 @@ impl EngineInner {
                     let drinking_ale_antagonist_inactive =
                         matches!(anim_type, OrderType::DrinkingAle)
                             && antagonist.is_some_and(|a| {
-                                !active_entity_flags
-                                    .get(a.index() as usize)
-                                    .copied()
-                                    .unwrap_or(false)
+                                !active_entity_flags.get(a).copied().unwrap_or(false)
                             });
                     let motion = if is_turn {
                         // Play the turn sprite animation (alerted
@@ -3255,7 +3248,7 @@ impl EngineInner {
                             .and_then(|h| h.opponents.first().copied())
                             .and_then(|opponent| {
                                 frames_from_now_till_action_done
-                                    .get(opponent.index() as usize)
+                                    .get(opponent)
                                     .copied()
                                     .flatten()
                             });

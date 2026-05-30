@@ -11,7 +11,7 @@ use crate::ai::RepulsivePoint as StaticRepulsivePoint;
 use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
-use crate::entities::Entities;
+use crate::entities::{Entities, EntitySlots};
 use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d;
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
@@ -79,8 +79,8 @@ pub fn snapshot_all(
     entities: &Entities,
     sequence_manager: &SequenceManager,
     profile_manager: &ProfileManager,
-) -> Vec<Option<ActorSnapshot>> {
-    let mut snapshots = vec![None; entities.len()];
+) -> EntitySlots<Option<ActorSnapshot>> {
+    let mut snapshots = EntitySlots::filled(entities.len(), None);
     for (entity_id, entity) in entities.actors() {
         let entity_id = EntityId::from(entity_id);
         let elem = entity.element_data();
@@ -96,7 +96,7 @@ pub fn snapshot_all(
                 }
             })
         });
-        snapshots[entity_id.index() as usize] = Some(ActorSnapshot {
+        snapshots[entity_id] = Some(ActorSnapshot {
             id: entity_id,
             active: elem.active,
             is_actor,

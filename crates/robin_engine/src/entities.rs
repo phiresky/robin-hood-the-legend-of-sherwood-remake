@@ -327,6 +327,51 @@ impl Entities {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct EntitySlots<T>(Vec<T>);
+
+impl<T: Clone> EntitySlots<T> {
+    pub fn filled(len: usize, value: T) -> Self {
+        Self(vec![value; len])
+    }
+}
+
+impl<T> EntitySlots<T> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn get(&self, id: EntityId) -> Option<&T> {
+        self.0.get(id.index() as usize)
+    }
+
+    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut T> {
+        self.0.get_mut(id.index() as usize)
+    }
+
+    pub fn as_slice(&self) -> &[T] {
+        &self.0
+    }
+}
+
+impl<T> std::ops::Index<EntityId> for EntitySlots<T> {
+    type Output = T;
+
+    fn index(&self, index: EntityId) -> &Self::Output {
+        &self.0[index.index() as usize]
+    }
+}
+
+impl<T> std::ops::IndexMut<EntityId> for EntitySlots<T> {
+    fn index_mut(&mut self, index: EntityId) -> &mut Self::Output {
+        &mut self.0[index.index() as usize]
+    }
+}
+
 impl std::ops::Index<EntityId> for Entities {
     type Output = Option<Entity>;
 
