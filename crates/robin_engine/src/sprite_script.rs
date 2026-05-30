@@ -12,7 +12,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{Point2D, Vec2D};
+use crate::coordinates::SpriteLocalPoint;
+use crate::geo2d::Vec2D;
 use crate::order::OrderType;
 use crate::sbfile::SbFile;
 
@@ -112,7 +113,7 @@ pub struct SpriteScript {
     /// Average movement speed across all frames (`sum(distance) / sum(delay)`).
     pub average_speed: f32,
     /// Hotspot / info point for this row.
-    pub hotspot: Point2D,
+    pub hotspot: SpriteLocalPoint,
     /// Cumulative distance across all frames.
     pub sum_distance: u16,
     /// Frame bank IDs (one per frame).
@@ -133,7 +134,7 @@ impl Default for SpriteScript {
             action_id: UNMAPPED,
             action_done: 0,
             average_speed: 0.0,
-            hotspot: Point2D { x: 0.0, y: 0.0 },
+            hotspot: SpriteLocalPoint::ZERO,
             sum_distance: 0,
             frame_ids: Vec::new(),
             delays: Vec::new(),
@@ -614,10 +615,7 @@ impl SpriteScriptor {
             let mut script = SpriteScript {
                 action_id: row_hdr.action_id,
                 action_done: row_hdr.action_done,
-                hotspot: Point2D {
-                    x: row_hdr.hotspot_x as f32,
-                    y: row_hdr.hotspot_y as f32,
-                },
+                hotspot: SpriteLocalPoint::new(row_hdr.hotspot_x as f32, row_hdr.hotspot_y as f32),
                 frame_ids: Vec::with_capacity(num_frames),
                 delays: Vec::with_capacity(num_frames),
                 distances: Vec::with_capacity(num_frames),

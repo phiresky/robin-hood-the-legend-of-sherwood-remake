@@ -2093,7 +2093,7 @@ fn bind_test_action_point(
     engine: &mut EngineInner,
     id: EntityId,
     action: crate::order::OrderType,
-    hotspot: crate::geo2d::Point2D,
+    hotspot: crate::coordinates::SpriteLocalPoint,
     center: crate::coordinates::SpriteAnchor,
 ) {
     let script = crate::sprite_script::SpriteScript {
@@ -3011,7 +3011,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
         &mut engine,
         rescuer,
         OrderType::WakingUp,
-        crate::geo2d::pt(0.0, 0.0),
+        crate::coordinates::SpriteLocalPoint::ZERO,
         crate::coordinates::SpriteAnchor::ZERO,
     );
 

@@ -3783,7 +3783,7 @@ mod tests {
         engine: &mut EngineInner,
         id: EntityId,
         action: crate::order::OrderType,
-        hotspot: crate::geo2d::Point2D,
+        hotspot: crate::coordinates::SpriteLocalPoint,
         center: crate::geo2d::Point2D,
     ) {
         let script = SpriteScript {
@@ -3887,7 +3887,7 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::Listening,
-            crate::geo2d::pt(30.0, 0.0),
+            crate::coordinates::SpriteLocalPoint::new(30.0, 0.0),
             crate::geo2d::pt(0.0, 0.0),
         );
 
@@ -4046,7 +4046,7 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::WakingUp,
-            crate::geo2d::pt(33.0, 0.0),
+            crate::coordinates::SpriteLocalPoint::new(33.0, 0.0),
             crate::geo2d::pt(10.0, 0.0),
         );
         let mut victim = ActorPc {
@@ -4092,7 +4092,7 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::DroppingAle,
-            crate::geo2d::pt(13.0, 0.0),
+            crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
             crate::geo2d::pt(0.0, 0.0),
         );
 
@@ -4124,7 +4124,7 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::Searching,
-            crate::geo2d::pt(19.0, 0.0),
+            crate::coordinates::SpriteLocalPoint::new(19.0, 0.0),
             crate::geo2d::pt(0.0, 0.0),
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
@@ -4177,7 +4177,7 @@ mod tests {
             &mut engine,
             pc_id,
             crate::order::OrderType::ClimbingUpOnShoulders,
-            crate::geo2d::pt(11.0, 0.0),
+            crate::coordinates::SpriteLocalPoint::new(11.0, 0.0),
             crate::geo2d::pt(0.0, 0.0),
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);

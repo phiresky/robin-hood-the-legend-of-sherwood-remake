@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::SpriteAnchor;
+use crate::coordinates::{MapPoint, SpriteAnchor, SpriteLocalPoint};
 use crate::element::EntityId;
 use crate::geo2d::{Point2D, Vec2D};
 use crate::order::OrderType;
@@ -82,12 +82,12 @@ pub enum MotionMethod {
 #[derive(Debug, Clone, Copy)]
 pub struct MotionOrderContext {
     pub order_id: std::num::NonZeroU32,
-    pub destination: Point2D,
+    pub destination: MapPoint,
     pub reverse: bool,
     pub tolerance: f32,
     pub directional_tolerance: bool,
     pub compute_direction: bool,
-    pub next_destination_same_action: Option<Point2D>,
+    pub next_destination_same_action: Option<MapPoint>,
 }
 
 // ---------------------------------------------------------------------------
@@ -739,8 +739,8 @@ impl Sprite {
     }
 
     /// Get the hotspot/info point for a row.
-    #[must_use = "method returns Point2D by value; assigning to its fields silently modifies a temporary"]
-    pub fn hotspot_for_row(&self, row: u16) -> Point2D {
+    #[must_use = "method returns SpriteLocalPoint by value; assigning to its fields silently modifies a temporary"]
+    pub fn hotspot_for_row(&self, row: u16) -> SpriteLocalPoint {
         self.current_scripts()[row as usize].hotspot
     }
 
@@ -748,7 +748,7 @@ impl Sprite {
     /// sprite script. Caller combines this with
     /// `Entity::cxx_position_sprite()` to produce the current map-space
     /// hotspot, used by `MoveUsePoint` seek-arrival.
-    pub fn current_hotspot(&self) -> Option<Point2D> {
+    pub fn current_hotspot(&self) -> Option<SpriteLocalPoint> {
         let scripts = self.current_scripts_opt()?;
         scripts.get(self.current_row as usize).map(|s| s.hotspot)
     }
@@ -759,7 +759,7 @@ impl Sprite {
     /// conversion table + direction offset) and returns its hotspot.
     ///
     /// Returns `None` if the animation is unmapped or the row is out of range.
-    pub fn get_point(&self, animation: OrderType, direction: u16) -> Option<Point2D> {
+    pub fn get_point(&self, animation: OrderType, direction: u16) -> Option<SpriteLocalPoint> {
         let base_row = self.row_for_action(animation)?;
         let row = base_row + direction;
         let scripts = self.current_scripts_opt()?;
@@ -1694,11 +1694,11 @@ impl Sprite {
             && self.last_processed_order_id != ctx.order_id.get()
         {
             let pi = &mut self.position_iface;
-            pi.set_map_goal(crate::coordinates::MapPoint::from_geo(ctx.destination));
+            pi.set_map_goal(ctx.destination);
             pi.set_reversed_movement(ctx.reverse);
             pi.set_tolerance(ctx.tolerance, ctx.directional_tolerance);
             if let Some(next) = ctx.next_destination_same_action {
-                pi.set_next_map_goal(crate::coordinates::MapPoint::from_geo(next));
+                pi.set_next_map_goal(next);
             } else {
                 pi.set_goal_next_valid(false);
             }
@@ -1943,7 +1943,7 @@ impl Sprite {
             .resize(num_frames as usize, Vec2D { x: 0.0, y: 0.0 });
         script.sound_ids.resize(num_frames as usize, 0);
         script.action_done = 0;
-        script.hotspot = Point2D { x: 0.0, y: 0.0 };
+        script.hotspot = SpriteLocalPoint::ZERO;
 
         for i in 0..num_frames as usize {
             if frame_widths[i] > self.current_width {
@@ -1990,7 +1990,7 @@ mod tests {
             action_id: 0,
             action_done: 2,
             average_speed: 1.0,
-            hotspot: Point2D { x: 0.0, y: 0.0 },
+            hotspot: SpriteLocalPoint::ZERO,
             sum_distance: 12,
             frame_ids: vec![100, 101, 102, 103],
             delays: vec![2, 2, 2, 2],
@@ -2007,7 +2007,7 @@ mod tests {
             action_id: 1,
             action_done: 1,
             average_speed: 2.0,
-            hotspot: Point2D { x: 5.0, y: 5.0 },
+            hotspot: SpriteLocalPoint::new(5.0, 5.0),
             sum_distance: 8,
             frame_ids: vec![200, 201, 202],
             delays: vec![3, 3, 3],

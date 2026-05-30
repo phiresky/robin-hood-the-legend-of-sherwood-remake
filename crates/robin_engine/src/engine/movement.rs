@@ -3487,7 +3487,7 @@ impl EngineInner {
                 else {
                     continue;
                 };
-                let goal = crate::geo2d::pt(order.target_x, order.target_y);
+                let goal = MapPoint::new(order.target_x, order.target_y);
                 let order_id = Some(order.order_id);
                 let order_action = order.order_type;
                 let order_tolerance = order.tolerance;
@@ -3498,7 +3498,7 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.next_order())
                     .filter(|next| next.order_type == order_action)
-                    .map(|next| geo2d::pt(next.target_x, next.target_y));
+                    .map(|next| MapPoint::new(next.target_x, next.target_y));
                 let active_move_flags = self
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
@@ -3940,7 +3940,7 @@ impl EngineInner {
             let dest_already_at_pos = motion_method != MotionMethod::TillLastFrame && dist <= 0.01;
             let motion_order = order_id.map(|order_id| MotionOrderContext {
                 order_id,
-                destination: geo2d::pt(goal.x, goal.y),
+                destination: goal,
                 reverse: order_reverse,
                 tolerance: order_tolerance,
                 directional_tolerance: active_move_flags

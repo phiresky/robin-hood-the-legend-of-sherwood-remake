@@ -3858,6 +3858,7 @@ pub fn build_shoot_bow_element(shooter: EntityId, target: EntityId) -> SequenceE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::SpriteLocalPoint;
     use crate::element::{
         ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
     };
@@ -3970,7 +3971,7 @@ mod tests {
                 action_id: order_type as u16,
                 action_done: 1,
                 average_speed: 0.0,
-                hotspot: GeoPoint2D { x: 2.0, y: 3.0 },
+                hotspot: SpriteLocalPoint::new(2.0, 3.0),
                 sum_distance: 0,
                 frame_ids: vec![1, 2, 3],
                 delays: vec![0, 0, 0],

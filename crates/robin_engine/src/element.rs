@@ -4200,7 +4200,7 @@ mod tests {
         let mut sprite = Sprite {
             center: crate::coordinates::SpriteAnchor { x: 30.0, y: 70.0 },
             scripts: Arc::new(vec![SpriteScript {
-                hotspot: crate::geo2d::pt(46.0, 18.0),
+                hotspot: crate::coordinates::SpriteLocalPoint::new(46.0, 18.0),
                 ..SpriteScript::default()
             }]),
             ..Sprite::default()

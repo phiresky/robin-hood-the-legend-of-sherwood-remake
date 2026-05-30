@@ -12,8 +12,9 @@ use crate::player_command::PlayerCommand;
 use crate::profiles::MissionLocation;
 use crate::resource_ids;
 use crate::sdl_audio::SdlMixerBackend;
+use robin_engine::coordinates::SpriteLocalPoint;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::geo2d::{Point2D, Vec2D};
+use robin_engine::geo2d::Vec2D;
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 
 #[derive(Debug, serde::Deserialize)]
@@ -154,10 +155,7 @@ fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets) {
                         action_id: row.action_id,
                         action_done: row.action_done,
                         average_speed: row.average_speed,
-                        hotspot: Point2D {
-                            x: row.hotspot_x,
-                            y: row.hotspot_y,
-                        },
+                        hotspot: SpriteLocalPoint::new(row.hotspot_x, row.hotspot_y),
                         ..SpriteScript::default()
                     };
                     for frame in row.frames {
