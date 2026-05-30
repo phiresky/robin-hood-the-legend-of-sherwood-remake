@@ -2581,7 +2581,7 @@ impl EnemyAi {
 
         // Track stimulus actor
         if let StimulusInfo::Human(h) = stimulus.info {
-            self.base.last_stimulus_actor = h;
+            self.base.last_stimulus_actor = Some(h);
         }
 
         // LOSE_CONSCIOUSNESS always goes to green alert

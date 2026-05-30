@@ -354,7 +354,7 @@ impl FriendlyAi {
         self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_add(1);
 
         if let StimulusInfo::Human(h) = stimulus.info {
-            self.base.last_stimulus_actor = h;
+            self.base.last_stimulus_actor = Some(h);
         }
 
         // LOSE_CONSCIOUSNESS always drops the alert regardless of the

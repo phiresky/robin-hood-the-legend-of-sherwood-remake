@@ -3219,7 +3219,7 @@ impl EngineInner {
                             e.base.blood_alcohol,
                         )
                     })
-                    .unwrap_or((0, 0, 0));
+                    .unwrap_or((0, None, 0));
 
                 (
                     ai_vision::RefreshViewContext {
@@ -3253,22 +3253,23 @@ impl EngineInner {
             // edge and won't re-assert focus.  `focus(NULL)` on self
             // is a separate concern from `primary_target` lifecycle
             // (e.g. rider charge passing).
-            if ai_primary_target != ai_last_synced_focus
+            let ai_primary_target_focus = (ai_primary_target != 0).then_some(ai_primary_target);
+            if ai_primary_target_focus != ai_last_synced_focus
                 && let Some(npc) = entity.npc_data_mut()
             {
-                if ai_primary_target != 0 {
+                if let Some(target_handle) = ai_primary_target_focus {
                     ai_vision::focus_entity(
                         npc,
-                        EntityId::Pc(crate::entity_id::PcId(ai_primary_target)),
+                        EntityId::Pc(crate::entity_id::PcId(target_handle)),
                     );
                 } else {
                     ai_vision::unfocus(npc);
                 }
             }
-            if ai_primary_target != ai_last_synced_focus
+            if ai_primary_target_focus != ai_last_synced_focus
                 && let Some(ai) = entity.enemy_ai_mut()
             {
-                ai.base.last_synced_focus_target = ai_primary_target;
+                ai.base.last_synced_focus_target = ai_primary_target_focus;
             }
             if let Some(npc) = entity.npc_data_mut() {
                 ai_vision::refresh_view(npc, &ctx);
@@ -4286,7 +4287,7 @@ impl EngineInner {
             && let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
-            ai.last_synced_focus_target = ai.primary_target;
+            ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
         }
 
         // Process pending SlowlyOpenEyes — `slowly_open_eyes` sets

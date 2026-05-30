@@ -6590,15 +6590,28 @@ impl HostFunctions for GameHost {
                     let duration = stack.pop_i32();
                     let target = stack.pop_i32();
                     let actor = stack.pop_i32();
+                    let target_handle = u32::try_from(target)
+                        .ok()
+                        .and_then(std::num::NonZeroU32::new)
+                        .map(std::num::NonZeroU32::get);
+                    if duration > 0
+                        && let Some(target_handle) = target_handle
+                        && self.get_entity(target_handle as i32).is_none()
+                    {
+                        tracing::error!("Script Error: StareActor invalid target {target_handle}");
+                        return 0;
+                    }
                     if let Some(entity) = self.get_entity_mut(actor)
                         && let Some(ai) = entity.ai_controller_mut()
                     {
-                        if duration > 0 && target != 0 {
-                            ai.stare_target_actor = target as u32;
+                        if duration > 0
+                            && let Some(target_handle) = target_handle
+                        {
+                            ai.stare_target_actor = Some(target_handle);
                             ai.stare_target_position = None;
                             ai.stare_remaining = duration as u32;
                         } else {
-                            ai.stare_target_actor = 0;
+                            ai.stare_target_actor = None;
                             ai.stare_target_position = None;
                             ai.stare_remaining = 0;
                         }
@@ -6622,11 +6635,11 @@ impl HostFunctions for GameHost {
                         && let Some(ai) = entity.ai_controller_mut()
                     {
                         if duration > 0 {
-                            ai.stare_target_actor = 0;
+                            ai.stare_target_actor = None;
                             ai.stare_target_position = resolved_pos;
                             ai.stare_remaining = duration as u32;
                         } else {
-                            ai.stare_target_actor = 0;
+                            ai.stare_target_actor = None;
                             ai.stare_target_position = None;
                             ai.stare_remaining = 0;
                         }
