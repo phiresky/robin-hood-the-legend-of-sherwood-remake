@@ -2935,11 +2935,8 @@ fn tick_arrows_matching(
         holding_shield: bool,
         position_map: MapPoint,
     }
-    let human_snapshots: Vec<HumanSnapshot> = entities
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, slot)| {
-            let e = slot.as_ref()?;
+    let human_snapshots: Vec<HumanSnapshot> = crate::engine::occupied_entity_slots(entities)
+        .filter_map(|(entity_id, e)| {
             if !e.is_human() || !e.is_active() {
                 return None;
             }
@@ -2956,14 +2953,14 @@ fn tick_arrows_matching(
             }
             let Some(belt) = e.compute_belt_point() else {
                 tracing::warn!(
-                    entity = idx,
+                    entity = entity_id.index(),
                     "Projectile hit snapshot skipped: human missing belt hotspot"
                 );
                 return None;
             };
             let Some(eyes) = e.compute_eyes_point(None) else {
                 tracing::warn!(
-                    entity = idx,
+                    entity = entity_id.index(),
                     "Projectile hit snapshot skipped: human missing eyes hotspot"
                 );
                 return None;
@@ -2976,14 +2973,14 @@ fn tick_arrows_matching(
             };
             let Some(actor) = e.actor_data() else {
                 tracing::warn!(
-                    entity = idx,
+                    entity = entity_id.index(),
                     "Projectile hit snapshot skipped: human missing actor data"
                 );
                 return None;
             };
             let holding_shield = actor.action_state.is_shield();
             Some(HumanSnapshot {
-                id: EntityId::new(idx as u32, e.entity_id_kind()),
+                id: entity_id,
                 belt,
                 eyes,
                 leaning_out: posture == crate::element::Posture::LeaningOut,
@@ -3009,11 +3006,8 @@ fn tick_arrows_matching(
         position_map: MapPoint,
         action_filter: crate::element::TargetFilter,
     }
-    let fx_target_snapshots: Vec<FxTargetSnapshot> = entities
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, slot)| {
-            let e = slot.as_ref()?;
+    let fx_target_snapshots: Vec<FxTargetSnapshot> = crate::engine::occupied_entity_slots(entities)
+        .filter_map(|(entity_id, e)| {
             if !e.kind().is_fx_target() || !e.is_active() {
                 return None;
             }
@@ -3030,13 +3024,13 @@ fn tick_arrows_matching(
             }
             let Some(center) = e.compute_target_center() else {
                 tracing::warn!(
-                    entity = idx,
+                    entity = entity_id.index(),
                     "Projectile hit snapshot skipped: FX target missing center hotspot"
                 );
                 return None;
             };
             Some(FxTargetSnapshot {
-                id: EntityId::new(idx as u32, e.entity_id_kind()),
+                id: entity_id,
                 center,
                 position_map: e.element_data().position_map(),
                 action_filter: filter,
@@ -3054,11 +3048,8 @@ fn tick_arrows_matching(
         look_dir: (f32, f32),
         obstacle: crate::sight_obstacle::SightObstacle,
     }
-    let shield_snapshots: Vec<ShieldSnapshot> = entities
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, slot)| {
-            let e = slot.as_ref()?;
+    let shield_snapshots: Vec<ShieldSnapshot> = crate::engine::occupied_entity_slots(entities)
+        .filter_map(|(entity_id, e)| {
             if !e.is_human() || !e.is_active() || e.is_dead() {
                 return None;
             }
@@ -3071,7 +3062,7 @@ fn tick_arrows_matching(
             // Un-compress Y for angular comparison.
             let look_dir = (dx, dy * INVERSE_ASPECT_RATIO);
             Some(ShieldSnapshot {
-                holder_id: EntityId::new(idx as u32, e.entity_id_kind()),
+                holder_id: entity_id,
                 look_dir,
                 obstacle,
             })

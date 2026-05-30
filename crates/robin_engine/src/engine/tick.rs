@@ -8145,7 +8145,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         // Otherwise, check if the current animation is weak/stunned sword.
         // Orders live on the owning `SequenceElement.orders` now —
         // look up via the actor's current in-progress element.
-        let entity_id = EntityId::new(element.0, entity.entity_id_kind());
+        let entity_id = crate::engine::entity_id_for_occupied_slot(element.0, entity);
         matches!(
             self.sequence_manager
                 .current_order_for_actor(entity_id)
