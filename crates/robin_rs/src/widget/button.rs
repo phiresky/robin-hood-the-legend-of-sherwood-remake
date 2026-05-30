@@ -498,8 +498,8 @@ impl WidgetGroupable for WidgetButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::BBox2D;
     use crate::ui::UiKeyboard;
+    use robin_engine::coordinates::ScreenBBox;
 
     fn make_input(mouse_x: f32, mouse_y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
         // Leak a keyboard for test convenience (tests are short-lived).
@@ -534,11 +534,11 @@ mod tests {
     fn make_button() -> WidgetButton {
         let mut btn = WidgetButton::new(1);
         btn.base
-            .create("Test", BBox2D::from_coords(0.0, 0.0, 100.0, 30.0), 0);
+            .create("Test", ScreenBBox::from_coords(0.0, 0.0, 100.0, 30.0), 0);
         // Use a bitmap renderer with a matching bbox for hit testing.
         btn.base.renderer = super::super::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
             base: crate::ui::RendererBase {
-                bbox: BBox2D::from_coords(0.0, 0.0, 100.0, 30.0),
+                bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 30.0),
                 ..Default::default()
             },
         });

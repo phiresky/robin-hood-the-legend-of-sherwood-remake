@@ -18,9 +18,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::BBox2D;
 use crate::ui::{MouseButtons, UiEvent, UiEventData, UiMsg};
-use robin_engine::coordinates::ScreenPoint;
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
 use super::{WidgetBase, WidgetInput};
 
@@ -176,11 +175,11 @@ pub struct WidgetListbox<T: Clone = ()> {
 
     // ── Scrollbar geometry (set by layout/renderer) ──
     /// Bounding box of the item area (excluding scrollbar).
-    pub items_bbox: BBox2D,
+    pub items_bbox: ScreenBBox,
     /// Bounding box of the scrollbar track.
-    pub scrollbar_bbox: BBox2D,
+    pub scrollbar_bbox: ScreenBBox,
     /// Bounding box of the scrollbar knob (thumb).
-    pub knob_bbox: BBox2D,
+    pub knob_bbox: ScreenBBox,
     /// Height of one item in pixels.
     pub item_height: f32,
 
@@ -210,9 +209,9 @@ impl<T: Clone> Default for WidgetListbox<T> {
             first_visible: 0,
             visible_count: 0,
             state: ListboxState::Default,
-            items_bbox: BBox2D::new(),
-            scrollbar_bbox: BBox2D::new(),
-            knob_bbox: BBox2D::new(),
+            items_bbox: ScreenBBox::new(),
+            scrollbar_bbox: ScreenBBox::new(),
+            knob_bbox: ScreenBBox::new(),
             item_height: 16.0,
             drag_start_y: 0.0,
             drag_start_first: 0,
@@ -384,7 +383,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     /// Get the item index at a screen point, or None if not over an item.
     fn item_at_point(&self, point: ScreenPoint) -> Option<usize> {
-        if !self.items_bbox.is_boxed_point(point.to_geo()) {
+        if !self.items_bbox.is_boxed_point(point) {
             return None;
         }
         if let Some(rect) = self.items_bbox.0 {
@@ -406,12 +405,12 @@ impl<T: Clone> WidgetListbox<T> {
 
     /// Check if a point is over the scrollbar area.
     fn is_over_scrollbar(&self, point: ScreenPoint) -> bool {
-        self.scrollbar_bbox.is_boxed_point(point.to_geo())
+        self.scrollbar_bbox.is_boxed_point(point)
     }
 
     /// Check if a point is over the scrollbar knob.
     fn is_over_knob(&self, point: ScreenPoint) -> bool {
-        self.knob_bbox.is_boxed_point(point.to_geo())
+        self.knob_bbox.is_boxed_point(point)
     }
 
     // ── Input processing ───────────────────────────────────────────

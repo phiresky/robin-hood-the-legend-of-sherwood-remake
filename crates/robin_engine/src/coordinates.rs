@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::geo2d;
+use geo::Rect;
 
 macro_rules! coord2 {
     (
@@ -115,6 +116,141 @@ coord2!(
     ScreenPoint,
     screen_pt
 );
+
+/// Screen-space axis-aligned bounding box.
+///
+/// This is intentionally distinct from `geo2d::BBox2D`: widget, menu, HUD,
+/// and renderer hit-test rectangles live in screen/UI coordinates, not map or
+/// ground coordinates. `None` is the same legacy "hyperspace" unset state as
+/// `BBox2D`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct ScreenBBox(pub Option<Rect<f32>>);
+
+impl Default for ScreenBBox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ScreenBBox {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    #[inline]
+    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
+        Self(bbox.0)
+    }
+
+    #[inline]
+    pub fn to_geo(self) -> geo2d::BBox2D {
+        geo2d::BBox2D(self.0)
+    }
+
+    #[inline]
+    pub fn from_corners(min: ScreenPoint, max: ScreenPoint) -> Self {
+        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
+    }
+
+    #[inline]
+    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
+    }
+
+    #[inline]
+    pub fn from_point(point: ScreenPoint) -> Self {
+        Self(Some(Rect::new(point.to_geo(), point.to_geo())))
+    }
+
+    #[inline]
+    pub fn from_point_size(origin: ScreenPoint, width: f32, height: f32) -> Self {
+        Self::from_geo(geo2d::BBox2D::from_point_size(
+            origin.to_geo(),
+            width,
+            height,
+        ))
+    }
+
+    #[inline]
+    pub fn is_somewhere(&self) -> bool {
+        self.0.is_some()
+    }
+
+    #[inline]
+    pub fn x_min(&self) -> f32 {
+        self.0.unwrap().min().x
+    }
+
+    #[inline]
+    pub fn y_min(&self) -> f32 {
+        self.0.unwrap().min().y
+    }
+
+    #[inline]
+    pub fn x_max(&self) -> f32 {
+        self.0.unwrap().max().x
+    }
+
+    #[inline]
+    pub fn y_max(&self) -> f32 {
+        self.0.unwrap().max().y
+    }
+
+    #[inline]
+    pub fn width(&self) -> f32 {
+        let r = self.0.unwrap();
+        r.max().x - r.min().x
+    }
+
+    #[inline]
+    pub fn height(&self) -> f32 {
+        let r = self.0.unwrap();
+        r.max().y - r.min().y
+    }
+
+    #[inline]
+    pub fn top_left(&self) -> ScreenPoint {
+        ScreenPoint::from_geo(self.0.unwrap().min())
+    }
+
+    #[inline]
+    pub fn bottom_right(&self) -> ScreenPoint {
+        ScreenPoint::from_geo(self.0.unwrap().max())
+    }
+
+    #[inline]
+    pub fn contains_point(&self, point: ScreenPoint) -> bool {
+        self.to_geo().contains_point(point.to_geo())
+    }
+
+    #[inline]
+    pub fn is_boxed_point(&self, point: ScreenPoint) -> bool {
+        self.to_geo().is_boxed_point(point.to_geo())
+    }
+
+    #[inline]
+    pub fn intersects_bbox(&self, other: &ScreenBBox) -> bool {
+        self.to_geo().intersects_bbox(&other.to_geo())
+    }
+
+    #[inline]
+    pub fn contains_bbox(&self, other: &ScreenBBox) -> bool {
+        self.to_geo().contains_bbox(&other.to_geo())
+    }
+
+    #[inline]
+    pub fn translated(&self, v: geo2d::Vec2D) -> Self {
+        Self::from_geo(self.to_geo().translated(v))
+    }
+
+    #[inline]
+    pub fn translate(&mut self, v: geo2d::Vec2D) {
+        *self = self.translated(v);
+    }
+}
 
 /// World-space 3D point: raw Spellbound `(x, y, z)`.
 ///

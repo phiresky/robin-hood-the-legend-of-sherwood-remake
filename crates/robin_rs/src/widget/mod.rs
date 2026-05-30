@@ -28,13 +28,12 @@ pub use toggle::WidgetToggleButton;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::BBox2D;
 use crate::ui::{
     MouseButtons, ProbeCode, RendererAlphaConstant, RendererBase, RendererBitmap, RendererListbox,
     RendererShadow, RendererText, ResourceId, UiEvent, UiEventData, UiMsg, UiProbe, UiState,
     resource_widget_id,
 };
-use robin_engine::coordinates::ScreenPoint;
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
 // ─── Widget ID ──────────────────────────────────────────────────────
 
@@ -159,7 +158,7 @@ impl WidgetRenderer {
     }
 
     /// Set the bounding box on the underlying renderer.
-    pub fn set_position(&mut self, bbox: BBox2D) {
+    pub fn set_position(&mut self, bbox: ScreenBBox) {
         if let Some(b) = self.base_mut() {
             b.set_position_bbox(bbox);
         }
@@ -235,7 +234,7 @@ pub struct WidgetBase {
     /// Tooltip text (empty = no tooltip).
     pub tooltip_text: String,
     /// Position and size in screen coordinates.
-    pub bbox: BBox2D,
+    pub bbox: ScreenBBox,
     /// Current interaction state.
     pub state: UiState,
     /// Renderer for visual output.
@@ -256,7 +255,7 @@ impl Default for WidgetBase {
             flags: 0,
             text: String::new(),
             tooltip_text: String::new(),
-            bbox: BBox2D::new(),
+            bbox: ScreenBBox::new(),
             state: UiState::Default,
             renderer: WidgetRenderer::None,
             rendering_surface: u32::MAX,
@@ -266,7 +265,7 @@ impl Default for WidgetBase {
 
 impl WidgetBase {
     /// Initialize the widget.
-    pub fn create(&mut self, text: &str, bbox: BBox2D, flags: u32) {
+    pub fn create(&mut self, text: &str, bbox: ScreenBBox, flags: u32) {
         self.text = text.to_string();
         self.bbox = bbox;
         self.flags = flags;
@@ -281,7 +280,7 @@ impl WidgetBase {
     pub fn create_with_resource(
         &mut self,
         text: &str,
-        bbox: BBox2D,
+        bbox: ScreenBBox,
         flags: u32,
         resource_id: ResourceId,
     ) {
@@ -308,7 +307,7 @@ impl WidgetBase {
         self.fast_key = key;
     }
 
-    pub fn set_position(&mut self, bbox: BBox2D) {
+    pub fn set_position(&mut self, bbox: ScreenBBox) {
         self.bbox = bbox;
         self.renderer.set_position(bbox);
     }
@@ -319,10 +318,8 @@ impl WidgetBase {
         // yet (hyperspace), fall back to a 1×1 at `point` so we stay
         // compatible with callers that set the position before sizing.
         self.bbox = match self.bbox.0 {
-            Some(_) => {
-                BBox2D::from_point_size(point.to_geo(), self.bbox.width(), self.bbox.height())
-            }
-            None => BBox2D::from_point(point.to_geo()),
+            Some(_) => ScreenBBox::from_point_size(point, self.bbox.width(), self.bbox.height()),
+            None => ScreenBBox::from_point(point),
         };
         self.renderer.set_position(self.bbox);
     }
@@ -346,7 +343,7 @@ impl WidgetBase {
     /// half-open `is_boxed_point` so adjacent widgets never both claim
     /// a shared right/bottom edge column.
     pub fn is_inside(&self, point: ScreenPoint) -> bool {
-        self.bbox.is_boxed_point(point.to_geo()) && self.renderer.is_real_point(point)
+        self.bbox.is_boxed_point(point) && self.renderer.is_real_point(point)
     }
 
     /// Attach the widget (and its renderer) to a rendering surface.

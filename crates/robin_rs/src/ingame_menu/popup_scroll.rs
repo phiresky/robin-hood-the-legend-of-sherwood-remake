@@ -24,6 +24,7 @@ use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
+use robin_engine::coordinates::ScreenBBox;
 use robin_engine::player_command::DialogResult;
 use robin_engine::sound_cache::SampleLoader;
 
@@ -353,7 +354,7 @@ impl PopupScrollModalState {
         self.drop_cap_h = if pic_h > 0 { pic_h + PIC_TEXT_PAD_Y } else { 0 };
         self.picture_widget = self.picture.map(|pic| {
             let mut widget = crate::widget::WidgetPicture::new(u32::MAX);
-            let bbox = crate::geo2d::BBox2D::from_coords(
+            let bbox = ScreenBBox::from_coords(
                 (self.virt_x + pic_virt_x) as f32,
                 (self.virt_y + pic_virt_y) as f32,
                 (self.virt_x + pic_virt_x + pic_w) as f32,

@@ -13,7 +13,7 @@ use crate::ingame_menu::layout::{MenuTransform, TextAlign, VAlign, render_text_i
 use crate::input::{KeyboardState, MAX_SCANCODES};
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use robin_engine::coordinates::ScreenPoint;
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use robin_engine::sprite::BBox;
 
 // ═════════════════════════════════════════════════════════════════════
@@ -383,7 +383,7 @@ pub enum ProbeCode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiProbe {
     pub code: ProbeCode,
-    pub zone: BBox2D,
+    pub zone: ScreenBBox,
     pub widget_id: u32,
 }
 
@@ -534,7 +534,7 @@ impl AlphaMask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RendererBase {
     /// Bounding box where the widget is drawn.
-    pub bbox: BBox2D,
+    pub bbox: ScreenBBox,
     /// Current resource ID.
     pub resource_id: ResourceId,
     /// Current sub-resource for rendering.
@@ -560,7 +560,7 @@ pub struct RendererBase {
 impl Default for RendererBase {
     fn default() -> Self {
         Self {
-            bbox: BBox2D::new(),
+            bbox: ScreenBBox::new(),
             resource_id: -1,
             sub_resource: resource_widget_id::NO_RESOURCE,
             flags: 0,
@@ -574,7 +574,7 @@ impl Default for RendererBase {
 }
 
 impl RendererBase {
-    pub fn set_position_bbox(&mut self, bbox: BBox2D) {
+    pub fn set_position_bbox(&mut self, bbox: ScreenBBox) {
         self.bbox = bbox;
     }
 
@@ -583,7 +583,7 @@ impl RendererBase {
         // (see `widget/picture.rs` etc.), which queries `ResourceManager`
         // and calls `set_position_bbox`. This 1×1 fallback is a
         // safety net for callers that haven't been ported yet.
-        self.bbox = BBox2D::from_point(point.to_geo());
+        self.bbox = ScreenBBox::from_point(point);
     }
 
     pub fn set_resource(&mut self, id: ResourceId) -> bool {
@@ -628,7 +628,7 @@ impl RendererBase {
     /// not bound to a pre-loaded sprite pack), the bbox check stands
     /// alone.
     pub fn is_real_point(&self, point: ScreenPoint) -> bool {
-        if !self.bbox.contains_point(point.to_geo()) {
+        if !self.bbox.contains_point(point) {
             return false;
         }
         let Some(mask) = self.alpha_mask.as_ref() else {
@@ -1352,7 +1352,7 @@ impl RendererListbox {
     /// if INDENT: box.xMin += indentSize
     /// box += bbox.topLeft
     /// ```
-    pub fn text_box_for_item(&self, index: u16, flags: u32) -> BBox2D {
+    pub fn text_box_for_item(&self, index: u16, flags: u32) -> ScreenBBox {
         // The bbox is always expected to be present at this point; a
         // `None` here is a broken lifecycle, not a normal state. Fail
         // loudly rather than fabricate.
@@ -1377,7 +1377,7 @@ impl RendererListbox {
         }
 
         // Offset by bbox top-left (screen position)
-        BBox2D::from_coords(x_min + min.x, y_min + min.y, x_max + min.x, y_max + min.y)
+        ScreenBBox::from_coords(x_min + min.x, y_min + min.y, x_max + min.x, y_max + min.y)
     }
 
     /// Get the current scrollbar knob bounding box.
@@ -1388,7 +1388,7 @@ impl RendererListbox {
     /// knob_x       = bbox.right - 1 - scrollbarWidth
     /// offset by (knob_x, bbox.top + 1)
     /// ```
-    pub fn knob_bbox(&self) -> BBox2D {
+    pub fn knob_bbox(&self) -> ScreenBBox {
         // The bbox is always expected to be present at this point; a
         // `None` here is a broken lifecycle, not a normal state. Fail
         // loudly rather than fabricate.
@@ -1407,7 +1407,7 @@ impl RendererListbox {
         let y_end = (height - 2.0) * (self.before_ratio + self.knob_ratio);
         let x_start = max.x - 1.0 - kw;
 
-        BBox2D::from_coords(
+        ScreenBBox::from_coords(
             x_start,
             y_start + min.y + 1.0,
             x_start + kw,
@@ -1421,11 +1421,11 @@ impl RendererListbox {
     /// box = (0, 0, scrollbarWidth, bboxHeight)
     /// offset by (bbox.right - scrollbarWidth, bbox.top)
     /// ```
-    pub fn scrollbar_bbox(&self) -> BBox2D {
+    pub fn scrollbar_bbox(&self) -> ScreenBBox {
         if self.surface_scrollbar == u32::MAX {
             // Return a degenerate `(0,0,0,0)` box here, not a "no box"
             // sentinel — callers expect a real box.
-            return BBox2D::from_coords(0.0, 0.0, 0.0, 0.0);
+            return ScreenBBox::from_coords(0.0, 0.0, 0.0, 0.0);
         }
         // The bbox is always expected to be present at this point — a
         // `None` here means the listbox lifecycle is broken (refresh
@@ -1439,7 +1439,7 @@ impl RendererListbox {
         let max = rect.max();
         let sw = self.scrollbar_track_width as f32;
 
-        BBox2D::from_coords(max.x - sw, min.y, max.x, max.y)
+        ScreenBBox::from_coords(max.x - sw, min.y, max.x, max.y)
     }
 
     /// Pixel height to move the knob for one item.
@@ -2052,7 +2052,7 @@ mod tests {
     #[test]
     fn renderer_base_is_real_point_bbox_only() {
         let mut r = RendererBase::default();
-        r.set_position_bbox(BBox2D::from_coords(10.0, 10.0, 30.0, 30.0));
+        r.set_position_bbox(ScreenBBox::from_coords(10.0, 10.0, 30.0, 30.0));
         assert!(r.is_real_point(ScreenPoint::new(15.0, 15.0)));
         assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
         // Without a mask, every in-bbox pixel is opaque.
@@ -2069,7 +2069,7 @@ mod tests {
         let mask = AlphaMask::from_pixels(4, 4, 4, &pixels, KEY);
 
         let mut r = RendererBase::default();
-        r.set_position_bbox(BBox2D::from_coords(10.0, 20.0, 14.0, 24.0));
+        r.set_position_bbox(ScreenBBox::from_coords(10.0, 20.0, 14.0, 24.0));
         r.set_alpha_mask(Some(mask));
 
         // bbox top-left = (10, 20); only local (1, 1) is opaque.
@@ -2084,7 +2084,7 @@ mod tests {
     fn renderer_alpha_constant_is_real_point_short_circuits() {
         let mut r = RendererAlphaConstant::default();
         r.base
-            .set_position_bbox(BBox2D::from_coords(0.0, 0.0, 10.0, 10.0));
+            .set_position_bbox(ScreenBBox::from_coords(0.0, 0.0, 10.0, 10.0));
         assert!(r.is_real_point(ScreenPoint::new(5.0, 5.0)));
         r.set_alpha_level(0);
         assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
@@ -2183,7 +2183,7 @@ mod tests {
     #[test]
     fn renderer_listbox_displayable_items() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_font_height(20);
         assert_eq!(lb.displayable_item_count(), 5); // 100 / 20
 
@@ -2194,7 +2194,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_params() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_font_height(20);
         lb.set_scrollbar_track_width(16);
 
@@ -2209,7 +2209,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_params_few_items() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_font_height(20);
         // Only 3 items, but can display 5 → full knob
         lb.set_knob_parameters(0, 3);
@@ -2220,7 +2220,7 @@ mod tests {
     #[test]
     fn renderer_listbox_text_box() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(10.0, 20.0, 210.0, 120.0);
+        lb.base.bbox = ScreenBBox::from_coords(10.0, 20.0, 210.0, 120.0);
         lb.set_font_height(15);
         lb.set_scrollbar_track_width(16);
 
@@ -2242,7 +2242,7 @@ mod tests {
     #[test]
     fn renderer_listbox_scrollbar_bbox() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_scrollbar_track_width(16);
         lb.surface_scrollbar = 0; // not 0xFFFFFFFF
 
@@ -2269,7 +2269,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_bbox() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_knob_width(16);
         lb.before_ratio = 0.0;
         lb.knob_ratio = 0.5;
@@ -2287,7 +2287,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_height_for_one_item() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 102.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 102.0);
         lb.number_of_items = 10;
         // (102 - 2) / 10 = 10
         assert_eq!(lb.knob_height_for_one_item(), 10);

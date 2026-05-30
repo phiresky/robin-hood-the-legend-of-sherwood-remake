@@ -698,16 +698,16 @@ fn byte_offset_for_char_index(s: &str, char_index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::BBox2D;
     use crate::ui::{MouseButtons, UiKeyboard};
+    use robin_engine::coordinates::ScreenBBox;
 
     fn make_editable_field() -> WidgetInputField {
         let mut f = WidgetInputField::new(1);
         f.base
-            .create("", BBox2D::from_coords(0.0, 0.0, 100.0, 20.0), 0);
+            .create("", ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0), 0);
         f.base.renderer = crate::widget::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
             base: crate::ui::RendererBase {
-                bbox: BBox2D::from_coords(0.0, 0.0, 100.0, 20.0),
+                bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0),
                 ..Default::default()
             },
         });

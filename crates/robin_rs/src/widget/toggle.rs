@@ -580,12 +580,12 @@ impl WidgetGroupable for WidgetToggleButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::BBox2D;
     use crate::ui::UiKeyboard;
+    use robin_engine::coordinates::ScreenBBox;
 
     fn test_widget() -> WidgetToggleButton {
         let mut w = WidgetToggleButton::new(1);
-        w.base.bbox = BBox2D::from_coords(0.0, 0.0, 10.0, 10.0);
+        w.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 10.0, 10.0);
         // No renderer attached → `is_real_point` would return false and
         // `is_inside` would fail. Give it a bitmap renderer with the
         // same bbox so hit-testing succeeds.

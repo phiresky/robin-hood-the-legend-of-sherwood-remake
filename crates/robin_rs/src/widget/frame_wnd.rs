@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::ui::{UiEvent, UiMsg, UiProbe};
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
 use super::{Widget, WidgetId, WidgetInput};
 
@@ -17,7 +17,7 @@ pub struct FrameWnd {
     /// Window title.
     pub title: String,
     /// Position and size in screen coordinates.
-    pub bbox: BBox2D,
+    pub bbox: ScreenBBox,
     /// Creation flags.
     pub flags: u32,
     /// Whether this frame window is enabled.
@@ -48,7 +48,7 @@ impl Default for FrameWnd {
     fn default() -> Self {
         Self {
             title: String::new(),
-            bbox: BBox2D::new(),
+            bbox: ScreenBBox::new(),
             flags: 0,
             enabled: true,
             input_enabled: true,
@@ -64,7 +64,7 @@ impl Default for FrameWnd {
 
 impl FrameWnd {
     /// Create a new frame window.
-    pub fn new(title: &str, bbox: BBox2D, flags: u32) -> Self {
+    pub fn new(title: &str, bbox: ScreenBBox, flags: u32) -> Self {
         Self {
             title: title.to_string(),
             bbox,
@@ -99,10 +99,10 @@ impl FrameWnd {
         let frame_origin = self
             .bbox
             .0
-            .map(|r| r.min())
-            .unwrap_or(GeoPoint2D { x: 0.0, y: 0.0 });
+            .map(|r| ScreenPoint::from_geo(r.min()))
+            .unwrap_or(ScreenPoint::ZERO);
         if let Some(widget_rect) = widget.base().bbox.0 {
-            let adjusted = BBox2D::from_coords(
+            let adjusted = ScreenBBox::from_coords(
                 widget_rect.min().x + frame_origin.x,
                 widget_rect.min().y + frame_origin.y,
                 widget_rect.max().x + frame_origin.x,
@@ -215,22 +215,22 @@ impl FrameWnd {
     // ── Position ───────────────────────────────────────────────────
 
     /// Get the frame's origin (top-left corner).
-    pub fn origin(&self) -> GeoPoint2D {
+    pub fn origin(&self) -> ScreenPoint {
         self.bbox
             .0
-            .map(|r| r.min())
-            .unwrap_or(GeoPoint2D { x: 0.0, y: 0.0 })
+            .map(|r| ScreenPoint::from_geo(r.min()))
+            .unwrap_or(ScreenPoint::ZERO)
     }
 
     /// Move the frame and all its widgets by a delta.
-    pub fn set_position(&mut self, new_bbox: BBox2D) {
+    pub fn set_position(&mut self, new_bbox: ScreenBBox) {
         if let (Some(old_rect), Some(new_rect)) = (self.bbox.0, new_bbox.0) {
             let dx = new_rect.min().x - old_rect.min().x;
             let dy = new_rect.min().y - old_rect.min().y;
 
             for widget in &mut self.widgets {
                 if let Some(wrect) = widget.base().bbox.0 {
-                    let adjusted = BBox2D::from_coords(
+                    let adjusted = ScreenBBox::from_coords(
                         wrect.min().x + dx,
                         wrect.min().y + dy,
                         wrect.max().x + dx,
@@ -244,11 +244,11 @@ impl FrameWnd {
     }
 
     /// Move the frame to a new origin point, keeping size the same.
-    pub fn set_position_point(&mut self, point: GeoPoint2D) {
+    pub fn set_position_point(&mut self, point: ScreenPoint) {
         if let Some(rect) = self.bbox.0 {
             let w = rect.max().x - rect.min().x;
             let h = rect.max().y - rect.min().y;
-            let new_bbox = BBox2D::from_coords(point.x, point.y, point.x + w, point.y + h);
+            let new_bbox = ScreenBBox::from_coords(point.x, point.y, point.x + w, point.y + h);
             self.set_position(new_bbox);
         }
     }
@@ -286,7 +286,7 @@ impl FrameWnd {
         }
 
         // Check if mouse is over the frame → emit FrameFocus.
-        let mouse_in_frame = self.bbox.contains_point(input.mouse_position.to_geo());
+        let mouse_in_frame = self.bbox.contains_point(input.mouse_position);
         if mouse_in_frame {
             events.push(UiEvent {
                 msg_type: UiMsg::FrameFocus,
@@ -386,7 +386,7 @@ impl FrameWnd {
     }
 
     /// Restore only widgets that overlap with the given region.
-    pub fn restore_region(&mut self, region: &BBox2D) {
+    pub fn restore_region(&mut self, region: &ScreenBBox) {
         if !self.enabled {
             return;
         }
@@ -405,7 +405,6 @@ impl FrameWnd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::BBox2D;
     use crate::ui::{MouseButtons, UiKeyboard, UiMsg};
     use crate::widget::{WidgetButton, WidgetRadioButton, WidgetRenderer};
 
@@ -426,7 +425,7 @@ mod tests {
 
     fn make_button_widget(id: WidgetId, x: f32, y: f32, w: f32, h: f32) -> Widget {
         let mut btn = WidgetButton::new(id);
-        let bbox = BBox2D::from_coords(x, y, x + w, y + h);
+        let bbox = ScreenBBox::from_coords(x, y, x + w, y + h);
         btn.base.create("Test", bbox, 0);
         btn.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
             base: crate::ui::RendererBase {
@@ -439,11 +438,15 @@ mod tests {
 
     #[test]
     fn add_widget_adjusts_position() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(100.0, 50.0, 400.0, 300.0), 0);
+        let mut frame = FrameWnd::new(
+            "Test",
+            ScreenBBox::from_coords(100.0, 50.0, 400.0, 300.0),
+            0,
+        );
         // Widget at (10, 10) relative to frame.
         let mut btn = WidgetButton::new(1);
         btn.base
-            .create("Btn", BBox2D::from_coords(10.0, 10.0, 80.0, 30.0), 0);
+            .create("Btn", ScreenBBox::from_coords(10.0, 10.0, 80.0, 30.0), 0);
         frame.add_widget(Widget::Button(btn));
 
         let widget_bbox = frame.widget(1).unwrap().base().bbox;
@@ -455,7 +458,7 @@ mod tests {
 
     #[test]
     fn process_input_routes_to_widgets() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
 
         // Hover over button.
@@ -467,7 +470,7 @@ mod tests {
 
     #[test]
     fn excluded_widget_skipped() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         frame.exclude_widget(1);
 
@@ -479,7 +482,7 @@ mod tests {
 
     #[test]
     fn remove_widget_works() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         assert_eq!(frame.widget_count(), 1);
 
@@ -490,7 +493,7 @@ mod tests {
 
     #[test]
     fn disabled_frame_returns_no_events() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         frame.set_enable(false);
 
@@ -503,7 +506,7 @@ mod tests {
     fn disabled_frame_refresh_skips_children() {
         use crate::ui::resource_widget_id::{BUTTON_DEFAULT, NO_RESOURCE};
 
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
 
         assert_eq!(
@@ -551,7 +554,7 @@ mod tests {
 
     #[test]
     fn disabled_frame_restore_and_probe_skip_children() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         // Dirty last_rendered so we can detect whether restore() cleared it.
         frame
@@ -578,7 +581,7 @@ mod tests {
             "restore() on disabled frame must not touch children",
         );
 
-        let region = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let region = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         frame.restore_region(&region);
         assert_eq!(
             frame
@@ -604,7 +607,7 @@ mod tests {
     fn restore_region_calls_both_restore_and_refresh() {
         use crate::ui::resource_widget_id::{BUTTON_DEFAULT, NO_RESOURCE};
 
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         // Sentinel for restore() detection: reset_save will reset this to [MAX; 2].
         frame
@@ -628,7 +631,7 @@ mod tests {
             NO_RESOURCE,
         );
 
-        let region = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let region = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         frame.restore_region(&region);
 
         let rbase = frame.widget(1).unwrap().base().renderer.base().unwrap();
@@ -645,7 +648,7 @@ mod tests {
 
     #[test]
     fn exclude_widget_requires_membership() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
 
         // Unknown widget id must not be excluded.
@@ -662,7 +665,7 @@ mod tests {
 
     #[test]
     fn remove_widget_leaves_exclusion_list() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         assert!(frame.exclude_widget(1));
         assert!(frame.is_excluded(1));
@@ -678,7 +681,7 @@ mod tests {
 
     #[test]
     fn clear_widgets_empties_tree() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
         frame.add_widget_absolute(make_button_widget(2, 10.0, 50.0, 80.0, 30.0));
         assert_eq!(frame.widget_count(), 2);
@@ -689,7 +692,7 @@ mod tests {
 
     #[test]
     fn has_tooltip_reflects_set_call_not_text() {
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         assert!(!frame.has_tooltip());
 
         // setting empty text still flags the tooltip present.
@@ -705,10 +708,10 @@ mod tests {
     fn add_widget_adjusts_even_without_frame_bbox() {
         // Frame with no bbox — origin defaults to (0, 0); widget position
         // should stay unchanged.
-        let mut frame = FrameWnd::new("Test", BBox2D::new(), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::new(), 0);
         let mut btn = WidgetButton::new(1);
         btn.base
-            .create("Btn", BBox2D::from_coords(10.0, 10.0, 80.0, 30.0), 0);
+            .create("Btn", ScreenBBox::from_coords(10.0, 10.0, 80.0, 30.0), 0);
         frame.add_widget(Widget::Button(btn));
 
         let rect = frame.widget(1).unwrap().base().bbox.0.unwrap();
@@ -718,7 +721,7 @@ mod tests {
 
     fn make_radio_widget(id: WidgetId, x: f32, y: f32, w: f32, h: f32) -> WidgetRadioButton {
         let mut rb = WidgetRadioButton::new(id);
-        let bbox = BBox2D::from_coords(x, y, x + w, y + h);
+        let bbox = ScreenBBox::from_coords(x, y, x + w, y + h);
         rb.base.create("Radio", bbox, 0);
         rb.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
             base: crate::ui::RendererBase {
@@ -733,7 +736,7 @@ mod tests {
     fn radio_group_exclusion_deselects_siblings() {
         // Three radio buttons linked as a group — clicking one must
         // deselect the others.
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 400.0, 400.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 400.0, 400.0), 0);
         let mut rb0 = make_radio_widget(10, 10.0, 10.0, 80.0, 20.0);
         let mut rb1 = make_radio_widget(11, 10.0, 40.0, 80.0, 20.0);
         let mut rb2 = make_radio_widget(12, 10.0, 70.0, 80.0, 20.0);
@@ -770,7 +773,7 @@ mod tests {
         // Radio buttons with empty group_members must not interfere with
         // each other — matches the slider sub-button case where exclusion
         // is managed by the slider, not the frame.
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 400.0, 400.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 400.0, 400.0), 0);
         let rb0 = make_radio_widget(10, 10.0, 10.0, 80.0, 20.0);
         let mut rb1 = make_radio_widget(11, 10.0, 40.0, 80.0, 20.0);
         rb1.set_selected(true);
@@ -803,11 +806,11 @@ mod tests {
     fn restore_region_skips_non_intersecting() {
         use crate::ui::resource_widget_id::NO_RESOURCE;
 
-        let mut frame = FrameWnd::new("Test", BBox2D::from_coords(0.0, 0.0, 200.0, 200.0), 0);
+        let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
 
         // Region far outside the widget's bbox.
-        let region = BBox2D::from_coords(150.0, 150.0, 200.0, 200.0);
+        let region = ScreenBBox::from_coords(150.0, 150.0, 200.0, 200.0);
         frame.restore_region(&region);
 
         assert_eq!(
