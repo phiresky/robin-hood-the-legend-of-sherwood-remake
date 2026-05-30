@@ -20,14 +20,6 @@ impl Entities {
         Self::default()
     }
 
-    pub fn from_slots(slots: Vec<Option<Entity>>) -> Self {
-        Self(slots)
-    }
-
-    pub fn into_slots(self) -> Vec<Option<Entity>> {
-        self.0
-    }
-
     pub fn occupied(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
         self.0.iter().enumerate().filter_map(|(idx, slot)| {
             slot.as_ref()
@@ -309,17 +301,5 @@ impl std::ops::Deref for Entities {
 impl std::ops::DerefMut for Entities {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
-    }
-}
-
-impl From<Vec<Option<Entity>>> for Entities {
-    fn from(slots: Vec<Option<Entity>>) -> Self {
-        Self::from_slots(slots)
-    }
-}
-
-impl From<Entities> for Vec<Option<Entity>> {
-    fn from(entities: Entities) -> Self {
-        entities.into_slots()
     }
 }
