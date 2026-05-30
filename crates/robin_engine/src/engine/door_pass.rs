@@ -885,7 +885,11 @@ impl EngineInner {
                         .unwrap_or_default();
                     let any_pc_remains = occupants.iter().any(|&h| {
                         crate::natives::GameHost::actor_index(h)
-                            .and_then(|idx| self.entities.slot(idx).and_then(|slot| slot.as_ref()))
+                            .and_then(|idx| {
+                                self.entities
+                                    .get_at_index(idx as u32)
+                                    .map(|(_, entity)| entity)
+                            })
                             .is_some_and(|e| e.is_pc())
                     });
                     if !any_pc_remains {
@@ -895,8 +899,8 @@ impl EngineInner {
                             };
                             let Some(occ) = self
                                 .entities
-                                .slot_mut(occ_idx)
-                                .and_then(|slot| slot.as_mut())
+                                .get_mut_at_index(occ_idx as u32)
+                                .map(|(_, entity)| entity)
                             else {
                                 continue;
                             };
@@ -1092,8 +1096,8 @@ impl EngineInner {
                     };
                     let Some(occ) = self
                         .entities
-                        .slot_mut(occ_idx)
-                        .and_then(|slot| slot.as_mut())
+                        .get_mut_at_index(occ_idx as u32)
+                        .map(|(_, entity)| entity)
                     else {
                         continue;
                     };

@@ -121,20 +121,20 @@ impl EngineInner {
         // ── Phase 4: nest Hourglass — emit buzz while wasps fly ────
         let nest_buzzes: Vec<WorldPoint3D> = self
             .entities
-            .iter_slots()
-            .filter_map(|slot| match slot {
-                Some(Entity::Projectile(p))
-                    if p.element.active
-                        && matches!(
-                            p.object.object_type,
-                            ObjectType::WaspNest | ObjectType::BonusWaspNest
-                        )
-                        && p.projectile.wasp.burst
-                        && p.projectile.wasp.flying_wasp_count > 0 =>
+            .projectiles()
+            .filter_map(|(_, p)| {
+                if p.element.active
+                    && matches!(
+                        p.object.object_type,
+                        ObjectType::WaspNest | ObjectType::BonusWaspNest
+                    )
+                    && p.projectile.wasp.burst
+                    && p.projectile.wasp.flying_wasp_count > 0
                 {
                     Some(p.element.position())
+                } else {
+                    None
                 }
-                _ => None,
             })
             .collect();
 
@@ -780,14 +780,10 @@ mod tests {
 
             let wasp_count = engine
                 .entities
-                .iter_slots()
-                .filter(|slot| {
-                    matches!(
-                        slot,
-                        Some(Entity::Projectile(p))
-                            if p.object.object_type == ObjectType::Wasp
-                                && p.projectile.wasp.source_nest == Some(nest_id)
-                    )
+                .projectiles()
+                .filter(|(_, p)| {
+                    p.object.object_type == ObjectType::Wasp
+                        && p.projectile.wasp.source_nest == Some(nest_id)
                 })
                 .count();
             assert_eq!(wasp_count as u16, NUMBER_OF_WASPS);
@@ -900,14 +896,10 @@ mod tests {
             // At least one wasp should point back at that soldier.
             let targeting = engine
                 .entities
-                .iter_slots()
-                .filter(|slot| {
-                    matches!(
-                        slot,
-                        Some(Entity::Projectile(p))
-                            if p.object.object_type == ObjectType::Wasp
-                                && p.projectile.wasp.victim == Some(soldier_id)
-                    )
+                .projectiles()
+                .filter(|(_, p)| {
+                    p.object.object_type == ObjectType::Wasp
+                        && p.projectile.wasp.victim == Some(soldier_id)
                 })
                 .count();
             assert!(

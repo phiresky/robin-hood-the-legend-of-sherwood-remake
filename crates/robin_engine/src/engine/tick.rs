@@ -5556,9 +5556,8 @@ impl EngineInner {
         // Then run the titbit update to advance animations and
         // expire finished titbits.
         {
-            let entities_ref = self.entities.slots();
             let query = EntityTitbitQuery {
-                entity_slots: entities_ref,
+                entities: &self.entities,
                 sequence_manager: &self.sequence_manager,
                 follow_element: self.seats[0].follow_element,
             };
@@ -5568,9 +5567,9 @@ impl EngineInner {
             // as a stand-in (we don't compute display order yet).
             self.titbit_manager.prepare_refresh(|handle| {
                 let idx = handle.0 as usize;
-                entities_ref
-                    .get(idx)
-                    .and_then(|opt| opt.as_ref())
+                self.entities
+                    .get_at_index(idx as u32)
+                    .map(|(_, entity)| entity)
                     .map(|e| e.element_data().position_map().y)
             });
         }
@@ -8063,7 +8062,7 @@ pub(super) fn apply_drunken_path_deviation(
 /// queries live entity state.  Replaces the old `StubQuery` that kept
 /// all titbits alive unconditionally.
 struct EntityTitbitQuery<'a> {
-    entity_slots: &'a [Option<Entity>],
+    entities: &'a crate::entities::Entities,
     sequence_manager: &'a crate::sequence::SequenceManager,
     follow_element: Option<EntityId>,
 }
@@ -8079,9 +8078,9 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         use crate::order::OrderType;
 
         let Some(entity) = self
-            .entity_slots
-            .get(element.0 as usize)
-            .and_then(|slot| slot.as_ref())
+            .entities
+            .get_at_index(element.0 as usize as u32)
+            .map(|(_, entity)| entity)
         else {
             return false;
         };
@@ -8107,9 +8106,9 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 
     fn is_unconscious_and_alive(&self, element: crate::titbit::ElementHandle) -> bool {
         let Some(entity) = self
-            .entity_slots
-            .get(element.0 as usize)
-            .and_then(|slot| slot.as_ref())
+            .entities
+            .get_at_index(element.0 as usize as u32)
+            .map(|(_, entity)| entity)
         else {
             return false;
         };
@@ -8131,9 +8130,9 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
     fn is_hidden_posture(&self, element: crate::titbit::ElementHandle) -> bool {
         use crate::element::Posture;
         let Some(entity) = self
-            .entity_slots
-            .get(element.0 as usize)
-            .and_then(|slot| slot.as_ref())
+            .entities
+            .get_at_index(element.0 as usize as u32)
+            .map(|(_, entity)| entity)
         else {
             return false;
         };

@@ -2732,26 +2732,18 @@ impl EngineInner {
                     .collect()
             })
             .unwrap_or_default();
-        let frames_from_now_till_action_done: Vec<Option<i16>> = self
-            .entities
-            .iter_slots()
-            .map(|slot| {
-                slot.as_ref().and_then(|entity| {
-                    let sprite = &entity.element_data().sprite;
-                    safe_frames_from_now_till_action_done(sprite)
-                })
-            })
-            .collect();
-        let active_entity_flags: Vec<bool> = self
-            .entities
-            .iter_slots()
-            .map(|slot| slot.as_ref().is_some_and(Entity::is_active))
-            .collect();
-        let door_pass_crenel_transition_dirs: Vec<Option<i16>> = self
-            .entities
-            .iter_slots()
-            .map(|slot| {
-                let entity = slot.as_ref()?;
+        let mut frames_from_now_till_action_done: Vec<Option<i16>> =
+            vec![None; self.entities.len()];
+        let mut active_entity_flags: Vec<bool> = vec![false; self.entities.len()];
+        let mut door_pass_crenel_transition_dirs: Vec<Option<i16>> =
+            vec![None; self.entities.len()];
+        for (entity_id, entity) in self.entities.occupied() {
+            let entity_idx = entity_id.index() as usize;
+            let sprite = &entity.element_data().sprite;
+            frames_from_now_till_action_done[entity_idx] =
+                safe_frames_from_now_till_action_done(sprite);
+            active_entity_flags[entity_idx] = entity.is_active();
+            door_pass_crenel_transition_dirs[entity_idx] = (|| {
                 let dp = entity.actor_data()?.active_door_pass.as_ref()?;
                 let reverse_direction = match dp.current_action {
                     OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel => false,
@@ -2782,8 +2774,8 @@ impl EngineInner {
                 } else {
                     direction
                 })
-            })
-            .collect();
+            })();
+        }
 
         // Collect patch indices whose transitions completed this tick.
         // Processed after the entity loop to avoid borrowing conflicts.

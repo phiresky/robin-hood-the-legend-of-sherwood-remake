@@ -505,8 +505,8 @@ fn sprite_serialization_surface_matches_v2_contract() {
     // Pull the sprite back out of the rehydrated engine.
     let rehydrated_sprite = rehydrated
         .entities
-        .iter_slots()
-        .flatten()
+        .occupied()
+        .map(|(_, entity)| entity)
         .next()
         .expect("one entity")
         .element_data()

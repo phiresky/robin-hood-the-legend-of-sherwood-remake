@@ -1199,10 +1199,7 @@ impl EngineInner {
     /// Resolve a legacy raw entity-table index to the typed ID variant for
     /// the entity currently stored in that slot.
     pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
-        self.entities
-            .slot(index as usize)
-            .and_then(|slot| slot.as_ref())
-            .map(|entity| entity_id_for_occupied_slot(index, entity))
+        self.entities.id_at_index(index)
     }
 
     /// Resolve a legacy raw entity-table index and panic when the slot is not
@@ -2510,7 +2507,7 @@ impl EngineInner {
 
     /// Iterate over all live entities (skipping `None` slots).
     pub fn entities_iter(&self) -> impl Iterator<Item = &Entity> + '_ {
-        self.entities.iter_slots().flatten()
+        self.entities.occupied().map(|(_, entity)| entity)
     }
 
     /// Active entity positions for debug overlays.
@@ -3229,9 +3226,7 @@ impl EngineInner {
 
     /// Remove an entity. Leaves a None hole (IDs are stable).
     pub(crate) fn remove_entity(&mut self, id: EntityId) {
-        if let Some(slot) = self.entities.slot_mut(id.index() as usize) {
-            *slot = None;
-        }
+        self.entities.remove(id);
         // Remove from index lists
         self.pc_ids.retain(|&i| i != id);
         self.seats[0].selection.retain(|&i| i != id);
@@ -3246,7 +3241,7 @@ impl EngineInner {
 
     /// Number of live entities.
     pub fn entity_count(&self) -> usize {
-        self.entities.iter_slots().filter(|e| e.is_some()).count()
+        self.entities.occupied().count()
     }
 
     /// Remove a PC entity from the engine by its character profile index.

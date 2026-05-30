@@ -2569,7 +2569,7 @@ impl EngineInner {
         // Disjoint-borrow: pull the id counter out as a `&mut u32` so
         // the inner loop can stamp fresh ids via
         // `crate::order::alloc_order_id` while still holding
-        // `self.entities.iter_slots_mut()`.
+        // `self.entities.humans_mut()`.
         let next_order_id = &mut self.next_order_id;
         for (entity_id, entity) in self.entities.humans_mut() {
             let entity_id = EntityId::from(entity_id);

@@ -3,7 +3,7 @@
 use super::scroll_reveal::ScrollStatus;
 use super::*;
 use crate::coordinates::MapPoint;
-use crate::element::{BonusItemTypeExt, Entity};
+use crate::element::{BonusItemTypeExt, Entity, EntityId};
 use crate::geo2d;
 
 /// CPU-decoded background map ready for GPU upload.
@@ -3357,8 +3357,8 @@ impl EngineInner {
             for &elem_idx in &tenants.tenant_element_indices {
                 let Some(entity) = self
                     .entities
-                    .slot_mut(elem_idx as usize)
-                    .and_then(|slot| slot.as_mut())
+                    .get_mut_at_index(elem_idx as usize as u32)
+                    .map(|(_, entity)| entity)
                 else {
                     continue;
                 };
@@ -5890,16 +5890,17 @@ impl EngineInner {
                     }
                 };
 
-                let Some(entity_idx) = self.entities.iter_slots().position(|slot| {
-                    matches!(
-                        slot,
-                        Some(crate::element::Entity::Pc(pc)) if pc.pc.profile_index == profile_idx
-                    )
-                }) else {
+                let Some(pc_id) = self
+                    .entities
+                    .pcs()
+                    .find_map(|(id, pc)| (pc.pc.profile_index == profile_idx).then_some(id))
+                else {
                     // PC isn't present in this Sherwood load (e.g. not yet
                     // rescued, or lost) — skip silently.
                     continue;
                 };
+                let entity_id = EntityId::Pc(pc_id);
+                let entity_idx = entity_id.index() as usize;
 
                 let (Some(layer), Some(sector_idx)) = (plan.zone_layer, plan.zone_sector) else {
                     // No script-zone for this production type — cannot
@@ -5914,11 +5915,7 @@ impl EngineInner {
                 // material from the SECTOR_SOUND polygons at the current
                 // map position (or `default_material` when none contain
                 // the point).
-                if let Some(crate::element::Entity::Pc(pc)) = self
-                    .entities
-                    .slot_mut(entity_idx)
-                    .and_then(|slot| slot.as_mut())
-                {
+                if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
                     pc.element
                         .set_position_map(MapPoint::new(occupant.x, occupant.y));
                     pc.element.set_layer(layer);
@@ -5936,19 +5933,8 @@ impl EngineInner {
                 } else {
                     Some(occupant.obstacle)
                 };
-                self.set_obstacle_and_material(
-                    assets,
-                    self.expect_entity_id_for_index(
-                        entity_idx as u32,
-                        "level loading occupant obstacle restore",
-                    ),
-                    occupant_obstacle_opt,
-                );
-                if let Some(crate::element::Entity::Pc(pc)) = self
-                    .entities
-                    .slot_mut(entity_idx)
-                    .and_then(|slot| slot.as_mut())
-                {
+                self.set_obstacle_and_material(assets, entity_id, occupant_obstacle_opt);
+                if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
                     pc.element.update_grid_cell();
                 }
 
@@ -5986,8 +5972,8 @@ impl EngineInner {
                     let amount = plan.heal_gain.min(i16::MAX as u16) as i16;
                     if let Some(crate::element::Entity::Pc(pc)) = self
                         .entities
-                        .slot_mut(entity_idx)
-                        .and_then(|slot| slot.as_mut())
+                        .get_mut_at_index(entity_idx as u32)
+                        .map(|(_, entity)| entity)
                     {
                         crate::pc_status::heal(&mut pc.pc.life_points, amount, false);
                     }
