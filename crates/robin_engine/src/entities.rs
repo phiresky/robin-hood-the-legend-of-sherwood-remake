@@ -86,6 +86,10 @@ impl Entities {
         })
     }
 
+    pub fn npc_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.npcs().map(|(id, _)| EntityId::from(id))
+    }
+
     pub fn npcs_mut(&mut self) -> impl Iterator<Item = (NpcId, &mut Entity)> + '_ {
         self.occupied_mut().filter_map(|(id, entity)| match id {
             EntityId::Soldier(id) => Some((NpcId::Soldier(id), entity)),
@@ -142,6 +146,10 @@ impl Entities {
                 Some(Entity::Soldier(entity)) => Some((SoldierId(idx as u32), entity)),
                 _ => None,
             })
+    }
+
+    pub fn soldier_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.soldiers().map(|(id, _)| EntityId::from(id))
     }
 
     pub fn fighter_ids_for_camp(&self, camp: Camp) -> impl Iterator<Item = EntityId> + '_ {
@@ -230,6 +238,16 @@ impl Entities {
     pub fn scrolls(&self) -> impl Iterator<Item = (ScrollId, &ElementScroll)> + '_ {
         self.0
             .iter()
+            .enumerate()
+            .filter_map(|(idx, slot)| match slot {
+                Some(Entity::Scroll(entity)) => Some((ScrollId(idx as u32), entity)),
+                _ => None,
+            })
+    }
+
+    pub fn scrolls_mut(&mut self) -> impl Iterator<Item = (ScrollId, &mut ElementScroll)> + '_ {
+        self.0
+            .iter_mut()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
                 Some(Entity::Scroll(entity)) => Some((ScrollId(idx as u32), entity)),

@@ -11,6 +11,7 @@ use crate::ai::RepulsivePoint as StaticRepulsivePoint;
 use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
+use crate::entities::Entities;
 use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d::{self, BBox2D, GeoPoint2D};
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
@@ -75,14 +76,15 @@ pub struct ActorSnapshot {
 /// `profile_manager` is used to look up per-entity sword / rider
 /// overrides so the right force parameters end up on each snapshot.
 pub fn snapshot_all(
-    entities: &[Option<Entity>],
+    entities: &Entities,
     sequence_manager: &SequenceManager,
     profile_manager: &ProfileManager,
 ) -> Vec<Option<ActorSnapshot>> {
     let mut snapshots = vec![None; entities.len()];
-    for (entity_id, entity) in crate::engine::occupied_entity_slots(entities) {
+    for (entity_id, entity) in entities.actors() {
+        let entity_id = EntityId::from(entity_id);
         let elem = entity.element_data();
-        let is_actor = entity.is_actor();
+        let is_actor = true;
         let actor = entity.actor_data();
         let target_element = actor.and_then(|a| {
             a.seek_target.or_else(|| {

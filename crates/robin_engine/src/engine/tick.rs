@@ -248,10 +248,8 @@ impl EngineInner {
             terminate: bool,
         }
         let mut pending: Vec<Pending> = Vec::new();
-        for (owner, entity) in self.entities_iter_with_id() {
-            if entity.actor_data().is_none() {
-                continue;
-            }
+        for (owner, _) in self.entities.actors() {
+            let owner = EntityId::from(owner);
             let Some((seq_id, elem_idx)) = self.sequence_manager.current_element_for_actor(owner)
             else {
                 continue;
@@ -603,16 +601,11 @@ impl EngineInner {
 
             // Check if any civilian was killed (not by accident) → mission failure
             let mut killed_civilian = None;
-            for &npc_id in &self.npc_ids {
-                if let Some(Some(entity)) = self.entities.get(npc_id.index() as usize)
-                    && entity.is_civilian()
-                    && entity.is_dead()
-                {
+            for (npc_id, civilian) in self.entities.civilians() {
+                if civilian.element.posture.is_dead() {
+                    let npc_id = EntityId::from(npc_id);
                     // Check killed_by_accident via the civilian's human data
-                    let accident = match entity {
-                        Entity::Civilian(c) => c.human.killed_by_accident,
-                        _ => false,
-                    };
+                    let accident = civilian.human.killed_by_accident;
                     if !accident {
                         killed_civilian = Some(npc_id);
                         break;
@@ -5223,8 +5216,10 @@ impl EngineInner {
         // Only check entities actively moving in sword state.
         {
             let ids_to_check: Vec<EntityId> = self
-                .entities_iter_with_id()
+                .entities
+                .humans()
                 .filter_map(|(entity_id, e)| {
+                    let entity_id = EntityId::from(entity_id);
                     let h = e.human_data()?;
                     if h.opponents.is_empty() {
                         return None;
@@ -5258,12 +5253,11 @@ impl EngineInner {
         // behaviour.
         {
             let pinch_aborts: Vec<(crate::sequence::SequenceId, usize)> = self
-                .entities_iter_with_id()
+                .entities
+                .pcs()
                 .filter_map(|(eid, e)| {
-                    if !e.is_pc() {
-                        return None;
-                    }
-                    let a = e.actor_data()?;
+                    let eid = EntityId::from(eid);
+                    let a = &e.actor;
                     if !matches!(
                         a.action_state,
                         crate::element::ActionState::MovingSword
@@ -5273,7 +5267,7 @@ impl EngineInner {
                     }
                     let seq_id = a.active_movement.sequence_id?;
                     let elem_idx = a.active_movement.element_index;
-                    if !e.position_iface().is_moving_map() {
+                    if !e.element.sprite.position_iface.is_moving_map() {
                         return None;
                     }
                     if !crate::engine::melee::enemies_are_blocking_my_movement(&self.entities, eid)
@@ -8467,14 +8461,14 @@ mod drop_ammo_merge_tests {
 
     fn count_bonuses(engine: &EngineInner, action: Action) -> Vec<(EntityId, u16)> {
         engine
-            .entities_iter_with_id()
-            .filter_map(|(entity_id, entity)| match entity {
-                crate::element::Entity::Bonus(b)
-                    if b.element.active && b.object.associated_action == action =>
-                {
-                    Some((entity_id, b.object.quantity))
+            .entities
+            .bonuses()
+            .filter_map(|(entity_id, bonus)| {
+                if bonus.element.active && bonus.object.associated_action == action {
+                    Some((EntityId::from(entity_id), bonus.object.quantity))
+                } else {
+                    None
                 }
-                _ => None,
             })
             .collect()
     }

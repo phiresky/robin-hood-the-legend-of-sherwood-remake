@@ -45,6 +45,7 @@
 use super::*;
 use crate::combat::{self, ConcussionContext};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
+use crate::entities::Entities;
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 #[cfg(test)]
@@ -709,7 +710,7 @@ impl EngineInner {
             return;
         }
         let waker_camp = waker.camp();
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == waker_id {
                 continue;
@@ -1643,7 +1644,7 @@ fn is_possible_sword_strike_victim_id(
 /// whose direction from the attacker falls between `begin_sector` and `end_sector`.
 #[allow(clippy::too_many_arguments)]
 fn collect_arc_victims(
-    entities: &[Option<Entity>],
+    entities: &Entities,
     attacker_id: EntityId,
     attacker_pos: (f32, f32),
     min_distance: f32,
@@ -1655,7 +1656,8 @@ fn collect_arc_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
+    for (target_id, entity) in entities.humans() {
+        let target_id = EntityId::from(target_id);
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1694,7 +1696,7 @@ fn collect_arc_victims(
 /// walking-with-sword enemies.
 #[allow(clippy::too_many_arguments)]
 fn collect_circle_warn_victims(
-    entities: &[Option<Entity>],
+    entities: &Entities,
     attacker_id: EntityId,
     attacker_pos: (f32, f32),
     attacker_direction: i16,
@@ -1705,7 +1707,8 @@ fn collect_circle_warn_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
+    for (target_id, entity) in entities.humans() {
+        let target_id = EntityId::from(target_id);
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1763,7 +1766,7 @@ struct PushStrikeParams {
 /// The hit area is a rectangle in front of the attacker: `[min_dist, max_dist]` deep
 /// and `[-width/2, +width/2]` wide, measured along the attacker's facing direction.
 fn collect_push_victims(
-    entities: &[Option<Entity>],
+    entities: &Entities,
     params: &PushStrikeParams,
     profile_manager: &crate::profiles::ProfileManager,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -1792,7 +1795,8 @@ fn collect_push_victims(
     let sy = fx;
 
     let mut victims = Vec::new();
-    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
+    for (target_id, entity) in entities.humans() {
+        let target_id = EntityId::from(target_id);
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,

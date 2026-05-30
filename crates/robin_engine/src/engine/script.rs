@@ -4,7 +4,6 @@ use super::scroll_reveal::ScrollStatus;
 use super::*;
 use crate::ai::AiStateChangeSource;
 use crate::campaign::{Campaign, CampaignValue};
-use crate::element::Entity;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
@@ -32,49 +31,49 @@ impl EngineInner {
             .map(|i| self.sound_sim.sources.get(i).is_some())
             .collect();
 
-        for (id, entity) in self.entities_iter_with_id() {
-            let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
+        for (id, fx) in self.entities.fxs() {
+            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            entity_active_map.push((handle, fx.element.active));
+        }
+        for (id, target) in self.entities.targets() {
+            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            entity_active_map.push((handle, target.element.active));
+        }
 
-            // FX / target active state (existing)
-            if entity.kind().is_fx() || entity.kind().is_fx_target() {
-                entity_active_map.push((handle, entity.is_active()));
+        for (id, pc) in self.entities.pcs() {
+            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            pc_handles.push(handle);
+            pc_profile_map.push((handle, pc.pc.profile_index));
+            if pc.pc.robin {
+                robin_handle = handle;
             }
+        }
 
-            // PC state
-            if let Entity::Pc(pc) = entity {
-                pc_handles.push(handle);
-                pc_profile_map.push((handle, pc.pc.profile_index));
-                if pc.pc.robin {
-                    robin_handle = handle;
+        // NPC aggregate state.  Alert sourced from the NPC's
+        // `current_music_alert_status`, which `SetAlertStatus`
+        // writes independently of the AI state machine.  Do not
+        // collapse with `AiState` — the two fields drift.
+        for (_, entity) in self.entities.npcs() {
+            let dead = entity.is_dead();
+            let alert = entity
+                .ai_controller()
+                .map(|ai| ai.current_music_alert_status as i32)
+                .unwrap_or(0);
+            // Civilian filter is `!is_soldier()` (all non-soldier
+            // NPCs), not a narrower civilian category.
+            if entity.is_soldier() {
+                if dead {
+                    any_enemy_dead = true;
                 }
-            }
-
-            // NPC aggregate state.  Alert sourced from the NPC's
-            // `current_music_alert_status`, which `SetAlertStatus`
-            // writes independently of the AI state machine.  Do not
-            // collapse with `AiState` — the two fields drift.
-            if entity.npc_data().is_some() {
-                let dead = entity.is_dead();
-                let alert = entity
-                    .ai_controller()
-                    .map(|ai| ai.current_music_alert_status as i32)
-                    .unwrap_or(0);
-                // Civilian filter is `!is_soldier()` (all non-soldier
-                // NPCs), not a narrower civilian category.
-                if entity.is_soldier() {
-                    if dead {
-                        any_enemy_dead = true;
-                    }
-                    if !dead && alert > overall_enemy_alert {
-                        overall_enemy_alert = alert;
-                    }
-                } else {
-                    if dead {
-                        any_civilian_dead = true;
-                    }
-                    if !dead && alert > overall_civilian_alert {
-                        overall_civilian_alert = alert;
-                    }
+                if !dead && alert > overall_enemy_alert {
+                    overall_enemy_alert = alert;
+                }
+            } else {
+                if dead {
+                    any_civilian_dead = true;
+                }
+                if !dead && alert > overall_civilian_alert {
+                    overall_civilian_alert = alert;
                 }
             }
         }
@@ -93,16 +92,16 @@ impl EngineInner {
         // for the current frame.
         let mut current_animations: Vec<(i32, crate::order::OrderType)> =
             Vec::with_capacity(self.entities.len());
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            let idx = entity_id.index() as usize;
-            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
-            if entity.is_actor() {
-                if let Some((_, _, order)) =
-                    self.sequence_manager.current_order_for_actor(entity_id)
-                {
-                    current_animations.push((handle, order.order_type));
-                }
-            } else if let Some(obj) = entity.object_data() {
+        for (entity_id, _) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
+            let handle = crate::natives::GameHost::actor_handle(entity_id);
+            if let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(entity_id) {
+                current_animations.push((handle, order.order_type));
+            }
+        }
+        for (entity_id, entity) in self.entities.objects() {
+            let handle = crate::natives::GameHost::actor_handle(EntityId::from(entity_id));
+            if let Some(obj) = entity.object_data() {
                 current_animations.push((handle, obj.animation));
             }
         }
@@ -145,13 +144,11 @@ impl EngineInner {
     pub(super) fn refresh_game_host_pc_auth_bits(&mut self) {
         let mut bits: Vec<(i32, u16)> = Vec::new();
         let mut pc_bit_idx = 0u16;
-        for (id, entity) in self.entities_iter_with_id() {
-            if let Entity::Pc(_) = entity {
-                let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
-                let bit = 1u16 << pc_bit_idx;
-                bits.push((handle, bit));
-                pc_bit_idx += 1;
-            }
+        for (id, _) in self.entities.pcs() {
+            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            let bit = 1u16 << pc_bit_idx;
+            bits.push((handle, bit));
+            pc_bit_idx += 1;
         }
         if let Some(ref mut script) = self.mission_script
             && let Some(game_host) = script.game_host_mut()
@@ -895,8 +892,10 @@ impl EngineInner {
         // Each actor with a script_class gets IActorScript::Initialize()
         // called during loading (before StartUp::Initialize).
         let per_actor_scripts: Vec<(i32, String)> = self
-            .entities_iter_with_id()
+            .entities
+            .actors()
             .filter_map(|(entity_id, entity)| {
+                let entity_id = EntityId::from(entity_id);
                 let script_class = &entity.actor_data()?.script_class;
                 if script_class.is_empty() {
                     return None;
@@ -913,19 +912,16 @@ impl EngineInner {
         // Each target carries its own VM and `Initialize()` runs
         // during `InitializeFromMissionStream`.
         let per_target_scripts: Vec<(i32, String)> = self
-            .entities_iter_with_id()
-            .filter_map(|(entity_id, entity)| {
-                if let crate::element::Entity::Target(t) = entity {
-                    if t.target.script_class.is_empty() {
-                        return None;
-                    }
-                    Some((
-                        crate::natives::GameHost::actor_handle(entity_id),
-                        t.target.script_class.clone(),
-                    ))
-                } else {
-                    None
+            .entities
+            .targets()
+            .filter_map(|(entity_id, target)| {
+                if target.target.script_class.is_empty() {
+                    return None;
                 }
+                Some((
+                    crate::natives::GameHost::actor_handle(EntityId::from(entity_id)),
+                    target.target.script_class.clone(),
+                ))
             })
             .collect();
 
@@ -933,19 +929,16 @@ impl EngineInner {
         // `InitializeFromMissionStream` and walk the list calling
         // `IScrollScript::Initialize()`.
         let per_scroll_scripts: Vec<(i32, String)> = self
-            .entities_iter_with_id()
-            .filter_map(|(entity_id, entity)| {
-                if let crate::element::Entity::Scroll(s) = entity {
-                    if s.script_class.is_empty() {
-                        return None;
-                    }
-                    Some((
-                        crate::natives::GameHost::actor_handle(entity_id),
-                        s.script_class.clone(),
-                    ))
-                } else {
-                    None
+            .entities
+            .scrolls()
+            .filter_map(|(entity_id, scroll)| {
+                if scroll.script_class.is_empty() {
+                    return None;
                 }
+                Some((
+                    crate::natives::GameHost::actor_handle(EntityId::from(entity_id)),
+                    scroll.script_class.clone(),
+                ))
             })
             .collect();
 
@@ -1162,7 +1155,8 @@ impl EngineInner {
         // in-progress sequence element.
         let mut changes: Vec<(usize, crate::order::OrderType, crate::order::OrderType)> =
             Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let idx = entity_id.index() as usize;
             let Some(actor) = entity.actor_data() else {
                 continue;
@@ -1259,10 +1253,8 @@ impl EngineInner {
         // (it gets swapped into the script manager below), so the list
         // of ready-to-fire scrolls is captured first.
         let mut ready: Vec<i32> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
-            let crate::element::Entity::Scroll(s) = entity else {
-                continue;
-            };
+        for (id, s) in self.entities.scrolls_mut() {
+            let id = EntityId::from(id);
             if !s.element.active {
                 continue;
             }
@@ -1503,10 +1495,8 @@ impl EngineInner {
         if assets.script_zone_grid_indices.is_empty() {
             return entries;
         }
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            if !entity.is_actor() {
-                continue;
-            }
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let ed = entity.element_data();
             // `in_honolulu` stands in for the `IsInside(GetBoxMap())`
             // reject — honolulu actors are parked off-map.  The extra
@@ -1681,10 +1671,8 @@ impl EngineInner {
         let mut enter_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
         let mut exit_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
 
-        for (eidx, entity) in self.entities_iter_with_id() {
-            if !entity.is_actor() {
-                continue;
-            }
+        for (eidx, entity) in self.entities.actors() {
+            let eidx = EntityId::from(eidx);
             let ed = entity.element_data();
             let active = ed.active && !ed.in_honolulu;
             let pos = ed.position_map();
@@ -2311,7 +2299,8 @@ impl EngineInner {
 
         // Collect state changes: (npc_handle, source_handle, state_change_code).
         let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.npcs_mut() {
+            let id = EntityId::from(id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };

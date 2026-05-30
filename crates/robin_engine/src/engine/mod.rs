@@ -243,8 +243,6 @@ pub struct EngineInner {
     pub(crate) entities: Entities,
     /// Indices of player characters.
     pub(crate) pc_ids: Vec<EntityId>,
-    /// Indices of NPCs (soldiers + civilians).
-    pub(crate) npc_ids: Vec<EntityId>,
     /// Floating indicator manager (titbits: stars, emoticons, smoke, splashes, etc.).
     pub(crate) titbit_manager: crate::titbit::TitbitManager,
     /// Per-seat sim-tracked state (selection, hotgroups). Indexed by
@@ -477,26 +475,6 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
     EntityId::new(index, entity.entity_id_kind())
 }
 
-/// Iterate occupied entity table slots with their typed stable IDs.
-pub(crate) fn occupied_entity_slots(
-    entities: &[Option<Entity>],
-) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-    entities.iter().enumerate().filter_map(|(idx, slot)| {
-        slot.as_ref()
-            .map(|e| (entity_id_for_occupied_slot(idx as u32, e), e))
-    })
-}
-
-/// Mutable variant of [`occupied_entity_slots`].
-pub(crate) fn occupied_entity_slots_mut(
-    entities: &mut [Option<Entity>],
-) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
-    entities.iter_mut().enumerate().filter_map(|(idx, slot)| {
-        slot.as_mut()
-            .map(|e| (entity_id_for_occupied_slot(idx as u32, e), e))
-    })
-}
-
 impl EngineInner {
     pub(crate) fn pc_description_index_for_pc_data(
         &self,
@@ -631,7 +609,6 @@ impl EngineInner {
 
             entities: Entities::new(),
             pc_ids: Vec::new(),
-            npc_ids: Vec::new(),
             titbit_manager: crate::titbit::TitbitManager::new(),
             seats: vec![SeatState::default()],
             ai_global: AiGlobalState::default(),
@@ -767,14 +744,8 @@ impl EngineInner {
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
         let rng = &mut self.rng;
-        for (_, entity) in self.entities.occupied_mut() {
-            if !matches!(entity, Entity::Scroll(_)) {
-                continue;
-            }
-            entity
-                .element_data_mut()
-                .sprite
-                .force_random_sprite_frame(rng);
+        for (_, scroll) in self.entities.scrolls_mut() {
+            scroll.element.sprite.force_random_sprite_frame(rng);
         }
     }
 
@@ -926,9 +897,8 @@ impl EngineInner {
         const SCORE_SOLDIER_TIED_AND_UNCONSCIOUS: i32 = 70;
 
         let mut score = 0;
-        for &npc_id in &self.npc_ids {
-            if let Some(Entity::Soldier(s)) = self.get_entity(npc_id)
-                && s.camp() == Camp::Lacklandists
+        for (_, s) in self.entities.soldiers() {
+            if s.camp() == Camp::Lacklandists
                 && s.life_points() > 0
                 && (s.is_tied() || s.is_unconscious())
             {
@@ -949,10 +919,8 @@ impl EngineInner {
 
         let mut living = 0u32;
         let mut dead = 0u32;
-        for &npc_id in &self.npc_ids {
-            if let Some(Entity::Soldier(s)) = self.get_entity(npc_id)
-                && s.camp() == Camp::Lacklandists
-            {
+        for (_, s) in self.entities.soldiers() {
+            if s.camp() == Camp::Lacklandists {
                 if s.life_points() > 0 {
                     living += 1;
                 } else {
@@ -1212,12 +1180,8 @@ impl EngineInner {
             Entity::Pc(_) => {
                 self.pc_ids.push(id);
             }
-            Entity::Soldier(_) => {
-                self.npc_ids.push(id);
-            }
-            Entity::Civilian(_) => {
-                self.npc_ids.push(id);
-            }
+            Entity::Soldier(_) => {}
+            Entity::Civilian(_) => {}
             Entity::Fx(_) => {}
             Entity::Target(_) | Entity::Net(_) | Entity::Scroll(_) | Entity::Projectile(_) => {}
             Entity::Bonus(_) => {}
@@ -2144,16 +2108,14 @@ impl EngineInner {
     /// instead of installing the cross-element link.
     pub(super) fn propagate_done_to_current_orders(&mut self) {
         let done_actors: Vec<crate::element::EntityId> = self
-            .entities_iter_with_id()
+            .entities
+            .actors()
             .filter_map(|(entity_id, entity)| {
-                if !entity.is_actor() {
-                    return None;
-                }
                 matches!(
                     entity.element_data().sprite.last_motion_state,
                     Some(crate::sprite::MotionState::Done)
                 )
-                .then_some(entity_id)
+                .then_some(EntityId::from(entity_id))
             })
             .collect();
 
@@ -2435,7 +2397,7 @@ impl EngineInner {
         if self.freeze_all {
             return;
         }
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let busy = self.is_very_very_busy(npc_id);
             if let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize)
@@ -2557,12 +2519,15 @@ impl EngineInner {
         self.entities.iter().flatten()
     }
 
-    /// Iterate over all live entities paired with their `EntityId`.
-    /// Same order as [`Self::entities_iter`], with the slot index
-    /// exposed so overlays / debug renderers can label entities
-    /// without a reverse lookup.
-    pub fn entities_iter_with_id(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.entities.occupied()
+    /// Active entity positions for debug overlays.
+    pub fn active_entity_positions(
+        &self,
+    ) -> impl Iterator<Item = (EntityId, crate::coordinates::MapPoint)> + '_ {
+        self.entities.occupied().filter_map(|(id, entity)| {
+            entity
+                .is_active()
+                .then_some((id, entity.element_data().position_map()))
+        })
     }
 
     /// All player characters (portrait order).
@@ -2571,8 +2536,8 @@ impl EngineInner {
     }
 
     /// All NPCs (soldiers + civilians).
-    pub fn npc_ids(&self) -> &[EntityId] {
-        &self.npc_ids
+    pub fn npc_ids(&self) -> Vec<EntityId> {
+        self.entities.npc_ids().collect()
     }
 
     /// Currently selected PC ids for the [`PlayerId::HOST`] seat.
@@ -2698,6 +2663,14 @@ impl EngineInner {
         self.entities
             .fxs()
             .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(EntityId::from(id)))
+            .collect()
+    }
+
+    /// Patch FX entity ids.
+    pub fn patch_fx_ids(&self) -> Vec<EntityId> {
+        self.entities
+            .fxs()
+            .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(EntityId::from(id)))
             .collect()
     }
 
@@ -3269,7 +3242,6 @@ impl EngineInner {
         }
         // Remove from index lists
         self.pc_ids.retain(|&i| i != id);
-        self.npc_ids.retain(|&i| i != id);
         self.seats[0].selection.retain(|&i| i != id);
         // Any pending path request for this actor is cancelled when
         // the element tears down.  Entity removal implies all its
@@ -3881,7 +3853,7 @@ impl EngineInner {
     /// renderer is a host-side `&EngineInner` pass, so the clear runs
     /// here.
     pub(crate) fn clear_npc_double_status_bar_flags(&mut self) {
-        let ids = self.npc_ids.clone();
+        let ids = self.entities.npc_ids().collect::<Vec<_>>();
         for id in ids {
             if let Some(e) = self.get_entity_mut(id)
                 && let Some(npc) = e.npc_data_mut()

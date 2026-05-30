@@ -1732,7 +1732,9 @@ pub fn tick_bow_shots(
         .map(|slot| slot.as_ref().map(bow_target_ground_position))
         .collect();
 
-    for (shooter_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
+    for (idx, slot) in entities.iter_mut().enumerate() {
+        let Some(entity) = slot else { continue };
+        let shooter_id = crate::engine::entity_id_for_occupied_slot(idx as u32, entity);
         let idx = shooter_id.index() as usize;
         let actor = match entity.actor_data() {
             Some(a) => a,
@@ -2934,8 +2936,12 @@ fn tick_arrows_matching(
         holding_shield: bool,
         position_map: MapPoint,
     }
-    let human_snapshots: Vec<HumanSnapshot> = crate::engine::occupied_entity_slots(entities)
-        .filter_map(|(entity_id, e)| {
+    let human_snapshots: Vec<HumanSnapshot> = entities
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, slot)| {
+            let e = slot.as_ref()?;
+            let entity_id = crate::engine::entity_id_for_occupied_slot(idx as u32, e);
             if !e.is_human() || !e.is_active() {
                 return None;
             }
@@ -3005,13 +3011,18 @@ fn tick_arrows_matching(
         position_map: MapPoint,
         action_filter: crate::element::TargetFilter,
     }
-    let fx_target_snapshots: Vec<FxTargetSnapshot> = crate::engine::occupied_entity_slots(entities)
-        .filter_map(|(entity_id, e)| {
-            if !e.kind().is_fx_target() || !e.is_active() {
+    let fx_target_snapshots: Vec<FxTargetSnapshot> = entities
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, slot)| {
+            let Some(Entity::Target(e)) = slot.as_ref() else {
+                return None;
+            };
+            let entity_id = EntityId::Target(crate::entity_id::TargetId(idx as u32));
+            if !e.element.active {
                 return None;
             }
-            let Entity::Target(t) = e else { return None };
-            let filter = t.target.action_filter;
+            let filter = e.target.action_filter;
             // Projectile-activation filters only — keeps the per-tick
             // inner loop small.
             if !filter.intersects(
@@ -3021,7 +3032,7 @@ fn tick_arrows_matching(
             ) {
                 return None;
             }
-            let Some(center) = e.compute_target_center() else {
+            let Some(center) = slot.as_ref()?.compute_target_center() else {
                 tracing::warn!(
                     entity = entity_id.index(),
                     "Projectile hit snapshot skipped: FX target missing center hotspot"
@@ -3031,7 +3042,7 @@ fn tick_arrows_matching(
             Some(FxTargetSnapshot {
                 id: entity_id,
                 center,
-                position_map: e.element_data().position_map(),
+                position_map: e.element.position_map(),
                 action_filter: filter,
             })
         })
@@ -3047,9 +3058,13 @@ fn tick_arrows_matching(
         look_dir: (f32, f32),
         obstacle: crate::sight_obstacle::SightObstacle,
     }
-    let shield_snapshots: Vec<ShieldSnapshot> = crate::engine::occupied_entity_slots(entities)
-        .filter_map(|(entity_id, e)| {
-            if !e.is_human() || !e.is_active() || e.is_dead() {
+    let shield_snapshots: Vec<ShieldSnapshot> = entities
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, slot)| {
+            let e = slot.as_ref()?;
+            let entity_id = crate::engine::entity_id_for_occupied_slot(idx as u32, e);
+            if !e.is_active() || e.is_dead() {
                 return None;
             }
             let actor = e.actor_data()?;
@@ -3068,20 +3083,20 @@ fn tick_arrows_matching(
         })
         .collect();
 
-    for (arrow_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
+    for (idx, slot) in entities.iter_mut().enumerate() {
+        let Some(Entity::Projectile(entity)) = slot else {
+            continue;
+        };
+        let arrow_id = EntityId::Projectile(crate::entity_id::ProjectileId(idx as u32));
         if let Some(only_arrow_id) = only_arrow_id
             && only_arrow_id != arrow_id
         {
             continue;
         }
-        let is_arrow = matches!(entity, Entity::Projectile(_)) && entity.element_data().active;
-        if !is_arrow {
+        if !entity.element.active {
             continue;
         }
-        let proj = match entity {
-            Entity::Projectile(p) => p,
-            _ => continue,
-        };
+        let proj = entity;
         // `Entity::Projectile` is shared by arrows, apples, stones,
         // purses, coins, nets, wasp nests, and wasps.  Purses, coins,
         // wasp nests, and wasps follow their own per-tick update paths

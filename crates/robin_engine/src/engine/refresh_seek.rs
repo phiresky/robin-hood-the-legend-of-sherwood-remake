@@ -203,7 +203,8 @@ impl crate::engine::EngineInner {
 
         let mut refreshes: Vec<Refresh> = Vec::new();
 
-        for (owner_id, entity) in self.entities_iter_with_id() {
+        for (owner_id, entity) in self.entities.actors() {
+            let owner_id = EntityId::from(owner_id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -267,7 +268,7 @@ impl crate::engine::EngineInner {
 
         // Decrement `seek_refresh_wait` for every actor with an active
         // seek, regardless of whether it triggered.
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };

@@ -81,13 +81,11 @@ impl EngineInner {
         }
         let mut impacts: Vec<Impact> = Vec::new();
 
-        for (id, entity) in self.entities.occupied_mut() {
-            if !entity.element_data().active {
+        for (id, proj) in self.entities.projectiles_mut() {
+            let id = EntityId::from(id);
+            if !proj.element.active {
                 continue;
             }
-            let Entity::Projectile(proj) = entity else {
-                continue;
-            };
             let object_type = proj.object.object_type;
             if !matches!(object_type, ObjectType::Purse | ObjectType::Coin) {
                 continue;
@@ -145,17 +143,18 @@ impl EngineInner {
         // despawn paths are `take_purse` (clicking the purse) and level
         // unload.
         let purses_to_check: Vec<EntityId> = self
-            .entities_iter_with_id()
-            .filter_map(|(id, entity)| match entity {
-                Entity::Projectile(p)
-                    if p.element.active
-                        && p.object.object_type == ObjectType::Purse
-                        && p.projectile.purse.burst
-                        && !p.projectile.purse.child_coins.is_empty() =>
+            .entities
+            .projectiles()
+            .filter_map(|(id, p)| {
+                if p.element.active
+                    && p.object.object_type == ObjectType::Purse
+                    && p.projectile.purse.burst
+                    && !p.projectile.purse.child_coins.is_empty()
                 {
-                    Some(id)
+                    Some(EntityId::from(id))
+                } else {
+                    None
                 }
-                _ => None,
             })
             .collect();
 

@@ -17,6 +17,7 @@ use crate::ai_vision;
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId};
 use crate::engine::SimScratch;
+use crate::entities::Entities;
 
 /// Number of arrows given to Merry Man archers in forest levels.
 const MERRY_MAN_ARROWS: u16 = 3;
@@ -40,7 +41,8 @@ struct PotentialDetectable {
 /// pass.
 fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
-    for (id, entity) in engine.entities_iter_with_id() {
+    for (id, entity) in engine.entities.humans() {
+        let id = EntityId::from(id);
         if !entity.element_data().active {
             continue;
         }
@@ -503,15 +505,13 @@ pub(super) fn lookup_primary_target_metadata(
 /// `ATTACKING_CHARGING_ENEMY`) with a live primary target are
 /// eligible.
 pub(super) fn build_friend_swap_candidates(
-    entities: &[Option<Entity>],
+    entities: &Entities,
     me_id: crate::element::EntityId,
     my_camp: crate::element::Camp,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
     let mut out = Vec::new();
-    for (friend_id, entity) in occupied_entity_slots(entities) {
-        let Entity::Soldier(s) = entity else {
-            continue;
-        };
+    for (friend_id, s) in entities.soldiers() {
+        let friend_id = EntityId::from(friend_id);
         if friend_id == me_id {
             continue;
         }
@@ -682,10 +682,8 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     // Net radius: 10 when crumpled, else 40.
     let mut nets_by_victim: std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> =
         std::collections::HashMap::new();
-    for (net_id, entity) in crate::engine::occupied_entity_slots(&engine.entities) {
-        let Entity::Net(net) = entity else {
-            continue;
-        };
+    for (net_id, net) in engine.entities.nets() {
+        let net_id = EntityId::from(net_id);
         if !net.element.active {
             continue;
         }
@@ -709,7 +707,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     }
 
     let mut map = AiEntityViewMap::with_capacity(engine.entities.len());
-    for (entity_id, entity) in crate::engine::occupied_entity_slots(&engine.entities) {
+    for (entity_id, entity) in engine.entities.occupied() {
         let elem = entity.element_data();
         if !elem.active {
             continue;
@@ -1154,17 +1152,13 @@ impl EngineInner {
         let obstacles_owned = scratch.ai_sight_obstacles.clone();
         let obstacles = obstacles_owned.list();
 
-        let mut camp_soldiers = Vec::with_capacity(self.npc_ids.len().saturating_sub(1));
-        for &other_id in &self.npc_ids {
+        let mut camp_soldiers =
+            Vec::with_capacity(self.entities.soldiers().count().saturating_sub(1));
+        for (other_id, s) in self.entities.soldiers() {
+            let other_id = EntityId::from(other_id);
             if other_id == npc_id {
                 continue;
             }
-            let Some(Some(entity_ref)) = self.entities.get(other_id.index() as usize) else {
-                continue;
-            };
-            let Entity::Soldier(s) = entity_ref else {
-                continue;
-            };
             if s.soldier.cached_camp != my_camp || !s.element.active || s.human.unconscious {
                 continue;
             }
@@ -1180,23 +1174,33 @@ impl EngineInner {
                     .and_then(|ms| ms.game_host())
                     .map(|h| h.doors.as_slice())
                     .unwrap_or(&[]);
-                if let Some(input) = extract_forecast_input(entity_ref) {
-                    crate::ai::forecast_destination_for_ia(
-                        &input,
-                        doors,
-                        &self.fast_grid.level.sectors,
-                        &self.fast_grid.level.sector_number_map,
-                    )
-                    .position
-                } else {
-                    let pos_now = s.element.position_map();
-                    crate::ai::Position {
-                        x: pos_now.x,
-                        y: pos_now.y,
-                        sector: s.element.sector(),
-                        level: s.element.layer(),
-                    }
-                }
+                let pos_now = s.element.position_map();
+                let door_pass = s
+                    .actor
+                    .active_door_pass
+                    .as_ref()
+                    .map(|dp| (dp.door_index, dp.direct));
+                let input = crate::ai::ForecastInput {
+                    position_map_x: pos_now.x,
+                    position_map_y: pos_now.y,
+                    sector: s.element.sector().map(u16::from).unwrap_or(0),
+                    layer: s.element.layer(),
+                    direction: s.element.direction() as u16,
+                    forecasted_movement_z: s
+                        .element
+                        .sprite
+                        .position_iface
+                        .get_forecasted_movement()
+                        .z,
+                    door_pass,
+                };
+                crate::ai::forecast_destination_for_ia(
+                    &input,
+                    doors,
+                    &self.fast_grid.level.sectors,
+                    &self.fast_grid.level.sector_number_map,
+                )
+                .position
             };
             let position = s.element.position_map();
             // Snapshot the soldier's `DETECTABLE_BODY` list — handles of
@@ -1564,14 +1568,11 @@ impl EngineInner {
         // camp fighter registries when rebuilding the us/them lists;
         // using the persisted per-AI lists here made combat-position
         // cleanup blind to same-camp fighters and allowed dogpiles.
-        for &other_id in &self.npc_ids {
+        for (other_id, s) in self.entities.soldiers() {
+            let other_id = EntityId::from(other_id);
             if other_id.index() == me_handle {
                 continue;
             }
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(other_id.index() as usize)
-            else {
-                continue;
-            };
             if s.element.layer() != my_layer {
                 continue;
             }
@@ -1731,7 +1732,7 @@ impl EngineInner {
         self.ai_global.teleport_seek_points_inside_doors();
 
         // Initialize each NPC's AI.
-        let npc_ids: Vec<EntityId> = self.npc_ids.clone();
+        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
         let hiking_paths = assets.hiking_paths.clone();
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
@@ -2311,10 +2312,8 @@ impl EngineInner {
             Vec<EntityId>,
         > = std::collections::HashMap::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            if entity.actor_data().is_none() {
-                continue;
-            }
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let elem = entity.element_data();
             let sector_raw = match elem.sector() {
                 Some(s) => crate::sector::SectorNumber::new(u16::from(s) as i16),
@@ -2412,15 +2411,8 @@ impl EngineInner {
         // soldiers here and clear after consumption.  Non-soldier flags
         // are ignored to match the soldier-only gate.
         let mut any_instant_change = false;
-        let npc_ids = self.npc_ids.clone();
-        for &npc_id in &npc_ids {
-            let Some(entity) = self.get_entity_mut(npc_id) else {
-                continue;
-            };
-            if !entity.is_soldier() {
-                continue;
-            }
-            let Some(ai) = entity.ai_controller_mut() else {
+        for (_, soldier) in self.entities.soldiers_mut() {
+            let Some(ai) = soldier.npc.ai_brain.base_mut() else {
                 continue;
             };
             match ai.current_music_alert_status {
@@ -2505,10 +2497,7 @@ impl EngineInner {
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS
         };
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs_mut() {
             if let Some(npc) = entity.npc_data_mut() {
                 npc.view_radius_base = r;
                 npc.view_radius_goal = r;
@@ -2567,10 +2556,8 @@ impl EngineInner {
         // frames of "standing alerted" before the enemy starts
         // running).
         let mut updates: Vec<(crate::element::EntityId, i16)> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        for (npc_id, entity) in self.entities.npcs() {
+            let npc_id = EntityId::from(npc_id);
             let Some((_, _, front)) = self.sequence_manager.current_order_for_actor(npc_id) else {
                 continue;
             };
@@ -2969,7 +2956,8 @@ impl EngineInner {
         }
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.npcs_mut() {
+            let id = EntityId::from(id);
             let Some(npc) = entity.npc_data_mut() else {
                 continue;
             };
@@ -3012,7 +3000,7 @@ impl EngineInner {
         // `get_worst_detected_type` never climbs past DETECTABLE_FRIEND
         // for civilians, dropping their emoticon / alert reactions to
         // nearby bodies.
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         let det_idx = DetectableType::Body as usize;
         for friend_id in npc_ids {
             if friend_id == body_id {
@@ -3078,7 +3066,7 @@ impl EngineInner {
     pub(super) fn delete_beggar_detectable_for_all_npc(&mut self, beggar_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Beggar as usize;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for friend_id in npc_ids {
             let Some(Some(entity)) = self.entities.get_mut(friend_id.index() as usize) else {
                 continue;
@@ -3107,7 +3095,8 @@ impl EngineInner {
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.entities.npcs_mut() {
+            let id = EntityId::from(id);
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
@@ -3142,7 +3131,7 @@ impl EngineInner {
     pub(super) fn broadcast_resurrection(&mut self, resurrected_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for friend_id in npc_ids {
             if friend_id == resurrected_id {
                 continue;
@@ -3166,7 +3155,7 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // ── Phase 1: read-only — gather context ──
             let (ctx, ai_primary_target, ai_last_synced_focus) = {
@@ -3314,11 +3303,8 @@ impl EngineInner {
         }
         let mut snaps: Vec<SpeechSnap> = Vec::new();
 
-        for &npc_id in self.npc_ids.iter() {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
-
+        for (npc_id, entity) in self.entities.npcs_mut() {
+            let npc_id = EntityId::from(npc_id);
             let (npc, is_soldier, is_vip, blipped, sector, in_door_transit, pos) = match entity {
                 crate::element::Entity::Soldier(s) => (
                     &mut s.npc,
@@ -4547,7 +4533,7 @@ impl EngineInner {
                 };
                 let sq_vr = vr * vr;
                 let charly_is_self = charly_handle == npc_id.index();
-                for other_id in self.npc_ids.clone() {
+                for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
                     if other_id == npc_id {
                         continue;
                     }
@@ -4849,8 +4835,8 @@ impl EngineInner {
             use crate::element_kinds::ObjectType;
             let det_idx = DetectableType::Object as usize;
             let mut to_add: Vec<EntityId> = Vec::new();
-            for (entity_id, entity) in self.entities_iter_with_id() {
-                if !entity.is_object() || !entity.is_active() {
+            for (entity_id, entity) in self.entities.objects() {
+                if !entity.is_active() {
                     continue;
                 }
                 let Some(obj) = entity.object_data() else {
@@ -4862,7 +4848,7 @@ impl EngineInner {
                     _ => false,
                 };
                 if restore_this {
-                    to_add.push(entity_id);
+                    to_add.push(EntityId::from(entity_id));
                 }
             }
             if !to_add.is_empty()
@@ -5109,7 +5095,7 @@ impl EngineInner {
         };
 
         let radius_sq = radius * radius;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == source {
                 continue;
@@ -5406,7 +5392,7 @@ impl EngineInner {
             level: 0,
         };
 
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         // Clone the Arc-shared snapshot so the per-civilian filter can
         // call `los_clear` without holding an immutable borrow on
         // `self.ai_global` across the later `process_pending_*` mutable
@@ -5994,7 +5980,7 @@ impl EngineInner {
         let scratch = self.build_sim_scratch(assets);
 
         let frame = self.frame_counter;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         // ── Phase 0: Drain pending CMD_PATROL_DIRECTION broadcasts ──
         // `instruct_patrol_direction_to_patrol_members` —
@@ -6518,7 +6504,7 @@ impl EngineInner {
         const HEARING_FACTOR: f32 = 1.0;
 
         let frame = self.frame_counter;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         // `get_hear_volume` shifts the origin Y by elevation and
         // keeps elevation as Z, so an elevated noise source
@@ -6637,10 +6623,7 @@ impl EngineInner {
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
         // `CALL_REPORT` to soldiers via `AiController` on their base.
         let mut all_actions: Vec<crate::ai::CrossNpcAction> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs_mut() {
             if let Some(ai) = entity.ai_controller_mut() {
                 all_actions.extend(ai.take_pending_cross_npc_actions());
             }
@@ -7148,7 +7131,7 @@ impl EngineInner {
     /// early-return — so a stimulus queued late in tick N is guaranteed
     /// to fire at the start of tick N+1.
     pub(super) fn drain_pending_self_stimuli(&mut self, assets: &LevelAssets) {
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.drain_self_stimuli_for_npc(npc_id, assets);
         }
@@ -7235,10 +7218,8 @@ impl EngineInner {
         // swapping engine state into the script host.  Always take the
         // `Option` so we don't leave stale state when scripts are off.
         let mut requests: Vec<(crate::element::EntityId, crate::ai::PathId, u8)> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
-                continue;
-            };
+        for (npc_id, entity) in self.entities.npcs_mut() {
+            let npc_id = EntityId::from(npc_id);
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
@@ -7358,7 +7339,7 @@ impl EngineInner {
         let current_frame = self.frame_counter;
         let frame_phase = (current_frame % 16) as u8;
 
-        for &npc_id in &self.npc_ids {
+        for npc_id in self.entities.npc_ids().collect::<Vec<_>>() {
             // Stagger: each NPC runs on a different frame within the
             // 16-frame window, matching per-actor `hourglass` phasing.
             if (npc_id.index() % 16) != frame_phase as u32 {
@@ -7471,7 +7452,7 @@ impl EngineInner {
         let frame = self.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             // Phase 1: read-only — gather context + eyes point + LOS scope.
@@ -7547,7 +7528,7 @@ impl EngineInner {
         // (engine/mod.rs:1081-1096) — both kinds execute waypoint
         // macros, even if the soldier-only opcodes SBError on
         // civilians.
-        let npc_ids: Vec<EntityId> = self.npc_ids.clone();
+        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             // Read macro-timer state without holding a borrow.
@@ -7624,7 +7605,7 @@ impl EngineInner {
     // it strictly greater than `current_frame`, preventing a fire.
     pub(super) fn tick_npc_locked_frame_timer_bumps(&mut self) {
         let frozen = self.freeze_all;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
                 continue;
@@ -7660,7 +7641,7 @@ impl EngineInner {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // Snapshot the gating predicates without holding a borrow.
             let on_ladder = match self.entities.get(npc_id.index() as usize) {

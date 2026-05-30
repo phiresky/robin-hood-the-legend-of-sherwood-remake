@@ -57,10 +57,8 @@ impl EngineInner {
     pub(crate) fn process_corpse_intersection_updates(&mut self) {
         let mut transitions: Vec<(EntityId, bool)> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
-            if !entity.is_human() {
-                continue;
-            }
+        for (entity_id, entity) in self.entities.humans_mut() {
+            let entity_id = EntityId::from(entity_id);
             let is_lying = entity.element_data().posture.is_lying();
             let Some(human) = entity.human_data_mut() else {
                 continue;
@@ -179,11 +177,9 @@ impl EngineInner {
         candidate_small_flag: bool,
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
-        for (id, actor) in self.entities_iter_with_id() {
+        for (id, actor) in self.entities.humans() {
+            let id = EntityId::from(id);
             if id == corpse {
-                continue;
-            }
-            if !actor.is_human() {
                 continue;
             }
             let Some(human) = actor.human_data() else {

@@ -166,7 +166,7 @@ impl EngineInner {
         // 1_000_000`) is an overflow-safety clause: wait times are
         // 1-600 frames so a ring-frame that "overshoots" by a million
         // always indicates an unsigned underflow, never a future tick.
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.tick_enemy_ai_pursuit_approach_timer_for_npc(
                 npc_id,
@@ -374,7 +374,7 @@ impl EngineInner {
     /// after all think calls are done, since they require engine-side
     /// entity mutations (opponent lists, sequences).
     pub(super) fn tick_enemy_ai_drain_swordfight_requests(&mut self, assets: &LevelAssets) {
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.drain_pending_for_npc(npc_id, assets);
         }
@@ -392,7 +392,7 @@ impl EngineInner {
         assets: &LevelAssets,
         scratch: &SimScratch,
     ) {
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, scratch);
         }

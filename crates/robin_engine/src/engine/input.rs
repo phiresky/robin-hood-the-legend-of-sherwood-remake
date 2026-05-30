@@ -1016,7 +1016,13 @@ impl EngineInner {
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
         let selected_pc = self.seats[0].selection.first().copied();
-        for &nid in self.npc_ids.iter().rev() {
+        for nid in self
+            .entities
+            .npc_ids()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
             if let Some(e) = self.get_entity(nid)
                 && self.is_entity_focusable(assets, nid, e, mouse_map, focus, selected_pc)
             {

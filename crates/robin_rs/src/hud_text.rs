@@ -503,12 +503,7 @@ pub fn render_entity_id_overlay(
     let font = &fonts.portrait_font;
     let shadow = fonts.shadow_font.as_ref();
 
-    for (id, entity) in engine.entities_iter_with_id() {
-        if !entity.is_active() {
-            continue;
-        }
-        let pos = entity.element_data().position_map();
-        let map_pt = pos;
+    for (id, map_pt) in engine.active_entity_positions() {
         let Some(screen_pt) = camera.map_to_screen(map_pt) else {
             continue;
         };

@@ -407,7 +407,7 @@ fn main() {
     let mut largest_entities: Vec<(u32, String, usize, usize)> = Vec::new();
     let mut component_totals: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
     let mut detail_totals: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new();
-    for (id, entity) in engine.entities_iter_with_id() {
+    for (id, entity) in engine.entities_iter().enumerate() {
         let kind = format!("{:?}", entity.kind());
         let entity_bincode = bincode_len(entity);
         let entity_json = json_len(entity);
@@ -415,7 +415,7 @@ fn main() {
         entry.0 += 1;
         entry.1 += entity_bincode;
         entry.2 += entity_json;
-        largest_entities.push((id.index(), kind, entity_bincode, entity_json));
+        largest_entities.push((id as u32, kind, entity_bincode, entity_json));
         measure_entity_components(entity, &mut component_totals, &mut detail_totals);
     }
     largest_entities.sort_by_key(|(_, _, bytes, _)| std::cmp::Reverse(*bytes));

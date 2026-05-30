@@ -561,9 +561,8 @@ impl EngineInner {
     ) -> std::collections::BTreeMap<EntityId, u32> {
         let mut primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32> =
             std::collections::BTreeMap::new();
-        for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                && let Some(ai) = s.npc.ai_brain.base()
+        for (_, s) in self.entities.soldiers() {
+            if let Some(ai) = s.npc.ai_brain.base()
                 && ai.primary_target != 0
                 && ai.current_substate.is_any_swordfight()
             {
@@ -583,10 +582,10 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> std::collections::HashMap<EntityId, Option<u32>> {
         let mut npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>> =
-            std::collections::HashMap::with_capacity(self.npc_ids.len());
-        for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                && let Some(ai) = s.npc.ai_brain.enemy()
+            std::collections::HashMap::with_capacity(self.entities.soldiers().count());
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
+            if let Some(ai) = s.npc.ai_brain.enemy()
                 && ai.base.primary_target != 0
             {
                 let jl = crate::engine::melee::is_table_swordfight_needed(
@@ -614,14 +613,10 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
     ) -> Vec<SoldierSnapshot> {
-        let mut soldier_snapshots: Vec<SoldierSnapshot> = Vec::with_capacity(self.npc_ids.len());
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity_ref)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
-            let Entity::Soldier(s) = entity_ref else {
-                continue;
-            };
+        let mut soldier_snapshots: Vec<SoldierSnapshot> =
+            Vec::with_capacity(self.entities.soldiers().count());
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             if !s.element.active || s.human.unconscious {
                 continue;
             }
@@ -815,23 +810,33 @@ impl EngineInner {
                     .and_then(|ms| ms.game_host())
                     .map(|h| h.doors.as_slice())
                     .unwrap_or(&[]);
-                if let Some(input) = extract_forecast_input(entity_ref) {
-                    crate::ai::forecast_destination_for_ia(
-                        &input,
-                        doors,
-                        &self.fast_grid.level.sectors,
-                        &self.fast_grid.level.sector_number_map,
-                    )
-                    .position
-                } else {
-                    let pos_now = s.element.position_map();
-                    crate::ai::Position {
-                        x: pos_now.x,
-                        y: pos_now.y,
-                        sector: None,
-                        level: s.element.layer(),
-                    }
-                }
+                let pos_now = s.element.position_map();
+                let door_pass = s
+                    .actor
+                    .active_door_pass
+                    .as_ref()
+                    .map(|dp| (dp.door_index, dp.direct));
+                let input = crate::ai::ForecastInput {
+                    position_map_x: pos_now.x,
+                    position_map_y: pos_now.y,
+                    sector: s.element.sector().map(u16::from).unwrap_or(0),
+                    layer: s.element.layer(),
+                    direction: s.element.direction() as u16,
+                    forecasted_movement_z: s
+                        .element
+                        .sprite
+                        .position_iface
+                        .get_forecasted_movement()
+                        .z,
+                    door_pass,
+                };
+                crate::ai::forecast_destination_for_ia(
+                    &input,
+                    doors,
+                    &self.fast_grid.level.sectors,
+                    &self.fast_grid.level.sector_number_map,
+                )
+                .position
             };
             let able_to_help = crate::ai_enemy::soldier_is_able_to_help_state(
                 able_to_fight,
@@ -946,11 +951,9 @@ impl EngineInner {
     /// we keep this side-list separate.
     pub(super) fn tick_enemy_ai_build_ko_money_fight_soldiers(&self) -> Vec<(EntityId, Camp)> {
         let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
-            Vec::with_capacity(self.npc_ids.len());
-        for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+            Vec::with_capacity(self.entities.soldiers().count());
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             if !s.element.active {
                 continue;
             }
@@ -1005,15 +1008,12 @@ impl EngineInner {
         // Collect every entity referenced by any human-typed
         // detectable list (Body / Friend / MissedFriend / Beggar)
         // across all NPCs, plus every object-typed list.  One pass
-        // over `npc_ids`; one pass over `entities` for each set.
+        // over NPCs; one pass over `entities` for each set.
         let mut human_ids: std::collections::HashSet<EntityId> =
             std::collections::HashSet::with_capacity(self.entities.len());
         let mut object_ids: std::collections::HashSet<EntityId> =
             std::collections::HashSet::with_capacity(self.entities.len());
-        for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs() {
             let Some(npc) = entity.npc_data() else {
                 continue;
             };

@@ -247,16 +247,14 @@ impl EngineInner {
         // `IElementTargetScript::ActivatedByListenable`.
         let mut to_hear: Vec<(usize, EntityId)> = Vec::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            let elem = entity.element_data();
-
-            // ── FX target Heard() check. ─────────────────────
-            // Independent of the blip state — targets are always
-            // eligible for Heard() regardless of `blipped`.
-            if entity.kind().is_fx_target() && !firing_listeners.is_empty() {
-                let target_pos = elem.position_map();
-                let target_layer = elem.layer();
-                let target_z = elem.position().z;
+        // ── FX target Heard() check. ─────────────────────
+        // Independent of the blip state — targets are always
+        // eligible for Heard() regardless of `blipped`.
+        if !firing_listeners.is_empty() {
+            for (entity_id, target) in self.entities.targets() {
+                let target_pos = target.element.position_map();
+                let target_layer = target.element.layer();
+                let target_z = target.element.position().z;
                 for pc in &firing_listeners {
                     if pc.layer != target_layer {
                         continue;
@@ -267,20 +265,30 @@ impl EngineInner {
                     let dz = target_z - pc.position_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
                     if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        to_hear.push((entity_id.index() as usize, pc.pc_id));
+                        to_hear.push((entity_id.0 as usize, pc.pc_id));
                         break;
                     }
                 }
             }
+        }
+
+        for (entity_id, entity) in self
+            .entities
+            .npcs()
+            .map(|(id, entity)| (EntityId::from(id), entity))
+            .chain(
+                self.entities
+                    .objects()
+                    .map(|(id, entity)| (EntityId::from(id), entity)),
+            )
+        {
+            let elem = entity.element_data();
 
             if !elem.blipped {
                 continue;
             }
-            let is_npc = entity.is_npc(); // soldier or civilian
+            let is_npc = entity.npc_data().is_some(); // soldier or civilian
             let is_object = entity.is_object();
-            if !is_npc && !is_object {
-                continue;
-            }
 
             // Royalist soldiers: auto-reveal.
             if entity.is_soldier()
@@ -556,7 +564,7 @@ impl EngineInner {
         const DETECTION_FREQUENCY_SOUNDS: u32 = 3;
 
         let universal_frame = self.frame_counter;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // Read NPC state (layer, position, current_state, active).
             let (layer, position, elevation, current_state, active, expects_pc_detectables) = {
@@ -771,7 +779,7 @@ impl EngineInner {
         let is_forest_level = self.weather.is_forest_level;
         let sq_view_radius =
             (self.standard_view_polygon_radius as f32) * (self.standard_view_polygon_radius as f32);
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             self.tick_enemy_ai_refresh_detection_for_npc(
@@ -2409,7 +2417,8 @@ impl EngineInner {
 
         // Build target list from alive Lacklandist soldiers.
         let mut npc_targets: Vec<NpcTarget> = Vec::new();
-        for &npc_id in &self.npc_ids {
+        for (npc_id, s) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
             let (
                 pos,
                 layer,
@@ -2423,10 +2432,6 @@ impl EngineInner {
                 obstacle_idx,
                 direction,
             ) = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                else {
-                    continue;
-                };
                 if s.soldier.cached_camp != Camp::Lacklandists {
                     continue;
                 }
@@ -2473,7 +2478,7 @@ impl EngineInner {
 
         let mut to_reveal: Vec<EntityId> = Vec::new();
         let mut royalist_alert_calls: Vec<(EntityId, MapPoint)> = Vec::new();
-        let royalist_ids = self.npc_ids.clone();
+        let royalist_ids = self.entities.npc_ids().collect::<Vec<_>>();
 
         for npc_id in royalist_ids {
             self.tick_enemy_ai_royalist_detection_for_npc(
@@ -2902,7 +2907,7 @@ impl EngineInner {
     ) {
         let universal_frame = self.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
-        let npc_ids = self.npc_ids.clone();
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.tick_enemy_ai_refresh_per_type_for_npc(
                 npc_id,

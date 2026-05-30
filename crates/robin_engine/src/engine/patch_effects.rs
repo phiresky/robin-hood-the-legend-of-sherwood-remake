@@ -315,11 +315,10 @@ impl EngineInner {
         // So the move-box check only gates the `crushed` computation,
         // not target inclusion.
         let targets: Vec<(EntityId, bool)> = self
-            .entities_iter_with_id()
+            .entities
+            .actors()
             .filter_map(|(id, entity)| {
-                if !entity.is_actor() {
-                    return None;
-                }
+                let id = EntityId::from(id);
                 let element = entity.element_data();
                 if element.layer() != layer {
                     return None;

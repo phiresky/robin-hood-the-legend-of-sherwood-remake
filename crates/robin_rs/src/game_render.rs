@@ -1736,7 +1736,7 @@ pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, render
     // consumers elsewhere clear it after rendering.  We only *read* it
     // here to keep this function `&Engine`; the clearing happens in
     // `clear_display_flags`.
-    for &npc_id in engine.npc_ids() {
+    for npc_id in engine.npc_ids() {
         let Some(e) = engine.get_entity(npc_id) else {
             continue;
         };
@@ -2178,11 +2178,7 @@ pub(crate) fn render_patch_fx_gpu(
     _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
-    let patch_ids: Vec<_> = engine
-        .entities_iter_with_id()
-        .filter(|(_, entity)| entity.fx_data().is_some_and(|fx| fx.patch_index.is_some()))
-        .map(|(id, _)| id)
-        .collect();
+    let patch_ids = engine.patch_fx_ids();
     if patch_ids.is_empty() {
         return;
     }
@@ -3135,7 +3131,7 @@ pub(crate) fn render_debug_whatsup_overlay(host: &Host, engine: &Engine, rendere
         (sx, sy)
     };
 
-    for &npc_id in engine.npc_ids() {
+    for npc_id in engine.npc_ids() {
         let Some(entity) = engine.get_entity(npc_id) else {
             continue;
         };

@@ -517,10 +517,7 @@ impl EngineInner {
         use crate::shadow_polygon::ALPHA_DAY;
 
         let mut result = Vec::new();
-        for &id in &self.npc_ids {
-            let Some(entity) = self.get_entity(id) else {
-                continue;
-            };
+        for (_, entity) in self.entities.npcs() {
             if !entity.is_active() || entity.is_dead() {
                 continue;
             }
@@ -634,11 +631,11 @@ impl EngineInner {
         // the ref offset for carried/attached ones (which need the base
         // values computed first).
         let mut depths: HashMap<EntityId, f32> = HashMap::with_capacity(self.entities.len());
-        for (id, e) in self.entities_iter_with_id() {
+        for (id, e) in self.entities.occupied() {
             depths.insert(id, e.element_data().position().y);
         }
 
-        for (id, entity) in self.entities_iter_with_id() {
+        for (id, entity) in self.entities.occupied() {
             let sprite = &entity.element_data().sprite;
             let Some(ref_id) = sprite.display_order_ref else {
                 continue;
@@ -667,7 +664,7 @@ impl EngineInner {
         let mut animations: Vec<EntityId> = Vec::new();
         let mut non_animations: Vec<EntityId> = Vec::new();
 
-        for (id, entity) in self.entities_iter_with_id() {
+        for (id, entity) in self.entities.occupied() {
             // Scrolls whose current status is neither Visible nor
             // Opened are filtered out entirely — Invisible / Taken
             // scrolls don't render, and dropping them from the draw
@@ -842,7 +839,7 @@ impl EngineInner {
     // Returns every live entity; callers filter on `is_active()` /
     // `custom_minimap_dot`.
     pub fn sort_for_minimap(&self) -> Vec<EntityId> {
-        let mut ids: Vec<EntityId> = self.entities_iter_with_id().map(|(id, _)| id).collect();
+        let mut ids: Vec<EntityId> = self.entities.occupied().map(|(id, _)| id).collect();
 
         ids.sort_by(|&a, &b| {
             let ea = self.entities[a.index() as usize]

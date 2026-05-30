@@ -988,21 +988,18 @@ impl EngineInner {
         }
         let mut pending: Vec<Pending> = Vec::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
-            if !entity.is_pc() || entity.is_dead() {
+        for (entity_id, entity) in self.entities.pcs() {
+            let entity_id = EntityId::from(entity_id);
+            if entity.element.posture.is_dead() {
                 continue;
             }
-            if !entity.is_active() {
+            if !entity.element.active {
                 continue;
             }
             // PC override `Execute` opens with
             // `if (execution_frozen) return InProgress;` — frozen PCs
             // never reach the validity guards.
-            if entity
-                .actor_data()
-                .map(|a| a.execution_frozen)
-                .unwrap_or(false)
-            {
+            if entity.actor.execution_frozen {
                 continue;
             }
 
@@ -1023,7 +1020,7 @@ impl EngineInner {
             // `perform_action` call for a given order; before that, it
             // holds the previous order's id (or `u32::MAX` for a
             // fresh sprite).
-            let last_processed = entity.element_data().sprite.last_processed_order_id;
+            let last_processed = entity.element.sprite.last_processed_order_id;
             if last_processed == order_id {
                 continue;
             }

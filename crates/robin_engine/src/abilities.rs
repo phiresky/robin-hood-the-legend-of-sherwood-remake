@@ -2017,7 +2017,9 @@ pub fn tick_abilities(
 ) -> Vec<AbilityTickResult> {
     let mut results = Vec::new();
 
-    for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
+    for (idx, slot) in entities.iter_mut().enumerate() {
+        let Some(entity) = slot else { continue };
+        let entity_id = crate::engine::entity_id_for_occupied_slot(idx as u32, entity);
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -2518,12 +2520,16 @@ pub fn sync_carried_positions(
 ) {
     // Collect carrier snapshots first to avoid borrow conflicts.
     let mut snapshots: Vec<CarrierSnapshot> = Vec::new();
-    for (carrier_id, entity) in crate::engine::occupied_entity_slots(entities) {
-        let Some(pc) = entity.pc_data() else { continue };
+    for (idx, slot) in entities.iter().enumerate() {
+        let Some(Entity::Pc(entity)) = slot else {
+            continue;
+        };
+        let carrier_id = EntityId::Pc(crate::entity_id::PcId(idx as u32));
+        let pc = &entity.pc;
         let Some(target_id) = pc.carried else {
             continue;
         };
-        let elem = entity.element_data();
+        let elem = &entity.element;
 
         // Check the carrier's profile for LittleJohnCarry or the
         // equivalent FarmerCarry.
@@ -2549,7 +2555,7 @@ pub fn sync_carried_positions(
         // from the carrier's current `obstacle_index` when the carrier last
         // crossed onto that obstacle; copying it directly avoids having to
         // re-resolve from the sight-obstacle list here.
-        let plane = entity.position_iface().get_plane().copied();
+        let plane = entity.element.sprite.position_iface.get_plane().copied();
 
         let carried_posture = pc.carried_posture;
 

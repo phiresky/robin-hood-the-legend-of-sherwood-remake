@@ -44,7 +44,8 @@ impl EngineInner {
 
         // Periodic combat state dump (every 64 frames)
         if self.frame_counter.is_multiple_of(64) {
-            for (entity_id, entity) in self.entities_iter_with_id() {
+            for (entity_id, entity) in self.entities.humans() {
+                let entity_id = EntityId::from(entity_id);
                 let Some(human) = entity.human_data() else {
                     continue;
                 };
@@ -94,7 +95,8 @@ impl EngineInner {
         let mut terminate_low_parry: Vec<(crate::sequence::SequenceId, usize, EntityId)> =
             Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.humans_mut() {
+            let entity_id = EntityId::from(entity_id);
             let is_parrying = entity
                 .actor_data()
                 .map(|a| {
@@ -288,9 +290,10 @@ impl EngineInner {
         // The follow-up decision path mutates engine state, so keep this
         // first pass read-only and stage typed ids.
         let mut smalltalk_candidates = Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.humans() {
+            let entity_id = EntityId::from(entity_id);
             let (has_initiative, opponents_empty, principal_id, action_ok, observing) = {
-                if !entity.is_human() || entity.is_dead() {
+                if entity.is_dead() {
                     continue;
                 }
                 let Some(human) = entity.human_data() else {
@@ -600,7 +603,8 @@ impl EngineInner {
         // Done in a separate pass because the main iter_mut loop
         // can't access two entities simultaneously.
         let mut pending_directions = Vec::new();
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let (strike, target_id) = {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
@@ -637,7 +641,8 @@ impl EngineInner {
         }
 
         // Phase 1: advance timers and collect hits
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(entity_id);
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
 
@@ -1144,7 +1149,8 @@ impl EngineInner {
         }
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
-        for (entity_id, entity) in self.entities_iter_with_id() {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let actor = match entity.actor_data() {
                 Some(a) => a,
                 None => continue,
@@ -1336,7 +1342,8 @@ impl EngineInner {
         // termination.
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(entity_id);
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -1481,10 +1488,9 @@ impl EngineInner {
         // (soldiers / civilians) then PCs.  Animals live in a
         // separate list and are excluded.
         let candidate_ids: Vec<EntityId> = self
-            .npc_ids
-            .iter()
-            .chain(self.pc_ids.iter())
-            .copied()
+            .entities
+            .npc_ids()
+            .chain(self.pc_ids.iter().copied())
             .collect();
         let mut victims: Vec<EntityId> = Vec::new();
         for candidate_id in candidate_ids {
@@ -1684,7 +1690,8 @@ impl EngineInner {
                 static_active: &self.static_sight_obstacle_active,
             };
             let mut pending_charge_inits = Vec::new();
-            for (attacker_id, entity) in self.entities_iter_with_id() {
+            for (attacker_id, entity) in self.entities.actors() {
+                let attacker_id = EntityId::from(attacker_id);
                 let actor = match entity.actor_data() {
                     Some(a) => a,
                     None => continue,
@@ -1750,7 +1757,8 @@ impl EngineInner {
 
                 // Collect potential victims inside the initial polygon.
                 let mut pending_victims = Vec::new();
-                for (victim_id, victim) in self.entities_iter_with_id() {
+                for (victim_id, victim) in self.entities.humans() {
+                    let victim_id = EntityId::from(victim_id);
                     if victim_id == attacker_id {
                         continue;
                     }
@@ -1823,8 +1831,8 @@ impl EngineInner {
         let mut hits: Vec<ChargeHit> = Vec::new();
         let mut finished_charges: Vec<EntityId> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
-            let attacker_id = entity_id;
+        for (entity_id, entity) in self.entities.actors_mut() {
+            let attacker_id = EntityId::from(entity_id);
             let (elem_pos, _elem_layer, attacker_profile_idx) = {
                 let elem = entity.element_data();
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -2017,9 +2025,9 @@ impl EngineInner {
         // Collecting flagged-npcs first so we can query the sequence
         // manager and then mutate the AI without aliasing `self`.
         let mut flagged: Vec<EntityId> = Vec::new();
-        for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.index() as usize)
-                && let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
+        for (npc_id, soldier) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
+            if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
                 && ai.pending_special_strike
             {
                 flagged.push(npc_id);
@@ -2060,14 +2068,11 @@ impl EngineInner {
         // Tired-soldier `SwordstrikeTired` elements collected here and
         // launched after the npc-iter loop ends — `launch_element` needs
         // `&mut self` and we still hold an immutable borrow on
-        // `self.npc_ids`.
+        // `self.entities`.
         let mut pending_tired: Vec<EntityId> = Vec::new();
 
-        for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.index() as usize)
-            else {
-                continue;
-            };
+        for (npc_id, soldier) in self.entities.soldiers() {
+            let npc_id = EntityId::from(npc_id);
 
             // Must be in swordfight substate and alive.
             //
@@ -2356,8 +2361,10 @@ impl EngineInner {
                 static_active: &self.static_sight_obstacle_active,
             };
             let nearby: Vec<crate::combat::NearbyVictim> = self
-                .entities_iter_with_id()
+                .entities
+                .humans()
                 .filter_map(|(eid, e)| {
+                    let eid = EntityId::from(eid);
                     if eid == attack.soldier_id {
                         return None;
                     }
@@ -2577,8 +2584,9 @@ impl EngineInner {
         // `crate::order::alloc_order_id` while still holding
         // `self.entities.iter_mut()`.
         let next_order_id = &mut self.next_order_id;
-        for (entity_id, entity) in self.entities.occupied_mut() {
-            if !entity.is_human() || entity.is_dead() {
+        for (entity_id, entity) in self.entities.humans_mut() {
+            let entity_id = EntityId::from(entity_id);
+            if entity.is_dead() {
                 continue;
             }
 
