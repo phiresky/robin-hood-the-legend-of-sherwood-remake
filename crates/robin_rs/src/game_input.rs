@@ -13,6 +13,7 @@ use crate::geo2d;
 use crate::mouse_way::MouseWayPattern;
 use crate::player_command::{PlayerCommand, PlayerId};
 use crate::profiles::Action;
+use crate::sector::SectorNumber;
 use crate::sequence::Field;
 use crate::shadow_polygon::ASPECT_RATIO;
 use robin_engine::coordinates::MapPoint;
@@ -1276,7 +1277,7 @@ fn resolve_right_click_stop(engine: &Engine, local_seat: PlayerId) -> Vec<Player
                     .element_data()
                     .sector()
                     .and_then(|s| {
-                        let sn = crate::sector::SectorNumber::new(i16::from(s));
+                        let sn = SectorNumber::new(i16::from(s));
                         let idx = *engine.fast_grid().level.sector_number_map.get(&sn)?;
                         engine.fast_grid().level.sectors.get(idx)
                     })
