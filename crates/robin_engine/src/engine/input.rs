@@ -2688,10 +2688,7 @@ impl EngineInner {
             // so keep this order or upward/long aim can be evaluated
             // from the previous direction.
             if (dx != 0.0 || dy != 0.0)
-                && let Some(Entity::Pc(pc)) = self
-                    .entities
-                    .get_mut(pc_id.index() as usize)
-                    .and_then(|s| s.as_mut())
+                && let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id)
             {
                 pc.element
                     .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
@@ -2751,10 +2748,10 @@ impl EngineInner {
             ) {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id) else {
                 continue;
             };
-            let Some(Entity::Pc(pc)) = entity.as_mut() else {
+            let Entity::Pc(pc) = entity else {
                 continue;
             };
             let pos = pc.element.position_map();
@@ -2779,10 +2776,10 @@ impl EngineInner {
 
         let ids = self.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id) else {
                 continue;
             };
-            let Some(Entity::Pc(pc)) = entity.as_mut() else {
+            let Entity::Pc(pc) = entity else {
                 continue;
             };
             let pos = pc.element.position_map();
@@ -2828,10 +2825,10 @@ impl EngineInner {
 
         let ids = self.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id) else {
                 continue;
             };
-            let Some(Entity::Pc(pc)) = entity.as_mut() else {
+            let Entity::Pc(pc) = entity else {
                 continue;
             };
             let pos = pc.element.position_map();

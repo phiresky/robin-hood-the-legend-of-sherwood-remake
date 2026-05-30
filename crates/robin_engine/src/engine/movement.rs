@@ -585,11 +585,7 @@ impl EngineInner {
     ) -> OrderType {
         use crate::element::Posture;
 
-        let Some(entity) = self
-            .entities
-            .get(owner.index() as usize)
-            .and_then(|e| e.as_ref())
-        else {
+        let Some(entity) = self.entities.get(owner) else {
             return action;
         };
         let elem = entity.element_data();
@@ -664,7 +660,7 @@ impl EngineInner {
             .and_then(|e| e.human_data())
             .and_then(|h| h.opponents.first().copied());
 
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = false;
@@ -683,7 +679,7 @@ impl EngineInner {
             return;
         }
 
-        if let Some(Some(entity)) = self.entities.get_mut(principal_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(principal_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = true;
@@ -2622,11 +2618,7 @@ impl EngineInner {
     /// by the GoTo pre-flight gates to surface a same-frame failure to
     /// the AI's stuck-retry / fallback logic.
     fn set_ai_couldnt_reachpoint(&mut self, entity_id: EntityId) {
-        let Some(entity) = self
-            .entities
-            .get_mut(entity_id.index() as usize)
-            .and_then(|e| e.as_mut())
-        else {
+        let Some(entity) = self.entities.get_mut(entity_id) else {
             return;
         };
         if let Some(ai) = entity.ai_controller_mut() {
@@ -2833,7 +2825,7 @@ impl EngineInner {
             // shield-bearer away from the ally.
             if is_shield_moving
                 && let Some(protected_id) = entity.pc_data().and_then(|pc| pc.shield_protected)
-                && let Some(Some(ally)) = self.entities.get(protected_id.index() as usize)
+                && let Some(ally) = self.entities.get(protected_id)
             {
                 let self_pos = entity.element_data().position_map();
                 let ally_pos = ally.element_data().position_map();
@@ -2879,7 +2871,7 @@ impl EngineInner {
             };
 
             if let Some(opp_id) = opp_id_opt
-                && let Some(Some(opp)) = self.entities.get(opp_id.index() as usize)
+                && let Some(opp) = self.entities.get(opp_id)
             {
                 combat_face_targets[idx] = Some(opp.element_data().position_map());
             } else {
@@ -4612,7 +4604,9 @@ impl EngineInner {
                     (*pi.get_move_box(), pi.get_half_diagonal())
                 };
 
-                let (dx_step, dy_step) = if let Some(Some(mover_snap)) = anti_snapshots.get(idx) {
+                let (dx_step, dy_step) = if let Some(mover_snap) =
+                    anti_snapshots.get(idx).and_then(|slot| slot.as_ref())
+                {
                     let pi = entity.position_iface_mut();
                     let mut state = super::anti_collision::AntiCollisionState {
                         pi,
@@ -4712,7 +4706,7 @@ impl EngineInner {
                 // "already-moved" position of this one.  Without this
                 // two actors heading for the same cell both see each
                 // other at the *old* position and can still overlap.
-                if let Some(Some(snap)) = anti_snapshots.get_mut(idx) {
+                if let Some(snap) = anti_snapshots.get_mut(idx).and_then(|slot| slot.as_mut()) {
                     let new_pos = crate::geo2d::pt(new_pos_x, new_pos_y);
                     snap.position_map = new_pos.into();
                     if let Some(rp) = snap.repulsive_point.as_mut() {
@@ -5111,7 +5105,7 @@ impl EngineInner {
     /// without a corresponding `set_state`.  In either case the halt
     /// below will swallow the exit event and leave the AI stranded.
     fn check_shape1_contract(&self, entity_id: EntityId) {
-        let Some(Some(entity)) = self.entities.get(entity_id.index() as usize) else {
+        let Some(entity) = self.entities.get(entity_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller() else {
@@ -5178,11 +5172,7 @@ impl EngineInner {
         // interrupt are tagged `from_halt` and don't fire
         // `Think(EventDone)`.
         let (has_pending_orders, take_halt) = {
-            let Some(entity) = self
-                .entities
-                .get_mut(entity_id.index() as usize)
-                .and_then(|e| e.as_mut())
-            else {
+            let Some(entity) = self.entities.get_mut(entity_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -5199,11 +5189,7 @@ impl EngineInner {
             return;
         }
         let intents: Vec<crate::order::AiOrderIntent> = {
-            let Some(entity) = self
-                .entities
-                .get_mut(entity_id.index() as usize)
-                .and_then(|e| e.as_mut())
-            else {
+            let Some(entity) = self.entities.get_mut(entity_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -5390,11 +5376,7 @@ impl EngineInner {
         let left = line.left_obstacle_index;
         let right = line.right_obstacle_index;
 
-        let (current, layer) = match self
-            .entities
-            .get(entity_id.index() as usize)
-            .and_then(|s| s.as_ref())
-        {
+        let (current, layer) = match self.entities.get(entity_id) {
             Some(e) => (
                 e.element_data().obstacle_index().map(u16::from),
                 e.element_data().layer(),
@@ -5521,11 +5503,7 @@ impl EngineInner {
 
         // Read the actor's current obstacle — used as the seed for the
         // sort when multiple lines are crossed.
-        let mut current_obstacle = match self
-            .entities
-            .get(entity_id.index() as usize)
-            .and_then(|s| s.as_ref())
-        {
+        let mut current_obstacle = match self.entities.get(entity_id) {
             Some(e) => e.element_data().obstacle_index().map(u16::from),
             None => return false,
         };
@@ -5905,7 +5883,7 @@ impl EngineInner {
                 _ => None,
             };
             if let Some(want) = sword_variant
-                && let Some(Some(entity)) = self.entities.get(owner.index() as usize)
+                && let Some(entity) = self.entities.get(owner)
                 && entity.sprite().has_animation(want)
             {
                 move_action = want;
@@ -5924,11 +5902,7 @@ impl EngineInner {
         // Gated on PC because soldier/civilian shield holders fall
         // through to the upright animation.  Skip when the sprite
         // lacks the shield row (mirrors the sword PC fallback above).
-        let owner_is_pc = self
-            .entities
-            .get(owner.index() as usize)
-            .and_then(|s| s.as_ref())
-            .is_some_and(|e| e.is_pc());
+        let owner_is_pc = self.entities.get(owner).is_some_and(|e| e.is_pc());
         if owner_is_pc
             && posture_after == crate::element::Posture::Upright
             && action_after.is_shield()
@@ -5950,7 +5924,7 @@ impl EngineInner {
                 }
             };
             if let Some(want) = want
-                && let Some(Some(entity)) = self.entities.get(owner.index() as usize)
+                && let Some(entity) = self.entities.get(owner)
                 && entity.sprite().has_animation(want)
             {
                 move_action = want;
@@ -5967,21 +5941,21 @@ impl EngineInner {
         let mut want_reverse_flag = false;
         match posture_after {
             crate::element::Posture::CarryingCorpse => {
-                if let Some(Some(entity)) = self.entities.get(owner.index() as usize)
+                if let Some(entity) = self.entities.get(owner)
                     && entity.sprite().has_animation(OrderType::WalkingWithCorpse)
                 {
                     move_action = OrderType::WalkingWithCorpse;
                 }
             }
             crate::element::Posture::Crouched => {
-                if let Some(Some(entity)) = self.entities.get(owner.index() as usize)
+                if let Some(entity) = self.entities.get(owner)
                     && entity.sprite().has_animation(OrderType::WalkingCrouched)
                 {
                     move_action = OrderType::WalkingCrouched;
                 }
             }
             crate::element::Posture::CarryingOnShoulders => {
-                if let Some(Some(entity)) = self.entities.get(owner.index() as usize)
+                if let Some(entity) = self.entities.get(owner)
                     && entity
                         .sprite()
                         .has_animation(OrderType::WalkingCarryingOnShoulders)
@@ -6003,8 +5977,7 @@ impl EngineInner {
                 // above.
                 let owner_sector = self
                     .entities
-                    .get(owner.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(owner)
                     .and_then(|e| e.element_data().sector());
                 let on_lift = self.sector_is_lift(owner_sector);
                 let inner_arm = matches!(
@@ -6069,7 +6042,7 @@ impl EngineInner {
                 *flags |= crate::sequence::MoveFlags::REVERSED;
             }
             if elem.posture_after_transition == crate::element::Posture::Undefined
-                && let Some(Some(entity)) = self.entities.get(owner.index() as usize)
+                && let Some(entity) = self.entities.get(owner)
             {
                 elem.posture_after_transition = entity.element_data().posture;
             }
@@ -6087,8 +6060,8 @@ impl EngineInner {
             half_diagonal,
             actor_passing_door,
         ) = {
-            let entity = match self.entities.get(owner.index() as usize) {
-                Some(Some(e)) => e,
+            let entity = match self.entities.get(owner) {
+                Some(e) => e,
                 _ => return MovePathOutcome::ActorGone,
             };
             let elem = entity.element_data();
@@ -6300,8 +6273,7 @@ impl EngineInner {
         if is_movement_anim && !is_pass_door {
             let blood_alcohol = self
                 .entities
-                .get(owner.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(owner)
                 .and_then(|e| e.npc_data())
                 .and_then(|n| n.ai_brain.base())
                 .map(|b| b.blood_alcohol)
@@ -6309,8 +6281,7 @@ impl EngineInner {
             if blood_alcohol > 0 {
                 let (half_diag, move_box) = self
                     .entities
-                    .get(owner.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(owner)
                     .map(|e| e.position_iface())
                     .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
                     .unwrap_or_default();
@@ -6464,7 +6435,7 @@ impl EngineInner {
         // handler flips it to the moving state on completion.  End-only
         // transitions are appended behind the movement orders; they must
         // not delay the actor entering Moving/MovingSword now.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             if !have_start_transition {
@@ -6552,8 +6523,7 @@ impl EngineInner {
 
             let is_pc = self
                 .entities
-                .get(req.owner.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(req.owner)
                 .map(|e| e.is_pc())
                 .unwrap_or(false);
             if is_pc {

@@ -193,7 +193,7 @@ impl EngineInner {
 
         for (seq_id, elem_idx, owner) in terminate_low_parry {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
-            if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+            if let Some(entity) = self.entities.get_mut(owner)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.action_state = ActionState::WaitingSword;
@@ -339,8 +339,7 @@ impl EngineInner {
             // Verify mutual principal opponents
             let is_mutual = self
                 .entities
-                .get(principal_id.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(principal_id)
                 .and_then(|e| e.human_data())
                 .and_then(|h| h.opponents.first().copied())
                 .map(|opp| opp == entity_id)
@@ -430,11 +429,11 @@ impl EngineInner {
                 .and_then(|h| h.opponents.first().copied());
             if let Some(pid) = principal_id {
                 let dir = direction_to(&self.entities, actor_id, pid);
-                if let Some(Some(entity)) = self.entities.get_mut(actor_id.index() as usize) {
+                if let Some(entity) = self.entities.get_mut(actor_id) {
                     entity.element_data_mut().set_direction_instantly(dir);
                 }
             }
-            if let Some(Some(entity)) = self.entities.get_mut(actor_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(actor_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.last_motion_was_step_back_in_combat = true;
@@ -492,7 +491,7 @@ impl EngineInner {
 
             // Face the target and set yellow outline for smalltalk
             let dir = direction_to(&self.entities, attacker_id, target_id);
-            if let Some(Some(entity)) = self.entities.get_mut(attacker_id.index() as usize) {
+            if let Some(entity) = self.entities.get_mut(attacker_id) {
                 entity.element_data_mut().set_direction_instantly(dir);
                 entity.element_data_mut().current_outline =
                     crate::element::OutlineColorName::Striking;
@@ -531,7 +530,7 @@ impl EngineInner {
         if !is_principal {
             return;
         }
-        if let Some(Some(target)) = self.entities.get_mut(target_id.index() as usize)
+        if let Some(target) = self.entities.get_mut(target_id)
             && let Some(human) = target.human_data_mut()
         {
             human.smalltalk_hint = if is_left {
@@ -558,7 +557,7 @@ impl EngineInner {
             crate::element::SmalltalkHint::None => return false,
         };
 
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_hint = crate::element::SmalltalkHint::None;
@@ -902,7 +901,7 @@ impl EngineInner {
                         );
                     }
                 }
-                if let Some(Some(entity)) = self.entities.get_mut(hit.attacker_id.index() as usize)
+                if let Some(entity) = self.entities.get_mut(hit.attacker_id)
                     && let Some(actor) = entity.actor_data_mut()
                 {
                     actor.pending_push_swordfight = all_victims;
@@ -932,9 +931,7 @@ impl EngineInner {
                     )
                 {
                     let dir = direction_to(&self.entities, hit.attacker_id, hit.victim_id);
-                    if let Some(Some(entity)) =
-                        self.entities.get_mut(hit.attacker_id.index() as usize)
-                    {
+                    if let Some(entity) = self.entities.get_mut(hit.attacker_id) {
                         entity.element_data_mut().set_direction_instantly(dir);
                     }
                     if let Some(profile_idx) = hit.attacker_profile_idx {
@@ -966,8 +963,7 @@ impl EngineInner {
             // the damage sequences have already resolved (possibly
             // killing / knocking out victims who then get filtered by
             // `enter_swordfight`).
-            let pending_sf = if let Some(Some(entity)) =
-                self.entities.get_mut(actor_id.index() as usize)
+            let pending_sf = if let Some(entity) = self.entities.get_mut(actor_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.sweep_state = None;
@@ -984,7 +980,7 @@ impl EngineInner {
             {
                 Some(profile) => {
                     let energy = combat::strike_energy_cost(profile, completed_strike.strike);
-                    if let Some(Some(entity)) = self.entities.get_mut(actor_id.index() as usize)
+                    if let Some(entity) = self.entities.get_mut(actor_id)
                         && let Some(human) = entity.human_data_mut()
                     {
                         human.tiredness = human.tiredness.saturating_add(energy);
@@ -1118,7 +1114,7 @@ impl EngineInner {
             strike_kind,
         };
 
-        if let Some(Some(entity)) = self.entities.get_mut(attacker_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(attacker_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.sweep_state = Some(sweep);
@@ -1194,9 +1190,7 @@ impl EngineInner {
                     | crate::profiles::WeaponThrustKind::TrueHalfCircle
             ) {
                 let new_dir = angle_to_sector(active.sweep.current_angle);
-                if let Some(Some(entity)) =
-                    self.entities.get_mut(active.attacker_id.index() as usize)
-                {
+                if let Some(entity) = self.entities.get_mut(active.attacker_id) {
                     let elem = entity.element_data_mut();
                     elem.set_direction_instantly(new_dir as i16);
                     elem.sprite.force_action_direction(
@@ -1299,7 +1293,7 @@ impl EngineInner {
 
         // Phase 3: write back updated sweep states
         for active in sweeps {
-            if let Some(Some(entity)) = self.entities.get_mut(active.attacker_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(active.attacker_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 let rotation_complete = sweep_rotation_complete(&active.sweep);
@@ -1604,7 +1598,7 @@ impl EngineInner {
         let normal = self.get_roll_normal(assets, entity_id);
         let new_dest = normal.and_then(|n| self.find_roll_point(entity_id, n, true));
 
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(entity_id) {
             let pos = entity.element_data().position_map();
             // Compute the new facing up front — we may need to update
             // the entity's direction before re-borrowing actor data.
@@ -1907,7 +1901,7 @@ impl EngineInner {
                 &self.fast_grid,
                 obstacles,
             ) {
-                if let Some(attacker) = self.entities[hit.attacker_id.index() as usize].as_mut()
+                if let Some(attacker) = self.entities[hit.attacker_id].as_mut()
                     && let Some(actor) = attacker.actor_data_mut()
                     && let Some(charge) = actor.active_rider_charge.as_mut()
                 {
@@ -1961,7 +1955,7 @@ impl EngineInner {
 
             if point_in_quad(victim_pos.x, victim_pos.y, hz[0], hz[1], hz[2], hz[3]) {
                 // Hit! Remove victim from pending list and apply damage.
-                if let Some(attacker) = self.entities[hit.attacker_id.index() as usize].as_mut()
+                if let Some(attacker) = self.entities[hit.attacker_id].as_mut()
                     && let Some(actor) = attacker.actor_data_mut()
                     && let Some(charge) = actor.active_rider_charge.as_mut()
                 {
@@ -1989,7 +1983,7 @@ impl EngineInner {
 
         // Phase 4: Clean up finished charges.
         for entity_id in finished_charges {
-            if let Some(entity) = self.entities[entity_id.index() as usize].as_mut()
+            if let Some(entity) = self.entities[entity_id].as_mut()
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_rider_charge = None;
@@ -2039,8 +2033,7 @@ impl EngineInner {
                 .has_live_element_for_actor_matching(npc_id, |cmd| {
                     cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
                 });
-            if let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(npc_id.index() as usize)
+            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id)
                 && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
             {
                 ai.reconcile_special_strike(has_active, current_frame);
@@ -2468,9 +2461,7 @@ impl EngineInner {
 
             let wait_time: u32 = if target_is_pc {
                 // Start the striking-outline hulk with width 2.
-                if let Some(Some(entity)) =
-                    self.entities.get_mut(attack.soldier_id.index() as usize)
-                {
+                if let Some(entity) = self.entities.get_mut(attack.soldier_id) {
                     if let Some(human) = entity.human_data_mut() {
                         human.start_hulk(true, 1.0);
                     }
@@ -2495,8 +2486,7 @@ impl EngineInner {
                 attack.soldier_id,
                 crate::sequence::SequencePriority::Preference,
             );
-            if let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(attack.soldier_id.index() as usize)
+            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(attack.soldier_id)
                 && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
             {
                 ai.begin_special_strike();
@@ -2507,8 +2497,7 @@ impl EngineInner {
             if matches!(
                 strike,
                 SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
-            ) && let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(attack.soldier_id.index() as usize)
+            ) && let Some(Entity::Soldier(soldier)) = self.entities.get_mut(attack.soldier_id)
             {
                 let is_vip = assets
                     .profile_manager
@@ -2555,9 +2544,7 @@ impl EngineInner {
             // Write back boredom state. The next-strike gate is set when
             // `reconcile_special_strike` observes that this sequence has
             // finished — equivalent to firing EventDone and a 20-frame timer.
-            if let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(attack.soldier_id.index() as usize)
-            {
+            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(attack.soldier_id) {
                 soldier.human.sword_strike_boredom = attack.boredom;
             }
 
@@ -2582,7 +2569,7 @@ impl EngineInner {
         // Disjoint-borrow: pull the id counter out as a `&mut u32` so
         // the inner loop can stamp fresh ids via
         // `crate::order::alloc_order_id` while still holding
-        // `self.entities.iter_mut()`.
+        // `self.entities.iter_slots_mut()`.
         let next_order_id = &mut self.next_order_id;
         for (entity_id, entity) in self.entities.humans_mut() {
             let entity_id = EntityId::from(entity_id);

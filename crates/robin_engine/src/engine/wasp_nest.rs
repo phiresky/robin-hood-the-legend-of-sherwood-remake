@@ -121,7 +121,7 @@ impl EngineInner {
         // ── Phase 4: nest Hourglass — emit buzz while wasps fly ────
         let nest_buzzes: Vec<WorldPoint3D> = self
             .entities
-            .iter()
+            .iter_slots()
             .filter_map(|slot| match slot {
                 Some(Entity::Projectile(p))
                     if p.element.active
@@ -159,11 +159,7 @@ impl EngineInner {
             return;
         }
 
-        if let Some(Entity::Projectile(nest)) = self
-            .entities
-            .get_mut(nest_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(Entity::Projectile(nest)) = self.entities.get_mut(nest_id) {
             nest.object.animation = Animation::ObjectBursting;
             nest.projectile.flying = false;
             nest.projectile.wasp.burst = true;
@@ -238,11 +234,7 @@ impl EngineInner {
                 // Reset timeout — `DIRECTION_CHANGE_TIMEOUT` plus a
                 // 0..3 jitter.
                 let jitter = crate::sim_rng::u32(0..3) as u16;
-                if let Some(Entity::Projectile(p)) = self
-                    .entities
-                    .get_mut(wasp_id.index() as usize)
-                    .and_then(|s| s.as_mut())
-                {
+                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                     p.projectile.wasp.timeout = DIRECTION_CHANGE_TIMEOUT + jitter;
                 }
             } else {
@@ -277,11 +269,7 @@ impl EngineInner {
                 self.kill_wasp(wasp_id);
                 return;
             }
-        } else if let Some(Entity::Projectile(p)) = self
-            .entities
-            .get_mut(wasp_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        } else if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
             p.projectile.wasp.timeout -= 1;
         }
 
@@ -292,12 +280,7 @@ impl EngineInner {
             Some(Entity::Projectile(p)) => (p.projectile.wasp.stinging, p.projectile.wasp.movement),
             _ => return,
         };
-        if !stinging_now
-            && let Some(Entity::Projectile(p)) = self
-                .entities
-                .get_mut(wasp_id.index() as usize)
-                .and_then(|s| s.as_mut())
-        {
+        if !stinging_now && let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
             let mut pos = p.element.position();
             pos.x += movement.x;
             pos.y += movement.y;
@@ -336,11 +319,7 @@ impl EngineInner {
                     // not the intended STINGING_MIN..=STINGING_MAX range.
                     // Preserved verbatim for parity.
                     let delay = crate::sim_rng::u32(0..STINGING_MAX_TIMEOUT as u32) as u16 + 1;
-                    if let Some(Entity::Projectile(p)) = self
-                        .entities
-                        .get_mut(wasp_id.index() as usize)
-                        .and_then(|s| s.as_mut())
-                    {
+                    if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                         p.projectile.wasp.stinging = true;
                         p.projectile.wasp.timeout = delay;
                     }
@@ -376,11 +355,7 @@ impl EngineInner {
             let dist2 = dx * dx + dy * dy + dz * dz;
             if self.get_entity(victim_id).is_none() || dist2 >= forget * forget {
                 self.clear_wasp_victim_flag(victim_id);
-                if let Some(Entity::Projectile(p)) = self
-                    .entities
-                    .get_mut(wasp_id.index() as usize)
-                    .and_then(|s| s.as_mut())
-                {
+                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                     p.projectile.wasp.victim = None;
                 }
             }
@@ -390,14 +365,10 @@ impl EngineInner {
         // No victim — pick one.
         let new_victim = self.wasp_choose_victim(assets, wasp_id);
         if let Some(vid) = new_victim {
-            if let Some(Entity::Projectile(p)) = self
-                .entities
-                .get_mut(wasp_id.index() as usize)
-                .and_then(|s| s.as_mut())
-            {
+            if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                 p.projectile.wasp.victim = Some(vid);
             }
-            if let Some(Some(v)) = self.entities.get_mut(vid.index() as usize)
+            if let Some(v) = self.entities.get_mut(vid)
                 && let Some(npc) = v.npc_data_mut()
             {
                 npc.wasp_victim = true;
@@ -497,7 +468,7 @@ impl EngineInner {
 
         // VIPs say `VipWaspsNo` instead of being targeted.
         for vid in vip_remarks {
-            if let Some(Some(entity)) = self.entities.get_mut(vid.index() as usize)
+            if let Some(entity) = self.entities.get_mut(vid)
                 && let Some(base) = entity.ai_controller_mut()
             {
                 base.say(crate::ai::Remark::VipWaspsNo);
@@ -557,11 +528,7 @@ impl EngineInner {
             let norm = (mv.x * mv.x + mv.y * mv.y + mv.z * mv.z).sqrt();
             if norm == 0.0 {
                 // Degenerate roll: zero movement and bail.
-                if let Some(Entity::Projectile(p)) = self
-                    .entities
-                    .get_mut(wasp_id.index() as usize)
-                    .and_then(|s| s.as_mut())
-                {
+                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                     p.projectile.wasp.movement = WorldVec3D {
                         x: 0.0,
                         y: 0.0,
@@ -658,11 +625,7 @@ impl EngineInner {
                 )
             };
             if clear {
-                if let Some(Entity::Projectile(p)) = self
-                    .entities
-                    .get_mut(wasp_id.index() as usize)
-                    .and_then(|s| s.as_mut())
-                {
+                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                     p.projectile.wasp.movement = mv;
                 }
                 return;
@@ -700,10 +663,7 @@ impl EngineInner {
 
     /// Decrement a nest's `flying_wasp_count`.
     fn wasp_killed(&mut self, nest_id: EntityId) {
-        if let Some(Entity::Projectile(nest)) = self
-            .entities
-            .get_mut(nest_id.index() as usize)
-            .and_then(|s| s.as_mut())
+        if let Some(Entity::Projectile(nest)) = self.entities.get_mut(nest_id)
             && nest.projectile.wasp.flying_wasp_count > 0
         {
             nest.projectile.wasp.flying_wasp_count -= 1;
@@ -712,7 +672,7 @@ impl EngineInner {
 
     /// Clear a soldier's `wasp_victim` flag.
     fn clear_wasp_victim_flag(&mut self, victim_id: EntityId) {
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(victim_id)
             && let Some(npc) = entity.npc_data_mut()
         {
             npc.wasp_victim = false;
@@ -820,7 +780,7 @@ mod tests {
 
             let wasp_count = engine
                 .entities
-                .iter()
+                .iter_slots()
                 .filter(|slot| {
                     matches!(
                         slot,
@@ -940,7 +900,7 @@ mod tests {
             // At least one wasp should point back at that soldier.
             let targeting = engine
                 .entities
-                .iter()
+                .iter_slots()
                 .filter(|slot| {
                     matches!(
                         slot,

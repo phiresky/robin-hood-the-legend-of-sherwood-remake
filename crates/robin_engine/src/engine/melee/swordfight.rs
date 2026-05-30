@@ -28,12 +28,12 @@ impl EngineInner {
     /// they need access to `&mut self` and the asset profile manager
     /// that this helper, scoped over the entity slice, can't reach.
     pub(super) fn add_opponent(
-        entities: &mut [Option<Entity>],
+        entities: &mut crate::entities::Entities,
         entity_id: EntityId,
         opponent_id: EntityId,
         jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
-        let Some(Some(entity)) = entities.get_mut(entity_id.index() as usize) else {
+        let Some(entity) = entities.get_mut(entity_id) else {
             return false;
         };
         let Some(human) = entity.human_data_mut() else {
@@ -61,11 +61,11 @@ impl EngineInner {
 
     /// Remove `opponent` from `entity`'s opponent list.
     pub(super) fn remove_opponent(
-        entities: &mut [Option<Entity>],
+        entities: &mut crate::entities::Entities,
         entity_id: EntityId,
         opponent_id: EntityId,
     ) {
-        if let Some(Some(entity)) = entities.get_mut(entity_id.index() as usize)
+        if let Some(entity) = entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
             && let Some(pos) = human.opponents.iter().position(|&id| id == opponent_id)
         {
@@ -236,7 +236,7 @@ impl EngineInner {
 
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 if human.opponent_jump_lines.len() < human.opponents.len() {
@@ -251,7 +251,7 @@ impl EngineInner {
             // Mirror onto the opponent's slot for `entity_id`.
             // Use a soft path here — opponent's list may legitimately
             // have removed the entry between snapshot and write-back.
-            if let Some(Some(entity)) = self.entities.get_mut(opp_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(opp_id)
                 && let Some(human) = entity.human_data_mut()
                 && let Some(pos) = human.opponents.iter().position(|&id| id == entity_id)
             {
@@ -356,7 +356,7 @@ impl EngineInner {
         };
 
         if new_principal != 0 {
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.opponents.swap(0, new_principal);
@@ -381,7 +381,7 @@ impl EngineInner {
         new_opponent_id: EntityId,
     ) {
         let found = {
-            let Some(Some(entity)) = self.entities.get(entity_id.index() as usize) else {
+            let Some(entity) = self.entities.get(entity_id) else {
                 return;
             };
             let Some(human) = entity.human_data() else {
@@ -392,7 +392,7 @@ impl EngineInner {
 
         if let Some(idx) = found {
             // Swap to front — makes this opponent the principal.
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.opponents.swap(0, idx);
@@ -509,7 +509,7 @@ impl EngineInner {
         }
 
         // Cancel any pending AI bow shot.
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(initiator.index() as usize)
+        if let Some(Entity::Soldier(s)) = self.entities.get_mut(initiator)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
             ai.pending_shoot_target = None;
@@ -523,26 +523,19 @@ impl EngineInner {
         // opponent in their pre-swordfight state.
         let opponent_was_swordfighting = self
             .entities
-            .get(opponent.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(opponent)
             .and_then(|e| e.human_data())
             .map(|h| !h.opponents.is_empty())
             .unwrap_or(false);
         if !opponent_was_swordfighting {
             self.stop_owner(opponent, crate::sequence::SequencePriority::Preference);
             // Synchronous Think on the opponent if they're a soldier.
-            let is_soldier = matches!(
-                self.entities
-                    .get(opponent.index() as usize)
-                    .and_then(|s| s.as_ref()),
-                Some(Entity::Soldier(_))
-            );
+            let is_soldier = matches!(self.entities.get(opponent), Some(Entity::Soldier(_)));
             if is_soldier {
                 let ctx = {
                     let entity = self
                         .entities
-                        .get(opponent.index() as usize)
-                        .and_then(|s| s.as_ref())
+                        .get(opponent)
                         .expect("opponent existence checked above");
                     crate::engine::ai::build_ai_context_from_entity(
                         entity,
@@ -588,8 +581,7 @@ impl EngineInner {
 
         let already_opponent = self
             .entities
-            .get(initiator.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(initiator)
             .and_then(|e| e.human_data())
             .map(|h| h.opponents.contains(&opponent))
             .unwrap_or(false);
@@ -603,14 +595,8 @@ impl EngineInner {
             // different-sector elevation.
             {
                 let (elev_a, elev_b, sector_a, sector_b) = {
-                    let entity_a = self
-                        .entities
-                        .get(initiator.index() as usize)
-                        .and_then(|s| s.as_ref());
-                    let entity_b = self
-                        .entities
-                        .get(opponent.index() as usize)
-                        .and_then(|s| s.as_ref());
+                    let entity_a = self.entities.get(initiator);
+                    let entity_b = self.entities.get(opponent);
                     let (Some(ea), Some(eb)) = (entity_a, entity_b) else {
                         return false;
                     };
@@ -639,16 +625,14 @@ impl EngineInner {
                 let dist = entity_distance(&self.entities, initiator, opponent);
                 let uber_a = self
                     .entities
-                    .get(initiator.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(initiator)
                     .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
                     .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
                     .map(|p| p.distance[3] as f32)
                     .unwrap_or(70.0);
                 let uber_b = self
                     .entities
-                    .get(opponent.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(opponent)
                     .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
                     .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
                     .map(|p| p.distance[3] as f32)
@@ -699,8 +683,7 @@ impl EngineInner {
             if sword_hurted {
                 let initiator_opp_count = self
                     .entities
-                    .get(initiator.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(initiator)
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.len())
                     .unwrap_or(0);
@@ -712,16 +695,14 @@ impl EngineInner {
                 // opponent has >1 opponents, don't pile in.
                 let principal_opp_id = self
                     .entities
-                    .get(opponent.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(opponent)
                     .and_then(|e| e.human_data())
                     .and_then(|h| h.opponents.first().copied());
 
                 if let Some(principal_id) = principal_opp_id {
                     let principal_opp_count = self
                         .entities
-                        .get(principal_id.index() as usize)
-                        .and_then(|s| s.as_ref())
+                        .get(principal_id)
                         .and_then(|e| e.human_data())
                         .map(|h| h.opponents.len())
                         .unwrap_or(0);
@@ -734,8 +715,7 @@ impl EngineInner {
             // Don't enter swordfight with a charging knight.
             let opponent_is_charging_rider = self
                 .entities
-                .get(opponent.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(opponent)
                 .map(|e| {
                     e.soldier_data().map(|s| s.rider).unwrap_or(false)
                         && e.actor_data()
@@ -749,7 +729,7 @@ impl EngineInner {
         }
 
         // Clear step-back flag on swordfight entry.
-        if let Some(Some(entity)) = self.entities.get_mut(initiator.index() as usize)
+        if let Some(entity) = self.entities.get_mut(initiator)
             && let Some(hd) = entity.human_data_mut()
         {
             hd.last_motion_was_step_back_in_combat = false;
@@ -758,8 +738,7 @@ impl EngineInner {
         // Multi-opponent purging.
         let opponent_is_swordfighting = self
             .entities
-            .get(opponent.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(opponent)
             .and_then(|e| e.human_data())
             .map(|h| !h.opponents.is_empty())
             .unwrap_or(false);
@@ -791,8 +770,7 @@ impl EngineInner {
             // break those fights to make room for the new 1-on-1.
             let opp_opponents: Vec<EntityId> = self
                 .entities
-                .get(opponent.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(opponent)
                 .and_then(|e| e.human_data())
                 .map(|h| h.opponents.clone())
                 .unwrap_or_default();
@@ -800,8 +778,7 @@ impl EngineInner {
             for ally_id in &opp_opponents {
                 let ally_opp_count = self
                     .entities
-                    .get(ally_id.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(*ally_id)
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.len())
                     .unwrap_or(0);
@@ -815,15 +792,13 @@ impl EngineInner {
             // opponents from the royalist side.
             let initiator_has_opps = self
                 .entities
-                .get(initiator.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(initiator)
                 .and_then(|e| e.human_data())
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
             let opponent_has_opps = self
                 .entities
-                .get(opponent.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(opponent)
                 .and_then(|e| e.human_data())
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
@@ -838,8 +813,7 @@ impl EngineInner {
 
                 let purge_opponents: Vec<EntityId> = self
                     .entities
-                    .get(human_to_purge.index() as usize)
-                    .and_then(|s| s.as_ref())
+                    .get(human_to_purge)
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.clone())
                     .unwrap_or_default();
@@ -880,14 +854,12 @@ impl EngineInner {
         // Pre-compute shield bearer status and positions before mutable borrow.
         let initiator_is_shield_bearer = self
             .entities
-            .get(initiator.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(initiator)
             .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
             .unwrap_or(false);
         let opponent_is_shield_bearer = self
             .entities
-            .get(opponent.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(opponent)
             .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
             .unwrap_or(false);
         let initiator_pos = self
@@ -906,15 +878,13 @@ impl EngineInner {
         // in-progress walk-away / strafe during combat.
         let initiator_fresh = self
             .entities
-            .get(initiator.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(initiator)
             .and_then(|e| e.actor_data())
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
             .unwrap_or(true);
         let opponent_fresh = self
             .entities
-            .get(opponent.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(opponent)
             .and_then(|e| e.actor_data())
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
             .unwrap_or(true);
@@ -954,7 +924,7 @@ impl EngineInner {
                 initiator_pos,
             ),
         ] {
-            if let Some(Some(entity)) = self.entities.get_mut(me.index() as usize) {
+            if let Some(entity) = self.entities.get_mut(me) {
                 let mut raised_sword = false;
                 if let Some(actor) = entity.actor_data_mut()
                     && !actor.action_state.is_sword()
@@ -1036,8 +1006,7 @@ impl EngineInner {
         // Collect opponent list first to avoid borrow issues
         let opponents: Vec<EntityId> = self
             .entities
-            .get(entity_id.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(entity_id)
             .and_then(|e| e.human_data())
             .map(|h| h.opponents.clone())
             .unwrap_or_default();
@@ -1057,76 +1026,74 @@ impl EngineInner {
             // target.
             let opp_count = self
                 .entities
-                .get(opp_id.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(*opp_id)
                 .and_then(|e| e.human_data())
                 .map(|h| h.opponents.len())
                 .unwrap_or(0);
             if opp_count == 0 {
-                let pending_order =
-                    if let Some(Some(entity)) = self.entities.get_mut(opp_id.index() as usize) {
-                        let order_type = if let Some(actor) = entity.actor_data_mut() {
-                            if actor.action_state.is_sword() {
-                                // Walking-animation swap: if
-                                // mid-stride with sword, keep
-                                // walking but switch to non-sword
-                                // animation.
-                                match actor.action_state {
-                                    ActionState::MovingSword => {
-                                        actor.action_state = ActionState::Moving;
-                                    }
-                                    ActionState::MovingFastSword => {
-                                        actor.action_state = ActionState::MovingFast;
-                                    }
-                                    _ => {
-                                        actor.action_state = ActionState::Waiting;
-                                    }
+                let pending_order = if let Some(entity) = self.entities.get_mut(*opp_id) {
+                    let order_type = if let Some(actor) = entity.actor_data_mut() {
+                        if actor.action_state.is_sword() {
+                            // Walking-animation swap: if
+                            // mid-stride with sword, keep
+                            // walking but switch to non-sword
+                            // animation.
+                            match actor.action_state {
+                                ActionState::MovingSword => {
+                                    actor.action_state = ActionState::Moving;
                                 }
-                                // Any residual strike state must go; otherwise
-                                // tick_melee_strikes keeps driving the sprite
-                                // on the stale strike animation each frame, and
-                                // the idle / walking anim in animation.rs /
-                                // tick_entity_movement never runs.  The visible
-                                // symptom is Robin freezing on one frame of a
-                                // combat animation after combat ends.
-                                actor.active_melee.clear();
-                                // Queue lowering-sword transition animation.
-                                Some(crate::order::OrderType::TransitionLoweringSword)
-                            } else if actor.action_state.is_shield() {
-                                // Shield bearer leaving combat: lower shield.
-                                match actor.action_state {
-                                    ActionState::MovingShield => {
-                                        actor.action_state = ActionState::Moving;
-                                    }
-                                    _ => {
-                                        actor.action_state = ActionState::Waiting;
-                                    }
+                                ActionState::MovingFastSword => {
+                                    actor.action_state = ActionState::MovingFast;
                                 }
-                                actor.shield_face_point = None;
-                                Some(crate::order::OrderType::LoweringShield)
-                            } else {
-                                None
+                                _ => {
+                                    actor.action_state = ActionState::Waiting;
+                                }
                             }
+                            // Any residual strike state must go; otherwise
+                            // tick_melee_strikes keeps driving the sprite
+                            // on the stale strike animation each frame, and
+                            // the idle / walking anim in animation.rs /
+                            // tick_entity_movement never runs.  The visible
+                            // symptom is Robin freezing on one frame of a
+                            // combat animation after combat ends.
+                            actor.active_melee.clear();
+                            // Queue lowering-sword transition animation.
+                            Some(crate::order::OrderType::TransitionLoweringSword)
+                        } else if actor.action_state.is_shield() {
+                            // Shield bearer leaving combat: lower shield.
+                            match actor.action_state {
+                                ActionState::MovingShield => {
+                                    actor.action_state = ActionState::Moving;
+                                }
+                                _ => {
+                                    actor.action_state = ActionState::Waiting;
+                                }
+                            }
+                            actor.shield_face_point = None;
+                            Some(crate::order::OrderType::LoweringShield)
                         } else {
                             None
-                        };
-                        // Re-enable PC actions and clear melee target
-                        // for orphaned PCs.  `opp_count == 0` means
-                        // this PC's opponents list is empty, so
-                        // `is_swordfighting() == false`.
-                        // `enable_all_actions_temp` honours the
-                        // playable guard and restores `current_action`
-                        // from `saved_action` so the PC re-picks the
-                        // action it had before entering the
-                        // swordfight.
-                        if let Some(pc) = entity.pc_data_mut() {
-                            pc.melee_target = None;
-                            pc.enable_all_actions_temp(false);
                         }
-                        order_type
                     } else {
                         None
                     };
+                    // Re-enable PC actions and clear melee target
+                    // for orphaned PCs.  `opp_count == 0` means
+                    // this PC's opponents list is empty, so
+                    // `is_swordfighting() == false`.
+                    // `enable_all_actions_temp` honours the
+                    // playable guard and restores `current_action`
+                    // from `saved_action` so the PC re-picks the
+                    // action it had before entering the
+                    // swordfight.
+                    if let Some(pc) = entity.pc_data_mut() {
+                        pc.melee_target = None;
+                        pc.enable_all_actions_temp(false);
+                    }
+                    order_type
+                } else {
+                    None
+                };
                 if let Some(ot) = pending_order {
                     let id = self.alloc_order_id();
                     self.launch_single_order_sequence_stamped(
@@ -1182,61 +1149,60 @@ impl EngineInner {
         // "pending_order_2" duplicate of this block was dead work —
         // after the first pass set the action state to Waiting, the
         // second pass's `is_sword`/`is_shield` checks always failed.
-        let pending_order_self =
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize) {
-                let order_type = if !entity_is_dead {
-                    if let Some(actor) = entity.actor_data_mut() {
-                        if actor.action_state.is_sword() {
-                            // Walking animation swap: keep moving if mid-stride.
-                            match actor.action_state {
-                                ActionState::MovingSword => {
-                                    actor.action_state = ActionState::Moving;
-                                }
-                                ActionState::MovingFastSword => {
-                                    actor.action_state = ActionState::MovingFast;
-                                }
-                                _ => {
-                                    actor.action_state = ActionState::Waiting;
-                                }
+        let pending_order_self = if let Some(entity) = self.entities.get_mut(entity_id) {
+            let order_type = if !entity_is_dead {
+                if let Some(actor) = entity.actor_data_mut() {
+                    if actor.action_state.is_sword() {
+                        // Walking animation swap: keep moving if mid-stride.
+                        match actor.action_state {
+                            ActionState::MovingSword => {
+                                actor.action_state = ActionState::Moving;
                             }
-                            Some(crate::order::OrderType::TransitionLoweringSword)
-                        } else if actor.action_state.is_shield() {
-                            match actor.action_state {
-                                ActionState::MovingShield => {
-                                    actor.action_state = ActionState::Moving;
-                                }
-                                _ => {
-                                    actor.action_state = ActionState::Waiting;
-                                }
+                            ActionState::MovingFastSword => {
+                                actor.action_state = ActionState::MovingFast;
                             }
-                            actor.shield_face_point = None;
-                            Some(crate::order::OrderType::LoweringShield)
-                        } else {
-                            None
+                            _ => {
+                                actor.action_state = ActionState::Waiting;
+                            }
                         }
+                        Some(crate::order::OrderType::TransitionLoweringSword)
+                    } else if actor.action_state.is_shield() {
+                        match actor.action_state {
+                            ActionState::MovingShield => {
+                                actor.action_state = ActionState::Moving;
+                            }
+                            _ => {
+                                actor.action_state = ActionState::Waiting;
+                            }
+                        }
+                        actor.shield_face_point = None;
+                        Some(crate::order::OrderType::LoweringShield)
                     } else {
                         None
                     }
                 } else {
                     None
-                };
-                if let Some(human) = entity.human_data_mut() {
-                    human.opponents.clear();
-                    human.opponent_jump_lines.clear();
                 }
-                if !entity_is_dead && let Some(pc) = entity.pc_data_mut() {
-                    pc.melee_target = None;
-                    // `human.opponents` was cleared just above so
-                    // `is_swordfighting() == false`;
-                    // `enable_all_actions_temp` restores
-                    // `current_action` from `saved_action` if the
-                    // saved slot is still permitted.
-                    pc.enable_all_actions_temp(false);
-                }
-                order_type
             } else {
                 None
             };
+            if let Some(human) = entity.human_data_mut() {
+                human.opponents.clear();
+                human.opponent_jump_lines.clear();
+            }
+            if !entity_is_dead && let Some(pc) = entity.pc_data_mut() {
+                pc.melee_target = None;
+                // `human.opponents` was cleared just above so
+                // `is_swordfighting() == false`;
+                // `enable_all_actions_temp` restores
+                // `current_action` from `saved_action` if the
+                // saved slot is still permitted.
+                pc.enable_all_actions_temp(false);
+            }
+            order_type
+        } else {
+            None
+        };
         if let Some(ot) = pending_order_self {
             let id = self.alloc_order_id();
             self.launch_single_order_sequence_stamped(
@@ -1249,14 +1215,7 @@ impl EngineInner {
         // When a non-dead soldier voluntarily quits a swordfight,
         // immediately pump EventQuitSwordfight into its own AI so it
         // can re-plan, rather than waiting for the next AI tick.
-        if !entity_is_dead
-            && matches!(
-                self.entities
-                    .get(entity_id.index() as usize)
-                    .and_then(|s| s.as_ref()),
-                Some(Entity::Soldier(_))
-            )
-        {
+        if !entity_is_dead && matches!(self.entities.get(entity_id), Some(Entity::Soldier(_))) {
             self.dispatch_ai_stimulus(
                 entity_id,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
@@ -1266,11 +1225,11 @@ impl EngineInner {
 
     /// Set the melee target on a PC entity.
     pub(super) fn set_pc_melee_target(
-        entities: &mut [Option<Entity>],
+        entities: &mut crate::entities::Entities,
         pc_id: EntityId,
         opponent_id: EntityId,
     ) {
-        if let Some(Some(entity)) = entities.get_mut(pc_id.index() as usize)
+        if let Some(entity) = entities.get_mut(pc_id)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.melee_target = Some(opponent_id);
@@ -1286,11 +1245,7 @@ impl EngineInner {
         entity_id: EntityId,
     ) {
         let (opponents, uber_range) = {
-            let entity = match self
-                .entities
-                .get(entity_id.index() as usize)
-                .and_then(|s| s.as_ref())
-            {
+            let entity = match self.entities.get(entity_id) {
                 Some(e) => e,
                 None => return,
             };
@@ -1310,8 +1265,7 @@ impl EngineInner {
             let dist = entity_distance(&self.entities, entity_id, opp_id);
             let opp_uber = self
                 .entities
-                .get(opp_id.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(opp_id)
                 .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
                 .map(|p| p.distance[3] as f32)
@@ -1340,8 +1294,7 @@ impl EngineInner {
         // `choose_principal_opponent` when two or more remain.
         let remaining = self
             .entities
-            .get(entity_id.index() as usize)
-            .and_then(|s| s.as_ref())
+            .get(entity_id)
             .and_then(|e| e.human_data())
             .map(|h| h.opponents.len())
             .unwrap_or(0);
@@ -1480,7 +1433,7 @@ impl EngineInner {
         tracing::info!(entity = ?pc_id, "PC coma save activated — amulet consumed");
 
         // Set life to 5, max concussion, consume amulet
-        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) {
+        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
             pc.pc.life_points = 5;
             pc.human.concussion_of_the_brain = combat::CONCUSSION_MAX;
             pc.human.unconscious = true;
@@ -1504,7 +1457,7 @@ impl EngineInner {
             self.abort_quick_action(pc_id, slot);
         }
         // Close eyes / stop combat
-        if let Some(Some(entity)) = self.entities.get_mut(pc_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(pc_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.action_state = ActionState::Waiting;

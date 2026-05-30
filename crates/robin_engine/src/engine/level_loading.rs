@@ -205,11 +205,7 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         id: crate::element::EntityId,
     ) {
-        let Some(entity) = self
-            .entities
-            .get(id.index() as usize)
-            .and_then(|e| e.as_ref())
-        else {
+        let Some(entity) = self.entities.get(id) else {
             return;
         };
         let object_type = match entity {
@@ -230,7 +226,7 @@ impl EngineInner {
             return;
         };
         let sprite = prototype.clone();
-        if let Some(Some(entity)) = self.entities.get_mut(id.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(id) {
             entity.element_data_mut().sprite = sprite;
         }
     }
@@ -2001,7 +1997,7 @@ impl EngineInner {
             // `ai.base.me` and `owner_entity_id` so trace logs, filter-event
             // dispatch, and any `self.me`/`self.owner_entity_id` reads see
             // the real id instead of 0.
-            if let Some(Some(e)) = self.entities.get_mut(eid.index() as usize)
+            if let Some(e) = self.entities.get_mut(eid)
                 && let Some(ai) = e.ai_controller_mut()
             {
                 ai.me = eid.index();
@@ -3380,7 +3376,11 @@ impl EngineInner {
         for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
             let first_door = building_first_door_info.get(bld_idx).copied();
             for &elem_idx in &tenants.tenant_element_indices {
-                let Some(Some(entity)) = self.entities.get_mut(elem_idx as usize) else {
+                let Some(entity) = self
+                    .entities
+                    .slot_mut(elem_idx as usize)
+                    .and_then(|slot| slot.as_mut())
+                else {
                     continue;
                 };
                 // Only humans participate in InitOccupant; warn and skip
@@ -5491,8 +5491,8 @@ impl EngineInner {
             let captured = per_sector_occupants.entry(prod_type).or_default();
 
             for &elem_idx in &zone.occupant_indices {
-                let slot = self.entities.get(elem_idx.index() as usize);
-                let Some(Some(entity)) = slot else { continue };
+                let slot = self.entities.get(elem_idx);
+                let Some(entity) = slot else { continue };
                 let crate::element::Entity::Pc(pc) = entity else {
                     continue;
                 };
@@ -5550,7 +5550,7 @@ impl EngineInner {
         for sector in &mut campaign.production_sectors {
             // Bonus-amount branch runs for MAKE_* / any sector with an
             // associated action; no-op for TRAIN/HEAL/RELIC.
-            sector.get_amount_from_current_mission(entities_snapshot);
+            sector.get_amount_from_current_mission(entities_snapshot.slots());
 
             // Replace occupants with the fresh snapshot: sectors
             // whose type has no zone in the new map (or whose zone
@@ -5923,7 +5923,7 @@ impl EngineInner {
                     }
                 };
 
-                let Some(entity_idx) = self.entities.iter().position(|slot| {
+                let Some(entity_idx) = self.entities.iter_slots().position(|slot| {
                     matches!(
                         slot,
                         Some(crate::element::Entity::Pc(pc)) if pc.pc.profile_index == profile_idx
@@ -5947,8 +5947,10 @@ impl EngineInner {
                 // material from the SECTOR_SOUND polygons at the current
                 // map position (or `default_material` when none contain
                 // the point).
-                if let Some(Some(crate::element::Entity::Pc(pc))) =
-                    self.entities.get_mut(entity_idx)
+                if let Some(crate::element::Entity::Pc(pc)) = self
+                    .entities
+                    .slot_mut(entity_idx)
+                    .and_then(|slot| slot.as_mut())
                 {
                     pc.element.set_position_map(crate::coordinates::MapPoint {
                         x: occupant.x,
@@ -5980,8 +5982,10 @@ impl EngineInner {
                     ),
                     occupant_obstacle_opt,
                 );
-                if let Some(Some(crate::element::Entity::Pc(pc))) =
-                    self.entities.get_mut(entity_idx)
+                if let Some(crate::element::Entity::Pc(pc)) = self
+                    .entities
+                    .slot_mut(entity_idx)
+                    .and_then(|slot| slot.as_mut())
                 {
                     pc.element.update_grid_cell();
                 }
@@ -6018,8 +6022,10 @@ impl EngineInner {
                 }
                 if plan.heal_gain > 0 {
                     let amount = plan.heal_gain.min(i16::MAX as u16) as i16;
-                    if let Some(Some(crate::element::Entity::Pc(pc))) =
-                        self.entities.get_mut(entity_idx)
+                    if let Some(crate::element::Entity::Pc(pc)) = self
+                        .entities
+                        .slot_mut(entity_idx)
+                        .and_then(|slot| slot.as_mut())
                     {
                         crate::pc_status::heal(&mut pc.pc.life_points, amount, false);
                     }

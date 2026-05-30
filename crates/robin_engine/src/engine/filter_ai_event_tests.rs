@@ -350,8 +350,10 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     // Snapshot AI state pre-dispatch.
     let sensitive_idx =
         crate::natives::GameHost::actor_index(sensitive_handle).expect("valid test handle");
-    let before_state = engine.entities[sensitive_idx]
-        .as_ref()
+    let before_state = engine
+        .entities
+        .slot(sensitive_idx)
+        .and_then(|slot| slot.as_ref())
         .and_then(|e| e.ai_controller())
         .map(|ai| (ai.current_state, ai.current_substate));
 
@@ -371,8 +373,10 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     assert!(!handled, "filter blocked → dispatch returns false");
 
     // State should be unchanged (think() never ran).
-    let after_state = engine.entities[sensitive_idx]
-        .as_ref()
+    let after_state = engine
+        .entities
+        .slot(sensitive_idx)
+        .and_then(|slot| slot.as_ref())
         .and_then(|e| e.ai_controller())
         .map(|ai| (ai.current_state, ai.current_substate));
     assert_eq!(

@@ -46,11 +46,7 @@ impl EngineInner {
             crate::coordinates::MapPoint::from_geo(landing_screen),
             self.sight_obstacles(assets),
         );
-        if let Some(entity) = self
-            .entities
-            .get_mut(projectile_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(entity) = self.entities.get_mut(projectile_id) {
             let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 resolution.obstacle_index,
                 assets.static_sight_obstacles.as_slice(),
@@ -232,7 +228,8 @@ impl EngineInner {
         if self.freeze_all {
             return;
         }
-        let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
+        let events =
+            bow_shot::tick_bow_shots(self.entities.slots_mut(), &mut self.sequence_manager);
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(
@@ -549,7 +546,7 @@ impl EngineInner {
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
     fn start_arrow_ricochet(&mut self, arrow_id: EntityId) {
-        let Some(Some(entity)) = self.entities.get_mut(arrow_id.index() as usize) else {
+        let Some(entity) = self.entities.get_mut(arrow_id) else {
             return;
         };
         let Entity::Projectile(proj) = entity else {
@@ -820,7 +817,7 @@ impl EngineInner {
     /// `pending_refill_bow_ammo` restocks).
     fn decrement_bow_ammo(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
         // Soldier branch — saturating sub on the live NPC field.
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(shooter_id.index() as usize) {
+        if let Some(Entity::Soldier(s)) = self.entities.get_mut(shooter_id) {
             s.npc.number_of_arrows = s.npc.number_of_arrows.saturating_sub(1);
             tracing::debug!(
                 shooter = ?shooter_id,
@@ -1590,11 +1587,7 @@ impl EngineInner {
                     Some(result) => {
                         // Partial pickup — write the residual quantity
                         // back to the world bonus and leave it active.
-                        match self
-                            .entities
-                            .get_mut(bonus_id.index() as usize)
-                            .and_then(|s| s.as_mut())
-                        {
+                        match self.entities.get_mut(bonus_id) {
                             Some(Entity::Bonus(b)) => {
                                 b.object.quantity = result.remainder;
                             }
@@ -1617,11 +1610,7 @@ impl EngineInner {
             // those (active already false), but it still flips
             // `taken` for non-purse projectile pickups (e.g. loose
             // coins or non-burst purses).
-            match self
-                .entities
-                .get_mut(bonus_id.index() as usize)
-                .and_then(|s| s.as_mut())
-            {
+            match self.entities.get_mut(bonus_id) {
                 Some(Entity::Bonus(bonus)) => {
                     bonus.object.taken = true;
                     if remove {
@@ -1866,7 +1855,7 @@ impl EngineInner {
             dynamic_obstacles: &self.dynamic_sight_obstacles,
             static_active: &self.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrows(&mut self.entities, sight_obstacles);
+        let results = bow_shot::tick_arrows(self.entities.slots_mut(), sight_obstacles);
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -1880,7 +1869,7 @@ impl EngineInner {
             dynamic_obstacles: &self.dynamic_sight_obstacles,
             static_active: &self.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrow(&mut self.entities, sight_obstacles, arrow_id);
+        let results = bow_shot::tick_arrow(self.entities.slots_mut(), sight_obstacles, arrow_id);
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -2039,8 +2028,8 @@ impl EngineInner {
                                 // projectile for despawn; flip it back to
                                 // flying and skip the sound / despawn
                                 // sections below.
-                                if let Some(Some(Entity::Projectile(p))) =
-                                    self.entities.get_mut(result.arrow.index() as usize)
+                                if let Some(Entity::Projectile(p)) =
+                                    self.entities.get_mut(result.arrow)
                                 {
                                     p.projectile.flying = true;
                                 }
@@ -2175,8 +2164,7 @@ impl EngineInner {
         projectile: EntityId,
         old_pos: crate::coordinates::WorldPoint3D,
     ) {
-        let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.index() as usize)
-        else {
+        let Some(Entity::Projectile(p)) = self.entities.get_mut(projectile) else {
             tracing::warn!(
                 ?projectile,
                 "projectile human-hit rewind skipped: projectile entity missing"
@@ -2306,7 +2294,7 @@ impl EngineInner {
     /// Set the 1500-frame apple-smell counter on a soldier.  Titbit
     /// creation is driven event-free by `sync_apple_smell_titbits`.
     fn set_soldier_apple_smell(&mut self, victim: EntityId) {
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(victim.index() as usize) {
+        if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim) {
             s.soldier.apple_smell = APPLE_SMELL_DURATION;
         }
     }
@@ -2334,8 +2322,7 @@ impl EngineInner {
         let soldier_ids: Vec<_> = self.entities.soldier_ids().collect();
         for npc_id in soldier_ids {
             let target_handle = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
-                else {
+                let Some(Entity::Soldier(s)) = self.entities.get(npc_id) else {
                     continue;
                 };
                 let Some(ai) = s.npc.ai_brain.base() else {
@@ -2367,7 +2354,7 @@ impl EngineInner {
             let dx = target_pos.x - my_pos.x;
             let dy = target_pos.y - my_pos.y;
             let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize) {
+            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
                 s.element.set_direction_instantly(sector);
             }
         }
@@ -2560,9 +2547,7 @@ impl EngineInner {
         // doesn't need a stored flag because the side-effects fire in
         // the same tick the landing is detected.
         let is_water = matches!(material, crate::sound_cache::Material::Water);
-        if !is_water
-            && let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(arrow.index() as usize)
-        {
+        if !is_water && let Some(Entity::Projectile(p)) = self.entities.get_mut(arrow) {
             p.projectile.disappear = true;
         }
 
@@ -2780,7 +2765,7 @@ impl EngineInner {
             return;
         }
         let results = crate::abilities::tick_abilities(
-            &mut self.entities,
+            self.entities.slots_mut(),
             &self.sequence_manager,
             &mut self.next_order_id,
         );

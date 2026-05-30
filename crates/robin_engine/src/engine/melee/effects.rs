@@ -108,7 +108,7 @@ impl EngineInner {
             }
             // Clear the marker so the actor isn't credited with an
             // occupancy slot they no longer hold.
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(victim_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_lift = None;
@@ -123,7 +123,7 @@ impl EngineInner {
         // ActiveFlight is independent of animation state and is set
         // unconditionally so the victim is carried to the ladder's low
         // entry point.
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(victim_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             {
@@ -222,7 +222,7 @@ impl EngineInner {
 
         // Side-state cleanup: clear carrier/carried pointers and
         // unfreeze the carried actor before the order insertion.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(owner) {
             match posture {
                 Posture::OnShoulders => {
                     if let Some(human) = entity.human_data_mut() {
@@ -374,7 +374,7 @@ impl EngineInner {
         };
 
         // Side-state cleanup before queuing the animation.
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(victim_id) {
             match posture {
                 Posture::OnShoulders => {
                     if let Some(human) = entity.human_data_mut() {
@@ -650,7 +650,7 @@ impl EngineInner {
             let flight_sector =
                 crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
             let facing = (flight_sector + 8) % 16;
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
+            if let Some(entity) = self.entities.get_mut(victim_id) {
                 entity.element_data_mut().set_direction_instantly(facing);
             }
         }
@@ -796,7 +796,7 @@ impl EngineInner {
             let inc_x = total_dx / flight_frames as f32;
             let inc_y = total_dy / flight_frames as f32;
             let inc_z = total_dz / flight_frames as f32;
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(victim_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_flight = Some(crate::element::ActiveFlight {
@@ -880,26 +880,25 @@ impl EngineInner {
             // centralised in `set_concussion`.
             if is_dead {
                 // Simplified death handling for push — sets posture, quits swordfight
-                let is_pc =
-                    if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
-                        entity.set_posture(Posture::Dead);
-                        if let Some(actor) = entity.actor_data_mut() {
-                            if actor.action_state.is_sword()
-                                || actor.action_state == ActionState::Menacing
-                            {
-                                actor.action_state = ActionState::Waiting;
-                            }
-                            actor.active_melee.clear();
-                            actor.clear_path();
+                let is_pc = if let Some(entity) = self.entities.get_mut(victim_id) {
+                    entity.set_posture(Posture::Dead);
+                    if let Some(actor) = entity.actor_data_mut() {
+                        if actor.action_state.is_sword()
+                            || actor.action_state == ActionState::Menacing
+                        {
+                            actor.action_state = ActionState::Waiting;
                         }
-                        if let Some(npc) = entity.npc_data_mut() {
-                            crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
-                            npc.alerted = false;
-                        }
-                        entity.kind().is_pc()
-                    } else {
-                        false
-                    };
+                        actor.active_melee.clear();
+                        actor.clear_path();
+                    }
+                    if let Some(npc) = entity.npc_data_mut() {
+                        crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
+                        npc.alerted = false;
+                    }
+                    entity.kind().is_pc()
+                } else {
+                    false
+                };
                 self.quit_swordfight(assets, victim_id);
                 if is_pc {
                     // Run the PC kill cascade (gang removal, trumpet,
@@ -916,7 +915,7 @@ impl EngineInner {
                 self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, false);
             } else if concussion > STUNNING_THRESHOLD && !posture.is_lying() {
                 // Stumble to lying from concussion
-                if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
+                if let Some(entity) = self.entities.get_mut(victim_id) {
                     entity.set_posture(Posture::Lying);
                 }
             }
@@ -935,25 +934,24 @@ impl EngineInner {
         } else {
             // No falling animation (already lying/dead/carried).
             if is_dead {
-                let is_pc =
-                    if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
-                        if let Some(actor) = entity.actor_data_mut() {
-                            actor.active_melee.clear();
-                            actor.clear_path();
-                        }
-                        if let Some(npc) = entity.npc_data_mut() {
-                            crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
-                            npc.alerted = false;
-                        }
-                        entity.kind().is_pc()
-                    } else {
-                        false
-                    };
+                let is_pc = if let Some(entity) = self.entities.get_mut(victim_id) {
+                    if let Some(actor) = entity.actor_data_mut() {
+                        actor.active_melee.clear();
+                        actor.clear_path();
+                    }
+                    if let Some(npc) = entity.npc_data_mut() {
+                        crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
+                        npc.alerted = false;
+                    }
+                    entity.kind().is_pc()
+                } else {
+                    false
+                };
                 self.quit_swordfight(assets, victim_id);
                 if is_pc {
                     self.apply_pc_kill_cascade(assets, victim_id);
                 }
-                if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
+                if let Some(entity) = self.entities.get_mut(victim_id) {
                     entity.set_posture(Posture::Dead);
                 }
             }
@@ -1134,7 +1132,7 @@ impl EngineInner {
         // on MotionState::Start to install `active_flight` toward the
         // destination (Order doesn't carry the dest separately from
         // `active_flight`'s per-frame increments).
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(entity_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.pending_roll = Some(dest);

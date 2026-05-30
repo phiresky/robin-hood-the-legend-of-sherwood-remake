@@ -1613,11 +1613,11 @@ impl EngineInner {
                 QaReplayCommand::Interaction { target, .. }
                 | QaReplayCommand::ScrollRead { target, .. }
                 | QaReplayCommand::Swordfight { target, .. }
-                | QaReplayCommand::SwordStrike { target, .. } => Some(*target),
+                | QaReplayCommand::SwordStrike { target, .. } => Some(target),
                 _ => None,
             };
             if let Some(target) = target
-                && self.get_entity(target).is_none()
+                && self.get_entity(*target).is_none()
             {
                 return false;
             }
@@ -2940,7 +2940,7 @@ impl EngineInner {
         // Stamp the new danger point on the acting PC so
         // `sync_danger_point_titbits` refreshes the `DangerPoint`
         // titbit next tick.
-        if let Some(Some(entity)) = self.entities.get_mut(actor.index() as usize)
+        if let Some(entity) = self.entities.get_mut(actor)
             && let Some(actor_data) = entity.actor_data_mut()
         {
             actor_data.shield_face_point = Some(danger_point);
@@ -3005,13 +3005,13 @@ impl EngineInner {
         protectee: Option<EntityId>,
     ) {
         if protectee.is_none()
-            && let Some(Some(me)) = self.entities.get_mut(protector_id.index() as usize)
+            && let Some(me) = self.entities.get_mut(protector_id)
             && let Some(pc) = me.pc_data_mut()
         {
             pc.shield_danger_point = crate::coordinates::WorldPoint3D::default();
         }
 
-        if let Some(Some(me)) = self.entities.get_mut(protector_id.index() as usize)
+        if let Some(me) = self.entities.get_mut(protector_id)
             && let Some(pc) = me.pc_data_mut()
         {
             pc.shield_protected = protectee;

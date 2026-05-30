@@ -504,7 +504,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
     // Pull the sprite back out of the rehydrated engine.
     let rehydrated_sprite = rehydrated
         .entities
-        .iter()
+        .iter_slots()
         .flatten()
         .next()
         .expect("one entity")
@@ -1364,14 +1364,14 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         soldier: Default::default(),
     }));
 
-    if let Some(Some(attacker)) = engine.entities.get_mut(attacker_id.index() as usize) {
+    if let Some(attacker) = engine.entities.get_mut(attacker_id) {
         attacker.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = attacker.human_data_mut().unwrap();
         human.opponents.push(defender_id);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    if let Some(Some(defender)) = engine.entities.get_mut(defender_id.index() as usize) {
+    if let Some(defender) = engine.entities.get_mut(defender_id) {
         defender.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         defender
             .human_data_mut()
@@ -1459,7 +1459,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         soldier: Default::default(),
     }));
 
-    if let Some(Some(pc)) = engine.entities.get_mut(pc_id.index() as usize) {
+    if let Some(pc) = engine.entities.get_mut(pc_id) {
         pc.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = pc.human_data_mut().unwrap();
         human.opponents.push(soldier_id);
@@ -1467,7 +1467,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         human.smalltalk_hint = SmalltalkHint::Left;
         human.smalltalk_hint_opponent = Some(soldier_id);
     }
-    if let Some(Some(soldier)) = engine.entities.get_mut(soldier_id.index() as usize) {
+    if let Some(soldier) = engine.entities.get_mut(soldier_id) {
         soldier.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         soldier.human_data_mut().unwrap().opponents.push(pc_id);
     }
@@ -1573,7 +1573,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         soldier: Default::default(),
     }));
 
-    if let Some(Some(hinted)) = engine.entities.get_mut(hinted_id.index() as usize) {
+    if let Some(hinted) = engine.entities.get_mut(hinted_id) {
         hinted.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = hinted.human_data_mut().unwrap();
         human.opponents.push(hinted_opponent_id);
@@ -1582,9 +1582,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         human.smalltalk_hint = SmalltalkHint::Left;
         human.smalltalk_hint_opponent = Some(hinted_opponent_id);
     }
-    if let Some(Some(hinted_opponent)) =
-        engine.entities.get_mut(hinted_opponent_id.index() as usize)
-    {
+    if let Some(hinted_opponent) = engine.entities.get_mut(hinted_opponent_id) {
         hinted_opponent.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         hinted_opponent
             .human_data_mut()
@@ -1592,14 +1590,14 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             .opponents
             .push(hinted_id);
     }
-    if let Some(Some(free_attacker)) = engine.entities.get_mut(free_attacker_id.index() as usize) {
+    if let Some(free_attacker) = engine.entities.get_mut(free_attacker_id) {
         free_attacker.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = free_attacker.human_data_mut().unwrap();
         human.opponents.push(free_defender_id);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    if let Some(Some(free_defender)) = engine.entities.get_mut(free_defender_id.index() as usize) {
+    if let Some(free_defender) = engine.entities.get_mut(free_defender_id) {
         free_defender.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         free_defender
             .human_data_mut()
@@ -1680,12 +1678,12 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         soldier: Default::default(),
     }));
 
-    if let Some(Some(attacker)) = engine.entities.get_mut(attacker_id.index() as usize) {
+    if let Some(attacker) = engine.entities.get_mut(attacker_id) {
         let human = attacker.human_data_mut().unwrap();
         human.opponents.push(defender_id);
         human.smalltalk_initiative = true;
     }
-    if let Some(Some(defender)) = engine.entities.get_mut(defender_id.index() as usize) {
+    if let Some(defender) = engine.entities.get_mut(defender_id) {
         let human = defender.human_data_mut().unwrap();
         human.opponents.push(attacker_id);
         human.smalltalk_initiative = false;
@@ -3136,11 +3134,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     let mut engine = EngineInner::new();
     let killer = engine.add_entity(make_test_soldier(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Lying));
-    if let Some(crate::element::Entity::Soldier(soldier)) = engine
-        .entities
-        .get_mut(victim.index() as usize)
-        .and_then(|s| s.as_mut())
-    {
+    if let Some(crate::element::Entity::Soldier(soldier)) = engine.entities.get_mut(victim) {
         soldier.npc.life_points = 30;
         soldier.soldier.cached_max_life_points = 30;
         soldier.human.unconscious = true;

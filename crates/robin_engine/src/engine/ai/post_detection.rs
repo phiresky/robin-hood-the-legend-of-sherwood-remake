@@ -59,9 +59,7 @@ impl EngineInner {
             .into_iter()
             .zip(viewer_building_sectors)
         {
-            if let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(npc_id.index() as usize)
-            {
+            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) {
                 // `reinitialize_them_list` walks the enemy detectable
                 // list and rebuilds `list_them` from entries with
                 // `seen_now` true.  The dispatch reads the snapshot
@@ -145,7 +143,7 @@ impl EngineInner {
         // `event_view_standard_procedure` (via `face_entity` +
         // `pending_focus`).
         for det in transitions {
-            if let Some(Some(entity)) = self.entities.get_mut(det.enemy.index() as usize)
+            if let Some(entity) = self.entities.get_mut(det.enemy)
                 && entity.element_data().blipped
             {
                 tracing::debug!(
@@ -187,8 +185,7 @@ impl EngineInner {
         for enemy in panic_calls {
             // Look up the soldier's primary target.
             let target_id = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(enemy.index() as usize)
-                else {
+                let Some(Entity::Soldier(s)) = self.entities.get(enemy) else {
                     continue;
                 };
                 s.npc
@@ -203,7 +200,7 @@ impl EngineInner {
             // interrupted by the subsequent combat-sequence launch
             // via priority arbitration (same pattern used by every
             // ability teardown).
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(enemy.index() as usize) {
+            if let Some(Entity::Soldier(s)) = self.entities.get_mut(enemy) {
                 s.actor.active_movement.clear();
                 s.actor.action_state = crate::element::ActionState::WaitingSword;
             }
@@ -212,8 +209,7 @@ impl EngineInner {
             // melee anchor.
             if let Some(target_id) = target_id
                 && target_id.index() != 0
-                && let Some(Some(Entity::Pc(pc))) =
-                    self.entities.get_mut(target_id.index() as usize)
+                && let Some(Entity::Pc(pc)) = self.entities.get_mut(target_id)
             {
                 pc.actor.active_movement.clear();
                 // Don't force the PC into WaitingSword — that's
@@ -250,7 +246,7 @@ impl EngineInner {
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
         let (timer_fires, alerted, target_id, enemy_pos, is_soldier) = {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller() else {
@@ -283,8 +279,7 @@ impl EngineInner {
         // transition into `AttackingSwordfight` so the post-dispatch
         // panic_calls push is gated on this snapshot too.
         let in_swordfight = if is_soldier {
-            let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.index() as usize)
-            else {
+            let Some(Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
                 return;
             };
             soldier.npc.ai_substate() == crate::ai::Substate::AttackingSwordfight
@@ -298,8 +293,7 @@ impl EngineInner {
         // `AiPerTickData` the builder assembles below.
         let face_dir = target_id.and_then(|tid| {
             self.entities
-                .get(tid.index() as usize)
-                .and_then(|s| s.as_ref())
+                .get(tid)
                 .map(|e| e.element_data().position_map())
                 .map(|tp| {
                     crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -319,7 +313,7 @@ impl EngineInner {
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let ctx = {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(npc_id) else {
                 return;
             };
             // Only snap facing when the AI is alerted and has a
@@ -361,7 +355,7 @@ impl EngineInner {
         // Civilians never enter `AttackingSwordfight`, so this check
         // can stay gated on the Soldier-only `enemy_ai()` accessor.
         if !in_swordfight
-            && let Some(Some(entity)) = self.entities.get(npc_id.index() as usize)
+            && let Some(entity) = self.entities.get(npc_id)
             && let Some(ai) = entity.enemy_ai()
             && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
         {
@@ -409,7 +403,7 @@ impl EngineInner {
         scratch: &SimScratch,
     ) {
         let stimuli = {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -423,12 +417,12 @@ impl EngineInner {
         for stimulus in stimuli {
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
-                let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+                let Some(entity) = self.entities.get(npc_id) else {
                     break;
                 };
                 let entity_sector = entity.element_data().sector();
                 let building_sector = self.entity_building_sector(entity_sector);
-                let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+                let Some(entity) = self.entities.get(npc_id) else {
                     break;
                 };
                 let mut ctx = build_ai_context_from_entity(

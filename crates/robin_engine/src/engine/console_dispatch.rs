@@ -218,7 +218,7 @@ impl EngineInner {
                 // Sum quantities of still-active BONUS_BLAZON pickups
                 // left on the map.
                 let mut pending_blazons: i32 = 0;
-                for entity in self.entities.iter().flatten() {
+                for entity in self.entities.iter_slots().flatten() {
                     if !entity.is_bonus() || !entity.element_data().active {
                         continue;
                     }

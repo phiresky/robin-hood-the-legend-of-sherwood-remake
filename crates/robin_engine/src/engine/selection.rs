@@ -377,7 +377,7 @@ impl EngineInner {
         //   wait
         // The hero-speak fires *before* the life write — keep that order so
         // any speech queueing observes the pre-write state.
-        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) {
+        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
             pc.human.concussion_of_the_brain = 0;
             pc.human.unconscious = false;
             pc.element.set_posture(crate::element::Posture::Upright);
@@ -388,7 +388,7 @@ impl EngineInner {
         // Route the life write through `combat::set_life_points` so the
         // clamp + invulnerable + sherwood guards live in one place, even for
         // the heal path. The widget side relies on the per-frame HUD refresh.
-        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) {
+        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
             crate::combat::set_life_points(
                 &mut pc.pc.life_points,
                 50,
@@ -1274,13 +1274,12 @@ impl EngineInner {
 
     /// Look up the profile priority for a PC entity without &self.
     fn pc_priority_static(
-        entities: &[Option<Entity>],
+        entities: &crate::entities::Entities,
         profiles: &crate::profiles::ProfileManager,
         id: EntityId,
     ) -> u16 {
         let profile_idx = entities
-            .get(id.index() as usize)
-            .and_then(|e| e.as_ref())
+            .get(id)
             .and_then(|e| e.pc_data())
             .map(|pc| pc.profile_index);
         let Some(idx) = profile_idx else { return 0 };

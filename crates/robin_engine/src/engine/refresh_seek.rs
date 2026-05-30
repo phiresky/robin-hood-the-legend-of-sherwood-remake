@@ -366,7 +366,7 @@ impl crate::engine::EngineInner {
         // `try_dispatch_move_path` will overwrite both when the new
         // element dispatches, but stamp them here too so a dispatch
         // failure still leaves coherent state.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.last_seek_target_position = new_target_pos;

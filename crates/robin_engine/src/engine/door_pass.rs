@@ -889,7 +889,7 @@ impl EngineInner {
                         .unwrap_or_default();
                     let any_pc_remains = occupants.iter().any(|&h| {
                         crate::natives::GameHost::actor_index(h)
-                            .and_then(|idx| self.entities.get(idx).and_then(|s| s.as_ref()))
+                            .and_then(|idx| self.entities.slot(idx).and_then(|slot| slot.as_ref()))
                             .is_some_and(|e| e.is_pc())
                     });
                     if !any_pc_remains {
@@ -897,7 +897,11 @@ impl EngineInner {
                             let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
                                 continue;
                             };
-                            let Some(Some(occ)) = self.entities.get_mut(occ_idx) else {
+                            let Some(occ) = self
+                                .entities
+                                .slot_mut(occ_idx)
+                                .and_then(|slot| slot.as_mut())
+                            else {
                                 continue;
                             };
                             let elem = occ.element_data_mut();
@@ -1090,7 +1094,11 @@ impl EngineInner {
                     let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
                         continue;
                     };
-                    let Some(Some(occ)) = self.entities.get_mut(occ_idx) else {
+                    let Some(occ) = self
+                        .entities
+                        .slot_mut(occ_idx)
+                        .and_then(|slot| slot.as_mut())
+                    else {
                         continue;
                     };
                     let Some(hd) = occ.human_data() else { continue };

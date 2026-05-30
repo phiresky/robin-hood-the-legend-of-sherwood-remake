@@ -332,7 +332,7 @@ impl EngineInner {
 
         let mut pc_snapshots: Vec<PcSnapshot> = Vec::with_capacity(self.pc_ids.len());
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.index() as usize) else {
+            let Some(Entity::Pc(pc)) = self.entities.get(pc_id) else {
                 continue;
             };
             // `is_able_to_fight` requires alive, but unconscious PCs are
@@ -506,7 +506,7 @@ impl EngineInner {
         // can pick it up.  Stored on the human element so it carries
         // across frames.
         for snap in &pc_snapshots {
-            if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(snap.id.index() as usize) {
+            if let Some(Entity::Pc(pc)) = self.entities.get_mut(snap.id) {
                 pc.actor.last_noise_volume = snap.noise_volume;
             }
         }
@@ -529,7 +529,7 @@ impl EngineInner {
             .unwrap_or(&[]);
         let mut forecasts = std::collections::HashMap::with_capacity(self.pc_ids.len());
         forecasts.extend(self.pc_ids.iter().filter_map(|&pc_id| {
-            let entity = self.entities.get(pc_id.index() as usize)?.as_ref()?;
+            let entity = self.entities.get(pc_id)?;
             let input = extract_forecast_input(entity)?;
             let forecast = crate::ai::forecast_destination_for_ia(
                 &input,
@@ -933,8 +933,7 @@ impl EngineInner {
             // (outside snapshots) stay fresh.
             for snap in &soldier_snapshots {
                 let npc_id = snap.id;
-                if let Some(Some(Entity::Soldier(s))) =
-                    self.entities.get_mut(npc_id.index() as usize)
+                if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
                     && let Some(enemy_ai) = s.npc.ai_brain.enemy_mut()
                 {
                     enemy_ai.archer_behind_me = snap.archer_behind_me;
@@ -1045,7 +1044,7 @@ impl EngineInner {
         let mut human_targets: std::collections::HashMap<EntityId, HumanTarget> =
             std::collections::HashMap::with_capacity(human_ids.len());
         for id in human_ids {
-            let Some(Some(entity)) = self.entities.get(id.index() as usize) else {
+            let Some(entity) = self.entities.get(id) else {
                 continue;
             };
             let position = entity.element_data().position_map();
@@ -1129,7 +1128,7 @@ impl EngineInner {
         let mut object_targets: std::collections::HashMap<EntityId, ObjectTarget> =
             std::collections::HashMap::with_capacity(object_ids.len());
         for id in object_ids {
-            let Some(Some(entity)) = self.entities.get(id.index() as usize) else {
+            let Some(entity) = self.entities.get(id) else {
                 continue;
             };
             let position = entity.element_data().position_map();
