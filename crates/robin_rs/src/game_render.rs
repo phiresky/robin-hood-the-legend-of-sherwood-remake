@@ -953,7 +953,7 @@ fn render_ground_mark_set(
             renderer,
             mark.layer,
             &mark_world_bbox,
-            mark_position,
+            robin_engine::coordinates::MapPoint::from_geo(mark_position),
             mark_rect,
             view_pos.to_geo(),
             zoom,
@@ -967,7 +967,7 @@ fn render_character_masks_clipped(
     renderer: &mut Renderer,
     layer: u16,
     world_bbox: &crate::geo2d::BBox2D,
-    position: crate::geo2d::GeoPoint2D,
+    position: robin_engine::coordinates::MapPoint,
     clip_rect: Rect,
     view: crate::geo2d::GeoPoint2D,
     zoom: f32,
@@ -1261,7 +1261,7 @@ pub(crate) fn render_entities_gpu(
                 sprite_y + sh as f32,
             );
             let actor_layer = elem.layer();
-            let actor_position = crate::geo2d::pt(world_x, world_y);
+            let actor_position = robin_engine::coordinates::MapPoint::new(world_x, world_y);
             // The mask lookup switches between
             // `get_masks_applied_to_character` and
             // `get_masks_applied_to_projectile` based on the masking
@@ -1440,7 +1440,7 @@ fn render_sprite_mask_debug_overlay(
     engine: &Engine,
     renderer: &mut Renderer,
     sprite_world_bbox: &crate::geo2d::BBox2D,
-    actor_position: crate::geo2d::GeoPoint2D,
+    actor_position: robin_engine::coordinates::MapPoint,
     position_3d: robin_engine::coordinates::WorldPoint3D,
     use_projectile_path: bool,
     mask_indices: &[robin_engine::mask::MaskIndex],
@@ -1461,10 +1461,10 @@ fn render_sprite_mask_debug_overlay(
         draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
     }
 
-    draw_world_cross(host, renderer, actor_position, 0x07e0);
+    draw_world_cross(host, renderer, actor_position.to_geo(), 0x07e0);
     if use_projectile_path {
         let projectile_test_point = crate::geo2d::pt(position_3d.x, position_3d.y);
-        let actor_screen = world_to_screen(host, actor_position);
+        let actor_screen = world_to_screen(host, actor_position.to_geo());
         let projectile_screen = world_to_screen(host, projectile_test_point);
         renderer.draw_line_screen(
             actor_screen.0,

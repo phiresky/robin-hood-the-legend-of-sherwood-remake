@@ -1491,7 +1491,7 @@ impl FastFindGrid {
         &self,
         layer: u16,
         bbox: &BBox2D,
-        position: GeoPoint2D,
+        position: MapPoint,
     ) -> Vec<crate::mask::MaskIndex> {
         let rect = match bbox.0 {
             Some(r) => r,
