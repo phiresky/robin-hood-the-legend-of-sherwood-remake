@@ -18,12 +18,13 @@ use crate::geo2d;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MenuTransform, TextAlign, VAlign, align_bottom_right, dim_screen, enter_modal_gpu_phase,
-    render_text_in_box_aligned, render_text_virt,
+    MENU_W, MenuTransform, TextAlign, VAlign, align_bottom_right, dim_screen,
+    enter_modal_gpu_phase, render_text_in_box_aligned, render_text_virt,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mods_dir};
 use crate::renderer::Renderer;
+use crate::ui::MouseButtons;
 use crate::widget::FrameWnd;
 use robin_engine::sprite::BBox;
 
@@ -201,7 +202,7 @@ pub(crate) async fn show_custom_missions(
                             // same row launches (when launchable).
                             let dbl = input_state
                                 .buttons
-                                .contains(crate::ui::MouseButtons::LEFT_DOUBLE_CLICK);
+                                .contains(MouseButtons::LEFT_DOUBLE_CLICK);
                             if target == selected && dbl && entries[selected].status.is_ok() {
                                 activated = Some(ID_PLAY);
                             }
@@ -283,7 +284,7 @@ fn draw_title(renderer: &mut Renderer, resources: &IngameMenuResources, transfor
     };
     let title = "Custom Missions";
     let tw = font.text_width(title);
-    let x = (crate::ingame_menu::layout::MENU_W - tw) / 2;
+    let x = (MENU_W - tw) / 2;
     render_text_virt(renderer, font, transform, title, x, TITLE_Y);
 }
 
