@@ -13,6 +13,7 @@ use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use robin_assets::keyconfig::{KeyConfig, REAL_KEY_COUNT};
 use robin_engine::sound_cache::SampleLoader;
+use winit::keyboard::KeyCode;
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
@@ -120,7 +121,7 @@ pub async fn show_shortcuts(
 
     let mut focused_row: Option<usize> = None;
     let mut rebinding_row: Option<usize> = None;
-    // True when the user pressed a reserved scancode during the current
+    // True when the user pressed a reserved key during the current
     // rebind — shows the localised "Reserved" string in place of the
     // "<Press a key>" prompt while edit mode stays open.  Cleared on
     // any non-reserved keydown (which assigns and exits edit mode) and
@@ -163,13 +164,13 @@ pub async fn show_shortcuts(
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => done = true,
-                GameEvent::KeyDown { keycode, scancode } => {
+                GameEvent::KeyDown {
+                    keycode,
+                    physical_key,
+                } => {
                     if let Some(row) = rebinding_row {
-                        // Escape's SDL scancode (41) is in the reserved
-                        // set, but the GameEvent's `keycode` may be
-                        // resolved through layout mapping; check both so
-                        // either path lands in the reserved branch.
-                        if keycode == Keycode::Escape || is_reserved_scancode(scancode) {
+                        if keycode == Keycode::Escape || physical_key.map_or(true, is_reserved_key)
+                        {
                             // Pressing a reserved key shows the localised
                             // "Reserved" string in the row and *stays* in
                             // edit mode for another attempt.  Surfaced via
@@ -177,7 +178,11 @@ pub async fn show_shortcuts(
                             reserved_overlay = true;
                             play_rebind_noise(&mut sound, &mut audio_backend, sample_loader);
                         } else {
-                            assign_key_with_conflict_resolution(&mut working, row as u16, scancode);
+                            assign_key_with_conflict_resolution(
+                                &mut working,
+                                row as u16,
+                                physical_key,
+                            );
                             working.key_type = 1; // UserDefined
                             working_dirty = true;
                             rebinding_row = None;
@@ -294,14 +299,10 @@ pub async fn show_shortcuts(
                     done = true;
                 }
                 ID_DEFAULT1 => {
-                    let record =
-                        robin_engine::engine::GlobalOptions::record_default_key_config_global();
-                    set_to_preset(&mut working, custom, &mut working_dirty, 0, record);
+                    set_to_preset(&mut working, custom, &mut working_dirty, 0);
                 }
                 ID_DEFAULT2 => {
-                    let record =
-                        robin_engine::engine::GlobalOptions::record_default_key_config_global();
-                    set_to_preset(&mut working, custom, &mut working_dirty, 1, record);
+                    set_to_preset(&mut working, custom, &mut working_dirty, 1);
                 }
                 ID_USER => {
                     apply_user_defined(&mut working, custom, &mut working_dirty);
@@ -366,7 +367,7 @@ pub async fn show_shortcuts(
             let row_top = LIST_RECT.y + 4 + row_offset as i32 * row_height;
             let action_label = resources.menu_text.get(MT_STR_SHORTCUT_00 + row_index);
             let key_value = working.get_key_by_index(row_index as u16);
-            let key_label = scancode_display_name(&resources.menu_text, key_value);
+            let key_label = key_display_name(&resources.menu_text, key_value);
 
             let is_focused = focused_row == Some(row_index);
             let is_rebinding = rebinding_row == Some(row_index);
@@ -390,7 +391,7 @@ pub async fn show_shortcuts(
             );
 
             // Right column: key value (or rebind prompt), centered within
-            // the 30% box.  When a reserved scancode was just pressed,
+            // the 30% box.  When a reserved key was just pressed,
             // show the localised "Reserved" string instead of the rebind
             // prompt.
             let display = if is_rebinding {
@@ -470,72 +471,26 @@ pub async fn show_shortcuts(
 /// since the last preset switch), they're first promoted into the
 /// custom slot so they aren't lost.
 ///
-/// Then:
-///   * Normal mode (`record_default_key_config == false`): load the
-///     hardcoded preset for `preset_idx` (0 = keyset1, 1 = keyset2).
-///   * Record mode (`-RECORDDEFAULTKEYCONFIG` launch flag): write the
-///     *current* working config to the corresponding `keyset{N}.cfg`
-///     file.  Developer path for rebuilding shipped presets.
+/// Then loads the hardcoded preset for `preset_idx` (0 = Default1,
+/// 1 = Default2).
 fn set_to_preset(
     working: &mut KeyConfig,
     custom: &mut KeyConfig,
     working_dirty: &mut bool,
     preset_idx: u16,
-    record_default_key_config: bool,
 ) {
     if *working_dirty {
         *custom = working.clone();
     }
 
-    if record_default_key_config {
-        // Write mode: persist the current working config to keyset{N}.cfg
-        // so future Default{N} clicks return to it.  The file path is
-        // relative to the datadir CWD.
-        let filename = match preset_idx {
-            0 => "Data/Configuration/keyset1.cfg",
-            1 => "Data/Configuration/keyset2.cfg",
-            _ => {
-                tracing::error!("set_to_preset: invalid preset_idx {preset_idx}");
-                return;
-            }
-        };
-        // Tag the saved config as the target preset (PresetBase + idx).
-        let mut to_save = working.clone();
-        to_save.key_type = 2 + preset_idx;
-        if let Err(err) = to_save.save_to_keyset_file(std::path::Path::new(filename)) {
-            tracing::error!("Failed to save preset {preset_idx} to {filename}: {err}");
-        } else {
-            tracing::info!("Saved working config to {filename} (preset {preset_idx})");
+    *working = match preset_idx {
+        0 => KeyConfig::default_preset(),
+        1 => KeyConfig::alternate_preset(),
+        _ => {
+            tracing::error!("set_to_preset: invalid preset_idx {preset_idx}");
+            return;
         }
-        // Bringing the in-memory working config in line with the file
-        // we just wrote — same key_type stamp, same bindings.
-        *working = to_save;
-    } else {
-        // Read mode: attempt to load the on-disk keyset{N}.cfg first.
-        // Fall back to the hardcoded preset if the file is missing or
-        // unreadable, so the RECORDDEFAULTKEYCONFIG → relaunch →
-        // read-back loop still works.
-        let (filename, fallback): (&str, fn() -> KeyConfig) = match preset_idx {
-            0 => ("Data/Configuration/keyset1.cfg", KeyConfig::default_preset),
-            1 => (
-                "Data/Configuration/keyset2.cfg",
-                KeyConfig::alternate_preset,
-            ),
-            _ => {
-                tracing::error!("set_to_preset: invalid preset_idx {preset_idx}");
-                return;
-            }
-        };
-        *working = match KeyConfig::load_from_keyset_file(std::path::Path::new(filename)) {
-            Ok(cfg) => cfg,
-            Err(err) => {
-                tracing::warn!(
-                    "set_to_preset: failed to read {filename} ({err}); using hardcoded preset"
-                );
-                fallback()
-            }
-        };
-    }
+    };
     *working_dirty = false;
 }
 
@@ -657,15 +612,22 @@ fn draw_listbox_scrollbar(
     );
 }
 
-/// Bind `scancode` to `target_index`, first clearing any other slot
-/// that already holds that scancode.  Without this, the same physical
+/// Bind `key` to `target_index`, first clearing any other slot
+/// that already holds that key.  Without this, the same physical
 /// key would silently end up bound to two actions.
-fn assign_key_with_conflict_resolution(cfg: &mut KeyConfig, target_index: u16, scancode: u16) {
-    let conflict = cfg.get_index_for_key(scancode);
+fn assign_key_with_conflict_resolution(
+    cfg: &mut KeyConfig,
+    target_index: u16,
+    key: Option<KeyCode>,
+) {
+    let Some(key) = key else {
+        return;
+    };
+    let conflict = cfg.get_index_for_key(key);
     if conflict != 0xFFFF && conflict != target_index {
-        cfg.set_key_by_index(conflict, 0);
+        cfg.set_key_by_index(conflict, None);
     }
-    cfg.set_key_by_index(target_index, scancode);
+    cfg.set_key_by_index(target_index, Some(key));
 }
 
 /// Play the rebind noise — the listbox noisy bank's ACTIVATED slot.
@@ -692,134 +654,145 @@ fn play_rebind_noise(
     s.play_menu_sound(sound_id, b, loader);
 }
 
-/// SDL scancodes that the shortcuts menu refuses to assign as user
+/// Physical keys that the shortcuts menu refuses to assign as user
 /// bindings — pressing one of these during a rebind aborts the edit
 /// without changing anything.
-fn is_reserved_scancode(scancode: u16) -> bool {
-    const SDL_SCANCODE_PRINTSCREEN: u16 = 70;
-    const SDL_SCANCODE_ESCAPE: u16 = 41;
-    const SDL_SCANCODE_LGUI: u16 = 227;
-    const SDL_SCANCODE_RGUI: u16 = 231;
-    const SDL_SCANCODE_MENU: u16 = 118;
+fn is_reserved_key(key: KeyCode) -> bool {
     matches!(
-        scancode,
-        SDL_SCANCODE_PRINTSCREEN
-            | SDL_SCANCODE_ESCAPE
-            | SDL_SCANCODE_LGUI
-            | SDL_SCANCODE_RGUI
-            | SDL_SCANCODE_MENU
+        key,
+        KeyCode::PrintScreen
+            | KeyCode::Escape
+            | KeyCode::SuperLeft
+            | KeyCode::SuperRight
+            | KeyCode::ContextMenu
     )
 }
 
-/// Convert an SDL scancode to its localised display name.  Named keys
-/// come from the `MT_STR_KEY_*` menu-text table (so rebound keys read
-/// e.g. "Espacio" in ES); printable characters are emitted directly.
-///
-/// Every scancode that `convertkeys::dik_to_sdl` can emit is covered, so
-/// a rebind never renders as `Scan N`.  Scancodes outside the named set
-/// that fall through to a synthesised label (`F13`, `Menu`, `Keypad =`,
-/// extra Win keys) are intentionally hard-coded English: there is no
-/// menu-text id for them and they would otherwise render as a blank
-/// cell, so a readable English name is strictly better.
-fn scancode_display_name(menu_text: &MenuText, scancode: u16) -> String {
-    // Helper: look up the menu-text entry for a scancode that has a
-    // dedicated `MT_STR_KEY_*` id.
+/// Convert a winit physical key to its localised display name.
+/// Named keys come from the `MT_STR_KEY_*` menu-text table.
+fn key_display_name(menu_text: &MenuText, key: Option<KeyCode>) -> String {
     let mt = |id: usize| menu_text.get(id);
-    match scancode {
-        0 => mt(MT_STR_KEY_NONE),
-        4..=29 => {
-            let c = (b'a' + (scancode as u8 - 4)) as char;
-            c.to_string()
-        }
-        30..=38 => {
-            let c = (b'1' + (scancode as u8 - 30)) as char;
-            c.to_string()
-        }
-        39 => "0".to_string(),
-        40 => mt(MT_STR_KEY_RETURN),
-        41 => mt(MT_STR_KEY_ESC),
-        42 => mt(MT_STR_KEY_BACKSPACE),
-        43 => mt(MT_STR_KEY_TAB),
-        44 => mt(MT_STR_KEY_SPACE),
-        45 => "-".to_string(),
-        46 => "=".to_string(),
-        47 => "[".to_string(),
-        48 => "]".to_string(),
-        49 => "\\".to_string(),
-        51 => ";".to_string(),
-        52 => "'".to_string(),
-        53 => "`".to_string(),
-        54 => ",".to_string(),
-        55 => ".".to_string(),
-        56 => "/".to_string(),
-        57 => mt(MT_STR_KEY_CAPS_LOCK),
-        58 => mt(MT_STR_KEY_F1),
-        59 => mt(MT_STR_KEY_F2),
-        60 => mt(MT_STR_KEY_F3),
-        61 => mt(MT_STR_KEY_F4),
-        62 => mt(MT_STR_KEY_F5),
-        63 => mt(MT_STR_KEY_F6),
-        64 => mt(MT_STR_KEY_F7),
-        65 => mt(MT_STR_KEY_F8),
-        66 => mt(MT_STR_KEY_F9),
-        67 => mt(MT_STR_KEY_F10),
-        68 => mt(MT_STR_KEY_F11),
-        69 => mt(MT_STR_KEY_F12),
-        70 => mt(MT_STR_KEY_PRINT),
-        71 => mt(MT_STR_KEY_SCROLL_LOCK),
-        72 => mt(MT_STR_KEY_PAUSE),
-        73 => mt(MT_STR_KEY_INS),
-        74 => mt(MT_STR_KEY_HOME),
-        75 => mt(MT_STR_KEY_PAGE_UP),
-        76 => mt(MT_STR_KEY_SUP),
-        77 => mt(MT_STR_KEY_END),
-        78 => mt(MT_STR_KEY_PAGE_DOWN),
-        79 => mt(MT_STR_KEY_RIGHT),
-        80 => mt(MT_STR_KEY_LEFT),
-        81 => mt(MT_STR_KEY_DOWN),
-        82 => mt(MT_STR_KEY_UP),
-        83 => mt(MT_STR_KEY_NUM_LOCK),
-        84 => mt(MT_STR_KEY_NUM_SLASH),
-        85 => mt(MT_STR_KEY_NUM_STAR),
-        86 => mt(MT_STR_KEY_NUM_DASH),
-        87 => mt(MT_STR_KEY_NUM_CROSS),
-        88 => mt(MT_STR_KEY_NUM_RETURN),
-        89 => mt(MT_STR_KEY_NUM_1),
-        90 => mt(MT_STR_KEY_NUM_2),
-        91 => mt(MT_STR_KEY_NUM_3),
-        92 => mt(MT_STR_KEY_NUM_4),
-        93 => mt(MT_STR_KEY_NUM_5),
-        94 => mt(MT_STR_KEY_NUM_6),
-        95 => mt(MT_STR_KEY_NUM_7),
-        96 => mt(MT_STR_KEY_NUM_8),
-        97 => mt(MT_STR_KEY_NUM_9),
-        98 => mt(MT_STR_KEY_NUM_0),
-        99 => mt(MT_STR_KEY_NUM_SUP),
-        103 => "Keypad =".to_string(),
-        104 => "F13".to_string(),
-        105 => "F14".to_string(),
-        106 => "F15".to_string(),
-        118 => "Menu".to_string(),
-        154 => "SysReq".to_string(),
-        224 => mt(MT_STR_KEY_CTRL_LEFT),
-        225 => mt(MT_STR_KEY_SHIFT_LEFT),
-        226 => mt(MT_STR_KEY_ALT),
-        227 => "Left Win".to_string(),
-        228 => mt(MT_STR_KEY_CTRL_RIGHT),
-        229 => mt(MT_STR_KEY_SHIFT_RIGHT),
-        230 => mt(MT_STR_KEY_ALT_GR),
-        231 => "Right Win".to_string(),
-        _ => format!("Scan {scancode}"),
+    match key {
+        None => mt(MT_STR_KEY_NONE),
+        Some(KeyCode::KeyA) => "a".to_string(),
+        Some(KeyCode::KeyB) => "b".to_string(),
+        Some(KeyCode::KeyC) => "c".to_string(),
+        Some(KeyCode::KeyD) => "d".to_string(),
+        Some(KeyCode::KeyE) => "e".to_string(),
+        Some(KeyCode::KeyF) => "f".to_string(),
+        Some(KeyCode::KeyG) => "g".to_string(),
+        Some(KeyCode::KeyH) => "h".to_string(),
+        Some(KeyCode::KeyI) => "i".to_string(),
+        Some(KeyCode::KeyJ) => "j".to_string(),
+        Some(KeyCode::KeyK) => "k".to_string(),
+        Some(KeyCode::KeyL) => "l".to_string(),
+        Some(KeyCode::KeyM) => "m".to_string(),
+        Some(KeyCode::KeyN) => "n".to_string(),
+        Some(KeyCode::KeyO) => "o".to_string(),
+        Some(KeyCode::KeyP) => "p".to_string(),
+        Some(KeyCode::KeyQ) => "q".to_string(),
+        Some(KeyCode::KeyR) => "r".to_string(),
+        Some(KeyCode::KeyS) => "s".to_string(),
+        Some(KeyCode::KeyT) => "t".to_string(),
+        Some(KeyCode::KeyU) => "u".to_string(),
+        Some(KeyCode::KeyV) => "v".to_string(),
+        Some(KeyCode::KeyW) => "w".to_string(),
+        Some(KeyCode::KeyX) => "x".to_string(),
+        Some(KeyCode::KeyY) => "y".to_string(),
+        Some(KeyCode::KeyZ) => "z".to_string(),
+        Some(KeyCode::Digit0) => "0".to_string(),
+        Some(KeyCode::Digit1) => "1".to_string(),
+        Some(KeyCode::Digit2) => "2".to_string(),
+        Some(KeyCode::Digit3) => "3".to_string(),
+        Some(KeyCode::Digit4) => "4".to_string(),
+        Some(KeyCode::Digit5) => "5".to_string(),
+        Some(KeyCode::Digit6) => "6".to_string(),
+        Some(KeyCode::Digit7) => "7".to_string(),
+        Some(KeyCode::Digit8) => "8".to_string(),
+        Some(KeyCode::Digit9) => "9".to_string(),
+        Some(KeyCode::Enter) => mt(MT_STR_KEY_RETURN),
+        Some(KeyCode::Escape) => mt(MT_STR_KEY_ESC),
+        Some(KeyCode::Backspace) => mt(MT_STR_KEY_BACKSPACE),
+        Some(KeyCode::Tab) => mt(MT_STR_KEY_TAB),
+        Some(KeyCode::Space) => mt(MT_STR_KEY_SPACE),
+        Some(KeyCode::Minus) => "-".to_string(),
+        Some(KeyCode::Equal) => "=".to_string(),
+        Some(KeyCode::BracketLeft) => "[".to_string(),
+        Some(KeyCode::BracketRight) => "]".to_string(),
+        Some(KeyCode::Backslash) => "\\".to_string(),
+        Some(KeyCode::Semicolon) => ";".to_string(),
+        Some(KeyCode::Quote) => "'".to_string(),
+        Some(KeyCode::Backquote) => "`".to_string(),
+        Some(KeyCode::Comma) => ",".to_string(),
+        Some(KeyCode::Period) => ".".to_string(),
+        Some(KeyCode::Slash) => "/".to_string(),
+        Some(KeyCode::CapsLock) => mt(MT_STR_KEY_CAPS_LOCK),
+        Some(KeyCode::F1) => mt(MT_STR_KEY_F1),
+        Some(KeyCode::F2) => mt(MT_STR_KEY_F2),
+        Some(KeyCode::F3) => mt(MT_STR_KEY_F3),
+        Some(KeyCode::F4) => mt(MT_STR_KEY_F4),
+        Some(KeyCode::F5) => mt(MT_STR_KEY_F5),
+        Some(KeyCode::F6) => mt(MT_STR_KEY_F6),
+        Some(KeyCode::F7) => mt(MT_STR_KEY_F7),
+        Some(KeyCode::F8) => mt(MT_STR_KEY_F8),
+        Some(KeyCode::F9) => mt(MT_STR_KEY_F9),
+        Some(KeyCode::F10) => mt(MT_STR_KEY_F10),
+        Some(KeyCode::F11) => mt(MT_STR_KEY_F11),
+        Some(KeyCode::F12) => mt(MT_STR_KEY_F12),
+        Some(KeyCode::PrintScreen) => mt(MT_STR_KEY_PRINT),
+        Some(KeyCode::ScrollLock) => mt(MT_STR_KEY_SCROLL_LOCK),
+        Some(KeyCode::Pause) => mt(MT_STR_KEY_PAUSE),
+        Some(KeyCode::Insert) => mt(MT_STR_KEY_INS),
+        Some(KeyCode::Home) => mt(MT_STR_KEY_HOME),
+        Some(KeyCode::PageUp) => mt(MT_STR_KEY_PAGE_UP),
+        Some(KeyCode::Delete) => mt(MT_STR_KEY_SUP),
+        Some(KeyCode::End) => mt(MT_STR_KEY_END),
+        Some(KeyCode::PageDown) => mt(MT_STR_KEY_PAGE_DOWN),
+        Some(KeyCode::ArrowRight) => mt(MT_STR_KEY_RIGHT),
+        Some(KeyCode::ArrowLeft) => mt(MT_STR_KEY_LEFT),
+        Some(KeyCode::ArrowDown) => mt(MT_STR_KEY_DOWN),
+        Some(KeyCode::ArrowUp) => mt(MT_STR_KEY_UP),
+        Some(KeyCode::NumLock) => mt(MT_STR_KEY_NUM_LOCK),
+        Some(KeyCode::NumpadDivide) => mt(MT_STR_KEY_NUM_SLASH),
+        Some(KeyCode::NumpadMultiply) => mt(MT_STR_KEY_NUM_STAR),
+        Some(KeyCode::NumpadSubtract) => mt(MT_STR_KEY_NUM_DASH),
+        Some(KeyCode::NumpadAdd) => mt(MT_STR_KEY_NUM_CROSS),
+        Some(KeyCode::NumpadEnter) => mt(MT_STR_KEY_NUM_RETURN),
+        Some(KeyCode::Numpad0) => mt(MT_STR_KEY_NUM_0),
+        Some(KeyCode::Numpad1) => mt(MT_STR_KEY_NUM_1),
+        Some(KeyCode::Numpad2) => mt(MT_STR_KEY_NUM_2),
+        Some(KeyCode::Numpad3) => mt(MT_STR_KEY_NUM_3),
+        Some(KeyCode::Numpad4) => mt(MT_STR_KEY_NUM_4),
+        Some(KeyCode::Numpad5) => mt(MT_STR_KEY_NUM_5),
+        Some(KeyCode::Numpad6) => mt(MT_STR_KEY_NUM_6),
+        Some(KeyCode::Numpad7) => mt(MT_STR_KEY_NUM_7),
+        Some(KeyCode::Numpad8) => mt(MT_STR_KEY_NUM_8),
+        Some(KeyCode::Numpad9) => mt(MT_STR_KEY_NUM_9),
+        Some(KeyCode::NumpadDecimal) => mt(MT_STR_KEY_NUM_SUP),
+        Some(KeyCode::NumpadEqual) => "Keypad =".to_string(),
+        Some(KeyCode::F13) => "F13".to_string(),
+        Some(KeyCode::F14) => "F14".to_string(),
+        Some(KeyCode::F15) => "F15".to_string(),
+        Some(KeyCode::ContextMenu) => "Menu".to_string(),
+        Some(KeyCode::ControlLeft) => mt(MT_STR_KEY_CTRL_LEFT),
+        Some(KeyCode::ShiftLeft) => mt(MT_STR_KEY_SHIFT_LEFT),
+        Some(KeyCode::AltLeft) => mt(MT_STR_KEY_ALT),
+        Some(KeyCode::SuperLeft) => "Left Win".to_string(),
+        Some(KeyCode::ControlRight) => mt(MT_STR_KEY_CTRL_RIGHT),
+        Some(KeyCode::ShiftRight) => mt(MT_STR_KEY_SHIFT_RIGHT),
+        Some(KeyCode::AltRight) => mt(MT_STR_KEY_ALT_GR),
+        Some(KeyCode::SuperRight) => "Right Win".to_string(),
+        Some(other) => format!("{other:?}"),
     }
 }
 
 trait KeyConfigVec {
-    fn get_keys_array_vec(&self) -> Vec<u16>;
+    fn get_keys_array_vec(&self) -> Vec<Option<KeyCode>>;
 }
 
 impl KeyConfigVec for KeyConfig {
-    fn get_keys_array_vec(&self) -> Vec<u16> {
-        let mut out = vec![0u16; REAL_KEY_COUNT as usize];
+    fn get_keys_array_vec(&self) -> Vec<Option<KeyCode>> {
+        let mut out = vec![None; REAL_KEY_COUNT as usize];
         self.get_keys_array(&mut out);
         out
     }
@@ -833,16 +806,15 @@ mod tests {
     fn set_to_preset_load_mode_promotes_dirty_edits_into_custom() {
         // User's persistent custom slot (whatever they had saved before).
         let mut custom = KeyConfig::default();
-        custom.set_binding("ZoomIn", 99, 0);
+        custom.set_binding("ZoomIn", Some(KeyCode::F2), None);
         let custom_before = custom.clone();
 
         // Working copy with an in-progress edit.
         let mut working = KeyConfig::default_preset();
-        working.set_key_by_index(0, 200); // override ZoomIn
+        working.set_key_by_index(0, Some(KeyCode::F3)); // override ZoomIn
         let mut dirty = true;
 
-        // preset_idx=1 → alternate preset; record=false → load mode.
-        set_to_preset(&mut working, &mut custom, &mut dirty, 1, false);
+        set_to_preset(&mut working, &mut custom, &mut dirty, 1);
 
         assert!(!dirty, "dirty flag should be cleared after preset switch");
         assert_eq!(
@@ -857,61 +829,17 @@ mod tests {
         );
         assert_eq!(
             custom.get_binding("ZoomIn").unwrap().primary_key,
-            200,
+            Some(KeyCode::F3),
             "custom should hold the in-progress ZoomIn edit"
         );
-    }
-
-    #[test]
-    fn set_to_preset_record_mode_writes_keyset_file() {
-        // Record mode: working config must be written to disk at
-        // Data/Configuration/keyset{N}.cfg, and *not* replaced by the
-        // hardcoded preset.  We cd into a temp dir so the relative path
-        // resolves locally, matching the real game which chdirs into
-        // the datadir at startup.
-        let dir = tempfile::tempdir().unwrap();
-        let prev_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
-
-        let mut custom = KeyConfig::default();
-        let mut working = KeyConfig::default_preset();
-        working.set_key_by_index(0, 77); // a bespoke ZoomIn value
-        let mut dirty = false;
-
-        set_to_preset(&mut working, &mut custom, &mut dirty, 0, true);
-
-        // Restore cwd before any assertion so a failed test doesn't
-        // leave the process pointing at the temp dir.
-        let keyset_path = dir.path().join("Data/Configuration/keyset1.cfg");
-        std::env::set_current_dir(prev_cwd).unwrap();
-
-        assert!(
-            keyset_path.exists(),
-            "record mode should have written the keyset file"
-        );
-
-        // The on-disk file must round-trip back to the working config.
-        let from_disk = KeyConfig::load_from_keyset_file(&keyset_path).unwrap();
-        assert_eq!(
-            from_disk.get_key_by_index(0),
-            77,
-            "saved keyset should contain the bespoke ZoomIn value"
-        );
-        assert_eq!(
-            from_disk.key_type, 2,
-            "saved keyset should carry PresetBase + 0 as its type"
-        );
-        // And working must keep the bindings we just saved, not a
-        // hardcoded preset.
-        assert_eq!(working.get_key_by_index(0), 77);
     }
 
     #[test]
     fn apply_user_defined_restores_from_custom_slot() {
         // Simulate: the user has a saved custom config from a previous session.
         let mut custom = KeyConfig::default();
-        custom.set_binding("ZoomIn", 111, 0);
-        custom.set_binding("Action1", 222, 0);
+        custom.set_binding("ZoomIn", Some(KeyCode::F2), None);
+        custom.set_binding("Action1", Some(KeyCode::F3), None);
 
         // Working is currently on a preset (e.g. Default1 was just clicked).
         let mut working = KeyConfig::default_preset();
@@ -923,12 +851,12 @@ mod tests {
         assert_eq!(working.key_type, 1, "should flag as UserDefined");
         assert_eq!(
             working.get_binding("ZoomIn").unwrap().primary_key,
-            111,
+            Some(KeyCode::F2),
             "should restore the persisted custom ZoomIn binding"
         );
         assert_eq!(
             working.get_binding("Action1").unwrap().primary_key,
-            222,
+            Some(KeyCode::F3),
             "should restore the persisted custom Action1 binding"
         );
     }
@@ -936,23 +864,23 @@ mod tests {
     #[test]
     fn conflict_resolution_clears_other_slot_then_assigns() {
         let mut cfg = KeyConfig::default_preset();
-        // Pick a scancode currently bound to ZoomIn and try to put it
+        // Pick a key currently bound to ZoomIn and try to put it
         // on a different action.  The old binding must be cleared.
         let zoom_in_idx = 0u16;
         let action1_idx = 18u16;
         let zoom_in_key = cfg.get_key_by_index(zoom_in_idx);
-        assert_ne!(zoom_in_key, 0, "test fixture sanity");
+        assert!(zoom_in_key.is_some(), "test fixture sanity");
 
         assign_key_with_conflict_resolution(&mut cfg, action1_idx, zoom_in_key);
 
         assert_eq!(
             cfg.get_key_by_index(action1_idx),
             zoom_in_key,
-            "target slot should now hold the scancode"
+            "target slot should now hold the key"
         );
         assert_eq!(
             cfg.get_key_by_index(zoom_in_idx),
-            0,
+            None,
             "previous owner should have been cleared"
         );
     }
@@ -963,7 +891,7 @@ mod tests {
         let action1_idx = 18u16;
         let key = cfg.get_key_by_index(action1_idx);
 
-        // Re-binding the slot to the same scancode it already holds
+        // Re-binding the slot to the same key it already holds
         // must NOT clear it (the conflict-and-target are the same row).
         assign_key_with_conflict_resolution(&mut cfg, action1_idx, key);
 
@@ -971,38 +899,22 @@ mod tests {
     }
 
     #[test]
-    fn reserved_scancodes_are_blocked() {
-        // Sample of every reserved scancode the menu rejects.
-        for sc in [70u16, 41, 227, 231, 118] {
-            assert!(is_reserved_scancode(sc), "scancode {sc} should be reserved");
+    fn reserved_keys_are_blocked() {
+        for key in [
+            KeyCode::PrintScreen,
+            KeyCode::Escape,
+            KeyCode::SuperLeft,
+            KeyCode::SuperRight,
+            KeyCode::ContextMenu,
+        ] {
+            assert!(is_reserved_key(key), "{key:?} should be reserved");
         }
-        // A regular letter must not be reserved.
-        assert!(!is_reserved_scancode(4)); // SDL 'A'
-        assert!(!is_reserved_scancode(82)); // SDL Up arrow
+        assert!(!is_reserved_key(KeyCode::KeyA));
+        assert!(!is_reserved_key(KeyCode::ArrowUp));
     }
 
     #[test]
-    fn scancode_display_table_covers_every_convertkeys_output() {
-        // Every SDL scancode `dik_to_sdl` can produce must have a
-        // human-readable name (no `Scan N` fallback).  Walk every DIK
-        // value and check the converted result.
-        let menu_text = MenuText::english_fallbacks_only();
-        let mut keys: Vec<u16> = (0u16..=0xFF).collect();
-        robin_assets::convertkeys::convert_keys(&mut keys);
-        for sdl in keys {
-            if sdl == 0 {
-                continue; // Unmapped DIK codes legitimately produce 0.
-            }
-            let name = scancode_display_name(&menu_text, sdl);
-            assert!(
-                !name.starts_with("Scan "),
-                "SDL scancode {sdl} must have a friendly name (got {name})"
-            );
-        }
-    }
-
-    #[test]
-    fn scancode_display_uses_menu_text_for_named_keys() {
+    fn key_display_uses_menu_text_for_named_keys() {
         // Override the menu-text table with a sentinel translation; if the
         // lookup is wired correctly, named keys should pick up the override.
         let mut menu_text = MenuText::english_fallbacks_only();
@@ -1011,28 +923,31 @@ mod tests {
         let mut strings: Vec<String> = vec![String::new(); MT_STR_KEY_SPACE + 1];
         strings[MT_STR_KEY_SPACE] = "Espacio".to_string();
         menu_text.replace_strings_for_test(strings);
-        assert_eq!(scancode_display_name(&menu_text, 44), "Espacio");
+        assert_eq!(
+            key_display_name(&menu_text, Some(KeyCode::Space)),
+            "Espacio"
+        );
     }
 
     #[test]
-    fn scancode_display_falls_back_to_english_without_menu_text() {
+    fn key_display_falls_back_to_english_without_menu_text() {
         let menu_text = MenuText::english_fallbacks_only();
         // Space key — should fall back to the English label.
-        assert_eq!(scancode_display_name(&menu_text, 44), "Space");
+        assert_eq!(key_display_name(&menu_text, Some(KeyCode::Space)), "Space");
         // Letter key — printable character path, no menu text lookup.
-        assert_eq!(scancode_display_name(&menu_text, 4), "a");
+        assert_eq!(key_display_name(&menu_text, Some(KeyCode::KeyA)), "a");
     }
 
     #[test]
     fn set_to_preset_clean_does_not_touch_custom() {
         let mut custom = KeyConfig::default();
-        custom.set_binding("ZoomIn", 99, 0);
+        custom.set_binding("ZoomIn", Some(KeyCode::F2), None);
         let custom_before = custom.clone();
 
         let mut working = KeyConfig::default_preset();
         let mut dirty = false;
 
-        set_to_preset(&mut working, &mut custom, &mut dirty, 1, false);
+        set_to_preset(&mut working, &mut custom, &mut dirty, 1);
 
         assert!(!dirty);
         assert_eq!(

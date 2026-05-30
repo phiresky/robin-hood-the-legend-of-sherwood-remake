@@ -1705,7 +1705,7 @@ pub struct InputState {
     pub right_mouse_down: bool,
 
     /// Alt modifier is currently held.  Persisted on `InputState`
-    /// rather than read ad-hoc from the SDL scancode state each
+    /// rather than read ad-hoc from the physical key state each
     /// frame.  Updated from the key-state snapshot at the top of the
     /// event loop; consumed by mouse-way append gating, view-cone
     /// overlay, and any other subsystem that doesn't otherwise have

@@ -368,7 +368,7 @@ mod tests {
         let mut menu = PauseMenu::new(&resources, true);
         let event = GameEvent::KeyDown {
             keycode: Keycode::Escape,
-            scancode: 0,
+            physical_key: Some(winit::keyboard::KeyCode::Escape),
         };
         assert_eq!(
             menu.handle_event(&event, 1024, 768),
@@ -447,7 +447,7 @@ mod tests {
         // menu and the game unpauses.
         let esc = GameEvent::KeyDown {
             keycode: Keycode::Escape,
-            scancode: 0,
+            physical_key: Some(winit::keyboard::KeyCode::Escape),
         };
         assert_eq!(
             menu.handle_event(&esc, 1024, 768),
@@ -498,7 +498,7 @@ mod tests {
 
         let esc = GameEvent::KeyDown {
             keycode: Keycode::Escape,
-            scancode: 0,
+            physical_key: Some(winit::keyboard::KeyCode::Escape),
         };
         assert_eq!(
             menu.handle_event(&esc, 1024, 768),

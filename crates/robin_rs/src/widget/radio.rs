@@ -121,8 +121,8 @@ impl WidgetRadioButton {
         let buttons = input.mouse_button;
 
         // Check accelerator key.
-        if self.base.fast_key != 0 {
-            let key_state = input.keyboard.get_state_of_key(self.base.fast_key);
+        if let Some(fast_key) = self.base.fast_key {
+            let key_state = input.keyboard.get_state_of_key(fast_key);
             match key_state {
                 KeyState::KeyDown => {
                     return self.process_pushed();

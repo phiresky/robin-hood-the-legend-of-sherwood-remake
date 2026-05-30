@@ -19,7 +19,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Parser, ValueEnum};
 use robin_rs::frame_holder::{FrameHolder, SpriteVariant};
-use robin_rs::keyconfig::KeyConfig;
 use robin_rs::level_loader::{
     ChunkReader, LevelFormat, LoadedMission, LoadedProtoLevel, load_mission, load_proto_level,
 };
@@ -346,11 +345,6 @@ impl Converter {
         ] {
             self.convert_rel(p)?;
         }
-        for p in ["Configuration/keyset1.cfg", "Configuration/keyset2.cfg"] {
-            if self.exists(p) {
-                self.convert_rel(p)?;
-            }
-        }
 
         // ── Pass 2 : profile.cpf (root index) and its references ──────
         let cpf_rel = "Configuration/profile.cpf";
@@ -530,11 +524,6 @@ impl Converter {
             "cpf" => {
                 let dst = self.out_path(&format!("{rel}.json"), locale);
                 convert_cpf(&src, &dst)?;
-                self.converted += 1;
-            }
-            "cfg" => {
-                let dst = self.out_path(&format!("{rel}.json"), locale);
-                convert_keyset(&src, &dst)?;
                 self.converted += 1;
             }
             "red" => {
@@ -947,11 +936,6 @@ fn convert_cpf(src: &Path, dst: &Path) -> Result<()> {
     write_json_pretty(dst, &mgr)
 }
 
-fn convert_keyset(src: &Path, dst: &Path) -> Result<()> {
-    let cfg = KeyConfig::load_from_keyset_file(src).map_err(|e| anyhow!("keyset: {e}"))?;
-    write_json_pretty(dst, &cfg)
-}
-
 fn convert_red(src: &Path, dst: &Path) -> Result<()> {
     let desc = res_descr::load(&src.to_string_lossy()).context("loading .red")?;
     write_json_pretty(dst, &desc)
@@ -1235,16 +1219,6 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         let encoded = encode_interface_pak_pictures(&pictures, opts.interface_image_format)?;
         dd.pak_files.insert("interface/loading.pak".into(), encoded);
     }
-    for (rel, key) in [
-        ("Configuration/keyset1.cfg", "keyset1"),
-        ("Configuration/keyset2.cfg", "keyset2"),
-    ] {
-        if let Some(p) = in_path(rel) {
-            let cfg = KeyConfig::load_from_keyset_file(&p).map_err(|e| anyhow!("keyset: {e}"))?;
-            dd.keysets.insert(key.into(), cfg);
-        }
-    }
-
     // ── profile.cpf (root index) ───────────────────────────────────────
     let cpf_path =
         in_path("Configuration/profile.cpf").ok_or_else(|| anyhow!("profile.cpf missing"))?;

@@ -111,6 +111,7 @@ impl KeyConfigStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winit::keyboard::KeyCode;
 
     #[test]
     fn fresh_seeds_both_slots_with_default_preset() {
@@ -129,10 +130,13 @@ mod tests {
         store
             .entry_or_default(7)
             .active
-            .set_binding("ZoomIn", 42, 0);
+            .set_binding("ZoomIn", Some(KeyCode::Backspace), None);
 
         let again = store.entry_or_default(7);
-        assert_eq!(again.active.get_binding("ZoomIn").unwrap().primary_key, 42);
+        assert_eq!(
+            again.active.get_binding("ZoomIn").unwrap().primary_key,
+            Some(KeyCode::Backspace)
+        );
         assert_eq!(store.configs.len(), 1);
     }
 
@@ -144,15 +148,21 @@ mod tests {
         {
             let mut store = KeyConfigStore::new(dir_str.clone());
             let entry = store.entry_or_default(3);
-            entry.active.set_binding("ZoomIn", 100, 0);
-            entry.custom.set_binding("ZoomIn", 200, 0);
+            entry.active.set_binding("ZoomIn", Some(KeyCode::F2), None);
+            entry.custom.set_binding("ZoomIn", Some(KeyCode::F3), None);
             store.save().unwrap();
         }
 
         let loaded = KeyConfigStore::load(&dir_str).unwrap();
         let entry = loaded.get(3).expect("profile 3 should round-trip");
-        assert_eq!(entry.active.get_binding("ZoomIn").unwrap().primary_key, 100);
-        assert_eq!(entry.custom.get_binding("ZoomIn").unwrap().primary_key, 200);
+        assert_eq!(
+            entry.active.get_binding("ZoomIn").unwrap().primary_key,
+            Some(KeyCode::F2)
+        );
+        assert_eq!(
+            entry.custom.get_binding("ZoomIn").unwrap().primary_key,
+            Some(KeyCode::F3)
+        );
     }
 
     #[test]

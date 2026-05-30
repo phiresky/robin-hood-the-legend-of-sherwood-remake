@@ -885,20 +885,21 @@ impl ApplicationHandler for AppHandler {
                     },
                 ..
             } => {
-                let (keycode, scancode) = if is_android_back_key(&logical_key, physical_key) {
-                    (Keycode::Escape, 41)
+                let (keycode, physical_key) = if is_android_back_key(&logical_key, physical_key) {
+                    (Keycode::Escape, Some(KeyCode::Escape))
                 } else {
                     (
                         physical_key_to_keycode(physical_key),
-                        physical_key_to_sdl_scancode(physical_key),
+                        physical_key_to_key_code(physical_key),
                     )
                 };
                 match state {
                     ElementState::Pressed => {
                         if !repeat {
-                            let _ = self
-                                .events_tx
-                                .try_send(HostMsg::Event(GameEvent::KeyDown { keycode, scancode }));
+                            let _ = self.events_tx.try_send(HostMsg::Event(GameEvent::KeyDown {
+                                keycode,
+                                physical_key,
+                            }));
                         }
                         if let Some(text) = text
                             && !text.chars().any(|c| c.is_control())
@@ -911,9 +912,10 @@ impl ApplicationHandler for AppHandler {
                         }
                     }
                     ElementState::Released => {
-                        let _ = self
-                            .events_tx
-                            .try_send(HostMsg::Event(GameEvent::KeyUp { keycode, scancode }));
+                        let _ = self.events_tx.try_send(HostMsg::Event(GameEvent::KeyUp {
+                            keycode,
+                            physical_key,
+                        }));
                     }
                 }
             }
@@ -1357,117 +1359,10 @@ pub fn stop_text_input() {}
 // Key mapping (unchanged from the pump-events implementation).
 // ---------------------------------------------------------------------
 
-fn physical_key_to_sdl_scancode(key: PhysicalKey) -> u16 {
-    let code = match key {
-        PhysicalKey::Code(c) => c,
-        PhysicalKey::Unidentified(_) => return 0,
-    };
-    use KeyCode as K;
-    match code {
-        K::KeyA => 4,
-        K::KeyB => 5,
-        K::KeyC => 6,
-        K::KeyD => 7,
-        K::KeyE => 8,
-        K::KeyF => 9,
-        K::KeyG => 10,
-        K::KeyH => 11,
-        K::KeyI => 12,
-        K::KeyJ => 13,
-        K::KeyK => 14,
-        K::KeyL => 15,
-        K::KeyM => 16,
-        K::KeyN => 17,
-        K::KeyO => 18,
-        K::KeyP => 19,
-        K::KeyQ => 20,
-        K::KeyR => 21,
-        K::KeyS => 22,
-        K::KeyT => 23,
-        K::KeyU => 24,
-        K::KeyV => 25,
-        K::KeyW => 26,
-        K::KeyX => 27,
-        K::KeyY => 28,
-        K::KeyZ => 29,
-        K::Digit1 => 30,
-        K::Digit2 => 31,
-        K::Digit3 => 32,
-        K::Digit4 => 33,
-        K::Digit5 => 34,
-        K::Digit6 => 35,
-        K::Digit7 => 36,
-        K::Digit8 => 37,
-        K::Digit9 => 38,
-        K::Digit0 => 39,
-        K::Enter => 40,
-        K::Escape => 41,
-        K::Backspace => 42,
-        K::Tab => 43,
-        K::Space => 44,
-        K::Minus => 45,
-        K::Equal => 46,
-        K::BracketLeft => 47,
-        K::BracketRight => 48,
-        K::Backslash => 49,
-        K::Semicolon => 51,
-        K::Quote => 52,
-        K::Backquote => 53,
-        K::Comma => 54,
-        K::Period => 55,
-        K::Slash => 56,
-        K::CapsLock => 57,
-        K::F1 => 58,
-        K::F2 => 59,
-        K::F3 => 60,
-        K::F4 => 61,
-        K::F5 => 62,
-        K::F6 => 63,
-        K::F7 => 64,
-        K::F8 => 65,
-        K::F9 => 66,
-        K::F10 => 67,
-        K::F11 => 68,
-        K::F12 => 69,
-        K::PrintScreen => 70,
-        K::ScrollLock => 71,
-        K::Pause => 72,
-        K::Insert => 73,
-        K::Home => 74,
-        K::PageUp => 75,
-        K::Delete => 76,
-        K::End => 77,
-        K::PageDown => 78,
-        K::ArrowRight => 79,
-        K::ArrowLeft => 80,
-        K::ArrowDown => 81,
-        K::ArrowUp => 82,
-        K::NumLock => 83,
-        K::NumpadDivide => 84,
-        K::NumpadMultiply => 85,
-        K::NumpadSubtract => 86,
-        K::NumpadAdd => 87,
-        K::NumpadEnter => 88,
-        K::Numpad1 => 89,
-        K::Numpad2 => 90,
-        K::Numpad3 => 91,
-        K::Numpad4 => 92,
-        K::Numpad5 => 93,
-        K::Numpad6 => 94,
-        K::Numpad7 => 95,
-        K::Numpad8 => 96,
-        K::Numpad9 => 97,
-        K::Numpad0 => 98,
-        K::NumpadDecimal => 99,
-        K::ControlLeft => 224,
-        K::ShiftLeft => 225,
-        K::AltLeft => 226,
-        K::SuperLeft => 227,
-        K::ControlRight => 228,
-        K::ShiftRight => 229,
-        K::AltRight => 230,
-        K::SuperRight => 231,
-        _ => 0,
+fn physical_key_to_key_code(key: PhysicalKey) -> Option<KeyCode> {
+    match key {
+        PhysicalKey::Code(c) => Some(c),
+        PhysicalKey::Unidentified(_) => None,
     }
 }
 

@@ -216,7 +216,7 @@ pub async fn show_save_load(
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_sdl(event_pump, transform);
 
-    // Stub keyboard fed into the input-field widget so its scancode
+    // Stub keyboard fed into the input-field widget so its special-key
     // branches (Backspace / Delete / Left / Right / Home / End / Tab /
     // Up / Down / Enter / Escape) stay silent. The modal handles those
     // at the `GameEvent::KeyDown` level and drives the widget via the

@@ -343,11 +343,11 @@ pub struct Host {
     /// personal bindings so the User Defined button can restore them.
     pub custom_key_config: KeyConfig,
 
-    /// SDL scancode bound to the `DisplayMap` shortcut.  The game loop
+    /// Physical key bound to the `DisplayMap` shortcut.  The game loop
     /// reads this on each frame and emits a minimap-toggle command on
-    /// key release.  Zero means no accelerator bound.  Lives host-side
+    /// key release.  `None` means no accelerator bound.  Lives host-side
     /// — the engine has no reason to know which key the UI is bound to.
-    pub minimap_fast_key: u16,
+    pub minimap_fast_key: Option<winit::keyboard::KeyCode>,
 
     // ── Host-side managers ───────────────────────────────────────
     /// Audio playback manager (samples, music, listen point).

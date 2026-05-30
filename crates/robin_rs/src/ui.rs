@@ -5,12 +5,15 @@
 //! widget-specific drawing code (see `widget/` and `game_session`); this
 //! module is a serializable state + layout/event skeleton.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
 use crate::geo2d::{BBox2D, Point2D, pt};
 use crate::ingame_menu::layout::{MenuTransform, TextAlign, VAlign, render_text_in_box_aligned};
-use crate::input::{KeyboardState, MAX_SCANCODES};
+use crate::input::KeyboardState;
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::sprite::BBox;
@@ -151,12 +154,12 @@ pub struct UiKeyboard {
     repeat_loop: u16,
     double_press_delay: u32,
 
-    key_state: Vec<KeyState>,
-    old_key_state: Vec<KeyState>,
-    repeat_counter: Vec<u16>,
-    typewriter: Vec<TypeWriter>,
-    last_key_press: Vec<u32>,
-    type_press: Vec<u32>,
+    key_state: BTreeMap<KeyCode, KeyState>,
+    old_key_state: BTreeMap<KeyCode, KeyState>,
+    repeat_counter: BTreeMap<KeyCode, u16>,
+    typewriter: BTreeMap<KeyCode, TypeWriter>,
+    last_key_press: BTreeMap<KeyCode, u32>,
+    type_press: BTreeMap<KeyCode, u32>,
 
     old_keyboard_state: KeyboardState,
 }
@@ -175,12 +178,12 @@ impl UiKeyboard {
             repeat_delay: 5,
             repeat_loop: 2,
             double_press_delay,
-            key_state: vec![KeyState::KeyUp; MAX_SCANCODES],
-            old_key_state: vec![KeyState::KeyUp; MAX_SCANCODES],
-            repeat_counter: vec![0u16; MAX_SCANCODES],
-            typewriter: vec![TypeWriter::None; MAX_SCANCODES],
-            last_key_press: vec![0u32; MAX_SCANCODES],
-            type_press: vec![0u32; MAX_SCANCODES],
+            key_state: BTreeMap::new(),
+            old_key_state: BTreeMap::new(),
+            repeat_counter: BTreeMap::new(),
+            typewriter: BTreeMap::new(),
+            last_key_press: BTreeMap::new(),
+            type_press: BTreeMap::new(),
             old_keyboard_state: KeyboardState::default(),
         }
     }
@@ -199,75 +202,85 @@ impl UiKeyboard {
         }
 
         // Save previous key states for change detection.
-        self.old_key_state.copy_from_slice(&self.key_state);
+        self.old_key_state = self.key_state.clone();
 
         self.changed = false;
 
-        for i in 0..MAX_SCANCODES {
-            let cur = keyboard_state.keys.get(i).copied().unwrap_or(0);
-            let old = self.old_keyboard_state.keys.get(i).copied().unwrap_or(0);
+        let mut keys_to_update: BTreeSet<KeyCode> = self.key_state.keys().copied().collect();
+        keys_to_update.extend(keyboard_state.keys.iter().copied());
+        keys_to_update.extend(self.old_keyboard_state.keys.iter().copied());
+
+        for key in keys_to_update {
+            let cur = keyboard_state.keys.contains(&key);
+            let old = self.old_keyboard_state.keys.contains(&key);
 
             if cur != old {
                 // ── Key state changed this frame ──
                 self.changed = true;
 
-                if cur > 0 {
+                if cur {
                     // Key just went down.
-                    self.key_state[i] = KeyState::KeyDown;
-                    self.type_press[i] = current_time_ms;
-                    self.typewriter[i] = TypeWriter::None;
+                    self.key_state.insert(key, KeyState::KeyDown);
+                    self.type_press.insert(key, current_time_ms);
+                    self.typewriter.insert(key, TypeWriter::None);
                 } else {
                     // Key just went up.
-                    self.repeat_counter[i] = 0;
+                    self.repeat_counter.insert(key, 0);
 
                     // Only handle a previous `KeyDown` here; other previous
                     // states (`KeyPressed`, `KeyDouble`, `KeyUp`) are a no-op
                     // and leave `last_key_press` untouched.
-                    if let KeyState::KeyDown = self.key_state[i] {
-                        if current_time_ms.wrapping_sub(self.last_key_press[i])
-                            <= self.double_press_delay
-                        {
-                            self.key_state[i] = KeyState::KeyDouble;
+                    if self.key_state.get(&key).copied() == Some(KeyState::KeyDown) {
+                        let last_key_press = *self.last_key_press.get(&key).unwrap_or(&0);
+                        if current_time_ms.wrapping_sub(last_key_press) <= self.double_press_delay {
+                            self.key_state.insert(key, KeyState::KeyDouble);
                         } else {
-                            self.key_state[i] = KeyState::KeyPressed;
-                            self.last_key_press[i] = current_time_ms;
+                            self.key_state.insert(key, KeyState::KeyPressed);
+                            self.last_key_press.insert(key, current_time_ms);
                         }
                     }
                 }
             } else {
                 // ── Key state unchanged ──
 
-                if cur > 0 {
+                if cur {
                     // Key is still held — advance the typewriter.
-                    match self.typewriter[i] {
+                    match self
+                        .typewriter
+                        .get(&key)
+                        .copied()
+                        .unwrap_or(TypeWriter::None)
+                    {
                         TypeWriter::None => {
-                            self.typewriter[i] = TypeWriter::Touch;
+                            self.typewriter.insert(key, TypeWriter::Touch);
                         }
                         TypeWriter::Touch => {
-                            if current_time_ms.wrapping_sub(self.type_press[i]) > REPEAT_FIRST_MS {
-                                self.typewriter[i] = TypeWriter::Repeat;
-                                self.type_press[i] = current_time_ms;
+                            let type_press = *self.type_press.get(&key).unwrap_or(&0);
+                            if current_time_ms.wrapping_sub(type_press) > REPEAT_FIRST_MS {
+                                self.typewriter.insert(key, TypeWriter::Repeat);
+                                self.type_press.insert(key, current_time_ms);
                             }
                         }
                         TypeWriter::Repeat => {
-                            self.typewriter[i] = TypeWriter::Waiting;
+                            self.typewriter.insert(key, TypeWriter::Waiting);
                         }
                         TypeWriter::Waiting => {
-                            if current_time_ms.wrapping_sub(self.type_press[i]) > REPEAT_AFTER_MS {
-                                self.typewriter[i] = TypeWriter::Repeat;
-                                self.type_press[i] = current_time_ms;
+                            let type_press = *self.type_press.get(&key).unwrap_or(&0);
+                            if current_time_ms.wrapping_sub(type_press) > REPEAT_AFTER_MS {
+                                self.typewriter.insert(key, TypeWriter::Repeat);
+                                self.type_press.insert(key, current_time_ms);
                             }
                         }
                     }
                 } else {
-                    self.typewriter[i] = TypeWriter::None;
+                    self.typewriter.insert(key, TypeWriter::None);
                 }
 
                 // Clean up transient states.
-                match self.key_state[i] {
+                match self.key_state.get(&key).copied().unwrap_or(KeyState::KeyUp) {
                     KeyState::KeyDouble | KeyState::KeyPressed => {
                         self.changed = true;
-                        self.key_state[i] = KeyState::KeyUp;
+                        self.key_state.insert(key, KeyState::KeyUp);
                     }
                     _ => {}
                 }
@@ -284,22 +297,25 @@ impl UiKeyboard {
     }
 
     /// Whether a specific key changed state during the last refresh.
-    pub fn has_key_changed(&self, scancode: u16) -> bool {
-        let i = scancode as usize;
-        assert!(i < MAX_SCANCODES, "scancode {scancode} out of range");
-        self.old_key_state[i] != self.key_state[i]
+    pub fn has_key_changed(&self, key: KeyCode) -> bool {
+        self.old_key_state
+            .get(&key)
+            .copied()
+            .unwrap_or(KeyState::KeyUp)
+            != self.key_state.get(&key).copied().unwrap_or(KeyState::KeyUp)
     }
 
     /// Current state of a key.
-    pub fn get_state_of_key(&self, scancode: u16) -> KeyState {
-        let i = scancode as usize;
-        assert!(i < MAX_SCANCODES, "scancode {scancode} out of range");
-        self.key_state[i]
+    pub fn get_state_of_key(&self, key: KeyCode) -> KeyState {
+        self.key_state.get(&key).copied().unwrap_or(KeyState::KeyUp)
     }
 
     /// Typewriter repeat state of a key.
-    pub fn get_typewriter_state(&self, scancode: u16) -> TypeWriter {
-        self.typewriter[scancode as usize]
+    pub fn get_typewriter_state(&self, key: KeyCode) -> TypeWriter {
+        self.typewriter
+            .get(&key)
+            .copied()
+            .unwrap_or(TypeWriter::None)
     }
 
     pub fn double_press_delay(&self) -> u32 {
@@ -318,9 +334,13 @@ impl UiKeyboard {
     /// Reset all key states and counters.
     pub fn reset(&mut self) {
         self.changed = true;
-        self.repeat_counter.fill(0);
-        self.last_key_press.fill(0);
-        self.type_press.fill(0);
+        self.key_state.clear();
+        self.old_key_state.clear();
+        self.repeat_counter.clear();
+        self.typewriter.clear();
+        self.last_key_press.clear();
+        self.type_press.clear();
+        self.old_keyboard_state.keys.clear();
     }
 }
 
@@ -1804,10 +1824,10 @@ mod tests {
 
     // ── UiKeyboard tests ──
 
-    fn make_keys(pressed: &[u16]) -> KeyboardState {
+    fn make_keys(pressed: &[KeyCode]) -> KeyboardState {
         let mut ks = KeyboardState::default();
-        for &sc in pressed {
-            ks.keys[sc as usize] = 1;
+        for &key in pressed {
+            ks.keys.insert(key);
         }
         ks
     }
@@ -1815,7 +1835,7 @@ mod tests {
     #[test]
     fn keyboard_first_refresh_initializes() {
         let mut kb = UiKeyboard::default();
-        let ks = make_keys(&[10]);
+        let ks = make_keys(&[KeyCode::KeyA]);
         assert!(!kb.refresh(&ks, 0));
         // Not initialized until second call.
         assert!(!kb.has_changed());
@@ -1826,9 +1846,9 @@ mod tests {
         let mut kb = UiKeyboard::default();
         kb.refresh(&make_keys(&[]), 0);
 
-        kb.refresh(&make_keys(&[42]), 100);
+        kb.refresh(&make_keys(&[KeyCode::Backspace]), 100);
         assert!(kb.has_changed());
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyDown);
+        assert_eq!(kb.get_state_of_key(KeyCode::Backspace), KeyState::KeyDown);
     }
 
     #[test]
@@ -1837,16 +1857,19 @@ mod tests {
         kb.refresh(&make_keys(&[]), 0);
 
         // Press key
-        kb.refresh(&make_keys(&[42]), 100);
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyDown);
+        kb.refresh(&make_keys(&[KeyCode::Backspace]), 100);
+        assert_eq!(kb.get_state_of_key(KeyCode::Backspace), KeyState::KeyDown);
 
         // Release key → KeyPressed
         kb.refresh(&make_keys(&[]), 700);
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyPressed);
+        assert_eq!(
+            kb.get_state_of_key(KeyCode::Backspace),
+            KeyState::KeyPressed
+        );
 
         // Next frame → KeyUp (transient state cleaned up)
         kb.refresh(&make_keys(&[]), 800);
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyUp);
+        assert_eq!(kb.get_state_of_key(KeyCode::Backspace), KeyState::KeyUp);
     }
 
     #[test]
@@ -1857,17 +1880,17 @@ mod tests {
         kb.refresh(&make_keys(&[]), 10_000);
 
         // First press + release
-        kb.refresh(&make_keys(&[10]), 10_100);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_100);
         kb.refresh(&make_keys(&[]), 10_200);
-        assert_eq!(kb.get_state_of_key(10), KeyState::KeyPressed);
+        assert_eq!(kb.get_state_of_key(KeyCode::KeyA), KeyState::KeyPressed);
 
         // Consume the pressed state
         kb.refresh(&make_keys(&[]), 10_250);
 
         // Second press + release within 500ms of first release
-        kb.refresh(&make_keys(&[10]), 10_300);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_300);
         kb.refresh(&make_keys(&[]), 10_400);
-        assert_eq!(kb.get_state_of_key(10), KeyState::KeyDouble);
+        assert_eq!(kb.get_state_of_key(KeyCode::KeyA), KeyState::KeyDouble);
     }
 
     #[test]
@@ -1876,14 +1899,14 @@ mod tests {
         kb.refresh(&make_keys(&[]), 10_000);
 
         // First press + release
-        kb.refresh(&make_keys(&[10]), 10_100);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_100);
         kb.refresh(&make_keys(&[]), 10_200);
         kb.refresh(&make_keys(&[]), 10_250);
 
         // Second press + release AFTER 500ms from first release
-        kb.refresh(&make_keys(&[10]), 10_800);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_800);
         kb.refresh(&make_keys(&[]), 10_900);
-        assert_eq!(kb.get_state_of_key(10), KeyState::KeyPressed);
+        assert_eq!(kb.get_state_of_key(KeyCode::KeyA), KeyState::KeyPressed);
     }
 
     #[test]
@@ -1892,24 +1915,24 @@ mod tests {
         kb.refresh(&make_keys(&[]), 0);
 
         // Press key
-        kb.refresh(&make_keys(&[20]), 100);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::None);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 100);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::None);
 
         // Hold — transitions to Touch
-        kb.refresh(&make_keys(&[20]), 200);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Touch);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 200);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Touch);
 
         // Hold past REPEAT_FIRST (400ms) → Repeat
-        kb.refresh(&make_keys(&[20]), 550);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Repeat);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 550);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Repeat);
 
         // Next frame → Waiting
-        kb.refresh(&make_keys(&[20]), 560);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Waiting);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 560);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Waiting);
 
         // Wait past REPEAT_AFTER (50ms) → Repeat again
-        kb.refresh(&make_keys(&[20]), 620);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Repeat);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 620);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Repeat);
     }
 
     #[test]
@@ -1917,16 +1940,16 @@ mod tests {
         let mut kb = UiKeyboard::default();
         kb.refresh(&make_keys(&[]), 0);
 
-        kb.refresh(&make_keys(&[5]), 100);
-        assert!(kb.has_key_changed(5));
-        assert!(!kb.has_key_changed(6));
+        kb.refresh(&make_keys(&[KeyCode::Digit5]), 100);
+        assert!(kb.has_key_changed(KeyCode::Digit5));
+        assert!(!kb.has_key_changed(KeyCode::Digit6));
     }
 
     #[test]
     fn keyboard_reset() {
         let mut kb = UiKeyboard::default();
         kb.refresh(&make_keys(&[]), 0);
-        kb.refresh(&make_keys(&[10]), 100);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 100);
         kb.reset();
         assert!(kb.has_changed()); // reset sets changed = true
     }

@@ -225,8 +225,8 @@ pub struct WidgetBase {
     pub with_default: bool,
     /// Whether `create()` has been called.
     pub created: bool,
-    /// Accelerator key scancode (0 = none).
-    pub fast_key: u16,
+    /// Accelerator physical key.
+    pub fast_key: Option<winit::keyboard::KeyCode>,
     /// Creation flags.
     pub flags: u32,
     /// Widget text (button label, input text, etc.).
@@ -251,7 +251,7 @@ impl Default for WidgetBase {
             with_focus: true,
             with_default: true,
             created: false,
-            fast_key: 0,
+            fast_key: None,
             flags: 0,
             text: String::new(),
             tooltip_text: String::new(),
@@ -303,7 +303,7 @@ impl WidgetBase {
         !self.tooltip_text.is_empty()
     }
 
-    pub fn set_accelerator(&mut self, key: u16) {
+    pub fn set_accelerator(&mut self, key: Option<winit::keyboard::KeyCode>) {
         self.fast_key = key;
     }
 
