@@ -9,12 +9,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, GeoPoint2D};
+use crate::geo2d;
 use crate::profiles::{ArmorMaterial, WeaponMaterial};
 use crate::sound_cache::{Material, SampleLoader, SoundCache};
 use crate::sound_config::SoundConfig;
 use crate::sound_geometry::*;
 use crate::sound_source::*;
+use robin_engine::coordinates::MapPoint;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -432,8 +433,8 @@ impl SoundManager {
         0
     }
 
-    pub fn listen_point(&self) -> GeoPoint2D {
-        self.geometry_engine.listen_point()
+    pub fn listen_point(&self) -> MapPoint {
+        MapPoint::from_geo(self.geometry_engine.listen_point())
     }
 
     pub fn is_dialog_finished(&self) -> bool {
@@ -630,9 +631,10 @@ impl SoundManager {
     // ── Listen point ─────────────────────────────────────────────────
 
     /// Update the listener position and zoom level.
-    pub fn set_listen_point(&mut self, position: GeoPoint2D, zoom_level: f32) {
-        if self.geometry_engine.listen_point() != position {
-            self.geometry_engine.set_listen_point(position);
+    pub fn set_listen_point(&mut self, position: MapPoint, zoom_level: f32) {
+        let position_geo = position.to_geo();
+        if self.geometry_engine.listen_point() != position_geo {
+            self.geometry_engine.set_listen_point(position_geo);
             self.update_pending_sounds = true;
         }
         if (self.geometry_engine.zoom_factor() - zoom_level).abs() > f32::EPSILON {
@@ -904,7 +906,7 @@ impl SoundManager {
     pub fn play_fx(
         &mut self,
         fx_id: u32,
-        position: GeoPoint2D,
+        position: MapPoint,
         material: Option<Material>,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
@@ -916,7 +918,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::Fx,
-            position,
+            position: position.to_geo(),
             identifier: fx_id,
             source: SoundSettingsSource::Position {
                 material: material.map_or(Material::NUM_MATERIALS as u8, |m| m as u8),
@@ -959,7 +961,7 @@ impl SoundManager {
         strike_kind: StrikeKind,
         weapon1: WeaponMaterial,
         weapon2: WeaponMaterial,
-        position: GeoPoint2D,
+        position: MapPoint,
         backend: &mut dyn AudioBackend,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
@@ -975,7 +977,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position,
+            position: position.to_geo(),
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -997,7 +999,7 @@ impl SoundManager {
         impact_kind: ImpactKind,
         weapon: WeaponMaterial,
         armor: ArmorMaterial,
-        position: GeoPoint2D,
+        position: MapPoint,
         backend: &mut dyn AudioBackend,
         loader: &SampleLoader,
         rng: &mut dyn FnMut(u32) -> u32,
@@ -1021,7 +1023,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position,
+            position: position.to_geo(),
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1044,7 +1046,7 @@ impl SoundManager {
         strike_kind: StrikeKind,
         weapon1: WeaponMaterial,
         weapon2: WeaponMaterial,
-        position: GeoPoint2D,
+        position: MapPoint,
     ) {
         if !self.active {
             return;
@@ -1056,7 +1058,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position,
+            position: position.to_geo(),
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1091,7 +1093,7 @@ impl SoundManager {
         impact_kind: ImpactKind,
         weapon: WeaponMaterial,
         armor: ArmorMaterial,
-        position: GeoPoint2D,
+        position: MapPoint,
     ) {
         if !self.active {
             return;
@@ -1104,7 +1106,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position,
+            position: position.to_geo(),
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1134,14 +1136,14 @@ impl SoundManager {
     /// footsteps and cloth sounds (so the bank picks the right
     /// material variant); `None` for surface-independent FX
     /// (explosions, bell rings, etc).
-    pub fn queue_fx(&mut self, fx_id: u32, position: GeoPoint2D, material: Option<Material>) {
+    pub fn queue_fx(&mut self, fx_id: u32, position: MapPoint, material: Option<Material>) {
         if !self.active {
             return;
         }
 
         let settings = SoundSettings {
             sound_type: SoundType::Fx,
-            position,
+            position: position.to_geo(),
             identifier: fx_id,
             source: SoundSettingsSource::Position {
                 material: material.map_or(Material::NUM_MATERIALS as u8, |m| m as u8),
@@ -1175,7 +1177,7 @@ impl SoundManager {
         profile_id: u32,
         exclamation_id: u16,
         variant: i32,
-        position: GeoPoint2D,
+        position: MapPoint,
         actor_id: Option<u32>,
     ) {
         tracing::trace!(
@@ -1199,7 +1201,7 @@ impl SoundManager {
             }
             lp
         } else {
-            position
+            position.to_geo()
         };
 
         let excl_id = (profile_id & 0xFFFF_0000) | exclamation_id as u32;
@@ -1405,7 +1407,7 @@ impl SoundManager {
     pub fn resume_all_sound_sources(
         &mut self,
         sources: &SoundSourceManager,
-        position: GeoPoint2D,
+        position: MapPoint,
         zoom: f32,
     ) {
         self.set_listen_point(position, zoom);
@@ -2441,7 +2443,7 @@ mod tests {
     fn listen_point_triggers_update() {
         let mut mgr = SoundManager::new();
         mgr.update_pending_sounds = false;
-        mgr.set_listen_point(geo2d::pt(100.0, 200.0), 1.0);
+        mgr.set_listen_point(MapPoint::new(100.0, 200.0), 1.0);
         assert!(mgr.update_pending_sounds);
     }
 }

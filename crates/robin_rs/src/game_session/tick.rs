@@ -39,7 +39,7 @@ pub(super) fn tick_audio(
     if host.pending_resume_all_sources.take().is_some() {
         host.sound.resume_all_sound_sources(
             &manager.engine.sound_sim().sources,
-            host.viewport.sound_listen_point().to_geo(),
+            host.viewport.sound_listen_point(),
             host.viewport.zoom_factor,
         );
     }

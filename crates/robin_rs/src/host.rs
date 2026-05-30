@@ -714,7 +714,7 @@ impl Host {
                         profile_id,
                         exclamation_id,
                         variant,
-                        position.to_geo(),
+                        position,
                         actor_id.map(|id| id.0),
                     );
                 }
@@ -723,7 +723,7 @@ impl Host {
                     position,
                     material,
                 } => {
-                    self.sound.queue_fx(fx_id, position.to_geo(), material);
+                    self.sound.queue_fx(fx_id, position, material);
                 }
                 SoundCommand::StrikeFx {
                     strike_kind,
@@ -732,7 +732,7 @@ impl Host {
                     position,
                 } => {
                     self.sound
-                        .queue_strike_fx(strike_kind, weapon1, weapon2, position.to_geo());
+                        .queue_strike_fx(strike_kind, weapon1, weapon2, position);
                 }
                 SoundCommand::ImpactFx {
                     impact_kind,
@@ -741,7 +741,7 @@ impl Host {
                     position,
                 } => {
                     self.sound
-                        .queue_impact_fx(impact_kind, weapon, armor, position.to_geo());
+                        .queue_impact_fx(impact_kind, weapon, armor, position);
                 }
                 SoundCommand::Jingle(jingle) => {
                     self.sound.queue_jingle(jingle);
@@ -798,7 +798,7 @@ impl Host {
 
     pub fn sync_sound_listener(&mut self) {
         self.sound.set_listen_point(
-            self.viewport.sound_listen_point().to_geo(),
+            self.viewport.sound_listen_point(),
             self.viewport.zoom_factor,
         );
     }
