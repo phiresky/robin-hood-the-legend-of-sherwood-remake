@@ -5,6 +5,7 @@
 use super::selected_pc_profile_indices;
 use super::tick::drain_pending_console_output;
 use crate::Host;
+use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerTooltipTracker};
 use crate::element::Posture;
 use crate::game::Game;
 use crate::game_render::{
@@ -20,9 +21,13 @@ use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
 use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
+use crate::sherwood_hud::{self, SherwoodButtonEnable, SherwoodTooltipTracker};
 use crate::sound::MusicMode;
+use crate::stature_hud::{self, StatureEnable, StatureHoverState, StatureTooltipTracker};
 use crate::ui_panel::{PortraitHitArea, hit_test_portrait_detailed};
+use crate::widget::blazon_bar;
 use crate::widget::requirements::{RequirementSlot, build_requirements_state};
+use crate::zoom_hud::{self, ZoomButtonEnable, ZoomHoverState, ZoomTooltipTracker};
 use robin_engine::engine::Engine;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 
@@ -600,12 +605,12 @@ pub struct RenderContext<'a> {
     pub console_overlay: &'a mut crate::console_overlay::ConsoleOverlay,
 
     // Mutable per-frame UI trackers (tooltip hover timers).
-    pub zoom_tooltip: &'a mut crate::zoom_hud::ZoomTooltipTracker,
-    pub corner_tooltip: &'a mut crate::corner_hud::CornerTooltipTracker,
+    pub zoom_tooltip: &'a mut ZoomTooltipTracker,
+    pub corner_tooltip: &'a mut CornerTooltipTracker,
     pub requirements_tooltip: &'a mut crate::ui_panel::RequirementsTooltipTracker,
     pub blazon_tooltip: &'a mut crate::ui_panel::BlazonTooltipTracker,
-    pub stature_tooltip: &'a mut crate::stature_hud::StatureTooltipTracker,
-    pub sherwood_tooltip: &'a mut crate::sherwood_hud::SherwoodTooltipTracker,
+    pub stature_tooltip: &'a mut StatureTooltipTracker,
+    pub sherwood_tooltip: &'a mut SherwoodTooltipTracker,
     pub pc_action_tooltip: &'a mut crate::ui_panel::PcActionTooltipTracker,
 
     // Immutable resources.
@@ -614,20 +619,20 @@ pub struct RenderContext<'a> {
     pub menu_resources: Option<&'a IngameMenuResources>,
     pub hud_fonts: Option<&'a crate::hud_text::HudFonts>,
     pub short_briefing_strings: &'a std::collections::HashMap<u32, String>,
-    pub sherwood_layout: &'a crate::sherwood_hud::SherwoodHudLayout,
-    pub sherwood_sprites: &'a crate::sherwood_hud::SherwoodButtonSprites,
-    pub zoom_layout: &'a crate::zoom_hud::ZoomHudLayout,
-    pub zoom_sprites: &'a crate::zoom_hud::ZoomButtonSprites,
-    pub corner_layout: &'a crate::corner_hud::CornerHudLayout,
-    pub corner_sprites: &'a crate::corner_hud::CornerButtonSprites,
-    pub stature_layout: &'a crate::stature_hud::StatureHudLayout,
-    pub stature_sprites: &'a crate::stature_hud::StatureSprites,
+    pub sherwood_layout: &'a sherwood_hud::SherwoodHudLayout,
+    pub sherwood_sprites: &'a sherwood_hud::SherwoodButtonSprites,
+    pub zoom_layout: &'a zoom_hud::ZoomHudLayout,
+    pub zoom_sprites: &'a zoom_hud::ZoomButtonSprites,
+    pub corner_layout: &'a corner_hud::CornerHudLayout,
+    pub corner_sprites: &'a corner_hud::CornerButtonSprites,
+    pub stature_layout: &'a stature_hud::StatureHudLayout,
+    pub stature_sprites: &'a stature_hud::StatureSprites,
     pub threaded_input: &'a crate::input::ThreadedInput,
     pub game: &'a Game,
     pub pause_menu: Option<&'a PauseMenu>,
 
     // Copy values threaded through from the outer loop.
-    pub sherwood_enable: crate::sherwood_hud::SherwoodButtonEnable,
+    pub sherwood_enable: SherwoodButtonEnable,
     pub shift_held: bool,
     pub rewind_active: bool,
     pub display_info_elapsed_secs: u32,
@@ -998,7 +1003,7 @@ pub(super) fn render_frame(
             .and_then(|s| s.game_host())
             .map(|h| (h.men_to_blazon_conversion_mode, h.active_blinking_blazons()))
             .unwrap_or((false, 0));
-        if let Some(bb) = crate::widget::blazon_bar::build_blazon_bar_state(
+        if let Some(bb) = blazon_bar::build_blazon_bar_state(
             campaign,
             &assets.profile_manager,
             men_to_blazon,
@@ -1095,11 +1100,11 @@ pub(super) fn render_frame(
         let mp = threaded_input.position();
         let hovered_btn =
             sherwood_layout.hit_test_geometric(mp.x as i32, mp.y as i32, sherwood_enable);
-        let hover = crate::sherwood_hud::SherwoodHoverState {
+        let hover = sherwood_hud::SherwoodHoverState {
             hovered: hovered_btn,
             mouse_pressed: host.input.left_mouse_down,
         };
-        crate::sherwood_hud::draw_with_sprites(
+        sherwood_hud::draw_with_sprites(
             renderer,
             sherwood_layout,
             sherwood_enable,
@@ -1117,16 +1122,12 @@ pub(super) fn render_frame(
             let (cw, ch) = cursor_renderer.current_frame_size();
             let is_sherwood = game.is_sherwood;
             let men_to_blazon = game.is_men_to_blazon_conversion();
-            crate::sherwood_hud::draw_tooltip(
+            sherwood_hud::draw_tooltip(
                 renderer,
                 sherwood_tooltip,
                 |btn| {
-                    crate::sherwood_hud::sherwood_button_tooltip_mt_id(
-                        btn,
-                        is_sherwood,
-                        men_to_blazon,
-                    )
-                    .map(|mt_id| resources.menu_text.get(mt_id))
+                    sherwood_hud::sherwood_button_tooltip_mt_id(btn, is_sherwood, men_to_blazon)
+                        .map(|mt_id| resources.menu_text.get(mt_id))
                 },
                 &fonts.tooltip_font,
                 fonts.shadow_font.as_ref(),
@@ -1152,25 +1153,24 @@ pub(super) fn render_frame(
     // disabled/normal/hover/pressed scheme so the visuals reuse the
     // BTTN resource frames the original game ships.
     {
-        let zoom_enable =
-            crate::zoom_hud::ZoomButtonEnable::from_engine(engine, &host.engine_display);
+        let zoom_enable = ZoomButtonEnable::from_engine(engine, &host.engine_display);
         let mp = threaded_input.position();
         let hovered_btn = zoom_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
-        let hover = crate::zoom_hud::ZoomHoverState {
+        let hover = ZoomHoverState {
             hovered: hovered_btn,
             mouse_pressed: host.input.left_mouse_down,
         };
-        crate::zoom_hud::draw_with_sprites(renderer, zoom_layout, zoom_enable, hover, zoom_sprites);
+        zoom_hud::draw_with_sprites(renderer, zoom_layout, zoom_enable, hover, zoom_sprites);
 
         // Hover tooltip ("Zoom in" / "Zoom out").
         zoom_tooltip.update(hovered_btn);
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();
-            crate::zoom_hud::draw_tooltip(
+            zoom_hud::draw_tooltip(
                 renderer,
                 zoom_tooltip,
                 |btn| {
-                    let mt_id = crate::zoom_hud::zoom_button_tooltip_mt_id(btn);
+                    let mt_id = zoom_hud::zoom_button_tooltip_mt_id(btn);
                     resources.menu_text.get(mt_id)
                 },
                 &fonts.tooltip_font,
@@ -1186,14 +1186,14 @@ pub(super) fn render_frame(
     // panel in non-Sherwood missions only.  Hidden entirely during
     // Sherwood, where the Sherwood HUD owns this real-estate.
     if !game.is_sherwood {
-        let corner_enable = crate::corner_hud::CornerButtonEnable::from_engine(engine);
+        let corner_enable = CornerButtonEnable::from_engine(engine);
         let mp = threaded_input.position();
         let hovered_btn = corner_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
-        let hover = crate::corner_hud::CornerHoverState {
+        let hover = CornerHoverState {
             hovered: hovered_btn,
             mouse_pressed: host.input.left_mouse_down,
         };
-        crate::corner_hud::draw_with_sprites(
+        corner_hud::draw_with_sprites(
             renderer,
             corner_layout,
             corner_enable,
@@ -1213,15 +1213,15 @@ pub(super) fn render_frame(
         // `input_dispatch_stature_commands` below — and auto-clears
         // when the aggregate stature shifts.
         let stature = engine.retrieve_stature(None);
-        let stature_enable = crate::stature_hud::StatureEnable::from_stature(stature)
-            .with_focus_latch(game.stature_focus);
+        let stature_enable =
+            StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
         let stature_geom_hovered = stature_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
         let stature_hovered = stature_layout.hit_test(mp.x as i32, mp.y as i32, stature_enable);
-        let stature_hover = crate::stature_hud::StatureHoverState {
+        let stature_hover = StatureHoverState {
             hovered: stature_hovered,
             mouse_pressed: host.input.left_mouse_down,
         };
-        crate::stature_hud::draw_with_sprites(
+        stature_hud::draw_with_sprites(
             renderer,
             stature_layout,
             stature_enable,
@@ -1236,11 +1236,11 @@ pub(super) fn render_frame(
         stature_tooltip.update(stature_geom_hovered);
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();
-            crate::stature_hud::draw_tooltip(
+            stature_hud::draw_tooltip(
                 renderer,
                 stature_tooltip,
                 |btn| {
-                    let mt_id = crate::stature_hud::stature_button_tooltip_mt_id(btn);
+                    let mt_id = stature_hud::stature_button_tooltip_mt_id(btn);
                     resources.menu_text.get(mt_id)
                 },
                 &fonts.tooltip_font,
@@ -1255,7 +1255,7 @@ pub(super) fn render_frame(
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
             && let Some(btn) = corner_tooltip.ready_button()
         {
-            let mt_id = crate::corner_hud::corner_button_tooltip_mt_id(btn);
+            let mt_id = corner_hud::corner_button_tooltip_mt_id(btn);
             let text = resources.menu_text.get(mt_id);
             if !text.is_empty() {
                 let (cw, ch) = cursor_renderer.current_frame_size();
