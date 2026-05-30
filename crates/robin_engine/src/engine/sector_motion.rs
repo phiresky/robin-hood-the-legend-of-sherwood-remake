@@ -8,7 +8,6 @@
 //! projection area matches.
 
 use super::{EngineInner, LevelAssets};
-use crate::geo2d::GeoPoint2D;
 
 impl EngineInner {
     /// Look up the projection-area obstacle containing `point` for the
@@ -16,7 +15,7 @@ impl EngineInner {
     ///
     /// Iterates the sight-obstacle table, restricts to projection-area
     /// obstacles whose `(sector, layer)` match, then returns the
-    /// obstacle whose screen-space bbox **and** screen-space polygon
+    /// obstacle whose projected bbox **and** projected polygon
     /// (vertices `(x, y - z_top)`) both contain `point`.  When several
     /// candidates match, picks the one with the greatest `box_3d_max.z`
     /// ("highest obstacle" rule).
@@ -31,7 +30,7 @@ impl EngineInner {
         assets: &LevelAssets,
         sector: u16,
         layer: u16,
-        point: GeoPoint2D,
+        point: crate::coordinates::MapPoint,
     ) -> Option<u16> {
         let mut best: Option<(u16, f32)> = None;
         for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
@@ -41,10 +40,10 @@ impl EngineInner {
             if obs.sector != sector || obs.layer != layer {
                 continue;
             }
-            if !obs.box_screen.contains_point(point) {
+            if !obs.box_projection.contains_point(point) {
                 continue;
             }
-            if !obs.contains_point_screen(point) {
+            if !obs.contains_point_projection(point) {
                 continue;
             }
             let z_max = obs.box_3d_max[2];
@@ -104,7 +103,7 @@ impl EngineInner {
                     assets,
                     handle.get(),
                     layer,
-                    crate::geo2d::pt(x, y),
+                    crate::coordinates::MapPoint::new(x, y),
                 ) {
                     Some(obs_idx) => self
                         .sight_obstacles(assets)

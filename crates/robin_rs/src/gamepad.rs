@@ -4,8 +4,14 @@
 //! state), edge-detection between frames, and the sword-swing gesture
 //! recognizer.
 
-use crate::element::Posture;
+use crate::element::{Command, Posture};
 use crate::input::{MouseButton, ThreadedInput};
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element as engine_element;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::ScrollDirection;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::player_command::PlayerCommand;
 use serde::{Deserialize, Serialize};
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -325,11 +331,8 @@ impl GamePadState {
     /// POV-hat → scroll/zoom messenger dispatch.
     pub fn manage_scroll_axis(
         &self,
-        cmds: &mut Vec<robin_engine::player_command::PlayerCommand>,
+        cmds: &mut Vec<engine_player_command::PlayerCommand>,
     ) -> Vec<ViewportCommand> {
-        use robin_engine::engine::ScrollDirection;
-        use robin_engine::player_command::PlayerCommand;
-
         let mut viewport = Vec::new();
         let alt = self.is_down(GamePadButton::AltChoice);
         // `SelectFollowElement(None)` fires on every scroll direction so
@@ -402,8 +405,7 @@ impl GamePadState {
     pub fn manage_move_axis(
         &self,
         engine: &crate::Engine,
-    ) -> Vec<robin_engine::player_command::PlayerCommand> {
-        use robin_engine::player_command::PlayerCommand;
+    ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
         let selected = engine.selected_pc_ids();
@@ -433,7 +435,7 @@ impl GamePadState {
             } else {
                 MOVE_UNIT / norm
             };
-            let dest = robin_engine::coordinates::MapPoint::new(
+            let dest = engine_coordinates::MapPoint::new(
                 leader_pos.x + x * scale,
                 leader_pos.y + y * scale,
             );
@@ -444,7 +446,7 @@ impl GamePadState {
             // Drops the move when the stick points at unreachable
             // terrain instead of letting it resolve through
             // `perform_group_move`'s snap-to-walkable fallback.
-            let leader_ref = robin_engine::coordinates::MapPoint::new(leader_pos.x, leader_pos.y);
+            let leader_ref = engine_coordinates::MapPoint::new(leader_pos.x, leader_pos.y);
             let hit = engine.fast_grid().get_sector_screen(dest, leader_ref);
             let hit_is_patch = hit
                 .sector_idx
@@ -474,7 +476,7 @@ impl GamePadState {
             if leader_swordfighting {
                 cmds.extend(crate::game_input::resolve_right_click(
                     engine,
-                    robin_engine::player_command::PlayerId::HOST,
+                    engine_player_command::PlayerId::HOST,
                 ));
             } else if leader_posture == Posture::Crouched {
                 cmds.push(PlayerCommand::StandUp);
@@ -492,8 +494,7 @@ impl GamePadState {
         &mut self,
         engine: &crate::Engine,
         threaded_input: &mut ThreadedInput,
-    ) -> Vec<robin_engine::player_command::PlayerCommand> {
-        use robin_engine::player_command::PlayerCommand;
+    ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
         let selected = engine.selected_pc_ids();
@@ -508,7 +509,7 @@ impl GamePadState {
         if !swordfighting {
             if dx != 0.0 || dy != 0.0 {
                 let target = threaded_input.position();
-                threaded_input.reach_position(robin_engine::coordinates::ScreenPoint::new(
+                threaded_input.reach_position(engine_coordinates::ScreenPoint::new(
                     target.x + dx,
                     target.y + dy,
                 ));
@@ -552,8 +553,7 @@ impl GamePadState {
     pub fn manage_character_select(
         &self,
         engine: &crate::Engine,
-    ) -> Vec<robin_engine::player_command::PlayerCommand> {
-        use robin_engine::player_command::PlayerCommand;
+    ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
         let pc_ids = engine.pc_ids();
         if pc_ids.is_empty() {
@@ -612,8 +612,7 @@ impl GamePadState {
     pub fn manage_action_select(
         &self,
         engine: &crate::Engine,
-    ) -> Vec<robin_engine::player_command::PlayerCommand> {
-        use robin_engine::player_command::PlayerCommand;
+    ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
         let selected = engine.selected_pc_ids();
         if !selected.is_empty() {
@@ -686,7 +685,7 @@ impl GamePadState {
             cmds.push(PlayerCommand::MouseRightUp);
             cmds.extend(crate::game_input::resolve_right_click(
                 engine,
-                robin_engine::player_command::PlayerId::HOST,
+                engine_player_command::PlayerId::HOST,
             ));
         }
 
@@ -737,7 +736,7 @@ pub struct GamepadFrame {
     /// Sim-affecting commands produced this frame. Apply to the engine
     /// via `engine.apply_command(...)` and also push onto the replay
     /// recorder.
-    pub cmds: Vec<robin_engine::player_command::PlayerCommand>,
+    pub cmds: Vec<engine_player_command::PlayerCommand>,
     pub viewport: Vec<ViewportCommand>,
     /// QA macro event, if any.  The host decides how to route these —
     /// the `PlayerCommand` bus doesn't yet carry start-macro /
@@ -748,7 +747,7 @@ pub struct GamepadFrame {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewportCommand {
-    Scroll(robin_engine::engine::ScrollDirection),
+    Scroll(engine_api::ScrollDirection),
     ZoomIn,
     ZoomOut,
 }
@@ -841,8 +840,7 @@ pub enum SwordStrike {
 impl SwordStrike {
     /// Convert the recognised gesture to the engine-side sword-strike
     /// [`Command`](robin_engine::element::Command) variant.
-    pub fn to_command(self) -> robin_engine::element::Command {
-        use robin_engine::element::Command;
+    pub fn to_command(self) -> engine_element::Command {
         match self {
             Self::ThrustA => Command::SwordstrikeThrustA,
             Self::ThrustB => Command::SwordstrikeThrustB,
@@ -971,10 +969,10 @@ pub fn recognize_swing(samples: &[(f32, f32)], facing_direction: u16) -> Option<
 /// Returns `None` when the PC has fewer than 2 opponents.
 fn choose_opponent(
     engine: &crate::Engine,
-    pc_id: robin_engine::element::EntityId,
+    pc_id: engine_element::EntityId,
     mut direction: u16,
     increment: i16,
-) -> Option<robin_engine::element::EntityId> {
+) -> Option<engine_element::EntityId> {
     let pc_entity = engine.get_entity(pc_id)?;
     let pc_pos = pc_entity.element_data().position_map();
     let opponents = pc_entity.human_data().map(|h| h.opponents.clone())?;
@@ -1028,19 +1026,12 @@ pub const QA_TIMER_LIMIT_MS: u32 = QA_TIMER_LIMIT;
 mod tests {
     use super::*;
 
-    fn fresh_engine() -> (
-        robin_engine::engine::Engine,
-        robin_engine::engine::LevelAssets,
-    ) {
+    fn fresh_engine() -> (engine_api::Engine, engine_api::LevelAssets) {
         use crate::campaign::Campaign;
-        let mut assets = robin_engine::engine::LevelAssets::new();
-        let engine = robin_engine::engine::Engine::new_for_test(
-            800.0,
-            600.0,
-            Campaign::default(),
-            &mut assets,
-        )
-        .expect("engine");
+        let mut assets = engine_api::LevelAssets::new();
+        let engine =
+            engine_api::Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
+                .expect("engine");
         (engine, assets)
     }
 
@@ -1309,10 +1300,7 @@ mod tests {
 
     // ── Dispatcher tests ────────────────────────────────────────
 
-    use robin_engine::engine::ScrollDirection;
-    use robin_engine::player_command::PlayerCommand;
-
-    fn empty_engine() -> robin_engine::engine::Engine {
+    fn empty_engine() -> engine_api::Engine {
         fresh_engine().0
     }
 

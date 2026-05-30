@@ -3,6 +3,7 @@
 use super::movement::mercenary_formation_destinations;
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
+use crate::coordinates::MapPoint;
 use crate::game_operation::GameCode;
 
 #[test]
@@ -595,7 +596,7 @@ fn measure_engine_size() {
             kind: crate::element::ElementKind::ActorSoldier,
             ..Default::default()
         };
-        element.set_position_map(geo2d::pt(i as f32 * 10.0, i as f32 * 10.0).into());
+        element.set_position_map(MapPoint::new(i as f32 * 10.0, i as f32 * 10.0));
         let entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
             element,
             actor: Default::default(),
@@ -610,7 +611,7 @@ fn measure_engine_size() {
             kind: crate::element::ElementKind::ActorPc,
             ..Default::default()
         };
-        element.set_position_map(geo2d::pt(100.0 + i as f32 * 20.0, 100.0).into());
+        element.set_position_map(MapPoint::new(100.0 + i as f32 * 20.0, 100.0));
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {
             element,
             actor: Default::default(),
@@ -1281,7 +1282,7 @@ fn sort_for_minimap_priority_order() {
         kind: ElementKind::ActorSoldier,
         ..Default::default()
     };
-    soldier_elem.set_position_map(geo2d::pt(20.0, 20.0).into());
+    soldier_elem.set_position_map(MapPoint::new(20.0, 20.0));
     let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
         element: soldier_elem,
         actor: Default::default(),
@@ -1294,7 +1295,7 @@ fn sort_for_minimap_priority_order() {
         kind: ElementKind::ActorPc,
         ..Default::default()
     };
-    pc_elem.set_position_map(geo2d::pt(30.0, 30.0).into());
+    pc_elem.set_position_map(MapPoint::new(30.0, 30.0));
     let pc_id = engine.add_entity(Entity::Pc(ActorPc {
         element: pc_elem,
         actor: Default::default(),
@@ -1306,7 +1307,7 @@ fn sort_for_minimap_priority_order() {
         kind: ElementKind::ObjectBonus,
         ..Default::default()
     };
-    bonus_elem.set_position_map(geo2d::pt(40.0, 40.0).into());
+    bonus_elem.set_position_map(MapPoint::new(40.0, 40.0));
     let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
         element: bonus_elem,
         object: Default::default(),
@@ -1893,7 +1894,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
 /// returns `false`.
 #[test]
 fn scroll_is_taken_without_script_returns_false_and_opens() {
-    use crate::engine::scroll_reveal::ScrollStatus;
+    use super::scroll_reveal::ScrollStatus;
 
     let mut engine = EngineInner::new();
     let scroll = Entity::Scroll(crate::element::ElementScroll {
@@ -2290,7 +2291,7 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = crate::engine::types::LevelAssets::default();
+    let assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -2331,7 +2332,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     engine.set_soldier_attentive_mode(soldier_id, true, false);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = crate::engine::types::LevelAssets::default();
+    let assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -2491,7 +2492,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = crate::engine::types::LevelAssets::default();
+    let assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -2585,7 +2586,7 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
 #[test]
 fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     let scb = scripted_waypoint_scb();
-    let mut script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mut script = MissionScript::from_scb(scb).expect("from_scb");
 
     assert!(script.bind_waypoint(crate::ai::PathId::new(2).unwrap(), 3, "TestWaypoint"));
     assert!(
@@ -2609,7 +2610,7 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
 #[test]
 fn call_waypoint_function_dispatches_and_falls_back() {
     let scb = scripted_waypoint_scb();
-    let mut script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mut script = MissionScript::from_scb(scb).expect("from_scb");
     assert!(script.bind_waypoint(crate::ai::PathId::new(0).unwrap(), 0, "TestWaypoint"));
 
     // Bound: call dispatches cleanly.
@@ -2670,7 +2671,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     let scb = scripted_waypoint_scb();
-    let mission_script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mission_script = MissionScript::from_scb(scb).expect("from_scb");
 
     let mut engine = EngineInner::new();
     engine.mission_script = Some(mission_script);
@@ -2776,7 +2777,7 @@ fn waypoint_script_heap_round_trips_through_serde() {
         classes: vec![startup, waypoint_class],
     };
 
-    let mut script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mut script = MissionScript::from_scb(scb).expect("from_scb");
     assert!(script.bind_waypoint(crate::ai::PathId::new(3).unwrap(), 7, "HeapWaypoint"));
 
     // Poke distinct bytes into the heap so a zero reset is detectable.

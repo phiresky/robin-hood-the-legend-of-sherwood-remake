@@ -16,15 +16,17 @@ use crate::Host;
 use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
 use crate::host::HostTitbitPreview;
+use robin_assets::picture::Picture;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::Engine;
+use robin_engine::graphic_config::TextureScaleMode;
 
 use crate::profiles::Action;
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
 use crate::resource_ids::*;
 use crate::resource_manager::ResourceManager;
 use crate::titbit::SpriteRow;
-use robin_assets::picture::Picture;
-use robin_engine::engine::Engine;
-use robin_engine::graphic_config::TextureScaleMode;
 
 const NUM_ROWS: usize = SpriteRow::NumberOfRows as usize;
 
@@ -356,7 +358,7 @@ impl TitbitRenderer {
                 else {
                     return;
                 };
-                let map_pt = robin_engine::coordinates::MapPoint::from_world_xyz(
+                let map_pt = engine_coordinates::MapPoint::from_world_xyz(
                     position.x, position.y, position.z,
                 );
                 let Some(screen_pt) = host.viewport.map_to_screen(map_pt) else {
@@ -402,7 +404,7 @@ impl TitbitRenderer {
         &mut self,
         host: &mut Host,
         engine: &Engine,
-        assets: &robin_engine::engine::LevelAssets,
+        assets: &engine_api::LevelAssets,
         renderer: &mut crate::renderer::Renderer,
         display_order_max: f32,
     ) {
@@ -611,7 +613,7 @@ impl TitbitRenderer {
             };
 
             // Convert 3D world position to 2D map: (x, y - z).
-            let map_pt = robin_engine::coordinates::MapPoint::from_world_xyz(
+            let map_pt = engine_coordinates::MapPoint::from_world_xyz(
                 titbit.position.x,
                 titbit.position.y,
                 titbit.position.z,

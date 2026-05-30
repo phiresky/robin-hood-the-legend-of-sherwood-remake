@@ -18,6 +18,7 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
+use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
@@ -25,7 +26,6 @@ use crate::short_briefings::ShortBriefings;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
-use robin_engine::sound_cache::SampleLoader;
 
 use super::briefings::draw_short_briefings;
 use super::layout::{MenuRect, MenuTransform, align_bottom_right, dim_screen};

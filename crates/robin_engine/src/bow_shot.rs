@@ -42,7 +42,7 @@
 //! shows the disabled bow slot automatically.
 
 use crate::combat::{self, ConcussionContext};
-use crate::coordinates::{MapPoint, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{GroundPoint, MapPoint, WorldPoint3D, WorldVec3D};
 use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
     ObjectData, ObjectType, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
@@ -354,23 +354,23 @@ pub(crate) fn bow_point_order_type_for_mode(mode: ShootMode) -> OrderType {
     }
 }
 
-/// Absolute 2D bow hotspot used by C++ `ComputeBowPoint`:
+/// Absolute projected bow hotspot used by C++ `ComputeBowPoint`:
 /// `GetPositionSprite() + sprite.GetPoint(shoot_animation, direction)`.
 pub(crate) fn bow_sprite_hand_point(
     entity: &Entity,
     mode: ShootMode,
     direction: i16,
-) -> Option<crate::geo2d::GeoPoint2D> {
+) -> Option<MapPoint> {
     let dir = u16::try_from(direction).ok()?;
     let sprite_pos = entity.cxx_position_sprite();
     let offset = entity
         .element_data()
         .sprite
         .get_point(bow_point_order_type_for_mode(mode), dir)?;
-    Some(crate::geo2d::GeoPoint2D {
-        x: sprite_pos.x + offset.x,
-        y: sprite_pos.y + offset.y,
-    })
+    Some(MapPoint::new(
+        sprite_pos.x + offset.x,
+        sprite_pos.y + offset.y,
+    ))
 }
 
 /// Whether this order type is a bow shoot animation.
@@ -692,10 +692,9 @@ fn classify_impact(
     let top_z = obs.compute_top_z(impact.x, impact.y);
     const TOP_EPS: f32 = 0.5;
     let is_top = (impact.z - top_z).abs() <= TOP_EPS
-        && obs.box_ground.contains_point(crate::geo2d::GeoPoint2D {
-            x: impact.x,
-            y: impact.y,
-        });
+        && obs
+            .box_ground
+            .contains_point(GroundPoint::new(impact.x, impact.y));
 
     if is_top {
         // Top-plane normal from the three plane-defining points.
@@ -1124,7 +1123,7 @@ fn compute_trajectory_ballistic_impl(
 /// Takes the shooter's 3D entity position (`Entity::element_data().position`)
 /// where `.z` is the ground elevation and `.y` already includes elevation.
 ///
-/// `sprite_hand_point`: absolute 2D position of the hand anchor, computed as
+/// `sprite_hand_point`: projected map position of the hand anchor, computed as
 /// `sprite_position + hotspot_offset` by the caller.
 ///
 /// For down shots, the bow point is shifted laterally by 20 units along
@@ -1133,7 +1132,7 @@ pub fn compute_bow_point(
     position: WorldPoint3D,
     shoot_mode: ShootMode,
     direction: i16,
-    sprite_hand_point: crate::geo2d::GeoPoint2D,
+    sprite_hand_point: MapPoint,
 ) -> WorldPoint3D {
     let elevation = position.z;
 
@@ -1678,8 +1677,8 @@ pub struct ShotTickResult {
     pub shoot_mode: ShootMode,
     /// Shooter's facing direction (0–15) for bow-point computation.
     pub shooter_direction: i16,
-    /// Sprite hand anchor point (sprite position + hotspot).
-    pub sprite_hand_point: crate::geo2d::GeoPoint2D,
+    /// Projected sprite hand anchor point (sprite position + hotspot).
+    pub sprite_hand_point: MapPoint,
     /// Target's forecasted movement vector for leading shots.
     pub target_forecasted_movement: WorldVec3D,
 }
@@ -1692,7 +1691,7 @@ struct PendingShotTickResult {
     shooter_position: WorldPoint3D,
     shoot_mode: ShootMode,
     shooter_direction: i16,
-    sprite_hand_point: crate::geo2d::GeoPoint2D,
+    sprite_hand_point: MapPoint,
 }
 
 #[derive(Default)]
@@ -3182,17 +3181,17 @@ fn tick_arrows_matching(
                 // Active in-flight projectiles don't carry a cached
                 // obstacle reference, so re-derive the obstacle here
                 // by scanning active projection-area obstacles whose
-                // screen polygon contains the landing point — the same
+                // projected polygon contains the landing point — the same
                 // lookup `FastFindGrid::resolve_projectile_landing`
                 // runs after tick to populate the cached obstacle.
                 let pos = proj.element.position();
-                let landing_screen = crate::geo2d::pt(pos.x, pos.y - pos.z);
+                let landing_map = pos.to_map();
                 let mut top_plane_z: Option<f32> = None;
                 for (obs_idx, obstacle) in sight_obstacles.iter_indexed() {
                     if !sight_obstacles.is_active(obs_idx as usize)
                         || !obstacle.is_projection_area()
                         || obstacle.layer == u16::MAX
-                        || !obstacle.contains_point_screen(landing_screen)
+                        || !obstacle.contains_point_projection(landing_map)
                     {
                         continue;
                     }
@@ -3219,9 +3218,7 @@ fn tick_arrows_matching(
                     let mut p = proj.element.position();
                     p.z = z;
                     proj.element.set_position(p);
-                    let mut m = proj.element.position_map();
-                    m.y = p.y - p.z;
-                    proj.element.set_position_map_preserving_3d(m);
+                    proj.element.set_position_map_preserving_3d(p.to_map());
                 }
                 let impact_pos = proj.element.position_map();
                 proj.projectile.flying = false;
@@ -3361,7 +3358,8 @@ fn tick_arrows_matching(
             || vx != 0.0
             || vy != 0.0
         {
-            let old_pos = [arrow_old.x, arrow_old.y - arrow_old.z, arrow_old.z];
+            let arrow_old_map = arrow_old.to_map();
+            let old_pos = [arrow_old_map.x, arrow_old_map.y, arrow_old.z];
             let new_pos = [arrow_new.x, arrow_map.y, arrow_new.z];
 
             // Flight direction with Y un-compressed.
@@ -3841,7 +3839,7 @@ mod tests {
         ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
     };
     use crate::element::{ActorPc, ActorSoldier, NpcData, PcData, SoldierData};
-    use crate::geo2d::{GeoPoint2D, Vec2D};
+    use crate::geo2d::Vec2D;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
@@ -5985,7 +5983,7 @@ mod tests {
             y: 20.0,
             z: 0.0,
         };
-        let hand = GeoPoint2D { x: pos.x, y: pos.y };
+        let hand = MapPoint::new(pos.x, pos.y);
         let pt = compute_bow_point(pos, ShootMode::Normal, 0, hand);
         assert_eq!(pt.z, BOW_Z_OFFSET_NORMAL);
         assert_eq!(pt.x, 10.0); // no lateral shift for normal
@@ -6007,10 +6005,7 @@ mod tests {
             y: 50.0,
             z: 30.0,
         };
-        let elevated_hand = GeoPoint2D {
-            x: elevated_pos.x,
-            y: elevated_pos.y,
-        };
+        let elevated_hand = MapPoint::new(elevated_pos.x, elevated_pos.y);
         let pt_elev = compute_bow_point(elevated_pos, ShootMode::Normal, 0, elevated_hand);
         assert_eq!(pt_elev.z, 30.0 + BOW_Z_OFFSET_NORMAL);
         assert_eq!(pt_elev.y, 50.0 + 30.0); // map_y + elevation

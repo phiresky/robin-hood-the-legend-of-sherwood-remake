@@ -67,10 +67,10 @@ pub use signatures::{
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ai::{AiGlobalState, AiState, AlertLevel, EmoticonType, GotoFlags};
+use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
 use crate::gate::Door;
-use crate::geo2d::BBox2D;
 use crate::interp::{HostFunctions, NativeStack};
 use crate::order::OrderType;
 use crate::patch::Patch;
@@ -138,7 +138,7 @@ const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
 )]
 pub struct ScriptZonePolygon {
     pub layer: u16,
-    pub bounding_box: BBox2D,
+    pub bounding_box: MapBBox,
     pub points: Vec<crate::coordinates::MapPoint>,
 }
 
@@ -383,7 +383,7 @@ pub struct GameHost {
     /// RecordLeaveGame to compute map-edge spawn and exit points via
     /// `compute_border_point`. Populated by the engine from
     /// `FastFindGrid::map_bbox` before script execution.
-    pub map_bbox: BBox2D,
+    pub map_bbox: MapBBox,
 
     /// Per-sector type/lift snapshot needed by the record-time
     /// `append_move_to_sequence` to drive the building / ladder-lift
@@ -520,7 +520,7 @@ impl GameHost {
             blink_expire_frame: u32::MAX,
             patch_animation_entities: Vec::new(),
             frame_counter: 0,
-            map_bbox: BBox2D::new(),
+            map_bbox: MapBBox::new(),
             sector_kinds: BTreeMap::new(),
             pending_nested_call: None,
             nested_call_depth: 0,
@@ -1462,7 +1462,7 @@ impl GameHost {
 /// so level-load code (which does not hold a `GameHost`) can share the
 /// same computation.
 pub(crate) fn compute_border_point_bbox(
-    map_bbox: BBox2D,
+    map_bbox: MapBBox,
     inside: (f32, f32),
     direction: i16,
 ) -> ((f32, f32), (f32, f32)) {
@@ -5589,8 +5589,7 @@ impl HostFunctions for GameHost {
                         if zone.layer != ed.layer() {
                             return 0;
                         }
-                        let p = ed.position_map();
-                        let pt = crate::geo2d::pt(p.x, p.y);
+                        let pt = ed.position_map();
                         if !zone.bounding_box.contains_point(pt) {
                             return 0;
                         }

@@ -20,8 +20,8 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::MapPoint;
 use crate::gate::ActorAuthInfo;
-use crate::geo2d::GeoPoint2D;
 use crate::sector_production;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -589,7 +589,7 @@ impl ScriptSectorData {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct ShadowData {
     /// 2D barycentre (centroid) of the shadow polygon.
-    pub barycentre_2d: GeoPoint2D,
+    pub barycentre_2d: MapPoint,
 
     /// 3D barycentre — includes Z from the height plane at the centroid.
     pub barycentre_3d_x: f32,
@@ -603,7 +603,7 @@ pub struct ShadowData {
 impl Default for ShadowData {
     fn default() -> Self {
         Self {
-            barycentre_2d: GeoPoint2D { x: 0.0, y: 0.0 },
+            barycentre_2d: MapPoint::ZERO,
             barycentre_3d_x: 0.0,
             barycentre_3d_y: 0.0,
             barycentre_3d_z: 0.0,
@@ -618,7 +618,7 @@ impl ShadowData {
     ///
     /// Note: the 3D barycentre requires height plane lookup and must be
     /// computed separately (see `initialize_3d`).
-    pub fn initialize_2d(&mut self, points: &[GeoPoint2D]) {
+    pub fn initialize_2d(&mut self, points: &[MapPoint]) {
         assert!(!points.is_empty(), "shadow sector has no points");
         let n = points.len() as f32;
 
@@ -631,7 +631,7 @@ impl ShadowData {
         let inv_n = 1.0 / n;
         cx *= inv_n;
         cy *= inv_n;
-        self.barycentre_2d = GeoPoint2D { x: cx, y: cy };
+        self.barycentre_2d = MapPoint::new(cx, cy);
 
         let mut total_dist = 0.0_f32;
         for p in points {
@@ -705,7 +705,6 @@ impl ShadowData {
 mod tests {
     use super::*;
     use crate::element::ElementKind;
-    use crate::geo2d::pt;
 
     #[test]
     fn sector_type_bitflags() {
@@ -971,7 +970,12 @@ mod tests {
     #[test]
     fn shadow_initialize_2d() {
         let mut shadow = ShadowData::default();
-        let points = vec![pt(0.0, 0.0), pt(10.0, 0.0), pt(10.0, 10.0), pt(0.0, 10.0)];
+        let points = vec![
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(10.0, 0.0),
+            MapPoint::new(10.0, 10.0),
+            MapPoint::new(0.0, 10.0),
+        ];
         shadow.initialize_2d(&points);
 
         assert!((shadow.barycentre_2d.x - 5.0).abs() < 1e-6);

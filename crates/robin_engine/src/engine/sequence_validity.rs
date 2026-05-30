@@ -10,7 +10,7 @@
 
 use crate::element::{Command, Entity, EntityId, ObjectType, Posture};
 use crate::engine::{EngineInner, LevelAssets};
-use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceElementData};
+use crate::sequence::{Field, FieldValue, SequenceElement, SequenceElementData};
 
 use super::input::BowTarget;
 use super::scroll_reveal::ScrollStatus;
@@ -1211,12 +1211,9 @@ impl EngineInner {
         let Some(landing) = trajectory.last() else {
             return false;
         };
-        let landing_screen =
-            crate::geo2d::pt(landing.position.x, landing.position.y - landing.position.z);
-        let resolution = self.fast_grid.resolve_projectile_landing(
-            crate::coordinates::MapPoint::from_geo(landing_screen),
-            self.sight_obstacles(assets),
-        );
+        let resolution = self
+            .fast_grid
+            .resolve_projectile_landing(landing.position.to_map(), self.sight_obstacles(assets));
         resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle
     }
 }
@@ -1455,7 +1452,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(crate::geo2d::pt(0.0, 0.0).into());
+        element.set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
         element
     }
 
@@ -1465,7 +1462,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(crate::geo2d::pt(10.0, 0.0).into());
+        element.set_position_map(crate::coordinates::MapPoint::new(10.0, 0.0));
         Entity::Bonus(ElementBonus {
             element,
             object: ObjectData {

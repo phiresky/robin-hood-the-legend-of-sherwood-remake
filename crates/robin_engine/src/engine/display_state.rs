@@ -1,16 +1,16 @@
 //! Rendering: draw, view cone overlay, background, selection box.
 
 use super::*;
-use crate::coordinates::{MapPoint, ScreenPoint};
+use crate::coordinates::{GroundPoint, MapPoint, ScreenPoint};
 use crate::element::EntityId;
-use crate::geo2d::{self, GeoPoint2D};
+use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::shadow_polygon::ViewParameters;
 use std::collections::HashMap;
 
 /// Tuple returned by `selected_view_cone_params`: (eye point, view
 /// parameters, optional RGB tint for the darkening overlay).
-pub type ViewConeParams = (GeoPoint2D, ViewParameters, Option<(u8, u8, u8)>);
+pub type ViewConeParams = (GroundPoint, ViewParameters, Option<(u8, u8, u8)>);
 
 /// Back-to-front entity render order plus the per-entity depth value
 /// the sort used as its key.
@@ -440,7 +440,7 @@ impl EngineInner {
             return None;
         }
 
-        let viewer = geo2d::pt(eye.x, eye.y);
+        let viewer = GroundPoint::new(eye.x, eye.y);
 
         // View direction and half-aperture.  For NPCs, use the
         // computed values from `refresh_view` (head turning, stare,
@@ -536,7 +536,7 @@ impl EngineInner {
                 continue;
             }
 
-            let viewer = geo2d::pt(eye.x, eye.y);
+            let viewer = GroundPoint::new(eye.x, eye.y);
             let radius = npc.view_radius as f32;
             let alpha = (npc.view_alpha_start as u8).min(ALPHA_DAY);
 
@@ -671,7 +671,7 @@ impl EngineInner {
             // order here also hides them from input hit-testing that
             // reuses `draw_order.ids` (e.g. `find_focusable_entity`).
             if matches!(entity, crate::element::Entity::Scroll(_)) {
-                use crate::engine::scroll_reveal::ScrollStatus;
+                use super::scroll_reveal::ScrollStatus;
                 if !matches!(
                     self.scroll_status(id),
                     ScrollStatus::Visible | ScrollStatus::Opened

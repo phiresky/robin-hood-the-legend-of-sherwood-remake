@@ -8,15 +8,22 @@
 
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
+use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_assets::shipping_datadir::ShippingDatadir;
 use robin_engine::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
 use robin_engine::element::{EntityId, TrajectoryPoint};
+use robin_engine::engine as engine_api;
 use robin_engine::engine::{
     DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
+    SoundCommand,
 };
 use robin_engine::game_operation::GameCode;
+use robin_engine::geo2d as engine_geo2d;
 use robin_engine::geo2d::Vec2D;
+use robin_engine::markers as engine_markers;
 use robin_engine::markers::GroundMark;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::player_profile::PlayerProfileManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,7 +33,7 @@ use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
 
-const PANNEL_HEIGHT: f32 = robin_engine::engine::PANNEL_HEIGHT;
+const PANNEL_HEIGHT: f32 = engine_api::PANNEL_HEIGHT;
 const DISPLAY_INFO_SAMPLES: usize = 16;
 
 /// Deferred PrintScreen request, including the modifier branch that was
@@ -82,18 +89,18 @@ impl ViewportState {
             old_view_position: MapPoint::ZERO,
             zoom_factor: 1.0,
             old_zoom_factor: 1.0,
-            screen_size: robin_engine::geo2d::pt(screen_width, screen_height),
-            level_size: robin_engine::geo2d::pt(0.0, 0.0),
+            screen_size: engine_geo2d::pt(screen_width, screen_height),
+            level_size: engine_geo2d::pt(0.0, 0.0),
         }
     }
 
     pub fn set_screen_size(&mut self, width: f32, height: f32) {
-        self.screen_size = robin_engine::geo2d::pt(width, height);
+        self.screen_size = engine_geo2d::pt(width, height);
         self.clip_view();
     }
 
     pub fn set_level_size(&mut self, width: f32, height: f32) {
-        self.level_size = robin_engine::geo2d::pt(width, height);
+        self.level_size = engine_geo2d::pt(width, height);
         self.clip_view();
     }
 
@@ -216,7 +223,7 @@ pub struct Host {
     pub minimap_dot_surfaces: Vec<(u32, u16, u16)>,
     pub ground_mark_surfaces: Vec<(u32, u16, u16)>,
     pub viewport: ViewportState,
-    pub engine_display: robin_engine::engine::HostDisplayState,
+    pub engine_display: engine_api::HostDisplayState,
 
     // ── Input ────────────────────────────────────────────────────
     pub input: InputState,
@@ -237,7 +244,7 @@ pub struct Host {
     /// occupies in the sim — that's identical on every machine in
     /// the session.  `local_seat` varies per machine and never
     /// participates in serialization or rollback hashes.
-    pub local_seat: robin_engine::player_command::PlayerId,
+    pub local_seat: engine_player_command::PlayerId,
 
     /// Multiplayer transport session (server or client).  `None` in
     /// single-player; populated when `--server` / `--connect` is set.
@@ -271,7 +278,7 @@ pub struct Host {
     /// `should_run_hourglass` check as the sim tick (so pause / console
     /// freeze the ring).  Only `SelectionMarkRenderer` reads it —
     /// purely cosmetic, lives host-side.
-    pub selection_mark: robin_engine::markers::SelectionMark,
+    pub selection_mark: engine_markers::SelectionMark,
 
     /// Entity whose vision cone is currently displayed as an overlay.
     /// Set when the player alt-hovers an NPC (or an ally via a cheat).
@@ -413,7 +420,7 @@ pub struct Host {
     /// by the game session through `RHMenuPopupScroll::DisplaySingle`.
     pub pending_popup_texts: Vec<i32>,
     /// Debriefing text IDs pushed by the `DisplayAllDebriefings` cheat.
-    pub pending_debriefings: Vec<robin_engine::player_command::DebriefingTextId>,
+    pub pending_debriefings: Vec<engine_player_command::DebriefingTextId>,
     /// Set when a tick fired `DisplaySherwoodReport`.
     pub pending_sherwood_report: bool,
     /// Set when a tick fired `DisplayConsole`.
@@ -521,7 +528,7 @@ impl Host {
             // wasm build with a shipping datadir still ends up going
             // through the disk-I/O fallback, which fails because no
             // filesystem is visible inside the worker.
-            shipping: robin_assets::shipping_datadir::global().cloned(),
+            shipping: assets_shipping_datadir::global().cloned(),
             ..Default::default()
         }
     }
@@ -563,7 +570,7 @@ impl Host {
         // Restart the PC selection ring animation so every selected PC
         // comes back with a clean frame 0 (matches the pre-move
         // `Engine::restore` cleanup).
-        self.selection_mark = robin_engine::markers::SelectionMark::default();
+        self.selection_mark = engine_markers::SelectionMark::default();
 
         // Drop any UI-request queues that were in flight before the
         // load.  They live host-side now — accumulated from per-tick
@@ -650,7 +657,6 @@ impl Host {
             // `PlayerProfileManager` and save to disk; failures are
             // logged and otherwise tolerated (the sim has already
             // accepted the new position).
-            use robin_engine::player_profile::PlayerProfileManager;
             let mut guard = PlayerProfileManager::global();
             if let Some(mgr) = guard.as_mut()
                 && let Some(profile) = mgr.get_active_mut()
@@ -677,7 +683,6 @@ impl Host {
         // ActivateSource) are stashed on host and drained by
         // game_session before the hourglass call.
         for cmd in fx.sounds {
-            use robin_engine::engine::SoundCommand;
             match cmd {
                 SoundCommand::StopExclamation { actor_id } => {
                     self.pending_stop_exclamations.push(actor_id.index());

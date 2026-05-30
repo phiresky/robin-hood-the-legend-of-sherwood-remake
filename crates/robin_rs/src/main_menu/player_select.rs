@@ -7,6 +7,7 @@
 //! keyboards).
 
 use crate::gfx_types::Keycode;
+use robin_engine::sprite::BBox;
 
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
@@ -28,7 +29,6 @@ use crate::resource_ids;
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::ui_screens::MAX_PLAYER_NAME_LENGTH;
 use crate::widget::{FrameWnd, Widget, WidgetInput, WidgetInputField};
-use robin_engine::sprite::BBox;
 
 /// Maximum number of player profiles that can coexist on disk.
 const MAX_PROFILES: usize = 10;

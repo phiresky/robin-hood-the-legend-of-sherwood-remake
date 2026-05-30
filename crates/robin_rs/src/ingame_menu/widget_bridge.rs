@@ -24,8 +24,11 @@ use crate::widget::{
     CaptureSlot, FrameWnd, Widget, WidgetButton, WidgetId, WidgetInput, WidgetLabel,
     WidgetMultiPicture, WidgetPicture, WidgetRenderer,
 };
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::ScreenBBox;
+use robin_engine::engine as engine_api;
 use robin_engine::sound_cache::SampleLoader;
+use robin_engine::sprite as engine_sprite;
 use robin_engine::sprite::BBox;
 
 use super::layout::{
@@ -303,11 +306,7 @@ pub fn default_modal_cursor<'a>(
     if cursor.current_cursor_id() != resource_ids::RHMOUSE_DEFAULT {
         cursor.load_cursor(resource_ids::RHMOUSE_DEFAULT, cursor_res, renderer);
     }
-    ModalCursor::new(
-        cursor,
-        robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
-        0,
-    )
+    ModalCursor::new(cursor, engine_api::input::MOUSE_OPACITY_DEFAULT, 0)
 }
 
 impl ModalInputState {
@@ -397,7 +396,7 @@ impl ModalInputState {
         let now_ms = self.start_time.elapsed().as_millis() as u32;
         self.keyboard.refresh(&self.raw_keyboard, now_ms);
         WidgetInput {
-            mouse_position: robin_engine::coordinates::ScreenPoint::new(self.virt_x, self.virt_y),
+            mouse_position: engine_coordinates::ScreenPoint::new(self.virt_x, self.virt_y),
             mouse_z: 0,
             mouse_button: self.buttons,
             keyboard: &self.keyboard,
@@ -548,7 +547,6 @@ pub fn draw_widget_button(
     let (sx, sy) = transform.to_screen(vx, vy);
 
     use crate::renderer::BLIT_SOURCE_TRANSPARENT;
-    use robin_engine::sprite::BBox;
 
     // Look up the sprite pack by the widget's resource ID.  Dispatching
     // on `base.renderer.base().resource_id` lets the same draw routine
@@ -822,7 +820,6 @@ pub fn draw_widget_radio(
     let (sx, sy) = transform.to_screen(vx, vy);
 
     use crate::renderer::BLIT_SOURCE_TRANSPARENT;
-    use robin_engine::sprite::BBox;
 
     if let Some(surf) = resources.input_field_surface(selected) {
         let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(w as f32, h as f32));
@@ -840,7 +837,7 @@ pub fn draw_widget_radio(
             Renderer::create_color_16(30, 25, 15)
         };
         renderer.fill_screen(
-            Some(&robin_engine::sprite::BBox::new(
+            Some(&engine_sprite::BBox::new(
                 geo2d::pt(sx as f32, sy as f32),
                 geo2d::pt((sx + w) as f32, (sy + h) as f32),
             )),

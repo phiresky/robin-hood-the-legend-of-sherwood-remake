@@ -8,6 +8,12 @@
 //! [`PlayerProfile`]'s stats via [`render_text_virt`].
 
 use crate::gfx_types::Keycode;
+use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
+use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sound_cache::SampleLoader;
+use robin_engine::sprite::BBox;
 
 use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
@@ -35,11 +41,7 @@ use crate::sound_config::SoundConfig;
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
 use crate::window::GameWindow;
-use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
-use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfile, PlayerProfileManager};
-use robin_engine::sound_cache::SampleLoader;
-use robin_engine::sprite::BBox;
 
 pub(crate) mod credits;
 pub(crate) mod custom_missions;
@@ -188,8 +190,8 @@ impl MainMenuAudio {
 pub(crate) async fn show_main_menu(
     window: &mut GameWindow,
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    profiles: &engine_profiles::ProfileManager,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) -> Result<MainMenuChoice, String> {
     window.set_logical_size(MENU_W as u32, MENU_H as u32);
 
@@ -622,8 +624,8 @@ async fn dispatch_click(
     save_manager: &mut SaveGameManager,
     cursor_renderer: &mut CursorRenderer,
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    profiles: &engine_profiles::ProfileManager,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) -> Option<MainMenuChoice> {
     match action {
         ClickAction::Return(c) => Some(c),

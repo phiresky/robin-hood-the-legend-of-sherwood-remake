@@ -194,10 +194,10 @@ fn wasm_log_level_from_query() -> (tracing::Level, Option<String>) {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn wasm_boot(datadir_bin: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
-    let dd = robin_assets::shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
+    let dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("datadir decode: {e:#}")))?;
     let dd = std::sync::Arc::new(dd);
-    let _ = robin_assets::shipping_datadir::install_global(dd.clone());
+    let _ = assets_shipping_datadir::install_global(dd.clone());
     let _ = robin_util::asset_fs::install_bundle(std::sync::Arc::new(dd.raw.clone()));
     robin_rs::http_server::start_global(0)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("rpc init: {e}")))?;
@@ -221,7 +221,7 @@ pub fn wasm_preload_asset(path: &str, bytes: &[u8]) {
 
 #[cfg(target_arch = "wasm32")]
 async fn wasm_main(
-    shipping: std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
 ) -> Result<(), String> {
     let args = robin_rs::main_entry::parse_cli();
     let (campaign, profiles, shipping) =

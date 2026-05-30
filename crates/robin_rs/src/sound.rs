@@ -7,6 +7,8 @@
 //! and [`SoundSourceManager`](crate::sound_source::SoundSourceManager) for
 //! ambient emitters.
 
+use robin_engine::coordinates::MapPoint;
+use robin_engine::sound_kinds as engine_sound_kinds;
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::{ArmorMaterial, WeaponMaterial};
@@ -14,7 +16,6 @@ use crate::sound_cache::{Material, SampleLoader, SoundCache};
 use crate::sound_config::SoundConfig;
 use crate::sound_geometry::*;
 use crate::sound_source::*;
-use robin_engine::coordinates::MapPoint;
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -258,7 +259,7 @@ pub trait AudioBackend {
 // SoundSimState now lives in robin_engine::sound_kinds (re-exported via
 // `crate::sound` stub from engine). Re-export here for callers that
 // reach for it via robin_rs::sound::SoundSimState.
-pub use robin_engine::sound_kinds::SoundSimState;
+pub use engine_sound_kinds::SoundSimState;
 
 /// Main sound manager. Orchestrates all audio in the game.
 ///
@@ -1688,12 +1689,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::Source,
-            position: src
-                .shape
-                .first()
-                .copied()
-                .map(MapPoint::from_geo)
-                .unwrap_or(MapPoint::ZERO),
+            position: src.shape.first().copied().unwrap_or(MapPoint::ZERO),
             identifier: src.id,
             source: SoundSettingsSource::SoundSource {
                 info: src.to_source_info(),

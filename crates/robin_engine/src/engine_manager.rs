@@ -30,7 +30,6 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use crate::engine::{Engine, HostDisplayState, InputState, LevelAssets};
-use crate::multiplayer::INPUT_DELAY_FRAMES;
 use crate::player_command::{PlayerId, PlayerInput};
 
 /// A peer-or-self input whose `target_frame` is in the past relative

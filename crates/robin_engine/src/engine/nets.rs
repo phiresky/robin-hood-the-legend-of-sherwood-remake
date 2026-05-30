@@ -912,7 +912,8 @@ fn top_plane_normal_z(obstacle: &crate::sight_obstacle::SightObstacle) -> f32 {
 /// Point-in-bbox test for the 2D ground-plane bounding box of a
 /// sight obstacle.
 fn obstacle_bbox_contains(o: &crate::sight_obstacle::SightObstacle, x: f32, y: f32) -> bool {
-    o.box_ground.contains_point(crate::geo2d::pt(x, y))
+    o.box_ground
+        .contains_point(crate::coordinates::GroundPoint::new(x, y))
 }
 
 /// Advance a single net's ballistic trajectory by one frame.

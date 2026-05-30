@@ -17,8 +17,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
-use crate::geo2d::{self, BBox2D, GeoPoint2D, Vec2D, pt};
+use crate::coordinates::{GroundBBox, MapBBox, MapPoint, MapVec, MoveBox};
+use crate::geo2d::{self, BBox2D, Vec2D, pt};
 
 // ---------------------------------------------------------------------------
 // SectorIndex — nominal newtype
@@ -273,16 +273,16 @@ pub struct GridLine {
     pub is_sound: bool,
     /// Outward normal (for repulsive lines, used in `FindAutorizedPosition`).
     pub normal: Vec2D,
-    /// Bounding box of the segment (pre-computed for fast rejection).
-    pub bbox: BBox2D,
+    /// Map-space bounding box of the segment (pre-computed for fast rejection).
+    pub bbox: MapBBox,
 }
 
 impl GridLine {
     /// Create a new grid line from two endpoints.
     pub fn new(a: MapPoint, b: MapPoint, is_motion: bool) -> Self {
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(a.to_geo());
-        bbox.expand_point(b.to_geo());
+        let mut bbox = MapBBox::new();
+        bbox.expand_point(a);
+        bbox.expand_point(b);
         // Compute outward normal (perpendicular to segment, normalized).
         let dx = b.x - a.x;
         let dy = b.y - a.y;
@@ -435,7 +435,7 @@ pub struct GridSector {
     /// Polygon vertices defining this sector's boundary.
     pub points: Vec<MapPoint>,
     /// Axis-aligned bounding box (pre-computed for fast rejection).
-    pub bounding_box: BBox2D,
+    pub bounding_box: MapBBox,
     /// Bitflag combination of sector type properties (AREA, MOTION, DOOR, LIFT, etc.).
     pub sector_type: crate::sector::SectorType,
     /// Layer this sector belongs to.
@@ -502,8 +502,7 @@ impl GridSector {
         if self.points.len() < 3 {
             return false;
         }
-        let pt_geo = pt.to_geo();
-        if !self.bounding_box.contains_point(pt_geo) {
+        if !self.bounding_box.contains_point(pt) {
             return false;
         }
         let mut inside = false;
@@ -706,8 +705,8 @@ pub struct LevelGrid {
     /// Index of the special layer (= number of conventional layers + 1 for lift layer).
     pub special_layer: u16,
 
-    /// Map bounding box in world coordinates.
-    pub map_bbox: BBox2D,
+    /// Map bounding box in projected map coordinates.
+    pub map_bbox: MapBBox,
 
     /// All lines stored in the grid.
     pub lines: Vec<GridLine>,
@@ -1016,7 +1015,7 @@ impl FastFindGrid {
         let level = self.level_mut();
         level.grid_width = width;
         level.grid_height = height + 4; // +4-row pad inherited from level format
-        level.map_bbox = BBox2D::from_coords(
+        level.map_bbox = MapBBox::from_coords(
             0.0,
             0.0,
             (width as f32) * GRID_CELL_SIZE_F - 1.0,
@@ -1351,7 +1350,7 @@ impl FastFindGrid {
         &mut self,
         idx: crate::mask::MaskIndex,
         layer: u16,
-        bbox: BBox2D,
+        bbox: MapBBox,
     ) {
         let level = self.level_mut();
         let Some(rect) = bbox.0 else {
@@ -1390,7 +1389,7 @@ impl FastFindGrid {
         &mut self,
         obstacle_idx: crate::sight_obstacle::SightObstacleIndex,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &GroundBBox,
     ) {
         let level = self.level_mut();
         if (layer as usize) < level.layers.len() {
@@ -1438,7 +1437,7 @@ impl FastFindGrid {
     pub fn get_obstacle_indices(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &GroundBBox,
     ) -> Vec<crate::sight_obstacle::SightObstacleIndex> {
         let rect = match bbox.0 {
             Some(r) => r,
@@ -1480,7 +1479,7 @@ impl FastFindGrid {
     pub fn get_masks_applied_to_character(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
         position: MapPoint,
     ) -> Vec<crate::mask::MaskIndex> {
         let rect = match bbox.0 {
@@ -1591,7 +1590,7 @@ impl FastFindGrid {
     pub fn get_masks_applied_to_projectile(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
         position: crate::coordinates::WorldPoint3D,
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -1674,31 +1673,31 @@ impl FastFindGrid {
     }
 
     /// Resolve the obstacle/layer/sector for a projectile that has just
-    /// landed at `landing_screen` (screen-space `(x, y - z)`).
+    /// landed at `landing_map` (projected map-space `(x, y - z)`).
     ///
     /// The reference behavior starts from the impact obstacle when one
     /// was struck, then queries motion sectors at that layer to find the
     /// containing motion area. Call
     /// [`Self::resolve_projectile_landing_with_obstacle`] when the
     /// trajectory impact carried exact obstacle identity; this wrapper
-    /// keeps the legacy screen-polygon fallback for callers that only
+    /// keeps the legacy projection-polygon fallback for callers that only
     /// know the landing footprint.
     pub fn resolve_projectile_landing(
         &self,
-        landing_screen: MapPoint,
+        landing_map: MapPoint,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
-        self.resolve_projectile_landing_with_obstacle(landing_screen, None, sight_obstacles)
+        self.resolve_projectile_landing_with_obstacle(landing_map, None, sight_obstacles)
     }
 
     /// Resolve projectile landing membership, preferring an exact
     /// obstacle index captured by the trajectory impact when available.
     /// This preserves the legacy implementation pointer identity behavior for overlapping
     /// projection areas; callers without trajectory obstacle identity
-    /// still fall back to the screen polygon lookup.
+    /// still fall back to the projected polygon lookup.
     pub fn resolve_projectile_landing_with_obstacle(
         &self,
-        landing_screen: MapPoint,
+        landing_map: MapPoint,
         exact_obstacle_index: Option<crate::position_interface::ObstacleHandle>,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
@@ -1725,7 +1724,7 @@ impl FastFindGrid {
         for (idx, obstacle) in projection_iter.by_ref() {
             if !sight_obstacles.is_active(idx as usize)
                 || !obstacle.is_projection_area()
-                || !obstacle.contains_point_screen(landing_screen.to_geo())
+                || !obstacle.contains_point_projection(landing_map)
             {
                 continue;
             }
@@ -1747,16 +1746,16 @@ impl FastFindGrid {
         }
 
         let mut sector = None;
-        if self.is_inside_grid_point(landing_screen) {
-            let block_idx = self.get_block_index(landing_screen, layer);
+        if self.is_inside_grid_point(landing_map) {
+            let block_idx = self.get_block_index(landing_map, layer);
             for (_, motion_sector) in self.get_sectors_at_block(block_idx, SectorType::MOTION) {
                 if motion_sector.sector_type.is_area() {
-                    if motion_sector.contains_point(landing_screen) {
+                    if motion_sector.contains_point(landing_map) {
                         sector = u16::try_from(i16::from(motion_sector.sector_number))
                             .ok()
                             .and_then(crate::position_interface::SectorHandle::new);
                     }
-                } else if motion_sector.contains_point(landing_screen) {
+                } else if motion_sector.contains_point(landing_map) {
                     return ProjectileLandingResolution {
                         obstacle_index,
                         obstacle_plane,
@@ -2055,7 +2054,7 @@ impl FastFindGrid {
     ///
     /// This is the core spatial query used by the pathfinder: iterates
     /// grid blocks and filters by motion + active.
-    pub fn get_active_motion_line_indices(&self, layer: u16, bbox: &BBox2D) -> Vec<LineIndex> {
+    pub fn get_active_motion_line_indices(&self, layer: u16, bbox: &MapBBox) -> Vec<LineIndex> {
         let mut result = Vec::new();
         self.visit_active_motion_line_indices(layer, bbox, |idx| {
             result.push(idx);
@@ -2067,7 +2066,7 @@ impl FastFindGrid {
     fn visit_active_motion_line_indices(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
         mut visit: impl FnMut(LineIndex) -> bool,
     ) {
         let rect = match bbox.0 {
@@ -2109,12 +2108,12 @@ impl FastFindGrid {
     pub fn get_level_repulsive_points(
         &self,
         layer: u16,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
     ) -> Vec<&LevelRepulsivePoint> {
         self.level
             .level_repulsive_points
             .iter()
-            .filter(|p| p.layer == layer && bbox.contains_point(p.position.to_geo()))
+            .filter(|p| p.layer == layer && bbox.contains_point(p.position))
             .collect()
     }
 
@@ -2122,8 +2121,9 @@ impl FastFindGrid {
     /// overlap a bounding box on a given layer. The anti-collision step
     /// uses this to fetch wall / sector-perimeter pushes so actors
     /// don't scrape along motion lines.
-    pub fn get_active_repulsive_line_indices(&self, layer: u16, bbox: &BBox2D) -> Vec<LineIndex> {
-        let rect = match bbox.0 {
+    pub fn get_active_repulsive_line_indices(&self, layer: u16, bbox: &MapBBox) -> Vec<LineIndex> {
+        let bbox_geo = bbox.to_geo();
+        let rect = match bbox_geo.0 {
             Some(r) => r,
             None => return Vec::new(),
         };
@@ -2169,9 +2169,7 @@ impl FastFindGrid {
         old_pos: MapPoint,
         new_pos: MapPoint,
     ) -> Vec<LineIndex> {
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos.to_geo());
-        bbox.expand_point(new_pos.to_geo());
+        let bbox = map_bbox_from_points(old_pos, new_pos);
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2263,9 +2261,7 @@ impl FastFindGrid {
         old_pos: MapPoint,
         new_pos: MapPoint,
     ) -> Vec<LineIndex> {
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos.to_geo());
-        bbox.expand_point(new_pos.to_geo());
+        let bbox = map_bbox_from_points(old_pos, new_pos);
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2385,9 +2381,7 @@ impl FastFindGrid {
         old_pos: MapPoint,
         new_pos: MapPoint,
     ) -> Vec<LineIndex> {
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos.to_geo());
-        bbox.expand_point(new_pos.to_geo());
+        let bbox = map_bbox_from_points(old_pos, new_pos);
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2476,7 +2470,7 @@ impl FastFindGrid {
         layer: u16,
         seg1: geo::Line<f32>,
         seg2: geo::Line<f32>,
-        bbox: &BBox2D,
+        bbox: &MapBBox,
     ) -> Vec<LineIndex> {
         let rect = match bbox.0 {
             Some(r) => r,
@@ -2625,7 +2619,7 @@ impl FastFindGrid {
         Some(ThickMoveCorridor {
             seg1,
             seg2,
-            bbox,
+            bbox: MapBBox::from_geo(bbox),
             vec1,
             vec2,
             vec3,
@@ -2636,7 +2630,8 @@ impl FastFindGrid {
     // ── Collision / Reachability ──
 
     /// Check if a bounding box does not intersect any active motion line.
-    pub fn is_position_authorized(&self, bbox: &BBox2D, layer: u16) -> bool {
+    pub fn is_position_authorized(&self, bbox: &MapBBox, layer: u16) -> bool {
+        let bbox_geo = bbox.to_geo();
         // This gates only on the grid-block bounds; the pathfinder
         // wrapper (`PathFinder::object_position_authorized`) does the
         // out-of-grid rejection before invoking this. A previous
@@ -2647,7 +2642,7 @@ impl FastFindGrid {
         let mut authorized = true;
         self.visit_active_motion_line_indices(layer, bbox, |idx| {
             let line = &self.level.lines[usize::from(idx)];
-            if line.intersects_bbox(bbox) {
+            if line.intersects_bbox(&bbox_geo) {
                 tracing::trace!(
                     ?bbox,
                     layer,
@@ -2712,9 +2707,9 @@ impl FastFindGrid {
     /// Check thin (zero-width) reachability between two points.
     pub fn is_reachable_thin(&self, p1: MapPoint, p2: MapPoint, layer: u16) -> bool {
         let seg = geo2d::segment(p1.to_geo(), p2.to_geo());
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(p1.to_geo());
-        bbox.expand_point(p2.to_geo());
+        let mut bbox = MapBBox::new();
+        bbox.expand_point(p1);
+        bbox.expand_point(p2);
 
         let mut reachable = true;
         self.visit_active_motion_line_indices(layer, &bbox, |idx| {
@@ -2876,9 +2871,9 @@ impl FastFindGrid {
         layer: u16,
     ) -> Option<f32> {
         let seg = geo2d::segment(origin.to_geo(), destination.to_geo());
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(origin.to_geo());
-        bbox.expand_point(destination.to_geo());
+        let mut bbox = MapBBox::new();
+        bbox.expand_point(origin);
+        bbox.expand_point(destination);
 
         let mut min_t: Option<f32> = None;
 
@@ -2925,7 +2920,7 @@ impl FastFindGrid {
         p1: MapPoint,
         p2: MapPoint,
         layer: u16,
-        move_box: &BBox2D,
+        move_box: &MoveBox,
     ) -> bool {
         // Check destination position is authorized
         let dest_box = move_box.translated(pt(p2.x, p2.y));
@@ -2966,11 +2961,12 @@ impl FastFindGrid {
         let Some(corridor) = Self::build_thick_move_corridor(p1, p2, half_diagonal) else {
             return true;
         };
+        let corridor_bbox = corridor.bbox.to_geo();
         for line in mobile_lines {
             // Mobile (per-entity repulsive) lines have no runtime active
             // toggle — they're rebuilt each tick from the live entity
             // set, so they're implicitly "always active."
-            if !line.intersects_bbox(&corridor.bbox) {
+            if !line.intersects_bbox(&corridor_bbox) {
                 continue;
             }
             if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
@@ -2987,7 +2983,11 @@ impl FastFindGrid {
     /// by iteratively pushing it away from intersecting motion lines.
     ///
     /// Returns `true` if a valid position was found (modifying `bbox` in place).
-    pub fn find_authorized_position(&self, bbox: &mut BBox2D, layer: u16) -> bool {
+    pub fn find_authorized_position(&self, bbox: &mut MapBBox, layer: u16) -> bool {
+        self.find_authorized_position_map(bbox, layer)
+    }
+
+    fn find_authorized_position_map(&self, bbox: &mut MapBBox, layer: u16) -> bool {
         // Defensive: an unset bbox has no center / corners to push
         // around and would panic on the `bbox.center()` call below.
         // With actors now properly populated with a move-box at spawn
@@ -3017,7 +3017,7 @@ impl FastFindGrid {
                 ty = -(el_rect.max().y - map_rect.max().y);
             }
 
-            bbox.translate(pt(tx, ty));
+            bbox.translate(MapVec::new(tx, ty));
         }
 
         // Iteratively push away from motion lines (up to 50 tries).
@@ -3029,7 +3029,7 @@ impl FastFindGrid {
             let line_indices = self.get_active_motion_line_indices(layer, bbox);
             let intersecting: Vec<LineIndex> = line_indices
                 .into_iter()
-                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(bbox))
+                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(&bbox.to_geo()))
                 .collect();
 
             if intersecting.is_empty() {
@@ -3056,7 +3056,16 @@ impl FastFindGrid {
     /// using `click` as the reference direction instead of box center.
     pub fn find_authorized_position_toward(
         &self,
-        bbox: &mut BBox2D,
+        bbox: &mut MapBBox,
+        click: MapPoint,
+        layer: u16,
+    ) -> bool {
+        self.find_authorized_position_toward_map(bbox, click, layer)
+    }
+
+    fn find_authorized_position_toward_map(
+        &self,
+        bbox: &mut MapBBox,
         click: MapPoint,
         layer: u16,
     ) -> bool {
@@ -3064,9 +3073,9 @@ impl FastFindGrid {
             // Collect lines from both the segment (center→click) and the box itself
             let center = bbox.center();
             let seg_bbox = {
-                let mut b = BBox2D::new();
+                let mut b = MapBBox::new();
                 b.expand_point(center);
-                b.expand_point(click.to_geo());
+                b.expand_point(click);
                 b
             };
             let seg_lines = self.get_active_motion_line_indices(layer, &seg_bbox);
@@ -3085,8 +3094,8 @@ impl FastFindGrid {
                 .into_iter()
                 .filter(|&idx| {
                     let line = &self.level.lines[usize::from(idx)];
-                    line.intersects_bbox(bbox)
-                        || line.intersects_segment(geo2d::segment(center, click.to_geo()))
+                    line.intersects_bbox(&bbox.to_geo())
+                        || line.intersects_segment(geo2d::segment(center.to_geo(), click.to_geo()))
                 })
                 .collect();
 
@@ -3111,7 +3120,16 @@ impl FastFindGrid {
     /// center, then refine by pushing away from the box itself.
     pub fn find_authorized_position_straight(
         &self,
-        bbox: &mut BBox2D,
+        bbox: &mut MapBBox,
+        start: MapPoint,
+        layer: u16,
+    ) -> bool {
+        self.find_authorized_position_straight_map(bbox, start, layer)
+    }
+
+    fn find_authorized_position_straight_map(
+        &self,
+        bbox: &mut MapBBox,
         start: MapPoint,
         layer: u16,
     ) -> bool {
@@ -3119,9 +3137,9 @@ impl FastFindGrid {
         for _ in 0..50 {
             let center = bbox.center();
             let seg_bbox = {
-                let mut b = BBox2D::new();
+                let mut b = MapBBox::new();
                 b.expand_point(center);
-                b.expand_point(start.to_geo());
+                b.expand_point(start);
                 b
             };
             let line_indices = self.get_active_motion_line_indices(layer, &seg_bbox);
@@ -3129,7 +3147,7 @@ impl FastFindGrid {
                 .into_iter()
                 .filter(|&idx| {
                     self.level.lines[usize::from(idx)]
-                        .intersects_segment(geo2d::segment(center, start.to_geo()))
+                        .intersects_segment(geo2d::segment(center.to_geo(), start.to_geo()))
                 })
                 .collect();
 
@@ -3152,7 +3170,7 @@ impl FastFindGrid {
             let line_indices = self.get_active_motion_line_indices(layer, bbox);
             let intersecting: Vec<LineIndex> = line_indices
                 .into_iter()
-                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(bbox))
+                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(&bbox.to_geo()))
                 .collect();
 
             if intersecting.is_empty() {
@@ -3175,13 +3193,23 @@ impl FastFindGrid {
     /// directions at increasing radii.
     pub fn find_authorized_position_approx(
         &self,
-        bbox: &mut BBox2D,
+        bbox: &mut MapBBox,
+        layer: u16,
+        radius: f32,
+        step: f32,
+    ) -> bool {
+        self.find_authorized_position_approx_map(bbox, layer, radius, step)
+    }
+
+    fn find_authorized_position_approx_map(
+        &self,
+        bbox: &mut MapBBox,
         layer: u16,
         radius: f32,
         step: f32,
     ) -> bool {
         let initial = *bbox;
-        if self.find_authorized_position(bbox, layer) {
+        if self.find_authorized_position_map(bbox, layer) {
             return true;
         }
 
@@ -3200,12 +3228,8 @@ impl FastFindGrid {
                 let vx = angle.sin();
                 let vy = -angle.cos();
                 *bbox = initial;
-                bbox.translate(pt(vx * radius_try, vy * radius_try));
-                if self.find_authorized_position_toward(
-                    bbox,
-                    MapPoint::from_geo(center_initial),
-                    layer,
-                ) {
+                bbox.translate(MapVec::new(vx * radius_try, vy * radius_try));
+                if self.find_authorized_position_toward_map(bbox, center_initial, layer) {
                     return true;
                 }
             }
@@ -3228,21 +3252,28 @@ impl FastFindGrid {
 /// dropping their distance below the `-0.1` gate, suppressing the
 /// push). Capturing corners into an array before the loop over-pushes
 /// the box, so don't refactor that away.
-fn push_corners_away_from_line(bbox: &mut BBox2D, line: &GridLine) {
+fn push_corners_away_from_line(bbox: &mut MapBBox, line: &GridLine) {
     // Corner-read order: top-left, bottom-right, (xmax, ymin), (xmin, ymax).
-    let push_if_close = |bbox: &mut BBox2D, corner: GeoPoint2D| {
+    let push_if_close = |bbox: &mut MapBBox, corner: MapPoint| {
         let to_corner = pt(line.a.x - corner.x, line.a.y - corner.y);
         let dist = geo2d::dot(line.normal, to_corner);
         if dist > -0.1 {
-            let push = pt((dist + 1.0) * line.normal.x, (dist + 1.0) * line.normal.y);
+            let push = MapVec::new((dist + 1.0) * line.normal.x, (dist + 1.0) * line.normal.y);
             bbox.translate(push);
         }
     };
 
     push_if_close(bbox, bbox.top_left());
     push_if_close(bbox, bbox.bottom_right());
-    push_if_close(bbox, pt(bbox.x_max(), bbox.y_min()));
-    push_if_close(bbox, pt(bbox.x_min(), bbox.y_max()));
+    push_if_close(bbox, MapPoint::new(bbox.x_max(), bbox.y_min()));
+    push_if_close(bbox, MapPoint::new(bbox.x_min(), bbox.y_max()));
+}
+
+fn map_bbox_from_points(a: MapPoint, b: MapPoint) -> MapBBox {
+    let mut bbox = MapBBox::new();
+    bbox.expand_point(a);
+    bbox.expand_point(b);
+    bbox
 }
 
 // ─── ThickMoveCorridor ───────────────────────────────────────────
@@ -3258,7 +3289,7 @@ pub struct ThickMoveCorridor {
     /// Left/bottom side segment (direction reversed from seg1).
     pub seg2: geo::Line<f32>,
     /// Bounding box enclosing the entire corridor.
-    pub bbox: BBox2D,
+    pub bbox: MapBBox,
     /// Direction vector of seg1.
     pub vec1: Vec2D,
     /// Direction vector of seg2.
@@ -3335,12 +3366,12 @@ mod tests {
         let grid = make_grid_with_line();
 
         // Query a bbox that should contain the line
-        let bbox = BBox2D::from_coords(0.0, 100.0, 256.0, 150.0);
+        let bbox = MapBBox::from_coords(0.0, 100.0, 256.0, 150.0);
         let lines = grid.get_active_motion_line_indices(0, &bbox);
         assert!(!lines.is_empty(), "should find the motion line");
 
         // Query a bbox that should NOT contain the line
-        let bbox_miss = BBox2D::from_coords(0.0, 0.0, 256.0, 50.0);
+        let bbox_miss = MapBBox::from_coords(0.0, 0.0, 256.0, 50.0);
         let lines_miss = grid.get_active_motion_line_indices(0, &bbox_miss);
         assert!(lines_miss.is_empty(), "should not find lines above");
     }
@@ -3362,11 +3393,11 @@ mod tests {
         let grid = make_grid_with_line();
 
         // A box above the line — should be OK
-        let bbox_ok = BBox2D::from_coords(50.0, 50.0, 70.0, 70.0);
+        let bbox_ok = MapBBox::from_coords(50.0, 50.0, 70.0, 70.0);
         assert!(grid.is_position_authorized(&bbox_ok, 0));
 
         // A box crossing the line — should fail
-        let bbox_cross = BBox2D::from_coords(50.0, 120.0, 70.0, 140.0);
+        let bbox_cross = MapBBox::from_coords(50.0, 120.0, 70.0, 140.0);
         assert!(!grid.is_position_authorized(&bbox_cross, 0));
     }
 
@@ -3435,7 +3466,7 @@ mod tests {
         let grid = make_grid_with_line();
 
         // A box straddling the line from below — should be pushed away
-        let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
+        let mut bbox = MapBBox::from_coords(120.0, 125.0, 140.0, 135.0);
         let found = grid.find_authorized_position(&mut bbox, 0);
         assert!(found, "should find an authorized position");
         // The pushed box should no longer intersect the line
@@ -3446,7 +3477,7 @@ mod tests {
     fn test_is_straight_movement_authorized() {
         let grid = make_grid_with_line();
         // 0-centered move box (half-size 5x5)
-        let move_box = BBox2D::from_coords(-5.0, -5.0, 5.0, 5.0);
+        let move_box = MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0);
 
         // Movement entirely above the line — authorized
         assert!(grid.is_straight_movement_authorized(
@@ -3517,7 +3548,7 @@ mod tests {
 
         // Box straddling the line, push toward a click point below (on the
         // normal side — the line's normal points +Y for a left-to-right line)
-        let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
+        let mut bbox = MapBBox::from_coords(120.0, 125.0, 140.0, 135.0);
         let found = grid.find_authorized_position_toward(&mut bbox, MapPoint::new(130.0, 200.0), 0);
         assert!(found, "should find position toward click");
         assert!(grid.is_position_authorized(&bbox, 0));
@@ -3530,7 +3561,7 @@ mod tests {
         let grid = make_grid_with_line();
 
         // Box straddling the line, push along segment from a start point below
-        let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
+        let mut bbox = MapBBox::from_coords(120.0, 125.0, 140.0, 135.0);
         let found =
             grid.find_authorized_position_straight(&mut bbox, MapPoint::new(130.0, 200.0), 0);
         assert!(found, "should find straight authorized position");
@@ -3542,7 +3573,7 @@ mod tests {
         let grid = make_grid_with_line();
 
         // Box right on the line — approx search should find a nearby clear position
-        let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
+        let mut bbox = MapBBox::from_coords(120.0, 125.0, 140.0, 135.0);
         let found = grid.find_authorized_position_approx(&mut bbox, 0, 100.0, 20.0);
         assert!(found, "should find approx authorized position");
         assert!(grid.is_position_authorized(&bbox, 0));
@@ -3558,8 +3589,8 @@ mod tests {
     }
 
     fn square_sector(
-        min: GeoPoint2D,
-        max: GeoPoint2D,
+        min: geo2d::GeoPoint2D,
+        max: geo2d::GeoPoint2D,
         sector_type: crate::sector::SectorType,
         layer: u16,
         sector_number: i16,
@@ -3576,7 +3607,7 @@ mod tests {
         }
         GridSector {
             points: pts.iter().copied().map(MapPoint::from_geo).collect(),
-            bounding_box: bbox,
+            bounding_box: MapBBox::from_geo(bbox),
             sector_type,
             layer,
             sector_number: crate::sector::SectorNumber::new(sector_number),
@@ -3595,8 +3626,8 @@ mod tests {
     }
 
     fn square_projection_obstacle(
-        min: GeoPoint2D,
-        max: GeoPoint2D,
+        min: geo2d::GeoPoint2D,
+        max: geo2d::GeoPoint2D,
         layer: u16,
         sector: u16,
     ) -> crate::sight_obstacle::SightObstacle {
@@ -3846,7 +3877,7 @@ mod tests {
     #[test]
     fn test_add_obstacle_index_populates_block_and_layer() {
         let mut grid = make_empty_grid(1);
-        let bbox = BBox2D::from_coords(64.0, 64.0, 127.0, 127.0);
+        let bbox = GroundBBox::from_coords(64.0, 64.0, 127.0, 127.0);
         let idx_42 = crate::sight_obstacle::SightObstacleIndex::new(42).unwrap();
         grid.add_obstacle_index(idx_42, 0, &bbox);
 
@@ -3858,7 +3889,7 @@ mod tests {
         assert!(hit.contains(&idx_42));
 
         // A query in an unrelated cell does not.
-        let miss_bbox = BBox2D::from_coords(256.0, 256.0, 300.0, 300.0);
+        let miss_bbox = GroundBBox::from_coords(256.0, 256.0, 300.0, 300.0);
         let miss = grid.get_obstacle_indices(0, &miss_bbox);
         assert!(miss.is_empty());
     }

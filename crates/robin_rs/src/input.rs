@@ -13,14 +13,13 @@
 //!   `ingame_menu::widget_bridge::ModalInputState`.
 //! - Gamepad/joystick state → `gamepad.rs`.
 
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::geo2d::BBox2D;
 use crate::gfx_types::{GameEvent, Keycode};
-use robin_engine::coordinates::ScreenPoint;
 
 /// Mouse button identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,17 +30,9 @@ pub enum MouseButton {
 }
 
 /// Keyboard state keyed by winit physical key location.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeyboardState {
     pub keys: BTreeSet<KeyCode>,
-}
-
-impl Default for KeyboardState {
-    fn default() -> Self {
-        Self {
-            keys: BTreeSet::new(),
-        }
-    }
 }
 
 impl KeyboardState {
@@ -71,7 +62,7 @@ pub struct ThreadedInput {
     wheel_delta: i16,
     position: ScreenPoint,
     has_position: bool,
-    clipping: BBox2D,
+    clipping: ScreenBBox,
     ended: bool,
     /// When `false`, [`feed_sdl_events`](Self::feed_sdl_events) drops
     /// mouse-motion / button events so cinematics, mission briefings,
@@ -88,7 +79,7 @@ impl Default for ThreadedInput {
             wheel_delta: 0,
             position: ScreenPoint::default(),
             has_position: false,
-            clipping: BBox2D::default(),
+            clipping: ScreenBBox::default(),
             ended: false,
             enabled: true,
             synthetic_events: Vec::new(),
@@ -115,7 +106,7 @@ impl ThreadedInput {
         self.has_position = false;
     }
 
-    pub fn set_clipping(&mut self, clip: BBox2D) {
+    pub fn set_clipping(&mut self, clip: ScreenBBox) {
         self.clipping = clip;
         // Re-clip immediately after assigning the box, so a cursor that
         // was outside the new rect snaps inside on the same call rather
@@ -153,7 +144,7 @@ impl ThreadedInput {
     /// enqueues a `MouseMove` event with the full delta as `xrel/yrel`,
     /// and returns `true`.
     pub fn reach_position(&mut self, target: ScreenPoint) -> bool {
-        if self.clipping.is_somewhere() && !self.clipping.contains_point(target.to_geo()) {
+        if self.clipping.is_somewhere() && !self.clipping.contains_point(target) {
             return false;
         }
 
@@ -411,7 +402,7 @@ mod tests {
     #[test]
     fn feed_sdl_mouse_move_updates_position() {
         let mut ti = ThreadedInput::new();
-        ti.set_clipping(BBox2D::from_coords(0.0, 0.0, 800.0, 600.0));
+        ti.set_clipping(ScreenBBox::from_coords(0.0, 0.0, 800.0, 600.0));
 
         ti.feed_sdl_events(&[GameEvent::MouseMove {
             x: 400,
@@ -461,7 +452,7 @@ mod tests {
     #[test]
     fn reach_position_teleports_within_clip_and_queues_motion_event() {
         let mut ti = ThreadedInput::new();
-        ti.set_clipping(BBox2D::from_coords(0.0, 0.0, 800.0, 600.0));
+        ti.set_clipping(ScreenBBox::from_coords(0.0, 0.0, 800.0, 600.0));
 
         // Inside clip — teleport, returns true.
         assert!(ti.reach_position(ScreenPoint::new(500.0, 400.0)));
@@ -487,7 +478,7 @@ mod tests {
     #[test]
     fn mouse_events_dropped_when_disabled() {
         let mut ti = ThreadedInput::new();
-        ti.set_clipping(BBox2D::from_coords(0.0, 0.0, 800.0, 600.0));
+        ti.set_clipping(ScreenBBox::from_coords(0.0, 0.0, 800.0, 600.0));
         ti.feed_sdl_events(&[GameEvent::MouseMove {
             x: 100,
             y: 100,

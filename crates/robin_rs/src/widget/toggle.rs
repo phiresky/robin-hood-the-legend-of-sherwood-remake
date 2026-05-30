@@ -18,6 +18,9 @@
 //! - `Activate()` is the keyboard/focus-manager activation entry point.
 //!   Keyboard accelerator keys run first at the top of `process_input`.
 
+#[cfg(test)]
+use robin_engine::coordinates::ScreenBBox;
+use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
@@ -28,7 +31,6 @@ use crate::ui::{
         TOGGLE_FOCUSED_TWO, TOGGLE_SELECTED_ONE, TOGGLE_SELECTED_TWO,
     },
 };
-use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetInput};
 
@@ -539,7 +541,6 @@ mod tests {
     use super::*;
     use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
     use crate::widget::WidgetRenderer;
-    use robin_engine::coordinates::ScreenBBox;
 
     fn test_widget() -> WidgetToggleButton {
         let mut w = WidgetToggleButton::new(1);

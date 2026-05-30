@@ -22,6 +22,8 @@
 //!   back out).
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::coordinates::ScreenBBox;
+use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -32,6 +34,16 @@ use crate::resource_ids::{
     RHID_DISPLAY_CAMPAIGN_MAP, RHID_FLOATING_CANCEL, RHID_FLOATING_OK, RHID_GO_TO_EXIT,
 };
 use crate::resource_manager::ResourceManager;
+
+fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+    let bbox = ScreenBBox::from_coords(
+        rect.x() as f32,
+        rect.y() as f32,
+        (rect.x() + rect.width() as i32) as f32,
+        (rect.y() + rect.height() as i32) as f32,
+    );
+    engine_sprite::BBox::new(bbox.top_left().to_geo(), bbox.bottom_right().to_geo())
+}
 
 /// Logical Sherwood button id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -437,16 +449,7 @@ pub fn draw_with_sprites(
             // typically authored at the button's native size, but we
             // blit into the logical rect anyway so the visuals track
             // our layout.
-            let dst = robin_engine::sprite::BBox::new(
-                crate::geo2d::GeoPoint2D {
-                    x: rect.x() as f32,
-                    y: rect.y() as f32,
-                },
-                crate::geo2d::GeoPoint2D {
-                    x: (rect.x() + rect.width() as i32) as f32,
-                    y: (rect.y() + rect.height() as i32) as f32,
-                },
-            );
+            let dst = screen_rect_to_sprite_bbox(*rect);
             if matches!(
                 btn,
                 SherwoodButton::StartMission | SherwoodButton::QuitMission

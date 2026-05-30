@@ -7,6 +7,12 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
+use robin_engine::coordinates as engine_coordinates;
+#[cfg(test)]
+use robin_engine::mission_stat as engine_mission_stat;
+use robin_engine::mission_stat::MissionStat;
+#[cfg(test)]
+use robin_engine::pc_status as engine_pc_status;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
@@ -23,7 +29,6 @@ use super::resources::{
     MT_TTL_MISSION_WON, MenuText,
 };
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
-use robin_engine::mission_stat::MissionStat;
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 496;
@@ -708,10 +713,8 @@ impl DebriefingPageState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
-            self.input_state.virt_x,
-            self.input_state.virt_y,
-        );
+        let mouse_pt =
+            engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = body_font_ref {
             self.tooltip
@@ -877,7 +880,7 @@ mod tests {
             killed_peasant_count: 1,
             killed_allied_count: 1,
             added_score: 500,
-            pc_names: vec![robin_engine::mission_stat::PcStatName::new(
+            pc_names: vec![engine_mission_stat::PcStatName::new(
                 "Little John".into(),
                 None,
             )],
@@ -934,11 +937,11 @@ mod tests {
         menu_text.replace_strings_for_test(strings);
         let stat = MissionStat {
             pc_names: vec![
-                robin_engine::mission_stat::PcStatName::new(
+                engine_mission_stat::PcStatName::new(
                     "Robin des bois".into(),
-                    Some(robin_engine::pc_status::SpecialPeasantName::A),
+                    Some(engine_pc_status::SpecialPeasantName::A),
                 ),
-                robin_engine::mission_stat::PcStatName::new("Little John".into(), None),
+                engine_mission_stat::PcStatName::new("Little John".into(), None),
             ],
             ..Default::default()
         };
@@ -959,9 +962,9 @@ mod tests {
         // the profile-name string rather than emit a blank.
         let menu_text = MenuText::english_fallbacks_only();
         let stat = MissionStat {
-            pc_names: vec![robin_engine::mission_stat::PcStatName::new(
+            pc_names: vec![engine_mission_stat::PcStatName::new(
                 "Robin des bois".into(),
-                Some(robin_engine::pc_status::SpecialPeasantName::C),
+                Some(engine_pc_status::SpecialPeasantName::C),
             )],
             ..Default::default()
         };

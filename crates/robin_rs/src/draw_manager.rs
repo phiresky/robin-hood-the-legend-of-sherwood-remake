@@ -5,12 +5,12 @@
 //!
 //! Runtime primitives queue GPU overlay draws.
 
+use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
 
 use crate::geo2d::GeoPoint2D;
 use crate::{gfx_types::Rect, renderer::Renderer};
 use robin_engine::coordinates::{MapPoint, ScreenPoint};
-use robin_engine::sprite::BBox;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -140,15 +140,15 @@ impl DrawManager {
     ///
     /// Returns the clipped endpoints in screen coordinates, or `None` if
     /// the segment is entirely outside the view.
-    pub fn clip_segment(&self, a: GeoPoint2D, b: GeoPoint2D) -> Option<(GeoPoint2D, GeoPoint2D)> {
+    pub fn clip_segment(&self, a: MapPoint, b: MapPoint) -> Option<(ScreenPoint, ScreenPoint)> {
         // Cohen-Sutherland-style clip against view_rect
-        let clipped = clip_line_to_box(a, b, &self.view_rect)?;
+        let clipped = clip_line_to_box(a.to_geo(), b.to_geo(), &self.view_rect)?;
 
-        let mut pa = GeoPoint2D {
+        let mut pa = ScreenPoint {
             x: clipped.0.x - self.view_rect.min.x,
             y: clipped.0.y - self.view_rect.min.y,
         };
-        let mut pb = GeoPoint2D {
+        let mut pb = ScreenPoint {
             x: clipped.1.x - self.view_rect.min.x,
             y: clipped.1.y - self.view_rect.min.y,
         };
@@ -201,7 +201,7 @@ impl DrawManager {
 
     /// Draw a line segment in projected map coordinates, clipped to the view.
     pub fn draw_segment(&self, renderer: &mut Renderer, a: MapPoint, b: MapPoint, color: u16) {
-        if let Some((pa, pb)) = self.clip_segment(a.to_geo(), b.to_geo()) {
+        if let Some((pa, pb)) = self.clip_segment(a, b) {
             renderer.draw_line_screen(pa.x as i32, pa.y as i32, pb.x as i32, pb.y as i32, color);
         }
     }
@@ -691,10 +691,7 @@ mod tests {
             1.0,
         );
 
-        let result = dm.clip_segment(
-            GeoPoint2D { x: 10.0, y: 10.0 },
-            GeoPoint2D { x: 90.0, y: 90.0 },
-        );
+        let result = dm.clip_segment(MapPoint::new(10.0, 10.0), MapPoint::new(90.0, 90.0));
         assert!(result.is_some());
     }
 
@@ -711,10 +708,7 @@ mod tests {
         );
 
         // Completely outside
-        let result = dm.clip_segment(
-            GeoPoint2D { x: 200.0, y: 200.0 },
-            GeoPoint2D { x: 300.0, y: 300.0 },
-        );
+        let result = dm.clip_segment(MapPoint::new(200.0, 200.0), MapPoint::new(300.0, 300.0));
         assert!(result.is_none());
     }
 

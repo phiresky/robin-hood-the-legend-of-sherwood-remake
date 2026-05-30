@@ -9,12 +9,11 @@
 //! selects/activates the focused groupable widget.  Keyboard shortcuts can
 //! focus and activate groupable widgets directly.
 
+use robin_engine::coordinates::ScreenPoint;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
-
-use robin_engine::coordinates::ScreenPoint;
 
 // ─── Public types ────────────────────────────────────────────────────
 
@@ -88,19 +87,10 @@ pub struct KeyInfo {
 }
 
 /// Full keyboard state for one frame.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct KeyboardState {
     pub keys: HashMap<KeyCode, KeyInfo>,
     pub has_changed: bool,
-}
-
-impl Default for KeyboardState {
-    fn default() -> Self {
-        Self {
-            keys: HashMap::new(),
-            has_changed: false,
-        }
-    }
 }
 
 /// Combined UI input state for one frame.

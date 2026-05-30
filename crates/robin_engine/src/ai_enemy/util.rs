@@ -5,7 +5,7 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
-use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
+use crate::position_interface::INVERSE_ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------
 // Task priority constants
@@ -697,7 +697,7 @@ pub(super) fn enemy_is_below_me(
 /// straight-line movement, or `None` if no valid retreat was found.
 pub fn propose_good_step_back_goal(
     pos_me: Position,
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
     pos_enemy: Position,
     good_distance: u16,
     min_distance: u16,
@@ -738,14 +738,9 @@ pub fn propose_good_step_back_goal(
             };
 
             if let Some(grid) = grid {
-                let me_pt = crate::geo2d::pt(pos_me.x, pos_me.y);
-                let goal_pt = crate::geo2d::pt(goal.x, goal.y);
-                if grid.is_straight_movement_authorized(
-                    me_pt.into(),
-                    goal_pt.into(),
-                    pos_me.level,
-                    move_box,
-                ) {
+                let me_pt = crate::coordinates::MapPoint::new(pos_me.x, pos_me.y);
+                let goal_pt = crate::coordinates::MapPoint::new(goal.x, goal.y);
+                if grid.is_straight_movement_authorized(me_pt, goal_pt, pos_me.level, move_box) {
                     return Some(goal);
                 }
             } else {
@@ -827,12 +822,12 @@ pub(super) fn check_straight_movement(
     grid: Option<&crate::fast_find_grid::FastFindGrid>,
     from: &Position,
     to: &Position,
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
 ) -> bool {
     match grid {
         Some(g) => g.is_straight_movement_authorized(
-            crate::geo2d::pt(from.x, from.y).into(),
-            crate::geo2d::pt(to.x, to.y).into(),
+            crate::coordinates::MapPoint::new(from.x, from.y),
+            crate::coordinates::MapPoint::new(to.x, to.y),
             from.level,
             move_box,
         ),

@@ -224,7 +224,7 @@ impl EngineInner {
                 // Only Visible/Opened scrolls are focusable. Scroll
                 // status is stored on `GameHost::scroll_status` keyed
                 // by entity handle.
-                use crate::engine::scroll_reveal::ScrollStatus;
+                use super::scroll_reveal::ScrollStatus;
                 if !matches!(
                     self.scroll_status(entity_id),
                     ScrollStatus::Visible | ScrollStatus::Opened
@@ -1845,11 +1845,9 @@ impl EngineInner {
             && let TrajectoryPreview::ShowArc { points, .. } = &preview
             && let Some(last) = points.last()
         {
-            let impact_2d = crate::geo2d::pt(last.position.x, last.position.y - last.position.z);
-            let resolution = self.fast_grid.resolve_projectile_landing(
-                crate::coordinates::MapPoint::from_geo(impact_2d),
-                self.sight_obstacles(assets),
-            );
+            let resolution = self
+                .fast_grid
+                .resolve_projectile_landing(last.position.to_map(), self.sight_obstacles(assets));
             if resolution.sector.is_none() || resolution.blocked_by_motion_obstacle {
                 return TrajectoryPreview::Invalid;
             }

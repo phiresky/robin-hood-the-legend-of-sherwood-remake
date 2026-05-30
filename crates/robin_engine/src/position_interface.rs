@@ -22,9 +22,9 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, MapVec, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
-use crate::geo2d::{self, BBox2D, Vec2D};
+use crate::geo2d::{self, Vec2D};
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 
 // ---------------------------------------------------------------------------
@@ -584,12 +584,12 @@ pub struct PositionInterface {
     pathfinder_index_alternate: u16,
 
     // -- Move boxes --
-    move_box: BBox2D,
-    move_box_alternate: BBox2D,
+    move_box: MoveBox,
+    move_box_alternate: MoveBox,
 
     use_emergency_lying_box: bool,
 
-    move_box_map: BBox2D,
+    move_box_map: MapBBox,
 
     // -- Direction --
     direction: Direction,
@@ -619,7 +619,7 @@ pub struct PositionInterface {
     anti_collision_on: bool,
     pub deviated: bool,
     pub blocked_count: u16,
-    pub box_blocked: BBox2D,
+    pub box_blocked: MapBBox,
     pub radius: f32,
     pub radius_initial: f32,
 
@@ -663,10 +663,10 @@ impl PositionInterface {
             pathfinder_index: u16::MAX,
             pathfinder_index_alternate: u16::MAX,
 
-            move_box: BBox2D::new(),
-            move_box_alternate: BBox2D::new(),
+            move_box: MoveBox::new(),
+            move_box_alternate: MoveBox::new(),
             use_emergency_lying_box: false,
-            move_box_map: BBox2D::new(),
+            move_box_map: MapBBox::new(),
 
             direction: Direction::NORTH,
             direction_goal: Direction::NORTH,
@@ -690,7 +690,7 @@ impl PositionInterface {
             anti_collision_on: true,
             deviated: false,
             blocked_count: 0,
-            box_blocked: BBox2D::new(),
+            box_blocked: MapBBox::new(),
             radius: RADIUS_GUY,
             radius_initial: RADIUS_GUY,
 
@@ -1050,17 +1050,17 @@ impl PositionInterface {
 
     /// Current move box (centered on origin).
     #[inline]
-    pub fn get_move_box(&self) -> &BBox2D {
+    pub fn get_move_box(&self) -> &MoveBox {
         &self.move_box
     }
 
     /// Move box in map coordinates.
-    pub fn get_move_box_map(&self) -> &BBox2D {
+    pub fn get_move_box_map(&self) -> &MapBBox {
         &self.move_box_map
     }
 
     #[inline]
-    pub fn set_move_box(&mut self, b: BBox2D) {
+    pub fn set_move_box(&mut self, b: MoveBox) {
         self.move_box = b;
     }
     /// In-place equivalent of [`for_actor`] — applies the actor-specific
@@ -1076,9 +1076,9 @@ impl PositionInterface {
         use crate::geo2d;
         let hd = half_diagonal.unwrap_or(geo2d::pt(1.0, 1.0));
         self.set_pathfinder_index(pathfinder_idx as u16);
-        self.set_move_box(BBox2D::from_corners(
-            geo2d::pt(-hd.x, -hd.y),
-            geo2d::pt(hd.x, hd.y),
+        self.set_move_box(MoveBox::from_corners(
+            MapVec::new(-hd.x, -hd.y),
+            MapVec::new(hd.x, hd.y),
         ));
         self.set_map_position(position_map);
     }
@@ -1086,7 +1086,7 @@ impl PositionInterface {
     /// Half diagonal of the current move box (bottom-right corner).
     #[must_use = "method returns Vec2D by value; `pi.get_half_diagonal().x = v` silently modifies a temporary."]
     pub fn get_half_diagonal(&self) -> Vec2D {
-        self.move_box.bottom_right()
+        self.move_box.bottom_right().to_geo()
     }
 
     #[inline]
@@ -1191,8 +1191,13 @@ impl PositionInterface {
         } else {
             let map = self.position_map;
             let goal = self.goal_map;
-            let v = geo2d::pt(goal.x - map.x, goal.y - map.y);
-            self.increment_map = MapVec::from_geo(geo2d::normalize(v));
+            let v = goal - map;
+            let len = v.length();
+            self.increment_map = if len > f32::EPSILON {
+                v.scale(1.0 / len)
+            } else {
+                MapVec::ZERO
+            };
         }
         self.set_increment_map_computed(true);
     }
@@ -1222,22 +1227,19 @@ impl PositionInterface {
         } else {
             let map = self.position_map;
             let goal = self.goal_map;
-            let mut v = geo2d::pt(goal.x - map.x, goal.y - map.y);
+            let v = goal - map;
 
             very_small = v.x.abs().max(v.y.abs()) < 1.0;
 
             if v.x != 0.0 || v.y != 0.0 {
-                v = geo2d::normalize(v);
-                self.increment_map = MapVec::from_geo(v);
+                let v = v.scale(1.0 / v.length());
+                self.increment_map = v;
 
                 self.increment.x = v.x;
                 if let Some(p) = &self.plane {
                     self.increment.z = p.compute_z_increment(v.x, v.y);
-                    self.increment.y = crate::coordinates::GroundVec::from_map_and_z(
-                        MapVec::from_geo(v),
-                        self.increment.z,
-                    )
-                    .y;
+                    self.increment.y =
+                        crate::coordinates::GroundVec::from_map_and_z(v, self.increment.z).y;
                 } else {
                     self.increment.y = v.y;
                     self.increment.z = 0.0;
@@ -1362,18 +1364,16 @@ impl PositionInterface {
 
     /// Track whether the entity is stuck in a small area.
     pub fn update_box_blocked(&mut self, point: MapPoint) -> bool {
-        if self.box_blocked.is_somewhere() && self.box_blocked.contains_point(point.to_geo()) {
+        if self.box_blocked.is_somewhere() && self.box_blocked.contains_point(point) {
             self.blocked_count += 1;
             if self.radius > 1.0 {
                 self.radius -= 0.2;
             }
             false
         } else {
-            let half = geo2d::pt(0.49, 0.49);
-            self.box_blocked
-                .expand_point(geo2d::pt(point.x + half.x, point.y + half.y));
-            self.box_blocked
-                .expand_point(geo2d::pt(point.x - half.x, point.y - half.y));
+            let half = MapVec::new(0.49, 0.49);
+            self.box_blocked.expand_point(point + half);
+            self.box_blocked.expand_point(point - half);
             self.blocked_count = 0;
             self.radius = self.radius_initial;
             true
@@ -1582,10 +1582,12 @@ impl PositionInterface {
     /// Check whether the current map position (with its move box) is free of
     /// motion-line collisions on the current layer.
     pub fn is_position_authorized(&self, grid: &FastFindGrid) -> bool {
-        let lines = grid.get_active_motion_line_indices(self.layer.get(), &self.move_box_map);
+        let move_box_map = self.move_box_map;
+        let move_box_map_geo = move_box_map.to_geo();
+        let lines = grid.get_active_motion_line_indices(self.layer.get(), &move_box_map);
         for &line_idx in &lines {
             let line = &grid.level.lines[usize::from(line_idx)];
-            if line.intersects_bbox(&self.move_box_map) {
+            if line.intersects_bbox(&move_box_map_geo) {
                 return false;
             }
         }
@@ -1597,14 +1599,11 @@ impl PositionInterface {
     // ====================================================================
 
     /// Offset the move box to a map position.
-    fn get_move_box_offset(&self, pt: MapPoint) -> BBox2D {
+    fn get_move_box_offset(&self, pt: MapPoint) -> MapBBox {
         if self.move_box.is_somewhere() {
-            BBox2D::from_corners(
-                geo2d::pt(self.move_box.x_min() + pt.x, self.move_box.y_min() + pt.y),
-                geo2d::pt(self.move_box.x_max() + pt.x, self.move_box.y_max() + pt.y),
-            )
+            self.move_box.translated(pt)
         } else {
-            BBox2D::new()
+            MapBBox::new()
         }
     }
 }
@@ -1618,7 +1617,7 @@ pub struct AnticollisionData {
     pub map: MapPoint,
     pub increment_map: MapVec,
     pub deviated: bool,
-    pub box_blocked: BBox2D,
+    pub box_blocked: MapBBox,
     pub blocked_count: u16,
     pub radius: f32,
 }
@@ -1775,9 +1774,9 @@ mod tests {
     #[test]
     fn test_set_position_3d_eagerly_syncs_map_and_move_box() {
         let mut pi = PositionInterface::new();
-        pi.set_move_box(BBox2D::from_corners(
-            geo2d::pt(0.0, 0.0),
-            geo2d::pt(1.0, 1.0),
+        pi.set_move_box(MoveBox::from_corners(
+            MapVec::new(0.0, 0.0),
+            MapVec::new(1.0, 1.0),
         ));
         pi.set_position(p3(100.0, 200.0, 0.0));
 

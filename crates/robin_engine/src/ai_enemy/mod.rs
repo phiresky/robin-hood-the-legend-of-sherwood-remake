@@ -3713,7 +3713,7 @@ mod tests {
             position: me,
             sq_standard_view_radius: 500.0 * 500.0,
             sq_self_view_radius: 500.0 * 500.0,
-            move_box: crate::geo2d::BBox2D::from_coords(-5.0, -5.0, 5.0, 5.0),
+            move_box: crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
             entity_views: Arc::new(views),
             ..AiContext::default()
         };
@@ -3763,7 +3763,7 @@ mod tests {
             position: me,
             sq_standard_view_radius: 500.0 * 500.0,
             sq_self_view_radius: 500.0 * 500.0,
-            move_box: crate::geo2d::BBox2D::from_coords(-5.0, -5.0, 5.0, 5.0),
+            move_box: crate::coordinates::MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0),
             entity_views: Arc::new(views),
             ..AiContext::default()
         };

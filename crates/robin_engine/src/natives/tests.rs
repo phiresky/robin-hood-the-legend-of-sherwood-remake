@@ -643,10 +643,10 @@ fn npc_value_nonexistent_actor_returns_minus_one() {
 /// (actor silhouette no longer overlaps the map box).
 #[test]
 fn compute_border_point_cardinal_directions() {
-    use crate::geo2d::BBox2D;
+    use crate::coordinates::MapBBox;
 
     let mut host = GameHost::new();
-    host.map_bbox = BBox2D::from_coords(0.0, 0.0, 1000.0, 800.0);
+    host.map_bbox = MapBBox::from_coords(0.0, 0.0, 1000.0, 800.0);
     let inside = (400.0, 300.0);
 
     // Direction 0 = facing north (-y). Actor enters from the south

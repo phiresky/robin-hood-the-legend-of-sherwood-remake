@@ -14,6 +14,11 @@
 //! missing in the resource pack.
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::coordinates::ScreenBBox;
+use robin_engine::engine as engine_api;
+#[cfg(test)]
+use robin_engine::player_command::PlayerCommand;
+use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -22,6 +27,16 @@ use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids::{RHID_ZOOM_DOWN, RHID_ZOOM_UP};
 use crate::resource_manager::ResourceManager;
+
+fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+    let bbox = ScreenBBox::from_coords(
+        rect.x() as f32,
+        rect.y() as f32,
+        (rect.x() + rect.width() as i32) as f32,
+        (rect.y() + rect.height() as i32) as f32,
+    );
+    engine_sprite::BBox::new(bbox.top_left().to_geo(), bbox.bottom_right().to_geo())
+}
 
 /// Logical zoom button id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +78,8 @@ impl ZoomButtonEnable {
     /// that's active so its widget stays visually "pressed" for the
     /// duration.
     pub fn from_engine(
-        engine: &robin_engine::engine::Engine,
-        display: &robin_engine::engine::HostDisplayState,
+        engine: &engine_api::Engine,
+        display: &engine_api::HostDisplayState,
     ) -> Self {
         let gated = engine.is_zoom_possible(display);
         let zoom_up_in_progress = engine.is_zoom_up_in_progress(display);
@@ -276,16 +291,7 @@ pub fn draw_with_sprites(
         let state = button_sprite_state(enabled, hovered || selected, pressed);
 
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
-            let dst = robin_engine::sprite::BBox::new(
-                crate::geo2d::GeoPoint2D {
-                    x: rect.x() as f32,
-                    y: rect.y() as f32,
-                },
-                crate::geo2d::GeoPoint2D {
-                    x: (rect.x() + rect.width() as i32) as f32,
-                    y: (rect.y() + rect.height() as i32) as f32,
-                },
-            );
+            let dst = screen_rect_to_sprite_bbox(*rect);
             // C++ zoom widgets use SBUIRendererBitmap, not the shadow
             // renderer, so shadow-key pixels are treated by the normal
             // transparent blit path.
@@ -402,10 +408,9 @@ mod tests {
     fn enable_mask_gates_on_is_zoom_possible() {
         use crate::campaign::Campaign;
         use robin_engine::engine::{EngineStateRequest, HostDisplayState, InputState, LevelAssets};
-        use robin_engine::player_command::PlayerCommand;
 
         let mut assets = LevelAssets::new();
-        let mut engine = robin_engine::engine::Engine::new_for_test_with_level_size(
+        let mut engine = engine_api::Engine::new_for_test_with_level_size(
             1024.0,
             768.0,
             Campaign::default(),

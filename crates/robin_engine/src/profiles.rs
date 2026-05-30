@@ -8,7 +8,8 @@
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, BBox2D, GeoPoint2D};
+use crate::coordinates::{MoveBox, SpriteAnchor};
+use crate::geo2d;
 use crate::sbfile::SbFile;
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -581,8 +582,8 @@ pub struct CharacterProfile {
     pub action_max_ammo: [u16; NUMBER_OF_PC_ACTIONS],
     pub contextual_actions: [Action; NUMBER_OF_PC_CONTEXTUAL_ACTIONS],
     pub pathfinder_index: u8,
-    pub box_move: BBox2D,
-    pub center: GeoPoint2D,
+    pub box_move: MoveBox,
+    pub center: SpriteAnchor,
     pub priority: u16,
     pub wake_up: u16,
     pub detection_speed_in_city: u16,
@@ -642,8 +643,8 @@ pub struct SoldierProfile {
     pub duty: bool,
     pub strangle: bool,
     pub pathfinder_index: u8,
-    pub box_move: BBox2D,
-    pub center: GeoPoint2D,
+    pub box_move: MoveBox,
+    pub center: SpriteAnchor,
     pub wake_up: u16,
     pub weapon_material: WeaponMaterial,
     pub armor_material: ArmorMaterial,
@@ -1107,7 +1108,11 @@ impl CharacterProfile {
 
         file.serialize_u8(&mut self.pathfinder_index)?;
         self.box_move.binary_rw(file)?;
-        geo2d::serialize_geo_point(file, &mut self.center)?;
+        let mut center = self.center.to_geo();
+        geo2d::serialize_geo_point(file, &mut center)?;
+        if file.is_read_mode() {
+            self.center = SpriteAnchor::from_geo(center);
+        }
         file.serialize_u16(&mut self.wake_up)?;
 
         let mut wm = self.weapon_material as u32;
@@ -1201,7 +1206,11 @@ impl SoldierProfile {
         file.serialize_u32(&mut self.shooting_weapon_id)?;
         file.serialize_u8(&mut self.pathfinder_index)?;
         self.box_move.binary_rw(file)?;
-        geo2d::serialize_geo_point(file, &mut self.center)?;
+        let mut center = self.center.to_geo();
+        geo2d::serialize_geo_point(file, &mut center)?;
+        if file.is_read_mode() {
+            self.center = SpriteAnchor::from_geo(center);
+        }
         file.serialize_u16(&mut self.wake_up)?;
 
         let mut wm = self.weapon_material as u32;

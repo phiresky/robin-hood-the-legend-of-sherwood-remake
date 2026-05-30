@@ -10,12 +10,19 @@
 
 use crate::Host;
 use crate::renderer::Renderer;
+use robin_assets::frame_holder as assets_frame_holder;
+use robin_assets::frame_holder::ProgressUpdate;
 use robin_assets::picture::Picture;
+use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::coordinates::{MapPoint, ScreenBBox};
 use robin_engine::engine::level_loading::{
     MinimapBitmapSetup, PreDecodedBackground, PreDecodedMinimap,
 };
 use robin_engine::engine::{Ambiance, Engine, GlobalOptions, PANNEL_HEIGHT};
 use robin_engine::geo2d;
+use robin_engine::minimap as engine_minimap;
+use robin_engine::player_profile::PlayerProfileManager;
 use robin_engine::sbfile;
 use robin_engine::sprite::BBox;
 use robin_engine::sprite_variant::SpriteVariant;
@@ -79,10 +86,9 @@ pub fn pre_decode_background_map(
     map_name: &str,
     ambiance_dir: &str,
     level_directory: &str,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
-    progress: &mut dyn FnMut(robin_assets::frame_holder::ProgressUpdate),
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
 ) -> Result<Option<PreDecodedBackground>, String> {
-    use robin_assets::frame_holder::ProgressUpdate;
     if map_name.is_empty() {
         tracing::warn!("No map name set, skipping background load");
         return Ok(None);
@@ -230,7 +236,7 @@ pub fn pre_decode_minimap(
     map_name: &str,
     ambiance_dir: &str,
     level_directory: &str,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     progress: &mut dyn FnMut(f32),
 ) -> Option<PreDecodedMinimap> {
     if map_name.is_empty() {
@@ -339,7 +345,7 @@ pub fn apply_minimap(
     let map_w = decoded.width as f32;
     let map_h = decoded.height as f32;
 
-    let hit_mask = robin_engine::minimap::HitMask::from_pixels_u16(
+    let hit_mask = engine_minimap::HitMask::from_pixels_u16(
         decoded.width,
         decoded.height,
         &decoded.pixels,
@@ -350,13 +356,12 @@ pub fn apply_minimap(
     // default (`PlayerProfile::new` initializes both fields to that
     // value).
     let saved_position = {
-        use robin_engine::player_profile::PlayerProfileManager;
         let guard = PlayerProfileManager::global();
         guard
             .as_ref()
             .and_then(|m| m.get_active())
-            .map(|p| robin_engine::coordinates::ScreenPoint::new(p.minimap_x, p.minimap_y))
-            .unwrap_or_else(|| robin_engine::coordinates::ScreenPoint::new(65536.0, 65536.0))
+            .map(|p| engine_coordinates::ScreenPoint::new(p.minimap_x, p.minimap_y))
+            .unwrap_or_else(|| engine_coordinates::ScreenPoint::new(65536.0, 65536.0))
     };
 
     tracing::info!(
@@ -393,23 +398,17 @@ impl EngineLevelLoadExt for Engine {
         let screen = &host.viewport.screen_size;
         let zoom = host.viewport.zoom_factor;
 
-        let src = BBox::new(
-            geo2d::GeoPoint2D {
-                x: view.x,
-                y: view.y,
-            },
-            geo2d::GeoPoint2D {
-                x: view.x + (screen.x / zoom),
-                y: view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
-            },
+        let src_min = *view;
+        let src_max = MapPoint::new(
+            view.x + (screen.x / zoom),
+            view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
         );
+        let src = BBox::new(src_min.to_geo(), src_max.to_geo());
 
+        let dst_bbox = ScreenBBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
         let dst = BBox::new(
-            geo2d::GeoPoint2D { x: 0.0, y: 0.0 },
-            geo2d::GeoPoint2D {
-                x: screen.x,
-                y: screen.y - PANNEL_HEIGHT,
-            },
+            dst_bbox.top_left().to_geo(),
+            dst_bbox.bottom_right().to_geo(),
         );
 
         renderer.render_background_texture(Some(&src), Some(&dst));

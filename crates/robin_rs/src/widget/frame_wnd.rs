@@ -4,6 +4,8 @@
 //! collects events, and manages refresh probes. Widgets are positioned
 //! relative to the frame's origin.
 
+#[cfg(test)]
+use robin_engine::coordinates as engine_coordinates;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{UiEvent, UiMsg, UiProbe};
@@ -390,7 +392,7 @@ mod tests {
 
     fn make_input(x: f32, y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
         WidgetInput {
-            mouse_position: robin_engine::coordinates::ScreenPoint::new(x, y),
+            mouse_position: engine_coordinates::ScreenPoint::new(x, y),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard: make_keyboard(),

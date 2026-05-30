@@ -4,6 +4,7 @@
 //! The input system resolves raw events into commands by reading engine
 //! state immutably; this module executes them.
 
+use super::movement::GoalShape;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Command, EntityId, Human as _};
@@ -736,7 +737,7 @@ impl EngineInner {
                 layer,
                 sector,
             } => {
-                self.manage_input_process_teleport(dest.to_geo(), *layer, *sector);
+                self.manage_input_process_teleport(*dest, *layer, *sector);
             }
 
             // ── Minimap ─────────────────────────────────────────
@@ -1750,7 +1751,7 @@ impl EngineInner {
         }
         let tgt_pos = target_entity.position_iface().map_position();
         let tgt_layer = target_entity.element_data().layer();
-        let mut box_at_target = move_box.translated(tgt_pos.to_geo());
+        let mut box_at_target = move_box.translated(tgt_pos);
         self.fast_grid
             .find_authorized_position(&mut box_at_target, tgt_layer)
     }
@@ -2526,7 +2527,7 @@ impl EngineInner {
                 {
                     let mid = jl.get_middle_point();
                     (
-                        crate::engine::movement::GoalShape::Line {
+                        GoalShape::Line {
                             line_index: aggr_idx,
                             midpoint: mid,
                             tolerance: seek_tolerance,
@@ -2535,10 +2536,7 @@ impl EngineInner {
                     )
                 } else {
                     (
-                        crate::engine::movement::GoalShape::Point(MapPoint::new(
-                            target_pos.x,
-                            target_pos.y,
-                        )),
+                        GoalShape::Point(MapPoint::new(target_pos.x, target_pos.y)),
                         target_layer,
                     )
                 };
@@ -2672,11 +2670,11 @@ impl EngineInner {
             return;
         };
 
-        let victim_pos_geo = match self.get_entity(target_id) {
-            Some(e) => e.element_data().position_map().to_geo(),
+        let victim_pos = match self.get_entity(target_id) {
+            Some(e) => e.element_data().position_map(),
             None => return,
         };
-        let t_victim = victim_line.compute_nearest_point_param(victim_pos_geo.into());
+        let t_victim = victim_line.compute_nearest_point_param(victim_pos.to_geo().into());
         let coeff = t_victim * victim_line.norm();
 
         let aggressor_vec = aggressor_line.vector();
@@ -2863,7 +2861,7 @@ impl EngineInner {
 
         let mut destination_pos = target_pos;
         if move_box.is_somewhere() {
-            let mut box_at_target = move_box.translated(target_pos.to_geo());
+            let mut box_at_target = move_box.translated(target_pos);
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_at_target, layer)
@@ -3288,7 +3286,7 @@ pub fn object_pickup_command(
         // Scrolls: no associated action; takable is vacuously true
         // once status is Visible / Opened.
         Entity::Scroll(_) => {
-            use crate::engine::scroll_reveal::ScrollStatus;
+            use super::scroll_reveal::ScrollStatus;
             matches!(
                 engine.scroll_status(target_id),
                 ScrollStatus::Visible | ScrollStatus::Opened
@@ -3575,6 +3573,7 @@ mod tests {
         ElementProjectile, ElementScroll, Entity, HumanData, NetData, NpcData, ObjectData,
         ObjectType, PcData, Posture, ProjectileData,
     };
+    use crate::engine::MissionScript;
     use crate::engine::ScrollStatus;
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
@@ -3863,7 +3862,7 @@ mod tests {
                 },
             ],
         };
-        crate::engine::types::MissionScript::from_scb(ScbFile {
+        MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
             classes: vec![startup],
         })

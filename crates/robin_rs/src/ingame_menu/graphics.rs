@@ -5,12 +5,13 @@
 //! via the [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
+use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
 use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
-use robin_engine::graphic_config::TextureScaleMode;
 
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_fallback_rect,
@@ -489,7 +490,7 @@ fn draw_preset_list(
         if is_selected {
             let (rx, ry) = transform.to_screen(PRESET_LIST_X + 1, y + 1);
             renderer.fill_screen(
-                Some(&robin_engine::sprite::BBox::new(
+                Some(&engine_sprite::BBox::new(
                     crate::geo2d::pt(rx as f32, ry as f32),
                     crate::geo2d::pt(
                         (rx + PRESET_LIST_W - 2) as f32,

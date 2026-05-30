@@ -6,9 +6,9 @@
 //! operations.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
-use crate::geo2d::{self, GeoPoint2D};
+use crate::coordinates::MapPoint;
+use crate::geo2d;
 use crate::position_interface::{ASPECT_RATIO, vector_norm_iso};
 use crate::sound_geometry::{SoundSourceAltitude, SoundSourceInfo};
 
@@ -70,8 +70,8 @@ pub struct SoundSource {
     pub inner_volume: u16,
     /// Volume at outer distance \[0–255\].
     pub outer_volume: u16,
-    /// Shape points defining the source geometry (polyline).
-    pub shape: Vec<GeoPoint2D>,
+    /// Shape points defining the source geometry (map-space polyline).
+    pub shape: Vec<MapPoint>,
     /// Altitude classification affecting volume with zoom.
     pub altitude: SoundSourceAltitude,
     /// Minimum delay ticks (for [`SoundSourceKind::Delayed`]).
@@ -132,18 +132,14 @@ impl SoundSource {
     // ── Geometry helpers ──────────────────────────────────────────────
 
     /// Distance between two points with isometric Y scaling.
-    fn distance_for_point(origin: GeoPoint2D, position: GeoPoint2D) -> f32 {
+    fn distance_for_point(origin: MapPoint, position: MapPoint) -> f32 {
         vector_norm_iso(position.x - origin.x, position.y - origin.y)
     }
 
     /// Perpendicular distance from `position` to segment `[seg_a, seg_b]`,
     /// using the isometric-corrected normal. Returns `None` if the
     /// perpendicular projection doesn't fall within the segment bounds.
-    fn distance_to_segment(
-        seg_a: GeoPoint2D,
-        seg_b: GeoPoint2D,
-        position: GeoPoint2D,
-    ) -> Option<f32> {
+    fn distance_to_segment(seg_a: MapPoint, seg_b: MapPoint, position: MapPoint) -> Option<f32> {
         // Segment direction
         let dir = geo2d::pt(seg_b.x - seg_a.x, seg_b.y - seg_a.y);
 
@@ -177,7 +173,10 @@ impl SoundSource {
         }
 
         let intersection = geo2d::pt(seg_a.x + t * d1.x, seg_a.y + t * d1.y);
-        Some(Self::distance_for_point(intersection, position))
+        Some(Self::distance_for_point(
+            MapPoint::from_geo(intersection),
+            position,
+        ))
     }
 
     // ── Noise covering ───────────────────────────────────────────────
@@ -199,7 +198,7 @@ impl SoundSource {
             return 0;
         }
 
-        let position = geo2d::pt(x, y - z);
+        let position = MapPoint::from_world_xyz(x, y, z);
         let num_points = self.shape.len();
 
         match num_points {
@@ -274,7 +273,7 @@ impl SoundSource {
             for _ in 0..num_points {
                 let x = read_i16_le(data, pos) as f32;
                 let y = read_i16_le(data, pos) as f32;
-                source.shape.push(geo2d::pt(x, y));
+                source.shape.push(MapPoint::new(x, y));
             }
 
             if new_levels {
@@ -538,7 +537,7 @@ mod tests {
         let mut src = SoundSource::new();
         src.active = true;
         src.noise_covering_distance = 200;
-        src.shape.push(geo2d::pt(100.0, 100.0));
+        src.shape.push(MapPoint::new(100.0, 100.0));
 
         // At the source point, distance ~0 → full volume
         let vol = src.noise_covering_volume_for_3d(100.0, 100.0, 0.0);
@@ -554,7 +553,7 @@ mod tests {
         let mut src = SoundSource::new();
         src.active = true;
         src.noise_covering_distance = 200;
-        src.shape.push(geo2d::pt(100.0, 50.0));
+        src.shape.push(MapPoint::new(100.0, 50.0));
 
         // Position (100, 100, 50) → projected to (100, 50) → at source
         let vol = src.noise_covering_volume_for_3d(100.0, 100.0, 50.0);
@@ -563,16 +562,16 @@ mod tests {
 
     #[test]
     fn distance_for_point_basic() {
-        let a = geo2d::pt(0.0, 0.0);
-        let b = geo2d::pt(100.0, 0.0);
+        let a = MapPoint::new(0.0, 0.0);
+        let b = MapPoint::new(100.0, 0.0);
         let dist = SoundSource::distance_for_point(a, b);
         assert!((dist - 100.0).abs() < 0.01);
     }
 
     #[test]
     fn distance_for_point_isometric() {
-        let a = geo2d::pt(0.0, 0.0);
-        let b = geo2d::pt(0.0, 100.0);
+        let a = MapPoint::new(0.0, 0.0);
+        let b = MapPoint::new(0.0, 100.0);
         // Y distance is scaled by INVERSE_ASPECT_RATIO
         let dist = SoundSource::distance_for_point(a, b);
         assert!((dist - 100.0 * INVERSE_ASPECT_RATIO).abs() < 0.1);
@@ -580,10 +579,10 @@ mod tests {
 
     #[test]
     fn segment_distance_perpendicular() {
-        let a = geo2d::pt(0.0, 0.0);
-        let b = geo2d::pt(100.0, 0.0);
+        let a = MapPoint::new(0.0, 0.0);
+        let b = MapPoint::new(100.0, 0.0);
         // Point directly above the midpoint
-        let pos = geo2d::pt(50.0, 10.0);
+        let pos = MapPoint::new(50.0, 10.0);
         let dist = SoundSource::distance_to_segment(a, b, pos);
         assert!(dist.is_some());
         // Distance should be roughly 10 * INVERSE_ASPECT_RATIO (isometric Y)
@@ -593,10 +592,10 @@ mod tests {
 
     #[test]
     fn segment_distance_outside() {
-        let a = geo2d::pt(0.0, 0.0);
-        let b = geo2d::pt(100.0, 0.0);
+        let a = MapPoint::new(0.0, 0.0);
+        let b = MapPoint::new(100.0, 0.0);
         // Point far beyond the segment endpoint — perpendicular misses
-        let pos = geo2d::pt(200.0, 10.0);
+        let pos = MapPoint::new(200.0, 10.0);
         let dist = SoundSource::distance_to_segment(a, b, pos);
         assert!(dist.is_none());
     }
@@ -748,7 +747,7 @@ mod tests {
         src.min_delay = 10;
         src.max_delay = 50;
         src.active = true;
-        src.shape.push(geo2d::pt(1.0, 2.0));
+        src.shape.push(MapPoint::new(1.0, 2.0));
 
         let json = serde_json::to_string(&src).unwrap();
         let restored: SoundSource = serde_json::from_str(&json).unwrap();

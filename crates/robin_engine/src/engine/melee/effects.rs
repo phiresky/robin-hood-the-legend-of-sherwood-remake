@@ -586,9 +586,9 @@ impl EngineInner {
                 .map(|e| e.position_iface())
                 .map(|p| *p.get_move_box())
                 .unwrap_or_else(|| {
-                    crate::geo2d::BBox2D::from_corners(
-                        crate::geo2d::pt(-5.0, -5.0),
-                        crate::geo2d::pt(5.0, 5.0),
+                    crate::coordinates::MoveBox::from_corners(
+                        crate::coordinates::MapVec::new(-5.0, -5.0),
+                        crate::coordinates::MapVec::new(5.0, 5.0),
                     )
                 });
             (apos, adir, vpos, vz, vlayer, vsector, vis_rider, vmbox)
@@ -669,23 +669,23 @@ impl EngineInner {
         // chosen point is inside the minimal-goal sector's polygon
         // and revert to minimal goal on failure.
         let (goal_x, goal_y) = {
-            let pt_start = crate::geo2d::pt(victim_pos.x, victim_pos.y);
+            let pt_start = victim_pos;
             let try_pt = |frac: f32| {
-                crate::geo2d::pt(
+                crate::coordinates::MapPoint::new(
                     victim_pos.x + flight_x * frac,
                     victim_pos.y + flight_y * frac,
                 )
             };
-            let authorized = |pt_try: crate::geo2d::GeoPoint2D| {
+            let authorized = |pt_try: crate::coordinates::MapPoint| {
                 self.fast_grid.is_straight_movement_authorized(
-                    pt_start.into(),
-                    pt_try.into(),
+                    pt_start,
+                    pt_try,
                     victim_layer,
                     &victim_move_box,
                 )
             };
 
-            let mut chosen: Option<crate::geo2d::GeoPoint2D> = None;
+            let mut chosen: Option<crate::coordinates::MapPoint> = None;
             // 100%
             let pt_full = try_pt(1.0);
             if authorized(pt_full) {
@@ -723,7 +723,7 @@ impl EngineInner {
                             .copied()
                     })
                     .and_then(|idx| self.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.contains_point(crate::coordinates::MapPoint::from_geo(pt)))
+                    .map(|gs| gs.contains_point(pt))
                     // Without a known sector, trust the
                     // `is_straight_movement_authorized` result.
                     .unwrap_or(true);
@@ -771,7 +771,7 @@ impl EngineInner {
                 assets,
                 sh.get(),
                 victim_layer,
-                crate::geo2d::pt(goal_x, goal_y),
+                crate::coordinates::MapPoint::new(goal_x, goal_y),
             ) {
                 Some(obs_idx) => {
                     let z = self
@@ -1073,30 +1073,28 @@ impl EngineInner {
         ry *= 100.0;
         rz *= 100.0;
 
-        // Map projection: Y component includes Z for isometric.
-        let map_x = rx;
-        let map_y = ry - rz;
+        let push_map = crate::coordinates::MapVec::from_world_xyz(rx, ry, rz);
 
         // If the entity is already moving against the roll direction
         // (dot product negative), refuse to redirect it.
         if check_increment && let Some(pi) = Some(entity.position_iface()) {
             let inc = pi.get_increment_map();
-            if inc.x * map_x + inc.y * map_y < 0.0 {
+            if inc.x * push_map.x + inc.y * push_map.y < 0.0 {
                 return None;
             }
         }
 
-        let dest_x = pos.x + map_x;
-        let dest_y = pos.y + map_y;
+        let dest_x = pos.x + push_map.x;
+        let dest_y = pos.y + push_map.y;
 
         // Build a lying-posture box at the roll destination and call
         // `find_authorized_position_straight`, which **mutates the
         // box** by iteratively pushing it off intersecting motion
         // lines (two 50-iter passes).  The roll endpoint is the
         // *adjusted* box centre, not `pos + direction`.
-        let mut dest_box = crate::geo2d::BBox2D::from_corners(
-            crate::geo2d::pt(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
-            crate::geo2d::pt(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
+        let mut dest_box = crate::coordinates::MapBBox::from_corners(
+            crate::coordinates::MapPoint::new(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
+            crate::coordinates::MapPoint::new(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
         );
         let pt_start = pos;
         if !self
@@ -1105,8 +1103,7 @@ impl EngineInner {
         {
             return None;
         }
-        let center = dest_box.center();
-        Some(crate::coordinates::MapPoint::new(center.x, center.y))
+        Some(dest_box.center())
     }
 
     /// Queue a rolling animation after a fall if the entity is on a steep slope.

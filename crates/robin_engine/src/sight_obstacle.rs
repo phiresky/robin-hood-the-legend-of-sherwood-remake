@@ -6,7 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, BBox2D, GeoPoint2D, Polygon2D, pt, segment};
+use crate::coordinates::{GroundBBox, GroundPoint, MapBBox, MapPoint};
+use crate::geo2d::{self, Polygon2D, pt, segment};
 
 // ---------------------------------------------------------------------------
 // SightObstacleIndex — nominal newtype
@@ -234,8 +235,8 @@ pub struct ObstaclePoint {
 }
 
 impl ObstaclePoint {
-    pub fn ground_point(&self) -> GeoPoint2D {
-        pt(self.x, self.y)
+    pub fn ground_point(&self) -> GroundPoint {
+        GroundPoint::new(self.x, self.y)
     }
 }
 
@@ -264,10 +265,10 @@ pub struct SightObstacle {
     pub box_3d_max: [f32; 3],
 
     /// 2D ground-plane bounding box.
-    pub box_ground: BBox2D,
+    pub box_ground: GroundBBox,
 
-    /// 2D screen-space bounding box (Y shifted by Z for isometric projection).
-    pub box_screen: BBox2D,
+    /// 2D projected bounding box (Y shifted by Z for isometric projection).
+    pub box_projection: MapBBox,
 
     /// Per-vertex obstacle data (x, y, z_top, z_bottom).
     pub obstacle_points: Vec<ObstaclePoint>,
@@ -275,12 +276,12 @@ pub struct SightObstacle {
     /// Ground-plane polygon (CCW winding, convex).
     pub polygon: Polygon2D<f32>,
 
-    /// Screen-space polygon — vertices `(x, y - z_top)`.  Used to
+    /// Projected polygon — vertices `(x, y - z_top)`.  Used to
     /// discriminate candidate projection-area obstacles by
-    /// point-in-polygon at the position's screen-space coordinates.
+    /// point-in-polygon at the position's projected map coordinates.
     /// Only meaningful when `is_projection_area()` is set; for
     /// ground-flat obstacles it coincides with `polygon`.
-    pub polygon_screen: Polygon2D<f32>,
+    pub polygon_projection: Polygon2D<f32>,
 
     /// Top plane defined by three points `[origin, p1, p2]` (each `[x,y,z]`).
     /// Stored as raw triples so we don't depend on sb3d serde.
@@ -344,11 +345,11 @@ impl SightObstacle {
             obstacle_type,
             box_3d_min: [0.0; 3],
             box_3d_max: [0.0; 3],
-            box_ground: BBox2D::new(),
-            box_screen: BBox2D::new(),
+            box_ground: GroundBBox::new(),
+            box_projection: MapBBox::new(),
             obstacle_points: Vec::new(),
             polygon: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
-            polygon_screen: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
+            polygon_projection: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
             top_plane_points: [[0.0; 3]; 3],
             bottom_plane_points: [[0.0; 3]; 3],
             on_ground: true,
@@ -416,15 +417,15 @@ impl SightObstacle {
     // ---- Geometry queries ----
 
     /// Test if a ground-plane point lies inside the obstacle's polygon.
-    pub fn contains_point(&self, p: GeoPoint2D) -> bool {
-        geo2d::polygon_contains_point(&self.polygon, p)
+    pub fn contains_point(&self, p: GroundPoint) -> bool {
+        geo2d::polygon_contains_point(&self.polygon, p.to_geo())
     }
 
-    /// Test if a screen-space point lies inside the obstacle's
-    /// screen-space polygon (vertices `(x, y - z_top)`).  Used by the
+    /// Test if a projected map point lies inside the obstacle's
+    /// projected polygon (vertices `(x, y - z_top)`).  Used by the
     /// projection-area sector lookup.
-    pub fn contains_point_screen(&self, p: GeoPoint2D) -> bool {
-        geo2d::polygon_contains_point(&self.polygon_screen, p)
+    pub fn contains_point_projection(&self, p: MapPoint) -> bool {
+        geo2d::polygon_contains_point(&self.polygon_projection, p.to_geo())
     }
 
     /// Test if a sight line (segment from `from` to `to` on the ground plane)
@@ -433,8 +434,8 @@ impl SightObstacle {
     /// Returns `true` when the obstacle is active and the segment intersects
     /// the ground-plane polygon.  The caller is responsible for filtering by
     /// bounding-box first (typically done by the fast-find grid).
-    pub fn is_blocking_sight(&self, from: GeoPoint2D, to: GeoPoint2D) -> bool {
-        let seg = segment(from, to);
+    pub fn is_blocking_sight(&self, from: GroundPoint, to: GroundPoint) -> bool {
+        let seg = segment(from.to_geo(), to.to_geo());
         // Quick AABB rejection before the full polygon test.
         if self.box_ground.trivially_rejects_segment(seg) {
             return false;
@@ -451,25 +452,25 @@ impl SightObstacle {
         let coords: Vec<geo::Coord<f32>> = self
             .obstacle_points
             .iter()
-            .map(|op| pt(op.x, op.y))
+            .map(|op| GroundPoint::new(op.x, op.y).to_geo())
             .collect();
 
         self.polygon = Polygon2D::new(geo::LineString::from(coords), vec![]);
 
-        // Build screen-space polygon (vertices `(x, y - z_top)`). Used
-        // for screen-coord point-in-polygon discrimination by the
+        // Build projected polygon (vertices `(x, y - z_top)`). Used
+        // for projected point-in-polygon discrimination by the
         // projection-area sector lookup.
         let coords_screen: Vec<geo::Coord<f32>> = self
             .obstacle_points
             .iter()
-            .map(|op| pt(op.x, op.y - op.z_top))
+            .map(|op| MapPoint::from_world_xyz(op.x, op.y, op.z_top).to_geo())
             .collect();
-        self.polygon_screen = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
+        self.polygon_projection = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
 
         // Rebuild 2D ground bbox.
-        self.box_ground = BBox2D::new();
+        self.box_ground = GroundBBox::new();
         for op in &self.obstacle_points {
-            self.box_ground.expand_point(pt(op.x, op.y));
+            self.box_ground.expand_point(GroundPoint::new(op.x, op.y));
         }
 
         // Rebuild 3D bbox.
@@ -486,11 +487,13 @@ impl SightObstacle {
         self.box_3d_min = min;
         self.box_3d_max = max;
 
-        // Rebuild screen bbox (isometric: screen_y = y - z_top).
-        self.box_screen = BBox2D::new();
+        // Rebuild projected bbox (isometric: projected_y = y - z_top).
+        self.box_projection = MapBBox::new();
         for op in &self.obstacle_points {
-            self.box_screen.expand_point(pt(op.x, op.y - op.z_top));
-            self.box_screen.expand_point(pt(op.x, op.y - op.z_bottom));
+            self.box_projection
+                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_top));
+            self.box_projection
+                .expand_point(MapPoint::from_world_xyz(op.x, op.y, op.z_bottom));
         }
 
         // Check on_ground.
@@ -597,7 +600,7 @@ impl SightObstacle {
                     if let geo2d::Intersection2D::Point(ip) =
                         geo2d::segment_intersection(ray_seg, edge)
                     {
-                        let ray_z = ray_eq.z_at(ip);
+                        let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
                         let top_z = self.compute_top_z(ip.x, ip.y);
                         if top_z >= ray_z {
                             return true;
@@ -617,7 +620,7 @@ impl SightObstacle {
                     let ix = origin[0] + t * (destination[0] - origin[0]);
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         return true;
@@ -661,7 +664,7 @@ impl SightObstacle {
                     if let geo2d::Intersection2D::Point(ip) =
                         geo2d::segment_intersection(ray_seg, edge)
                     {
-                        let ray_z = ray_eq.z_at(ip);
+                        let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
                         let top_z = self.compute_top_z(ip.x, ip.y);
                         let bot_z = self.compute_bottom_z(ip.x, ip.y);
                         if top_z >= ray_z && bot_z <= ray_z {
@@ -683,7 +686,7 @@ impl SightObstacle {
                     let ix = origin[0] + t * (destination[0] - origin[0]);
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         return true;
@@ -701,7 +704,7 @@ impl SightObstacle {
                     let ix = origin[0] + t * (destination[0] - origin[0]);
                     let iy = origin[1] + t * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         return true;
@@ -766,7 +769,7 @@ impl SightObstacle {
             if geo2d::segments_intersect(ray_seg, edge)
                 && let geo2d::Intersection2D::Point(ip) = geo2d::segment_intersection(ray_seg, edge)
             {
-                let ray_z = ray_eq.z_at(ip);
+                let ray_z = ray_eq.z_at(GroundPoint::from_geo(ip));
                 let top_z = self.compute_top_z(ip.x, ip.y);
                 let blocked = if self.on_ground {
                     if !origin_above_top && !dest_above_top {
@@ -802,7 +805,7 @@ impl SightObstacle {
                 let ix = origin[0] + t_plane * (destination[0] - origin[0]);
                 let iy = origin[1] + t_plane * (destination[1] - origin[1]);
                 let ip = pt(ix, iy);
-                if self.box_ground.contains_point(ip)
+                if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                     && geo2d::polygon_contains_point(&self.polygon, ip)
                 {
                     let t = t_plane.clamp(0.0, 1.0);
@@ -830,7 +833,7 @@ impl SightObstacle {
                     let ix = origin[0] + t_plane * (destination[0] - origin[0]);
                     let iy = origin[1] + t_plane * (destination[1] - origin[1]);
                     let ip = pt(ix, iy);
-                    if self.box_ground.contains_point(ip)
+                    if self.box_ground.contains_point(GroundPoint::from_geo(ip))
                         && geo2d::polygon_contains_point(&self.polygon, ip)
                     {
                         let t = t_plane.clamp(0.0, 1.0);
@@ -927,7 +930,7 @@ impl RayZEquation {
         }
     }
 
-    fn z_at(&self, p: GeoPoint2D) -> f32 {
+    fn z_at(&self, p: GroundPoint) -> f32 {
         let coord = if self.use_x { p.x } else { p.y };
         self.slope * coord + self.intercept
     }
@@ -1001,7 +1004,7 @@ pub fn is_reachable_impact_3d(
     destination: crate::coordinates::WorldPoint3D,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
-    map_bbox: Option<BBox2D>,
+    map_bbox: Option<MapBBox>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1075,7 +1078,7 @@ pub fn is_reachable_impact_fall_3d(
     destination_altitude: f32,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
-    map_bbox: Option<BBox2D>,
+    map_bbox: Option<MapBBox>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1094,12 +1097,12 @@ pub fn is_reachable_impact_fall_3d(
         });
     }
 
-    let p2d = pt(origin.x, origin.y);
+    let p2d = GroundPoint::new(origin.x, origin.y);
 
     // Out-of-map guard: when origin is outside the playable rectangle,
     // force an impact at the ground plane with no obstacle.
     if let Some(bbox) = map_bbox
-        && !bbox.contains_point(p2d)
+        && !bbox.contains_point(MapPoint::new(p2d.x, p2d.y))
     {
         return Some(ImpactResult3D {
             impact: WorldPoint3D {
@@ -1161,7 +1164,7 @@ pub fn is_reachable_impact_up_3d(
     destination_altitude: f32,
     type_filter: u32,
     obstacles: ObstacleList<'_>,
-    map_bbox: Option<BBox2D>,
+    map_bbox: Option<MapBBox>,
 ) -> Option<ImpactResult3D> {
     use crate::coordinates::WorldPoint3D;
 
@@ -1179,12 +1182,12 @@ pub fn is_reachable_impact_up_3d(
         });
     }
 
-    let p2d = pt(origin.x, origin.y);
+    let p2d = GroundPoint::new(origin.x, origin.y);
 
     // Out-of-map guard: when origin is outside the playable rectangle,
     // force a ground-impact with no obstacle.
     if let Some(bbox) = map_bbox
-        && !bbox.contains_point(p2d)
+        && !bbox.contains_point(MapPoint::new(p2d.x, p2d.y))
     {
         return Some(ImpactResult3D {
             impact: WorldPoint3D {
@@ -1333,29 +1336,29 @@ mod tests {
     #[test]
     fn contains_point_inside() {
         let obs = make_square_obstacle();
-        assert!(obs.contains_point(pt(5.0, 5.0)));
-        assert!(obs.contains_point(pt(0.0, 0.0))); // boundary
+        assert!(obs.contains_point(GroundPoint::new(5.0, 5.0)));
+        assert!(obs.contains_point(GroundPoint::new(0.0, 0.0))); // boundary
     }
 
     #[test]
     fn contains_point_outside() {
         let obs = make_square_obstacle();
-        assert!(!obs.contains_point(pt(-1.0, 5.0)));
-        assert!(!obs.contains_point(pt(15.0, 5.0)));
+        assert!(!obs.contains_point(GroundPoint::new(-1.0, 5.0)));
+        assert!(!obs.contains_point(GroundPoint::new(15.0, 5.0)));
     }
 
     #[test]
     fn blocking_sight_through_obstacle() {
         let obs = make_square_obstacle();
         // Line from left of obstacle to right of obstacle — crosses polygon.
-        assert!(obs.is_blocking_sight(pt(-5.0, 5.0), pt(15.0, 5.0)));
+        assert!(obs.is_blocking_sight(GroundPoint::new(-5.0, 5.0), GroundPoint::new(15.0, 5.0)));
     }
 
     #[test]
     fn not_blocking_sight_around_obstacle() {
         let obs = make_square_obstacle();
         // Line that passes above the obstacle (in ground Y).
-        assert!(!obs.is_blocking_sight(pt(-5.0, 15.0), pt(15.0, 15.0)));
+        assert!(!obs.is_blocking_sight(GroundPoint::new(-5.0, 15.0), GroundPoint::new(15.0, 15.0)));
     }
 
     #[test]
@@ -1398,8 +1401,8 @@ mod tests {
     fn translate_2d_moves_polygon() {
         let mut obs = make_square_obstacle();
         obs.translate_2d(100.0, 100.0);
-        assert!(obs.contains_point(pt(105.0, 105.0)));
-        assert!(!obs.contains_point(pt(5.0, 5.0)));
+        assert!(obs.contains_point(GroundPoint::new(105.0, 105.0)));
+        assert!(!obs.contains_point(GroundPoint::new(5.0, 5.0)));
     }
 
     #[test]

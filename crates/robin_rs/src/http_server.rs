@@ -68,6 +68,19 @@
 //! No authentication. Bind is `127.0.0.1` only. Pass `--http-server 0`
 //! to disable the server entirely.
 
+use robin_assets::decompile as assets_decompile;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element as engine_element;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::PANNEL_HEIGHT;
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::natives as engine_natives;
+use robin_engine::player_command::PlayerCommand;
+use robin_engine::position_interface as engine_position_interface;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::replay as engine_replay;
+use robin_engine::scb as engine_scb;
+use robin_engine::weapons as engine_weapons;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -80,7 +93,6 @@ use std::thread;
 use std::time::Duration;
 
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::player_command::PlayerCommand;
 
 /// Default port. Reasonably uncommon and easy to remember; change with
 /// `--http-server <port>` or set 0 to disable.
@@ -609,9 +621,9 @@ fn info_json() -> serde_json::Value {
 fn list_natives_json() -> serde_json::Value {
     let mut entries = Vec::new();
     for i in 0u32..512 {
-        if let Ok(n) = robin_engine::natives::NativeFn::try_from(i) {
+        if let Ok(n) = engine_natives::NativeFn::try_from(i) {
             let name: &'static str = n.into();
-            let sig = robin_engine::natives::native_signature_by_name(name);
+            let sig = engine_natives::native_signature_by_name(name);
             entries.push(serde_json::json!({
                 "index": i,
                 "name": name,
@@ -672,7 +684,7 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
         }
         replay
     } else {
-        robin_engine::replay::ReplayData::from_reader(std::io::Cursor::new(trimmed.as_bytes()))
+        engine_replay::ReplayData::from_reader(std::io::Cursor::new(trimmed.as_bytes()))
             .map_err(|e| format!("parse replay: {e}"))?
     };
     let frame_count = replay.frame_count();
@@ -691,7 +703,7 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
 }
 
 pub fn drain_global(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut crate::Host,
     assets: &LevelAssets,
     net: Option<&crate::multiplayer::NetChannels>,
@@ -778,10 +790,10 @@ pub fn drain_global(
 fn dispatch_in_engine(
     payload: HttpPayload,
     engine: &mut Engine,
-    display: &mut robin_engine::engine::HostDisplayState,
+    display: &mut engine_api::HostDisplayState,
     assets: &LevelAssets,
-    input: &mut robin_engine::engine::InputState,
-    selected_view_element: &mut Option<robin_engine::element::EntityId>,
+    input: &mut engine_api::InputState,
+    selected_view_element: &mut Option<engine_element::EntityId>,
     net: Option<&crate::multiplayer::NetChannels>,
 ) -> Reply {
     match payload {
@@ -811,7 +823,7 @@ fn dispatch_in_engine(
             // Route through `run_cheat_string` — the HTTP caller is
             // treated as the "WASM GUI" entry point, which always wants
             // the full dev cheat set regardless of `use_final`.
-            let mut dev = robin_engine::engine::DevState::default();
+            let mut dev = engine_api::DevState::default();
             let resp = engine.run_cheat_string(assets, &mut dev, selected_view_element, &cmd);
             Ok(ReplyBody::Json(console_response_to_json(resp)))
         }
@@ -896,7 +908,7 @@ fn snapshot_host_debug(
         })
     });
     let bow_hover = match (selected_action, selected_pc, host.input.focused_entity_id) {
-        (robin_engine::profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
+        (engine_profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
             let (target_status, shoot_mode) =
                 engine.can_shoot_with_bow_at(assets, pc_id, target_id);
             Some(serde_json::json!({
@@ -943,12 +955,12 @@ fn snapshot_host_debug(
     })
 }
 
-fn bow_debug_ground_y_raw(point: robin_engine::coordinates::WorldPoint3D) -> f32 {
+fn bow_debug_ground_y_raw(point: engine_coordinates::WorldPoint3D) -> f32 {
     point.y
 }
 
-fn bow_debug_ground_y_projected(point: robin_engine::coordinates::WorldPoint3D) -> f32 {
-    point.y - point.z
+fn bow_debug_ground_y_projected(point: engine_coordinates::WorldPoint3D) -> f32 {
+    point.to_map().y
 }
 
 fn cxx_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> u8 {
@@ -995,11 +1007,11 @@ fn cxx_sector_0_to_15_with_aspect(x: f32, y: f32, aspect_ratio: f32) -> u8 {
 fn bow_profile_debug(
     engine: &Engine,
     assets: &LevelAssets,
-    entity_id: robin_engine::element::EntityId,
+    entity_id: engine_element::EntityId,
 ) -> Option<serde_json::Value> {
     let entity = engine.get_entity(entity_id)?;
     let (bow_profile_idx, shooting_ability) = match entity {
-        robin_engine::element::Entity::Pc(pc) => {
+        engine_element::Entity::Pc(pc) => {
             let idx = usize::from(pc.pc.profile_index);
             let profile = assets.profile_manager.characters.get(idx)?;
             if profile.shooting_weapon_id == 0 {
@@ -1007,7 +1019,7 @@ fn bow_profile_debug(
             }
             (profile.shooting_weapon_id, profile.shooting as u32)
         }
-        robin_engine::element::Entity::Soldier(soldier) => {
+        engine_element::Entity::Soldier(soldier) => {
             let idx = usize::from(soldier.soldier.soldier_profile_index);
             let profile = assets.profile_manager.soldiers.get(idx)?;
             if profile.shooting_weapon_id == 0 {
@@ -1019,7 +1031,7 @@ fn bow_profile_debug(
     };
 
     let bow_profile = assets.profile_manager.get_bow(bow_profile_idx)?;
-    let bow_state = robin_engine::weapons::BowState::new(bow_profile_idx, bow_profile, 1);
+    let bow_state = engine_weapons::BowState::new(bow_profile_idx, bow_profile, 1);
     Some(serde_json::json!({
         "bow_profile_idx": bow_profile_idx,
         "shooting_ability": shooting_ability,
@@ -1032,7 +1044,7 @@ fn bow_profile_debug(
 
 fn bow_target_points_debug(
     engine: &Engine,
-    target_id: robin_engine::element::EntityId,
+    target_id: engine_element::EntityId,
 ) -> Option<serde_json::Value> {
     let target = engine.get_entity(target_id)?;
     let range_target = if target.is_human() {
@@ -1064,8 +1076,8 @@ fn bow_target_points_debug(
 }
 
 fn bow_range_math_debug(
-    hand_point: robin_engine::coordinates::WorldPoint3D,
-    target_point: robin_engine::coordinates::WorldPoint3D,
+    hand_point: engine_coordinates::WorldPoint3D,
+    target_point: engine_coordinates::WorldPoint3D,
     max_range: f32,
     forest_target: bool,
 ) -> serde_json::Value {
@@ -1087,9 +1099,9 @@ fn bow_range_math_debug(
     let dy_projected =
         bow_debug_ground_y_projected(target_point) - bow_debug_ground_y_projected(hand_point);
     let dz = target_point.z - hand_point.z;
-    let dy_range_raw = dy_raw * robin_engine::position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
+    let dy_range_raw = dy_raw * engine_position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
     let dy_range_projected =
-        dy_projected * robin_engine::position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
+        dy_projected * engine_position_interface::INVERSE_ASPECT_RATIO_PROJECTILES;
     let square_distance_raw = dx * dx + dy_range_raw * dy_range_raw;
     let square_distance_projected = dx * dx + dy_range_projected * dy_range_projected;
     let radius_square = radius * radius;
@@ -1123,17 +1135,17 @@ fn bow_range_math_debug(
             "dist_3d_projected_y_minus_z": dist_3d_projected,
         },
         "direction": {
-            "rust_iso_sector_raw_cxx_y": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
-            "rust_iso_sector_projected_y_minus_z": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
+            "rust_iso_sector_raw_cxx_y": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
+            "rust_iso_sector_projected_y_minus_z": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
             "cxx_get_sector_aspect_raw_cxx_y": cxx_sector_0_to_15_with_aspect(
                 dx,
                 dy_raw,
-                robin_engine::position_interface::ASPECT_RATIO,
+                engine_position_interface::ASPECT_RATIO,
             ),
             "cxx_get_sector_aspect_projected_y_minus_z": cxx_sector_0_to_15_with_aspect(
                 dx,
                 dy_projected,
-                robin_engine::position_interface::ASPECT_RATIO,
+                engine_position_interface::ASPECT_RATIO,
             ),
         },
     })
@@ -1142,8 +1154,8 @@ fn bow_range_math_debug(
 fn bow_range_debug(
     engine: &Engine,
     assets: &LevelAssets,
-    pc_id: robin_engine::element::EntityId,
-    target_id: robin_engine::element::EntityId,
+    pc_id: engine_element::EntityId,
+    target_id: engine_element::EntityId,
 ) -> serde_json::Value {
     let Some(shooter) = engine.get_entity(pc_id) else {
         return serde_json::json!({"error": "missing_shooter", "pc_id": pc_id});
@@ -1194,17 +1206,17 @@ fn bow_range_debug(
             "dx": dx,
             "dy_raw_cxx": dy_raw,
             "dy_projected_y_minus_z": dy_projected,
-            "rust_iso_sector_raw_cxx_y": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
-            "rust_iso_sector_projected_y_minus_z": robin_engine::position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
+            "rust_iso_sector_raw_cxx_y": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_raw),
+            "rust_iso_sector_projected_y_minus_z": engine_position_interface::vector_to_sector_0_to_15_iso(dx, dy_projected),
             "cxx_get_sector_aspect_raw_cxx_y": cxx_sector_0_to_15_with_aspect(
                 dx,
                 dy_raw,
-                robin_engine::position_interface::ASPECT_RATIO,
+                engine_position_interface::ASPECT_RATIO,
             ),
             "cxx_get_sector_aspect_projected_y_minus_z": cxx_sector_0_to_15_with_aspect(
                 dx,
                 dy_projected,
-                robin_engine::position_interface::ASPECT_RATIO,
+                engine_position_interface::ASPECT_RATIO,
             ),
         })
     });
@@ -1240,7 +1252,7 @@ fn engine_dump_json(engine: &Engine) -> Result<serde_json::Value, String> {
 /// A replay queued by `load-replay`, consumed by
 /// [`crate::game_session::init_replay_and_rollback`] on next mission start.
 pub struct PendingReplay {
-    pub data: robin_engine::replay::ReplayData,
+    pub data: engine_replay::ReplayData,
     /// Whether the caller asked for the mission to start paused so they
     /// can step through frame-by-frame with `step-forward`.
     pub paused: bool,
@@ -1361,7 +1373,7 @@ fn get_current_replay() -> Result<String, String> {
     if bytes.is_empty() {
         return Err("no active replay recording".into());
     }
-    let data = robin_engine::replay::ReplayData::from_reader(std::io::Cursor::new(&bytes[..]))
+    let data = engine_replay::ReplayData::from_reader(std::io::Cursor::new(&bytes[..]))
         .map_err(|e| format!("parse mirrored replay buffer: {e}"))?;
     crate::replay_format::encode_compact(&data, crate::replay_format::ENGINE_VERSION_HASH)
         .map_err(|e| format!("encode compact replay: {e}"))
@@ -1486,10 +1498,7 @@ pub fn take_pending_screenshots() -> Vec<PendingScreenshot> {
 /// place.  Apply this to a **cloned** `DevState` so the live state
 /// stays untouched — the caller keeps the original and passes the
 /// clone to `render_frame`.
-pub fn apply_screenshot_flags(
-    debug: &mut robin_engine::engine::DebugFlags,
-    flags: &ScreenshotFlags,
-) {
+pub fn apply_screenshot_flags(debug: &mut engine_api::DebugFlags, flags: &ScreenshotFlags) {
     macro_rules! set {
         ($name:ident, $field:ident) => {
             if let Some(v) = flags.$name {
@@ -1525,8 +1534,6 @@ pub fn apply_screenshot_flags(
 /// scaling — good enough for a dev-inspection endpoint and avoids
 /// pulling in an image crate.
 fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRequest) -> Reply {
-    use robin_engine::engine::PANNEL_HEIGHT;
-
     // Optional bottom-panel crop: strip the HUD strip before any resize.
     let (src, mut used_w, mut used_h) = if req.hide_ui && src_h > PANNEL_HEIGHT as u32 {
         let new_h = src_h - PANNEL_HEIGHT as u32;
@@ -1647,8 +1654,9 @@ mod tests {
     }
 }
 
-fn console_response_to_json(resp: robin_engine::engine::ConsoleResponse) -> serde_json::Value {
-    use robin_engine::engine::ConsoleResponse as R;
+fn console_response_to_json(resp: engine_api::ConsoleResponse) -> serde_json::Value {
+    use engine_api::ConsoleResponse as R;
+
     match resp {
         R::Ok(msg) => serde_json::json!({"kind": "ok", "message": msg}),
         R::Unknown => serde_json::json!({"kind": "unknown"}),
@@ -1708,13 +1716,13 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
         let Some(c) = scb.classes.iter().find(|c| c.class_name == name) else {
             return serde_json::json!({"error": format!("class not found: {name}")});
         };
-        let scb_one = robin_engine::scb::ScbFile {
+        let scb_one = engine_scb::ScbFile {
             version: scb.version,
             classes: vec![c.clone()],
         };
-        robin_assets::decompile::decompile(&scb_one)
+        assets_decompile::decompile(&scb_one)
     } else {
-        robin_assets::decompile::decompile(scb)
+        assets_decompile::decompile(scb)
     };
     serde_json::json!({"source": source})
 }
@@ -1735,7 +1743,6 @@ pub mod wasm_rpc {
         GLOBAL, HttpPayload, HttpRequest, NativeCall, Reply, ReplyBody, Responder,
         ScreenshotRequest,
     };
-    use robin_engine::player_command::PlayerCommand;
     use wasm_bindgen::JsValue;
 
     fn reply_to_js(reply: Reply) -> Result<JsValue, JsValue> {

@@ -10,6 +10,15 @@
 //! - [`crate::game_input`]   — left/right click handlers for the mission loop
 //! - [`crate::game_render`]  — in-game rendering passes (entities, outlines, minimap, …)
 
+use robin_assets::picture::Picture;
+use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::campaign as engine_campaign;
+use robin_engine::engine as engine_api;
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::profiles::ProfileManager;
+use robin_engine::replay as engine_replay;
+use robin_engine::sbfile as engine_sbfile;
 use std::ffi::OsString;
 #[cfg(any(not(target_arch = "wasm32"), target_os = "android"))]
 use std::path::Path;
@@ -125,7 +134,7 @@ pub struct CliArgs {
     /// into a command-line string.
     #[arg(skip)]
     #[serde(skip)]
-    pub replay_data: Option<robin_engine::replay::ReplayData>,
+    pub replay_data: Option<engine_replay::ReplayData>,
 
     /// Runtime rollback consistency checker: rewind a short window of
     /// engine state and re-simulate it to detect desyncs.
@@ -250,7 +259,7 @@ pub struct CliArgs {
     /// not been threaded through `CliArgs` directly.
     #[clap(skip)]
     #[serde(skip)]
-    pub global_options: robin_engine::engine::GlobalOptions,
+    pub global_options: engine_api::GlobalOptions,
 
     /// Internal handoff: when the main menu's custom-mission picker
     /// chooses a Spellforge mod, this carries the bits the session
@@ -307,7 +316,7 @@ impl Default for CliArgs {
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,
             mp_nickname: String::new(),
-            global_options: robin_engine::engine::GlobalOptions::default(),
+            global_options: engine_api::GlobalOptions::default(),
             pending_lua_mission: None,
         };
         install_global_options(&mut args);
@@ -316,7 +325,7 @@ impl Default for CliArgs {
 }
 
 fn install_global_options(args: &mut CliArgs) {
-    let opts = robin_engine::engine::GlobalOptions {
+    let opts = engine_api::GlobalOptions {
         sound_enabled: !args.no_sound,
         script_enabled: !args.no_script,
         highlander2: args.highlander2,
@@ -332,7 +341,7 @@ fn install_global_options(args: &mut CliArgs) {
     args.global_options = opts.clone();
     // Install the process-wide `GlobalOptions` so UI layers that don't
     // have a `Game` or `CliArgs` in scope can still read startup flags.
-    robin_engine::engine::GlobalOptions::set_global(opts);
+    engine_api::GlobalOptions::set_global(opts);
 }
 
 pub fn try_parse_cli_from<I, T>(itr: I) -> Result<CliArgs, clap::Error>
@@ -470,8 +479,6 @@ use crate::main_menu::{MainMenuChoice, show_main_menu};
 use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
 use crate::window::GameWindow;
-use robin_assets::picture::Picture;
-use robin_engine::profiles::ProfileManager;
 
 // ─── Data directory setup ───────────────────────────────────────────
 
@@ -602,7 +609,7 @@ fn setup_data_dir() -> Result<(), String> {
     }
 
     if crate::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
-        && robin_assets::shipping_datadir::global().is_none()
+        && assets_shipping_datadir::global().is_none()
     {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
@@ -631,8 +638,8 @@ fn setup_data_dir() -> Result<(), String> {
 /// optional shipping datadir handle (if one was found / supplied).
 pub type RustInit = (
     Campaign,
-    std::sync::Arc<robin_engine::profiles::ProfileManager>,
-    Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
+    std::sync::Arc<engine_profiles::ProfileManager>,
+    Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 );
 
 /// Pure-Rust initialization: logging, data dir, profiles, campaign.
@@ -643,11 +650,11 @@ pub fn rust_init() -> Result<RustInit, String> {
 
     // Load the shipping datadir if one exists. When present, subsystem
     // loaders prefer it over legacy disk I/O.
-    let shipping = robin_assets::shipping_datadir::try_load(std::path::Path::new("Data"))
+    let shipping = assets_shipping_datadir::try_load(std::path::Path::new("Data"))
         .map_err(|e| format!("shipping datadir: {e:#}"))?
         .map(std::sync::Arc::new);
     if let Some(ref dd) = shipping {
-        let _ = robin_assets::shipping_datadir::install_global(dd.clone());
+        let _ = assets_shipping_datadir::install_global(dd.clone());
         // Hand the small-file bundle to `asset_fs` so every `SbFile::open`
         // hits the in-memory map instead of issuing loose-file I/O.
         // Anything not in the bundle falls through to disk (native) or
@@ -663,7 +670,7 @@ pub fn rust_init() -> Result<RustInit, String> {
 /// it via `install_global` / `install_bundle`, so we skip the
 /// `try_load` step and reuse the supplied handle.
 pub fn rust_init_with_shipping(
-    shipping: Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
+    shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, String> {
     crate::init_tracing();
     setup_data_dir()?;
@@ -672,7 +679,7 @@ pub fn rust_init_with_shipping(
 }
 
 fn rust_init_finish(
-    shipping: Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
+    shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, String> {
     let profiles = std::sync::Arc::new(load_profiles(shipping.as_deref())?);
     tracing::info!(
@@ -704,7 +711,7 @@ fn rust_init_finish(
 ///   3. Binary `.cpf` at `Data/Configuration/profile.cpf` parsed via the
 ///      legacy CPF reader.
 fn load_profiles(
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) -> Result<ProfileManager, String> {
     if let Some(dd) = shipping
         && let Some(p) = &dd.profiles
@@ -723,13 +730,13 @@ fn load_profiles(
     // hiding required-action glyphs in the briefing UI and breaking
     // auto-gang-selection.  Walk every mission `.rhm` file and fold
     // beam-me action flags into the profile.
-    let level_dir = robin_engine::engine::GlobalOptions::global()
+    let level_dir = engine_api::GlobalOptions::global()
         .as_ref()
         .map(|o| o.level_directory.clone())
         .unwrap_or_else(|| "Data/Levels".to_string());
 
     let json_path = "Data/Configuration/profile.cpf.json";
-    if robin_engine::sbfile::SbFile::exists(json_path) {
+    if engine_sbfile::SbFile::exists(json_path) {
         tracing::info!("Profiles: loading JSON dump {json_path}");
         let mut mgr = ProfileManager::load_json(json_path)?;
         mgr.import_beam_mes(&level_dir);
@@ -737,7 +744,7 @@ fn load_profiles(
     }
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
-    let mut file = robin_engine::sbfile::SbFile::open(cpf_path, robin_engine::sbfile::SB_FILE_READ)
+    let mut file = engine_sbfile::SbFile::open(cpf_path, engine_sbfile::SB_FILE_READ)
         .map_err(|e| format!("Failed to open {cpf_path}: error {e}"))?;
     let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)
@@ -956,11 +963,7 @@ impl SaveLoadRequest {
 }
 
 impl crate::game::GameCallbacks for RustCallbacks {
-    fn serialize_save(
-        &mut self,
-        campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
-    ) {
+    fn serialize_save(&mut self, campaign: &Campaign, profiles: &engine_profiles::ProfileManager) {
         let mission_id = current_mission_id(campaign, profiles);
         self.pending = Some(SaveLoadRequest::Save {
             slot: None,
@@ -998,7 +1001,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
     fn synchronize_profile_with_campaign(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
     ) {
         // Copy end-of-mission campaign values (score, ransom, play time,
         // dead/alive soldiers → preserved_lives ratio) into the active
@@ -1074,7 +1077,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
         // (debriefing mission-length, profile `play_time` sync) all see
         // the campaign-owned counter.
         campaign
-            .get_value(robin_engine::campaign::CampaignValue::MissionLength)
+            .get_value(engine_campaign::CampaignValue::MissionLength)
             .max(0) as u32
     }
 }
@@ -1082,7 +1085,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
 /// Resolve the mission profile ID of the campaign's current mission, or 0.
 pub(crate) fn current_mission_id(
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
 ) -> u32 {
     campaign
         .current_mission_idx
@@ -1102,7 +1105,7 @@ pub(crate) fn current_mission_id(
 pub(crate) fn flush_pending_callbacks(
     host: &mut crate::Host,
     callbacks: &mut RustCallbacks,
-    _manager: &mut robin_engine::engine_manager::EngineManager,
+    _manager: &mut engine_manager_api::EngineManager,
     threaded_input: &mut crate::input::ThreadedInput,
     mut audio_backend: Option<&mut dyn crate::sound::AudioBackend>,
 ) {
@@ -1151,9 +1154,9 @@ pub(crate) fn perform_pending_save_load(
     host: &mut crate::Host,
     game: &mut crate::game::Game,
     callbacks: &mut RustCallbacks,
-    engine: &mut robin_engine::engine::Engine,
-    assets: &robin_engine::engine::LevelAssets,
-    profiles: &robin_engine::profiles::ProfileManager,
+    engine: &mut engine_api::Engine,
+    assets: &engine_api::LevelAssets,
+    profiles: &engine_profiles::ProfileManager,
     thumbnail: Option<crate::save_file::Thumbnail>,
 ) -> bool {
     let Some(request) = callbacks.pending.take() else {
@@ -1489,7 +1492,7 @@ pub(crate) fn detect_demo_mode()
 -> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
     let resolve = SbFile::exists;
     let shipping_has_level = |mission: &str| {
-        robin_assets::shipping_datadir::global().is_some_and(|dd| dd.levels.contains_key(mission))
+        assets_shipping_datadir::global().is_some_and(|dd| dd.levels.contains_key(mission))
     };
     if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
         // Leicester demo — R=Robin, J=Jean, M=Marianne, T=Tuck, F=Ferris.
@@ -1550,7 +1553,7 @@ pub(crate) fn resolve_loading_pak(
     }
     let default_path = "Data/Interface/Loading.pak";
     if data_asset_exists(default_path)
-        || robin_assets::shipping_datadir::global()
+        || assets_shipping_datadir::global()
             .is_some_and(|dd| dd.pak_files.contains_key("interface/loading.pak"))
     {
         Some(default_path.to_string())
@@ -1592,8 +1595,8 @@ fn force_mission_launch(
 pub async fn run_rust_game(
     window: &mut GameWindow,
     mut campaign: Campaign,
-    mut profiles: std::sync::Arc<robin_engine::profiles::ProfileManager>,
-    shipping: Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
+    mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
     args: &CliArgs,
 ) -> Result<i32, String> {
     // Bring up the script-RPC transport. Native binds a loopback HTTP
@@ -2041,8 +2044,8 @@ pub async fn run_rust_game(
 
 pub async fn run_rust_game_headless(
     mut campaign: Campaign,
-    mut profiles: std::sync::Arc<robin_engine::profiles::ProfileManager>,
-    _shipping: Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
+    mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    _shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
     args: &CliArgs,
 ) -> Result<i32, String> {
     #[cfg(not(target_arch = "wasm32"))]

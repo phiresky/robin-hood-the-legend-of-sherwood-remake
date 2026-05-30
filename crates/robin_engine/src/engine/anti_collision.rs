@@ -8,12 +8,12 @@
 //! no live call site.
 
 use crate::ai::RepulsivePoint as StaticRepulsivePoint;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox};
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
 use crate::entities::Entities;
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self, BBox2D, GeoPoint2D};
+use crate::geo2d;
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
 use crate::profiles::ProfileManager;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
@@ -137,7 +137,7 @@ pub fn snapshot_all(
 pub fn gather_static_repulsive_points(
     mover: &ActorSnapshot,
     static_points: &[StaticRepulsivePoint],
-    box_future: &BBox2D,
+    box_future: &MapBBox,
 ) -> Vec<RepulsivePoint> {
     let affect_bit = match mover.element_kind {
         ElementKind::ActorPc => 1,
@@ -154,7 +154,7 @@ pub fn gather_static_repulsive_points(
             continue;
         }
         let p = crate::coordinates::MapPoint::new(sp.position.x, sp.position.y);
-        if !box_future.contains_point(p.to_geo()) {
+        if !box_future.contains_point(p) {
             continue;
         }
         out.push(RepulsivePoint::new(p, sp.radius, sp.action_radius));
@@ -371,7 +371,7 @@ fn direction_vector(dir: u16) -> (f32, f32) {
 pub fn gather_disturbing(
     mover: &ActorSnapshot,
     neighbours: &[Option<ActorSnapshot>],
-    box_future: &BBox2D,
+    box_future: &MapBBox,
     increment: geo2d::Vec2D,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
@@ -437,7 +437,7 @@ pub fn gather_disturbing(
                 continue;
             }
         }
-        if !box_future.contains_point(other.position_map.to_geo()) {
+        if !box_future.contains_point(other.position_map) {
             continue;
         }
         if !is_object {
@@ -468,7 +468,7 @@ pub struct AntiCollisionState<'a> {
     /// Zero-centred move box for the mover.  Supplies the extents
     /// needed by `is_straight_movement_authorized` / the
     /// `find_authorized_position` fallback.
-    pub move_box: BBox2D,
+    pub move_box: crate::coordinates::MoveBox,
     /// Half-diagonal used by `is_reachable_thick`.
     pub half_diagonal: geo2d::Vec2D,
     /// Current movement goal (for the break-through barge).
@@ -478,18 +478,16 @@ pub struct AntiCollisionState<'a> {
 impl AntiCollisionState<'_> {
     fn update_box_blocked(&mut self, point: MapPoint) -> bool {
         let p = &mut *self.pi;
-        if p.box_blocked.is_somewhere() && p.box_blocked.contains_point(point.to_geo()) {
+        if p.box_blocked.is_somewhere() && p.box_blocked.contains_point(point) {
             p.blocked_count = p.blocked_count.saturating_add(1);
             if p.radius > 1.0 {
                 p.radius -= 0.2;
             }
             false
         } else {
-            let half = 0.49;
-            p.box_blocked
-                .expand_point(geo2d::pt(point.x + half, point.y + half));
-            p.box_blocked
-                .expand_point(geo2d::pt(point.x - half, point.y - half));
+            let half = crate::coordinates::MapVec::new(0.49, 0.49);
+            p.box_blocked.expand_point(point + half);
+            p.box_blocked.expand_point(point - half);
             p.blocked_count = 0;
             p.radius = p.radius_initial;
             true
@@ -537,9 +535,9 @@ pub fn apply_anti_collision_step(
         mover.position_map.y + naive.1,
     );
     let half = MAX_REPULSIVE_DISTANCE + RADIUS_GUY;
-    let box_future = BBox2D::from_corners(
-        geo2d::pt(future.x - half, future.y - half),
-        geo2d::pt(future.x + half, future.y + half),
+    let box_future = MapBBox::from_corners(
+        MapPoint::new(future.x - half, future.y - half),
+        MapPoint::new(future.x + half, future.y + half),
     );
 
     let increment = geo2d::pt(nx, ny);
@@ -725,46 +723,35 @@ pub fn apply_anti_collision_step(
         );
         let n = geo2d::normalize(to_goal);
         let mut barge = geo2d::pt(n.x * speed, n.y * speed);
-        let mut barge_future = geo2d::pt(
+        let mut barge_future = MapPoint::new(
             mover.position_map.x + barge.x,
             mover.position_map.y + barge.y,
         );
 
         // Inset the move box by 1 unit.
         let box_inset = if let Some(r) = state.move_box.0 {
-            BBox2D(Some(geo::Rect::new(
-                geo2d::pt(r.min().x + 1.0, r.min().y + 1.0),
-                geo2d::pt(r.max().x - 1.0, r.max().y - 1.0),
-            )))
+            MoveBox::from_corners(
+                MapVec::new(r.min().x + 1.0, r.min().y + 1.0),
+                MapVec::new(r.max().x - 1.0, r.max().y - 1.0),
+            )
         } else {
-            BBox2D::new()
+            MoveBox::new()
         };
 
-        let offset = |b: &BBox2D, p: GeoPoint2D| -> BBox2D {
-            if let Some(r) = b.0 {
-                BBox2D(Some(geo::Rect::new(
-                    geo2d::pt(r.min().x + p.x, r.min().y + p.y),
-                    geo2d::pt(r.max().x + p.x, r.max().y + p.y),
-                )))
-            } else {
-                BBox2D::new()
-            }
-        };
-
-        if grid.is_position_authorized(&offset(&box_inset, barge_future), mover.layer) {
+        if grid.is_position_authorized(&box_inset.translated(barge_future), mover.layer) {
             state.pi.deviated = true;
             return (barge.x, barge.y);
         }
 
         let mut slower = speed;
         while slower > 0.1 {
-            if grid.is_position_authorized(&offset(&box_inset, barge_future), mover.layer) {
+            if grid.is_position_authorized(&box_inset.translated(barge_future), mover.layer) {
                 state.pi.deviated = true;
                 return (barge.x, barge.y);
             }
             slower *= 0.8;
             barge = geo2d::pt(barge.x * 0.8, barge.y * 0.8);
-            barge_future = geo2d::pt(
+            barge_future = MapPoint::new(
                 mover.position_map.x + barge.x,
                 mover.position_map.y + barge.y,
             );
@@ -773,15 +760,15 @@ pub fn apply_anti_collision_step(
         // Widen the box a touch and hand it to the grid's
         // nearest-authorised-position search.  Success teleports the
         // actor to the found cell's centre.
-        let mut widened = offset(&state.move_box, barge_future);
-        if let Some(r) = widened.0 {
-            widened = BBox2D(Some(geo::Rect::new(
-                geo2d::pt(r.min().x - 0.2, r.min().y - 0.2),
-                geo2d::pt(r.max().x + 0.2, r.max().y + 0.2),
-            )));
+        let mut widened_map = state.move_box.translated(barge_future);
+        if let Some(r) = widened_map.0 {
+            widened_map = MapBBox::from_corners(
+                MapPoint::new(r.min().x - 0.2, r.min().y - 0.2),
+                MapPoint::new(r.max().x + 0.2, r.max().y + 0.2),
+            );
         }
-        if grid.find_authorized_position(&mut widened, mover.layer) {
-            let c = widened.center();
+        if grid.find_authorized_position(&mut widened_map, mover.layer) {
+            let c = widened_map.center();
             state.pi.deviated = true;
             return (c.x - mover.position_map.x, c.y - mover.position_map.y);
         }
@@ -805,7 +792,7 @@ pub fn apply_anti_collision_step(
 pub fn gather_level_repulsive_lines(
     grid: &FastFindGrid,
     layer: u16,
-    box_future: &BBox2D,
+    box_future: &MapBBox,
 ) -> Vec<RepulsiveLine> {
     let indices = grid.get_active_repulsive_line_indices(layer, box_future);
     indices
@@ -828,7 +815,7 @@ pub fn gather_level_repulsive_lines(
 pub fn gather_level_repulsive_points(
     grid: &FastFindGrid,
     layer: u16,
-    box_future: &BBox2D,
+    box_future: &MapBBox,
 ) -> Vec<RepulsivePoint> {
     grid.get_level_repulsive_points(layer, box_future)
         .into_iter()
@@ -997,7 +984,7 @@ mod tests {
             posture: Posture::Upright,
             ..Default::default()
         };
-        element.set_position_map(geo2d::pt(10.0, 20.0).into());
+        element.set_position_map(MapPoint::new(10.0, 20.0));
 
         let mut human = crate::element::HumanData::default();
         human

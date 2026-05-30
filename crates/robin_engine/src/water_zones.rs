@@ -12,8 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
-use crate::geo2d::BBox2D;
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::level_data::RawMaterialSector;
 use crate::sound_cache::Material;
 
@@ -21,7 +20,7 @@ use crate::sound_cache::Material;
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct WaterZone {
     pub points: Vec<MapPoint>,
-    pub bounding_box: BBox2D,
+    pub bounding_box: MapBBox,
     /// Either [`Material::Water`] or [`Material::Hole`].
     pub material: Material,
 }
@@ -32,7 +31,7 @@ impl WaterZone {
         if self.points.len() < 3 {
             return false;
         }
-        if !self.bounding_box.contains_point(p.to_geo()) {
+        if !self.bounding_box.contains_point(p) {
             return false;
         }
         let mut inside = false;
@@ -89,9 +88,9 @@ impl WaterZones {
                 .iter()
                 .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                 .collect();
-            let mut bbox = BBox2D::new();
+            let mut bbox = MapBBox::new();
             for &p in &points {
-                bbox.expand_point(p.to_geo());
+                bbox.expand_point(p);
             }
             zones.push(WaterZone {
                 points,
@@ -397,9 +396,9 @@ mod tests {
             MapPoint::new(max, max),
             MapPoint::new(min, max),
         ];
-        let mut bbox = BBox2D::new();
+        let mut bbox = MapBBox::new();
         for &p in &points {
-            bbox.expand_point(p.to_geo());
+            bbox.expand_point(p);
         }
         crate::material_sectors::MaterialSector {
             points,

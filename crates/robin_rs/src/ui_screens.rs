@@ -26,6 +26,9 @@
 //! - movie viewer
 //! - mission started/quit popup with transition
 
+use robin_engine::profiles as engine_profiles;
+#[cfg(test)]
+use robin_engine::sherwood_stat as engine_sherwood_stat;
 use serde::{Deserialize, Serialize};
 
 use crate::campaign::Campaign;
@@ -674,7 +677,7 @@ impl MissionDescriptionScreen {
         mission_index: usize,
         mission: &Mission,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         level_descriptors: Option<&LevelDescriptors>,
         text_resources: &mut ResourceManager,
     ) -> Self {
@@ -2277,7 +2280,7 @@ mod tests {
     #[test]
     fn mission_description_tooltip_lookup() {
         struct StubMenuText;
-        impl robin_engine::sherwood_stat::MenuTextLookup for StubMenuText {
+        impl engine_sherwood_stat::MenuTextLookup for StubMenuText {
             fn get(&self, id: usize) -> String {
                 format!("tip:{id}")
             }

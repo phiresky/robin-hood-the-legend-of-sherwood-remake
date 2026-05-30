@@ -9,6 +9,8 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
+use robin_assets::keyconfig::KeyConfig;
+use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
@@ -17,8 +19,6 @@ use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
 use crate::widget::FrameWnd;
-use robin_assets::keyconfig::KeyConfig;
-use robin_engine::sound_cache::SampleLoader;
 
 use super::graphics::show_graphics;
 use super::layout::{

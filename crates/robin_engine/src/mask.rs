@@ -17,8 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
-use crate::geo2d::{BBox2D, pt};
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, RawMask};
 
 // ---------------------------------------------------------------------------
@@ -81,7 +80,7 @@ pub struct RuntimeMask {
     // Runtime active toggle (patches can flip it) lives in
     // [`FastFindGrid::mask_active`], keyed by mask index.
     /// Mask bounding box in world (map) coordinates.
-    pub bbox: BBox2D,
+    pub bbox: MapBBox,
 
     /// Polyline describing the character-masking silhouette (map coords).
     /// Sorted by increasing X.  Used by `is_applied_to_point_character` to
@@ -126,7 +125,7 @@ impl RuntimeMask {
             return None;
         }
 
-        let bbox = BBox2D::from_coords(
+        let bbox = MapBBox::from_coords(
             bbox_x as f32,
             bbox_y as f32,
             (bbox_x + bbox_w) as f32,
@@ -252,7 +251,7 @@ impl RuntimeMask {
             let Some(obs) = obstacles.get(usize::from(obs_idx)) else {
                 continue;
             };
-            let point_ground = pt(point.x, point.y);
+            let point_ground = crate::coordinates::GroundPoint::new(point.x, point.y);
             if !obs.box_ground.contains_point(point_ground) {
                 continue;
             }
@@ -505,7 +504,7 @@ mod tests {
         let mask = RuntimeMask {
             layer: 0,
             mask_type: MASK_PROJECTILE,
-            bbox: BBox2D::from_coords(0.0, 0.0, 16.0, 16.0),
+            bbox: MapBBox::from_coords(0.0, 0.0, 16.0, 16.0),
             character_polyline: vec![],
             lower_y_for_mask: f32::NEG_INFINITY,
             projectile_polyline: vec![MapPoint::new(0.0, 10.0), MapPoint::new(10.0, 10.0)],
@@ -546,7 +545,7 @@ mod tests {
         let mask = RuntimeMask {
             layer: 0,
             mask_type: MASK_OBSTACLE,
-            bbox: BBox2D::from_coords(0.0, 0.0, 10.0, 10.0),
+            bbox: MapBBox::from_coords(0.0, 0.0, 10.0, 10.0),
             character_polyline: vec![],
             lower_y_for_mask: f32::NEG_INFINITY,
             projectile_polyline: vec![],
@@ -618,7 +617,7 @@ mod tests {
         let mask = RuntimeMask {
             layer: 0,
             mask_type: MASK_PROJECTILE,
-            bbox: BBox2D::from_coords(0.0, 0.0, 10.0, 10.0),
+            bbox: MapBBox::from_coords(0.0, 0.0, 10.0, 10.0),
             character_polyline: vec![],
             lower_y_for_mask: f32::NEG_INFINITY,
             projectile_polyline: vec![],

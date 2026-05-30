@@ -18,7 +18,6 @@ use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId};
 use crate::engine::SimScratch;
 use crate::entities::Entities;
-use crate::geo2d::{self};
 
 /// Number of arrows given to Merry Man archers in forest levels.
 const MERRY_MAN_ARROWS: u16 = 3;
@@ -162,7 +161,7 @@ fn build_detectable_enemies_for(
 fn test_hiking_path_fine(
     grid: &crate::fast_find_grid::FastFindGrid,
     waypoints: &[crate::level_data::RawWaypoint],
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
 ) -> bool {
     if waypoints.len() < 2 {
         return true;
@@ -171,11 +170,9 @@ fn test_hiking_path_fine(
     let mut prev = &waypoints[0];
     for (i, wp) in waypoints.iter().enumerate().skip(1) {
         if wp.level == prev.level && wp.sector == prev.sector {
-            let p1 = geo2d::pt(prev.x as f32, prev.y as f32);
-            let p2 = geo2d::pt(wp.x as f32, wp.y as f32);
-            let p1_map = crate::coordinates::MapPoint::from_geo(p1);
-            let p2_map = crate::coordinates::MapPoint::from_geo(p2);
-            if !grid.is_reachable_thin(p1_map, p2_map, wp.level) {
+            let p1 = MapPoint::new(prev.x as f32, prev.y as f32);
+            let p2 = MapPoint::new(wp.x as f32, wp.y as f32);
+            if !grid.is_reachable_thin(p1, p2, wp.level) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,
@@ -202,7 +199,7 @@ fn test_hiking_path_fine(
                 ok = false;
             }
             let hd = crate::geo2d::pt(move_box.x_max(), move_box.y_max());
-            if !grid.is_reachable_thick(p1_map, p2_map, wp.level, hd) {
+            if !grid.is_reachable_thick(p1, p2, wp.level, hd) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,
@@ -1886,7 +1883,7 @@ impl EngineInner {
         // If the NPC's move-box overlaps the playable area, attempt to
         // push it to an authorized position via `find_authorized_position`.
         if is_enemy && let Some(move_box) = move_box_opt {
-            let mut abs_box = move_box.translated(geo2d::pt(pos_map.x, pos_map.y));
+            let mut abs_box = move_box.translated(pos_map);
             if !self.fast_grid.is_position_authorized(&abs_box, layer)
                 && self.fast_grid.find_authorized_position(&mut abs_box, layer)
             {
@@ -1897,11 +1894,10 @@ impl EngineInner {
                     .map(|(_, entity)| entity)
                     && entity.actor_data().is_some()
                 {
+                    let new_center_map = new_center;
                     let pi = entity.position_iface_mut();
-                    pi.set_map_position(crate::coordinates::MapPoint::from_geo(new_center));
-                    entity
-                        .element_data_mut()
-                        .set_position_map(new_center.into());
+                    pi.set_map_position(new_center_map);
+                    entity.element_data_mut().set_position_map(new_center_map);
                 }
             }
         }
@@ -5421,10 +5417,7 @@ impl EngineInner {
             let Some(detection_point) = entity.compute_detection_point() else {
                 return;
             };
-            (
-                entity.element_data().position_map().to_geo(),
-                detection_point,
-            )
+            (entity.element_data().position_map(), detection_point)
         };
 
         let panic_center = crate::ai::Position {
@@ -5459,7 +5452,7 @@ impl EngineInner {
                 if self.entity_data_inside_building(&c.element) {
                     continue;
                 }
-                let p = c.element.position_map().to_geo();
+                let p = c.element.position_map();
                 let dx = source_pos.x - p.x;
                 let dy = source_pos.y - p.y;
                 // Aspect-ratio bounding box: |dx| <= r,
@@ -6089,7 +6082,7 @@ impl EngineInner {
             is_alive: bool,
             is_active: bool,
             view_radius: u16,
-            move_box: crate::geo2d::BBox2D,
+            move_box: crate::coordinates::MoveBox,
             // Patrol admit gate (`initialize_patrol`):
             // `is_civilian() || is_able_to_fight()`.
             is_civilian: bool,
@@ -6336,13 +6329,13 @@ impl EngineInner {
                 // `is_straight_movement_autorized` for the 3-step
                 // side-offset fallback.
                 let chief_box = match snaps.get(&npc_id.index()).map(|s| s.move_box) {
-                    Some(b) if b.is_somewhere() => crate::geo2d::BBox2D::from_coords(
+                    Some(b) if b.is_somewhere() => crate::coordinates::MoveBox::from_coords(
                         b.x_min() - 3.0,
                         b.y_min() - 3.0,
                         b.x_max() + 3.0,
                         b.y_max() + 3.0,
                     ),
-                    _ => crate::geo2d::BBox2D::new(),
+                    _ => crate::coordinates::MoveBox::new(),
                 };
                 let positions =
                     path.compute_patrol_positions(patrol_size, Some(&self.fast_grid), &chief_box);

@@ -16,8 +16,15 @@ use crate::profiles::Action;
 use crate::sector::SectorNumber;
 use crate::sequence::Field;
 use crate::shadow_polygon::ASPECT_RATIO;
+use robin_engine::campaign as engine_campaign;
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
+use robin_engine::element as engine_element;
+use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sector as engine_sector;
+use robin_engine::sight_obstacle as engine_sight_obstacle;
 
 // ─── Left-click resolution ──────────────────────────────────────────
 
@@ -181,7 +188,7 @@ pub fn resolve_left_click(
             // the purse id so its has-been-taken sweep fires on
             // arrival.
             let launch_target = match cmd {
-                Command::Take => robin_engine::engine::coin_pickup_target(engine, target_id),
+                Command::Take => engine_api::coin_pickup_target(engine, target_id),
                 _ => target_id,
             };
             // Net-specific double-click handling:
@@ -191,7 +198,7 @@ pub fn resolve_left_click(
             // through to the regular take path.
             let target_is_net = matches!(
                 engine.get_entity(launch_target),
-                Some(robin_engine::element::Entity::Net(_))
+                Some(engine_element::Entity::Net(_))
             );
             let is_recording = engine.is_recording_macro();
             if is_double && target_is_net && cmd == Command::Take && !is_recording {
@@ -297,14 +304,13 @@ pub fn resolve_left_click(
                 if let Some(&pc_id) = selected.first() {
                     return vec![PlayerCommand::HeroSpeak {
                         pc_id,
-                        expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                        expression: engine_api::melee::HERO_UNABLE_TO_DO_SOMETHING,
                     }];
                 }
                 return vec![];
             }
         }
         let actors: Vec<EntityId> = selected.to_vec();
-        let waypoint = geo2d::pt(patch.waypoint.x, patch.waypoint.y);
         // Mirror C++'s `update_mouse` substitution
         // (`mpSelectedSector = mFastGrid.GetSector(patch.sector)` /
         // `muwSelectedLayer = patch.layer`): pass the patch's
@@ -313,12 +319,12 @@ pub fn resolve_left_click(
         // whatever the spatial lookup at the waypoint happens to find
         // (which can pick the wrong layer or no sector at all).
         let goal_override = Some((
-            robin_engine::sector::SectorNumber::new(patch.sector as i16),
+            engine_sector::SectorNumber::new(patch.sector as i16),
             patch.layer,
         ));
         return vec![PlayerCommand::GroupMove {
             actors,
-            destination: waypoint.into(),
+            destination: patch.waypoint,
             running: is_double,
             show_marker: false,
             goal_override,
@@ -333,7 +339,7 @@ pub fn resolve_left_click(
     let actors: Vec<EntityId> = selected.to_vec();
     vec![PlayerCommand::GroupMove {
         actors,
-        destination: map_pt.into(),
+        destination: map_pt,
         running: is_double,
         show_marker: true,
         goal_override: None,
@@ -377,13 +383,13 @@ fn resolve_action_left_click(
     // projection-area surface, used by the Purse/Wasp/Net ground-
     // target arms so the recorded titbit and `*_TARGET` sequence field
     // both land on the real 3D point instead of `z=0`.
-    let convert_to_3d = |pt: MapPoint| -> robin_engine::coordinates::WorldPoint3D {
+    let convert_to_3d = |pt: MapPoint| -> engine_coordinates::WorldPoint3D {
         let p3d = engine.fast_grid().convert_2d_to_3d(
             pt,
-            robin_engine::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
+            engine_sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             engine.sight_obstacles(assets),
         );
-        robin_engine::coordinates::WorldPoint3D::from(p3d)
+        p3d
     };
 
     // Post-launch tail for actions that deselect on launch (non-
@@ -458,7 +464,7 @@ fn resolve_action_left_click(
                 );
                 return vec![PlayerCommand::HeroSpeak {
                     pc_id,
-                    expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    expression: engine_api::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 }];
             }
 
@@ -469,7 +475,7 @@ fn resolve_action_left_click(
             if !is_recording {
                 let (bow_status, _shoot_mode) =
                     engine.can_shoot_with_bow_at(assets, pc_id, target_id);
-                if bow_status != robin_engine::engine::input::BowTarget::Valid {
+                if bow_status != engine_api::input::BowTarget::Valid {
                     tracing::info!(
                         ?pc_id,
                         ?target_id,
@@ -736,7 +742,7 @@ fn resolve_action_left_click(
                 PlayerCommand::RaiseShieldWithDanger {
                     actor: pc_id,
                     protected_pc,
-                    danger_point: map_pt.into(),
+                    danger_point: map_pt,
                     danger_point_layer: selected_layer,
                 },
                 commit_tail(is_recording),
@@ -878,13 +884,13 @@ fn resolve_action_left_click(
             // Move → DropAle sequence; the engine tick's
             // `Command::DropAle` arm then spawns the bottle and
             // decrements `Action::Ale` ammo.
-            if !engine.is_mouse_sector_valid_for_ground_target(map_pt.into()) {
+            if !engine.is_mouse_sector_valid_for_ground_target(map_pt) {
                 return vec![];
             }
             return vec![
                 PlayerCommand::DropAleAt {
                     actor: pc_id,
-                    target_pos: map_pt.into(),
+                    target_pos: map_pt,
                     running: is_double,
                 },
                 commit_tail(is_recording),
@@ -1136,9 +1142,7 @@ fn resolve_double_click_repeat(
                     return vec![];
                 };
                 let launch_target = match cmd {
-                    Command::Take => {
-                        robin_engine::engine::coin_pickup_target(engine, cached_target)
-                    }
+                    Command::Take => engine_api::coin_pickup_target(engine, cached_target),
                     _ => cached_target,
                 };
                 selected
@@ -1373,7 +1377,7 @@ pub fn resolve_swordfight(
             let h = entity.human_data()?;
             let is_sword = !h.opponents.is_empty();
             let elem = entity.element_data();
-            let pos = geo2d::pt(elem.position_map().x, elem.position_map().y);
+            let pos = elem.position_map();
             let dir_sector = elem.direction();
             let dir_arr = crate::shadow_polygon::sector_to_direction(dir_sector);
             let facing = geo2d::pt(dir_arr[0], dir_arr[1] * ASPECT_RATIO);
@@ -1514,8 +1518,7 @@ fn determine_use_command(
     // Object-class targets (Net, Bonus, Scroll, landed Projectile).
     // The engine-side `object_pickup_command` is the authoritative
     // implementation; this just calls straight through.
-    if let Some(cmd) = robin_engine::engine::object_pickup_command(engine, assets, target_id, pc_id)
-    {
+    if let Some(cmd) = engine_api::object_pickup_command(engine, assets, target_id, pc_id) {
         return Some(cmd);
     }
 
@@ -1550,7 +1553,7 @@ fn determine_use_command(
         if engine.selected_pc_has_contextual_action(
             assets,
             Some(pc_id),
-            robin_engine::profiles::Action::Jump,
+            engine_profiles::Action::Jump,
         ) {
             return Some(Command::ClimbUpOnShoulders);
         }
@@ -1570,9 +1573,9 @@ fn determine_use_command(
     {
         let ransom = engine
             .campaign()
-            .map(|c| c.get_value(robin_engine::campaign::CampaignValue::Ransom))
+            .map(|c| c.get_value(engine_campaign::CampaignValue::Ransom))
             .unwrap_or(0);
-        if ransom >= robin_engine::engine::BEGGAR_SALARY {
+        if ransom >= engine_api::BEGGAR_SALARY {
             return Some(Command::Pay);
         }
         return None;
@@ -1590,7 +1593,7 @@ fn determine_use_command(
         && engine.selected_pc_has_contextual_action(
             assets,
             Some(pc_id),
-            robin_engine::profiles::Action::Resuscitate,
+            engine_profiles::Action::Resuscitate,
         )
     {
         let target_pc_or_same_camp = match entity {
@@ -1629,7 +1632,7 @@ fn determine_use_command(
         && engine.selected_pc_has_contextual_action(
             assets,
             Some(pc_id),
-            robin_engine::profiles::Action::Tie,
+            engine_profiles::Action::Tie,
         )
     {
         return Some(Command::TieCmd);

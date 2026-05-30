@@ -6,6 +6,7 @@
 //! and the report-merging helper `get_report_from_soldier`.
 
 use crate::ai::*;
+use crate::coordinates::MapPoint;
 use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
@@ -71,7 +72,7 @@ impl EnemyAi {
             };
 
         let centre = (pt_officer.0 + forward_50.0, pt_officer.1 + forward_50.1);
-        let officer_pt = crate::geo2d::pt(pt_officer.0, pt_officer.1);
+        let officer_pt = MapPoint::new(pt_officer.0, pt_officer.1);
 
         let mut positions = Vec::with_capacity(num_soldiers as usize);
         for i in 0..num_soldiers {
@@ -86,14 +87,9 @@ impl EnemyAi {
 
             let px = centre.0 + sideways_index * side_50.0 + backward_index * backward_30.0;
             let py = centre.1 + sideways_index * side_50.1 + backward_index * backward_30.1;
-            let slot_pt = crate::geo2d::pt(px, py);
+            let slot_pt = MapPoint::new(px, py);
 
-            if !grid.is_straight_movement_authorized(
-                officer_pt.into(),
-                slot_pt.into(),
-                layer,
-                &ctx.move_box,
-            ) {
+            if !grid.is_straight_movement_authorized(officer_pt, slot_pt, layer, &ctx.move_box) {
                 return None;
             }
 
@@ -539,8 +535,8 @@ impl EnemyAi {
                 'outer: for k in 0..10u16 {
                     if k > 0
                         && !grid.is_straight_movement_authorized(
-                            crate::geo2d::pt(door_pt_out.0, door_pt_out.1).into(),
-                            crate::geo2d::pt(try_pt.0, try_pt.1).into(),
+                            MapPoint::new(door_pt_out.0, door_pt_out.1),
+                            MapPoint::new(try_pt.0, try_pt.1),
                             outside_layer,
                             &ctx.move_box,
                         )

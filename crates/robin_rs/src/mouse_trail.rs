@@ -48,6 +48,7 @@ use crate::mouse_way::MouseWay;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16};
 use robin_assets::picture::{Picture, PixelFormat};
 use robin_engine::coordinates::ScreenPoint;
+use robin_engine::sprite as engine_sprite;
 
 /// Vertical step size used when interpolating along the Y axis.
 pub const TRAIL_HEIGHT: i32 = 16;
@@ -246,11 +247,11 @@ impl MouseTrailRenderer {
             return;
         }
 
-        let src = robin_engine::sprite::BBox::new(
+        let src = engine_sprite::BBox::new(
             crate::geo2d::pt(0.0, 0.0),
             crate::geo2d::pt(1.0, height as f32),
         );
-        let dst = robin_engine::sprite::BBox::new(
+        let dst = engine_sprite::BBox::new(
             crate::geo2d::pt(x as f32, y as f32),
             crate::geo2d::pt((x + 1) as f32, (y + height) as f32),
         );

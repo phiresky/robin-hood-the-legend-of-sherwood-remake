@@ -7,7 +7,6 @@ use super::*;
 use crate::coordinates::MapPoint;
 use crate::element::{ActiveDoorPass, DoorPassStep, EntityId, Posture};
 use crate::gate::DoorType;
-use crate::geo2d::GeoPoint2D;
 use crate::order::OrderType;
 use crate::sector::LiftType;
 use std::collections::VecDeque;
@@ -794,10 +793,7 @@ impl EngineInner {
                 door.door_type,
                 DoorType::LiftHigh | DoorType::LiftHighCrenel
             );
-            let pout = GeoPoint2D {
-                x: door.point_out.0,
-                y: door.point_out.1,
-            };
+            let pout = MapPoint::new(door.point_out.0, door.point_out.1);
             (tl, ts, door.door_type, is_high, pout)
         };
 
@@ -1195,7 +1191,7 @@ impl EngineInner {
         assets: &LevelAssets,
         layer: u16,
         sector_number: u16,
-        point: GeoPoint2D,
+        point: crate::coordinates::MapPoint,
     ) -> Option<u16> {
         self.get_projection_area_index(assets, sector_number, layer, point)
     }

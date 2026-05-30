@@ -39,7 +39,7 @@ pub struct ViewParameters {
     pub projection_plane: Option<crate::position_interface::PlaneZCoeffs>,
     /// Current projection-area obstacle used by the display path. The
     /// original `RHShadowPolygon` renders one slice per projection area
-    /// and clips the slice to that area's screen polygon.
+    /// and clips the slice to that area's projected polygon.
     #[serde(skip)]
     pub projection_obstacle: Option<crate::position_interface::ObstacleHandle>,
 }

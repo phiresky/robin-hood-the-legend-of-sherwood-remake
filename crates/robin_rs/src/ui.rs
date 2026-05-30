@@ -5,17 +5,17 @@
 //! widget-specific drawing code (see `widget/` and `game_session`); this
 //! module is a serializable state + layout/event skeleton.
 
+use robin_engine::sprite::BBox;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::geo2d::{BBox2D, GeoPoint2D, pt};
+use crate::geo2d::pt;
 use crate::input::KeyboardState;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
-use robin_engine::sprite::BBox;
 
 // ═════════════════════════════════════════════════════════════════════
 //  Enums & constants
@@ -1008,7 +1008,7 @@ pub struct RendererListbox {
     pub scrollbar_track_width: u16,
 
     // ── Knob (scrollbar thumb) state ──
-    pub knob_position: GeoPoint2D,
+    pub knob_position: ScreenPoint,
     pub knob_ratio: f32,
     pub before_ratio: f32,
     pub knob_height: u16,
@@ -1041,7 +1041,7 @@ impl RendererListbox {
             surface_scrollbar: u32::MAX,
             knob_width: 0,
             scrollbar_track_width: 0,
-            knob_position: GeoPoint2D::default(),
+            knob_position: ScreenPoint::default(),
             knob_ratio: 0.0,
             before_ratio: 0.0,
             knob_height: 0,
@@ -1331,7 +1331,7 @@ pub enum MapType {
 pub struct Layout {
     h_orientation: HorizontalOrientation,
     v_orientation: VerticalOrientation,
-    physical_origin: GeoPoint2D,
+    physical_origin: ScreenPoint,
     /// Logical bounding box (stored as raw start/end in logical coords).
     bbox_start: LayoutPoint,
     bbox_end: LayoutPoint,
@@ -1340,8 +1340,8 @@ pub struct Layout {
 impl Layout {
     /// Create a layout from a physical bounding box and origin.
     pub fn new(
-        bbox: &BBox2D,
-        origin: GeoPoint2D,
+        bbox: &ScreenBBox,
+        origin: ScreenPoint,
         h_orientation: HorizontalOrientation,
         v_orientation: VerticalOrientation,
     ) -> Self {
@@ -1356,8 +1356,8 @@ impl Layout {
         if let Some(rect) = bbox.0 {
             let min = rect.min();
             let max = rect.max();
-            let mut tl = LayoutPoint::from_physical(&layout, min);
-            let mut br = LayoutPoint::from_physical(&layout, max);
+            let mut tl = LayoutPoint::from_physical(&layout, ScreenPoint::from_geo(min));
+            let mut br = LayoutPoint::from_physical(&layout, ScreenPoint::from_geo(max));
             // Ensure start ≤ end.
             if tl.x > br.x {
                 std::mem::swap(&mut tl.x, &mut br.x);
@@ -1415,15 +1415,15 @@ impl Layout {
         self.bbox_end.y = self.bbox_start.y + h as f32;
     }
 
-    /// Convert the logical bounding box to a physical `BBox2D`.
-    pub fn to_physical_bbox(&self) -> BBox2D {
+    /// Convert the logical bounding box to a physical screen-space box.
+    pub fn to_physical_bbox(&self) -> ScreenBBox {
         let start = self.bbox_start.to_physical(self);
         let end = self.bbox_end.to_physical(self);
         let x0 = start.x.min(end.x);
         let y0 = start.y.min(end.y);
         let x1 = start.x.max(end.x);
         let y1 = start.y.max(end.y);
-        BBox2D::from_coords(x0, y0, x1, y1)
+        ScreenBBox::from_coords(x0, y0, x1, y1)
     }
 }
 
@@ -1444,7 +1444,7 @@ impl LayoutPoint {
     }
 
     /// Convert a physical point to logical coordinates within a layout.
-    pub fn from_physical(layout: &Layout, phys: GeoPoint2D) -> Self {
+    pub fn from_physical(layout: &Layout, phys: ScreenPoint) -> Self {
         Self {
             x: layout.horizontal_map(phys.x, MapType::Logical),
             y: layout.vertical_map(phys.y, MapType::Logical),
@@ -1452,8 +1452,8 @@ impl LayoutPoint {
     }
 
     /// Convert this logical point back to physical coordinates.
-    pub fn to_physical(&self, layout: &Layout) -> GeoPoint2D {
-        pt(
+    pub fn to_physical(&self, layout: &Layout) -> ScreenPoint {
+        ScreenPoint::new(
             layout.horizontal_map(self.x, MapType::Physical),
             layout.vertical_map(self.y, MapType::Physical),
         )
@@ -1491,15 +1491,15 @@ impl LayoutBox {
         Self { start, end }
     }
 
-    /// Convert to physical `BBox2D`.
-    pub fn to_physical_bbox(&self, layout: &Layout) -> BBox2D {
+    /// Convert to physical screen-space box.
+    pub fn to_physical_bbox(&self, layout: &Layout) -> ScreenBBox {
         let start = self.start.to_physical(layout);
         let end = self.end.to_physical(layout);
         let x0 = start.x.min(end.x);
         let y0 = start.y.min(end.y);
         let x1 = start.x.max(end.x);
         let y1 = start.y.max(end.y);
-        BBox2D::from_coords(x0, y0, x1, y1)
+        ScreenBBox::from_coords(x0, y0, x1, y1)
     }
 
     pub fn width(&self) -> u32 {
@@ -1688,10 +1688,10 @@ mod tests {
 
     #[test]
     fn layout_left_to_right_top_down() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
-            pt(10.0, 20.0),
+            ScreenPoint::new(10.0, 20.0),
             HorizontalOrientation::LeftToRight,
             VerticalOrientation::TopDown,
         );
@@ -1709,10 +1709,10 @@ mod tests {
 
     #[test]
     fn layout_right_to_left() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
-            pt(100.0, 0.0),
+            ScreenPoint::new(100.0, 0.0),
             HorizontalOrientation::RightToLeft,
             VerticalOrientation::TopDown,
         );
@@ -1725,10 +1725,10 @@ mod tests {
 
     #[test]
     fn layout_bottom_up() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
-            pt(0.0, 100.0),
+            ScreenPoint::new(0.0, 100.0),
             HorizontalOrientation::LeftToRight,
             VerticalOrientation::BottomUp,
         );
@@ -1741,15 +1741,15 @@ mod tests {
 
     #[test]
     fn layout_point_roundtrip() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 200.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0);
         let layout = Layout::new(
             &bbox,
-            pt(50.0, 50.0),
+            ScreenPoint::new(50.0, 50.0),
             HorizontalOrientation::LeftToRight,
             VerticalOrientation::TopDown,
         );
 
-        let phys = pt(120.0, 80.0);
+        let phys = ScreenPoint::new(120.0, 80.0);
         let logical = LayoutPoint::from_physical(&layout, phys);
         let back = logical.to_physical(&layout);
         assert!((back.x - phys.x).abs() < 1e-6);
@@ -1758,15 +1758,15 @@ mod tests {
 
     #[test]
     fn layout_point_roundtrip_rtl_bu() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 200.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0);
         let layout = Layout::new(
             &bbox,
-            pt(200.0, 200.0),
+            ScreenPoint::new(200.0, 200.0),
             HorizontalOrientation::RightToLeft,
             VerticalOrientation::BottomUp,
         );
 
-        let phys = pt(50.0, 80.0);
+        let phys = ScreenPoint::new(50.0, 80.0);
         let logical = LayoutPoint::from_physical(&layout, phys);
         let back = logical.to_physical(&layout);
         assert!((back.x - phys.x).abs() < 1e-6);
@@ -2070,10 +2070,10 @@ mod tests {
 
     #[test]
     fn serde_layout_roundtrip() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
-            pt(10.0, 20.0),
+            ScreenPoint::new(10.0, 20.0),
             HorizontalOrientation::LeftToRight,
             VerticalOrientation::TopDown,
         );

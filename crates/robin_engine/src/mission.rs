@@ -6,8 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::sbfile::SbFile;
-
 /// Mission completion status.
 #[repr(u32)]
 #[derive(
@@ -17,16 +15,6 @@ pub enum MissionStatus {
     Available = 0,
     Won = 1,
     Lost = 2,
-}
-
-impl MissionStatus {
-    fn from_u32(v: u32) -> Self {
-        match v {
-            1 => MissionStatus::Won,
-            2 => MissionStatus::Lost,
-            _ => MissionStatus::Available,
-        }
-    }
 }
 
 /// Runtime state of a mission.
@@ -280,9 +268,6 @@ mod tests {
         assert_eq!(MissionStatus::Available as u32, 0);
         assert_eq!(MissionStatus::Won as u32, 1);
         assert_eq!(MissionStatus::Lost as u32, 2);
-        assert_eq!(MissionStatus::from_u32(0), MissionStatus::Available);
-        assert_eq!(MissionStatus::from_u32(1), MissionStatus::Won);
-        assert_eq!(MissionStatus::from_u32(99), MissionStatus::Available);
     }
 
     #[test]

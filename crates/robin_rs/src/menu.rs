@@ -6,6 +6,8 @@
 //! - Widget alignment helpers
 //! - Campaign map location/ARES mapping
 
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sherwood_stat as engine_sherwood_stat;
 use serde::{Deserialize, Serialize};
 
 use crate::campaign::{Campaign, CampaignValue};
@@ -346,7 +348,7 @@ impl CampaignMapState {
     pub fn assign_missions(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         mission_indices: &[usize],
     ) {
         for &idx in mission_indices {
@@ -386,7 +388,7 @@ impl CampaignMapState {
         &mut self,
         ares: i8,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
     ) {
         // ARES = -1 is a no-op that preserves prior arrow state, so
         // the reset below must come *after* this gate.
@@ -438,11 +440,7 @@ impl CampaignMapState {
     }
 
     /// Full update: reset, assign missions, arrows, and flags.
-    pub fn update_all(
-        &mut self,
-        campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
-    ) {
+    pub fn update_all(&mut self, campaign: &Campaign, profiles: &engine_profiles::ProfileManager) {
         self.init_locations_and_arrows();
         self.assign_missions(campaign, profiles, &campaign.accessible_mission_indices);
         self.assign_ares_to_arrows(campaign.get_ares(), campaign, profiles);
@@ -457,7 +455,7 @@ impl CampaignMapState {
     pub fn update_war_crime_text(
         &mut self,
         campaign: &Campaign,
-        menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
+        menu_text: &dyn engine_sherwood_stat::MenuTextLookup,
     ) {
         use crate::ingame_menu::resources::{MT_STR_PRESERVED_LIFES, MT_STR_RANSOM, MT_STR_SCORE};
 
@@ -502,7 +500,7 @@ impl CampaignMapState {
         &mut self,
         screen: &mut MenuScreenState,
         campaign: &Campaign,
-        menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup,
+        menu_text: &dyn engine_sherwood_stat::MenuTextLookup,
     ) {
         if let Some(timer_id) = self.announcement_timer.take() {
             screen.delete_timer(timer_id);
@@ -602,7 +600,7 @@ pub enum MissionDescriptionChoice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_engine::sherwood_stat::MenuTextLookup;
+    use engine_sherwood_stat::MenuTextLookup;
 
     /// Test-only stub returning the menu-text id inlined into the
     /// string. That keeps assertions simple — we only care that the
@@ -815,7 +813,7 @@ mod tests {
         let mut map = CampaignMapState::new();
         map.attack_arrows_visible[3] = true;
 
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         map.assign_ares_to_arrows(-1, &Campaign::default(), &profiles);
 
         assert!(map.attack_arrows_visible[3]);

@@ -11,6 +11,8 @@ use crate::native_font::{self, NativeFont};
 use crate::profiles;
 use crate::renderer::Renderer;
 use crate::ui_panel::PortraitCache;
+use robin_engine::character_kind as engine_character_kind;
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerId;
 
@@ -198,9 +200,9 @@ fn is_vip_character(engine: &Engine, assets: &LevelAssets, entity: &Entity) -> b
             !matches!(
                 pc.pc.kind,
                 Some(
-                    robin_engine::character_kind::CharacterKind::MerryManA
-                        | robin_engine::character_kind::CharacterKind::MerryManB
-                        | robin_engine::character_kind::CharacterKind::MerryManC
+                    engine_character_kind::CharacterKind::MerryManA
+                        | engine_character_kind::CharacterKind::MerryManB
+                        | engine_character_kind::CharacterKind::MerryManC
                 ),
             )
         }
@@ -480,8 +482,8 @@ pub fn render_screen_remarks(engine: &Engine, renderer: &mut Renderer, fonts: &H
     }
 }
 
-/// Dev overlay: draw each live entity's zero-based `EntityId` just below
-/// its feet.  Toggled by `/screenshot?entity_ids` over the HTTP RPC.
+/// Dev overlay: draw each live entity's typed `EntityId` just below its feet.
+/// Toggled by `/screenshot?entity_ids` over the HTTP RPC.
 ///
 /// Shares the `render_hud_text` text-surface pattern: allocate a
 /// transparent RGB565 surface, draw outlined text for every entity,
@@ -506,7 +508,7 @@ pub fn render_entity_id_overlay(
             continue;
         };
 
-        let text = id.index().to_string();
+        let text = id.to_string();
         let tw = font.text_width(&text);
         let text_x = screen_pt.x as i32 - tw / 2;
         // +6 px offset clears the feet / selection ring without
@@ -533,7 +535,7 @@ fn render_counter_titbits_gpu(
             continue;
         }
 
-        let map_pt = robin_engine::coordinates::MapPoint::new(titbit.position.x, titbit.position.y);
+        let map_pt = engine_coordinates::MapPoint::new(titbit.position.x, titbit.position.y);
         let Some(screen_pt) = camera.map_to_screen(map_pt) else {
             continue;
         };

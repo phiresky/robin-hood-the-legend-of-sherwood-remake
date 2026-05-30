@@ -27,6 +27,9 @@ use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
+use robin_engine::coordinates::{GroundBBox, GroundPoint};
+use robin_engine::mask as engine_mask;
+use robin_engine::position_interface as engine_position_interface;
 use robin_engine::sprite::BBox;
 
 // Shared constants + types from the engine side.
@@ -42,7 +45,7 @@ pub type TintedCone = (
     GeoPoint2D,
     f32,
     u8,
-    Option<robin_engine::position_interface::PlaneZCoeffs>,
+    Option<engine_position_interface::PlaneZCoeffs>,
 );
 
 // Constants/structs imported from robin_engine::shadow_polygon (see top of file).
@@ -60,7 +63,14 @@ const ALPHA_END: u8 = 4;
 ///
 /// Returns a list of points forming a fan-shaped polygon in **world
 /// coordinates**: viewer → left edge → arc → right edge.
-pub fn compute_view_cone(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<GeoPoint2D> {
+pub fn compute_view_cone(viewer: GroundPoint, params: &ViewParameters) -> Vec<GroundPoint> {
+    compute_view_cone_geo(viewer.to_geo(), params)
+        .into_iter()
+        .map(GroundPoint::from_geo)
+        .collect()
+}
+
+fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<GeoPoint2D> {
     let dir = normalise(params.direction);
     let radius = params.radius;
     let aperture = 2.0 * params.half_aperture;
@@ -132,7 +142,7 @@ pub fn compute_visibility_polygon(
     params: &ViewParameters,
     obstacles: &[&SightObstacle],
 ) -> Vec<Vec<GeoPoint2D>> {
-    let view_cone = compute_view_cone(viewer, params);
+    let view_cone = compute_view_cone_geo(viewer, params);
 
     if obstacles.is_empty() {
         return vec![view_cone];
@@ -264,18 +274,18 @@ fn points_to_polygon(points: &[GeoPoint2D]) -> Option<geo::Polygon<f32>> {
 }
 
 /// Project computed visibility polygons onto a projection-area plane and
-/// clip them to that surface's screen-space polygon.
+/// clip them to that surface's projected polygon.
 ///
 /// This mirrors the original `RHShadowPolygon::GetProjectionAreas` /
 /// `SetScreenCoords` display path for non-ground slices: points are
 /// converted to `(x, y - plane.ComputeZ(x, y))`. C++ then adds the
 /// projection area's sector plane as slice iterators in `PrepareSlice`;
-/// clipping to `polygon_screen` gives the same surface outline to the GPU
+/// clipping to `polygon_projection` gives the same surface outline to the GPU
 /// polygon path.
 pub fn project_and_clip_to_projection_area(
     visible_polygons: &[Vec<GeoPoint2D>],
     viewer: GeoPoint2D,
-    projection_plane: robin_engine::position_interface::PlaneZCoeffs,
+    projection_plane: engine_position_interface::PlaneZCoeffs,
     projection_area: &SightObstacle,
     occluding_projection_areas: &[&SightObstacle],
 ) -> (Vec<Vec<GeoPoint2D>>, GeoPoint2D) {
@@ -284,9 +294,9 @@ pub fn project_and_clip_to_projection_area(
         y: p.y - projection_plane.compute_z(p.x, p.y),
     };
 
-    if projection_area.polygon_screen.exterior().0.len() < 3 {
+    if projection_area.polygon_projection.exterior().0.len() < 3 {
         tracing::warn!(
-            "projection-area obstacle {} has no screen polygon for view-cone clipping",
+            "projection-area obstacle {} has no projected polygon for view-cone clipping",
             projection_area.id
         );
         return (Vec::new(), project(viewer));
@@ -295,8 +305,8 @@ pub fn project_and_clip_to_projection_area(
     let mut rings = Vec::new();
     let blockers: Vec<geo::Polygon<f32>> = occluding_projection_areas
         .iter()
-        .filter(|obs| obs.polygon_screen.exterior().0.len() >= 3)
-        .map(|obs| obs.polygon_screen.clone())
+        .filter(|obs| obs.polygon_projection.exterior().0.len() >= 3)
+        .map(|obs| obs.polygon_projection.clone())
         .collect();
     let blocker_union = (!blockers.is_empty()).then(|| unary_union(&blockers));
     for poly in visible_polygons {
@@ -304,7 +314,7 @@ pub fn project_and_clip_to_projection_area(
         let Some(projected_poly) = points_to_polygon(&projected) else {
             continue;
         };
-        let clipped = projected_poly.intersection(&projection_area.polygon_screen);
+        let clipped = projected_poly.intersection(&projection_area.polygon_projection);
         let clipped = if let Some(blocker_union) = &blocker_union {
             clipped.difference(blocker_union)
         } else {
@@ -337,7 +347,7 @@ pub fn project_and_clip_to_projection_area(
 /// directions (not scaled by radius).
 fn is_box_inside_field(
     viewer: GeoPoint2D,
-    box_ground: &robin_engine::geo2d::BBox2D,
+    box_ground: &GroundBBox,
     left_side: [f32; 2],
     right_side: [f32; 2],
 ) -> bool {
@@ -458,7 +468,7 @@ fn compute_shadow_polygon(
         return None;
     }
     // Viewer inside obstacle → no meaningful silhouette. Skip.
-    if obs.contains_point(viewer) {
+    if obs.contains_point(GroundPoint::from_geo(viewer)) {
         return None;
     }
 
@@ -506,8 +516,8 @@ fn compute_shadow_polygon(
         _ => return None, // all edges same facing → no shadow
     };
 
-    let s1 = pts[fb_idx].ground_point(); // first silhouette (enter back-facing run)
-    let s2 = pts[bf_idx].ground_point(); // second silhouette (exit back-facing run)
+    let s1 = pts[fb_idx].ground_point().to_geo(); // first silhouette (enter back-facing run)
+    let s2 = pts[bf_idx].ground_point().to_geo(); // second silhouette (exit back-facing run)
     let s1_z_top = pts[fb_idx].z_top;
     let s2_z_top = pts[bf_idx].z_top;
 
@@ -600,8 +610,8 @@ pub fn render_darken_inside(
     alpha: u8,
     viewer: GeoPoint2D,
     radius: f32,
-    projection_plane: Option<robin_engine::position_interface::PlaneZCoeffs>,
-    masks: &[&robin_engine::mask::RuntimeMask],
+    projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
+    masks: &[&engine_mask::RuntimeMask],
 ) {
     if alpha == 0 || visible_polygons.is_empty() {
         return;
@@ -638,8 +648,8 @@ fn render_darken_inside_gpu_spans(
     alpha: u8,
     viewer: GeoPoint2D,
     radius: f32,
-    projection_plane: Option<robin_engine::position_interface::PlaneZCoeffs>,
-    masks: &[&robin_engine::mask::RuntimeMask],
+    projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
+    masks: &[&engine_mask::RuntimeMask],
 ) {
     let w = renderer.screen_width() as i32;
     let h = renderer.screen_height() as i32;
@@ -724,7 +734,7 @@ fn render_darken_inside_gpu_spans(
 }
 
 fn mask_spans_for_row(
-    masks: &[&robin_engine::mask::RuntimeMask],
+    masks: &[&engine_mask::RuntimeMask],
     view_rect: &BBox,
     zoom: f32,
     inv_zoom: f32,
@@ -985,7 +995,7 @@ mod tests {
             projection_plane: None,
             projection_obstacle: None,
         };
-        let cone = compute_view_cone(GeoPoint2D { x: 100.0, y: 100.0 }, &params);
+        let cone = compute_view_cone_geo(GeoPoint2D { x: 100.0, y: 100.0 }, &params);
 
         // First point is the viewer
         assert_eq!(cone[0].x, 100.0);
@@ -1022,8 +1032,8 @@ mod tests {
         };
 
         let origin = GeoPoint2D { x: 500.0, y: 500.0 };
-        let cone_right = compute_view_cone(origin, &params_right);
-        let cone_left = compute_view_cone(origin, &params_left);
+        let cone_right = compute_view_cone_geo(origin, &params_right);
+        let cone_left = compute_view_cone_geo(origin, &params_left);
 
         // Average X of arc points should be > viewer for right, < for left
         let avg_x_right: f32 =
@@ -1040,7 +1050,7 @@ mod tests {
         let params = ViewParameters::default();
         let viewer = GeoPoint2D { x: 500.0, y: 500.0 };
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[]);
 
         assert_eq!(vis.len(), 1, "no obstacles → single visibility polygon");
@@ -1098,7 +1108,7 @@ mod tests {
         ];
         obs.rebuild_geometry();
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&obs]);
 
         // The clipped result should carve a concavity behind the obstacle.
@@ -1490,7 +1500,7 @@ mod tests {
         ];
         sky_slab.rebuild_geometry();
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&sky_slab]);
         // Without height filtering the slab would still cast a shadow
         // wedge because it sits inside the cone's ground bbox. The
@@ -1621,7 +1631,7 @@ mod tests {
         ];
         behind.rebuild_geometry();
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&behind]);
         assert_eq!(vis.len(), 1);
         assert_eq!(cone.len(), vis[0].len());

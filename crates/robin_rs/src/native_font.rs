@@ -3,6 +3,7 @@
 //! Loads `.sbf` font files containing bitmap glyphs with per-pixel
 //! alpha, and renders text directly to 16-bit RGB565 pixel buffers.
 
+use robin_engine::sbfile as engine_sbfile;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -507,7 +508,7 @@ pub fn load_font_by_name(config: &HashMap<String, FontEntry>, name: &str) -> Res
         // datadir-search machinery (unlike `NativeFont::load`, which
         // opens via `SbFile::open`).
         let resolved =
-            robin_engine::sbfile::resolve_data_path(&rel).unwrap_or_else(|| PathBuf::from(&rel));
+            engine_sbfile::resolve_data_path(&rel).unwrap_or_else(|| PathBuf::from(&rel));
         let tt = TrueTypeFont::load(&resolved);
         if tt.is_valid() {
             return Ok(Font::TrueType(tt));

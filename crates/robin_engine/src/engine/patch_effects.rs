@@ -6,6 +6,7 @@
 //! pathfinder state, FX entity animations, background invalidation, and
 //! door rights.
 
+use super::movement::MovePathOutcome;
 use super::*;
 use crate::patch::{PatchAnimation, PatchEffect};
 
@@ -325,13 +326,16 @@ impl EngineInner {
                 }
                 let pi = entity.position_iface();
                 let move_box_map = *pi.get_move_box_map();
+                let move_box_map_geo = move_box_map.to_geo();
                 let crushed = move_box_map.is_somewhere()
                     && appeared.iter().any(|obs| {
+                        let obs_polygon_geo: Vec<_> =
+                            obs.polygon.iter().map(|p| p.to_geo()).collect();
                         obs.bounding_box.is_somewhere()
                             && obs.bounding_box.intersects_bbox(&move_box_map)
                             && crate::geo2d::polygon_vertices_intersect_bbox(
-                                &obs.polygon,
-                                &move_box_map,
+                                &obs_polygon_geo,
+                                &move_box_map_geo,
                             )
                     });
                 Some((id, crushed))
@@ -401,11 +405,11 @@ impl EngineInner {
                     actor.active_movement.clear();
                 }
                 match self.try_dispatch_move_path(assets, id, seq_id, elem_idx, dest, action) {
-                    crate::engine::movement::MovePathOutcome::Success => {}
-                    crate::engine::movement::MovePathOutcome::ActorGone => {
+                    MovePathOutcome::Success => {}
+                    MovePathOutcome::ActorGone => {
                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                     }
-                    crate::engine::movement::MovePathOutcome::Failed => {
+                    MovePathOutcome::Failed => {
                         // Re-translate failed — slide into MOVE_WAITING.
                         self.failed_path_requests.push(
                             crate::engine::movement::FailedPathRequest {

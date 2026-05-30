@@ -12,15 +12,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::GameMaterial;
-use crate::geo2d::{BBox2D, pt};
+use crate::geo2d::pt;
 use crate::level_data::RawMaterialSector;
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct MaterialSector {
     pub points: Vec<MapPoint>,
-    pub bounding_box: BBox2D,
+    pub bounding_box: MapBBox,
     pub material: GameMaterial,
 }
 
@@ -42,9 +42,9 @@ impl MaterialSector {
             .iter()
             .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
             .collect();
-        let mut bbox = BBox2D::new();
+        let mut bbox = MapBBox::new();
         for &p in &points {
-            bbox.expand_point(p.to_geo());
+            bbox.expand_point(p);
         }
         let code = r.material as u32;
         debug_assert!(
@@ -69,7 +69,7 @@ impl MaterialSector {
         if self.points.len() < 3 {
             return false;
         }
-        if !self.bounding_box.contains_point(p.to_geo()) {
+        if !self.bounding_box.contains_point(p) {
             return false;
         }
         let mut inside = false;
@@ -329,7 +329,7 @@ mod tests {
     fn distance_to_boundary_empty_polygon_returns_sentinel() {
         let s = MaterialSector {
             points: vec![],
-            bounding_box: BBox2D::new(),
+            bounding_box: MapBBox::new(),
             material: GameMaterial::Water,
         };
         let d = s.approximate_distance_to_boundary(MapPoint::new(0.0, 0.0), 1.0);

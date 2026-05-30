@@ -1385,6 +1385,14 @@ mod tests {
         );
         assert!(!dev.debug.actor_info_display);
         assert!(!dev.debug.entity_ids);
+
+        let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "IDS");
+        assert_eq!(
+            resp,
+            ConsoleResponse::Ok("Actor infos displayed !".to_string())
+        );
+        assert!(dev.debug.actor_info_display);
+        assert!(dev.debug.entity_ids);
     }
 
     #[test]

@@ -26,7 +26,8 @@
 //! preserves door-sector and line-goal metadata when rebuilding those
 //! seek variants.
 
-use crate::coordinates::MapPoint;
+use super::movement::GoalShape;
+use crate::coordinates::{MapPoint, MapVec};
 use crate::element::{ActionState, EntityId};
 use crate::engine::LevelAssets;
 use crate::order::OrderType;
@@ -56,7 +57,6 @@ impl crate::engine::EngineInner {
         let target_entity = self.get_entity(target)?;
         let target_elem = target_entity.element_data();
         let target_pos = target_elem.position_map();
-        let target_geo = crate::geo2d::pt(target_pos.x, target_pos.y);
         let target_layer = target_elem.layer();
 
         let owner_move_box = *owner_entity.position_iface().get_move_box();
@@ -66,8 +66,8 @@ impl crate::engine::EngineInner {
                 .sprite
                 .current_hotspot()
                 .filter(|p| p.x != 0.0 || p.y != 0.0)
-                .map(|p| crate::geo2d::pt(target_pos.x + p.x, target_pos.y + p.y))
-                .unwrap_or(target_geo);
+                .map(|p| target_pos + MapVec::new(p.x, p.y))
+                .unwrap_or(target_pos);
             let mut target_box = owner_move_box.translated(current_point);
             if self.fast_grid.find_authorized_position_toward(
                 &mut target_box,
@@ -75,7 +75,7 @@ impl crate::engine::EngineInner {
                 target_layer,
             ) {
                 return Some(ResolvedEntitySeek {
-                    destination: target_box.center().into(),
+                    destination: target_box.center(),
                     tolerance: seek_distance,
                     speed_factor: 1.0,
                     stop_npc: false,
@@ -137,7 +137,7 @@ impl crate::engine::EngineInner {
             false
         };
 
-        let mut destination = target_geo;
+        let mut destination = target_pos;
         if owner_entity.is_pc() && flags.contains(MoveFlags::SEEK_SHIELD) {
             let danger = owner_entity
                 .pc_data()
@@ -148,10 +148,7 @@ impl crate::engine::EngineInner {
             let vy = (danger.y - protected_elevation) - target_pos.y;
             let len = (vx * vx + vy * vy).sqrt();
             if len > f32::EPSILON {
-                destination = crate::geo2d::pt(
-                    target_pos.x + vx / len * 50.0,
-                    target_pos.y + vy / len * 50.0,
-                );
+                destination = target_pos + MapVec::new(vx / len * 50.0, vy / len * 50.0);
             } else {
                 tolerance = seek_distance;
             }
@@ -163,7 +160,7 @@ impl crate::engine::EngineInner {
             .find_authorized_position_toward(&mut target_box, target_pos, target_layer)
         {
             Some(ResolvedEntitySeek {
-                destination: target_box.center().into(),
+                destination: target_box.center(),
                 tolerance,
                 speed_factor,
                 stop_npc,
@@ -466,7 +463,7 @@ impl crate::engine::EngineInner {
                 let elem = e.element_data();
                 let pi = e.position_iface();
                 (
-                    elem.position_map().to_geo(),
+                    elem.position_map(),
                     elem.sector(),
                     pi.get_door(),
                     pi.get_door_direction(),
@@ -480,7 +477,7 @@ impl crate::engine::EngineInner {
         let (target_pos, target_sector, target_layer) = match self.get_entity(target) {
             Some(e) => {
                 let elem = e.element_data();
-                (elem.position_map().to_geo(), elem.sector(), elem.layer())
+                (elem.position_map(), elem.sector(), elem.layer())
             }
             None => {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
@@ -515,7 +512,7 @@ impl crate::engine::EngineInner {
             });
             match adapted {
                 Some((adj, sector, _layer)) => (adj, sector),
-                None => (owner_pos.into(), u16::from(owner_sector)),
+                None => (owner_pos, u16::from(owner_sector)),
             }
         };
 
@@ -565,7 +562,7 @@ impl crate::engine::EngineInner {
         self.build_gate_movement_sequence(
             owner,
             gate_path,
-            crate::engine::movement::GoalShape::Seek {
+            GoalShape::Seek {
                 point: resolved.destination,
                 target,
                 tolerance: resolved.tolerance,

@@ -206,7 +206,7 @@ impl EngineInner {
             .and_then(|sid| self.get_entity(sid))
             .map(|e| e.position_iface())
             .map(|pi| *pi.get_move_box())
-            .unwrap_or_else(|| crate::geo2d::BBox2D::from_coords(-1.0, -1.0, 1.0, 1.0));
+            .unwrap_or_else(|| crate::coordinates::MoveBox::from_coords(-1.0, -1.0, 1.0, 1.0));
 
         // ── Position correction ────────────────────────────────────
         //
@@ -218,17 +218,12 @@ impl EngineInner {
             x: impact_pos.x,
             y: impact_pos.y,
         };
-        let mut box_at_pos =
-            shooter_move_box.translated(crate::geo2d::pt(impact_pos.x, impact_pos.y));
+        let mut box_at_pos = shooter_move_box.translated(MapPoint::new(impact_pos.x, impact_pos.y));
         if self
             .fast_grid
             .find_authorized_position(&mut box_at_pos, layer)
         {
-            let centre = box_at_pos.center();
-            corrected_2d = MapPoint {
-                x: centre.x,
-                y: centre.y,
-            };
+            corrected_2d = box_at_pos.center();
         }
         let source_pos = WorldPoint3D {
             x: corrected_2d.x,
@@ -320,8 +315,8 @@ impl EngineInner {
                     y: source_pos.y + scatter_y,
                 };
                 if self.fast_grid.is_straight_movement_authorized(
-                    crate::geo2d::pt(corrected_2d.x, corrected_2d.y).into(),
-                    crate::geo2d::pt(candidate.x, candidate.y).into(),
+                    MapPoint::new(corrected_2d.x, corrected_2d.y),
+                    candidate,
                     layer,
                     &shooter_move_box,
                 ) {

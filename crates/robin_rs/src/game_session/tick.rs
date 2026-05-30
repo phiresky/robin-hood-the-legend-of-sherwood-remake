@@ -14,6 +14,10 @@ use crate::rollback_checker::RollbackChecker;
 use crate::sdl_audio::SdlMixerBackend;
 use crate::sound::AlertStatus;
 use crate::sound_cache::SampleLoader;
+use robin_engine::engine as engine_api;
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::geo2d as engine_geo2d;
+use robin_engine::sprite as engine_sprite;
 
 /// Per-frame audio tick.
 ///
@@ -24,7 +28,7 @@ use crate::sound_cache::SampleLoader;
 /// `alert_status` runs inside `perform_hourglass` so it's part of the
 /// rollback snapshot.
 pub(super) fn tick_audio(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     backend: &mut SdlMixerBackend,
     sample_loader: &SampleLoader,
@@ -84,9 +88,9 @@ pub(super) fn tick_audio(
 /// cache derived state, not sim state, and lives outside the command
 /// pipeline.
 pub(super) fn pre_render_engine_setup(
-    _manager: &mut robin_engine::engine_manager::EngineManager,
+    _manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    _assets: &robin_engine::engine::LevelAssets,
+    _assets: &engine_api::LevelAssets,
     _renderer: &mut crate::renderer::Renderer,
 ) {
     let view = host.viewport.view_position;
@@ -98,11 +102,11 @@ pub(super) fn pre_render_engine_setup(
         // overlay uses it.
         host.draw_manager.update_drawing_parameters(
             0,
-            robin_engine::sprite::BBox::new(
+            engine_sprite::BBox::new(
                 view.to_geo(),
-                robin_engine::geo2d::pt(
+                engine_geo2d::pt(
                     view.x + (screen.x - 1.0) / zoom,
-                    view.y + (screen.y - robin_engine::engine::PANNEL_HEIGHT + 1.0) / zoom,
+                    view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
                 ),
             ),
             zoom,
@@ -125,9 +129,9 @@ pub(super) fn drain_pending_console_output(
 /// Post-render bookkeeping: clear the one-shot `display_double_status_bar`
 /// NPC flag after `render_combat_status_bars` has observed it.
 pub(super) fn post_render_engine_cleanup(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
 ) {
     clear_status_bar_flags(
         &mut manager.engine,
@@ -161,10 +165,10 @@ pub(super) fn post_render_engine_cleanup(
 /// we append more frames to it).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_steps(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &mut robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &mut engine_api::DevState,
     game: &mut Game,
     rewind_buffer: &mut RewindBuffer,
     rollback_checker: &mut Option<RollbackChecker>,
@@ -314,10 +318,10 @@ pub(super) fn drain_steps(
 /// interactive-vs-scripted divergence.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_forward_ticks(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &mut robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &mut engine_api::DevState,
     game: &mut Game,
     rewind_buffer: &mut RewindBuffer,
     rollback_checker: &mut Option<RollbackChecker>,
@@ -380,9 +384,9 @@ pub(super) fn run_forward_ticks(
 /// Returns the frame we rewound from on success.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn rewind_to_frame(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     rewind_buffer: &mut RewindBuffer,
     replay_player: &mut Option<ReplayPlayer>,
     target: u32,

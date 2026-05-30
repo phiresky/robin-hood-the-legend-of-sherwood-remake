@@ -20,9 +20,9 @@ impl EngineInner {
             Some(e) => (e.element_data().position_map(), e.element_data().layer()),
             None => return,
         };
-        let mut bbox = crate::geo2d::BBox2D::from_corners(
-            crate::geo2d::pt(start.x - BOX_LYING_X, start.y - BOX_LYING_Y),
-            crate::geo2d::pt(start.x + BOX_LYING_X, start.y + BOX_LYING_Y),
+        let mut bbox = crate::coordinates::MapBBox::from_corners(
+            crate::coordinates::MapPoint::new(start.x - BOX_LYING_X, start.y - BOX_LYING_Y),
+            crate::coordinates::MapPoint::new(start.x + BOX_LYING_X, start.y + BOX_LYING_Y),
         );
         // Use the click-biased `find_authorized_position_toward` so
         // the box stays pulled toward the actor's original spot; the
@@ -1233,16 +1233,16 @@ impl EngineInner {
 
         // Validate the flight destination with fractional fallback.
         let (goal_x, goal_y) = if flight_x.abs() > 0.01 || flight_y.abs() > 0.01 {
-            let pt_start = crate::geo2d::pt(victim_pos.x, victim_pos.y);
+            let pt_start = victim_pos;
             let mut gx = victim_pos.x;
             let mut gy = victim_pos.y;
             for &frac in &[1.0f32, 0.75, 0.5, 0.25] {
                 let try_x = victim_pos.x + flight_x * frac;
                 let try_y = victim_pos.y + flight_y * frac;
-                let pt_try = crate::geo2d::pt(try_x, try_y);
+                let pt_try = crate::coordinates::MapPoint::new(try_x, try_y);
                 if self.fast_grid.is_straight_movement_authorized(
-                    pt_start.into(),
-                    pt_try.into(),
+                    pt_start,
+                    pt_try,
                     victim_layer,
                     &victim_move_box,
                 ) {

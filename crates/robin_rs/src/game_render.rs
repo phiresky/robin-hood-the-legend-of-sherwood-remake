@@ -20,8 +20,19 @@ use crate::player_command::PlayerCommand;
 use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
-use robin_engine::engine::{DevState, Engine, LevelAssets};
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::coordinates::{GroundPoint, MapPoint};
+use robin_engine::element as engine_element;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::{Ambiance, DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
+use robin_engine::geo2d as engine_geo2d;
 use robin_engine::markers::GroundMark;
+use robin_engine::mask as engine_mask;
+use robin_engine::minimap as engine_minimap;
+use robin_engine::pathfinder as engine_pathfinder;
+use robin_engine::position_interface as engine_position_interface;
+use robin_engine::sector as engine_sector;
+use robin_engine::sight_obstacle as engine_sight_obstacle;
 use robin_engine::sprite::BBox;
 
 // ─── Door / jump zone alpha overlays ──────────────────────────────────
@@ -62,10 +73,8 @@ pub(crate) fn render_door_overlays(
 ) {
     use crate::element::Posture;
     use crate::gate::DoorType;
-    use crate::geo2d::pt;
     use crate::profiles::Action;
     use crate::sector::SectorType;
-    use robin_engine::coordinates::MapPoint;
 
     let Some(game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
         return;
@@ -79,16 +88,14 @@ pub(crate) fn render_door_overlays(
             .draw_alpha_polygon(renderer, pts, color, alpha);
     };
 
-    let draw_map_polygon = |renderer: &mut Renderer,
-                            pts: &[robin_engine::coordinates::MapPoint],
-                            color: u32,
-                            alpha: u32| {
-        if pts.len() < 3 {
-            return;
-        }
-        host.draw_manager
-            .draw_alpha_polygon(renderer, pts, color, alpha);
-    };
+    let draw_map_polygon =
+        |renderer: &mut Renderer, pts: &[engine_coordinates::MapPoint], color: u32, alpha: u32| {
+            if pts.len() < 3 {
+                return;
+            }
+            host.draw_manager
+                .draw_alpha_polygon(renderer, pts, color, alpha);
+        };
 
     let draw_door = |renderer: &mut Renderer, door: &crate::gate::Door| {
         if door.click_polygon.len() < 3 {
@@ -127,7 +134,7 @@ pub(crate) fn render_door_overlays(
             .fast_grid()
             .level
             .sector_number_map
-            .get(&robin_engine::sector::SectorNumber::new(sector_num))?;
+            .get(&engine_sector::SectorNumber::new(sector_num))?;
         engine.fast_grid().level.sectors.get(idx)
     };
 
@@ -307,16 +314,13 @@ pub(crate) fn render_door_overlays(
                 }
                 let pc_pos = engine
                     .get_entity(pc_id)
-                    .map(|e| {
-                        let p = e.element_data().position_map();
-                        pt(p.x, p.y)
-                    })
-                    .unwrap_or(pt(0.0, 0.0));
+                    .map(|e| e.element_data().position_map())
+                    .unwrap_or(MapPoint::ZERO);
                 paint = engine
                     .get_nearest_jumpable_jump_line(
                         pc_id,
                         pc_pos,
-                        pt(0.0, 0.0),
+                        MapPoint::ZERO,
                         /* test_posture */ false,
                     )
                     .is_some();
@@ -397,7 +401,6 @@ pub(crate) fn apply_ambiance_overlay(engine: &Engine, renderer: &mut Renderer) {
     use robin_assets::frame_holder::{
         FOG_COLOR, FOG_INTENSITY, NIGHT_FOG_COLOR_16, NIGHT_INTENSITY,
     };
-    use robin_engine::engine::Ambiance;
 
     let (level, fog_color) = match engine.weather().ambiance {
         Ambiance::Night => (NIGHT_INTENSITY, NIGHT_FOG_COLOR_16),
@@ -434,8 +437,8 @@ pub(crate) fn render_view_cone_overlay(
     host: &Host,
     engine: &Engine,
     assets: &LevelAssets,
-    selected_view_element: Option<robin_engine::element::EntityId>,
-    dev: &robin_engine::engine::DevState,
+    selected_view_element: Option<engine_element::EntityId>,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     use robin_engine::engine::{Ambiance, PANNEL_HEIGHT};
@@ -452,17 +455,17 @@ pub(crate) fn render_view_cone_overlay(
     let (viewer, params, tint) = if dev.debug.free_shadow_polygon {
         // Developer cheat: anchor the cone at a stored 3D position,
         // or at the camera centre when nothing has been set yet.
-        let pos = dev.cheat_free_shadow_polygon_pos.unwrap_or_else(|| {
-            robin_engine::coordinates::WorldPoint3D {
-                x: host.viewport.view_position.x
-                    + (host.viewport.screen_size.x / host.viewport.zoom_factor) * 0.5,
-                y: host.viewport.view_position.y
-                    + (host.viewport.screen_size.y / host.viewport.zoom_factor) * 0.5,
-                z: 0.0,
-            }
-        });
+        let pos =
+            dev.cheat_free_shadow_polygon_pos
+                .unwrap_or_else(|| engine_coordinates::WorldPoint3D {
+                    x: host.viewport.view_position.x
+                        + (host.viewport.screen_size.x / host.viewport.zoom_factor) * 0.5,
+                    y: host.viewport.view_position.y
+                        + (host.viewport.screen_size.y / host.viewport.zoom_factor) * 0.5,
+                    z: 0.0,
+                });
         (
-            geo2d::pt(pos.x, pos.y),
+            GroundPoint::new(pos.x, pos.y),
             dev.cheat_free_shadow_polygon_params.clone(),
             None,
         )
@@ -509,13 +512,13 @@ pub(crate) fn render_view_cone_overlay(
     // Collect character masks whose world-space bbox intersects the view
     // rect — these building silhouettes clear the tint inside the cone
     // in `render_darken_inside_gpu`'s mask post-pass.
-    let view_bbox = BBox2D::from_coords(
+    let view_bbox = engine_coordinates::MapBBox::from_coords(
         view_rect.min.x,
         view_rect.min.y,
         view_rect.max.x,
         view_rect.max.y,
     );
-    let cone_masks: Vec<&robin_engine::mask::RuntimeMask> = engine
+    let cone_masks: Vec<&engine_mask::RuntimeMask> = engine
         .fast_grid()
         .level
         .masks
@@ -524,7 +527,7 @@ pub(crate) fn render_view_cone_overlay(
         .filter(|(idx, m)| {
             // Only masks with a valid (non-max) index participate in the
             // active toggle; enumerate() yields usize so wrap through new().
-            robin_engine::mask::MaskIndex::new(*idx as u32)
+            engine_mask::MaskIndex::new(*idx as u32)
                 .is_some_and(|mi| engine.fast_grid().is_mask_active(mi))
                 && m.is_character()
                 && m.bbox.intersects_bbox(&view_bbox)
@@ -552,13 +555,13 @@ struct ViewConeRenderSlice {
     polys: Vec<Vec<crate::geo2d::GeoPoint2D>>,
     viewer: crate::geo2d::GeoPoint2D,
     radius: f32,
-    projection_plane: Option<robin_engine::position_interface::PlaneZCoeffs>,
+    projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
 }
 
 fn view_cone_polys_for_render(
-    viewer: crate::geo2d::GeoPoint2D,
+    viewer: GroundPoint,
     params: &crate::shadow_polygon::ViewParameters,
-    obstacles_view: &robin_engine::sight_obstacle::ObstacleList<'_>,
+    obstacles_view: &engine_sight_obstacle::ObstacleList<'_>,
 ) -> Option<Vec<ViewConeRenderSlice>> {
     if let Some(obstacle_handle) = params.projection_obstacle {
         let idx = usize::from(obstacle_handle);
@@ -593,13 +596,13 @@ fn view_cone_polys_for_render(
         let mut slice_params = params.clone();
         slice_params.radius = radius;
         let ground_polys = crate::shadow_polygon::compute_visibility_polygon(
-            viewer,
+            viewer.to_geo(),
             &slice_params,
             &all_obstacles,
         );
         slices.push(ViewConeRenderSlice {
             polys: ground_polys,
-            viewer,
+            viewer: viewer.to_geo(),
             radius,
             projection_plane: None,
         });
@@ -609,7 +612,7 @@ fn view_cone_polys_for_render(
         let cone = crate::shadow_polygon::compute_view_cone(viewer, params);
         let mut bbox = BBox2D::new();
         for p in cone {
-            bbox.expand_point(p);
+            bbox.expand_point(p.to_geo());
         }
         bbox
     };
@@ -617,14 +620,15 @@ fn view_cone_polys_for_render(
     for (projection_idx, projection_area) in active_obstacles.iter().copied().filter(|(_, o)| {
         o.is_projection_area()
             && o.is_showing_shadow_polygon()
-            && o.box_ground.intersects_bbox(&cone_bbox)
+            && o.box_ground
+                .intersects_bbox(&engine_coordinates::GroundBBox::from_geo(cone_bbox))
     }) {
         let obstacles: Vec<&crate::sight_obstacle::SightObstacle> = active_obstacles
             .iter()
             .filter(|(idx, _)| *idx != projection_idx)
             .map(|(_, o)| *o)
             .collect();
-        let projection_plane = robin_engine::position_interface::PlaneZCoeffs::from_plane_points(
+        let projection_plane = engine_position_interface::PlaneZCoeffs::from_plane_points(
             &projection_area.top_plane_points,
         );
         let Some(radius) = shadow_polygon_slice_radius(params, Some(projection_plane), viewer)
@@ -640,13 +644,18 @@ fn view_cone_polys_for_render(
                     (*idx != projection_idx
                         && o.is_projection_area()
                         && o.layer >= projection_area.layer
-                        && o.box_screen.intersects_bbox(&projection_area.box_screen))
+                        && o.box_projection
+                            .intersects_bbox(&projection_area.box_projection))
                     .then_some(*o)
                 })
                 .collect();
         let (polys, viewer) = crate::shadow_polygon::project_and_clip_to_projection_area(
-            &crate::shadow_polygon::compute_visibility_polygon(viewer, &slice_params, &obstacles),
-            viewer,
+            &crate::shadow_polygon::compute_visibility_polygon(
+                viewer.to_geo(),
+                &slice_params,
+                &obstacles,
+            ),
+            viewer.to_geo(),
             projection_plane,
             projection_area,
             &occluding_projection_areas,
@@ -674,8 +683,8 @@ fn view_cone_polys_for_render(
 
 fn shadow_polygon_slice_radius(
     params: &crate::shadow_polygon::ViewParameters,
-    projection_plane: Option<robin_engine::position_interface::PlaneZCoeffs>,
-    viewer: crate::geo2d::GeoPoint2D,
+    projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
+    viewer: GroundPoint,
 ) -> Option<f32> {
     const FACTOR_ELLIPSE: f32 = 0.35;
     const INV_SQUARE_FACTOR_ELLIPSE: f32 = 8.163_265;
@@ -722,8 +731,8 @@ fn shadow_polygon_slice_radius(
 pub(crate) fn render_shadow_polygon_sphere_debug(
     host: &Host,
     engine: &Engine,
-    selected_view_element: Option<robin_engine::element::EntityId>,
-    dev: &robin_engine::engine::DevState,
+    selected_view_element: Option<engine_element::EntityId>,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     if !dev.debug.shadow_polygon_sphere {
@@ -735,7 +744,7 @@ pub(crate) fn render_shadow_polygon_sphere_debug(
     };
     host.draw_manager.draw_ellipse(
         renderer,
-        robin_engine::coordinates::MapPoint::new(viewer.x, viewer.y),
+        engine_coordinates::MapPoint::new(viewer.x, viewer.y),
         params.radius as u16,
         0xFFFF,
     );
@@ -948,13 +957,13 @@ fn render_ground_mark_set(
             BLIT_SOURCE_TRANSPARENT,
         );
 
-        let mark_world_bbox = BBox2D::from_coords(
+        let mark_world_bbox = engine_coordinates::MapBBox::from_coords(
             mark.x + ox as f32,
             mark.y + oy as f32,
             mark.x + ox as f32 + fw as f32,
             mark.y + oy as f32 + fh as f32,
         );
-        let mark_position = crate::geo2d::pt(
+        let mark_position = MapPoint::new(
             mark.x + ox as f32 + fw as f32 * 0.5,
             mark.y + oy as f32 + fh as f32 * 0.5,
         );
@@ -964,7 +973,7 @@ fn render_ground_mark_set(
             renderer,
             mark.layer,
             &mark_world_bbox,
-            robin_engine::coordinates::MapPoint::from_geo(mark_position),
+            mark_position,
             mark_rect,
             view_pos.to_geo(),
             zoom,
@@ -977,8 +986,8 @@ fn render_character_masks_clipped(
     engine: &Engine,
     renderer: &mut Renderer,
     layer: u16,
-    world_bbox: &crate::geo2d::BBox2D,
-    position: robin_engine::coordinates::MapPoint,
+    world_bbox: &engine_coordinates::MapBBox,
+    position: engine_coordinates::MapPoint,
     clip_rect: Rect,
     view: crate::geo2d::GeoPoint2D,
     zoom: f32,
@@ -1265,14 +1274,14 @@ pub(crate) fn render_entities_gpu(
             // of the sprite.  Where the mask is set the building
             // pixels reappear in front of the actor; elsewhere the
             // texture is transparent and the sprite stays visible.
-            let sprite_world_bbox = BBox2D::from_coords(
+            let sprite_world_bbox = engine_coordinates::MapBBox::from_coords(
                 sprite_x,
                 sprite_y,
                 sprite_x + sw as f32,
                 sprite_y + sh as f32,
             );
             let actor_layer = elem.layer();
-            let actor_position = robin_engine::coordinates::MapPoint::new(world_x, world_y);
+            let actor_position = engine_coordinates::MapPoint::new(world_x, world_y);
             // The mask lookup switches between
             // `get_masks_applied_to_character` and
             // `get_masks_applied_to_projectile` based on the masking
@@ -1304,7 +1313,7 @@ pub(crate) fn render_entities_gpu(
                 engine.fast_grid().get_masks_applied_to_projectile(
                     engine.fast_grid().level.special_layer,
                     &sprite_world_bbox,
-                    projectile_mask_position.into(),
+                    projectile_mask_position,
                     is_flying_human, // is_human — bottom-plane test
                     engine.sight_obstacles(assets),
                 )
@@ -1399,7 +1408,7 @@ fn transition_crenel_climb_up_mask_position(
     entity: &crate::element::Entity,
     engine: &Engine,
     assets: &LevelAssets,
-) -> Option<robin_engine::coordinates::WorldPoint3D> {
+) -> Option<engine_coordinates::WorldPoint3D> {
     use crate::order::OrderType;
 
     let elem = entity.element_data();
@@ -1430,7 +1439,7 @@ fn transition_crenel_climb_up_mask_position(
         if !obs.is_projection_area()
             || obs.layer != door.layer_out
             || obs.sector != u16::from(door.sector_out)
-            || !obs.contains_point_screen(point_out)
+            || !obs.contains_point_projection(engine_coordinates::MapPoint::from_geo(point_out))
         {
             continue;
         }
@@ -1438,7 +1447,7 @@ fn transition_crenel_climb_up_mask_position(
         best_z = Some(best_z.map_or(z, |old| old.max(z)));
     }
     let z = best_z?;
-    Some(robin_engine::coordinates::WorldPoint3D {
+    Some(engine_coordinates::WorldPoint3D {
         x: point_mid.x,
         y: point_mid.y + z,
         z,
@@ -1450,11 +1459,11 @@ fn render_sprite_mask_debug_overlay(
     host: &Host,
     engine: &Engine,
     renderer: &mut Renderer,
-    sprite_world_bbox: &crate::geo2d::BBox2D,
-    actor_position: robin_engine::coordinates::MapPoint,
-    position_3d: robin_engine::coordinates::WorldPoint3D,
+    sprite_world_bbox: &engine_coordinates::MapBBox,
+    actor_position: engine_coordinates::MapPoint,
+    position_3d: engine_coordinates::WorldPoint3D,
     use_projectile_path: bool,
-    mask_indices: &[robin_engine::mask::MaskIndex],
+    mask_indices: &[engine_mask::MaskIndex],
 ) {
     if mask_indices.is_empty() && !use_projectile_path {
         return;
@@ -1465,18 +1474,18 @@ fn render_sprite_mask_debug_overlay(
     } else {
         0xf81f
     };
-    draw_world_bbox_outline(host, renderer, sprite_world_bbox, sprite_color);
+    draw_map_bbox_outline(host, renderer, sprite_world_bbox, sprite_color);
 
     for &mask_idx in mask_indices {
         let mask = &engine.fast_grid().level.masks[usize::from(mask_idx)];
-        draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
+        draw_map_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
     }
 
-    draw_world_cross(host, renderer, actor_position.to_geo(), 0x07e0);
+    draw_map_cross(host, renderer, actor_position, 0x07e0);
     if use_projectile_path {
-        let projectile_test_point = crate::geo2d::pt(position_3d.x, position_3d.y);
-        let actor_screen = world_to_screen(host, actor_position.to_geo());
-        let projectile_screen = world_to_screen(host, projectile_test_point);
+        let projectile_test_point = position_3d.to_map();
+        let actor_screen = map_to_screen(host, actor_position);
+        let projectile_screen = map_to_screen(host, projectile_test_point);
         renderer.draw_line_screen(
             actor_screen.0,
             actor_screen.1,
@@ -1484,36 +1493,42 @@ fn render_sprite_mask_debug_overlay(
             projectile_screen.1,
             0xfd20,
         );
-        draw_world_cross(host, renderer, projectile_test_point, 0xfd20);
+        draw_map_cross(host, renderer, projectile_test_point, 0xfd20);
     }
 }
 
-fn draw_world_bbox_outline(
+fn draw_map_bbox_outline(
     host: &Host,
     renderer: &mut Renderer,
-    bbox: &crate::geo2d::BBox2D,
+    bbox: &engine_coordinates::MapBBox,
     color: u16,
 ) {
     if !bbox.is_somewhere() {
         return;
     }
-    let (x1, y1) = world_to_screen(host, crate::geo2d::pt(bbox.x_min(), bbox.y_min()));
-    let (x2, y2) = world_to_screen(host, crate::geo2d::pt(bbox.x_max(), bbox.y_max()));
+    let (x1, y1) = map_to_screen(
+        host,
+        engine_coordinates::MapPoint::new(bbox.x_min(), bbox.y_min()),
+    );
+    let (x2, y2) = map_to_screen(
+        host,
+        engine_coordinates::MapPoint::new(bbox.x_max(), bbox.y_max()),
+    );
     renderer.draw_rect_outline_screen(x1, y1, x2, y2, color);
 }
 
-fn draw_world_cross(
+fn draw_map_cross(
     host: &Host,
     renderer: &mut Renderer,
-    point: crate::geo2d::GeoPoint2D,
+    point: engine_coordinates::MapPoint,
     color: u16,
 ) {
-    let (x, y) = world_to_screen(host, point);
+    let (x, y) = map_to_screen(host, point);
     renderer.draw_line_screen(x - 4, y, x + 4, y, color);
     renderer.draw_line_screen(x, y - 4, x, y + 4, color);
 }
 
-fn world_to_screen(host: &Host, point: crate::geo2d::GeoPoint2D) -> (i32, i32) {
+fn map_to_screen(host: &Host, point: engine_coordinates::MapPoint) -> (i32, i32) {
     let view = host.viewport.view_position;
     let zoom = host.viewport.zoom_factor;
     (
@@ -1831,8 +1846,8 @@ fn draw_status_bar(
 /// through the single `apply_command` entry point.
 pub(crate) fn clear_status_bar_flags(
     engine: &mut Engine,
-    display: &mut robin_engine::engine::HostDisplayState,
-    input: &mut robin_engine::engine::InputState,
+    display: &mut engine_api::HostDisplayState,
+    input: &mut engine_api::InputState,
     assets: &LevelAssets,
 ) {
     engine.apply_command(
@@ -1881,7 +1896,7 @@ fn render_entity_fallback(
 /// active entity coloured by kind + state.
 pub(crate) fn render_minimap(
     host: &mut Host,
-    display: &robin_engine::engine::HostDisplayState,
+    display: &engine_api::HostDisplayState,
     engine: &Engine,
     assets: &LevelAssets,
     renderer: &mut Renderer,
@@ -1957,7 +1972,7 @@ pub(crate) fn render_minimap(
     // PANNEL_HEIGHT.  This diverges from the camera-position clamp
     // formula (which subtracts before dividing); the original may
     // itself be a bug, but the parity contract wins.
-    let view_br = robin_engine::coordinates::MapPoint::new(
+    let view_br = engine_coordinates::MapPoint::new(
         camera_pos.x + screen_size.x / zoom,
         camera_pos.y + screen_size.y / zoom - 80.0, // PANNEL_HEIGHT = 80
     );
@@ -2001,7 +2016,7 @@ pub(crate) fn render_minimap(
         if !info.is_active {
             continue;
         }
-        let dot_type = match robin_engine::minimap::classify_element_dot(&info) {
+        let dot_type = match engine_minimap::classify_element_dot(&info) {
             Some(d) => d,
             None => continue,
         };
@@ -2037,7 +2052,7 @@ pub(crate) fn render_minimap(
             mm,
             level_size,
             entity.element_data().position_map(),
-            robin_engine::minimap::DotType::Highlighted,
+            engine_minimap::DotType::Highlighted,
             &widget_box,
             renderer,
         );
@@ -2048,11 +2063,11 @@ pub(crate) fn render_minimap(
 /// position.
 fn refresh_dot(
     host: &Host,
-    mm: &robin_engine::minimap::MinimapState,
-    level_size: robin_engine::geo2d::Vec2D,
-    world_pos: robin_engine::coordinates::MapPoint,
-    dot_type: robin_engine::minimap::DotType,
-    widget_box: &robin_engine::coordinates::ScreenBBox,
+    mm: &engine_minimap::MinimapState,
+    level_size: engine_geo2d::Vec2D,
+    world_pos: engine_coordinates::MapPoint,
+    dot_type: engine_minimap::DotType,
+    widget_box: &engine_coordinates::ScreenBBox,
     renderer: &mut Renderer,
 ) {
     let idx = dot_type as usize;
@@ -2067,7 +2082,7 @@ fn refresh_dot(
     };
 
     // Centre the sprite on the converted position.
-    let top_left = robin_engine::coordinates::ScreenPoint::new(
+    let top_left = engine_coordinates::ScreenPoint::new(
         map_pos.x - (dot_w as f32) * 0.5,
         map_pos.y - (dot_h as f32) * 0.5,
     );
@@ -2167,7 +2182,7 @@ pub(crate) fn render_patch_fx_gpu(
 
 fn render_fx_entities_gpu<I>(entity_ids: I, engine: &Engine, host: &Host, renderer: &mut Renderer)
 where
-    I: IntoIterator<Item = robin_engine::element::EntityId>,
+    I: IntoIterator<Item = engine_element::EntityId>,
 {
     let view = host.viewport.view_position;
     let zoom = host.viewport.zoom_factor;
@@ -2294,7 +2309,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
     /// Render dots along a trajectory from `start` through `points`.
     #[allow(clippy::too_many_arguments)]
     fn render_arc(
-        start: robin_engine::coordinates::WorldPoint3D,
+        start: engine_coordinates::WorldPoint3D,
         points: &[crate::element::TrajectoryPoint],
         view: crate::geo2d::GeoPoint2D,
         zoom: f32,
@@ -2326,17 +2341,15 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
             let mut dot_distance = TRAJECTORY_DOT_INTERVAL - carry;
             while dot_distance <= seg_len {
                 let ratio = dot_distance / seg_len;
-                let walk = robin_engine::coordinates::WorldPoint3D {
+                let walk = engine_coordinates::WorldPoint3D {
                     x: last.x + dx * ratio,
                     y: last.y + dy * ratio,
                     z: last.z + dz * ratio,
                 };
 
-                // Project 3D → 2D: screen_y uses (y - z) for isometric height
-                let map_x = walk.x;
-                let map_y = walk.y - walk.z;
-                let sx = ((map_x - view.x) * zoom) as i32;
-                let sy = ((map_y - view.y) * zoom) as i32;
+                let walk_map = walk.to_map();
+                let sx = ((walk_map.x - view.x) * zoom) as i32;
+                let sy = ((walk_map.y - view.y) * zoom) as i32;
 
                 if sx >= 0 && sy >= 0 && sx < screen_w && sy < screen_h {
                     renderer.render_gpu_rect(sx, sy, 2, 2, cr, cg, cb, 255);
@@ -2440,7 +2453,7 @@ pub(crate) fn render_listen_ping(host: &mut Host, engine: &Engine, renderer: &mu
 pub(crate) fn render_debug_doors(
     host: &Host,
     engine: &Engine,
-    dev: &robin_engine::engine::DevState,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     use crate::gate::DoorType;
@@ -2539,8 +2552,8 @@ pub(crate) fn render_debug_doors(
 pub(crate) fn render_debug_motion_graph(
     host: &Host,
     engine: &Engine,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     if !dev.debug.motion_graph_display {
@@ -2556,8 +2569,8 @@ pub(crate) fn render_debug_motion_graph(
 
     // The bounding box is the camera viewport in world coords: origin
     // at `view_position`, dimensions `screen_size / zoom_factor`.
-    let view_rect = robin_engine::geo2d::BBox2D::from_point_size(
-        view.to_geo(),
+    let view_rect = engine_coordinates::MapBBox::from_point_size(
+        view,
         screen_size.x / zoom,
         screen_size.y / zoom,
     );
@@ -2570,7 +2583,7 @@ pub(crate) fn render_debug_motion_graph(
         .map(|e| e.sprite().position_iface.get_pathfinder_index())
         .unwrap_or(0);
 
-    let world_to_screen = |p: robin_engine::coordinates::MapPoint| -> (i32, i32) {
+    let world_to_screen = |p: engine_coordinates::MapPoint| -> (i32, i32) {
         let sx = ((p.x - view.x) * zoom).round() as i32;
         let sy = ((p.y - view.y) * zoom).round() as i32;
         (sx, sy)
@@ -2636,20 +2649,16 @@ fn surface_color(layer: usize, area: usize) -> (u8, u8, u8) {
 /// layer.  Both indices are vec positions in
 /// `move_layers[layer][area]` — matches `PathGraph::find_area_at_point`,
 /// which is the canonical lookup.
-fn locate_surface(
-    graph: &robin_engine::pathfinder::PathGraph,
-    pt: robin_engine::geo2d::GeoPoint2D,
-) -> Option<(usize, usize)> {
-    let pt = robin_engine::coordinates::MapPoint::from_geo(pt);
+fn locate_surface(graph: &engine_pathfinder::PathGraph, pt: MapPoint) -> Option<(usize, usize)> {
     (0..graph.static_data.move_layers.len())
         .find_map(|l| graph.find_area_at_point(l, pt).map(|a| (l, a)))
 }
 
 /// Draw a closed polyline outline on the GPU layer.
-fn draw_polygon_outline_world(
+fn draw_polygon_outline_map(
     renderer: &mut Renderer,
-    verts: &[robin_engine::geo2d::GeoPoint2D],
-    world_to_screen: &dyn Fn(robin_engine::geo2d::GeoPoint2D) -> (i32, i32),
+    verts: &[MapPoint],
+    map_to_screen: &dyn Fn(MapPoint) -> (i32, i32),
     r: u8,
     g: u8,
     b: u8,
@@ -2660,8 +2669,8 @@ fn draw_polygon_outline_world(
     for i in 0..verts.len() {
         let a = verts[i];
         let bp = verts[(i + 1) % verts.len()];
-        let (x1, y1) = world_to_screen(a);
-        let (x2, y2) = world_to_screen(bp);
+        let (x1, y1) = map_to_screen(a);
+        let (x2, y2) = map_to_screen(bp);
         renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
     }
 }
@@ -2673,10 +2682,10 @@ fn draw_polygon_outline_world(
 /// boundaries are routinely concave (e.g. ground areas wrapping around
 /// buildings), and a fan from vertex 0 produces giant bowtie triangles
 /// that fan across empty space.
-fn fill_polygon_world(
+fn fill_polygon_map(
     renderer: &mut Renderer,
-    verts: &[robin_engine::geo2d::GeoPoint2D],
-    world_to_screen: &dyn Fn(robin_engine::geo2d::GeoPoint2D) -> (f32, f32),
+    verts: &[MapPoint],
+    map_to_screen: &dyn Fn(MapPoint) -> (f32, f32),
     r: u8,
     g: u8,
     b: u8,
@@ -2695,9 +2704,9 @@ fn fill_polygon_world(
         Err(_) => return,
     };
     for tri in indices.chunks_exact(3) {
-        let p0 = world_to_screen(verts[tri[0]]);
-        let p1 = world_to_screen(verts[tri[1]]);
-        let p2 = world_to_screen(verts[tri[2]]);
+        let p0 = map_to_screen(verts[tri[0]]);
+        let p1 = map_to_screen(verts[tri[1]]);
+        let p2 = map_to_screen(verts[tri[2]]);
         renderer.render_gpu_triangle([p0, p1, p2], r, g, b, a);
     }
 }
@@ -2707,7 +2716,7 @@ fn fill_polygon_world(
 fn selected_surface(
     host: &Host,
     engine: &Engine,
-    graph: &robin_engine::pathfinder::PathGraph,
+    graph: &engine_pathfinder::PathGraph,
 ) -> Option<(usize, usize)> {
     let pc_id = engine.seat_selection(host.local_seat).first().copied()?;
     let entity = engine.get_entity(pc_id)?;
@@ -2727,7 +2736,7 @@ pub(crate) fn render_debug_surfaces_fill(
     host: &Host,
     engine: &Engine,
     assets: &LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     if !dev.debug.surface_display {
@@ -2739,9 +2748,8 @@ pub(crate) fn render_debug_surfaces_fill(
     if zoom <= 0.0 || screen_size.x <= 0.0 || screen_size.y <= 0.0 {
         return;
     }
-    let to_screen_f = move |p: robin_engine::geo2d::GeoPoint2D| -> (f32, f32) {
-        ((p.x - view.x) * zoom, (p.y - view.y) * zoom)
-    };
+    let to_screen_f =
+        move |p: MapPoint| -> (f32, f32) { ((p.x - view.x) * zoom, (p.y - view.y) * zoom) };
     let graph = assets.pathfinder_graph.as_ref();
     let Some((sel_layer, sel_area)) = selected_surface(host, engine, graph) else {
         return;
@@ -2754,7 +2762,7 @@ pub(crate) fn render_debug_surfaces_fill(
     else {
         return;
     };
-    fill_polygon_world(renderer, &area.polygon, &to_screen_f, 255, 255, 0, 80);
+    fill_polygon_map(renderer, &area.polygon, &to_screen_f, 255, 255, 0, 80);
 }
 
 /// Outline + path pass for the surface debug overlay.  Drawn after
@@ -2765,7 +2773,7 @@ pub(crate) fn render_debug_surfaces_outline(
     host: &Host,
     engine: &Engine,
     assets: &LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     if !dev.debug.surface_display {
@@ -2779,7 +2787,7 @@ pub(crate) fn render_debug_surfaces_outline(
         return;
     }
 
-    let to_screen_i = move |p: robin_engine::geo2d::GeoPoint2D| -> (i32, i32) {
+    let to_screen_i = move |p: MapPoint| -> (i32, i32) {
         let (sx, sy) = ((p.x - view.x) * zoom, (p.y - view.y) * zoom);
         (sx.round() as i32, sy.round() as i32)
     };
@@ -2793,12 +2801,12 @@ pub(crate) fn render_debug_surfaces_outline(
     for (layer_idx, areas) in move_layers.iter().enumerate() {
         for (area_idx, area) in areas.iter().enumerate() {
             let (r, g, b) = surface_color(layer_idx, area_idx);
-            draw_polygon_outline_world(renderer, &area.polygon, &to_screen_i, r, g, b);
+            draw_polygon_outline_map(renderer, &area.polygon, &to_screen_i, r, g, b);
             for obstacle in &area.motion_obstacles {
                 if !obstacle.active {
                     continue;
                 }
-                draw_polygon_outline_world(renderer, &obstacle.polygon, &to_screen_i, 200, 40, 40);
+                draw_polygon_outline_map(renderer, &obstacle.polygon, &to_screen_i, 200, 40, 40);
             }
         }
     }
@@ -2810,7 +2818,7 @@ pub(crate) fn render_debug_surfaces_outline(
             .get(sel_layer)
             .and_then(|areas| areas.get(sel_area))
     {
-        draw_polygon_outline_world(renderer, &area.polygon, &to_screen_i, 255, 255, 0);
+        draw_polygon_outline_map(renderer, &area.polygon, &to_screen_i, 255, 255, 0);
     }
 
     // Pass 3: committed path polyline, colored per segment by the
@@ -2822,25 +2830,21 @@ pub(crate) fn render_debug_surfaces_outline(
     {
         let start = engine
             .get_entity(pc_id)
-            .map(|e| {
-                let pm = e.element_data().position_map();
-                robin_engine::geo2d::pt(pm.x, pm.y)
-            })
-            .unwrap_or_else(|| waypoints[0].to_geo());
+            .map(|e| e.element_data().position_map())
+            .unwrap_or(waypoints[0]);
         let mut prev = start;
         for &wp in &waypoints {
-            let wp_geo = wp.to_geo();
-            let (r, g, b) = match locate_surface(graph, wp_geo) {
+            let (r, g, b) = match locate_surface(graph, wp) {
                 Some((l, a)) => surface_color(l, a),
                 None => (255, 255, 255),
             };
             let (x1, y1) = to_screen_i(prev);
-            let (x2, y2) = to_screen_i(wp_geo);
+            let (x2, y2) = to_screen_i(wp);
             renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
             const M: i32 = 4;
             renderer.render_gpu_line(x2 - M, y2 - M, x2 + M, y2 + M, r, g, b);
             renderer.render_gpu_line(x2 - M, y2 + M, x2 + M, y2 - M, r, g, b);
-            prev = wp_geo;
+            prev = wp;
         }
     }
 
@@ -2856,8 +2860,9 @@ pub(crate) fn render_debug_surfaces_outline(
         let pos = entity.element_data().position();
         // Top: where the sprite is drawn.  Bottom: same map (x, y)
         // but at z = 0.
-        let top_x_w = pos.x;
-        let top_y_w = pos.y - pos.z;
+        let top_map = pos.to_map();
+        let top_x_w = top_map.x;
+        let top_y_w = top_map.y;
         let bot_x_w = pos.x;
         let bot_y_w = pos.y;
         let top = (
@@ -2923,9 +2928,9 @@ pub(crate) fn render_noise_display(
     host: &mut Host,
     engine: &Engine,
     assets: &LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    dev: &engine_api::DevState,
     fonts: Option<&HudFonts>,
-    selected_view_element: Option<robin_engine::element::EntityId>,
+    selected_view_element: Option<engine_element::EntityId>,
     renderer: &mut Renderer,
 ) {
     if !dev.debug.noise_display {
@@ -3003,7 +3008,7 @@ pub(crate) fn render_noise_display(
     // ── (2) Punctual noises ──────────────────────────────────────
     for displayed in &dev.displayed_noises {
         let noise = &displayed.noise;
-        let origin = robin_engine::coordinates::MapPoint::new(noise.origin.x, noise.origin.y);
+        let origin = engine_coordinates::MapPoint::new(noise.origin.x, noise.origin.y);
         let effective = (noise.volume as f32 * HEARING_FACTOR) as u16;
         let mut r = displayed.start_radius;
         while r < effective {
@@ -3026,7 +3031,7 @@ pub(crate) fn render_noise_display(
                 let radius = r2.sqrt() as u16;
                 host.draw_manager.draw_ellipse(
                     renderer,
-                    robin_engine::coordinates::MapPoint::new(origin.x, origin.y - sw_height as f32),
+                    engine_coordinates::MapPoint::new(origin.x, origin.y - sw_height as f32),
                     radius,
                     0x000A,
                 );
@@ -3038,7 +3043,7 @@ pub(crate) fn render_noise_display(
     // ── (3) Selected NPC deafness ring ───────────────────────────
     // Pick the selected view element if it's an NPC, else the first
     // NPC.
-    let picked_npc: Option<robin_engine::element::EntityId> = selected_view_element
+    let picked_npc: Option<engine_element::EntityId> = selected_view_element
         .filter(|id| engine.get_entity(*id).map(|e| e.is_npc()).unwrap_or(false))
         .or_else(|| engine.npc_ids().first().copied());
     if let Some(npc_id) = picked_npc
@@ -3060,7 +3065,7 @@ pub(crate) fn render_noise_display(
 pub(crate) fn render_debug_animation_lines(
     host: &mut Host,
     engine: &Engine,
-    dev: &robin_engine::engine::DevState,
+    dev: &engine_api::DevState,
     renderer: &mut Renderer,
 ) {
     if !dev.debug.display_animation_lines {
@@ -3099,7 +3104,7 @@ pub(crate) fn render_debug_animation_lines(
 /// world→screen transform and let the framebuffer clip.  Empty rects
 /// are skipped.
 pub(crate) fn render_debug_whatsup_overlay(host: &Host, engine: &Engine, renderer: &mut Renderer) {
-    let enabled = robin_engine::engine::GlobalOptions::global()
+    let enabled = engine_api::GlobalOptions::global()
         .as_ref()
         .is_some_and(|o| o.whatsup);
     if !enabled {
@@ -3315,8 +3320,6 @@ fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str
 ///   shrinks the rect below the threshold.
 /// * When latched, paint the four edges in the select/unselect color.
 pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
-    use robin_engine::engine::MULTI_SELECTION_THRESHOLD;
-
     // ── Swordfighting cancel ──
     if engine.is_seat_selection_swordfighting(host.local_seat) {
         host.input.multi_selection_active = false;
@@ -3358,25 +3361,25 @@ pub(crate) fn draw_multi_selection_box(host: &mut Host, engine: &Engine, rendere
     //    SDL's line drawer clips off-screen pieces. ──
     let a = host
         .viewport
-        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+        .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.min(p2.x),
             p1.y.min(p2.y),
         ));
     let b = host
         .viewport
-        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+        .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.max(p2.x),
             p1.y.min(p2.y),
         ));
     let c = host
         .viewport
-        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+        .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.max(p2.x),
             p1.y.max(p2.y),
         ));
     let d = host
         .viewport
-        .map_to_screen_unclamped(robin_engine::coordinates::MapPoint::new(
+        .map_to_screen_unclamped(engine_coordinates::MapPoint::new(
             p1.x.min(p2.x),
             p1.y.max(p2.y),
         ));

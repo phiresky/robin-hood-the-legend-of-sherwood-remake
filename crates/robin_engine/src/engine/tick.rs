@@ -1,5 +1,6 @@
 //! Main per-frame update tick (`perform_hourglass`).
 
+use super::movement::MovePathOutcome;
 use super::*;
 use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
@@ -1431,11 +1432,11 @@ impl EngineInner {
             // pass.
 
             match self.try_dispatch_move_path(assets, owner, seq_id, elem_idx, dest, move_action) {
-                crate::engine::movement::MovePathOutcome::Success => {}
-                crate::engine::movement::MovePathOutcome::ActorGone => {
+                MovePathOutcome::Success => {}
+                MovePathOutcome::ActorGone => {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }
-                crate::engine::movement::MovePathOutcome::Failed => {
+                MovePathOutcome::Failed => {
                     // Stamp the failed request with the current frame
                     // counter and push it onto `failed_path_requests`.
                     // The element stays `InProgress` with an empty
@@ -3623,13 +3624,13 @@ impl EngineInner {
                                 // `find_authorized_position` to nudge
                                 // it onto a walkable cell.
                                 let spawn_pos = {
-                                    let mut b = crate::geo2d::BBox2D::new();
-                                    b.expand_point(pos.to_geo());
+                                    let mut b = crate::coordinates::MapBBox::new();
+                                    b.expand_point(pos);
                                     if self
                                         .fast_grid
                                         .find_authorized_position_toward(&mut b, pos, layer)
                                     {
-                                        crate::coordinates::MapPoint::from(b.center())
+                                        b.center()
                                     } else {
                                         pos
                                     }
@@ -3769,13 +3770,13 @@ impl EngineInner {
                             // when possible (same authorized-position
                             // handoff as generic DropAmmo above).
                             let spawn_pos = {
-                                let mut b = crate::geo2d::BBox2D::new();
-                                b.expand_point(pos.to_geo());
+                                let mut b = crate::coordinates::MapBBox::new();
+                                b.expand_point(pos);
                                 if self
                                     .fast_grid
                                     .find_authorized_position_toward(&mut b, pos, layer)
                                 {
-                                    crate::coordinates::MapPoint::from(b.center())
+                                    b.center()
                                 } else {
                                     pos
                                 }
@@ -6164,7 +6165,7 @@ impl EngineInner {
                     assets,
                     layer_in,
                     u16::from(sector_in),
-                    crate::geo2d::pt(point_in.x, point_in.y),
+                    crate::coordinates::MapPoint::new(point_in.x, point_in.y),
                 );
                 if obstacle.is_none() {
                     tracing::warn!(
@@ -6222,7 +6223,7 @@ impl EngineInner {
                     assets,
                     layer_out,
                     u16::from(sector_out),
-                    crate::geo2d::pt(point_out.x, point_out.y),
+                    crate::coordinates::MapPoint::new(point_out.x, point_out.y),
                 );
                 if obstacle.is_none() {
                     tracing::warn!(
@@ -6644,7 +6645,7 @@ impl EngineInner {
                 if !target_mutual {
                     continue;
                 }
-                let pos = entity.element_data().position_map().to_geo();
+                let pos = entity.element_data().position_map();
                 let weapon1 =
                     super::melee::weapon_material_from_profile(entity, &assets.profile_manager);
                 (target_id, pos, weapon1)
@@ -6659,7 +6660,7 @@ impl EngineInner {
                     strike_kind: crate::sound::StrikeKind::Swipe,
                     weapon1,
                     weapon2,
-                    position: position.into(),
+                    position,
                 });
         }
 
@@ -7388,10 +7389,7 @@ impl EngineInner {
                     // When either step fails the entire apply
                     // block is skipped — the actor stays put but
                     // the new-position star burst still fires.
-                    let dest_geo = crate::geo2d::pt(dest.x, dest.y);
-                    let probe = self.fast_grid.get_sector_screen_accessible(
-                        crate::coordinates::MapPoint::from_geo(dest_geo),
-                    );
+                    let probe = self.fast_grid.get_sector_screen_accessible(dest);
                     let move_box = self
                         .get_entity(owner)
                         .map(|e| *e.position_iface().get_move_box());
@@ -7399,17 +7397,13 @@ impl EngineInner {
                         if let (Some(_sector_idx), Some(sector_number), Some(move_box)) =
                             (probe.sector_idx, probe.sector, move_box)
                         {
-                            let mut box_at = move_box.translated(dest_geo);
+                            let mut box_at = move_box.translated(dest);
                             if self.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
                                 dest,
                                 probe.layer,
                             ) {
-                                let center = box_at.center();
-                                let dest_pt = crate::coordinates::MapPoint {
-                                    x: center.x,
-                                    y: center.y,
-                                };
+                                let dest_pt = box_at.center();
                                 let sector_handle = crate::position_interface::SectorHandle::new(
                                     u16::from(sector_number),
                                 );
@@ -7461,7 +7455,7 @@ impl EngineInner {
                             assets,
                             final_layer,
                             u16::from(final_sector_number),
-                            crate::geo2d::pt(final_dest.x, final_dest.y),
+                            final_dest,
                         );
                         self.set_obstacle_and_material(assets, owner, obstacle_idx);
 
@@ -8001,7 +7995,7 @@ pub(super) fn apply_drunken_path_deviation(
     blood_alcohol: u8,
     is_running: bool,
     layer: u16,
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
     half_diagonal: crate::geo2d::Vec2D,
     grid: &crate::fast_find_grid::FastFindGrid,
     rng: &mut fastrand::Rng,
@@ -8429,7 +8423,6 @@ mod drop_ammo_merge_tests {
     use super::*;
     use crate::campaign::{Campaign, PcDescription};
     use crate::element::{ActorPc, ElementData, ElementKind, EntityId, Posture};
-    use crate::geo2d::BBox2D;
     use crate::profiles::{Action, CharacterProfileIdx};
     use crate::sequence::{Field, FieldValue, SequenceElement};
 
@@ -8485,9 +8478,9 @@ mod drop_ammo_merge_tests {
         element
             .sprite
             .position_iface
-            .set_move_box(BBox2D::from_corners(
-                crate::geo2d::pt(-5.0, -5.0),
-                crate::geo2d::pt(5.0, 5.0),
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-5.0, -5.0),
+                crate::coordinates::MapVec::new(5.0, 5.0),
             ));
 
         let pc_id = engine.add_entity(crate::element::Entity::Pc(ActorPc {

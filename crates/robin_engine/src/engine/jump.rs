@@ -611,8 +611,8 @@ pub fn get_nearest_jumpable_jump_line(
     doors: &[crate::gate::Door],
     pc_sector_grid_idx: u32,
     pc_auth: &crate::gate::ActorAuthInfo,
-    pt_start: crate::geo2d::GeoPoint2D,
-    pt_goal: crate::geo2d::GeoPoint2D,
+    pt_start: MapPoint,
+    pt_goal: MapPoint,
     test_posture: bool,
 ) -> Option<u32> {
     let sector = fast_grid.level.sectors.get(pc_sector_grid_idx as usize)?;
@@ -702,8 +702,8 @@ impl EngineInner {
     pub fn get_nearest_jumpable_jump_line(
         &self,
         pc_entity: EntityId,
-        pt_start: crate::geo2d::GeoPoint2D,
-        pt_goal: crate::geo2d::GeoPoint2D,
+        pt_start: MapPoint,
+        pt_goal: MapPoint,
         test_posture: bool,
     ) -> Option<u32> {
         let entity = self.entities.get(pc_entity)?;
@@ -1283,10 +1283,9 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
     state.frames_elapsed = state.frames_elapsed.saturating_add(1);
 
     if let Some(target) = target_3d {
-        // Target Y in map coords = target.y - target.z (isometric).
-        let target_map_y = target.y - target.z;
+        let target_map = target.to_map();
         let full_dx = target.x - state.start_x;
-        let full_dy = target_map_y - state.start_y;
+        let full_dy = target_map.y - state.start_y;
         let full_dist = (full_dx * full_dx + full_dy * full_dy).sqrt();
 
         // Read this frame's distance from the sprite's distance table.
@@ -1305,8 +1304,8 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
             let travelled_new = (new_x - state.start_x) * dir_x + (new_y - state.start_y) * dir_y;
             if travelled_new >= full_dist {
                 elem.set_position_map(crate::coordinates::MapPoint {
-                    x: target.x,
-                    y: target_map_y,
+                    x: target_map.x,
+                    y: target_map.y,
                 });
             } else {
                 elem.set_position_map(crate::coordinates::MapPoint { x: new_x, y: new_y });
@@ -1529,7 +1528,7 @@ mod tests {
                 let mut b = BBox2D::new();
                 b.expand_point(pt(0.0, 0.0));
                 b.expand_point(pt(64.0, 64.0));
-                b
+                crate::coordinates::MapBBox::from_geo(b)
             },
             sector_type: SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
             layer: 0,
@@ -1662,8 +1661,8 @@ mod tests {
             &doors,
             0,
             &pc,
-            crate::geo2d::pt(32.0, 0.0),
-            crate::geo2d::pt(32.0, 64.0),
+            MapPoint::new(32.0, 0.0),
+            MapPoint::new(32.0, 64.0),
             false,
         );
         assert_eq!(got, Some(0));
