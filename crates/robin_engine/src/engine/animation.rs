@@ -2734,7 +2734,7 @@ impl EngineInner {
             .unwrap_or_default();
         let frames_from_now_till_action_done: Vec<Option<i16>> = self
             .entities
-            .iter()
+            .iter_slots()
             .map(|slot| {
                 slot.as_ref().and_then(|entity| {
                     let sprite = &entity.element_data().sprite;
@@ -2744,12 +2744,12 @@ impl EngineInner {
             .collect();
         let active_entity_flags: Vec<bool> = self
             .entities
-            .iter()
+            .iter_slots()
             .map(|slot| slot.as_ref().is_some_and(Entity::is_active))
             .collect();
         let door_pass_crenel_transition_dirs: Vec<Option<i16>> = self
             .entities
-            .iter()
+            .iter_slots()
             .map(|slot| {
                 let entity = slot.as_ref()?;
                 let dp = entity.actor_data()?.active_door_pass.as_ref()?;

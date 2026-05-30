@@ -1562,13 +1562,13 @@ impl MissionScript {
     /// than a private GameHost copy.
     pub fn swap_engine_state(
         &mut self,
-        entities: &mut Vec<Option<crate::element::Entity>>,
+        entities: &mut crate::entities::Entities,
         ai_global: &mut crate::ai::AiGlobalState,
         fast_grid: &mut crate::fast_find_grid::FastFindGrid,
         campaign: &mut Option<crate::campaign::Campaign>,
         mission_stat: &mut crate::mission_stat::MissionStat,
     ) {
-        std::mem::swap(&mut self.game_host.entities, entities);
+        entities.swap_slots_with(&mut self.game_host.entities);
         std::mem::swap(&mut self.game_host.ai_global, ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
         std::mem::swap(&mut self.game_host.campaign, campaign);
@@ -2058,7 +2058,7 @@ pub struct SideEffects {
     /// leave a pending drag or click armed.
     pub reset_input: bool,
     /// Fade-to-black overlay transition requested this tick.
-    /// `Some(Some(..))` = start/replace fade. `Some(None)` = clear fade.
+    /// `Some(..)` = start/replace fade. `Some(None)` = clear fade.
     /// `None` = no change.
     pub fade_to_black: Option<Option<FadeToBlack>>,
     /// Toggle the masked / outline "draw hidden" display mode. `None` = no change.

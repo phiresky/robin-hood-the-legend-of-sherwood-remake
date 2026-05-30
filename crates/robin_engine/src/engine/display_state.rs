@@ -703,13 +703,11 @@ impl EngineInner {
         // Sort animations by the minimum Y of their display polyline.
         animations.sort_by(|&a, &b| {
             let ya = entities
-                .get(a.index() as usize)
-                .and_then(|e| e.as_ref())
+                .get(a)
                 .map(|e| y_min_polyline(e.display_polyline()))
                 .unwrap_or(f32::MAX);
             let yb = entities
-                .get(b.index() as usize)
-                .and_then(|e| e.as_ref())
+                .get(b)
                 .map(|e| y_min_polyline(e.display_polyline()))
                 .unwrap_or(f32::MAX);
             ya.partial_cmp(&yb).unwrap_or(std::cmp::Ordering::Equal)
@@ -729,10 +727,7 @@ impl EngineInner {
             let mut consumed = vec![false; non_animations.len()];
 
             for &anim_id in &animations {
-                let anim_entity = match entities
-                    .get(anim_id.index() as usize)
-                    .and_then(|e| e.as_ref())
-                {
+                let anim_entity = match entities.get(anim_id) {
                     Some(e) => e,
                     None => continue,
                 };
@@ -745,10 +740,7 @@ impl EngineInner {
                     if consumed[i] {
                         continue;
                     }
-                    let na_entity = match entities
-                        .get(na_id.index() as usize)
-                        .and_then(|e| e.as_ref())
-                    {
+                    let na_entity = match entities.get(na_id) {
                         Some(e) => e,
                         None => continue,
                     };
@@ -842,10 +834,10 @@ impl EngineInner {
         let mut ids: Vec<EntityId> = self.entities.occupied().map(|(id, _)| id).collect();
 
         ids.sort_by(|&a, &b| {
-            let ea = self.entities[a.index() as usize]
+            let ea = self.entities[a]
                 .as_ref()
                 .expect("entity present in sort input");
-            let eb = self.entities[b.index() as usize]
+            let eb = self.entities[b]
                 .as_ref()
                 .expect("entity present in sort input");
 
@@ -862,10 +854,7 @@ impl EngineInner {
                     let depth_of = |e: &Entity| -> f32 {
                         let sprite = &e.element_data().sprite;
                         if let Some(ref_id) = sprite.display_order_ref
-                            && let Some(ref_entity) = self
-                                .entities
-                                .get(ref_id.index() as usize)
-                                .and_then(|s| s.as_ref())
+                            && let Some(ref_entity) = self.entities.get(ref_id)
                         {
                             let base = ref_entity.element_data().position().y;
                             if sprite.behind_display_order_ref {

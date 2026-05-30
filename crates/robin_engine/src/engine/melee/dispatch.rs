@@ -77,7 +77,7 @@ impl EngineInner {
             })
             .unwrap_or((0.0, 0.0));
 
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(owner) {
             entity.element_data_mut().set_direction_instantly(dir);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_melee = ActiveMelee::new(target, strike, Some(seq_id), elem_idx);
@@ -100,7 +100,7 @@ impl EngineInner {
         order.compute_direction = false;
         let order_id = order.order_id;
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_melee.order_id = Some(order_id);
@@ -146,7 +146,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         {
-            let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(owner) else {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return;
             };
@@ -192,7 +192,7 @@ impl EngineInner {
             .map(|e| e.element_data().position_map());
 
         let queue_raise = {
-            let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(owner) else {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return;
             };
@@ -382,7 +382,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let queue_lower = if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        let queue_lower = if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Queue lowering-sword animation if in sword state.
@@ -421,7 +421,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let Some(Some(entity)) = self.entities.get(owner.index() as usize) else {
+        let Some(entity) = self.entities.get(owner) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -480,7 +480,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let Some(Some(entity)) = self.entities.get(owner.index() as usize) else {
+        let Some(entity) = self.entities.get(owner) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -539,8 +539,7 @@ impl EngineInner {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => {
                     let pt = antagonist.and_then(|id| {
                         self.entities
-                            .get(id.index() as usize)
-                            .and_then(|s| s.as_ref())
+                            .get(id)
                             .map(|e| e.element_data().position_map())
                     });
                     (pt, None, None, None)
@@ -597,7 +596,7 @@ impl EngineInner {
         // `sync_danger_point_titbits`).
         if let Some(pt3d) = danger_pt3d
             && (pt3d.x != 0.0 || pt3d.y != 0.0 || pt3d.z != 0.0)
-            && let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+            && let Some(entity) = self.entities.get_mut(owner)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.shield_danger_point = pt3d;
@@ -680,7 +679,7 @@ impl EngineInner {
         }
 
         let mut started = false;
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(owner) {
             // Face toward danger point if available.  Sets the
             // direction *goal*; the per-tick `turn()` (in the
             // order-driven animation handler) interpolates toward it
@@ -739,7 +738,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
+        if let Some(entity) = self.entities.get_mut(owner) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
                 actor.clear_path();
@@ -766,7 +765,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
             && actor.action_state.is_shield()
         {
@@ -810,7 +809,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Requires the actor to currently be holding the shield.
@@ -925,8 +924,7 @@ impl EngineInner {
                 if command == Command::ReceiveArrowDamage {
                     let posture = self
                         .entities
-                        .get(victim_id.index() as usize)
-                        .and_then(|s| s.as_ref())
+                        .get(victim_id)
                         .map(|e| e.element_data().posture)
                         .unwrap_or(Posture::Upright);
                     if !posture.is_hurtable_by_arrow() {

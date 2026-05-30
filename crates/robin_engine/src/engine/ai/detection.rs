@@ -194,7 +194,7 @@ impl EngineInner {
         let mut firing_listeners: Vec<FiringListener> = Vec::new();
         let next_order_id = &mut self.next_order_id;
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) else {
+            let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) else {
                 continue;
             };
             if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
@@ -460,7 +460,7 @@ impl EngineInner {
         }
 
         for idx in to_reveal {
-            if let Some(Some(entity)) = self.entities.get_mut(idx) {
+            if let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut()) {
                 tracing::debug!(
                     entity = idx,
                     "reveal_blip: shadow revealed by blip detection"
@@ -497,7 +497,8 @@ impl EngineInner {
         // swap).
         let mut listenable_calls: Vec<(i32, i32)> = Vec::new();
         for (idx, listening_pc) in to_hear {
-            if let Some(Some(Entity::Target(t))) = self.entities.get_mut(idx)
+            if let Some(Entity::Target(t)) =
+                self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
                 && t.target
                     .action_filter
                     .contains(crate::element::TargetFilter::LISTEN)
@@ -568,7 +569,7 @@ impl EngineInner {
         for npc_id in npc_ids {
             // Read NPC state (layer, position, current_state, active).
             let (layer, position, elevation, current_state, active, expects_pc_detectables) = {
-                let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+                let Some(entity) = self.entities.get(npc_id) else {
                     continue;
                 };
                 // Every NPC runs the acoustic pass — it lives on the
@@ -624,7 +625,7 @@ impl EngineInner {
                 .sources
                 .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
 
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get_mut(npc_id) else {
                 continue;
             };
             let Some(npc) = entity.npc_data_mut() else {
@@ -832,7 +833,7 @@ impl EngineInner {
 
         // -- Read enemy state in a scoped borrow --
         let viewer = {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get(npc_id) else {
                 return;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Lacklandists) else {
@@ -941,9 +942,7 @@ impl EngineInner {
             // nested scope below; the now-deferred stimulus pushes
             // at this level don't need it.
             let _ai_global = &mut self.ai_global;
-            let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(npc_id.index() as usize)
-            else {
+            let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
                 return;
             };
 
@@ -2289,9 +2288,7 @@ impl EngineInner {
             }
             if let Some(pc_handle) = near_pc {
                 let ai_global = &mut self.ai_global;
-                if let Some(Some(Entity::Soldier(s))) =
-                    self.entities.get_mut(npc_id.index() as usize)
-                {
+                if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
                     let ctx = AiContext {
                         position: crate::ai::Position {
                             x: s.element.position_map().x,
@@ -2494,7 +2491,7 @@ impl EngineInner {
         }
 
         for target_id in to_reveal {
-            if let Some(Some(entity)) = self.entities.get_mut(target_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(target_id)
                 && entity.element_data().blipped
             {
                 tracing::debug!(
@@ -2530,7 +2527,7 @@ impl EngineInner {
     ) {
         // -- Read royalist soldier viewer state --
         let viewer = {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get(npc_id) else {
                 return;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Royalists) else {
@@ -2638,9 +2635,7 @@ impl EngineInner {
             // the now-deferred EVENT_VIEW push doesn't
             // need it).
             let _ai_global = &mut self.ai_global;
-            let Some(Some(Entity::Soldier(soldier))) =
-                self.entities.get_mut(npc_id.index() as usize)
-            else {
+            let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
                 return;
             };
 
@@ -2938,7 +2933,7 @@ impl EngineInner {
 
         // -- Read NPC view-state in a scoped read borrow --
         let viewer = {
-            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
+            let Some(entity) = self.entities.get(npc_id) else {
                 return;
             };
             // RefreshDetection runs the per-type loop for both
@@ -3050,8 +3045,7 @@ impl EngineInner {
             static_active: &self.static_sight_obstacle_active,
         };
         let _ai_global = &mut self.ai_global;
-        let Some(Some(Entity::Soldier(soldier))) = self.entities.get_mut(npc_id.index() as usize)
-        else {
+        let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
             return;
         };
 

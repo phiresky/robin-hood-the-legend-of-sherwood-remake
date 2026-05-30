@@ -456,7 +456,11 @@ impl EngineInner {
             tracing::warn!(handle, "patch_effects: invalid animation entity handle");
             return;
         };
-        if let Some(Some(entity)) = self.entities.get_mut(entity_idx) {
+        if let Some(entity) = self
+            .entities
+            .slot_mut(entity_idx)
+            .and_then(|slot| slot.as_mut())
+        {
             entity.element_data_mut().active = true;
             {
                 let sprite = entity.sprite_mut();
@@ -503,7 +507,11 @@ impl EngineInner {
             tracing::warn!(handle, "patch_effects: invalid animation entity handle");
             return;
         };
-        if let Some(Some(entity)) = self.entities.get_mut(entity_idx) {
+        if let Some(entity) = self
+            .entities
+            .slot_mut(entity_idx)
+            .and_then(|slot| slot.as_mut())
+        {
             entity.element_data_mut().active = false;
         }
 

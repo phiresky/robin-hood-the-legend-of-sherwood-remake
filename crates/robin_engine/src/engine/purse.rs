@@ -177,11 +177,7 @@ impl EngineInner {
                         .unwrap_or(false)
                 })
                 .collect();
-            if let Some(Entity::Projectile(purse)) = self
-                .entities
-                .get_mut(purse_id.index() as usize)
-                .and_then(|s| s.as_mut())
-            {
+            if let Some(Entity::Projectile(purse)) = self.entities.get_mut(purse_id) {
                 purse.projectile.purse.child_coins = alive;
             }
         }
@@ -268,11 +264,7 @@ impl EngineInner {
         let material = assets
             .material_sectors
             .material_at_with_obstacle(landing_obstacle, impact_map);
-        if let Some(Entity::Projectile(p)) = self
-            .entities
-            .get_mut(purse_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(Entity::Projectile(p)) = self.entities.get_mut(purse_id) {
             p.element.set_material(material);
         }
 
@@ -380,11 +372,7 @@ impl EngineInner {
         // `ObjectBursting` animation row and becomes non-pickable; the
         // element itself stays alive (the empty purse sprite remains
         // as decoration).
-        if let Some(Entity::Projectile(purse)) = self
-            .entities
-            .get_mut(purse_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(Entity::Projectile(purse)) = self.entities.get_mut(purse_id) {
             debug_assert!(
                 purse.projectile.purse.number_of_coins >= NUMBER_OF_COINS_IN_PURSE,
                 "purse {purse_id:?} should hold ≥ {NUMBER_OF_COINS_IN_PURSE} coins at burst time, \
@@ -422,11 +410,7 @@ impl EngineInner {
     /// `EventSeesObject` fires.  `layer` is the layer the trajectory
     /// finished at (used as fallback when no goal layer was recorded).
     fn coin_landed(&mut self, coin_id: EntityId, impact_pos: WorldPoint3D, layer: u16) {
-        if let Some(Entity::Projectile(coin)) = self
-            .entities
-            .get_mut(coin_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(Entity::Projectile(coin)) = self.entities.get_mut(coin_id) {
             // Snap to the resolved goal stored at spawn.  Falls back to
             // the trajectory-end layer when the scatter-time
             // accessibility search couldn't pin a goal sector (no
@@ -486,10 +470,7 @@ impl EngineInner {
         };
         let mut collected: u32 = 0;
         for cid in children {
-            if let Some(Entity::Projectile(c)) = self
-                .entities
-                .get_mut(cid.index() as usize)
-                .and_then(|s| s.as_mut())
+            if let Some(Entity::Projectile(c)) = self.entities.get_mut(cid)
                 && c.element.active
                 && !c.object.taken
             {
@@ -498,11 +479,7 @@ impl EngineInner {
                 c.element.active = false;
             }
         }
-        if let Some(Entity::Projectile(purse)) = self
-            .entities
-            .get_mut(purse_id.index() as usize)
-            .and_then(|s| s.as_mut())
-        {
+        if let Some(Entity::Projectile(purse)) = self.entities.get_mut(purse_id) {
             purse.projectile.purse.child_coins.clear();
             // Flip the bonus taken flag so future click-forwarding from
             // a stray coin skips the purse path.
@@ -689,12 +666,8 @@ mod tests {
         assert_eq!(coin_ids.len(), NUMBER_OF_COINS_IN_PURSE as usize);
 
         // Deactivate every child coin (simulating pickup-and-removal).
-        for cid in &coin_ids {
-            if let Some(Entity::Projectile(c)) = engine
-                .entities
-                .get_mut(cid.index() as usize)
-                .and_then(|s| s.as_mut())
-            {
+        for &cid in &coin_ids {
+            if let Some(Entity::Projectile(c)) = engine.entities.get_mut(cid) {
                 c.element.active = false;
             }
         }

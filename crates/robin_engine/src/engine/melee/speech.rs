@@ -126,7 +126,7 @@ impl EngineInner {
                     .push(super::SoundCommand::StopExclamation {
                         actor_id: entity_id,
                     });
-                if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+                if let Some(entity) = self.entities.get_mut(entity_id)
                     && let Some(npc) = entity.npc_data_mut()
                     && let Some(base) = npc.ai_brain.base_mut()
                     && (base.current_remark != crate::ai::Remark::TheSoundOfSilence
@@ -377,7 +377,7 @@ impl EngineInner {
             HERO_SELECT => TIME_FORBID_HERO_SELECT,
             _ => HERO_EXPRESSION_DEFAULT_FORBID,
         };
-        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) {
+        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
             pc.pc.forbidden_expressions.push((expression, forbid_timer));
         }
         self.chorus_timer = DEFAULT_ANTI_CHORUS_TIMER;
@@ -517,8 +517,7 @@ impl EngineInner {
         entity_id: EntityId,
         stimulus: crate::ai::Stimulus,
     ) {
-        let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(entity_id.index() as usize)
-        else {
+        let Some(Entity::Soldier(s)) = self.entities.get_mut(entity_id) else {
             return;
         };
         if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {

@@ -663,7 +663,7 @@ impl EngineInner {
     /// `false` when any of the required data is missing (no mission
     /// script, entity, sector mapping, etc.).
     pub fn is_jumpable(&self, jump_line_idx: u32, pc_entity: EntityId, test_posture: bool) -> bool {
-        let Some(Some(entity)) = self.entities.get(pc_entity.index() as usize) else {
+        let Some(entity) = self.entities.get(pc_entity) else {
             return false;
         };
         let Some(sector_num) = entity.element_data().sector() else {
@@ -706,7 +706,7 @@ impl EngineInner {
         pt_goal: MapPoint,
         test_posture: bool,
     ) -> Option<u32> {
-        let entity = self.entities.get(pc_entity.index() as usize)?.as_ref()?;
+        let entity = self.entities.get(pc_entity)?;
         let sector_num = entity.element_data().sector()?;
         let &pc_sector_grid_idx =
             self.fast_grid
@@ -815,7 +815,7 @@ impl EngineInner {
         let jump_height = dst_line.z_a - src_line.z_a;
 
         let (pt_source, posture_before, is_swordfighting) = {
-            let Some(Some(entity)) = self.entities.get(owner.index() as usize) else {
+            let Some(entity) = self.entities.get(owner) else {
                 return false;
             };
             let elem_data = entity.element_data();
@@ -874,7 +874,7 @@ impl EngineInner {
         };
 
         // Install on the actor and reset any stale flight state.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
+        if let Some(entity) = self.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.clear_path();
@@ -1028,7 +1028,7 @@ impl EngineInner {
         // Apply destination layer/sector swaps and dispatch sequence
         // termination for jumps that finished this tick.
         for (entity_id, new_layer, new_sector) in layer_updates {
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize) {
+            if let Some(entity) = self.entities.get_mut(entity_id) {
                 let elem = entity.element_data_mut();
                 elem.set_layer(new_layer);
                 if let Some(s) = new_sector {
@@ -1063,7 +1063,7 @@ impl EngineInner {
     /// posture transition, and clears `current` so the next tick pops
     /// the next step.
     pub(super) fn advance_jump_step(&mut self, entity_id: EntityId) {
-        let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize) else {
+        let Some(entity) = self.entities.get_mut(entity_id) else {
             return;
         };
 

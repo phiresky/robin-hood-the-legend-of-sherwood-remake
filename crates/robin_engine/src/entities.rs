@@ -20,6 +20,58 @@ impl Entities {
         Self::default()
     }
 
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn push(&mut self, entity: Option<Entity>) {
+        self.0.push(entity);
+    }
+
+    pub fn resize(&mut self, new_len: usize, value: Option<Entity>) {
+        self.0.resize(new_len, value);
+    }
+
+    pub fn slots(&self) -> &[Option<Entity>] {
+        &self.0
+    }
+
+    pub fn slots_mut(&mut self) -> &mut [Option<Entity>] {
+        &mut self.0
+    }
+
+    pub fn swap_slots_with(&mut self, slots: &mut Vec<Option<Entity>>) {
+        std::mem::swap(&mut self.0, slots);
+    }
+
+    pub fn slot(&self, index: usize) -> Option<&Option<Entity>> {
+        self.0.get(index)
+    }
+
+    pub fn slot_mut(&mut self, index: usize) -> Option<&mut Option<Entity>> {
+        self.0.get_mut(index)
+    }
+
+    pub fn get(&self, id: EntityId) -> Option<&Entity> {
+        self.0.get(id.index() as usize)?.as_ref()
+    }
+
+    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
+        self.0.get_mut(id.index() as usize)?.as_mut()
+    }
+
+    pub fn iter_slots(&self) -> impl Iterator<Item = &Option<Entity>> + '_ {
+        self.0.iter()
+    }
+
+    pub fn iter_slots_mut(&mut self) -> impl Iterator<Item = &mut Option<Entity>> + '_ {
+        self.0.iter_mut()
+    }
+
     pub fn occupied(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
         self.0.iter().enumerate().filter_map(|(idx, slot)| {
             slot.as_ref()
@@ -290,16 +342,16 @@ impl Entities {
     }
 }
 
-impl std::ops::Deref for Entities {
-    type Target = Vec<Option<Entity>>;
+impl std::ops::Index<EntityId> for Entities {
+    type Output = Option<Entity>;
 
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    fn index(&self, index: EntityId) -> &Self::Output {
+        &self.0[index.index() as usize]
     }
 }
 
-impl std::ops::DerefMut for Entities {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+impl std::ops::IndexMut<EntityId> for Entities {
+    fn index_mut(&mut self, index: EntityId) -> &mut Self::Output {
+        &mut self.0[index.index() as usize]
     }
 }

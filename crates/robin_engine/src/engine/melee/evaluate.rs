@@ -46,7 +46,7 @@ impl EngineInner {
             return;
         }
 
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = true;
@@ -62,7 +62,7 @@ impl EngineInner {
             .unwrap_or(false);
 
         if is_mutual
-            && let Some(Some(entity)) = self.entities.get_mut(principal_id.index() as usize)
+            && let Some(entity) = self.entities.get_mut(principal_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = false;
@@ -101,7 +101,7 @@ impl EngineInner {
 
         let rfa = combat::compute_relative_fighting_ability(own_ability, opponents_total);
 
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.relative_fighting_ability = rfa;
@@ -890,7 +890,7 @@ impl EngineInner {
             };
 
         // Persist the updated boredom array back onto the PC.
-        if let Some(Some(entity)) = self.entities.get_mut(pc_id.index() as usize)
+        if let Some(entity) = self.entities.get_mut(pc_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.sword_strike_boredom = boredom;
@@ -1188,7 +1188,7 @@ impl EngineInner {
                 pc_layer,
                 principal_opponent,
             ) = {
-                let Some(Some(entity)) = self.entities.get(victim_id.index() as usize) else {
+                let Some(entity) = self.entities.get(victim_id) else {
                     continue;
                 };
                 let wid = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -1344,7 +1344,7 @@ impl EngineInner {
             );
 
             // Write back boredom
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
+            if let Some(entity) = self.entities.get_mut(victim_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.sword_strike_boredom = pc_boredom;
@@ -1418,8 +1418,7 @@ impl EngineInner {
         // Compare against the soldier's three known-enemy-strike slots.
         let strike_opt = Some(strike);
         let is_known = {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(victim_id.index() as usize)
-            else {
+            let Some(Entity::Soldier(s)) = self.entities.get(victim_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.enemy() else {
@@ -1475,8 +1474,7 @@ impl EngineInner {
             mut victim_boredom,
             principal_opponent,
         ) = {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(victim_id.index() as usize)
-            else {
+            let Some(Entity::Soldier(s)) = self.entities.get(victim_id) else {
                 return;
             };
             let ai = match &s.npc.ai_brain {
@@ -1665,7 +1663,7 @@ impl EngineInner {
         );
 
         // Write back boredom state
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(victim_id.index() as usize) {
+        if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim_id) {
             s.human.sword_strike_boredom = victim_boredom;
         }
 
@@ -1675,8 +1673,7 @@ impl EngineInner {
                 const MIN_CAPACITY_AVOID_PUSH_BACK: u16 = 50;
 
                 // StopAll().
-                if let Some(Some(Entity::Soldier(s))) =
-                    self.entities.get_mut(victim_id.index() as usize)
+                if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim_id)
                     && let Some(ai) = s.npc.ai_brain.base_mut()
                 {
                     ai.stop_all();
@@ -1731,8 +1728,7 @@ impl EngineInner {
                         crate::position_interface::SWORDFIGHT_ASPECT_RATIO,
                     ) {
                         // Step back to avoid strike.
-                        if let Some(Some(Entity::Soldier(s))) =
-                            self.entities.get_mut(victim_id.index() as usize)
+                        if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim_id)
                             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
                         {
                             let flags = crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD;
@@ -1791,8 +1787,7 @@ impl EngineInner {
                 let strike_frames = attacker_anim_frames as u32 + 10;
 
                 // Set substate to parade
-                if let Some(Some(Entity::Soldier(s))) =
-                    self.entities.get_mut(victim_id.index() as usize)
+                if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim_id)
                     && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
                 {
                     ai.set_state(
@@ -1820,8 +1815,7 @@ impl EngineInner {
                 // transition); StopAll is applied immediately before
                 // the counter-strike sequence is queued.
                 self.stop_owner(victim_id, crate::sequence::SequencePriority::Preference);
-                if let Some(Some(Entity::Soldier(s))) =
-                    self.entities.get_mut(victim_id.index() as usize)
+                if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim_id)
                     && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
                 {
                     ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
@@ -1914,8 +1908,7 @@ impl EngineInner {
                 .npc_ids()
                 .filter(|&id| id != soldier_id)
                 .filter(|&id| {
-                    let Some(Some(Entity::Soldier(s))) = self.entities.get(id.index() as usize)
-                    else {
+                    let Some(Entity::Soldier(s)) = self.entities.get(id) else {
                         return false;
                     };
                     if s.soldier.cached_camp != camp {
@@ -1953,7 +1946,7 @@ impl EngineInner {
             .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
             .unwrap_or(0);
 
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(soldier_id.index() as usize)
+        if let Some(Entity::Soldier(s)) = self.entities.get_mut(soldier_id)
             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
         {
             if ai.known_enemy_strike_1 == strike_opt {
