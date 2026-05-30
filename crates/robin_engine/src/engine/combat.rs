@@ -3,7 +3,7 @@
 use super::input::BowTarget;
 use super::*;
 use crate::bow_shot::{self};
-use crate::coordinates::MapPoint;
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Command, Entity, EntityId};
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
@@ -1661,10 +1661,7 @@ impl EngineInner {
     /// and returns the resulting box centre.  Returns `None` when no
     /// walkable cell exists near the hand (e.g. against a wall), which
     /// causes the drop sequence to be refused.
-    pub fn try_get_drop_position(
-        &self,
-        entity_id: crate::element::EntityId,
-    ) -> Option<crate::geo2d::GeoPoint2D> {
+    pub fn try_get_drop_position(&self, entity_id: crate::element::EntityId) -> Option<MapPoint> {
         let entity = self.get_entity(entity_id)?;
         let hand = entity.compute_hand_point(None)?;
         let move_box = *entity.position_iface().get_move_box();
@@ -1673,12 +1670,12 @@ impl EngineInner {
         }
         let layer = entity.element_data().layer();
         let hand_xy = crate::coordinates::MapPoint::new(hand.x, hand.y);
-        let mut bbox = move_box.translated(hand_xy.to_geo());
+        let mut bbox = move_box.translated(hand_xy);
         if self
             .fast_grid
             .find_authorized_position_toward(&mut bbox, hand_xy, layer)
         {
-            Some(bbox.center().to_geo())
+            Some(bbox.center())
         } else {
             None
         }
@@ -2339,13 +2336,13 @@ impl EngineInner {
                 ai.primary_target
             };
             let my_pos = match self.get_entity(npc_id) {
-                Some(e) => e.ground_position().to_geo(),
+                Some(e) => e.ground_position(),
                 None => continue,
             };
             let target_pos = match self.get_entity(
                 self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
             ) {
-                Some(e) => e.ground_position().to_geo(),
+                Some(e) => e.ground_position(),
                 None => continue,
             };
             let dx = target_pos.x - my_pos.x;
@@ -2511,12 +2508,13 @@ impl EngineInner {
         // is the correct one.  If none of the projection-area obstacles
         // cover the landing, fall through to the standalone water-zone
         // scan (branch 1).
-        let landing = position_map;
-        let landing_obstacle = self.find_landing_water_obstacle(assets, landing.to_geo());
+        let landing_map = position_map;
+        let landing_ground = GroundPoint::new(position.x, position.y);
+        let landing_obstacle = self.find_landing_water_obstacle(assets, landing_ground);
         let resolved_material = if let Some(obs) = landing_obstacle {
-            crate::water_zones::determine_water_hole_with_obstacle(obs, landing)
+            crate::water_zones::determine_water_hole_with_obstacle(obs, landing_map)
         } else {
-            assets.water_zones.determine_water_hole(landing)
+            assets.water_zones.determine_water_hole(landing_map)
         };
 
         let material = match resolved_material {
@@ -2593,9 +2591,9 @@ impl EngineInner {
         );
     }
 
-    /// Pick the topmost sight obstacle whose ground polygon contains
-    /// `landing` and whose configuration could yield a water/hole hit
-    /// — i.e. either the obstacle's own material is WATER (branch 2)
+    /// Pick the topmost sight obstacle whose ground polygon contains the
+    /// landing impact and whose configuration could yield a water/hole
+    /// hit — i.e. either the obstacle's own material is WATER (branch 2)
     /// or it carries a non-empty material sub-sector list (branch 3).
     /// Implements the "highest projection-area" disambiguation.
     ///
@@ -2613,7 +2611,7 @@ impl EngineInner {
     fn find_landing_water_obstacle<'a>(
         &'a self,
         assets: &'a LevelAssets,
-        landing: crate::geo2d::GeoPoint2D,
+        landing: GroundPoint,
     ) -> Option<&'a crate::sight_obstacle::SightObstacle> {
         use crate::geo2d::polygon_contains_point;
         const WATER_MATERIAL_CODE: u8 = 5;
@@ -2626,13 +2624,10 @@ impl EngineInner {
             if obs.material != WATER_MATERIAL_CODE && obs.material_sectors.is_empty() {
                 continue;
             }
-            if !obs
-                .box_ground
-                .contains_point(crate::coordinates::GroundPoint::from_geo(landing))
-            {
+            if !obs.box_ground.contains_point(landing) {
                 continue;
             }
-            if !polygon_contains_point(&obs.polygon, landing) {
+            if !polygon_contains_point(&obs.polygon, landing.to_geo()) {
                 continue;
             }
             let height = obs.compute_top_z(landing.x, landing.y);
@@ -2849,7 +2844,6 @@ impl EngineInner {
                     // using the resulting box centre. Falls back to
                     // `carrier_pos` when no authorised spot is found
                     // or the target has no move-box geometry.
-                    let carrier_pos_geo = crate::geo2d::pt(carrier_pos.x, carrier_pos.y);
                     let drop_pos = if in_building {
                         carrier_pos
                     } else {
@@ -2860,7 +2854,7 @@ impl EngineInner {
                             .filter(|b| b.is_somewhere());
                         match target_box {
                             Some(b) => {
-                                let mut bbox = b.translated(carrier_pos_geo);
+                                let mut bbox = b.translated(carrier_pos);
                                 if self.fast_grid.find_authorized_position_toward(
                                     &mut bbox,
                                     carrier_pos,
@@ -3008,10 +3002,6 @@ impl EngineInner {
                         // variant — the upright move-box was set when
                         // the PC was last upright and isn't overwritten
                         // while OnShoulders.
-                        let climber_pos_geo = crate::geo2d::GeoPoint2D {
-                            x: helper_pos.x,
-                            y: helper_pos.y,
-                        };
                         let landing_pos = {
                             let climber_box = self
                                 .get_entity(climber_id)
@@ -3020,7 +3010,7 @@ impl EngineInner {
                                 .filter(|b| b.is_somewhere());
                             match climber_box {
                                 Some(b) => {
-                                    let mut bbox = b.translated(climber_pos_geo);
+                                    let mut bbox = b.translated(helper_pos);
                                     if self
                                         .fast_grid
                                         .find_authorized_position(&mut bbox, helper_layer)
