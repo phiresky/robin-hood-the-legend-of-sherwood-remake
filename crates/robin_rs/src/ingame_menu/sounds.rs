@@ -15,8 +15,8 @@ use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
-use crate::ui::{UiEvent, UiMsg};
-use crate::widget::{Widget, WidgetSlider};
+use crate::ui::{UiEvent, UiMsg, UiState};
+use crate::widget::{FrameWnd, Widget, WidgetSlider};
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::sound_cache::SampleLoader;
 
@@ -135,7 +135,7 @@ pub async fn show_sounds(
     align_on_first_widget(&mut res_layout, 2);
 
     // Build FrameWnd with radios, OK/Cancel, and five volume sliders.
-    let mut frame = crate::widget::FrameWnd::default();
+    let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
 
@@ -313,7 +313,7 @@ pub async fn show_sounds(
             let state = frame
                 .widget(e.origin_widget_id)
                 .map(|w| w.base().state)
-                .unwrap_or(crate::ui::UiState::Default);
+                .unwrap_or(UiState::Default);
             let backend: Option<&mut dyn AudioBackend> = audio_backend
                 .as_mut()
                 .map(|b| &mut **b as &mut dyn AudioBackend);
@@ -331,7 +331,7 @@ pub async fn show_sounds(
             let state = frame
                 .widget(e.origin_widget_id)
                 .map(|w| w.base().state)
-                .unwrap_or(crate::ui::UiState::Default);
+                .unwrap_or(UiState::Default);
             let backend: Option<&mut dyn AudioBackend> = audio_backend
                 .as_mut()
                 .map(|b| &mut **b as &mut dyn AudioBackend);

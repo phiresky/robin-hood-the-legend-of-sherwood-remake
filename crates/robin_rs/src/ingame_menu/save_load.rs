@@ -25,7 +25,8 @@ use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
 use crate::sound::{AudioBackend, SoundManager};
-use crate::widget::{TextFromCaretSide, WidgetInput, WidgetInputField};
+use crate::ui::{MouseButtons, UiKeyboard, UiState};
+use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
 use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
@@ -210,7 +211,7 @@ pub async fn show_save_load(
     // Thumbnail preview state: a WidgetPicture owns the alternate-surface
     // handle; the metadata cache tracks which slot the surface was
     // built for so we only rebuild on selection change.
-    let mut thumb_widget = crate::widget::WidgetPicture::new(u32::MAX);
+    let mut thumb_widget = WidgetPicture::new(u32::MAX);
     let mut thumb_cache: Option<ThumbnailCache> = None;
 
     let mut input_state = ModalInputState::new();
@@ -224,7 +225,7 @@ pub async fn show_save_load(
     // `KeyPressed` transitions would double-fire with the modal's
     // press-edge handling. Kept outside the loop so we don't pay the
     // `Vec` reallocation on every frame.
-    let empty_keyboard = crate::ui::UiKeyboard::default();
+    let empty_keyboard = UiKeyboard::default();
 
     let outcome = loop {
         // Build (or rebuild) the widget frame. Save mode accepts an
@@ -235,7 +236,7 @@ pub async fn show_save_load(
             _ => false,
         };
         let delete_enabled = matches!(selected, Some(ListRow::Existing(_)));
-        let mut frame = crate::widget::FrameWnd::default();
+        let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
         for (id, label, x, y) in &btn_positions {
@@ -382,7 +383,7 @@ pub async fn show_save_load(
                         }
                         if input_state
                             .buttons
-                            .contains(crate::ui::MouseButtons::LEFT_DOUBLE_CLICK)
+                            .contains(MouseButtons::LEFT_DOUBLE_CLICK)
                             && selected.is_some()
                         {
                             // Match the action-enable rules used by the
@@ -436,7 +437,7 @@ pub async fn show_save_load(
             let field_input = WidgetInput {
                 mouse_position: widget_input.mouse_position,
                 mouse_z: widget_input.mouse_z,
-                mouse_button: crate::ui::MouseButtons::empty(),
+                mouse_button: MouseButtons::empty(),
                 keyboard: &empty_keyboard,
                 text_input: widget_input.text_input,
                 capture: None,
@@ -445,7 +446,7 @@ pub async fn show_save_load(
             // If the state machine fell out of edit mode for any reason
             // (shouldn't happen here but be defensive), put it back so
             // subsequent frames still accept text input.
-            if input_widget.base.state != crate::ui::UiState::SelectedEditable {
+            if input_widget.base.state != UiState::SelectedEditable {
                 input_widget.enter_edit_mode();
             }
         }

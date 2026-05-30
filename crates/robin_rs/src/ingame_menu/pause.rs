@@ -23,6 +23,7 @@ use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::short_briefings::ShortBriefings;
 use crate::sound::{AudioBackend, SoundManager};
+use crate::ui::UiState;
 use crate::widget::FrameWnd;
 use robin_engine::sound_cache::SampleLoader;
 
@@ -153,7 +154,7 @@ impl PauseMenu {
         self.input_state = ModalInputState::new();
         self.noisy_tracker.clear();
         for widget in self.frame.widgets_mut() {
-            widget.base_mut().state = crate::ui::UiState::Default;
+            widget.base_mut().state = UiState::Default;
         }
     }
 
@@ -248,7 +249,7 @@ impl PauseMenu {
 
         // Sync keyboard selection with mouse hover.
         for w in self.frame.widgets() {
-            if w.base().state != crate::ui::UiState::Default && w.base().enabled {
+            if w.base().state != UiState::Default && w.base().enabled {
                 self.keyboard_selection = w.id();
             }
         }
@@ -321,8 +322,8 @@ impl PauseMenu {
         }
 
         for widget in self.frame.widgets() {
-            let kb_highlight = widget.id() == self.keyboard_selection
-                && widget.base().state == crate::ui::UiState::Default;
+            let kb_highlight =
+                widget.id() == self.keyboard_selection && widget.base().state == UiState::Default;
             widget_bridge::draw_widget_button(renderer, resources, transform, widget, kb_highlight);
         }
     }
@@ -343,6 +344,7 @@ impl PauseMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::MouseButtons;
 
     fn stub_resources() -> IngameMenuResources {
         IngameMenuResources::stub()
@@ -430,7 +432,7 @@ mod tests {
         for w in menu.frame.widgets() {
             assert_eq!(
                 w.base().state,
-                crate::ui::UiState::Default,
+                UiState::Default,
                 "widget {} state not reset after side-menu",
                 w.id()
             );
@@ -458,20 +460,13 @@ mod tests {
 
         // Simulate a pressed left button inherited from before the
         // side menu launched.
-        menu.input_state.buttons |= crate::ui::MouseButtons::LEFT_DOWN;
-        assert!(
-            menu.input_state
-                .buttons
-                .contains(crate::ui::MouseButtons::LEFT_DOWN)
-        );
+        menu.input_state.buttons |= MouseButtons::LEFT_DOWN;
+        assert!(menu.input_state.buttons.contains(MouseButtons::LEFT_DOWN));
 
         menu.reset_after_side_menu();
 
         assert!(
-            !menu
-                .input_state
-                .buttons
-                .contains(crate::ui::MouseButtons::LEFT_DOWN),
+            !menu.input_state.buttons.contains(MouseButtons::LEFT_DOWN),
             "LEFT_DOWN should be cleared after side-menu return"
         );
     }
