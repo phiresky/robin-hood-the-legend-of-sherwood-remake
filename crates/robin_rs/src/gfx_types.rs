@@ -32,19 +32,6 @@ impl Color {
         Self { r, g, b, a }
     }
 
-    /// Convenience matching the SDL3 `Color::RGB` static-method-style call site.
-    #[inline]
-    #[allow(non_snake_case)]
-    pub const fn RGB(r: u8, g: u8, b: u8) -> Self {
-        Self::rgb(r, g, b)
-    }
-
-    #[inline]
-    #[allow(non_snake_case)]
-    pub const fn RGBA(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self::rgba(r, g, b, a)
-    }
-
     /// Linear-space `[f32; 4]` for shader uniforms.
     #[inline]
     pub fn to_f32_srgb(self) -> [f32; 4] {

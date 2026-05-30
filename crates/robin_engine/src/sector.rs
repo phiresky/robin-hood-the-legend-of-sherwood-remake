@@ -246,48 +246,25 @@ impl SectorType {
     pub fn is_motion(self) -> bool {
         self.contains(Self::MOTION)
     }
-    pub fn is_plane(self) -> bool {
-        self.contains(Self::PLANE)
-    }
-    pub fn is_sound(self) -> bool {
-        self.contains(Self::SOUND)
-    }
-    pub fn is_script(self) -> bool {
-        self.contains(Self::SCRIPT)
-    }
+
     pub fn is_patch(self) -> bool {
         self.contains(Self::PATCH)
     }
-    pub fn is_mouse(self) -> bool {
-        self.contains(Self::MOUSE)
-    }
-    pub fn is_cross(self) -> bool {
-        self.contains(Self::CROSS)
-    }
-    pub fn is_apply(self) -> bool {
-        self.contains(Self::APPLY)
-    }
+
     pub fn is_lift(self) -> bool {
         self.contains(Self::LIFT)
     }
     pub fn is_building(self) -> bool {
         self.contains(Self::BUILDING)
     }
-    pub fn is_associated(self) -> bool {
-        self.contains(Self::ASSOCIATED)
-    }
+
     pub fn is_door(self) -> bool {
         self.contains(Self::DOOR)
     }
     pub fn is_shadow(self) -> bool {
         self.contains(Self::SHADOW)
     }
-    pub fn is_railroad(self) -> bool {
-        self.contains(Self::RAILROAD)
-    }
-    pub fn is_apex(self) -> bool {
-        self.contains(Self::APEX)
-    }
+
     pub fn is_jump(self) -> bool {
         self.contains(Self::JUMP)
     }
@@ -549,10 +526,6 @@ impl ScriptSectorData {
         self.occupant_indices.contains(&element_index)
     }
 
-    pub fn any_occupant(&self) -> Option<crate::entity_id::EntityId> {
-        self.occupant_indices.first().copied()
-    }
-
     pub fn enter(&mut self, element_index: crate::entity_id::EntityId) {
         if self.occupant_indices.contains(&element_index) {
             tracing::warn!(
@@ -605,10 +578,6 @@ impl ScriptSectorData {
         // Drop any cached occupants; the occupant list isn't maintained
         // once the sector becomes APEX.
         self.occupant_indices.clear();
-    }
-
-    pub fn get_apex_height(&self) -> f32 {
-        self.max_throwing_apex_height
     }
 }
 

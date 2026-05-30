@@ -59,13 +59,6 @@ pub enum EncodedPictureCodec {
 }
 
 impl EncodedPicture {
-    pub fn jxl_rgb565(bytes: Vec<u8>) -> Self {
-        Self {
-            codec: EncodedPictureCodec::JxlRgb565,
-            bytes,
-        }
-    }
-
     pub fn jxl_rgba565_keyed(bytes: Vec<u8>) -> Self {
         Self {
             codec: EncodedPictureCodec::JxlRgba565Keyed,
@@ -558,15 +551,6 @@ impl ResourceManager {
             .ok_or_else(|| anyhow!("wave resource {id}: sub_id {sub_id} out of range"))
     }
 
-    /// Number of wave entries in a wave-table resource.
-    pub fn get_sample_count(&mut self, id: ResourceId) -> Result<usize> {
-        self.ensure_waves_loaded(id)?;
-        self.waves
-            .get(&id)
-            .map(|v| v.len())
-            .ok_or_else(|| anyhow!("wave resource {id}: not found"))
-    }
-
     // ===================================================================
     // Mouse-cursor getters
     // ===================================================================
@@ -576,33 +560,6 @@ impl ResourceManager {
         self.ensure_mouse_loaded(id)?;
         self.mouse_entries
             .get(&id)
-            .ok_or_else(|| anyhow!("mouse resource {id}: not found"))
-    }
-
-    /// Cursor hotspot point.
-    pub fn get_hotspot_for_mouse(&mut self, id: ResourceId) -> Result<&CursorHotspot> {
-        self.ensure_mouse_loaded(id)?;
-        self.mouse_entries
-            .get(&id)
-            .map(|e| &e.hotspot)
-            .ok_or_else(|| anyhow!("mouse resource {id}: not found"))
-    }
-
-    /// Cursor flags.
-    pub fn get_flags_for_mouse(&mut self, id: ResourceId) -> Result<u16> {
-        self.ensure_mouse_loaded(id)?;
-        self.mouse_entries
-            .get(&id)
-            .map(|e| e.flags)
-            .ok_or_else(|| anyhow!("mouse resource {id}: not found"))
-    }
-
-    /// Cursor animation frame length.
-    pub fn get_frame_length_for_mouse(&mut self, id: ResourceId) -> Result<u16> {
-        self.ensure_mouse_loaded(id)?;
-        self.mouse_entries
-            .get(&id)
-            .map(|e| e.frame_length)
             .ok_or_else(|| anyhow!("mouse resource {id}: not found"))
     }
 

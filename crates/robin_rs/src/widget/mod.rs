@@ -303,37 +303,13 @@ impl WidgetBase {
         !self.tooltip_text.is_empty()
     }
 
-    pub fn set_accelerator(&mut self, key: Option<winit::keyboard::KeyCode>) {
-        self.fast_key = key;
-    }
-
     pub fn set_position(&mut self, bbox: ScreenBBox) {
         self.bbox = bbox;
         self.renderer.set_position(bbox);
     }
 
-    pub fn set_position_point(&mut self, point: ScreenPoint) {
-        // Translate the existing bounding box so its top-left sits at
-        // `point`, preserving width/height. If the widget has no bbox
-        // yet (hyperspace), fall back to a 1×1 at `point` so we stay
-        // compatible with callers that set the position before sizing.
-        self.bbox = match self.bbox.0 {
-            Some(_) => ScreenBBox::from_point_size(point, self.bbox.width(), self.bbox.height()),
-            None => ScreenBBox::from_point(point),
-        };
-        self.renderer.set_position(self.bbox);
-    }
-
     pub fn set_enable(&mut self, enabled: bool) {
         self.enabled = enabled;
-    }
-
-    pub fn set_focus_enabled(&mut self, enabled: bool) {
-        self.with_focus = enabled;
-    }
-
-    pub fn set_default_enabled(&mut self, enabled: bool) {
-        self.with_default = enabled;
     }
 
     /// Check if a screen point is inside the widget's clickable area.
@@ -452,11 +428,6 @@ impl Widget {
     /// Widget ID.
     pub fn id(&self) -> WidgetId {
         self.base().id
-    }
-
-    /// Whether the widget is enabled for input.
-    pub fn is_enabled(&self) -> bool {
-        self.base().enabled
     }
 
     /// Process input for this widget, returning any generated events.

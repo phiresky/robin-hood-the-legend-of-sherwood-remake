@@ -1603,20 +1603,6 @@ impl FriendlyAi {
         // Intentionally empty.
     }
 
-    /// Run to a soldier to report something.
-    ///
-    /// Declared in the header but never implemented; kept as a stub.
-    pub fn run_to_your_big_brother(&mut self, _evil_pc: ElementHandle, _reason: Question) {
-        // No implementation exists — treated as dead code.
-    }
-
-    /// Hide in a house.
-    ///
-    /// Declared in the header but never implemented; kept as a stub.
-    pub fn hide_in_a_house(&mut self) {
-        // No implementation exists — treated as dead code.
-    }
-
     /// Alert a nearby soldier.
     ///
     /// Algorithm:
@@ -1851,13 +1837,6 @@ impl FriendlyAi {
 
         self.base.say(Remark::CivPanic);
         true
-    }
-
-    /// Standard procedure when seeing a friendly soldier (hint opportunity).
-    ///
-    /// Declared in the header but never implemented; kept as a stub.
-    pub fn event_sees_big_brother_standard_procedure(&mut self, _big_brother: NpcHandle) {
-        // No implementation exists — treated as dead code.
     }
 
     /// Random ambient speech for civilians.

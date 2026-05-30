@@ -42,10 +42,6 @@ const WASP_SPEED: f32 = 5.0;
 const NEST_ATTRACTION: f32 = 0.08;
 /// Base frames between direction changes; jittered +0..3.
 const DIRECTION_CHANGE_TIMEOUT: u16 = 7;
-/// Sting-delay floor in frames.  Documented intent of the constant is
-/// the minimum delay; the actual sting-delay roll has a parens bug
-/// that cancels this floor out (see comment at the use site), so this
-/// const is kept for documentation only and not used in the formula.
 // Kept-justified: paired with STINGING_MAX_TIMEOUT below for parity
 // documentation; unused at runtime due to the parens bug.
 #[allow(dead_code)]

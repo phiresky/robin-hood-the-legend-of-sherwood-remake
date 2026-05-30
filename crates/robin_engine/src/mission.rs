@@ -239,52 +239,12 @@ impl Mission {
             .wrapping_add(self.profile(profiles).blazon_inflation);
     }
 
-    pub fn reset_blazon_price(&mut self, profiles: &crate::profiles::ProfileManager) {
-        self.blazon_price = self.profile(profiles).blazon_price;
-    }
-
     pub fn win(&mut self) {
         self.status = MissionStatus::Won;
     }
 
     pub fn lose(&mut self) {
         self.status = MissionStatus::Lost;
-    }
-
-    /// Win a pseudo mission that requires zero blazons.
-    /// Called as part of DetermineNextMission to auto-complete
-    /// pseudo missions with no blazon requirement.
-    pub fn win_empty_pseudo_mission(&mut self, profiles: &crate::profiles::ProfileManager) -> bool {
-        let p = self.profile(profiles);
-        if p.mission_type == crate::profiles::MissionType::Pseudo && p.number_of_blazons_to_win == 0
-        {
-            // This will be completed via Campaign::set_mission_done
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Load the mission state from the legacy save-file format.
-    ///
-    /// Returns `Ok(())` on success.
-    pub fn load_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), i32> {
-        file.validate_stream("RHMission")?;
-
-        file.serialize_u16(&mut self.age)?;
-        file.serialize_u16(&mut self.blazon_price)?;
-
-        // CHECKENUM: status serialized as u32
-        let mut status_u32 = self.status as u32;
-        file.serialize_u32(&mut status_u32)?;
-        if file.is_read_mode() {
-            self.status = MissionStatus::from_u32(status_u32);
-        }
-
-        // Skip 2 * sizeof(UWORD) = 4 bytes of padding
-        file.skip_padding(4)?;
-
-        Ok(())
     }
 }
 

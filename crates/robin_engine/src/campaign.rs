@@ -440,14 +440,6 @@ impl Campaign {
         })
     }
 
-    pub fn get_mission_by_index(&self, idx: usize) -> Option<&Mission> {
-        self.missions.get(idx)
-    }
-
-    pub fn get_mission_by_index_mut(&mut self, idx: usize) -> Option<&mut Mission> {
-        self.missions.get_mut(idx)
-    }
-
     /// Count how many missions have been completed (won or lost).
     pub fn get_number_of_missions_done(&self) -> usize {
         self.missions.iter().filter(|m| m.is_done()).count()
@@ -644,11 +636,6 @@ impl Campaign {
         self.mission_team_indices.len()
     }
 
-    /// Read-only view of the upcoming mission team (character indices).
-    pub fn get_mission_team(&self) -> &[usize] {
-        &self.mission_team_indices
-    }
-
     /// Character profile indices of all members of the upcoming mission team.
     pub fn mission_team_profile_indices(&self) -> Vec<CharacterProfileIdx> {
         self.mission_team_indices
@@ -670,15 +657,6 @@ impl Campaign {
 
     /// Remove the mission team member at the given position (index into
     /// `mission_team_indices`, not a character index).
-    pub fn remove_from_mission_team_at(&mut self, position: usize) {
-        assert!(
-            position < self.mission_team_indices.len(),
-            "remove_from_mission_team_at: position {} out of bounds (len {})",
-            position,
-            self.mission_team_indices.len()
-        );
-        self.mission_team_indices.remove(position);
-    }
 
     pub fn reset_mission_team(&mut self) {
         self.mission_team_indices.clear();
@@ -693,22 +671,6 @@ impl Campaign {
         self.mission_team_indices.clear();
         self.mission_team_indices
             .extend_from_slice(&self.gang_indices);
-    }
-
-    /// Add only VIP gang members to the mission team.
-    pub fn add_all_vips_to_mission_team(&mut self, profiles: &ProfileManager) {
-        self.mission_team_indices.clear();
-        for &gi in &self.gang_indices {
-            let is_vip = self
-                .characters
-                .get(gi)
-                .and_then(|desc| desc.character_profile_idx)
-                .and_then(|cpi| profiles.get_character(cpi))
-                .is_some_and(|cp| cp.vip);
-            if is_vip {
-                self.mission_team_indices.push(gi);
-            }
-        }
     }
 
     // ── Character pool ──
@@ -786,13 +748,6 @@ impl Campaign {
         true
     }
 
-    /// Find the index of a character in `self.characters` by profile index.
-    /// Panics if not found.
-    pub fn get_description_index(&self, profile_idx: CharacterProfileIdx) -> usize {
-        self.get_character_by_profile(profile_idx)
-            .expect("get_description_index: character not found in pool")
-    }
-
     /// Add a `PcDescription` to the character pool. Returns the new index.
     /// VIP characters must not already exist in the pool.
     pub fn add_to_characters(&mut self, desc: PcDescription, profiles: &ProfileManager) -> usize {
@@ -830,10 +785,6 @@ impl Campaign {
     }
 
     // ── Relics ──
-
-    pub fn get_collected_relics(&self) -> &[u32] {
-        &self.collected_relics
-    }
 
     pub fn add_relic(&mut self, relic_type: u32) {
         self.collected_relics.push(relic_type);
@@ -1410,14 +1361,6 @@ impl Campaign {
             self.missions[idx].reset_age();
         }
         self.accessible_mission_indices.clear();
-    }
-
-    /// Clear the pending accessible missions list, resetting ages.
-    pub fn clear_pending_accessible_missions(&mut self) {
-        for &idx in &self.pending_accessible_mission_indices {
-            self.missions[idx].reset_age();
-        }
-        self.pending_accessible_mission_indices.clear();
     }
 
     // ── is_mission_team_valid ────────────────────────────────────────

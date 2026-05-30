@@ -361,17 +361,6 @@ impl PatrolPath {
         self.current_waypoint_index = index;
     }
 
-    /// Check if the path has the right direction for a direction flag.
-    pub fn has_right_direction(&self, flag: u8) -> bool {
-        // Direction flag: 0 = any, 1 = forward, 2 = backward
-        match flag {
-            0 => true,
-            1 => self.forward,
-            2 => !self.forward,
-            _ => true,
-        }
-    }
-
     /// Clear position history.
     pub fn reset_history(&mut self) {
         self.history.clear();
@@ -2814,55 +2803,10 @@ impl Stimulus {
         }
     }
 
-    pub fn with_hint(stimulus_type: StimulusType, hint: Hint) -> Self {
-        Self {
-            stimulus_type,
-            info: StimulusInfo::Hint(hint),
-            owner: 0,
-            to_whole_patrol: false,
-        }
-    }
-
-    pub fn with_object(stimulus_type: StimulusType, obj: ObjectHandle) -> Self {
-        Self {
-            stimulus_type,
-            info: StimulusInfo::Object(obj),
-            owner: 0,
-            to_whole_patrol: false,
-        }
-    }
-
-    pub fn with_stolen(stimulus_type: StimulusType, stolen: StolenObject) -> Self {
-        Self {
-            stimulus_type,
-            info: StimulusInfo::Stolen(stolen),
-            owner: 0,
-            to_whole_patrol: false,
-        }
-    }
-
-    pub fn with_combat(stimulus_type: StimulusType, combat: CombatInfo) -> Self {
-        Self {
-            stimulus_type,
-            info: StimulusInfo::Combat(combat),
-            owner: 0,
-            to_whole_patrol: false,
-        }
-    }
-
     pub fn with_door_combat(stimulus_type: StimulusType, dc: DoorCombatInfo) -> Self {
         Self {
             stimulus_type,
             info: StimulusInfo::DoorCombat(dc),
-            owner: 0,
-            to_whole_patrol: false,
-        }
-    }
-
-    pub fn with_index(stimulus_type: StimulusType, idx: u16) -> Self {
-        Self {
-            stimulus_type,
-            info: StimulusInfo::Index(idx),
             owner: 0,
             to_whole_patrol: false,
         }
@@ -2970,30 +2914,6 @@ impl ReconnaissanceReport {
     /// - `REPORT_UPDATE_BODIES` (1): merge seen_bodies from `other`
     /// - `REPORT_UPDATE_CHARLY` (2): copy charly handle if we don't have one
     /// - `REPORT_UPDATE_TYPE` (4): update report type and seek position
-    pub fn consider_report(&mut self, other: &ReconnaissanceReport, flags: u16) {
-        const REPORT_UPDATE_BODIES: u16 = 1;
-        const REPORT_UPDATE_CHARLY: u16 = 2;
-        const REPORT_UPDATE_TYPE: u16 = 4;
-
-        // Merge seen bodies
-        if (flags & REPORT_UPDATE_BODIES) != 0 {
-            for &body in &other.seen_bodies {
-                if !self.seen_bodies.contains(&body) {
-                    self.seen_bodies.push(body);
-                }
-            }
-        }
-
-        // Merge charly (missing friend)
-        if (flags & REPORT_UPDATE_CHARLY) != 0 && other.charly != 0 && self.charly == 0 {
-            self.charly = other.charly;
-        }
-
-        // Update report type and position
-        if (flags & REPORT_UPDATE_TYPE) != 0 {
-            self.update(other.report_type, other.seek_position);
-        }
-    }
 
     pub fn add_seen_body(&mut self, body: HumanHandle) {
         self.seen_bodies.push(body);
@@ -3082,25 +3002,6 @@ impl SeekPoint {
                 as u8
         };
         self.last_calculated_interest
-    }
-
-    /// Set interest to a value (0–100), updating the frame counter.
-    pub fn set_interest(&mut self, interest: i8, current_frame: u32) {
-        let clamped = interest.clamp(0, 100) as u32;
-        self.frame_when_full_interest = current_frame
-            + crate::parameters_ai::SEEK_POINT_TIME_TO_REGAIN_1_PERCENT_OF_INTEREST as u32
-                * clamped;
-    }
-
-    /// Increase interest (move full-interest frame closer to now).
-    pub fn add_interest(&mut self, value: u8, current_frame: u32) {
-        self.frame_when_full_interest = self.frame_when_full_interest.saturating_sub(
-            value as u32
-                * crate::parameters_ai::SEEK_POINT_TIME_TO_REGAIN_1_PERCENT_OF_INTEREST as u32,
-        );
-        if self.frame_when_full_interest < current_frame {
-            self.frame_when_full_interest = current_frame;
-        }
     }
 
     /// Decrease interest (push full-interest frame further into the future).
@@ -3264,16 +3165,6 @@ impl SectorArchery {
             j = i;
         }
         inside
-    }
-
-    /// Find the first unoccupied shooting point, returning its index.
-    pub fn find_free_shooting_point(&self) -> Option<usize> {
-        for (i, pt) in self.points.iter().enumerate() {
-            if pt.is_shooting_point && pt.owner.is_none() {
-                return Some(i);
-            }
-        }
-        None
     }
 }
 
@@ -3562,20 +3453,6 @@ impl AiContext {
     /// `ai_vision::los_clear` and the visibility query helpers accept.
     pub fn obstacle_list(&self) -> crate::sight_obstacle::ObstacleList<'_> {
         self.sight_obstacles.list()
-    }
-
-    pub fn los_clear(
-        &self,
-        viewer: crate::geo2d::GeoPoint2D,
-        target: crate::geo2d::GeoPoint2D,
-    ) -> bool {
-        crate::ai_vision::los_clear_spatial(
-            viewer,
-            target,
-            self.position.level,
-            self.obstacle_list(),
-            &self.fast_grid,
-        )
     }
 
     /// Resolve a soldier register number (load-order index) to an
@@ -5098,37 +4975,7 @@ impl AiController {
         }
     }
 
-    /// Create a new AI controller with both a legacy handle and a typed entity ID.
-    pub fn new_with_entity(owner: NpcHandle, entity_id: EntityId) -> Self {
-        Self {
-            me: owner,
-            owner_entity_id: Some(entity_id),
-            ..Default::default()
-        }
-    }
-
-    /// Bind this controller to a typed entity ID (call after entity registration).
-    pub fn bind_entity(&mut self, entity_id: EntityId) {
-        self.owner_entity_id = Some(entity_id);
-    }
-
     // -- Per-NPC init (called from EngineInner::init_one_ai) --
-
-    /// Common tail of the per-AI-flavour `init_one_ai`: once the
-    /// entity-level fields (direction / view radius / detectables /
-    /// initial position / patrol path) have been set up by
-    /// `EngineInner::init_one_ai`, start walking the patrol if we have
-    /// one.
-    ///
-    /// Subclasses (`EnemyAi::init_one_ai`, `FriendlyAi::init_one_ai`)
-    /// call this as part of their own init dispatch.
-    pub fn init_one_ai(&mut self, ctx: &AiContext) {
-        if self.has_patrol_path {
-            self.return_to_duty_common_stuff(DutyFlags::empty(), ctx);
-        }
-
-        tracing::trace!("AiController::init_one_ai for NPC handle {}", self.me);
-    }
 
     /// Evaluate `initial_action` and commit the matching AI-side
     /// state transition.
@@ -5378,23 +5225,6 @@ impl AiController {
         }
     }
 
-    /// Returns `true` while this NPC is queued to receive a body-alert
-    /// report from another soldier — the `DETECTABLE_BODY` visibility
-    /// arm in `GetVisibility` zeroes visibility so the NPC doesn't
-    /// double-trigger on the same body it's about to be briefed on.
-    ///
-    /// Currently unused from the `DETECTABLE_BODY` visibility loop
-    /// because body detection isn't ported yet (only Enemy). Wire this
-    /// in alongside the body-detection port so the handshake between
-    /// alerting soldier and officer stays consistent.
-    pub fn ignore_bodies(&self) -> bool {
-        matches!(
-            self.current_substate,
-            Substate::SeekingOfficerWaitForAlertingSoldier
-                | Substate::SeekingOfficerGetAlertingReportFromSoldier
-        )
-    }
-
     // -- Emoticon --
 
     pub fn set_emoticon(&mut self, emoticon: EmoticonType) {
@@ -5418,15 +5248,6 @@ impl AiController {
     }
 
     // -- Master/group --
-
-    pub fn set_master(&mut self, master: NpcHandle, self_handle: NpcHandle) {
-        self.master = master;
-        self.is_master = master == self_handle;
-    }
-
-    pub fn set_as_master(&mut self) {
-        self.is_master = true;
-    }
 
     // -- Patrol --
 
@@ -5642,11 +5463,6 @@ impl AiController {
     // Modelled as static helpers; original engine used thread-local
     // accumulators.
 
-    /// Weighted yes/no decision based on attribute value and threshold.
-    pub fn no_or_yes(min_value_for_yes: u8, attribute_value: u8) -> bool {
-        attribute_value >= min_value_for_yes
-    }
-
     /// Interpolate between two values based on a parameter in 0..100.
     ///
     /// `0.01f * param` is cast to `u16` (truncation toward zero), so
@@ -5659,45 +5475,6 @@ impl AiController {
         debug_assert!(param <= 100);
         let p = (0.01f32 * param as f32) as u16;
         value_at_0.wrapping_add(value_at_100.wrapping_sub(value_at_0).wrapping_mul(p))
-    }
-
-    /// 5-point piecewise-linear probability trial.
-    ///
-    /// `lambda` is the pre-computed consideration score in
-    /// `[0, MAX_ATT_VALUE]`; callers pass it explicitly because the
-    /// thread-local `Consider(...)` accumulator isn't ported — same
-    /// contract as [`Self::no_or_yes`].
-    pub fn random_bool_5pt(p0: u16, p25: u16, p50: u16, p75: u16, p100: u16, lambda: u8) -> bool {
-        debug_assert!(p0 <= 100);
-        debug_assert!(p25 <= 100);
-        debug_assert!(p50 <= 100);
-        debug_assert!(p75 <= 100);
-        debug_assert!(p100 <= 100);
-
-        let lambda = lambda as i32;
-        let q = QUARTER_MAX_ATT_VALUE;
-        let ub_p: i32 = if lambda < HALF_MAX_ATT_VALUE {
-            if lambda < q {
-                p0 as i32 + ((p25 as i32 - p0 as i32) * lambda) / q
-            } else {
-                p25 as i32 + ((p50 as i32 - p25 as i32) * (lambda - q)) / q
-            }
-        } else if lambda < THREE_QUARTERS_MAX_ATT_VALUE {
-            p50 as i32 + ((p75 as i32 - p50 as i32) * (lambda - HALF_MAX_ATT_VALUE)) / q
-        } else {
-            p75 as i32 + ((p100 as i32 - p75 as i32) * (lambda - THREE_QUARTERS_MAX_ATT_VALUE)) / q
-        };
-
-        (crate::sim_rng::u32(0..100) as i32) < ub_p
-    }
-
-    /// 2-point linear probability trial. See
-    /// [`Self::random_bool_5pt`] for the `lambda` convention.
-    pub fn random_bool_2pt(p0: u16, p100: u16, lambda: u8) -> bool {
-        debug_assert!(p0 <= 100);
-        debug_assert!(p100 <= 100);
-        let ub_p = p0 as i32 + ((p100 as i32 - p0 as i32) * lambda as i32) / MAX_ATT_VALUE;
-        (crate::sim_rng::u32(0..100) as i32) < ub_p
     }
 
     // -- Bored time --
@@ -5740,12 +5517,6 @@ impl AiController {
     }
 
     // -- Retrograde amnesia --
-
-    /// Clears the pending stimulus queue — "Deletes all stimuli which
-    /// are waiting for me in the stimulus queues".
-    pub fn retrograde_amnesia(&mut self) {
-        self.stimulus_queue.clear();
-    }
 
     // -- Pending order access --
 

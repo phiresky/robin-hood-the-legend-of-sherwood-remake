@@ -118,14 +118,6 @@ pub fn f32() -> f32 {
     with_rng(|rng| rng.f32())
 }
 
-pub fn choice<T: Copy>(slice: &[T]) -> Option<T> {
-    if slice.is_empty() {
-        None
-    } else {
-        Some(slice[usize(..slice.len())])
-    }
-}
-
 /// Shuffle a slice in-place using the simulation RNG.
 pub fn shuffle<T>(slice: &mut [T]) {
     with_rng(|rng| rng.shuffle(slice));

@@ -428,42 +428,6 @@ impl PathGraph {
             .map(|e| e.area)
     }
 
-    /// Get the number of half-diagonals (unit sizes).
-    pub fn num_half_diagonals(&self) -> usize {
-        self.static_data.half_diagonals.len()
-    }
-
-    /// Find the sector number for a point on a given layer.
-    ///
-    /// Returns `Some(sector_number)` if the point is inside a motion
-    /// area polygon. The sector number, when passed to `convert_sector`,
-    /// returns the area index for the given (layer, point).
-    ///
-    /// The sector_conversion table is built sequentially across layers
-    /// and areas, with each area consuming `num_obstacles + 1` sector
-    /// numbers (one for the polygon itself, one per obstacle).
-    pub fn find_sector_at_point(&self, layer: usize, point: GeoPoint2D) -> Option<u16> {
-        let area_idx = self.find_area_at_point(layer, point)?;
-        // Cumulative sector numbers contributed by all layers BEFORE the target.
-        let mut cumulative: u16 = 0;
-        for (l, layer_areas) in self.static_data.move_layers.iter().enumerate() {
-            if l == layer {
-                // Within this layer, walk to the target area, summing contributions.
-                for (a, area) in layer_areas.iter().enumerate() {
-                    if a == area_idx {
-                        return Some(cumulative);
-                    }
-                    cumulative += area.motion_obstacles.len() as u16 + 1;
-                }
-                return None;
-            }
-            for area in layer_areas {
-                cumulative += area.motion_obstacles.len() as u16 + 1;
-            }
-        }
-        None
-    }
-
     /// Find which motion area on a given layer contains `point`.
     ///
     /// Returns `Some(area_index)` if the point is inside a motion area
@@ -480,17 +444,6 @@ impl PathGraph {
             }
         }
         None
-    }
-
-    /// Get all active node indices in an area.
-    pub fn area_node_indices(
-        &self,
-        layer: usize,
-        area: usize,
-    ) -> impl Iterator<Item = NodeIdx> + '_ {
-        self.layers[layer][area]
-            .iter()
-            .flat_map(|obstacle| obstacle.iter().copied())
     }
 
     /// Read just the move-box half-diagonal table from a proto stream
@@ -2078,27 +2031,6 @@ impl PathFinderRuntime {
     pub fn initialize(&mut self) {
         self.initialize_all_states(0x5555_5555); // 1010101010... in binary
         self.set_states_all();
-    }
-
-    /// Merge all alternative nodes back into the active graph.
-    pub fn merge_states(&mut self) {
-        self.initialize_all_states(0);
-
-        for layer in 0..self.graph.alternative_layers.len() {
-            for area in 0..self.graph.alternative_layers[layer].len() {
-                for obs in 0..self.graph.alternative_layers[layer][area].len() {
-                    // Move all alternative nodes back to active
-                    while let Some(node_idx) = self.graph.alternative_layers[layer][area][obs].pop()
-                    {
-                        self.graph.layers[layer][area][obs].push(node_idx);
-
-                        // Move all alternative links back to active
-                        let node = &mut self.graph.nodes[node_idx.0 as usize];
-                        node.link_indices.append(&mut node.alternative_link_indices);
-                    }
-                }
-            }
-        }
     }
 
     // ── Debug visualisation ──────────────────────────────────────

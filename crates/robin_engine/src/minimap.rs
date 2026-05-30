@@ -389,11 +389,6 @@ impl MinimapState {
         self.drag_start
     }
 
-    /// Whether the current drag has exceeded the drag threshold.
-    pub fn dragged(&self) -> bool {
-        self.dragged
-    }
-
     // ── Hit testing ──
 
     /// Check if a screen position is "really" over the minimap widget.

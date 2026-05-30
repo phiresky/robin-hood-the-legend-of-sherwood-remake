@@ -89,10 +89,6 @@ impl ColumnLayout {
         self.ratios.is_empty()
     }
 
-    pub fn column_count(&self) -> usize {
-        self.ratios.len()
-    }
-
     /// Split a pipe-delimited row into per-column cells. Cells beyond
     /// the configured column count are absorbed into the final cell —
     /// only the first `N-1` pipes are split. If no columns are
@@ -233,109 +229,7 @@ impl<T: Clone> WidgetListbox<T> {
         }
     }
 
-    /// Configure the column layout for pipe-delimited rows. Columns are
-    /// always set up as a known list at construction, so they're passed
-    /// as a single slice.
-    pub fn set_columns(&mut self, columns: &[(f32, ColumnAlign)]) {
-        self.column_layout = ColumnLayout::new(columns);
-    }
-
     // ── Item management ────────────────────────────────────────────
-
-    /// Add an item at the end of the list.
-    pub fn add_item(&mut self, text: &str, data: T, flags: u32) {
-        self.items.push(ListboxItem {
-            text: text.to_string(),
-            data,
-            flags,
-        });
-        self.update_visible_count();
-    }
-
-    /// Insert an item at the given index.
-    pub fn insert_item(&mut self, index: usize, text: &str, data: T, flags: u32) {
-        self.items.insert(
-            index.min(self.items.len()),
-            ListboxItem {
-                text: text.to_string(),
-                data,
-                flags,
-            },
-        );
-        self.update_visible_count();
-    }
-
-    /// Remove the item at the given index.
-    pub fn delete_item(&mut self, index: usize) {
-        if index < self.items.len() {
-            self.items.remove(index);
-            // Adjust selection and focus.
-            if self.selected == Some(index) {
-                self.selected = None;
-            } else if let Some(sel) = self.selected
-                && sel > index
-            {
-                self.selected = Some(sel - 1);
-            }
-            if self.focused == Some(index) {
-                self.focused = None;
-            }
-            self.update_visible_count();
-        }
-    }
-
-    /// Remove all items.
-    pub fn delete_all_items(&mut self) {
-        self.items.clear();
-        self.selected = None;
-        self.focused = None;
-        self.first_visible = 0;
-    }
-
-    /// Get the number of items.
-    pub fn item_count(&self) -> usize {
-        self.items.len()
-    }
-
-    /// Get the text of an item.
-    pub fn item_text(&self, index: usize) -> Option<&str> {
-        self.items.get(index).map(|i| i.text.as_str())
-    }
-
-    /// Set the text of an item.
-    pub fn set_item_text(&mut self, index: usize, text: &str) {
-        if let Some(item) = self.items.get_mut(index) {
-            item.text = text.to_string();
-        }
-    }
-
-    /// Get the data of the selected item.
-    pub fn selected_item(&self) -> Option<&ListboxItem<T>> {
-        self.selected.and_then(|i| self.items.get(i))
-    }
-
-    /// Get the selected item index.
-    pub fn selected_index(&self) -> Option<usize> {
-        self.selected
-    }
-
-    /// Set the selected item index programmatically.
-    pub fn set_selected(&mut self, index: Option<usize>) {
-        self.selected = index;
-        // Ensure selected item is visible.
-        if let Some(idx) = index {
-            if idx < self.first_visible {
-                self.first_visible = idx;
-            } else if idx >= self.first_visible + self.visible_count {
-                self.first_visible = idx.saturating_sub(self.visible_count - 1);
-            }
-        }
-    }
-
-    /// Force a full refresh on both frames.
-    pub fn force_refresh(&mut self) {
-        self.force_refresh = [true; 2];
-    }
 
     /// Recalculate how many items fit in the visible area.
     fn update_visible_count(&mut self) {
@@ -367,15 +261,6 @@ impl<T: Clone> WidgetListbox<T> {
             true
         } else {
             false
-        }
-    }
-
-    /// Scroll so that the given item index is visible.
-    pub fn ensure_visible(&mut self, index: usize) {
-        if index < self.first_visible {
-            self.first_visible = index;
-        } else if index >= self.first_visible + self.visible_count {
-            self.first_visible = index.saturating_sub(self.visible_count - 1);
         }
     }
 

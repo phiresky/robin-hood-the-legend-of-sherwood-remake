@@ -368,30 +368,10 @@ impl DialogueScreen {
         }
     }
 
-    /// Handle the Skip/Continue button — advance to the next sentence.
-    pub fn on_skip(&mut self) -> Option<&DialogueSentence> {
-        self.next_sentence()
-    }
-
     /// Handle the Stop/Abandon button — end the dialogue early.
     pub fn on_stop(&mut self) {
         self.abandoned = true;
         self.finished = true;
-    }
-
-    /// Handle the timer firing (auto-advance when sound finishes).
-    pub fn on_timer(&mut self, sound_finished: bool) -> bool {
-        if sound_finished {
-            self.next_sentence().is_some()
-        } else {
-            true // still playing
-        }
-    }
-
-    /// Current sentence reference, if valid.
-    pub fn current(&self) -> Option<&DialogueSentence> {
-        let idx = self.current_sentence as usize;
-        self.sentences.get(idx)
     }
 }
 
@@ -1028,15 +1008,6 @@ impl IntroScreen {
         }
     }
 
-    /// Handle Select Player button — caller opens the player selection screen.
-    /// If resolution changed, sets Redisplay.
-    pub fn set_select_player_result(&mut self, resolution_changed: bool) {
-        if resolution_changed {
-            self.operation = IntroOperation::Redisplay;
-            self.closed = true;
-        }
-    }
-
     /// Handle Options button — if resolution changed, redisplay.
     pub fn set_options_result(&mut self, resolution_changed: bool) {
         if resolution_changed {
@@ -1084,14 +1055,6 @@ impl IngameScreen {
     pub fn set_load_result(&mut self, loaded: bool) {
         if loaded {
             self.game_code = GameCode::LevelLoad;
-            self.closed = true;
-        }
-    }
-
-    /// Set the result after the save screen closes.
-    pub fn set_save_result(&mut self, saved: bool) {
-        if saved {
-            self.game_code = GameCode::LevelSave;
             self.closed = true;
         }
     }
@@ -1147,18 +1110,6 @@ impl OptionsScreen {
         if resolution_changed {
             self.redisplay = true;
         }
-    }
-
-    /// Set the result after the sounds sub-screen closes.
-    pub fn set_sounds_result(&mut self, changed: bool) {
-        if changed {
-            self.options_changed = true;
-        }
-    }
-
-    /// Handle Back button.
-    pub fn on_back(&mut self) {
-        self.closed = true;
     }
 }
 
@@ -1483,11 +1434,6 @@ impl LoadSaveScreen {
     pub fn can_delete(&self) -> bool {
         self.selected_index.is_some()
     }
-
-    /// Get the selected save game entry, if any.
-    pub fn selected_entry(&self) -> Option<&SaveGameEntry> {
-        self.selected_index.and_then(|i| self.entries.get(i))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1554,13 +1500,6 @@ impl NewPlayerScreen {
             self.name = name;
         }
     }
-
-    /// Handle difficulty radio button selection.
-    pub fn on_difficulty(&mut self, index: u32) {
-        if index < DIFFICULTY_LEVEL_COUNT {
-            self.difficulty_index = index;
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1609,15 +1548,6 @@ impl SelectPlayerScreen {
             Some(idx)
         } else {
             None
-        }
-    }
-
-    /// Handle Rename — enable edit mode for the selected slot.
-    pub fn rename_selected(&mut self, new_name: String) {
-        if let Some(idx) = self.selected_index
-            && let Some(name) = self.profile_names.get_mut(idx)
-        {
-            *name = new_name;
         }
     }
 
@@ -1707,19 +1637,6 @@ impl BuyBlazonsScreen {
     pub fn on_quit(&mut self) {
         self.closed = true;
     }
-
-    /// Update state after external changes (e.g., funds updated).
-    pub fn update_state(&mut self, available_funds: u32) {
-        self.available_funds = available_funds;
-        self.message = if self.can_buy() {
-            format!("Cost: {}", self.cost)
-        } else {
-            format!(
-                "Not enough funds (need {}, have {})",
-                self.cost, self.available_funds
-            )
-        };
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1762,24 +1679,6 @@ impl ShortcutsScreen {
         self.accepted = false;
         self.closed = true;
     }
-
-    /// Handle Default1 preset button.
-    pub fn on_default1(&mut self) {
-        self.active_preset = Some(ShortcutPreset::Default1);
-        self.changed = true;
-    }
-
-    /// Handle Default2 preset button.
-    pub fn on_default2(&mut self) {
-        self.active_preset = Some(ShortcutPreset::Default2);
-        self.changed = true;
-    }
-
-    /// Handle User Defined button.
-    pub fn on_user_defined(&mut self) {
-        self.active_preset = Some(ShortcutPreset::UserDefined);
-        self.changed = true;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1801,11 +1700,6 @@ impl MoviesScreen {
             outro_available: campaign_complete,
             ..Default::default()
         }
-    }
-
-    /// Handle Intro button — caller should play the intro video.
-    pub fn on_intro(&self) -> &'static str {
-        "Data/Cinematics/Intro.ogg"
     }
 
     /// Handle Outro button — caller should play the outro video.
@@ -1938,21 +1832,6 @@ impl MissionWonPopup {
     /// Whether the opening transition has completed (popup fully visible).
     pub fn is_fully_open(&self) -> bool {
         self.visible && self.phase == TransitionPhase::Idle
-    }
-
-    /// Interpolation factor for rendering (0.0 = source button, 1.0 = full size).
-    pub fn interpolation(&self) -> f32 {
-        match self.phase {
-            TransitionPhase::Opening => 1.0 - self.transition_counter.min(1.0),
-            TransitionPhase::Closing => 1.0 - self.transition_counter.min(1.0),
-            TransitionPhase::Idle => {
-                if self.visible {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-        }
     }
 }
 

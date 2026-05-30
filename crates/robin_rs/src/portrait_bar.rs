@@ -195,15 +195,6 @@ impl PortraitBar {
         self.portraits.iter().position(|p| p.id == portrait_id)
     }
 
-    /// Update the playable state for a PC's portrait.
-    ///
-    /// Driven by `MSG_ENABLE_CHARACTER` / `MSG_DISABLE_CHARACTER`.
-    pub fn set_playable(&mut self, pc_id: PcId, playable: bool) {
-        if let Some(p) = self.portraits.iter_mut().find(|p| p.pc_id == pc_id) {
-            p.pc_is_playable = playable;
-        }
-    }
-
     /// Open or close all portraits.
     pub fn set_all_portraits_opened(&mut self, opened: bool) {
         for p in &mut self.portraits {

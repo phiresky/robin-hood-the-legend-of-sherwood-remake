@@ -299,14 +299,6 @@ impl SwordState {
         profile.shield_height
     }
 
-    pub fn get_bludgeon_protection(&self, profile: &HtHWeaponProfile) -> u16 {
-        profile.bludgeon_protection
-    }
-
-    pub fn get_piercing_protection(&self, profile: &HtHWeaponProfile) -> u16 {
-        profile.piercing_protection
-    }
-
     // ── Per-strike accessors ────────────────────────────────────
 
     pub fn get_strike_target(
@@ -351,22 +343,6 @@ impl SwordState {
         profile.thrusts[strike as usize].cutting
     }
 
-    pub fn get_strike_minimal_distance(
-        &self,
-        profile: &HtHWeaponProfile,
-        strike: SwordStrike,
-    ) -> u16 {
-        profile.thrusts[strike as usize].minimal_distance
-    }
-
-    pub fn get_strike_maximal_distance(
-        &self,
-        profile: &HtHWeaponProfile,
-        strike: SwordStrike,
-    ) -> u16 {
-        profile.thrusts[strike as usize].maximal_distance
-    }
-
     /// Initial angle in radians (profile stores degrees).
     pub fn get_strike_initial_angle(&self, profile: &HtHWeaponProfile, strike: SwordStrike) -> f32 {
         degrees_to_radians(profile.thrusts[strike as usize].initial_angle)
@@ -378,13 +354,6 @@ impl SwordState {
     }
 
     /// Rotation angle in radians.
-    pub fn get_strike_rotation_angle(
-        &self,
-        profile: &HtHWeaponProfile,
-        strike: SwordStrike,
-    ) -> f32 {
-        degrees_to_radians(profile.thrusts[strike as usize].rotation_angle)
-    }
 
     pub fn get_strike_repulsion(&self, profile: &HtHWeaponProfile, strike: SwordStrike) -> u16 {
         profile.thrusts[strike as usize].repulsion

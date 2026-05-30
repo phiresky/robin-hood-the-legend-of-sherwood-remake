@@ -69,18 +69,6 @@ impl EngineInner {
         })
     }
 
-    /// Advance the display-state machine for one tick.
-    ///
-    /// Only the *sim-state* half of rendering. All actual GPU work
-    /// (background blit, entity sprites, HUD, overlays) runs host-side in
-    /// `game_session::run_mission`. Returns non-zero when the host should
-    /// skip the render pass this frame (the fast-forward `every-32nd-frame`
-    /// short-circuit).
-    ///
-    /// Called once per tick from inside `perform_hourglass` so that
-    /// rollback replay re-runs the same display-state mutations and
-    /// keeps `display_op` / `background_transform` / `cutscene_camera.old_*` /
-    /// scroll-deceleration in sync.
     //
     // The Rust GPU renderer re-composes the scene every frame, so there
     // is no offscreen cache to invalidate from the engine — host cache
@@ -308,29 +296,6 @@ impl EngineInner {
         // Reset display op for next frame.
         if display.display_op != DisplayOpCode::InZoom {
             display.display_op = DisplayOpCode::NoBackgroundMove;
-        }
-    }
-
-    /// Post-draw overlay (titbits, debug info, UI elements drawn on top).
-    ///
-    /// Several overlays are rendered externally via game_session →
-    /// game_render:
-    /// - Ransom/amulet text → `render_ransom_amulet_overlay`
-    /// - Animation lines debug → `render_debug_animation_lines`
-    /// - Trajectory preview → `render_trajectory_preview`
-    ///
-    /// Remaining stubs below are blocked on unported data subsystems.
-    pub fn draw_over(&self, dev: &DevState) {
-        // Noise display moved out: `render_noise_display` (game_render.rs)
-        // reads `dev.displayed_noises` + per-PC footstep volumes and
-        // renders on the GPU path. Fed by `broadcast_noise` through
-        // `SideEffects::displayed_noises`, then drained into DevState
-        // by the game tick wrapper.
-        if dev.debug.combat_energy_display {
-            // No-op: the `energyDisplay` cheat sets a flag but no
-            // rendering code consumes it (`DisplayGauge` has zero
-            // callers). The flag is kept only so the cheat toggle
-            // stays recognised; there is nothing to render.
         }
     }
 

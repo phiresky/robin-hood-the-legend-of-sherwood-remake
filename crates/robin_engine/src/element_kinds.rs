@@ -92,9 +92,6 @@ impl ElementKind {
     pub fn is_projectile(self) -> bool {
         matches!(self, Self::ObjectProjectile | Self::ObjectNet)
     }
-    pub fn is_other_object(self) -> bool {
-        matches!(self, Self::ObjectOther)
-    }
 
     /// Whether the sprite's bounding box should participate in the
     /// building-mask occlusion pass.
@@ -308,15 +305,7 @@ impl Posture {
     pub fn is_hidden(self) -> bool {
         matches!(self, Self::Spy | Self::Tree | Self::AnonymousArcher)
     }
-    pub fn is_disguised(self) -> bool {
-        matches!(
-            self,
-            Self::SimulatingBeggar | Self::Spy | Self::AnonymousArcher
-        )
-    }
-    pub fn is_crouched_height(self) -> bool {
-        matches!(self, Self::Crouched | Self::SimulatingBeggar | Self::Tree)
-    }
+
     pub fn triggers_enemy_near(self) -> bool {
         matches!(
             self,
@@ -472,32 +461,6 @@ impl ActionState {
             self,
             Self::HoldingShield | Self::ParryingShield | Self::MovingShield
         )
-    }
-
-    /// Collapse a movement-variant action state to its corresponding
-    /// "resting" counterpart.  Used by the Move-element failure path to
-    /// pick a sane `action_state` for an actor whose Move was halted
-    /// mid-stride and then failed pathfinding — the element's stamped
-    /// `action_state_after_transition` snapshot may itself be a moving
-    /// variant (e.g. when a new Move interrupts an in-flight Move),
-    /// and reverting to that would reproduce the "frozen mid-walk"
-    /// bug.  This helper resolves the stamp through to the stationary
-    /// form.
-    ///
-    /// Non-movement states pass through unchanged — a PC interrupted
-    /// mid-bow keeps `AimingWithBow`, an attentive soldier keeps
-    /// `WaitingSword`, etc.
-    ///
-    /// Collapses `Moving → Waiting`,
-    /// `MovingSword/MovingFastSword → WaitingSword`, and
-    /// `MovingShield → HoldingShield`.
-    pub fn at_rest(self) -> Self {
-        match self {
-            Self::Moving | Self::MovingFast => Self::Waiting,
-            Self::MovingSword | Self::MovingFastSword => Self::WaitingSword,
-            Self::MovingShield => Self::HoldingShield,
-            other => other,
-        }
     }
 
     /// Normalise the action state onto the "moving" variant matching the
@@ -848,31 +811,6 @@ impl BonusItemType {
             17 => Self::DomesdayBook,
             18 => Self::SwordOfTheState,
             _ => panic!("invalid BonusType value: {value}"),
-        }
-    }
-
-    /// Convert a bonus item type to the matching object type.
-    pub fn to_object_type(self) -> ObjectType {
-        match self {
-            Self::Arrow => ObjectType::BonusArrow,
-            Self::Stone => ObjectType::BonusStone,
-            Self::Apple => ObjectType::BonusApple,
-            Self::Ale => ObjectType::BonusAle,
-            Self::Lamb => ObjectType::BonusLambLeg,
-            Self::Plant => ObjectType::BonusPlants,
-            Self::Net => ObjectType::BonusNet,
-            Self::WaspNest => ObjectType::BonusWaspNest,
-            Self::Purse => ObjectType::BonusPurse,
-            Self::Ransom => ObjectType::BonusRansom,
-            Self::Amulet => ObjectType::BonusAmulet,
-            Self::Blazon => ObjectType::BonusBlazon,
-            Self::Ampulla => ObjectType::BonusAmpulla,
-            Self::CoronationSpoon => ObjectType::BonusCoronationSpoon,
-            Self::RichardsCrown => ObjectType::BonusRichardsCrown,
-            Self::RoyalSeal => ObjectType::BonusRoyalSeal,
-            Self::RoyalSceptre => ObjectType::BonusRoyalSceptre,
-            Self::DomesdayBook => ObjectType::BonusDomesdayBook,
-            Self::SwordOfTheState => ObjectType::BonusSwordOfTheState,
         }
     }
 }

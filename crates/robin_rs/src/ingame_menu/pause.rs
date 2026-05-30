@@ -134,13 +134,6 @@ impl PauseMenu {
         self.outcome
     }
 
-    /// Reset the outcome to `Pending` — used by `game_session.rs` after
-    /// it handles a returned outcome (e.g. reopens the menu after a
-    /// non-confirmed quit or a closed Options sub-screen).
-    pub fn reset_outcome(&mut self) {
-        self.outcome = PauseMenuOutcome::Pending;
-    }
-
     /// Reset transient input state after a blocking side-menu
     /// (Load/Save/Options/YesNo) returns.  The side-menu owned the
     /// input pump while it was up, so the pause menu's last-seen

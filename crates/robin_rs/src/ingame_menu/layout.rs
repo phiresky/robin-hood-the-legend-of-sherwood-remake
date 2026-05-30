@@ -164,35 +164,6 @@ pub fn center_horizontally(
         .collect()
 }
 
-/// Lays out buttons on one horizontal row, centred inside a sub-rect.
-pub fn center_horizontally_in(
-    labels: &[(&str, bool)],
-    btn_w: i32,
-    btn_h: i32,
-    spacing: i32,
-    container: &MenuRect,
-) -> Vec<MenuButton> {
-    if labels.is_empty() {
-        return Vec::new();
-    }
-    let n = labels.len() as i32;
-    let total_w = n * btn_w + (n - 1) * spacing;
-    let start_x = container.x + (container.w - total_w) / 2;
-    let y = container.y + container.h - btn_h - 16;
-    labels
-        .iter()
-        .enumerate()
-        .map(|(i, (label, enabled))| MenuButton {
-            label: (*label).to_string(),
-            enabled: *enabled,
-            x: start_x + i as i32 * (btn_w + spacing),
-            y,
-            w: btn_w,
-            h: btn_h,
-        })
-        .collect()
-}
-
 /// Stacks widgets vertically starting at the first entry's virtual
 /// position.
 pub fn align_on_first_widget(buttons: &mut [MenuButton], spacing: i32) {
@@ -290,25 +261,6 @@ pub fn draw_screen_background(renderer: &mut Renderer, surface: &super::resource
     renderer.blit_to_screen(surface.id, Some(&src), Some(&dst), 0);
 }
 
-/// Blit a background surface centred inside the 640x480 virtual window.
-pub fn draw_centered_background(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    surface: &super::resources::MenuSurface,
-    virt_w: i32,
-    virt_h: i32,
-) -> MenuRect {
-    let virt_x = (MENU_W - virt_w) / 2;
-    let virt_y = (MENU_H - virt_h) / 2;
-    draw_background(renderer, transform, surface, virt_x, virt_y, virt_w, virt_h);
-    MenuRect {
-        x: virt_x,
-        y: virt_y,
-        w: virt_w,
-        h: virt_h,
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Button drawing
 // ═══════════════════════════════════════════════════════════════════
@@ -324,38 +276,6 @@ pub fn button_sprite_state(enabled: bool, hovered: bool, pressed: bool) -> usize
         BTN_STATE_HOVER
     } else {
         BTN_STATE_NORMAL
-    }
-}
-
-/// Render a single menu button (sprite + label) in virtual coordinates.
-pub fn draw_button(
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    transform: MenuTransform,
-    btn: &MenuButton,
-    hovered: bool,
-    pressed: bool,
-) {
-    let (x, y) = transform.to_screen(btn.x, btn.y);
-
-    let state = button_sprite_state(btn.enabled, hovered, pressed);
-    if let Some(surf) = resources.button_surface(state) {
-        let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(btn.w as f32, btn.h as f32));
-        let dst = BBox::new(
-            geo2d::pt(x as f32, y as f32),
-            geo2d::pt((x + btn.w) as f32, (y + btn.h) as f32),
-        );
-        renderer.blit_to_screen(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
-    } else {
-        draw_fallback_rect(renderer, x, y, btn.w, btn.h, hovered);
-    }
-
-    if let Some(font) = resources.menu_button_font(btn.enabled) {
-        let tw = font.text_width(&btn.label);
-        let th = font.height() as i32;
-        let tx = x + (btn.w - tw) / 2;
-        let ty = y + (btn.h - th) / 2;
-        render_text_screen(renderer, font, &btn.label, tx, ty);
     }
 }
 
@@ -375,60 +295,6 @@ pub fn draw_fallback_rect(renderer: &mut Renderer, x: i32, y: i32, w: i32, h: i3
     );
     let border = Renderer::create_color_16(180, 160, 100);
     renderer.draw_rect_outline_screen(x, y, x + w, y + h, border);
-}
-
-/// Render a radio / toggle button — the input field background sprite
-/// with a label.  The `selected` flag switches between the two sprite
-/// frames stored in the RHID_MENU_INPUT_FIELD pack.
-pub fn draw_radio_button(
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    transform: MenuTransform,
-    btn: &MenuButton,
-    selected: bool,
-    hovered: bool,
-) {
-    let (x, y) = transform.to_screen(btn.x, btn.y);
-    if let Some(surf) = resources.input_field_surface(selected) {
-        let src = BBox::new(geo2d::pt(0.0, 0.0), geo2d::pt(btn.w as f32, btn.h as f32));
-        let dst = BBox::new(
-            geo2d::pt(x as f32, y as f32),
-            geo2d::pt((x + btn.w) as f32, (y + btn.h) as f32),
-        );
-        renderer.blit_to_screen(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
-    } else {
-        let bg = if selected {
-            Renderer::create_color_16(100, 80, 40)
-        } else if hovered {
-            Renderer::create_color_16(60, 50, 30)
-        } else {
-            Renderer::create_color_16(30, 25, 15)
-        };
-        renderer.fill_screen(
-            Some(&BBox::new(
-                geo2d::pt(x as f32, y as f32),
-                geo2d::pt((x + btn.w) as f32, (y + btn.h) as f32),
-            )),
-            bg,
-        );
-        let border = if hovered || selected {
-            Renderer::create_color_16(220, 200, 140)
-        } else {
-            Renderer::create_color_16(120, 110, 80)
-        };
-        renderer.draw_rect_outline_screen(x, y, x + btn.w, y + btn.h, border);
-    }
-
-    if let Some(font) = resources
-        .edit_field_font()
-        .or_else(|| resources.menu_button_font(btn.enabled))
-    {
-        let tw = font.text_width(&btn.label);
-        let th = font.height() as i32;
-        let tx = x + (btn.w - tw) / 2;
-        let ty = y + (btn.h - th) / 2;
-        render_text_screen(renderer, font, &btn.label, tx, ty);
-    }
 }
 
 /// Render a slider widget — a 0..10 horizontal track with a thumb

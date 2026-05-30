@@ -136,13 +136,6 @@ impl EngineManager {
         }
     }
 
-    /// Bump `sim_frame`.  Call after the per-frame tick + rollback
-    /// bookkeeping has finished so the next iteration sees the new
-    /// frame.
-    pub fn advance(&mut self) {
-        self.sim_frame += 1;
-    }
-
     /// Force `sim_frame` to a specific value.  Used when adopting an
     /// authoritative initial-state snapshot from the host so the
     /// joining client's clock aligns with the host's.
@@ -154,13 +147,6 @@ impl EngineManager {
     /// snapshot adopt (everything before that frame is baked in).
     pub fn drop_pending_inputs_before(&mut self, frame: u32) {
         self.pending_inputs.retain(|&f, _| f >= frame);
-    }
-
-    /// Compute `sim_frame + INPUT_DELAY_FRAMES`.  Used by callers that
-    /// need to know what `target_frame` a freshly-dispatched local
-    /// input will land at.
-    pub fn target_frame_for_local_dispatch(&self) -> u32 {
-        self.sim_frame.saturating_add(INPUT_DELAY_FRAMES)
     }
 }
 

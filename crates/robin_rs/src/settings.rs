@@ -89,13 +89,6 @@ impl Settings {
         true
     }
 
-    pub fn flush(&mut self) -> bool {
-        if self.cached_write {
-            self.write_map_to_file();
-        }
-        true
-    }
-
     pub fn read_long(&self, key: &str) -> Option<i32> {
         if !self.initialized {
             return None;

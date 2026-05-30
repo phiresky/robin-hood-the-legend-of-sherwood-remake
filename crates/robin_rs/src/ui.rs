@@ -319,19 +319,6 @@ impl UiKeyboard {
             .unwrap_or(TypeWriter::None)
     }
 
-    pub fn double_press_delay(&self) -> u32 {
-        self.double_press_delay
-    }
-
-    pub fn set_double_press_delay(&mut self, delay: u32) {
-        self.double_press_delay = delay;
-    }
-
-    /// Get a reference to the last-seen raw keyboard state.
-    pub fn raw_keyboard_state(&self) -> &KeyboardState {
-        &self.old_keyboard_state
-    }
-
     /// Reset all key states and counters.
     pub fn reset(&mut self) {
         self.changed = true;
@@ -598,14 +585,6 @@ impl RendererBase {
         self.bbox = bbox;
     }
 
-    pub fn set_position_point(&mut self, point: ScreenPoint) {
-        // Actual dimensions are resolved by the concrete widget type
-        // (see `widget/picture.rs` etc.), which queries `ResourceManager`
-        // and calls `set_position_bbox`. This 1×1 fallback is a
-        // safety net for callers that haven't been ported yet.
-        self.bbox = ScreenBBox::from_point(point);
-    }
-
     pub fn set_resource(&mut self, id: ResourceId) -> bool {
         self.resource_id = id;
         // Resource loading / reference-counting is done by the
@@ -617,10 +596,6 @@ impl RendererBase {
         // Concrete widgets release via `ResourceManager`; we only
         // clear our local ID here.
         self.resource_id = -1;
-    }
-
-    pub fn set_flags(&mut self, flags: u32) {
-        self.flags = flags;
     }
 
     pub fn set_text(&mut self, text: &str) {
@@ -773,28 +748,6 @@ impl RendererAlphaConstant {
         self.target_alpha = alpha;
     }
 
-    /// Set the cross-fade alpha.
-    pub fn set_mix_alpha_level(&mut self, alpha: u16) {
-        self.mixing_alpha = alpha;
-    }
-
-    /// Set the (vestigial) alpha ceiling.
-    pub fn set_alpha_limit(&mut self, limit: u16) {
-        self.alpha_limit = limit;
-    }
-
-    /// Returns the *target* alpha, not the current animated value.
-    /// Use [`sliding_alpha`](Self::sliding_alpha) for the current
-    /// frame's blend factor.
-    pub fn alpha_level(&self) -> u16 {
-        self.target_alpha
-    }
-
-    /// Current animated alpha value.
-    pub fn sliding_alpha(&self) -> i16 {
-        self.sliding_alpha
-    }
-
     /// Configure a sliding alpha animation.
     ///
     /// - `target` — alpha value the slide animates toward.
@@ -816,13 +769,6 @@ impl RendererAlphaConstant {
         self.target_alpha = target;
         self.alpha_direction = direction;
         self.wait = wait;
-    }
-
-    /// Whether an alpha transition has reached its target. Note the
-    /// name is inverted relative to its body: `true` means the
-    /// animation has *finished*.
-    pub fn is_transition_in_progress(&self) -> bool {
-        self.alpha_reached
     }
 
     /// Advance the sliding alpha by one step. Returns the alpha
@@ -1003,25 +949,6 @@ impl RendererText {
         self.font_default = default;
         self.font_focus = focus;
         self.font_selected = selected;
-    }
-
-    pub fn set_alignment(&mut self, align: u32) {
-        self.align = align;
-    }
-
-    pub fn set_full_refresh_mode(&mut self, full: bool) {
-        self.full_refresh_mode = full;
-    }
-
-    pub fn set_subtracted(&mut self, value: u16) {
-        self.subtracted = value;
-    }
-
-    /// Pixel height needed to display the text. Legacy hook; the
-    /// concrete widget implementations compute this via
-    /// `NativeFont::height` / text layout, so this base stub returns 0.
-    pub fn needed_height(&self) -> u32 {
-        0
     }
 }
 
@@ -1208,96 +1135,6 @@ impl RendererListbox {
             self.knob_ratio = displayable as f32 / total_items as f32;
             self.before_ratio = index as f32 / total_items as f32;
         }
-    }
-
-    /// Start a list refresh pass (resets rendering position).
-    pub fn start_list_refresh(&mut self) {
-        self.render_position = 0;
-    }
-
-    /// Render a single list item.  Returns `true` if the next item would
-    /// still be inside the bounding box (i.e. there's room for more).
-    ///
-    /// Decodes alignment from `flags & ALIGN_MASK`, picks the active
-    /// font slot from `flags & ALTERNATE | flags & STATE_MASK`, emits
-    /// one centred-text draw via `render_text_in_box_aligned`, then
-    /// advances the render position and reports whether the next row
-    /// still fits.
-    ///
-    /// `fonts` is a 6-slot table indexed by [`ListboxFontSlot`]:
-    /// `[default, focused, selected, default_alt, focused_alt,
-    /// selected_alt]`. The `RendererListbox` only stores `u32` font
-    /// IDs, so the caller must resolve the IDs to actual glyph data
-    /// before calling. When the slot is `None` the row is skipped;
-    /// the per-caller "fall back to default font" behaviour is
-    /// already handled by
-    /// `IngameMenuResources::list_font_native_with_style`.
-    pub fn refresh_item(
-        &mut self,
-        renderer: &mut Renderer,
-        transform: MenuTransform,
-        fonts: &[Option<&NativeFont>; 6],
-        text: &str,
-        flags: u32,
-    ) -> bool {
-        let box_text = self.text_box_for_item(self.render_position, flags);
-        let alignment = alignment_for_flags(flags);
-        let slot = font_slot_for_flags(flags) as usize;
-
-        if let (Some(rect), Some(font)) = (box_text.0, fonts[slot]) {
-            let min = rect.min();
-            let max = rect.max();
-            let box_x = min.x as i32;
-            let box_y = min.y as i32;
-            let box_w = (max.x - min.x) as i32;
-            let box_h = (max.y - min.y) as i32;
-            // Default to vertical centring inside the box.
-            let text_align = match alignment {
-                ListboxAlignment::Left => TextAlign::Left,
-                ListboxAlignment::Right => TextAlign::Right,
-                ListboxAlignment::Centered => TextAlign::Center,
-                ListboxAlignment::Justified => TextAlign::Justified,
-            };
-            render_text_in_box_aligned(
-                renderer,
-                font,
-                transform,
-                text,
-                box_x,
-                box_y,
-                box_w,
-                box_h,
-                text_align,
-                VAlign::Center,
-            );
-        }
-
-        self.render_position += 1;
-        let next_box = self.text_box_for_item(self.render_position, flags);
-        self.base.bbox.contains_bbox(&next_box)
-    }
-
-    /// Resolve the active font ID for an item given its flags. Both
-    /// `FOCUSED` and `SELECTED` states map to the focused-font slot in
-    /// both branches; this aliasing is intentional.
-    pub fn font_for_flags(&self, flags: u32) -> u32 {
-        if (flags & listbox_flags::ALTERNATE) == 0 {
-            match flags & listbox_flags::STATE_MASK {
-                listbox_flags::FOCUSED | listbox_flags::SELECTED => self.font_focused,
-                _ => self.font_default,
-            }
-        } else {
-            match flags & listbox_flags::STATE_MASK {
-                listbox_flags::FOCUSED | listbox_flags::SELECTED => self.font_focused_alt,
-                _ => self.font_default_alt,
-            }
-        }
-    }
-
-    /// End the list refresh pass.
-    pub fn end_list_refresh(&mut self) -> bool {
-        self.render_position = 0;
-        true
     }
 }
 
@@ -1602,54 +1439,6 @@ impl Layout {
         self.bbox_end.y = self.bbox_start.y + h as f32;
     }
 
-    pub fn origin(&self) -> GeoPoint2D {
-        self.physical_origin
-    }
-
-    pub fn set_origin(&mut self, origin: GeoPoint2D) {
-        self.physical_origin = origin;
-    }
-
-    pub fn h_orientation(&self) -> HorizontalOrientation {
-        self.h_orientation
-    }
-
-    pub fn set_h_orientation(&mut self, o: HorizontalOrientation) {
-        self.h_orientation = o;
-    }
-
-    pub fn v_orientation(&self) -> VerticalOrientation {
-        self.v_orientation
-    }
-
-    pub fn set_v_orientation(&mut self, o: VerticalOrientation) {
-        self.v_orientation = o;
-    }
-
-    /// Convert a physical bounding box to a logical bbox within this layout.
-    pub fn set_bounding_box_physical(&mut self, bbox: &BBox2D) {
-        if let Some(rect) = bbox.0 {
-            let min = rect.min();
-            let max = rect.max();
-            let mut tl = LayoutPoint::from_physical(self, min);
-            let mut br = LayoutPoint::from_physical(self, max);
-            if tl.x > br.x {
-                std::mem::swap(&mut tl.x, &mut br.x);
-            }
-            if tl.y > br.y {
-                std::mem::swap(&mut tl.y, &mut br.y);
-            }
-            self.bbox_start = tl;
-            self.bbox_end = br;
-        }
-    }
-
-    /// Set bounding box from logical coordinates directly.
-    pub fn set_bounding_box_logical(&mut self, start: LayoutPoint, end: LayoutPoint) {
-        self.bbox_start = start;
-        self.bbox_end = end;
-    }
-
     /// Convert the logical bounding box to a physical `BBox2D`.
     pub fn to_physical_bbox(&self) -> BBox2D {
         let start = self.bbox_start.to_physical(self);
@@ -1700,11 +1489,6 @@ impl LayoutPoint {
         self.y += dy;
     }
 
-    /// Test if a point has strictly greater coordinates than another.
-    pub fn is_greater_than(&self, other: &LayoutPoint) -> bool {
-        self.x > other.x && self.y > other.y
-    }
-
     /// Test if this point falls inside a layout's bounding box.
     pub fn is_inside_layout(&self, layout: &Layout) -> bool {
         let phys = self.to_physical(layout);
@@ -1729,37 +1513,6 @@ impl LayoutBox {
             std::mem::swap(&mut start.y, &mut end.y);
         }
         Self { start, end }
-    }
-
-    /// Create from a start point and dimensions.
-    pub fn from_point_size(start: LayoutPoint, width: f32, height: f32) -> Self {
-        let end = LayoutPoint::new(start.x + width, start.y + height);
-        Self::new(start, end)
-    }
-
-    /// Create from four physical scalars, mapping each corner into
-    /// logical coords and normalizing per-axis.
-    pub fn from_physical_rect(
-        layout: &Layout,
-        left: f32,
-        top: f32,
-        right: f32,
-        bottom: f32,
-    ) -> Self {
-        let start = LayoutPoint::from_physical(layout, pt(left, top));
-        let end = LayoutPoint::from_physical(layout, pt(right, bottom));
-        Self::new(start, end)
-    }
-
-    /// Create from a physical bounding box, converting to logical coords.
-    pub fn from_physical_bbox(layout: &Layout, bbox: &BBox2D) -> Self {
-        if let Some(rect) = bbox.0 {
-            let start = LayoutPoint::from_physical(layout, rect.min());
-            let end = LayoutPoint::from_physical(layout, rect.max());
-            Self::new(start, end)
-        } else {
-            Self::default()
-        }
     }
 
     /// Convert to physical `BBox2D`.

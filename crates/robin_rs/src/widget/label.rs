@@ -73,9 +73,4 @@ impl WidgetLabel {
             None
         }
     }
-
-    /// Mark both buffers as needing refresh (called on restore).
-    pub fn restore(&mut self) {
-        self.refresh_needed = [true; 2];
-    }
 }

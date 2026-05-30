@@ -130,18 +130,7 @@ pub mod difficulty_params {
 
 // `modify_enemy_capacity` is an alias used by the other worktree branch —
 // delegate to the identical `modify_capacity` method above.
-impl DifficultyLevel {
-    /// Alias for [`modify_capacity`](Self::modify_capacity) used by some callers.
-    pub fn modify_enemy_capacity(
-        self,
-        capacity: u16,
-        easy_factor: f32,
-        hard_factor: f32,
-        max_allowed: u16,
-    ) -> u16 {
-        self.modify_capacity(capacity, easy_factor, hard_factor, max_allowed)
-    }
-}
+impl DifficultyLevel {}
 
 /// Initial ransom value for a new profile.
 const INITIAL_RANSOM: u32 = 100;
@@ -266,11 +255,6 @@ impl PlayerProfileManager {
     /// Return a mutable reference to the active profile, or `None`.
     pub fn get_active_mut(&mut self) -> Option<&mut PlayerProfile> {
         self.active_index.map(|i| &mut self.profiles[i])
-    }
-
-    /// Bounds-checked accessor: returns `None` for an out-of-range index.
-    pub fn get_profile(&self, idx: usize) -> Option<&PlayerProfile> {
-        self.profiles.get(idx)
     }
 
     /// Set the active profile by index.  If `index` is out of range the

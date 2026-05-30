@@ -1049,20 +1049,6 @@ impl SoundCache {
         }
     }
 
-    /// Unload a source sample by ID.
-    pub fn unload_source_sample(&mut self, source_id: u32) {
-        if let Some(entry) = self.source_cache.entries.get_mut(&source_id)
-            && entry.is_loaded()
-        {
-            self.source_cache.stats.data_size = self
-                .source_cache
-                .stats
-                .data_size
-                .saturating_sub(entry.sample_size);
-            entry.unload_sample();
-        }
-    }
-
     /// Flush caches. If `flush_all`, also flushes FX, combat, speech, and menu.
     pub fn flush(&mut self, flush_all: bool) {
         if flush_all {

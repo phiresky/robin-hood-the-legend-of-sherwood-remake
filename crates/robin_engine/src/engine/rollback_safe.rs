@@ -490,12 +490,6 @@ impl Engine {
             .call_external_native_with_this(assets, native_name, args, this_actor)
     }
 
-    /// Current cutscene camera view position in world coordinates.
-    /// Read-only accessor for HTTP state introspection.
-    pub fn cutscene_camera_view_position(&self) -> crate::coordinates::MapPoint {
-        self.inner.cutscene_camera().view_position
-    }
-
     /// Refresh render-only patch door highlight flags.
     ///
     /// `GameHost.patches` is intentionally outside the rollback hash,

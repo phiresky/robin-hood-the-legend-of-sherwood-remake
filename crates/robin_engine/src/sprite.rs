@@ -801,18 +801,6 @@ impl Sprite {
         self.offset(self.current_row, self.current_frame)
     }
 
-    /// Max-over-frames cached width for the current profile.
-    ///
-    /// The cached `current_width` field is the running max across all
-    /// loaded frames (seeded from `info.size.x` and updated by
-    /// `initialize_script_row_from_loaded_frames`), not the exact
-    /// per-frame width.  The only live consumer
-    /// (`Element::compute_target_center`) uses it as a half-extent for
-    /// FX target Z-centring, where max-over-frames is acceptable.
-    pub fn current_max_width(&self) -> u16 {
-        self.current_width
-    }
-
     /// Max-over-frames cached height for the current profile — see
     /// [`current_max_width`](Self::current_max_width) for the
     /// rationale.
@@ -849,16 +837,6 @@ impl Sprite {
     /// Current average speed from the script.
     pub fn current_average_speed(&self) -> f32 {
         self.current_scripts()[self.current_row as usize].average_speed
-    }
-
-    /// Check if current frame is before the action-done point.
-    pub fn is_not_yet_done(&self) -> bool {
-        self.current_frame < self.action_done_for_row(self.current_row)
-    }
-
-    /// Check if we're at the very start of an animation.
-    pub fn is_at_start_of_anim(&self) -> bool {
-        self.current_frame == 0 && self.frame_count == 0
     }
 
     /// Check if we're at a specific frame number (at the start of it).
@@ -1516,28 +1494,6 @@ impl Sprite {
         self.record_motion_state(state)
     }
 
-    /// Speed-modulated increment.
-    pub fn perform_increment_modulated(
-        &mut self,
-        speed: f32,
-        progression: FrameProgression,
-    ) -> MotionState {
-        let terminated = self.increment_frame_modulated(speed, progression);
-
-        let mut state = MotionState::InProgress;
-
-        if self.frame_count == 0 && self.current_frame == self.action_done_for_row(self.current_row)
-        {
-            state = MotionState::Done;
-        }
-
-        if terminated {
-            state = MotionState::Terminated;
-        }
-
-        self.record_motion_state(state)
-    }
-
     /// Perform an action: update sprite row for direction, handle frame
     /// initialization and increment.
     ///
@@ -1745,11 +1701,6 @@ impl Sprite {
         )
     }
 
-    /// Check if the sprite is on screen.
-    pub fn is_on_screen(&self, view_box: &BBox, sprite_pos: GeoPoint2D) -> bool {
-        view_box.is_intersecting(&self.bounding_box_at(sprite_pos))
-    }
-
     // -- Frame timing queries --
 
     /// Frames remaining from current position until action-done.
@@ -1808,14 +1759,6 @@ impl Sprite {
         };
         let scripts = self.current_scripts();
         scripts[row as usize].sum_distance as i16
-    }
-
-    /// Get the time (total ticks) for an animation.
-    pub fn time_for_anim(&self, anim: OrderType) -> u16 {
-        match self.row_for_action(anim) {
-            Some(row) => self.total_time_for_row(row),
-            None => 0,
-        }
     }
 
     // -- Force methods (direct state manipulation) --
@@ -1910,56 +1853,6 @@ impl Sprite {
     }
 
     // -- Script initialization --
-
-    /// Set up a fixed number of empty script rows.
-    pub fn set_number_of_fixed_rows(&mut self, num_rows: u16) {
-        let mut scripts = Vec::new();
-        scripts.resize_with(num_rows as usize, SpriteScript::default);
-        self.scripts = std::sync::Arc::new(scripts);
-        self.current_width = 0;
-        self.current_height = 0;
-    }
-
-    /// Initialize a single script row from loaded frame data.
-    #[allow(clippy::too_many_arguments)]
-    pub fn initialize_script_row_from_loaded_frames(
-        &mut self,
-        row: u16,
-        base_frame: u32,
-        num_frames: u16,
-        default_delay: u16,
-        default_distance: u16,
-        offsets: &[Vec2D],
-        frame_widths: &[u16],
-        frame_heights: &[u16],
-    ) {
-        let script = &mut std::sync::Arc::make_mut(&mut self.scripts)[row as usize];
-
-        script.frame_ids.resize(num_frames as usize, 0);
-        script.delays.resize(num_frames as usize, 0);
-        script.distances.resize(num_frames as usize, 0);
-        script
-            .offsets
-            .resize(num_frames as usize, Vec2D { x: 0.0, y: 0.0 });
-        script.sound_ids.resize(num_frames as usize, 0);
-        script.action_done = 0;
-        script.hotspot = SpriteLocalPoint::ZERO;
-
-        for i in 0..num_frames as usize {
-            if frame_widths[i] > self.current_width {
-                self.current_width = frame_widths[i];
-            }
-            if frame_heights[i] > self.current_height {
-                self.current_height = frame_heights[i];
-            }
-
-            script.delays[i] = default_delay;
-            script.distances[i] = default_distance;
-            script.frame_ids[i] = base_frame + i as u32;
-            script.offsets[i] = offsets[i];
-            script.sound_ids[i] = 0;
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

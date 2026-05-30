@@ -172,23 +172,6 @@ impl SequencePriority {
     pub fn is_non_interruptable(self) -> bool {
         self == Self::NonInterruptable
     }
-
-    /// Whether a sequence element with `self` priority can be replaced
-    /// by a new element with `other` priority. `NonInterruptable`
-    /// (value 0) wins over everything, and priorities of the same
-    /// level allow replacement.
-    ///
-    /// Because lower numeric value = higher priority in the enum order,
-    /// `other <= self` means "stronger or equal".
-    #[inline]
-    pub fn can_be_replaced_by(self, other: SequencePriority) -> bool {
-        if self.is_non_interruptable() {
-            // NonInterruptable can only be replaced by another
-            // NonInterruptable element (e.g. death, which is terminal).
-            return other.is_non_interruptable();
-        }
-        other <= self
-    }
 }
 
 /// Result of an actor-level instruct arbitration between the actor's
@@ -454,19 +437,6 @@ impl RecordingSession {
         self.has_elements_at_current_level = true;
     }
 
-    /// Like [`add_element`], but stamps `priority` on the element.  Used by
-    /// the `*_NONINTERRUPTABLE`-style natives.
-    pub fn add_element_with_priority(
-        &mut self,
-        mut element: SequenceElement,
-        priority: SequencePriority,
-    ) {
-        element.command_level = self.command_level;
-        element.priority = priority;
-        self.sequence.append_element(element);
-        self.has_elements_at_current_level = true;
-    }
-
     /// Returns the index of the first element added at the current command
     /// level (the snapshot used by the NONINTERRUPTABLE post-record bump
     /// loop in `RecordMove` / `RecordMoveNear`).
@@ -683,14 +653,6 @@ impl SequenceElementData {
         matches!(self, Self::Generic { .. })
     }
 
-    pub fn is_damage(&self) -> bool {
-        matches!(self, Self::Damage { .. })
-    }
-
-    pub fn is_interaction(&self) -> bool {
-        matches!(self, Self::Interaction { .. })
-    }
-
     /// Create a new sword damage element.
     pub fn new_sword_damage(
         origin: EntityId,
@@ -716,18 +678,6 @@ impl SequenceElementData {
             sword_strike: None,
             sword_profile_idx: None,
             is_harder_hit: false,
-        }
-    }
-
-    /// Create a new hit damage element (concussion only).
-    pub fn new_hit_damage(origin: EntityId, concussion: u16, is_harder_hit: bool) -> Self {
-        Self::Damage {
-            origin: Some(origin),
-            damage: 0,
-            concussion,
-            sword_strike: None,
-            sword_profile_idx: None,
-            is_harder_hit,
         }
     }
 
@@ -926,20 +876,6 @@ impl SequenceElement {
         }
     }
 
-    /// Update a property that must already be present on a generic element.
-    /// Panics if the field is missing or the element is not generic.
-    pub fn update_property(&mut self, field: Field, value: FieldValue) {
-        match &mut self.data {
-            SequenceElementData::Generic { properties } => {
-                let slot = properties
-                    .get_mut(&field)
-                    .unwrap_or_else(|| panic!("update_property: field {:?} not present", field));
-                *slot = value;
-            }
-            _ => panic!("update_property called on non-generic element"),
-        }
-    }
-
     /// Get a property from a generic element. Returns `None` if not found or not generic.
     pub fn get_property(&self, field: Field) -> Option<&FieldValue> {
         match &self.data {
@@ -964,14 +900,6 @@ impl SequenceElement {
         }
     }
 
-    /// Set the gate on a movement element.
-    pub fn set_gate(&mut self, gate: crate::gate::DoorIndex) {
-        match &mut self.data {
-            SequenceElementData::Movement { gate_id, .. } => *gate_id = Some(gate),
-            _ => panic!("set_gate called on non-movement element"),
-        }
-    }
-
     /// Get the current order (first in the queue).
     pub fn current_order(&self) -> Option<&Order> {
         self.orders.front()
@@ -980,11 +908,6 @@ impl SequenceElement {
     /// Get the next order (second in the queue).
     pub fn next_order(&self) -> Option<&Order> {
         self.orders.get(1)
-    }
-
-    /// Get the last order in the queue.
-    pub fn last_order(&self) -> Option<&Order> {
-        self.orders.back()
     }
 
     /// Add an order at the back of the queue.
@@ -1001,20 +924,6 @@ impl SequenceElement {
             return;
         }
         self.orders.push_back(order);
-    }
-
-    /// Add an order at the front of the queue.
-    pub fn push_order_front(&mut self, order: Order) {
-        debug_assert_ne!(
-            order.order_type,
-            OrderType::Invalid,
-            "push_order_front: order action must be defined before insertion"
-        );
-        if order.order_type == OrderType::Invalid {
-            tracing::warn!("push_order_front: dropping order with Invalid order_type");
-            return;
-        }
-        self.orders.push_front(order);
     }
 
     /// Insert an order at a specific index.
@@ -1063,19 +972,9 @@ impl SequenceElement {
         self.orders.front()
     }
 
-    /// Remove all orders.
-    pub fn clear_orders(&mut self) {
-        self.orders.clear();
-    }
-
     /// Initialize the transition order count to the current number of orders.
     pub fn initialize_transition_orders(&mut self) {
         self.num_transition_orders = self.orders.len();
-    }
-
-    /// Whether this element contains an order with the given animation.
-    pub fn contains_action(&self, anim: OrderType) -> bool {
-        self.orders.iter().any(|o| o.order_type == anim)
     }
 
     /// Set the movement action on this element. For non-movement
@@ -1597,22 +1496,6 @@ impl Sequence {
         self.elements.iter().any(|elem| {
             matches!(elem.state, SequenceState::Todo | SequenceState::InProgress)
                 && elem.owner == Some(entity)
-        })
-    }
-
-    /// Find the last movement element in this sequence.
-    /// Whitelists exactly `MoveOk | Seek | Move` — *not* every
-    /// `Movement`-variant element (that would also accept `PassDoor`,
-    /// `AssertPosition`, `MoveWaiting`, `Jump` here).  Currently
-    /// unused; kept around in case it's wired up.
-    pub fn last_move_element(&self) -> Option<usize> {
-        self.elements.iter().rposition(|e| {
-            matches!(
-                e.command,
-                crate::element::Command::Move
-                    | crate::element::Command::MoveOk
-                    | crate::element::Command::Seek
-            )
         })
     }
 }
@@ -2240,9 +2123,6 @@ impl SequenceManager {
     }
 
     /// Check if a sequence exists. O(log N).
-    pub fn sequence_exists(&self, id: SequenceId) -> bool {
-        self.sequences.contains_key(&id)
-    }
 
     fn index_sequence_actor_refs(&mut self, seq_id: SequenceId) {
         let refs: Vec<(EntityId, SequenceElementRef, SequenceState)> = {
@@ -2340,13 +2220,6 @@ impl SequenceManager {
         let mut seq = Sequence::new();
         seq.append_element(element);
         self.launch_sequence(seq)
-    }
-
-    /// Launch a one-shot damage sequence against `actor`.  Used by
-    /// `CheatNuke`, `CheatComa`, `CheatSanPetrus`, and
-    /// `CheatMisterSandman`.
-    pub fn launch_damage(&mut self, actor: EntityId, hp: u16, concussion: u16) -> SequenceId {
-        self.launch_sequence(Sequence::single_damage(actor, hp, concussion))
     }
 
     /// Launch a one-shot generic sequence carrying a single pre-built
@@ -2521,19 +2394,6 @@ impl SequenceManager {
         let (seq_id, elem_idx) = self.current_element_for_actor(actor)?;
         let order = self.get_element(seq_id, elem_idx)?.current_order()?;
         Some((seq_id, elem_idx, order))
-    }
-
-    /// Pop the front order off the actor's current in-progress element.
-    /// Returns the popped order (for callers that want to inspect it),
-    /// or `None` if there was nothing to pop.
-    pub fn proceed_current_order_for_actor(&mut self, actor: EntityId) -> Option<Order> {
-        let (seq_id, elem_idx) = self.current_element_for_actor(actor)?;
-        let elem = self.get_element_mut(seq_id, elem_idx)?;
-        let popped = elem.orders.pop_front();
-        if popped.is_some() {
-            elem.num_transition_orders = elem.num_transition_orders.saturating_sub(1);
-        }
-        popped
     }
 
     // ─── Element dispatch registration ──────────────────────────
@@ -3550,33 +3410,6 @@ impl SequenceManager {
                     && elem.state == SequenceState::Postponed
             })
         })
-    }
-
-    /// Returns `true` if `owner` has an active sword-strike element
-    /// (Todo / InProgress / Postponed) anywhere in the manager.  Used by
-    /// `EnemyAi::reconcile_special_strike` to detect whether the actor's
-    /// pending special-strike sequence has ended (natural completion *or*
-    /// interruption via `terminate_sequence` / `stop_owner` /
-    /// `friday_evening_cleanup`).  The sequence manager is the single
-    /// source of truth for "is a strike still in flight?".
-    pub fn has_active_swordstrike(&self, owner: EntityId) -> bool {
-        for seq in self.sequences.values() {
-            for elem in &seq.elements {
-                if elem.owner != Some(owner) {
-                    continue;
-                }
-                if !elem.command.is_swordstrike() {
-                    continue;
-                }
-                if matches!(
-                    elem.state,
-                    SequenceState::Todo | SequenceState::InProgress | SequenceState::Postponed
-                ) {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     /// Check if there's a pending element with this command for this owner.

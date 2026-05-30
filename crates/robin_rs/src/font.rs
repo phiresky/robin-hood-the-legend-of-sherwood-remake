@@ -458,21 +458,6 @@ impl TrueTypeFont {
         lk + w + rk
     }
 
-    /// Create a font handle for metrics only, searching for the .ttf by name.
-    pub fn from_ttf_name(tt_name_str: &str, height: u32) -> Self {
-        let mut font = Self::new_invalid();
-        font.file_tag = *SBTTFT_TAG;
-        font.file_version = 0x0100;
-        font.height = height;
-        let bytes = tt_name_str.as_bytes();
-        let len = bytes.len().min(FONT_NAME_LEN - 1);
-        font.tt_name[..len].copy_from_slice(&bytes[..len]);
-        font.valid = true;
-        let resolved = font.find_and_load_ttf(None);
-        font.warn_unsupported_styles(font.styles & !resolved);
-        font
-    }
-
     // -- Glyph rasterisation -------------------------------------------------
 
     /// Rasterise `text` into an ARGB8888 buffer using

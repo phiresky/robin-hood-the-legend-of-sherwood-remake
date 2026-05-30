@@ -20,7 +20,6 @@ struct WithFloat {
 #[derive(StateHash, Serialize)]
 struct WithSerdeSkip {
     a: u32,
-    #[serde(skip)]
     // Field exists solely to verify `#[serde(skip)]` is honored by StateHash;
     // it's set with different values in the test but never read.
     #[allow(dead_code)]

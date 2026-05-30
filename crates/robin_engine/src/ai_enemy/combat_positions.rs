@@ -1120,30 +1120,6 @@ impl EnemyAi {
     // Phalanx substate helpers
     // -----------------------------------------------------------------------
 
-    /// GetShieldBearerPosition. Returns the shield bearer's
-    /// position and facing for phalanx chain queries. When running to
-    /// a phalanx slot, returns the *future* seek position; once in
-    /// position, returns the current pose.
-    ///
-    /// Port of the legacy shield-bearer pose query.
-    pub fn get_shield_bearer_position(&self, ctx: &AiContext) -> (Position, u16) {
-        match self.base.current_substate {
-            Substate::AttackingRunningToPhalanx => {
-                (self.base.seek_position, self.shield_bearer_direction)
-            }
-            Substate::AttackingProtectingWithShield | Substate::AttackingPhalanx => {
-                (ctx.position, ctx.direction)
-            }
-            _ => {
-                tracing::warn!(
-                    "get_shield_bearer_position called in unexpected substate {:?}",
-                    self.base.current_substate
-                );
-                (ctx.position, ctx.direction)
-            }
-        }
-    }
-
     /// NumberOfNearbyArchersWhoNeedProtection. Scans nearby friendly
     /// soldiers for archers without a shield bearer and shield bearers
     /// without an archer, returning the net count. Positive = archers

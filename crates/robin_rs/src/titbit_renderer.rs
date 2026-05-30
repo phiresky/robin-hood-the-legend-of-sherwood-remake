@@ -222,12 +222,6 @@ impl TitbitRenderer {
         );
     }
 
-    /// Return the number of loaded frames for each sprite row.
-    /// Used to populate `TitbitManager::set_row_frame_counts`.
-    pub fn row_frame_counts(&self) -> Vec<u16> {
-        self.rows.iter().map(|r| r.len() as u16).collect()
-    }
-
     /// Blit a single titbit frame to UI screen coordinates (no world
     /// transform, no shadowing tweaks).  Used by the UI panel to
     /// overlay the `RHID_QUICKACTION_TITBITS` frame of the current step

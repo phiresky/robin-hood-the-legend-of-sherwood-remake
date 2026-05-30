@@ -121,11 +121,6 @@ impl BBox2D {
         BBox2D(Some(Rect::new(p, p)))
     }
 
-    /// Box around a single point given by raw coordinates.
-    pub fn from_xy(x: f32, y: f32) -> Self {
-        Self::from_point(pt(x, y))
-    }
-
     /// Box from a point + width/height.
     pub fn from_point_size(origin: GeoPoint2D, width: f32, height: f32) -> Self {
         let x0 = origin.x.min(origin.x + width);
@@ -133,21 +128,6 @@ impl BBox2D {
         let x1 = origin.x.max(origin.x + width);
         let y1 = origin.y.max(origin.y + height);
         BBox2D(Some(Rect::new(pt(x0, y0), pt(x1, y1))))
-    }
-
-    /// Box around a segment.
-    pub fn from_segment(seg: Line<f32>) -> Self {
-        let mut b = Self::new();
-        b.expand_segment(seg);
-        b
-    }
-
-    /// Box around all points of a line string. Empty input stays in
-    /// hyperspace.
-    pub fn from_line_string(ls: &LineString<f32>) -> Self {
-        let mut b = Self::new();
-        b.expand_line_string(ls);
-        b
     }
 
     /// Whether the box has defined bounds.
@@ -183,11 +163,6 @@ impl BBox2D {
     pub fn width(&self) -> f32 {
         let r = self.0.unwrap();
         r.max().x - r.min().x
-    }
-    #[inline]
-    pub fn height(&self) -> f32 {
-        let r = self.0.unwrap();
-        r.max().y - r.min().y
     }
     #[inline]
     pub fn center(&self) -> GeoPoint2D {
@@ -289,11 +264,6 @@ impl BBox2D {
         false
     }
 
-    /// Test if a segment is fully inside the box.
-    pub fn contains_segment(&self, seg: Line<f32>) -> bool {
-        self.contains_point(seg.start) && self.contains_point(seg.end)
-    }
-
     /// Test if another box is fully inside this box.
     pub fn contains_bbox(&self, other: &BBox2D) -> bool {
         match (self.0, other.0) {
@@ -317,14 +287,6 @@ impl BBox2D {
         }
     }
 
-    /// Trivial rejection test for another box.
-    pub fn trivially_rejects_bbox(&self, other: &BBox2D) -> bool {
-        match (self.0, other.0) {
-            (Some(a), Some(b)) => !a.intersects(&b),
-            _ => true,
-        }
-    }
-
     /// Test if a segment intersects the box.
     pub fn intersects_segment(&self, seg: Line<f32>) -> bool {
         match self.0 {
@@ -339,11 +301,6 @@ impl BBox2D {
             (Some(a), Some(b)) => a.intersects(&b),
             _ => false,
         }
-    }
-
-    /// Test if a point intersects (same as contains_point).
-    pub fn intersects_point(&self, p: GeoPoint2D) -> bool {
-        self.contains_point(p)
     }
 
     // ── Clip ──
@@ -383,15 +340,6 @@ impl BBox2D {
         let mut b = *self;
         b.translate(v);
         b
-    }
-
-    /// Scale the box by a scalar (from origin).
-    pub fn scale(&mut self, t: f32) {
-        if let Some(r) = &mut self.0 {
-            let min = pt(r.min().x * t, r.min().y * t);
-            let max = pt(r.max().x * t, r.max().y * t);
-            *r = Rect::new(min, max);
-        }
     }
 }
 
@@ -569,53 +517,6 @@ pub fn segment_intersects_polygon(seg: Line<f32>, poly: &Polygon<f32>) -> bool {
     segment_intersects_linestring(seg, poly.exterior())
 }
 
-/// Test if a segment intersects any edge of a linestring (open polyline).
-#[inline]
-pub fn segment_intersects_polyline(seg: Line<f32>, ls: &LineString<f32>) -> bool {
-    segment_intersects_linestring(seg, ls)
-}
-
-/// Test if two open polylines have any pair of edges that cross.
-///
-/// All-pairs of edges with an early-out, returning `false` when either
-/// operand has fewer than two points.
-///
-/// `geo::LineString::intersects::<LineString>` would diverge on 1-point
-/// linestrings (treats them as a point and tests point-vs-rhs); the
-/// explicit segment loop avoids that.
-pub fn polyline_intersects_polyline(a: &LineString<f32>, b: &LineString<f32>) -> bool {
-    for edge in a.lines() {
-        if segment_intersects_linestring(edge, b) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Test if any edge of an open polyline crosses any non-closing edge of a
-/// polygon's exterior (boundary-only, skipping the `vertex[N-1] → vertex[0]`
-/// closing edge).
-///
-/// `geo::LineString::intersects::<Polygon>` differs in two ways: (1) it
-/// tests the inside case (returns `true` for a polyline strictly inside
-/// the polygon, where this returns `false`), and (2) it includes the
-/// closing edge of the polygon's exterior. This explicit loop preserves
-/// the boundary-only semantics expected by the (currently dead) callers.
-pub fn polyline_intersects_polygon_boundary(ls: &LineString<f32>, poly: &Polygon<f32>) -> bool {
-    let edges: Vec<Line<f32>> = poly.exterior().lines().collect();
-    // `LineString` is closed (first == last), so `.lines()` includes the
-    // closing edge as its last element. Drop it to skip the closing edge.
-    let max = edges.len().saturating_sub(1);
-    for ls_edge in ls.lines() {
-        for poly_edge in &edges[..max] {
-            if segments_intersect(ls_edge, *poly_edge) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 #[inline]
 fn segment_intersects_linestring(seg: Line<f32>, ls: &LineString<f32>) -> bool {
     for edge in ls.lines() {
@@ -656,11 +557,6 @@ pub fn nearest_point_on_segment(p: GeoPoint2D, seg: Line<f32>) -> GeoPoint2D {
         Closest::SinglePoint(pt) | Closest::Intersection(pt) => pt.0,
         Closest::Indeterminate => seg.start, // degenerate segment
     }
-}
-
-/// Test if a point lies on a segment (within precision).
-pub fn point_on_segment(p: GeoPoint2D, seg: Line<f32>) -> bool {
-    point_to_segment_distance(p, seg) < PRECISION
 }
 
 /// Perpendicular-slab test — true iff the projection of `p` onto the
@@ -741,12 +637,6 @@ impl Line2D {
         }
     }
 
-    /// As a geo::Line segment (for interop with geo algorithms).
-    #[inline]
-    pub fn as_segment(&self) -> Line<f32> {
-        Line::new(self.a, self.b)
-    }
-
     /// Test whether the **infinite** line crosses a finite segment.
     ///
     /// `vect1 = b - a`, then the segment endpoints must straddle the
@@ -792,14 +682,6 @@ impl Line2D {
             }
         }
         false
-    }
-
-    /// Field-wise equality on the two defining endpoints. Distinct from
-    /// `PartialEq`, which tests geometric coincidence of the *infinite
-    /// line*.
-    #[inline]
-    pub fn same_endpoints(&self, other: &Self) -> bool {
-        self.a == other.a && self.b == other.b
     }
 }
 
@@ -972,32 +854,6 @@ pub fn polygon_vertices_intersect_bbox(vertices: &[GeoPoint2D], bbox: &BBox2D) -
     }
 }
 
-/// Test if two polygons' boundaries intersect (edge-vs-edge only).
-///
-/// Returns true iff *any* edge of `this` crosses *any* (non-closing)
-/// edge of `test_polygon`. **Containment is not detected** — a polygon
-/// fully inside the other with no edge crossings returns false, unlike
-/// `geo::Polygon::intersects` which treats them as filled regions.
-pub fn polygons_intersect(this: &Polygon<f32>, test_polygon: &Polygon<f32>) -> bool {
-    // Empty short-circuit.
-    if polygon_vertex_count(this) == 0 {
-        return false;
-    }
-    let test_edges: Vec<Line<f32>> = test_polygon.exterior().lines().collect();
-    // `LineString` is closed, so `.lines()` includes the closing edge as
-    // its last element. Drop it to skip the closing edge of the test
-    // polygon.
-    let test_max = test_edges.len().saturating_sub(1);
-    for this_edge in this.exterior().lines() {
-        for test_edge in &test_edges[..test_max] {
-            if segments_intersect(this_edge, *test_edge) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Test if a polygon fully contains a segment (boundary counts as inside).
 ///
 /// Multi-stage: both endpoints inside → convex fast-path → edge-walk via
@@ -1025,49 +881,6 @@ pub fn polygon_contains_segment(poly: &Polygon<f32>, seg: Line<f32>) -> bool {
         (seg.start.y + seg.end.y) * 0.5,
     );
     polygon_contains_point(poly, mid)
-}
-
-/// Test if `outer` fully contains `inner` (boundary counts as inside).
-///
-/// Walks `inner`'s vertices (excluding the closing duplicate),
-/// short-circuits false on any vertex outside, takes a convex fast path
-/// on `outer`, then iterates every inner edge (including the closing
-/// edge `last → first`) and checks via [`polygon_contains_segment`].
-///
-/// The per-vertex boundary-inclusive check ensures a polygon whose
-/// edges lie on `outer`'s boundary still counts as inside (geo's
-/// strict-interior `Contains` would reject it).
-pub fn polygon_contains_polygon(outer: &Polygon<f32>, inner: &Polygon<f32>) -> bool {
-    // Empty short-circuit.
-    if polygon_vertex_count(inner) == 0 {
-        return false;
-    }
-    // Walk inner's vertices (excluding the closing duplicate) — every
-    // one must be inside `outer` (boundary-inclusive).
-    let inner_pts = inner.exterior().0.as_slice();
-    let max = inner_pts.len().saturating_sub(1);
-    for v in &inner_pts[..max] {
-        if !polygon_contains_point(outer, *v) {
-            return false;
-        }
-    }
-    // Convex fast-path on outer.
-    if polygon_is_convex(outer) {
-        return true;
-    }
-    // Inner edges (including closing edge) must each be fully inside
-    // outer.
-    for edge in inner.exterior().lines() {
-        if !polygon_contains_segment(outer, edge) {
-            return false;
-        }
-    }
-    true
-}
-
-/// Compute the bounding box of a polygon.
-pub fn polygon_bbox(poly: &Polygon<f32>) -> BBox2D {
-    BBox2D::from(poly)
 }
 
 /// Count the polygon's distinct vertices.
@@ -1142,61 +955,6 @@ pub fn polygon_is_valid(poly: &Polygon<f32>) -> bool {
     true
 }
 
-/// Test if a polygon is concave (valid AND non-convex).
-///
-/// A self-intersecting polygon returns **false** for both
-/// [`polygon_is_convex`] and [`polygon_is_concave`] — they are not
-/// strict negations.
-pub fn polygon_is_concave(poly: &Polygon<f32>) -> bool {
-    polygon_is_valid(poly) && !polygon_is_convex(poly)
-}
-
-/// Test if a polygon's vertices are all collinear (strict).
-///
-/// True iff every consecutive edge-pair determinant is exactly zero.
-/// Stricter than `polygon_signed_area(p) == 0.0`, which can also be
-/// triggered by a self-intersecting figure-8 with cancelling lobes.
-///
-/// Empty polygons return `false` — they are treated as invalid rather
-/// than collinear.
-pub fn polygon_is_on_a_line(poly: &Polygon<f32>) -> bool {
-    if poly.exterior().0.is_empty() {
-        return false;
-    }
-    let edges: Vec<Line<f32>> = poly.exterior().lines().collect();
-    let n = edges.len();
-    if n == 0 {
-        return true;
-    }
-    for i in 0..n {
-        let last = edges[i];
-        let this = edges[(i + 1) % n];
-        let lv = pt(last.end.x - last.start.x, last.end.y - last.start.y);
-        let tv = pt(this.end.x - this.start.x, this.end.y - this.start.y);
-        if cross(lv, tv) != 0.0 {
-            return false;
-        }
-    }
-    true
-}
-
-/// Test if a (possibly concave) polygon is clockwise.
-///
-/// Uses the signed-area (shoelace) sign — mathematically equivalent to
-/// the curvatura-integra sign (sum of outer angles via atan2) for any
-/// simple polygon, since curvatura integra is ±2π for non-self-
-/// intersecting polygons. Polygons with fewer than three vertices
-/// return `true` by definition.
-pub fn polygon_is_clockwise_for_concave(poly: &Polygon<f32>) -> bool {
-    // exterior LineString is closed (first == last), so subtract one
-    // for the duplicated terminator to recover the vertex count.
-    let n = poly.exterior().0.len().saturating_sub(1);
-    if n < 3 {
-        return true;
-    }
-    polygon_is_clockwise(poly)
-}
-
 // ─── Intersection result ─────────────────────────────────────────
 
 /// Result of a geometric intersection calculation.
@@ -1251,89 +1009,6 @@ pub fn segment_intersection(a: Line<f32>, b: Line<f32>) -> Intersection2D {
         }
         Some(LineIntersection::Collinear { intersection }) => Intersection2D::Segment(intersection),
         Option::None => Intersection2D::None,
-    }
-}
-
-/// Intersect an **infinite** line with a finite segment.
-///
-/// Solves the slope-intercept system, then constrains the intersection
-/// to the segment's `[A,B]` range using [`PRECISION`] tolerance on the
-/// relevant axis. Collinear yields `Segment(seg)`; parallel-distinct
-/// yields `None`.
-///
-/// Distinct from [`segment_intersection`], which clips the crossing to
-/// **both** inputs' `[0,1]` parametric ranges and would miss crossings
-/// where the line extension beyond `line.a..line.b` strikes the segment.
-pub fn line_intersect_segment(line: Line2D, seg: Line<f32>) -> Intersection2D {
-    let prec = PRECISION as f64;
-    let line_dx = (line.b.x - line.a.x) as f64;
-    let seg_dx = (seg.end.x - seg.start.x) as f64;
-
-    if line_dx != 0.0 {
-        // Line is non-vertical: y = line_a * x + line_b.
-        let line_a = (line.b.y - line.a.y) as f64 / line_dx;
-        let line_b = line.a.y as f64 - line.a.x as f64 * line_a;
-
-        if seg_dx != 0.0 {
-            // Segment is also non-vertical.
-            let seg_a = (seg.end.y - seg.start.y) as f64 / seg_dx;
-            let seg_b = seg.start.y as f64 - seg.start.x as f64 * seg_a;
-
-            if line_a != seg_a {
-                let ix = (seg_b - line_b) / (line_a - seg_a);
-                let sa_x = seg.start.x as f64;
-                let sb_x = seg.end.x as f64;
-                let in_range = (ix <= sa_x + prec && ix >= sb_x - prec)
-                    || (ix >= sa_x - prec && ix <= sb_x + prec);
-                if in_range {
-                    let iy = ix * line_a + line_b;
-                    Intersection2D::Point(pt(ix as f32, iy as f32))
-                } else {
-                    Intersection2D::None
-                }
-            } else if line_b == seg_b {
-                // Collinear: full segment is the overlap.
-                Intersection2D::Segment(seg)
-            } else {
-                Intersection2D::None
-            }
-        } else {
-            // Segment is vertical (x = seg.start.x).
-            let iy = line_a * seg.start.x as f64 + line_b;
-            let sa_y = seg.start.y as f64;
-            let sb_y = seg.end.y as f64;
-            let in_range = (iy <= sa_y + prec && iy >= sb_y - prec)
-                || (iy >= sa_y - prec && iy <= sb_y + prec);
-            if in_range {
-                Intersection2D::Point(pt(seg.start.x, iy as f32))
-            } else {
-                Intersection2D::None
-            }
-        }
-    } else {
-        // Line is vertical (x = line.a.x).
-        if seg_dx != 0.0 {
-            let seg_a = (seg.end.y - seg.start.y) as f64 / seg_dx;
-            let seg_b = seg.start.y as f64 - seg.start.x as f64 * seg_a;
-            let lx = line.a.x as f64;
-            let sa_x = seg.start.x as f64;
-            let sb_x = seg.end.x as f64;
-            let in_range = (lx <= sa_x + prec && lx >= sb_x - prec)
-                || (lx >= sa_x - prec && lx <= sb_x + prec);
-            if in_range {
-                let iy = seg_a * lx + seg_b;
-                Intersection2D::Point(pt(line.a.x, iy as f32))
-            } else {
-                Intersection2D::None
-            }
-        } else {
-            // Both vertical.
-            if line.a.x == seg.start.x {
-                Intersection2D::Segment(seg)
-            } else {
-                Intersection2D::None
-            }
-        }
     }
 }
 

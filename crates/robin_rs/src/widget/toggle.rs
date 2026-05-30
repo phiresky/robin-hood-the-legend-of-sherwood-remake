@@ -88,28 +88,6 @@ impl WidgetToggleButton {
         if self.second_state { 1 } else { 0 }
     }
 
-    /// Set the toggle state directly.
-    ///
-    /// Flipping `second_state` also swaps any currently-held
-    /// `FOCUSED_*` / `SELECTED_*` state onto the matching other half,
-    /// so the next frame's state-machine arm is consistent with the
-    /// new `second_state`.
-    pub fn set_second_state(&mut self, second: bool) {
-        if second == self.second_state {
-            return;
-        }
-        self.second_state = second;
-        self.base.state = match (self.base.state, second) {
-            (UiState::FocusedFirst, true) => UiState::FocusedSecond,
-            (UiState::SelectedFirst, true) => UiState::SelectedSecond,
-            (UiState::PushedFirst, true) => UiState::PushedSecond,
-            (UiState::FocusedSecond, false) => UiState::FocusedFirst,
-            (UiState::SelectedSecond, false) => UiState::SelectedFirst,
-            (UiState::PushedSecond, false) => UiState::PushedFirst,
-            (other, _) => other,
-        };
-    }
-
     /// Group-focus flag setter. Emits `WidgetReactivated` when the
     /// group gains focus on an enabled widget.
     pub fn set_group_focused(&mut self, focused: bool) -> Vec<UiEvent> {
@@ -208,27 +186,6 @@ impl WidgetToggleButton {
     fn event_with_state(&self, msg: UiMsg) -> UiEvent {
         self.base
             .make_event_with_data(msg, UiEventData::ListIndex(self.state_index()))
-    }
-
-    /// Play the widget's "noisy" menu sound for any hover / activation
-    /// events emitted this frame. Should be called right after the
-    /// state-machine dispatch.
-    ///
-    /// Wraps `widget_bridge::play_widget_noise` with
-    /// `WIDGET_NOISY_BUTTON`.
-    pub fn play_noise(
-        events: &[UiEvent],
-        sound: &mut crate::sound::SoundManager,
-        backend: Option<&mut dyn crate::sound::AudioBackend>,
-        loader: &robin_engine::sound_cache::SampleLoader,
-    ) {
-        crate::ingame_menu::widget_bridge::play_widget_noise(
-            events,
-            crate::ingame_menu::widget_bridge::WIDGET_NOISY_BUTTON,
-            sound,
-            backend,
-            loader,
-        );
     }
 
     /// Map current state to renderer sub-resource ID. Group flags are

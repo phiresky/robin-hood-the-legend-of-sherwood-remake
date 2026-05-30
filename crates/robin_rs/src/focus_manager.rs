@@ -311,16 +311,6 @@ impl FocusManager {
 
     // ── Queries ─────────────────────────────────────────────────────
 
-    /// Index of the currently focused groupable widget, if any.
-    pub fn focused_groupable_index(&self) -> Option<usize> {
-        self.focused_groupable_idx
-    }
-
-    /// Index of the currently focused focusable widget, if any.
-    pub fn focused_focusable_index(&self) -> Option<usize> {
-        self.focused_focusable_idx
-    }
-
     /// Access a groupable widget by index.
     pub fn groupable(&self, index: usize) -> &dyn WidgetGroupable {
         &*self.group[index].widget

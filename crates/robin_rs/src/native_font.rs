@@ -178,11 +178,6 @@ impl NativeFont {
         })
     }
 
-    /// Font display name from the `.sbf` `FONT_HEADER`.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
     /// Font height in pixels.
     pub fn height(&self) -> u32 {
         self.height
@@ -328,122 +323,6 @@ impl NativeFont {
         }
         w
     }
-
-    /// Render text into an ARGB8888 pixel buffer with per-pixel alpha
-    /// from the font's alpha atlas.
-    ///
-    ///   1. Skip if the glyph atlas pixel equals the 16-bit green color
-    ///      key (`0x07C0`).
-    ///   2. Skip if the alpha-atlas pixel is zero.
-    ///   3. Otherwise write the glyph RGB with alpha = `(alpha_atlas_px
-    ///      & 0x1F) << 3` (blue-channel alpha extraction).
-    ///
-    /// Writing as ARGB lets SDL's `BLENDMODE_BLEND` do the per-pixel
-    /// blend against the actual destination (e.g. the parchment) when
-    /// the resulting surface is blitted, so anti-aliased edges fade
-    /// into the parchment instead of carrying a green halo from being
-    /// written verbatim.
-    ///
-    /// Buffer layout: ARGB8888 little-endian memory order — each pixel
-    /// is 4 bytes `[B, G, R, A]`.  `pitch` is in **bytes**, not pixels.
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_to_argb(
-        &self,
-        data: &mut [u8],
-        surface_w: i32,
-        surface_h: i32,
-        pitch: usize,
-        text: &str,
-        x: i32,
-        y: i32,
-    ) {
-        let mut cx = x;
-        let fh = self.height as i32;
-        let gw = self.glyph_width as usize;
-        let aw = self.alpha_width as usize;
-
-        for ch in text.encode_utf16() {
-            let info = match self.get_char_info(ch) {
-                Some(i) => i,
-                None => continue,
-            };
-
-            cx += info.pre_spacing;
-            let cw = info.width as i32;
-            let src_x0 = info.start as i32;
-
-            if ch == b' ' as u16 {
-                cx += cw + info.post_spacing + self.extra_spacing;
-                continue;
-            }
-
-            if cx + cw <= 0 || cx >= surface_w || y + fh <= 0 || y >= surface_h {
-                cx += cw + info.post_spacing + self.extra_spacing;
-                continue;
-            }
-
-            let row_start = 0.max(-y) as usize;
-            let row_end = fh.min(surface_h - y) as usize;
-            let col_start = 0.max(-cx) as usize;
-            let col_end = cw.min(surface_w - cx) as usize;
-
-            for row in row_start..row_end {
-                let dy = (y + row as i32) as usize;
-                let src_y = row;
-
-                for col in col_start..col_end {
-                    let sx = (src_x0 as usize) + col;
-
-                    // Alpha extraction: `(alpha_px & 0x1F) << 3`.
-                    let alpha8: u8 = if sx < aw {
-                        let alpha_idx = src_y * aw + sx;
-                        if alpha_idx < self.alpha_pixels.len() {
-                            let a = self.alpha_pixels[alpha_idx] & 0x1F;
-                            (a << 3) as u8
-                        } else {
-                            255
-                        }
-                    } else {
-                        255
-                    };
-                    if alpha8 == 0 {
-                        continue;
-                    }
-
-                    if sx >= gw {
-                        continue;
-                    }
-                    let glyph_idx = src_y * gw + sx;
-                    if glyph_idx >= self.glyph_pixels.len() {
-                        continue;
-                    }
-                    let src = self.glyph_pixels[glyph_idx];
-
-                    // Skip the green sentinel.
-                    if src == crate::renderer::TRANSPARENT_COLOR_KEY_16 {
-                        continue;
-                    }
-
-                    // RGB565 → 8-bit channels.
-                    let r = ((src >> 8) & 0xF8) as u8;
-                    let g = ((src >> 3) & 0xFC) as u8;
-                    let b = ((src << 3) & 0xF8) as u8;
-
-                    // SDL ARGB8888 little-endian memory layout: [B, G, R, A].
-                    let dx = (cx + col as i32) as usize;
-                    let off = dy * pitch + dx * 4;
-                    if off + 3 < data.len() {
-                        data[off] = b;
-                        data[off + 1] = g;
-                        data[off + 2] = r;
-                        data[off + 3] = alpha8;
-                    }
-                }
-            }
-
-            cx += cw + info.post_spacing + self.extra_spacing;
-        }
-    }
 }
 
 /// Convert a `&[u8]` of little-endian u16 pixel data to `Vec<u16>`.
@@ -539,13 +418,6 @@ impl Font {
         match self {
             Font::Native(f) => Some(f),
             Font::TrueType(_) => None,
-        }
-    }
-
-    pub fn as_truetype(&self) -> Option<&TrueTypeFont> {
-        match self {
-            Font::Native(_) => None,
-            Font::TrueType(f) => Some(f),
         }
     }
 }
