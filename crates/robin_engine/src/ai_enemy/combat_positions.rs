@@ -743,7 +743,7 @@ impl EnemyAi {
             && let Some(sector) = global.archery_sectors.get_mut(new_sec as usize)
             && let Some(pt) = sector.points.get_mut(new_pt as usize)
         {
-            pt.owner = Some(crate::entity_id::EntityId::from_raw(self.base.me));
+            pt.owner = Some(crate::entity_id::EntityId::Soldier(self.base.me));
         }
     }
 

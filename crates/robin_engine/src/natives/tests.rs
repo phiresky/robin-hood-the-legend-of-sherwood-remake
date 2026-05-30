@@ -211,11 +211,11 @@ fn script_actor_handle_maps_back_to_zero_based_entity_id() {
     assert_eq!(GameHost::actor_id(0), None);
     assert_eq!(
         GameHost::actor_id(GameHost::actor_handle_from_index(0)),
-        Some(EntityId::from_raw(0))
+        Some(EntityId::Pc(0))
     );
     assert_eq!(
         GameHost::actor_id(GameHost::actor_handle_from_index(70)),
-        Some(EntityId::from_raw(70))
+        Some(EntityId::Pc(70))
     );
 }
 

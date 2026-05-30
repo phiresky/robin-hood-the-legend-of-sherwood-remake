@@ -2872,7 +2872,7 @@ impl EngineInner {
                 // which can differ from opponents[0].
                 entity
                     .ai_controller()
-                    .map(|c| EntityId::from_raw(c.primary_target))
+                    .map(|c| EntityId::Pc(c.primary_target))
                     .filter(|id| id.index() != 0)
             } else {
                 None
@@ -3532,6 +3532,7 @@ impl EngineInner {
                 )
             };
 
+            let entity_id = EntityId::new(idx as u32, entity.entity_id_kind());
             let elem = entity.element_data_mut();
             let dx = goal.x - elem.position_map().x;
             let dy = goal.y - elem.position_map().y;
@@ -4005,7 +4006,7 @@ impl EngineInner {
             {
                 let goal_dir = elem.sprite.position_iface.get_direction_goal().as_u8();
                 tracing::debug!(
-                    entity = ?EntityId::from_raw(idx as u32),
+                    entity = ?entity_id,
                     ?anim,
                     posture = ?elem.posture,
                     action_state = ?action_state,
@@ -4046,8 +4047,7 @@ impl EngineInner {
                 if !transition_has_map_target && !is_in_place_movement_transition(order_action) {
                     panic!(
                         "movement transition {:?} for entity {:?} has zero map target; refusing to treat (0,0) as an implicit destination",
-                        order_action,
-                        EntityId::from_raw(idx as u32)
+                        order_action, entity_id
                     );
                 }
                 if transition_has_map_target && speed > 0.0 && dist > 0.01 {
@@ -4056,7 +4056,7 @@ impl EngineInner {
                     let pi = &mut elem.sprite.position_iface;
                     if !pi.is_increment_map_computed() {
                         tracing::warn!(
-                            entity = ?EntityId::from_raw(idx as u32),
+                            entity = ?entity_id,
                             order = ?order_action,
                             pos_x = pos.x,
                             pos_y = pos.y,
@@ -4177,7 +4177,7 @@ impl EngineInner {
 
             tracing::trace!(
                 "tick_move: entity={:?} pos=({:.0},{:.0}) goal=({:.0},{:.0}) speed={speed:.1} action={:?} state={:?}",
-                EntityId::from_raw(idx as u32),
+                entity_id,
                 elem.position_map().x,
                 elem.position_map().y,
                 goal.x,
@@ -4329,7 +4329,7 @@ impl EngineInner {
             let frozen_seek_wait = tolerance_arrival && !is_final_waypoint && !ft.has_post_seek;
             if frozen_seek_wait {
                 tracing::trace!(
-                    entity = ?EntityId::from_raw(idx as u32),
+                    entity = ?entity_id,
                     "tick_move: FROZEN seek wait (target in range, no post-seek, mid-path)",
                 );
                 continue;
@@ -6593,7 +6593,7 @@ mod line_jump_tests {
 
     #[test]
     fn line_jump_click_sequence_moves_to_line_then_jumps_then_moves_to_click() {
-        let owner = EntityId::from_raw(7);
+        let owner = EntityId::Pc(7);
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
         let mut source_line = crate::jump_line::JumpLine::new(
@@ -6664,7 +6664,7 @@ mod line_jump_tests {
 
     #[test]
     fn force_sword_movement_marks_all_movement_elements() {
-        let owner = EntityId::from_raw(7);
+        let owner = EntityId::Pc(7);
         let source_idx = crate::jump_line::JumpLineIndex::new(2).unwrap();
         let dest_idx = crate::jump_line::JumpLineIndex::new(3).unwrap();
         let source_line = crate::jump_line::JumpLine::new(

@@ -2188,11 +2188,8 @@ impl EngineInner {
     /// instead of installing the cross-element link.
     pub(super) fn propagate_done_to_current_orders(&mut self) {
         let done_actors: Vec<crate::element::EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let entity = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(entity_id, entity)| {
                 if !entity.is_actor() {
                     return None;
                 }
@@ -2200,7 +2197,7 @@ impl EngineInner {
                     entity.element_data().sprite.last_motion_state,
                     Some(crate::sprite::MotionState::Done)
                 )
-                .then_some(crate::element::EntityId::from_raw(idx as u32))
+                .then_some(entity_id)
             })
             .collect();
 

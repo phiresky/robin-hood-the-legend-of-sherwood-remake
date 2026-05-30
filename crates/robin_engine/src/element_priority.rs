@@ -307,7 +307,7 @@ mod tests {
     use crate::sequence::SequenceElement;
 
     fn make_elem(command: Command) -> SequenceElement {
-        SequenceElement::new(1, command, Some(EntityId::from_raw(1)))
+        SequenceElement::new(1, command, Some(EntityId::Pc(1)))
     }
 
     fn pc_ctx() -> ActorPriorityContext {
@@ -413,7 +413,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WaitingUpright,
         );
         if let SequenceElementData::Movement { flags, .. } = &mut elem.data {
@@ -430,7 +430,7 @@ mod tests {
         let elem = SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WaitingUpright,
         );
         assert_eq!(
