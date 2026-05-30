@@ -836,7 +836,8 @@ pub fn gather_level_repulsive_points(
     layer: u16,
     box_future: &BBox2D,
 ) -> Vec<RepulsivePoint> {
-    grid.get_level_repulsive_points(layer, box_future)
+    let box_future = MapBBox::from_geo(*box_future);
+    grid.get_level_repulsive_points(layer, &box_future)
         .into_iter()
         .map(|p| {
             let mut rp = RepulsivePoint::new(

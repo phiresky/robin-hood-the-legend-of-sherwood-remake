@@ -274,6 +274,11 @@ impl GroundBBox {
     }
 
     #[inline]
+    pub fn from_corners(min: GroundPoint, max: GroundPoint) -> Self {
+        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
+    }
+
+    #[inline]
     pub fn is_somewhere(&self) -> bool {
         self.0.is_some()
     }

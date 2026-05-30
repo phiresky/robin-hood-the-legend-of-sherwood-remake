@@ -1766,7 +1766,7 @@ impl PathFinderRuntime {
             self.current_layer,
             corridor.seg1,
             corridor.seg2,
-            &corridor.bbox.to_geo(),
+            &corridor.bbox,
         );
 
         if line_indices.is_empty() {

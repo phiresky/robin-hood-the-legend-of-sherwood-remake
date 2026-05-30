@@ -30,9 +30,8 @@
 //! candidate obstacles from the FastFindGrid cells crossed by the ray,
 //! then checking opaque blockers on that smaller candidate list.
 
-use crate::coordinates::{GroundPoint, MapPoint};
+use crate::coordinates::{GroundBBox, GroundPoint, MapPoint};
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
-use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::order::OrderType;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 use crate::sight_obstacle::ObstacleList;
@@ -733,18 +732,18 @@ pub fn compute_view_radius(
     // and two along the left/right cone edges.
     let (fx, fy) = view_forward;
     let half_r = 0.5 * base_radius;
-    let mut pt_ref = GeoPoint2D {
+    let mut pt_ref = MapPoint {
         x: eye.x + half_r * fx,
         y: eye.y + half_r * fy,
     };
 
     let (lx, ly) = rotate_unit(fx, fy, half_aperture);
     let (rx, ry) = rotate_unit(fx, fy, -half_aperture);
-    let mut pt_left = GeoPoint2D {
+    let mut pt_left = MapPoint {
         x: eye.x + half_r * lx,
         y: eye.y + half_r * ly,
     };
-    let mut pt_right = GeoPoint2D {
+    let mut pt_right = MapPoint {
         x: eye.x + half_r * rx,
         y: eye.y + half_r * ry,
     };
@@ -869,15 +868,21 @@ pub fn los_clear_spatial(
     obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
 ) -> bool {
-    let min = GeoPoint2D {
-        x: viewer.x.min(target.x),
-        y: viewer.y.min(target.y),
-    };
-    let max = GeoPoint2D {
-        x: viewer.x.max(target.x),
-        y: viewer.y.max(target.y),
-    };
-    let bbox = BBox2D::from_corners(min, max);
+    // The obstacle grid is keyed by `SightObstacle::box_ground`.
+    // Legacy visibility passes projected 2D positions here; preserve
+    // that parity explicitly at the conversion boundary.
+    let viewer_ground = GroundPoint::new(viewer.x, viewer.y);
+    let target_ground = GroundPoint::new(target.x, target.y);
+    let bbox = GroundBBox::from_corners(
+        GroundPoint::new(
+            viewer_ground.x.min(target_ground.x),
+            viewer_ground.y.min(target_ground.y),
+        ),
+        GroundPoint::new(
+            viewer_ground.x.max(target_ground.x),
+            viewer_ground.y.max(target_ground.y),
+        ),
+    );
 
     let mut candidates = fast_grid.get_obstacle_indices(0, &bbox);
     if layer != 0 {
@@ -903,10 +908,7 @@ pub fn los_clear_spatial(
         if obs.layer != u16::MAX && obs.layer != layer {
             continue;
         }
-        if obs.is_blocking_sight(
-            GroundPoint::new(viewer.x, viewer.y),
-            GroundPoint::new(target.x, target.y),
-        ) {
+        if obs.is_blocking_sight(viewer_ground, target_ground) {
             return false;
         }
     }
@@ -1414,8 +1416,7 @@ mod tests {
         grid.allocate_layers(4);
         for (idx, obs) in obstacles.iter().enumerate() {
             let idx = crate::sight_obstacle::SightObstacleIndex::new(idx as u32).unwrap();
-            let box_ground = obs.box_ground.to_geo();
-            grid.add_obstacle_index(idx, obs.layer, &box_ground);
+            grid.add_obstacle_index(idx, obs.layer, &obs.box_ground);
         }
         Box::leak(Box::new(grid))
     }

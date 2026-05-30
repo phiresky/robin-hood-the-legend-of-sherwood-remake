@@ -3663,10 +3663,10 @@ impl EngineInner {
         // Snapshot (idx, layer, box_ground) before mutating fast_grid —
         // `self.sight_obstacles(assets)` borrows engine immutably while
         // `add_obstacle_index` needs `&mut self.fast_grid`.
-        let obstacle_metadata: Vec<(u32, u16, crate::geo2d::BBox2D)> = self
+        let obstacle_metadata: Vec<(u32, u16, crate::coordinates::GroundBBox)> = self
             .sight_obstacles(assets)
             .iter_indexed()
-            .map(|(idx, obs)| (idx, obs.layer, obs.box_ground.to_geo()))
+            .map(|(idx, obs)| (idx, obs.layer, obs.box_ground))
             .collect();
         for (obs_idx, layer, box_ground) in obstacle_metadata {
             if let Some(idx) = crate::sight_obstacle::SightObstacleIndex::new(obs_idx) {
