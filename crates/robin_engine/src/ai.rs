@@ -3478,7 +3478,7 @@ impl AiContext {
             return false;
         }
         let viewer_eye = crate::stealth::eye_point_xy(
-            crate::geo2d::pt(self.position.x, self.position.y),
+            crate::coordinates::MapPoint::new(self.position.x, self.position.y),
             self.posture,
             self.direction as i16,
             false,

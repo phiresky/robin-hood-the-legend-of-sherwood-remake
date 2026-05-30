@@ -1104,12 +1104,10 @@ impl EngineInner {
                         // "active and outside building" reduces to
                         // "not in a building".
                         target_is_active_and_outside_building: pc.building_sector.is_none(),
-                        target: crate::coordinates::MapPoint::from_geo(
-                            crate::stealth::detection_point_xy(
-                                pc.position.to_geo(),
-                                pc.posture,
-                                pc.direction as i16,
-                            ),
+                        target: crate::stealth::detection_point_xy(
+                            pc.position,
+                            pc.posture,
+                            pc.direction as i16,
                         ),
                         target_posture: pc.posture,
                         target_action_state: pc.action_state,
@@ -2706,12 +2704,10 @@ impl EngineInner {
                         // are filtered to active/alive above,
                         // so this reduces to "not in a building".
                         target_is_active_and_outside_building: target.building_sector.is_none(),
-                        target: crate::coordinates::MapPoint::from_geo(
-                            crate::stealth::detection_point_xy(
-                                target.position.to_geo(),
-                                target.posture,
-                                target.direction,
-                            ),
+                        target: crate::stealth::detection_point_xy(
+                            target.position,
+                            target.posture,
+                            target.direction,
                         ),
                         target_posture: target.posture,
                         target_action_state: target.action_state,
@@ -3384,12 +3380,10 @@ impl EngineInner {
                     effective_view_radius,
                     target_is_active_and_outside_building: target.active
                         && target.building_sector.is_none(),
-                    target: crate::coordinates::MapPoint::from_geo(
-                        crate::stealth::detection_point_xy(
-                            target.position.to_geo(),
-                            target.posture,
-                            target.direction,
-                        ),
+                    target: crate::stealth::detection_point_xy(
+                        target.position,
+                        target.posture,
+                        target.direction,
                     ),
                     target_posture: target.posture,
                     target_action_state: target.action_state,

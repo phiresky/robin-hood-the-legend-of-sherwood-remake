@@ -4,6 +4,7 @@
 //! tick can call `stealth::validate_*` before dispatching, and
 //! `stealth::execute_*` to get the animation + posture result.
 
+use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Command, Posture};
 use crate::element_kinds::{CRAWLING_OFFSETS_X, CRAWLING_OFFSETS_Y};
 use crate::order::OrderType;
@@ -518,27 +519,23 @@ pub fn leaning_out_xy_offset(direction_x: f32, direction_y: f32) -> (f32, f32) {
 /// position.  Other postures return the input unchanged.
 ///
 /// `direction` is the actor's 16-sector facing.
-pub fn detection_point_xy(
-    ground: crate::geo2d::GeoPoint2D,
-    posture: Posture,
-    direction: i16,
-) -> crate::geo2d::GeoPoint2D {
+pub fn detection_point_xy(ground: MapPoint, posture: Posture, direction: i16) -> MapPoint {
     if posture != Posture::LeaningOut {
         return ground;
     }
     let (dx, dy) = crate::element_kinds::direction_vector_16(direction);
     let (sx, sy) = leaning_out_xy_offset(dx, dy);
-    crate::geo2d::pt(ground.x + sx, ground.y + sy)
+    MapPoint::new(ground.x + sx, ground.y + sy)
 }
 
 /// Apply the posture-dependent eye-point XY shift to a ground-plane
 /// position. This is the XY half of C++ `ComputeEyesPoint`.
 pub fn eye_point_xy(
-    ground: crate::geo2d::GeoPoint2D,
+    ground: MapPoint,
     posture: Posture,
     direction: i16,
     emergency_lying: bool,
-) -> crate::geo2d::GeoPoint2D {
+) -> MapPoint {
     match posture {
         Posture::LeaningOut => detection_point_xy(ground, posture, direction),
         Posture::Lying
@@ -548,7 +545,7 @@ pub fn eye_point_xy(
         | Posture::Tied => {
             let dir = direction.rem_euclid(16) as usize;
             let scale = if emergency_lying { 0.5 } else { 1.0 };
-            crate::geo2d::pt(
+            MapPoint::new(
                 ground.x + scale * CRAWLING_OFFSETS_X[dir],
                 ground.y + scale * CRAWLING_OFFSETS_Y[dir],
             )
@@ -763,10 +760,9 @@ mod tests {
 
     #[test]
     fn detection_point_xy_leaning_out_shifts_forward() {
-        use crate::geo2d::pt;
         // Sector 4 (= +X, east).  direction_vector_16 returns
         // (sin(τ·4/16), -cos(τ·4/16)) = (1, 0).
-        let ground = pt(100.0, 200.0);
+        let ground = MapPoint::new(100.0, 200.0);
         let shifted = detection_point_xy(ground, Posture::LeaningOut, 4);
         assert!((shifted.x - 140.0).abs() < 1e-3);
         assert!((shifted.y - 200.0).abs() < 1e-3);
@@ -778,8 +774,7 @@ mod tests {
 
     #[test]
     fn eye_point_xy_applies_crawling_offsets() {
-        use crate::geo2d::pt;
-        let ground = pt(100.0, 200.0);
+        let ground = MapPoint::new(100.0, 200.0);
         let shifted = eye_point_xy(ground, Posture::Lying, 4, false);
         assert!((shifted.x - 116.0).abs() < 1e-3);
         assert!((shifted.y - 200.0).abs() < 1e-3);

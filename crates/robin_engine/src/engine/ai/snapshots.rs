@@ -425,11 +425,12 @@ impl EngineInner {
                 .position_iface
                 .is_using_emergency_lying_box();
             let eye_position = crate::stealth::eye_point_xy(
-                pos.to_geo(),
+                pos,
                 pc.element.posture,
                 pc.element.direction(),
                 emergency_lying,
             )
+            .to_geo()
             .into();
             let eye_z = pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture, false);
             let detection_z =
