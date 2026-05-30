@@ -15,7 +15,7 @@ use robin_engine::engine::{
     DrawOrder, FadeToBlack, GroundMarkSpriteData, InputState, PendingBgBlit, SideEffects,
 };
 use robin_engine::game_operation::GameCode;
-use robin_engine::geo2d::{Point2D, Vec2D};
+use robin_engine::geo2d::Vec2D;
 use robin_engine::markers::GroundMark;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -307,7 +307,7 @@ pub struct Host {
     /// swap the arc colour from cyan (default) to pink (crumpled).
     pub net_crumpled: bool,
     pub time_no_mouse_move: u32,
-    pub mouse_map_prev: Point2D,
+    pub mouse_map_prev: MapPoint,
     /// Rolling counter for the once-every-10-frames ground-mark drop
     /// performed by `DisplayTrajectory`.  Incremented each frame the
     /// trajectory-preview is valid.
@@ -343,11 +343,11 @@ pub struct Host {
     /// personal bindings so the User Defined button can restore them.
     pub custom_key_config: KeyConfig,
 
-    /// SDL scancode bound to the `DisplayMap` shortcut.  The game loop
+    /// Physical key bound to the `DisplayMap` shortcut.  The game loop
     /// reads this on each frame and emits a minimap-toggle command on
-    /// key release.  Zero means no accelerator bound.  Lives host-side
+    /// key release.  `None` means no accelerator bound.  Lives host-side
     /// — the engine has no reason to know which key the UI is bound to.
-    pub minimap_fast_key: u16,
+    pub minimap_fast_key: Option<winit::keyboard::KeyCode>,
 
     // ── Host-side managers ───────────────────────────────────────
     /// Audio playback manager (samples, music, listen point).
@@ -386,7 +386,7 @@ pub struct Host {
     /// `(position, zoom)` set when a tick emitted a `ResumeAllSources`
     /// command. Drained by game_session before the sound hourglass
     /// runs, since it needs `&engine.sound_sim.sources`.
-    pub pending_resume_all_sources: Option<(Point2D, f32)>,
+    pub pending_resume_all_sources: Option<(MapPoint, f32)>,
 
     /// Sound-source indices the engine asked the host to activate
     /// this tick (from `SoundCommand::ActivateSource`). Drained by
@@ -798,7 +798,7 @@ impl Host {
 
     pub fn sync_sound_listener(&mut self) {
         self.sound.set_listen_point(
-            self.viewport.sound_listen_point().to_geo(),
+            self.viewport.sound_listen_point(),
             self.viewport.zoom_factor,
         );
     }

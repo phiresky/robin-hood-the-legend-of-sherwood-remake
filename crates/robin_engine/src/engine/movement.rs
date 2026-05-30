@@ -3,7 +3,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::EntityId;
-use crate::geo2d::{self, Point2D};
+use crate::geo2d::{self, GeoPoint2D};
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
@@ -77,7 +77,7 @@ fn sprite_motion_order_for_nonanimation(order: OrderType) -> OrderType {
     }
 }
 
-fn door_click_polygon_at(game_host: &crate::natives::GameHost, click: Point2D) -> Option<u32> {
+fn door_click_polygon_at(game_host: &crate::natives::GameHost, click: MapPoint) -> Option<u32> {
     game_host
         .doors
         .iter()
@@ -561,7 +561,7 @@ impl EngineInner {
     pub(super) fn lift_endpoint_points(
         &self,
         sector_number: crate::sector::SectorNumber,
-    ) -> (Point2D, Point2D) {
+    ) -> (GeoPoint2D, GeoPoint2D) {
         let sector = self
             .grid_sector_by_number(sector_number)
             .expect("DetermineMovementAnimation: missing lift sector");
@@ -933,7 +933,7 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .and_then(|h| door_click_polygon_at(h, click_point.to_geo()));
+                .and_then(|h| door_click_polygon_at(h, click_point));
             let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
             let is_door_click = is_door_click_sector || clicked_door_index.is_some();
 
@@ -1450,7 +1450,7 @@ impl EngineInner {
                 let candidate = MapPoint::new(click.x + angle.sin() * r, click.y - angle.cos() * r);
                 if assets
                     .pathfinder_graph
-                    .find_area_at_point(layer as usize, candidate.to_geo())
+                    .find_area_at_point(layer as usize, candidate)
                     .is_some()
                 {
                     return Some(candidate);
@@ -1933,7 +1933,7 @@ impl EngineInner {
                 let mut turn = SequenceElement::new_generic(level, Command::Turn, Some(entity_id));
                 turn.set_property(
                     Field::CameraPoint,
-                    FieldValue::Point2D {
+                    FieldValue::GeoPoint2D {
                         x: camera_pt.x,
                         y: camera_pt.y,
                     },
@@ -2314,7 +2314,7 @@ impl EngineInner {
                             SequenceElement::new_generic(level, Command::Turn, Some(entity_id));
                         turn.set_property(
                             Field::CameraPoint,
-                            FieldValue::Point2D {
+                            FieldValue::GeoPoint2D {
                                 x: cam_pt.x,
                                 y: cam_pt.y,
                             },
@@ -3321,26 +3321,15 @@ impl EngineInner {
         // Elevation-line crossings detected during this tick. Dispatched
         // after the entity loop so `check_for_line_crossing` can borrow
         // `self` for the fast-grid query and obstacle swap.
-        // Each entry is `(entity_id, old_pos, new_pos, layer)`; positions
-        // are `geo2d::Point2D` since the fast-grid query works in that
-        // coordinate type.
-        let mut line_cross_checks: Vec<(
-            EntityId,
-            crate::geo2d::Point2D,
-            crate::geo2d::Point2D,
-            u16,
-        )> = Vec::new();
+        // Each entry is `(entity_id, old_pos, new_pos, layer)` in projected
+        // map coordinates. Geometry queries convert at the call boundary.
+        let mut line_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
         // Patch-line (`LINE_PATCH`) crossings detected for PC actors.
         // Dispatched after the entity loop so
         // `check_for_patch_line_crossing` can borrow `self` for the
         // per-patch `enter`/`leave`/`apply` state mutation and effect
         // processing.  Covers the `LINE_PATCH` PC-only crossing arm.
-        let mut patch_cross_checks: Vec<(
-            EntityId,
-            crate::geo2d::Point2D,
-            crate::geo2d::Point2D,
-            u16,
-        )> = Vec::new();
+        let mut patch_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
         // Sound-line (`LINE_SOUND`) crossings detected for any actor.
         // Dispatched after the entity loop so
         // `check_for_sound_line_crossing` can borrow `self` for the
@@ -3348,12 +3337,7 @@ impl EngineInner {
         // (single-line and multi-line).  Unlike LINE_PATCH this fires
         // for every actor (PC, NPC, soldier) — the SOUND arm is not
         // gated on PC.
-        let mut sound_cross_checks: Vec<(
-            EntityId,
-            crate::geo2d::Point2D,
-            crate::geo2d::Point2D,
-            u16,
-        )> = Vec::new();
+        let mut sound_cross_checks: Vec<(EntityId, MapPoint, MapPoint, u16)> = Vec::new();
         // Seek elements whose end-of-walk arrival put a
         // transition-to-waiting animation in line as the next order
         // while the live target had drifted beyond
@@ -4767,17 +4751,13 @@ impl EngineInner {
                 let new_pos = entity.element_data().position_map();
                 let new_pos_geo = crate::geo2d::pt(new_pos.x, new_pos.y);
                 if self.fast_grid.level.map_bbox.contains_point(new_pos_geo) {
-                    line_cross_checks.push((
-                        EntityId(idx as u32),
-                        old_pos_geo,
-                        new_pos_geo,
-                        entity_layer,
-                    ));
+                    let old_pos = MapPoint::from_geo(old_pos_geo);
+                    line_cross_checks.push((EntityId(idx as u32), old_pos, new_pos, entity_layer));
                     if entity.is_pc() {
                         patch_cross_checks.push((
                             EntityId(idx as u32),
-                            old_pos_geo,
-                            new_pos_geo,
+                            old_pos,
+                            new_pos,
                             entity_layer,
                         ));
                     }
@@ -4786,12 +4766,7 @@ impl EngineInner {
                     // crossing a sound-material boundary so footstep
                     // sound playback picks the right per-frame
                     // material.
-                    sound_cross_checks.push((
-                        EntityId(idx as u32),
-                        old_pos_geo,
-                        new_pos_geo,
-                        entity_layer,
-                    ));
+                    sound_cross_checks.push((EntityId(idx as u32), old_pos, new_pos, entity_layer));
                 }
             }
         }
@@ -5325,7 +5300,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         layer: u16,
-        pos: Point2D,
+        pos: MapPoint,
     ) -> Option<u16> {
         self.find_plane_obstacle_split(assets, layer, pos, pos)
     }
@@ -5341,8 +5316,8 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         layer: u16,
-        bbox_at: Point2D,
-        polygon_at: Point2D,
+        bbox_at: MapPoint,
+        polygon_at: MapPoint,
     ) -> Option<u16> {
         for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
             if !obs.is_projection_area() {
@@ -5351,10 +5326,10 @@ impl EngineInner {
             if obs.layer != layer {
                 continue;
             }
-            if !obs.box_screen.contains_point(bbox_at) {
+            if !obs.box_screen.contains_point(bbox_at.to_geo()) {
                 continue;
             }
-            if !obs.contains_point_screen(polygon_at) {
+            if !obs.contains_point_screen(polygon_at.to_geo()) {
                 continue;
             }
             return Some(oi as u16);
@@ -5415,7 +5390,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
         line_idx: crate::fast_find_grid::LineIndex,
-        new_pos: Point2D,
+        new_pos: MapPoint,
         increment_map: crate::geo2d::Vec2D,
     ) {
         let line = match self.fast_grid.level.lines.get(usize::from(line_idx)) {
@@ -5470,7 +5445,7 @@ impl EngineInner {
                 let increment_computed =
                     increment_map.x.abs() > 1e-9 || increment_map.y.abs() > 1e-9;
                 if increment_computed {
-                    let probe = crate::geo2d::pt(
+                    let probe = MapPoint::new(
                         new_pos.x + 2.0 * increment_map.x,
                         new_pos.y + 2.0 * increment_map.y,
                     );
@@ -5538,8 +5513,8 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: crate::geo2d::Point2D,
-        new_pos: crate::geo2d::Point2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
         layer: u16,
     ) -> bool {
         // Early-out: exact same position means no crossing at all.
@@ -5547,9 +5522,11 @@ impl EngineInner {
             return false;
         }
 
-        let mut indices = self
-            .fast_grid
-            .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
+        let mut indices = self.fast_grid.get_crossing_elevation_line_indices(
+            layer,
+            old_pos.to_geo(),
+            new_pos.to_geo(),
+        );
         if indices.is_empty() {
             return false;
         }
@@ -5644,17 +5621,19 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: crate::geo2d::Point2D,
-        new_pos: crate::geo2d::Point2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
         layer: u16,
     ) {
         if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
             return;
         }
 
-        let indices = self
-            .fast_grid
-            .get_crossing_patch_line_indices(layer, old_pos, new_pos);
+        let indices = self.fast_grid.get_crossing_patch_line_indices(
+            layer,
+            old_pos.to_geo(),
+            new_pos.to_geo(),
+        );
         if indices.is_empty() {
             return;
         }
@@ -5730,7 +5709,7 @@ impl EngineInner {
             else {
                 continue;
             };
-            let inside_apply = apply_sector.contains_point(new_pos);
+            let inside_apply = apply_sector.contains_point(new_pos.to_geo());
 
             let effects = {
                 let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
@@ -5793,17 +5772,19 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         entity_id: EntityId,
-        old_pos: crate::geo2d::Point2D,
-        new_pos: crate::geo2d::Point2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
         layer: u16,
     ) {
         if (old_pos.x - new_pos.x).abs() < 1e-4 && (old_pos.y - new_pos.y).abs() < 1e-4 {
             return;
         }
 
-        let indices = self
-            .fast_grid
-            .get_crossing_sound_line_indices(layer, old_pos, new_pos);
+        let indices = self.fast_grid.get_crossing_sound_line_indices(
+            layer,
+            old_pos.to_geo(),
+            new_pos.to_geo(),
+        );
         if indices.is_empty() {
             return;
         }
@@ -5816,7 +5797,7 @@ impl EngineInner {
         // collapses the polygon scan + default-material fallback;
         // the obstacle-based fallback is then applied on top when no
         // sound polygon matches and the actor has an active obstacle.
-        let polygon_material = assets.material_sectors.material_at(new_pos);
+        let polygon_material = assets.material_sectors.material_at(new_pos.to_geo());
         let new_material = if polygon_material == assets.material_sectors.default_material {
             // No SECTOR_SOUND polygon matched; apply the obstacle
             // fallback.  Without an obstacle pointer the default-
@@ -6089,7 +6070,6 @@ impl EngineInner {
             }
             _ => {}
         }
-        let dest_geo = dest.to_geo();
         move_action =
             self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
         // Write the rewritten action back onto the movement sequence
@@ -6291,7 +6271,7 @@ impl EngineInner {
         // build a two-point "path" that the downstream emission loop
         // turns into a single walking order to `dest`.
         let mut waypoints = if straight_ok {
-            vec![source, dest_geo]
+            vec![MapPoint::from_geo(source), dest]
         } else {
             let path = self.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
@@ -6299,8 +6279,8 @@ impl EngineInner {
                 entity_layer,
                 entity_sector,
                 pf_idx,
-                source,
-                dest_geo,
+                MapPoint::from_geo(source),
+                dest,
                 use_first_point,
             );
             match path {
@@ -6350,8 +6330,10 @@ impl EngineInner {
                     .map(|e| e.position_iface())
                     .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
                     .unwrap_or_default();
+                let geo_waypoints: Vec<crate::geo2d::GeoPoint2D> =
+                    waypoints.iter().copied().map(MapPoint::to_geo).collect();
                 waypoints = apply_drunken_path_deviation(
-                    waypoints,
+                    geo_waypoints,
                     source,
                     blood_alcohol,
                     move_action == OrderType::RunningUpright,
@@ -6360,7 +6342,10 @@ impl EngineInner {
                     half_diag,
                     &self.fast_grid,
                     &mut self.rng,
-                );
+                )
+                .into_iter()
+                .map(MapPoint::from_geo)
+                .collect();
             }
         }
 
@@ -6436,8 +6421,6 @@ impl EngineInner {
         {
             let next_order_id = &mut self.next_order_id;
             if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
-                let waypoints: Vec<crate::coordinates::MapPoint> =
-                    waypoints.iter().copied().map(Into::into).collect();
                 crate::movement::build_orders_from_path(
                     elem,
                     &waypoints,

@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::ai::{AiState, EmoticonType};
-use crate::coordinates::WorldPoint3D;
+use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{DetectableType, Entity, EntityId, Posture};
 use crate::titbit::{ElementHandle, HiddenCharacter, INVALID_ID, SpriteRow, TitbitKind};
 
@@ -179,7 +179,7 @@ impl EngineInner {
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: 1476, // impact FX
-                position: crate::geo2d::pt(pos.x, pos.y - pos.z),
+                position: MapPoint::from_world_xyz(pos.x, pos.y, pos.z),
                 material: None,
             });
     }
@@ -461,7 +461,7 @@ impl EngineInner {
                 current_state: AiState,
                 blipped: bool,
                 posture: Posture,
-                position: crate::geo2d::Point2D,
+                position: crate::geo2d::GeoPoint2D,
                 layer: u16,
                 active: bool,
                 display_order: f32,

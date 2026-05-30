@@ -8,7 +8,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::Point2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{
@@ -16,6 +15,7 @@ use crate::ui::{
         RADIO_EX_FOCUSED2, RADIO_EX_PUSHED1, RADIO_EX_PUSHED2,
     },
 };
+use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetId, WidgetInput};
 
@@ -121,8 +121,8 @@ impl WidgetRadioButton {
         let buttons = input.mouse_button;
 
         // Check accelerator key.
-        if self.base.fast_key != 0 {
-            let key_state = input.keyboard.get_state_of_key(self.base.fast_key);
+        if let Some(fast_key) = self.base.fast_key {
+            let key_state = input.keyboard.get_state_of_key(fast_key);
             match key_state {
                 KeyState::KeyDown => {
                     return self.process_pushed();
@@ -322,7 +322,7 @@ impl WidgetRadioButton {
     /// wiring layer attached one — see
     /// `widget_bridge::attach_alpha_masks`). Falls back to bbox-only
     /// when no mask is attached.
-    pub fn is_mouse_inside(&self, point: Point2D) -> bool {
+    pub fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         self.base.is_inside(point)
     }
 }
@@ -370,7 +370,7 @@ impl WidgetGroupable for WidgetRadioButton {
         WidgetRadioButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: Point2D) -> bool {
+    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         WidgetRadioButton::is_mouse_inside(self, point)
     }
 

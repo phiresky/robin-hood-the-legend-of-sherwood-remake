@@ -67,7 +67,6 @@ fn main() -> Result<()> {
         if dd.profiles.is_some() { 1 } else { 0 },
         dd.profiles
     );
-    field!("keysets", dd.keysets.len(), dd.keysets);
     field!("res_files", dd.res_files.len(), dd.res_files);
     field!("pak_files", dd.pak_files.len(), dd.pak_files);
     field!("red_files", dd.red_files.len(), dd.red_files);

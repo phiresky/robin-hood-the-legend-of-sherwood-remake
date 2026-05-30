@@ -867,7 +867,7 @@ async fn run_name_prompt(
         let widget_events = frame.process_input(&widget_input);
         // Feed the accumulated text-input stream to the widget so its
         // caret-aware insert path handles max-length + control-char
-        // filtering. Stub keyboard keeps its scancode branches silent
+        // filtering. Stub keyboard keeps its special-key branches silent
         // (Backspace/caret nav handled above at the modal level to
         // avoid double-firing on key release).
         let field_input = WidgetInput {

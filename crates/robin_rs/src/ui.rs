@@ -5,14 +5,18 @@
 //! widget-specific drawing code (see `widget/` and `game_session`); this
 //! module is a serializable state + layout/event skeleton.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
-use crate::geo2d::{BBox2D, Point2D, pt};
+use crate::geo2d::{BBox2D, GeoPoint2D, pt};
 use crate::ingame_menu::layout::{MenuTransform, TextAlign, VAlign, render_text_in_box_aligned};
-use crate::input::{KeyboardState, MAX_SCANCODES};
+use crate::input::KeyboardState;
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use robin_engine::sprite::BBox;
 
 // ═════════════════════════════════════════════════════════════════════
@@ -151,12 +155,12 @@ pub struct UiKeyboard {
     repeat_loop: u16,
     double_press_delay: u32,
 
-    key_state: Vec<KeyState>,
-    old_key_state: Vec<KeyState>,
-    repeat_counter: Vec<u16>,
-    typewriter: Vec<TypeWriter>,
-    last_key_press: Vec<u32>,
-    type_press: Vec<u32>,
+    key_state: BTreeMap<KeyCode, KeyState>,
+    old_key_state: BTreeMap<KeyCode, KeyState>,
+    repeat_counter: BTreeMap<KeyCode, u16>,
+    typewriter: BTreeMap<KeyCode, TypeWriter>,
+    last_key_press: BTreeMap<KeyCode, u32>,
+    type_press: BTreeMap<KeyCode, u32>,
 
     old_keyboard_state: KeyboardState,
 }
@@ -175,12 +179,12 @@ impl UiKeyboard {
             repeat_delay: 5,
             repeat_loop: 2,
             double_press_delay,
-            key_state: vec![KeyState::KeyUp; MAX_SCANCODES],
-            old_key_state: vec![KeyState::KeyUp; MAX_SCANCODES],
-            repeat_counter: vec![0u16; MAX_SCANCODES],
-            typewriter: vec![TypeWriter::None; MAX_SCANCODES],
-            last_key_press: vec![0u32; MAX_SCANCODES],
-            type_press: vec![0u32; MAX_SCANCODES],
+            key_state: BTreeMap::new(),
+            old_key_state: BTreeMap::new(),
+            repeat_counter: BTreeMap::new(),
+            typewriter: BTreeMap::new(),
+            last_key_press: BTreeMap::new(),
+            type_press: BTreeMap::new(),
             old_keyboard_state: KeyboardState::default(),
         }
     }
@@ -199,75 +203,85 @@ impl UiKeyboard {
         }
 
         // Save previous key states for change detection.
-        self.old_key_state.copy_from_slice(&self.key_state);
+        self.old_key_state = self.key_state.clone();
 
         self.changed = false;
 
-        for i in 0..MAX_SCANCODES {
-            let cur = keyboard_state.keys.get(i).copied().unwrap_or(0);
-            let old = self.old_keyboard_state.keys.get(i).copied().unwrap_or(0);
+        let mut keys_to_update: BTreeSet<KeyCode> = self.key_state.keys().copied().collect();
+        keys_to_update.extend(keyboard_state.keys.iter().copied());
+        keys_to_update.extend(self.old_keyboard_state.keys.iter().copied());
+
+        for key in keys_to_update {
+            let cur = keyboard_state.keys.contains(&key);
+            let old = self.old_keyboard_state.keys.contains(&key);
 
             if cur != old {
                 // ── Key state changed this frame ──
                 self.changed = true;
 
-                if cur > 0 {
+                if cur {
                     // Key just went down.
-                    self.key_state[i] = KeyState::KeyDown;
-                    self.type_press[i] = current_time_ms;
-                    self.typewriter[i] = TypeWriter::None;
+                    self.key_state.insert(key, KeyState::KeyDown);
+                    self.type_press.insert(key, current_time_ms);
+                    self.typewriter.insert(key, TypeWriter::None);
                 } else {
                     // Key just went up.
-                    self.repeat_counter[i] = 0;
+                    self.repeat_counter.insert(key, 0);
 
                     // Only handle a previous `KeyDown` here; other previous
                     // states (`KeyPressed`, `KeyDouble`, `KeyUp`) are a no-op
                     // and leave `last_key_press` untouched.
-                    if let KeyState::KeyDown = self.key_state[i] {
-                        if current_time_ms.wrapping_sub(self.last_key_press[i])
-                            <= self.double_press_delay
-                        {
-                            self.key_state[i] = KeyState::KeyDouble;
+                    if self.key_state.get(&key).copied() == Some(KeyState::KeyDown) {
+                        let last_key_press = *self.last_key_press.get(&key).unwrap_or(&0);
+                        if current_time_ms.wrapping_sub(last_key_press) <= self.double_press_delay {
+                            self.key_state.insert(key, KeyState::KeyDouble);
                         } else {
-                            self.key_state[i] = KeyState::KeyPressed;
-                            self.last_key_press[i] = current_time_ms;
+                            self.key_state.insert(key, KeyState::KeyPressed);
+                            self.last_key_press.insert(key, current_time_ms);
                         }
                     }
                 }
             } else {
                 // ── Key state unchanged ──
 
-                if cur > 0 {
+                if cur {
                     // Key is still held — advance the typewriter.
-                    match self.typewriter[i] {
+                    match self
+                        .typewriter
+                        .get(&key)
+                        .copied()
+                        .unwrap_or(TypeWriter::None)
+                    {
                         TypeWriter::None => {
-                            self.typewriter[i] = TypeWriter::Touch;
+                            self.typewriter.insert(key, TypeWriter::Touch);
                         }
                         TypeWriter::Touch => {
-                            if current_time_ms.wrapping_sub(self.type_press[i]) > REPEAT_FIRST_MS {
-                                self.typewriter[i] = TypeWriter::Repeat;
-                                self.type_press[i] = current_time_ms;
+                            let type_press = *self.type_press.get(&key).unwrap_or(&0);
+                            if current_time_ms.wrapping_sub(type_press) > REPEAT_FIRST_MS {
+                                self.typewriter.insert(key, TypeWriter::Repeat);
+                                self.type_press.insert(key, current_time_ms);
                             }
                         }
                         TypeWriter::Repeat => {
-                            self.typewriter[i] = TypeWriter::Waiting;
+                            self.typewriter.insert(key, TypeWriter::Waiting);
                         }
                         TypeWriter::Waiting => {
-                            if current_time_ms.wrapping_sub(self.type_press[i]) > REPEAT_AFTER_MS {
-                                self.typewriter[i] = TypeWriter::Repeat;
-                                self.type_press[i] = current_time_ms;
+                            let type_press = *self.type_press.get(&key).unwrap_or(&0);
+                            if current_time_ms.wrapping_sub(type_press) > REPEAT_AFTER_MS {
+                                self.typewriter.insert(key, TypeWriter::Repeat);
+                                self.type_press.insert(key, current_time_ms);
                             }
                         }
                     }
                 } else {
-                    self.typewriter[i] = TypeWriter::None;
+                    self.typewriter.insert(key, TypeWriter::None);
                 }
 
                 // Clean up transient states.
-                match self.key_state[i] {
+                match self.key_state.get(&key).copied().unwrap_or(KeyState::KeyUp) {
                     KeyState::KeyDouble | KeyState::KeyPressed => {
                         self.changed = true;
-                        self.key_state[i] = KeyState::KeyUp;
+                        self.key_state.insert(key, KeyState::KeyUp);
                     }
                     _ => {}
                 }
@@ -284,22 +298,25 @@ impl UiKeyboard {
     }
 
     /// Whether a specific key changed state during the last refresh.
-    pub fn has_key_changed(&self, scancode: u16) -> bool {
-        let i = scancode as usize;
-        assert!(i < MAX_SCANCODES, "scancode {scancode} out of range");
-        self.old_key_state[i] != self.key_state[i]
+    pub fn has_key_changed(&self, key: KeyCode) -> bool {
+        self.old_key_state
+            .get(&key)
+            .copied()
+            .unwrap_or(KeyState::KeyUp)
+            != self.key_state.get(&key).copied().unwrap_or(KeyState::KeyUp)
     }
 
     /// Current state of a key.
-    pub fn get_state_of_key(&self, scancode: u16) -> KeyState {
-        let i = scancode as usize;
-        assert!(i < MAX_SCANCODES, "scancode {scancode} out of range");
-        self.key_state[i]
+    pub fn get_state_of_key(&self, key: KeyCode) -> KeyState {
+        self.key_state.get(&key).copied().unwrap_or(KeyState::KeyUp)
     }
 
     /// Typewriter repeat state of a key.
-    pub fn get_typewriter_state(&self, scancode: u16) -> TypeWriter {
-        self.typewriter[scancode as usize]
+    pub fn get_typewriter_state(&self, key: KeyCode) -> TypeWriter {
+        self.typewriter
+            .get(&key)
+            .copied()
+            .unwrap_or(TypeWriter::None)
     }
 
     pub fn double_press_delay(&self) -> u32 {
@@ -318,9 +335,13 @@ impl UiKeyboard {
     /// Reset all key states and counters.
     pub fn reset(&mut self) {
         self.changed = true;
-        self.repeat_counter.fill(0);
-        self.last_key_press.fill(0);
-        self.type_press.fill(0);
+        self.key_state.clear();
+        self.old_key_state.clear();
+        self.repeat_counter.clear();
+        self.typewriter.clear();
+        self.last_key_press.clear();
+        self.type_press.clear();
+        self.old_keyboard_state.keys.clear();
     }
 }
 
@@ -337,7 +358,7 @@ impl UiKeyboard {
 /// the input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiInput {
-    pub mouse_position: Point2D,
+    pub mouse_position: ScreenPoint,
     pub mouse_z: i16,
     pub mouse_button: u16,
 }
@@ -382,7 +403,7 @@ pub enum ProbeCode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiProbe {
     pub code: ProbeCode,
-    pub zone: BBox2D,
+    pub zone: ScreenBBox,
     pub widget_id: u32,
 }
 
@@ -533,7 +554,7 @@ impl AlphaMask {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RendererBase {
     /// Bounding box where the widget is drawn.
-    pub bbox: BBox2D,
+    pub bbox: ScreenBBox,
     /// Current resource ID.
     pub resource_id: ResourceId,
     /// Current sub-resource for rendering.
@@ -559,7 +580,7 @@ pub struct RendererBase {
 impl Default for RendererBase {
     fn default() -> Self {
         Self {
-            bbox: BBox2D::new(),
+            bbox: ScreenBBox::new(),
             resource_id: -1,
             sub_resource: resource_widget_id::NO_RESOURCE,
             flags: 0,
@@ -573,16 +594,16 @@ impl Default for RendererBase {
 }
 
 impl RendererBase {
-    pub fn set_position_bbox(&mut self, bbox: BBox2D) {
+    pub fn set_position_bbox(&mut self, bbox: ScreenBBox) {
         self.bbox = bbox;
     }
 
-    pub fn set_position_point(&mut self, point: Point2D) {
+    pub fn set_position_point(&mut self, point: ScreenPoint) {
         // Actual dimensions are resolved by the concrete widget type
         // (see `widget/picture.rs` etc.), which queries `ResourceManager`
         // and calls `set_position_bbox`. This 1×1 fallback is a
         // safety net for callers that haven't been ported yet.
-        self.bbox = BBox2D::from_point(point);
+        self.bbox = ScreenBBox::from_point(point);
     }
 
     pub fn set_resource(&mut self, id: ResourceId) -> bool {
@@ -626,7 +647,7 @@ impl RendererBase {
     /// When no mask is set (text labels, sliders, listboxes — anything
     /// not bound to a pre-loaded sprite pack), the bbox check stands
     /// alone.
-    pub fn is_real_point(&self, point: Point2D) -> bool {
+    pub fn is_real_point(&self, point: ScreenPoint) -> bool {
         if !self.bbox.contains_point(point) {
             return false;
         }
@@ -740,7 +761,7 @@ impl RendererAlphaConstant {
     /// A fully-faded widget (`target_alpha == 0`) cannot receive
     /// clicks. Otherwise defer to the base renderer (bbox +
     /// pixel-alpha).
-    pub fn is_real_point(&self, point: Point2D) -> bool {
+    pub fn is_real_point(&self, point: ScreenPoint) -> bool {
         if self.target_alpha == 0 {
             return false;
         }
@@ -1062,7 +1083,7 @@ pub struct RendererListbox {
     pub scrollbar_track_width: u16,
 
     // ── Knob (scrollbar thumb) state ──
-    pub knob_position: Point2D,
+    pub knob_position: GeoPoint2D,
     pub knob_ratio: f32,
     pub before_ratio: f32,
     pub knob_height: u16,
@@ -1095,7 +1116,7 @@ impl RendererListbox {
             surface_scrollbar: u32::MAX,
             knob_width: 0,
             scrollbar_track_width: 0,
-            knob_position: Point2D::default(),
+            knob_position: GeoPoint2D::default(),
             knob_ratio: 0.0,
             before_ratio: 0.0,
             knob_height: 0,
@@ -1351,7 +1372,7 @@ impl RendererListbox {
     /// if INDENT: box.xMin += indentSize
     /// box += bbox.topLeft
     /// ```
-    pub fn text_box_for_item(&self, index: u16, flags: u32) -> BBox2D {
+    pub fn text_box_for_item(&self, index: u16, flags: u32) -> ScreenBBox {
         // The bbox is always expected to be present at this point; a
         // `None` here is a broken lifecycle, not a normal state. Fail
         // loudly rather than fabricate.
@@ -1376,7 +1397,7 @@ impl RendererListbox {
         }
 
         // Offset by bbox top-left (screen position)
-        BBox2D::from_coords(x_min + min.x, y_min + min.y, x_max + min.x, y_max + min.y)
+        ScreenBBox::from_coords(x_min + min.x, y_min + min.y, x_max + min.x, y_max + min.y)
     }
 
     /// Get the current scrollbar knob bounding box.
@@ -1387,7 +1408,7 @@ impl RendererListbox {
     /// knob_x       = bbox.right - 1 - scrollbarWidth
     /// offset by (knob_x, bbox.top + 1)
     /// ```
-    pub fn knob_bbox(&self) -> BBox2D {
+    pub fn knob_bbox(&self) -> ScreenBBox {
         // The bbox is always expected to be present at this point; a
         // `None` here is a broken lifecycle, not a normal state. Fail
         // loudly rather than fabricate.
@@ -1406,7 +1427,7 @@ impl RendererListbox {
         let y_end = (height - 2.0) * (self.before_ratio + self.knob_ratio);
         let x_start = max.x - 1.0 - kw;
 
-        BBox2D::from_coords(
+        ScreenBBox::from_coords(
             x_start,
             y_start + min.y + 1.0,
             x_start + kw,
@@ -1420,11 +1441,11 @@ impl RendererListbox {
     /// box = (0, 0, scrollbarWidth, bboxHeight)
     /// offset by (bbox.right - scrollbarWidth, bbox.top)
     /// ```
-    pub fn scrollbar_bbox(&self) -> BBox2D {
+    pub fn scrollbar_bbox(&self) -> ScreenBBox {
         if self.surface_scrollbar == u32::MAX {
             // Return a degenerate `(0,0,0,0)` box here, not a "no box"
             // sentinel — callers expect a real box.
-            return BBox2D::from_coords(0.0, 0.0, 0.0, 0.0);
+            return ScreenBBox::from_coords(0.0, 0.0, 0.0, 0.0);
         }
         // The bbox is always expected to be present at this point — a
         // `None` here means the listbox lifecycle is broken (refresh
@@ -1438,7 +1459,7 @@ impl RendererListbox {
         let max = rect.max();
         let sw = self.scrollbar_track_width as f32;
 
-        BBox2D::from_coords(max.x - sw, min.y, max.x, max.y)
+        ScreenBBox::from_coords(max.x - sw, min.y, max.x, max.y)
     }
 
     /// Pixel height to move the knob for one item.
@@ -1497,7 +1518,7 @@ pub enum MapType {
 pub struct Layout {
     h_orientation: HorizontalOrientation,
     v_orientation: VerticalOrientation,
-    physical_origin: Point2D,
+    physical_origin: GeoPoint2D,
     /// Logical bounding box (stored as raw start/end in logical coords).
     bbox_start: LayoutPoint,
     bbox_end: LayoutPoint,
@@ -1507,7 +1528,7 @@ impl Layout {
     /// Create a layout from a physical bounding box and origin.
     pub fn new(
         bbox: &BBox2D,
-        origin: Point2D,
+        origin: GeoPoint2D,
         h_orientation: HorizontalOrientation,
         v_orientation: VerticalOrientation,
     ) -> Self {
@@ -1581,11 +1602,11 @@ impl Layout {
         self.bbox_end.y = self.bbox_start.y + h as f32;
     }
 
-    pub fn origin(&self) -> Point2D {
+    pub fn origin(&self) -> GeoPoint2D {
         self.physical_origin
     }
 
-    pub fn set_origin(&mut self, origin: Point2D) {
+    pub fn set_origin(&mut self, origin: GeoPoint2D) {
         self.physical_origin = origin;
     }
 
@@ -1658,7 +1679,7 @@ impl LayoutPoint {
     }
 
     /// Convert a physical point to logical coordinates within a layout.
-    pub fn from_physical(layout: &Layout, phys: Point2D) -> Self {
+    pub fn from_physical(layout: &Layout, phys: GeoPoint2D) -> Self {
         Self {
             x: layout.horizontal_map(phys.x, MapType::Logical),
             y: layout.vertical_map(phys.y, MapType::Logical),
@@ -1666,7 +1687,7 @@ impl LayoutPoint {
     }
 
     /// Convert this logical point back to physical coordinates.
-    pub fn to_physical(&self, layout: &Layout) -> Point2D {
+    pub fn to_physical(&self, layout: &Layout) -> GeoPoint2D {
         pt(
             layout.horizontal_map(self.x, MapType::Physical),
             layout.vertical_map(self.y, MapType::Physical),
@@ -1804,10 +1825,10 @@ mod tests {
 
     // ── UiKeyboard tests ──
 
-    fn make_keys(pressed: &[u16]) -> KeyboardState {
+    fn make_keys(pressed: &[KeyCode]) -> KeyboardState {
         let mut ks = KeyboardState::default();
-        for &sc in pressed {
-            ks.keys[sc as usize] = 1;
+        for &key in pressed {
+            ks.keys.insert(key);
         }
         ks
     }
@@ -1815,7 +1836,7 @@ mod tests {
     #[test]
     fn keyboard_first_refresh_initializes() {
         let mut kb = UiKeyboard::default();
-        let ks = make_keys(&[10]);
+        let ks = make_keys(&[KeyCode::KeyA]);
         assert!(!kb.refresh(&ks, 0));
         // Not initialized until second call.
         assert!(!kb.has_changed());
@@ -1826,9 +1847,9 @@ mod tests {
         let mut kb = UiKeyboard::default();
         kb.refresh(&make_keys(&[]), 0);
 
-        kb.refresh(&make_keys(&[42]), 100);
+        kb.refresh(&make_keys(&[KeyCode::Backspace]), 100);
         assert!(kb.has_changed());
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyDown);
+        assert_eq!(kb.get_state_of_key(KeyCode::Backspace), KeyState::KeyDown);
     }
 
     #[test]
@@ -1837,16 +1858,19 @@ mod tests {
         kb.refresh(&make_keys(&[]), 0);
 
         // Press key
-        kb.refresh(&make_keys(&[42]), 100);
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyDown);
+        kb.refresh(&make_keys(&[KeyCode::Backspace]), 100);
+        assert_eq!(kb.get_state_of_key(KeyCode::Backspace), KeyState::KeyDown);
 
         // Release key → KeyPressed
         kb.refresh(&make_keys(&[]), 700);
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyPressed);
+        assert_eq!(
+            kb.get_state_of_key(KeyCode::Backspace),
+            KeyState::KeyPressed
+        );
 
         // Next frame → KeyUp (transient state cleaned up)
         kb.refresh(&make_keys(&[]), 800);
-        assert_eq!(kb.get_state_of_key(42), KeyState::KeyUp);
+        assert_eq!(kb.get_state_of_key(KeyCode::Backspace), KeyState::KeyUp);
     }
 
     #[test]
@@ -1857,17 +1881,17 @@ mod tests {
         kb.refresh(&make_keys(&[]), 10_000);
 
         // First press + release
-        kb.refresh(&make_keys(&[10]), 10_100);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_100);
         kb.refresh(&make_keys(&[]), 10_200);
-        assert_eq!(kb.get_state_of_key(10), KeyState::KeyPressed);
+        assert_eq!(kb.get_state_of_key(KeyCode::KeyA), KeyState::KeyPressed);
 
         // Consume the pressed state
         kb.refresh(&make_keys(&[]), 10_250);
 
         // Second press + release within 500ms of first release
-        kb.refresh(&make_keys(&[10]), 10_300);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_300);
         kb.refresh(&make_keys(&[]), 10_400);
-        assert_eq!(kb.get_state_of_key(10), KeyState::KeyDouble);
+        assert_eq!(kb.get_state_of_key(KeyCode::KeyA), KeyState::KeyDouble);
     }
 
     #[test]
@@ -1876,14 +1900,14 @@ mod tests {
         kb.refresh(&make_keys(&[]), 10_000);
 
         // First press + release
-        kb.refresh(&make_keys(&[10]), 10_100);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_100);
         kb.refresh(&make_keys(&[]), 10_200);
         kb.refresh(&make_keys(&[]), 10_250);
 
         // Second press + release AFTER 500ms from first release
-        kb.refresh(&make_keys(&[10]), 10_800);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 10_800);
         kb.refresh(&make_keys(&[]), 10_900);
-        assert_eq!(kb.get_state_of_key(10), KeyState::KeyPressed);
+        assert_eq!(kb.get_state_of_key(KeyCode::KeyA), KeyState::KeyPressed);
     }
 
     #[test]
@@ -1892,24 +1916,24 @@ mod tests {
         kb.refresh(&make_keys(&[]), 0);
 
         // Press key
-        kb.refresh(&make_keys(&[20]), 100);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::None);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 100);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::None);
 
         // Hold — transitions to Touch
-        kb.refresh(&make_keys(&[20]), 200);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Touch);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 200);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Touch);
 
         // Hold past REPEAT_FIRST (400ms) → Repeat
-        kb.refresh(&make_keys(&[20]), 550);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Repeat);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 550);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Repeat);
 
         // Next frame → Waiting
-        kb.refresh(&make_keys(&[20]), 560);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Waiting);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 560);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Waiting);
 
         // Wait past REPEAT_AFTER (50ms) → Repeat again
-        kb.refresh(&make_keys(&[20]), 620);
-        assert_eq!(kb.get_typewriter_state(20), TypeWriter::Repeat);
+        kb.refresh(&make_keys(&[KeyCode::KeyB]), 620);
+        assert_eq!(kb.get_typewriter_state(KeyCode::KeyB), TypeWriter::Repeat);
     }
 
     #[test]
@@ -1917,16 +1941,16 @@ mod tests {
         let mut kb = UiKeyboard::default();
         kb.refresh(&make_keys(&[]), 0);
 
-        kb.refresh(&make_keys(&[5]), 100);
-        assert!(kb.has_key_changed(5));
-        assert!(!kb.has_key_changed(6));
+        kb.refresh(&make_keys(&[KeyCode::Digit5]), 100);
+        assert!(kb.has_key_changed(KeyCode::Digit5));
+        assert!(!kb.has_key_changed(KeyCode::Digit6));
     }
 
     #[test]
     fn keyboard_reset() {
         let mut kb = UiKeyboard::default();
         kb.refresh(&make_keys(&[]), 0);
-        kb.refresh(&make_keys(&[10]), 100);
+        kb.refresh(&make_keys(&[KeyCode::KeyA]), 100);
         kb.reset();
         assert!(kb.has_changed()); // reset sets changed = true
     }
@@ -2051,11 +2075,11 @@ mod tests {
     #[test]
     fn renderer_base_is_real_point_bbox_only() {
         let mut r = RendererBase::default();
-        r.set_position_bbox(BBox2D::from_coords(10.0, 10.0, 30.0, 30.0));
-        assert!(r.is_real_point(pt(15.0, 15.0)));
-        assert!(!r.is_real_point(pt(5.0, 5.0)));
+        r.set_position_bbox(ScreenBBox::from_coords(10.0, 10.0, 30.0, 30.0));
+        assert!(r.is_real_point(ScreenPoint::new(15.0, 15.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
         // Without a mask, every in-bbox pixel is opaque.
-        assert!(r.is_real_point(pt(10.0, 10.0)));
+        assert!(r.is_real_point(ScreenPoint::new(10.0, 10.0)));
     }
 
     #[test]
@@ -2068,25 +2092,25 @@ mod tests {
         let mask = AlphaMask::from_pixels(4, 4, 4, &pixels, KEY);
 
         let mut r = RendererBase::default();
-        r.set_position_bbox(BBox2D::from_coords(10.0, 20.0, 14.0, 24.0));
+        r.set_position_bbox(ScreenBBox::from_coords(10.0, 20.0, 14.0, 24.0));
         r.set_alpha_mask(Some(mask));
 
         // bbox top-left = (10, 20); only local (1, 1) is opaque.
-        assert!(r.is_real_point(pt(11.0, 21.0)));
-        assert!(!r.is_real_point(pt(10.0, 20.0)));
-        assert!(!r.is_real_point(pt(13.0, 23.0)));
+        assert!(r.is_real_point(ScreenPoint::new(11.0, 21.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(10.0, 20.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(13.0, 23.0)));
         // Outside the bbox: rejected before the mask check.
-        assert!(!r.is_real_point(pt(50.0, 50.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(50.0, 50.0)));
     }
 
     #[test]
     fn renderer_alpha_constant_is_real_point_short_circuits() {
         let mut r = RendererAlphaConstant::default();
         r.base
-            .set_position_bbox(BBox2D::from_coords(0.0, 0.0, 10.0, 10.0));
-        assert!(r.is_real_point(pt(5.0, 5.0)));
+            .set_position_bbox(ScreenBBox::from_coords(0.0, 0.0, 10.0, 10.0));
+        assert!(r.is_real_point(ScreenPoint::new(5.0, 5.0)));
         r.set_alpha_level(0);
-        assert!(!r.is_real_point(pt(5.0, 5.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
     }
 
     #[test]
@@ -2182,7 +2206,7 @@ mod tests {
     #[test]
     fn renderer_listbox_displayable_items() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_font_height(20);
         assert_eq!(lb.displayable_item_count(), 5); // 100 / 20
 
@@ -2193,7 +2217,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_params() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_font_height(20);
         lb.set_scrollbar_track_width(16);
 
@@ -2208,7 +2232,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_params_few_items() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_font_height(20);
         // Only 3 items, but can display 5 → full knob
         lb.set_knob_parameters(0, 3);
@@ -2219,7 +2243,7 @@ mod tests {
     #[test]
     fn renderer_listbox_text_box() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(10.0, 20.0, 210.0, 120.0);
+        lb.base.bbox = ScreenBBox::from_coords(10.0, 20.0, 210.0, 120.0);
         lb.set_font_height(15);
         lb.set_scrollbar_track_width(16);
 
@@ -2241,7 +2265,7 @@ mod tests {
     #[test]
     fn renderer_listbox_scrollbar_bbox() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_scrollbar_track_width(16);
         lb.surface_scrollbar = 0; // not 0xFFFFFFFF
 
@@ -2268,7 +2292,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_bbox() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 100.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 100.0);
         lb.set_knob_width(16);
         lb.before_ratio = 0.0;
         lb.knob_ratio = 0.5;
@@ -2286,7 +2310,7 @@ mod tests {
     #[test]
     fn renderer_listbox_knob_height_for_one_item() {
         let mut lb = RendererListbox::new();
-        lb.base.bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 102.0);
+        lb.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 102.0);
         lb.number_of_items = 10;
         // (102 - 2) / 10 = 10
         assert_eq!(lb.knob_height_for_one_item(), 10);

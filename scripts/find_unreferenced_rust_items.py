@@ -17,6 +17,7 @@ import contextlib
 import json
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -109,6 +110,9 @@ class LspClient:
         self._messages: queue.Queue[dict[str, Any]] = queue.Queue()
         self._stderr_tail: deque[str] = deque(maxlen=40)
         self._send_lock = threading.Lock()
+        self._progress_tokens: set[str] = set()
+        self._saw_progress = False
+        self._last_progress = time.monotonic()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._stderr_reader = threading.Thread(target=self._drain_stderr, daemon=True)
         self._reader.start()
@@ -220,9 +224,45 @@ class LspClient:
                 return
             self._handle_server_message(incoming)
 
+    def wait_for_work_done_progress(self, timeout: float, idle: float) -> None:
+        deadline = time.monotonic() + timeout
+        while True:
+            now = time.monotonic()
+            if (
+                self._saw_progress
+                and not self._progress_tokens
+                and now - self._last_progress >= idle
+            ):
+                return
+            remaining = deadline - now
+            if remaining <= 0:
+                if self._options.verbose:
+                    print("workspace progress wait timed out", file=sys.stderr)
+                return
+            try:
+                incoming = self._messages.get(timeout=min(remaining, 0.25))
+            except queue.Empty:
+                continue
+            self._handle_server_message(incoming)
+
     def _handle_server_message(self, message: dict[str, Any]) -> None:
         if self._options.verbose and "method" in message and "id" not in message:
             print(f"lsp notification: {message['method']}", file=sys.stderr)
+        if message.get("method") == "$/progress":
+            params = message.get("params", {})
+            token = str(params.get("token", ""))
+            value = params.get("value", {})
+            kind = value.get("kind")
+            title = value.get("title") or value.get("message") or token
+            self._saw_progress = True
+            self._last_progress = time.monotonic()
+            if kind == "begin":
+                self._progress_tokens.add(token)
+            elif kind == "end":
+                self._progress_tokens.discard(token)
+            if self._options.verbose and kind:
+                print(f"lsp progress: {kind} {title}", file=sys.stderr)
+            return
         if "id" in message and "method" in message:
             method = message["method"]
             if method == "workspace/configuration":
@@ -251,7 +291,11 @@ def iter_rust_files(paths: list[Path], include_tests: bool) -> list[Path]:
             candidates = path.rglob("*.rs")
 
         for candidate in candidates:
-            parts = set(candidate.parts)
+            try:
+                relative_parts = candidate.relative_to(path).parts
+            except ValueError:
+                relative_parts = candidate.name,
+            parts = set(relative_parts)
             if parts & DEFAULT_EXCLUDES:
                 continue
             if not include_tests and (
@@ -294,6 +338,188 @@ def source_line(path: Path, zero_based_line: int) -> str:
         return path.read_text(encoding="utf-8").splitlines()[zero_based_line].strip()
     except (OSError, UnicodeDecodeError, IndexError):
         return ""
+
+
+def _line_start_offsets(text: str) -> list[int]:
+    offsets = [0]
+    for idx, char in enumerate(text):
+        if char == "\n":
+            offsets.append(idx + 1)
+    return offsets
+
+
+def _trim_rust_header(header: str) -> str:
+    lines = []
+    for line in header.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("///"):
+            continue
+        if stripped.startswith("#["):
+            if stripped.startswith("#[cfg") or stripped.startswith("#![cfg"):
+                lines.append(stripped)
+            continue
+        if stripped.startswith("//"):
+            continue
+        lines.append(stripped)
+    return " ".join(lines)
+
+
+def _enclosing_block_headers(text: str, byte_offset: int) -> list[str]:
+    stack: list[tuple[int, str]] = []
+    last_boundary = 0
+    idx = 0
+    paren_depth = 0
+    bracket_depth = 0
+    angle_depth = 0
+    while idx < byte_offset and idx < len(text):
+        char = text[idx]
+        next_char = text[idx + 1] if idx + 1 < len(text) else ""
+
+        if char == "/" and next_char == "/":
+            newline = text.find("\n", idx + 2)
+            if newline == -1 or newline >= byte_offset:
+                break
+            idx = newline + 1
+            continue
+        if char == "/" and next_char == "*":
+            end = text.find("*/", idx + 2)
+            if end == -1 or end >= byte_offset:
+                break
+            idx = end + 2
+            continue
+        if char == '"':
+            idx += 1
+            while idx < byte_offset and idx < len(text):
+                if text[idx] == "\\":
+                    idx += 2
+                    continue
+                if text[idx] == '"':
+                    idx += 1
+                    break
+                idx += 1
+            continue
+
+        if char == "(":
+            paren_depth += 1
+        elif char == ")" and paren_depth:
+            paren_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif char == "<":
+            angle_depth += 1
+        elif char == ">" and angle_depth:
+            angle_depth -= 1
+        elif char == "{":
+            stack.append((idx, _trim_rust_header(text[last_boundary:idx])))
+            last_boundary = idx + 1
+        elif char == "}":
+            if stack:
+                stack.pop()
+            last_boundary = idx + 1
+        elif char == ";" and paren_depth == 0 and bracket_depth == 0 and angle_depth == 0:
+            last_boundary = idx + 1
+        idx += 1
+
+    return [header for _, header in stack]
+
+
+def is_trait_contract_item(path: Path, zero_based_line: int) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    offsets = _line_start_offsets(text)
+    if zero_based_line >= len(offsets):
+        return False
+
+    for header in reversed(_enclosing_block_headers(text, offsets[zero_based_line])):
+        if re.search(r"\btrait\s+[A-Za-z_][A-Za-z0-9_]*\b", header):
+            return True
+        if re.search(r"\bimpl\b", header) and re.search(r"\bfor\b", header):
+            return True
+    return False
+
+
+def _leading_attributes(path: Path, zero_based_line: int) -> list[str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    attrs: list[str] = []
+    idx = zero_based_line - 1
+    while idx >= 0:
+        line = lines[idx].strip()
+        if not line or line.startswith("///") or line.startswith("//"):
+            idx -= 1
+            continue
+        if line.startswith("#["):
+            attrs.append(line)
+            idx -= 1
+            continue
+        break
+    return list(reversed(attrs))
+
+
+def is_runtime_discovered_entrypoint(item: Item) -> bool:
+    if item.name == "main":
+        return True
+    attrs = _leading_attributes(item.path, item.line)
+    return any(
+        attr.startswith("#[no_mangle")
+        or attr.startswith("#[export_name")
+        or "wasm_bindgen" in attr
+        for attr in attrs
+    )
+
+
+def is_cfg_gated_item(path: Path, zero_based_line: int) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    offsets = _line_start_offsets(text)
+    if zero_based_line >= len(offsets):
+        return False
+
+    if any(attr.startswith("#[cfg") for attr in _leading_attributes(path, zero_based_line)):
+        return True
+    return any(
+        "#[cfg" in header
+        for header in _enclosing_block_headers(text, offsets[zero_based_line])
+    )
+
+
+def is_macro_discovered_helper(item: Item) -> bool:
+    # Serde discovers these by name from `#[serde(with = "...")]` modules,
+    # and Serialize/Deserialize impls use the same names. rust-analyzer
+    # reference queries do not see those macro-generated call sites.
+    return item.name in {"serialize", "deserialize"}
+
+
+def has_obvious_text_reference(item: Item) -> bool:
+    try:
+        text = item.path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    lines = text.splitlines()
+    if item.line < len(lines):
+        definition_line = lines[item.line]
+        text_without_definition = text.replace(definition_line, "", 1)
+    else:
+        text_without_definition = text
+
+    name = re.escape(item.name)
+    call_or_attr = re.compile(
+        rf"(\.|::|\b){name}\s*\(|[\"']{name}[\"']",
+        re.MULTILINE,
+    )
+    return call_or_attr.search(text_without_definition) is not None
 
 
 def has_test_attr(path: Path, zero_based_line: int) -> bool:
@@ -374,8 +600,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--startup-delay",
         type=float,
-        default=2.0,
-        help="Seconds to let rust-analyzer process initial workspace notifications.",
+        default=0.0,
+        help="Extra seconds to drain rust-analyzer notifications after workspace progress ends.",
+    )
+    parser.add_argument(
+        "--workspace-ready-timeout",
+        type=float,
+        default=120.0,
+        help="Seconds to wait for rust-analyzer work-done progress to become idle.",
+    )
+    parser.add_argument(
+        "--workspace-ready-idle",
+        type=float,
+        default=1.0,
+        help="Idle seconds with no active rust-analyzer progress before scanning.",
     )
     parser.add_argument(
         "--request-timeout",
@@ -430,6 +668,7 @@ def main() -> int:
                 "rootUri": uri(root),
                 "capabilities": {
                     "workspace": {"configuration": True},
+                    "window": {"workDoneProgress": True},
                     "textDocument": {
                         "documentSymbol": {
                             "hierarchicalDocumentSymbolSupport": True,
@@ -440,6 +679,11 @@ def main() -> int:
             timeout=args.request_timeout,
         )
         client.notify("initialized", {})
+        if args.workspace_ready_timeout > 0:
+            client.wait_for_work_done_progress(
+                args.workspace_ready_timeout,
+                args.workspace_ready_idle,
+            )
         client.drain_for(args.startup_delay)
 
         all_items_count = 0
@@ -486,6 +730,16 @@ def main() -> int:
                 for item in items:
                     if not args.include_tests and has_test_attr(item.path, item.line):
                         continue
+                    if is_trait_contract_item(item.path, item.line):
+                        continue
+                    if is_runtime_discovered_entrypoint(item):
+                        continue
+                    if is_cfg_gated_item(item.path, item.line):
+                        continue
+                    if is_macro_discovered_helper(item):
+                        continue
+                    if has_obvious_text_reference(item):
+                        continue
                     refs = request_with_content_retry(
                         client,
                         "textDocument/references",
@@ -519,6 +773,12 @@ def main() -> int:
                 client.notify(
                     "textDocument/didClose",
                     {"textDocument": {"uri": uri(path)}},
+                )
+
+            if all_items_count == 0 and rust_files:
+                raise RuntimeError(
+                    "rust-analyzer returned zero document symbols for every scanned file; "
+                    "the workspace was probably queried before it was ready"
                 )
 
             if args.json:

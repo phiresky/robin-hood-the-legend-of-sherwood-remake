@@ -165,7 +165,6 @@ pub mod bg_cache;
 pub mod blit_to_map;
 pub mod campaign_map;
 pub mod console_overlay;
-pub use robin_assets::convertkeys;
 pub mod corner_hud;
 pub mod cursor;
 pub mod debug_stub;

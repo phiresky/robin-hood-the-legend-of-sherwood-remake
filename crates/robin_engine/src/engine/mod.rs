@@ -566,7 +566,7 @@ impl EngineInner {
                 level_size: geo2d::pt(0.0, 0.0),
                 zoom_factor: 1.0,
                 desired_zoom_factor: 1.0,
-                camera_slide: geo2d::pt(-1.0, -1.0),
+                camera_slide: crate::coordinates::MapPoint::new(-1.0, -1.0),
                 ..Default::default()
             },
             mission: MissionState::default(),
@@ -2854,7 +2854,10 @@ impl EngineInner {
     /// execution order.  Used by the surface debug overlay to draw the
     /// path the character will follow.  Returns `None` when the actor
     /// has no active movement element.
-    pub fn actor_path_waypoints(&self, actor: EntityId) -> Option<Vec<crate::geo2d::Point2D>> {
+    pub fn actor_path_waypoints(
+        &self,
+        actor: EntityId,
+    ) -> Option<Vec<crate::coordinates::MapPoint>> {
         let entity = self.get_entity(actor)?;
         let actor_data = entity.actor_data()?;
         let seq_id = actor_data.active_movement.sequence_id?;
@@ -2864,7 +2867,7 @@ impl EngineInner {
             elem.orders
                 .iter()
                 .filter(|o| !o.done)
-                .map(|o| crate::geo2d::pt(o.target_x, o.target_y))
+                .map(|o| crate::coordinates::MapPoint::new(o.target_x, o.target_y))
                 .collect(),
         )
     }

@@ -536,7 +536,10 @@ impl GamePadState {
         if !swordfighting {
             if dx != 0.0 || dy != 0.0 {
                 let target = threaded_input.position();
-                threaded_input.reach_position(crate::geo2d::pt(target.x + dx, target.y + dy));
+                threaded_input.reach_position(robin_engine::coordinates::ScreenPoint::new(
+                    target.x + dx,
+                    target.y + dy,
+                ));
             }
             if self.is_pushed(GamePadButton::SimulatedLeftMouse) {
                 threaded_input.push_button(MouseButton::Left);

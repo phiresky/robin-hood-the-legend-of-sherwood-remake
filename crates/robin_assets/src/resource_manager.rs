@@ -20,7 +20,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::picture::{Picture, read_bytes, read_tag, read_u16, read_u32, seek_to};
-use robin_engine::geo2d::{self, Point2D};
+use robin_engine::coordinates::CursorHotspot;
 use robin_engine::sbfile::SbFile;
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ pub type ResourceId = i32;
 /// Mouse-cursor metadata stored alongside cursor picture resources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEntry {
-    pub hotspot: Point2D,
+    pub hotspot: CursorHotspot,
     pub flags: u16,
     pub frame_length: u16,
 }
@@ -155,7 +155,7 @@ fn read_cursor(file: &mut SbFile) -> Result<(u32, MouseEntry, Vec<Option<Picture
     }
 
     let entry = MouseEntry {
-        hotspot: geo2d::pt(x as f32, y as f32),
+        hotspot: CursorHotspot::new(x as f32, y as f32),
         flags: mouse_flags,
         frame_length,
     };
@@ -580,7 +580,7 @@ impl ResourceManager {
     }
 
     /// Cursor hotspot point.
-    pub fn get_hotspot_for_mouse(&mut self, id: ResourceId) -> Result<&Point2D> {
+    pub fn get_hotspot_for_mouse(&mut self, id: ResourceId) -> Result<&CursorHotspot> {
         self.ensure_mouse_loaded(id)?;
         self.mouse_entries
             .get(&id)

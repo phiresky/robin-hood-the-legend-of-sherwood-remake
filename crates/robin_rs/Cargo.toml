@@ -18,11 +18,11 @@ robin_lua = { path = "../robin_lua" }
 robin_util = { path = "../robin_util" }
 mlua = { version = "0.10", features = ["luau", "send"] }
 tempfile = "3"
-md5_crate = { package = "md-5", version = "0.11" }
 ab_glyph = "0.2"
 geo = { version = "0.33", features = ["serde"] }
 earcutr = "0.4"
 bitflags = { version = "2", features = ["serde"] }
+enum-map = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_urlencoded = "0.7"
@@ -56,7 +56,7 @@ bincode = { version = "2", features = ["serde"] }
 zstd = "0.13"
 base64 = "0.22"
 # Windowing + input
-winit = { version = "0.30", features = ["android-native-activity"] }
+winit = { version = "0.30", features = ["android-native-activity", "serde"] }
 raw-window-handle = "0.6"
 gilrs = "0.11"
 arboard = { version = "3", optional = true }

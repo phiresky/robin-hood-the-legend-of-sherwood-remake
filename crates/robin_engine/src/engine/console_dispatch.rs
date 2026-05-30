@@ -12,7 +12,6 @@ use crate::console::{ConsoleCommand, parse_with_final};
 use crate::element::{Camp, Command, Entity, EntityId, ObjectType, Posture};
 use crate::natives::EngineCommand;
 use crate::sequence::SequenceElement;
-use md5_crate::{Digest, Md5};
 
 /// Outcome of running a single console command.
 #[derive(Debug, Clone, PartialEq)]
@@ -56,13 +55,16 @@ impl EngineInner {
     ) -> ConsoleResponse {
         let cmd_opt = parse_with_final(input, dev.console.use_final);
 
-        // Deity easter egg: when `use_final` is set, MD5 the line
-        // buffer and on the magic hash clear `use_final`, print
+        // Deity easter egg: when `use_final` is set, match the line
+        // buffer against the hidden token, clear `use_final`, print
         // "Praised be His Name.", and have the input translator
         // rebind the SLOW_MOTION/TELEPORT/RECORD_MOVIE/REQUEST_INFO keys.
         // The command-line parser destructively uppercases + NUL-splits
-        // the buffer before the MD5 runs, so the hash sees only the
-        // first (uppercased) token.  The rebind itself lives in the
+        // the buffer before checking the token, so the comparison sees
+        // only the first (uppercased) token. The original binary compared
+        // MD5(token) to 8f986776f01f52c1225231ae93ab634f; brute-forcing
+        // likely all-caps cheat words recovered GLOIRE, confirmed with
+        // `printf GLOIRE | md5sum`. The rebind itself lives in the
         // host-owned `InputTranslator`, so emit `DeityInvoked` for the
         // host to drain.
         if dev.console.use_final
@@ -70,7 +72,7 @@ impl EngineInner {
                 .split_whitespace()
                 .next()
                 .map(|t| t.to_ascii_uppercase())
-            && hex_digest(&Md5::digest(token.as_bytes())) == "8f986776f01f52c1225231ae93ab634f"
+            && token == "GLOIRE"
         {
             dev.console.use_final = false;
             dev.console.push_history(input);
@@ -1302,15 +1304,6 @@ fn cheat_help_text(use_final: bool) -> &'static str {
                               OPTIMIZE, CALL <initial> HIDEINTERFACE|DISPLAYINTERFACE,\n\
                               FORGET, SARKOZY, ASSERTFALSE\n"
     }
-}
-
-/// Lowercase hex encoding of a 16-byte MD5 digest.
-fn hex_digest(digest: &[u8]) -> String {
-    let mut s = String::with_capacity(digest.len() * 2);
-    for &b in digest {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 #[cfg(test)]

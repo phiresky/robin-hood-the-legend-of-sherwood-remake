@@ -464,7 +464,8 @@ pub async fn show_dialogue(
         // Hover-tooltip: track which button the cursor is over and
         // paint the tooltip text after the idle delay.  Shared helper —
         // see `super::layout::TooltipState`.
-        let mouse_pt = geo2d::pt(input_state.virt_x, input_state.virt_y);
+        let mouse_pt =
+            robin_engine::coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
         tooltip.update(&frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             tooltip.draw(renderer, font, transform, &frame, mouse_pt);
@@ -817,7 +818,10 @@ impl DialogueModalState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = geo2d::pt(self.input_state.virt_x, self.input_state.virt_y);
+        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
+            self.input_state.virt_x,
+            self.input_state.virt_y,
+        );
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             self.tooltip

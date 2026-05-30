@@ -85,7 +85,7 @@ impl HostDisplayState {
     /// geometry and pixel hit mask.
     pub fn setup_minimap_widget(
         &mut self,
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::ScreenPoint,
         corner_size: crate::geo2d::Vec2D,
         button_hit_mask: Option<crate::minimap::HitMask>,
         screen_width: f32,
@@ -104,7 +104,7 @@ impl HostDisplayState {
         &mut self,
         hit_mask: crate::minimap::HitMask,
         map_size: crate::geo2d::Vec2D,
-        saved_position: crate::geo2d::Point2D,
+        saved_position: crate::coordinates::ScreenPoint,
         screen_width: f32,
         screen_height: f32,
     ) {

@@ -5,7 +5,6 @@ use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
 use crate::element::{Command, Entity, EntityId};
 use crate::game_operation::GameCode;
-use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
@@ -164,7 +163,7 @@ impl EngineInner {
             let screen_h = screen.y as i32;
             let frame_counter = self.frame_counter;
             self.ground_mark
-                .tick(view_pos, zoom, screen_w, screen_h, frame_counter);
+                .tick(view_pos.to_geo(), zoom, screen_w, screen_h, frame_counter);
         }
         // Sound-source delay state machine — fully sim-side now: engine
         // ticks the timer down, fires a `PlayDelayedSource` side-effect
@@ -597,7 +596,7 @@ impl EngineInner {
             if let Some(dead_id) = self.dead_pc.take() {
                 if let Some(entity) = self.get_entity(dead_id) {
                     let pos = entity.element_data().position_map();
-                    self.center_on_point(0, geo2d::pt(pos.x, pos.y));
+                    self.center_on_point(0, pos);
                 }
                 self.quit_mission();
                 return GameCode::LevelFailed;
@@ -624,7 +623,7 @@ impl EngineInner {
             if let Some(civ_id) = killed_civilian {
                 if let Some(entity) = self.get_entity(civ_id) {
                     let pos = entity.element_data().position_map();
-                    self.center_on_point(0, geo2d::pt(pos.x, pos.y));
+                    self.center_on_point(0, pos);
                 }
                 self.quit_mission();
                 return GameCode::LevelFailed;
@@ -3848,7 +3847,7 @@ impl EngineInner {
                             let target_pos = match &elem.data {
                                 crate::sequence::SequenceElementData::Generic { properties } => {
                                     match properties.get(&crate::sequence::Field::NetTarget) {
-                                        Some(crate::sequence::FieldValue::Point2D { x, y }) => {
+                                        Some(crate::sequence::FieldValue::GeoPoint2D { x, y }) => {
                                             Some(crate::coordinates::MapPoint { x: *x, y: *y })
                                         }
                                         Some(crate::sequence::FieldValue::Point3D {
@@ -3893,7 +3892,7 @@ impl EngineInner {
                             let target_pos = match &elem.data {
                                 crate::sequence::SequenceElementData::Generic { properties } => {
                                     match properties.get(&crate::sequence::Field::PurseTarget) {
-                                        Some(crate::sequence::FieldValue::Point2D { x, y }) => {
+                                        Some(crate::sequence::FieldValue::GeoPoint2D { x, y }) => {
                                             Some(crate::coordinates::MapPoint { x: *x, y: *y })
                                         }
                                         Some(crate::sequence::FieldValue::Point3D {
@@ -3938,7 +3937,7 @@ impl EngineInner {
                             let target_pos = match &elem.data {
                                 crate::sequence::SequenceElementData::Generic { properties } => {
                                     match properties.get(&crate::sequence::Field::WaspNestTarget) {
-                                        Some(crate::sequence::FieldValue::Point2D { x, y }) => {
+                                        Some(crate::sequence::FieldValue::GeoPoint2D { x, y }) => {
                                             Some(crate::coordinates::MapPoint { x: *x, y: *y })
                                         }
                                         Some(crate::sequence::FieldValue::Point3D {
@@ -4064,7 +4063,9 @@ impl EngineInner {
                             let camera_point = elem_props
                                 .and_then(|e| e.get_property(crate::sequence::Field::CameraPoint))
                                 .and_then(|v| match v {
-                                    crate::sequence::FieldValue::Point2D { x, y } => Some((*x, *y)),
+                                    crate::sequence::FieldValue::GeoPoint2D { x, y } => {
+                                        Some((*x, *y))
+                                    }
                                     _ => None,
                                 });
                             let explicit_direction = elem_props
@@ -6311,8 +6312,7 @@ impl EngineInner {
             .get_entity(entity_id)
             .map(|entity| entity.element_data().layer())
             .unwrap_or(0);
-        let obstacle =
-            self.find_plane_obstacle_at(assets, layer, crate::geo2d::pt(point.x, point.y));
+        let obstacle = self.find_plane_obstacle_at(assets, layer, point);
         if obstacle.is_none() {
             tracing::warn!(
                 entity = ?entity_id,
@@ -6685,7 +6685,7 @@ impl EngineInner {
                     strike_kind: crate::sound::StrikeKind::Swipe,
                     weapon1,
                     weapon2,
-                    position,
+                    position: position.into(),
                 });
         }
 
@@ -7717,8 +7717,8 @@ impl EngineInner {
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.get_property(crate::sequence::Field::CameraPoint))
                     .and_then(|v| match v {
-                        crate::sequence::FieldValue::Point2D { x, y } => {
-                            Some(crate::geo2d::pt(*x, *y))
+                        crate::sequence::FieldValue::GeoPoint2D { x, y } => {
+                            Some(crate::coordinates::MapPoint::new(*x, *y))
                         }
                         _ => None,
                     });
@@ -7745,8 +7745,8 @@ impl EngineInner {
                     let p = e
                         .and_then(|e| e.get_property(crate::sequence::Field::CameraPoint))
                         .and_then(|v| match v {
-                            crate::sequence::FieldValue::Point2D { x, y } => {
-                                Some(crate::geo2d::pt(*x, *y))
+                            crate::sequence::FieldValue::GeoPoint2D { x, y } => {
+                                Some(crate::coordinates::MapPoint::new(*x, *y))
                             }
                             _ => None,
                         });
@@ -8032,8 +8032,8 @@ impl EngineInner {
 /// `sim_rng`, so replays reproduce the same deviation sequence.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_path_deviation(
-    mut waypoints: Vec<crate::geo2d::Point2D>,
-    origin: crate::geo2d::Point2D,
+    mut waypoints: Vec<crate::geo2d::GeoPoint2D>,
+    origin: crate::geo2d::GeoPoint2D,
     blood_alcohol: u8,
     is_running: bool,
     layer: u16,
@@ -8041,8 +8041,8 @@ pub(super) fn apply_drunken_path_deviation(
     half_diagonal: crate::geo2d::Vec2D,
     grid: &crate::fast_find_grid::FastFindGrid,
     rng: &mut fastrand::Rng,
-) -> Vec<crate::geo2d::Point2D> {
-    use crate::geo2d::{Point2D, pt};
+) -> Vec<crate::geo2d::GeoPoint2D> {
+    use crate::geo2d::{GeoPoint2D, pt};
 
     const DRUNKEN_DEVIATION_FACTOR: f32 = 0.03;
 
@@ -8057,14 +8057,14 @@ pub(super) fn apply_drunken_path_deviation(
 
     let mut iterator = 0u8;
     while iterator < blood_alcohol {
-        let mut new_path: Vec<Point2D> = Vec::with_capacity(waypoints.len() * 2);
+        let mut new_path: Vec<GeoPoint2D> = Vec::with_capacity(waypoints.len() * 2);
         let mut prev = origin;
         for next in &waypoints {
             let straight = pt(next.x - prev.x, next.y - prev.y);
             let max_norm = straight.x.abs().max(straight.y.abs());
             // Midpoint of the current segment.
             let midpoint = pt(prev.x + 0.5 * straight.x, prev.y + 0.5 * straight.y);
-            let mut inserted: Option<Point2D> = None;
+            let mut inserted: Option<GeoPoint2D> = None;
             for _try in 0..3 {
                 // `rand() & 15` — pick a random 16-sector direction
                 // and scale by another 0..15 random magnitude.

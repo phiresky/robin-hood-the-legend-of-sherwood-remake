@@ -13,12 +13,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::element::GameMaterial;
-use crate::geo2d::{BBox2D, Point2D, pt};
+use crate::geo2d::{BBox2D, GeoPoint2D, pt};
 use crate::level_data::RawMaterialSector;
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct MaterialSector {
-    pub points: Vec<Point2D>,
+    pub points: Vec<GeoPoint2D>,
     pub bounding_box: BBox2D,
     pub material: GameMaterial,
 }
@@ -35,7 +35,7 @@ impl MaterialSector {
         if r.polygon.points.len() < 3 {
             return None;
         }
-        let points: Vec<Point2D> = r
+        let points: Vec<GeoPoint2D> = r
             .polygon
             .points
             .iter()
@@ -64,7 +64,7 @@ impl MaterialSector {
 
     /// Ray-casting point-in-polygon test — same implementation as
     /// [`crate::water_zones::WaterZone::contains`].
-    pub fn contains(&self, p: Point2D) -> bool {
+    pub fn contains(&self, p: GeoPoint2D) -> bool {
         if self.points.len() < 3 {
             return false;
         }
@@ -105,7 +105,7 @@ impl MaterialSector {
     /// polygons.
     pub fn approximate_distance_to_boundary(
         &self,
-        point: Point2D,
+        point: GeoPoint2D,
         inverse_aspect_ratio: f32,
     ) -> f32 {
         let mut min_distance = f32::MAX / 2.0;
@@ -221,7 +221,7 @@ impl MaterialSectors {
 
     /// Material at the given map point — first SECTOR_SOUND polygon that
     /// contains the point wins, falling back to `default_material`.
-    pub fn material_at(&self, point: Point2D) -> GameMaterial {
+    pub fn material_at(&self, point: GeoPoint2D) -> GameMaterial {
         for s in &self.sectors {
             if s.contains(point) {
                 return s.material;
@@ -233,7 +233,7 @@ impl MaterialSectors {
     /// First sector containing `point`, if any.  Same first-hit scan
     /// as `material_at` but returns the sector itself so callers can
     /// query boundary distance etc.
-    pub fn containing_sector(&self, point: Point2D) -> Option<&MaterialSector> {
+    pub fn containing_sector(&self, point: GeoPoint2D) -> Option<&MaterialSector> {
         self.sectors.iter().find(|s| s.contains(point))
     }
 
@@ -252,7 +252,7 @@ impl MaterialSectors {
     pub fn material_at_with_obstacle(
         &self,
         obstacle: Option<&crate::sight_obstacle::SightObstacle>,
-        point: Point2D,
+        point: GeoPoint2D,
     ) -> GameMaterial {
         match obstacle {
             None => self.material_at(point),

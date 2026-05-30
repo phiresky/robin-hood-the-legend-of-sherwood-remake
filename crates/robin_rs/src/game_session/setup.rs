@@ -1245,7 +1245,7 @@ pub(super) fn load_level_and_sprite_bank(
     let goldeneye_initial = args.goldeneye || args.global_options.golden_eye;
     if let Some(mm) = minimap_widget {
         host.engine_display.setup_minimap_widget(
-            geo2d::pt(_screen_width - 83.0, 38.0),
+            robin_engine::coordinates::ScreenPoint::new(_screen_width - 83.0, 38.0),
             mm.corner_size,
             mm.button_hit_mask,
             _screen_width,

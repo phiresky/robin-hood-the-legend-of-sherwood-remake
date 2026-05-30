@@ -24,13 +24,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::Point2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiMsg, UiState,
     resource_widget_id::{
         BUTTON_DEFAULT, BUTTON_DISABLED, BUTTON_FOCUSED, BUTTON_SELECTED, NO_RESOURCE,
     },
 };
+use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetInput};
 
@@ -181,8 +181,8 @@ impl WidgetButton {
         let buttons = input.mouse_button;
 
         // Check accelerator key.
-        if self.base.fast_key != 0 {
-            let key_state = input.keyboard.get_state_of_key(self.base.fast_key);
+        if let Some(fast_key) = self.base.fast_key {
+            let key_state = input.keyboard.get_state_of_key(fast_key);
             match key_state {
                 KeyState::KeyDown => {
                     return self.process_pushed();
@@ -421,7 +421,7 @@ impl WidgetButton {
 
     /// Hit-test for the focus manager. Combines the bbox test with the
     /// renderer's per-pixel transparency check.
-    pub fn is_mouse_inside(&self, point: Point2D) -> bool {
+    pub fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         self.base.is_inside(point)
     }
 }
@@ -474,7 +474,7 @@ impl WidgetGroupable for WidgetButton {
         WidgetButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: Point2D) -> bool {
+    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         WidgetButton::is_mouse_inside(self, point)
     }
 
@@ -498,14 +498,14 @@ impl WidgetGroupable for WidgetButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::BBox2D;
     use crate::ui::UiKeyboard;
+    use robin_engine::coordinates::ScreenBBox;
 
     fn make_input(mouse_x: f32, mouse_y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
         // Leak a keyboard for test convenience (tests are short-lived).
         let kb = Box::leak(Box::new(UiKeyboard::default()));
         WidgetInput {
-            mouse_position: crate::geo2d::pt(mouse_x, mouse_y),
+            mouse_position: ScreenPoint::new(mouse_x, mouse_y),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard: kb,
@@ -522,7 +522,7 @@ mod tests {
     ) -> WidgetInput<'a> {
         let kb = Box::leak(Box::new(UiKeyboard::default()));
         WidgetInput {
-            mouse_position: crate::geo2d::pt(mouse_x, mouse_y),
+            mouse_position: ScreenPoint::new(mouse_x, mouse_y),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard: kb,
@@ -534,11 +534,11 @@ mod tests {
     fn make_button() -> WidgetButton {
         let mut btn = WidgetButton::new(1);
         btn.base
-            .create("Test", BBox2D::from_coords(0.0, 0.0, 100.0, 30.0), 0);
+            .create("Test", ScreenBBox::from_coords(0.0, 0.0, 100.0, 30.0), 0);
         // Use a bitmap renderer with a matching bbox for hit testing.
         btn.base.renderer = super::super::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
             base: crate::ui::RendererBase {
-                bbox: BBox2D::from_coords(0.0, 0.0, 100.0, 30.0),
+                bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 30.0),
                 ..Default::default()
             },
         });

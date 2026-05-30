@@ -60,7 +60,7 @@ use crate::ingame_menu::{
     DebriefingOutcome, IngameMenuResources, MissionStatePopupState, PauseMenu, SaveLoadMode,
     SaveLoadOutcome,
 };
-use crate::input_translator::{GameAction, GameKey, InputTranslator, TranslationFlags};
+use crate::input_translator::{GameAction, InputTranslator, TranslationFlags};
 use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
 use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, detect_demo_mode,
@@ -1653,8 +1653,7 @@ pub(crate) async fn run_mission(
                 input_translator = InputTranslator::new(w, h);
                 // Reflect the active key profile into the freshly-
                 // built translator.  Without this the resized
-                // translator would fall back to the hardcoded
-                // keyset1 defaults.
+                // translator would fall back to its built-in defaults.
                 input_translator.load_bindings_from_keyconfig(&host.key_config);
                 // Re-install HUD-adjacent dead zones at the new
                 // resolution.
@@ -1662,7 +1661,7 @@ pub(crate) async fn run_mission(
                 // Reposition minimap.
                 if host.minimap_corner_size.x > 0.0 {
                     let cmd = PlayerCommand::MinimapResize {
-                        base: geo2d::pt(w - 83.0, 38.0),
+                        base: robin_engine::coordinates::ScreenPoint::new(w - 83.0, 38.0),
                         corner_size: host.minimap_corner_size,
                     };
                     dispatch_local_command(
@@ -1822,15 +1821,14 @@ pub(crate) async fn run_mission(
             }
         }
 
-        // Edge-check the minimap accelerator scancode BEFORE
+        // Edge-check the minimap accelerator key BEFORE
         // `translate_keyboard` advances the translator's prev-key
         // buffer.  The widget holds the accelerator itself and
         // toggles on release.
         let minimap_toggle_pressed = {
-            let fast_key = host.minimap_fast_key;
-            fast_key != 0
-                && input_translator
-                    .was_scancode_released(fast_key, &threaded_input.keyboard_state().keys)
+            host.minimap_fast_key.is_some_and(|fast_key| {
+                input_translator.was_key_released(fast_key, &threaded_input.keyboard_state().keys)
+            })
         };
 
         // Step-debug keys: `.` (forward), `,` / Backspace (back), Enter
@@ -1839,20 +1837,16 @@ pub(crate) async fn run_mission(
         // advances exactly one frame but holding still scrubs. Backspace
         // keeps its held-state rewind scrub behavior.  Enter uses the
         // release edge so a held Enter doesn't spam-resume.  All checks
-        // read raw scancodes rather than the bindable `GameAction` keyset.
+        // read physical keys rather than the bindable `GameAction` map.
         const STEP_REPEAT_INITIAL_DELAY_MS: u32 = 160;
         const STEP_REPEAT_INTERVAL_MS: u32 = 40;
-        const SDL_SCANCODE_RETURN: u16 = 40;
-        const SDL_SCANCODE_BACKSPACE: u16 = 42;
-        const SDL_SCANCODE_COMMA: u16 = 54;
-        const SDL_SCANCODE_PERIOD: u16 = 55;
+        use winit::keyboard::KeyCode;
         let keys = &threaded_input.keyboard_state().keys;
-        let is_down = |sc: u16| keys.get(sc as usize).copied().unwrap_or(0) != 0;
-        let step_forward_held = is_down(SDL_SCANCODE_PERIOD);
-        let step_back_comma_held = is_down(SDL_SCANCODE_COMMA);
-        let step_backspace_held = is_down(SDL_SCANCODE_BACKSPACE);
-        let step_forward_hit = input_translator.was_scancode_pressed(SDL_SCANCODE_PERIOD, keys);
-        let step_back_comma_hit = input_translator.was_scancode_pressed(SDL_SCANCODE_COMMA, keys);
+        let step_forward_held = keys.contains(&KeyCode::Period);
+        let step_back_comma_held = keys.contains(&KeyCode::Comma);
+        let step_backspace_held = keys.contains(&KeyCode::Backspace);
+        let step_forward_hit = input_translator.was_key_pressed(KeyCode::Period, keys);
+        let step_back_comma_hit = input_translator.was_key_pressed(KeyCode::Comma, keys);
         let repeat_step_key = |held: bool, hit: bool, repeat_at_ms: &mut Option<u32>| -> bool {
             if !held {
                 *repeat_at_ms = None;
@@ -1880,8 +1874,7 @@ pub(crate) async fn run_mission(
             step_back_comma_hit,
             &mut step_back_repeat_at_ms,
         ) || step_backspace_held;
-        let step_unpause_pressed =
-            input_translator.was_scancode_released(SDL_SCANCODE_RETURN, keys);
+        let step_unpause_pressed = input_translator.was_key_released(KeyCode::Enter, keys);
         // Suppress these shortcuts when any modal input sink has focus
         // so `.` / `,` / Enter typed into the console, pause menu, or
         // text input don't accidentally freeze/step the sim.
@@ -1925,24 +1918,15 @@ pub(crate) async fn run_mission(
         // Helper: check if Ctrl is held via keyboard state
         let ctrl_held = {
             let ks = &threaded_input.keyboard_state().keys;
-            const SDL_SCANCODE_LCTRL: usize = 224;
-            const SDL_SCANCODE_RCTRL: usize = 228;
-            (ks.len() > SDL_SCANCODE_LCTRL && ks[SDL_SCANCODE_LCTRL] != 0)
-                || (ks.len() > SDL_SCANCODE_RCTRL && ks[SDL_SCANCODE_RCTRL] != 0)
+            ks.contains(&KeyCode::ControlLeft) || ks.contains(&KeyCode::ControlRight)
         };
         let shift_held = {
             let ks = &threaded_input.keyboard_state().keys;
-            const SDL_SCANCODE_LSHIFT: usize = 225;
-            const SDL_SCANCODE_RSHIFT: usize = 229;
-            (ks.len() > SDL_SCANCODE_LSHIFT && ks[SDL_SCANCODE_LSHIFT] != 0)
-                || (ks.len() > SDL_SCANCODE_RSHIFT && ks[SDL_SCANCODE_RSHIFT] != 0)
+            ks.contains(&KeyCode::ShiftLeft) || ks.contains(&KeyCode::ShiftRight)
         };
         let alt_held = {
             let ks = &threaded_input.keyboard_state().keys;
-            const SDL_SCANCODE_LALT: usize = 226;
-            const SDL_SCANCODE_RALT: usize = 230;
-            (ks.len() > SDL_SCANCODE_LALT && ks[SDL_SCANCODE_LALT] != 0)
-                || (ks.len() > SDL_SCANCODE_RALT && ks[SDL_SCANCODE_RALT] != 0)
+            ks.contains(&KeyCode::AltLeft) || ks.contains(&KeyCode::AltRight)
         };
         // Persist the alt state on `InputState` so subsystems that
         // don't otherwise see the SDL modifier mask can read it.
@@ -2335,9 +2319,7 @@ pub(crate) async fn run_mission(
                                 // F7 cheat — teleport every selected
                                 // PC to the current mouse map point.
                                 let mouse_screen = threaded_input.position();
-                                if let Some(mouse_map) = host.viewport.screen_to_map(
-                                    robin_engine::coordinates::ScreenPoint::from_geo(mouse_screen),
-                                ) {
+                                if let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) {
                                     if !manager.engine.seat_selection(host.local_seat).is_empty() {
                                         // Resolve destination sector/layer
                                         // via `get_sector_screen_accessible`
@@ -2635,7 +2617,7 @@ pub(crate) async fn run_mission(
         }
 
         // ── Reset input state after load ──
-        // Clear the translator's scancode ring so half-pressed keys
+        // Clear the translator's key-edge state so half-pressed keys
         // at save time don't emit stale edge-detection events on the
         // next frame.  Host-side `InputState` is already wiped by
         // `Host::post_load_reset` during `apply_to`; this clears the
@@ -2933,11 +2915,7 @@ pub(crate) async fn run_mission(
             && !rewind_active
             && !paused
             && manager.engine.locker_active()
-            && let Some(mouse_map) =
-                host.viewport
-                    .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                        threaded_input.position(),
-                    ))
+            && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
             && let Some(id) = manager.engine.find_focusable_npc(
                 &assets,
                 mouse_map,
@@ -2966,11 +2944,7 @@ pub(crate) async fn run_mission(
         if replay_player.is_none()
             && !rewind_active
             && !paused
-            && let Some(mouse_map) =
-                host.viewport
-                    .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                        threaded_input.position(),
-                    ))
+            && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
         {
             let bow_armed = manager.engine.selected_action_for_seat(host.local_seat)
                 == robin_engine::profiles::Action::Bow;
@@ -3670,10 +3644,11 @@ pub(crate) async fn run_mission(
                     .unwrap_or(0);
                 // When restart is allowed, the debriefing accepts a
                 // QuickLoad keypress to short-circuit into a load.
-                // Pull the configured `QuickLoad1` scancode out of
+                // Pull the configured `QuickLoad1` key out of
                 // the input translator so the modal can fire on that
                 // key.
-                let quick_load_scancode = Some(input_translator.get_binding(GameKey::QuickLoad1));
+                let quick_load_key =
+                    input_translator.get_binding(crate::input_translator::GameKey::QuickLoad1);
                 // Restart only fires when a restart snapshot exists.
                 // When missing, the body window closes and the stat
                 // panel still shows.  Probe the save manager up
@@ -3717,7 +3692,7 @@ pub(crate) async fn run_mission(
                             mission_length,
                             won,
                             restart_allowed,
-                            quick_load_scancode,
+                            quick_load_key,
                             restart_snapshot_exists,
                             start_at_stat,
                         )

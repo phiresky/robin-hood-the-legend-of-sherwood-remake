@@ -31,7 +31,7 @@
 //! then checking opaque blockers on that smaller candidate list.
 
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
-use crate::geo2d::{BBox2D, Point2D};
+use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::order::OrderType;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 use crate::sight_obstacle::ObstacleList;
@@ -149,7 +149,7 @@ pub const ALPHA_START: u16 = 154;
 #[derive(Debug, Clone, Copy)]
 pub struct VisibilityQuery<'a> {
     /// Viewer's ground-plane position.
-    pub viewer: Point2D,
+    pub viewer: GeoPoint2D,
     /// Viewer body direction, 16-sector compass (0 = north, CW).
     /// Used only for the close-range halfcircle test.
     pub viewer_direction: i16,
@@ -199,7 +199,7 @@ pub struct VisibilityQuery<'a> {
     pub target_is_active_and_outside_building: bool,
 
     /// Target ground-plane position.
-    pub target: Point2D,
+    pub target: GeoPoint2D,
     /// Target posture (`Posture::Crouched`, `Posture::Spy`, etc).
     pub target_posture: Posture,
     /// Viewer's eye-point Z, i.e. `viewer.z + eye_z_for_posture(viewer_posture)`.
@@ -355,7 +355,7 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
 #[derive(Debug, Clone, Copy)]
 pub struct ObjectVisibilityQuery<'a> {
     /// Viewer's ground-plane position.
-    pub viewer: Point2D,
+    pub viewer: GeoPoint2D,
     /// Viewer body direction, 16-sector compass (0 = north, CW).
     /// Used only for the close-range halfcircle test inside
     /// `is_detecting` — though note the object path rejects any
@@ -376,7 +376,7 @@ pub struct ObjectVisibilityQuery<'a> {
     /// soldiers.
     pub object_belongs_to_beggar: bool,
     /// Target object's ground-plane position.
-    pub target: Point2D,
+    pub target: GeoPoint2D,
     /// Sight obstacle list plus FastFindGrid for the LOS check.
     pub sight_obstacles: crate::sight_obstacle::ObstacleList<'a>,
     pub fast_grid: &'a crate::fast_find_grid::FastFindGrid,
@@ -515,13 +515,13 @@ fn is_detecting(
 /// those short-circuits earlier in their own bodies.
 #[allow(clippy::too_many_arguments)]
 fn is_detecting_cone_and_los(
-    viewer: Point2D,
+    viewer: GeoPoint2D,
     viewer_direction: i16,
     real_half_aperture: f32,
     layer: u16,
     sight_obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
-    target: Point2D,
+    target: GeoPoint2D,
     los_z: Option<(f32, f32)>,
     view_x: f32,
     view_y: f32,
@@ -576,8 +576,8 @@ fn is_detecting_cone_and_los(
 }
 
 fn los_clear_for_detection(
-    viewer: Point2D,
-    target: Point2D,
+    viewer: GeoPoint2D,
+    target: GeoPoint2D,
     layer: u16,
     sight_obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -691,7 +691,7 @@ pub fn distance_sharpness(sqr_distance: f32, view_radius: f32) -> f32 {
 /// intentionally skipped — we recompute once per call.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_view_radius(
-    eye: Point2D,
+    eye: GeoPoint2D,
     eye_z: f32,
     view_radius: u16,
     view_forward: (f32, f32),
@@ -732,18 +732,18 @@ pub fn compute_view_radius(
     // and two along the left/right cone edges.
     let (fx, fy) = view_forward;
     let half_r = 0.5 * base_radius;
-    let mut pt_ref = Point2D {
+    let mut pt_ref = GeoPoint2D {
         x: eye.x + half_r * fx,
         y: eye.y + half_r * fy,
     };
 
     let (lx, ly) = rotate_unit(fx, fy, half_aperture);
     let (rx, ry) = rotate_unit(fx, fy, -half_aperture);
-    let mut pt_left = Point2D {
+    let mut pt_left = GeoPoint2D {
         x: eye.x + half_r * lx,
         y: eye.y + half_r * ly,
     };
-    let mut pt_right = Point2D {
+    let mut pt_right = GeoPoint2D {
         x: eye.x + half_r * rx,
         y: eye.y + half_r * ry,
     };
@@ -862,17 +862,17 @@ fn rotate_unit(x: f32, y: f32, theta: f32) -> (f32, f32) {
 /// LOS query: ask the grid for obstacles crossed by the ray, then run
 /// the opaque / layer / polygon checks on that smaller candidate list.
 pub fn los_clear_spatial(
-    viewer: Point2D,
-    target: Point2D,
+    viewer: GeoPoint2D,
+    target: GeoPoint2D,
     layer: u16,
     obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
 ) -> bool {
-    let min = Point2D {
+    let min = GeoPoint2D {
         x: viewer.x.min(target.x),
         y: viewer.y.min(target.y),
     };
-    let max = Point2D {
+    let max = GeoPoint2D {
         x: viewer.x.max(target.x),
         y: viewer.y.max(target.y),
     };
@@ -935,12 +935,12 @@ pub fn los_clear_spatial(
 /// the raw inputs.
 #[allow(clippy::too_many_arguments)]
 pub fn is_detecting_target(
-    viewer: Point2D,
+    viewer: GeoPoint2D,
     viewer_direction: i16,
     view_forward: (f32, f32),
     real_half_aperture: f32,
     view_radius: u16,
-    target: Point2D,
+    target: GeoPoint2D,
     layer: u16,
     obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -1007,10 +1007,10 @@ pub struct RefreshViewContext {
     /// — a cached copy on `NpcData` would go stale.
     pub blood_alcohol: u8,
     /// NPC's own ground position (for stare/follow vector).
-    pub own_position: Point2D,
+    pub own_position: GeoPoint2D,
     /// Ground position of the follow target, if [`EyeStatus::Follow`]
     /// and the target is alive.
-    pub follow_target_position: Option<Point2D>,
+    pub follow_target_position: Option<GeoPoint2D>,
 }
 
 /// Per-frame view parameter update.
@@ -1201,7 +1201,7 @@ pub fn focus_entity(npc: &mut NpcData, target: EntityId) {
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
 }
 
-pub fn focus_point(npc: &mut NpcData, point: Point2D) {
+pub fn focus_point(npc: &mut NpcData, point: GeoPoint2D) {
     npc.stare_point = point;
     npc.eye_status = EyeStatus::Stare;
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
@@ -1270,7 +1270,7 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 }
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
-fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &Point2D) {
+fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GeoPoint2D) {
     // Stare vector from own position to stare point.
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
@@ -1410,9 +1410,9 @@ mod tests {
     }
 
     fn query<'a>(
-        viewer: Point2D,
+        viewer: GeoPoint2D,
         dir: i16,
-        target: Point2D,
+        target: GeoPoint2D,
         obstacles: &'a [SightObstacle],
     ) -> VisibilityQuery<'a> {
         VisibilityQuery {
@@ -2042,9 +2042,9 @@ mod tests {
     // ── compute_object_visibility ─────────────────────────────────
 
     fn obj_query<'a>(
-        viewer: Point2D,
+        viewer: GeoPoint2D,
         dir: i16,
-        target: Point2D,
+        target: GeoPoint2D,
         obstacles: &'a [SightObstacle],
     ) -> ObjectVisibilityQuery<'a> {
         ObjectVisibilityQuery {

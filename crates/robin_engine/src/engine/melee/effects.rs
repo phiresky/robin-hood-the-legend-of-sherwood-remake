@@ -676,7 +676,7 @@ impl EngineInner {
                     victim_pos.y + flight_y * frac,
                 )
             };
-            let authorized = |pt_try: crate::geo2d::Point2D| {
+            let authorized = |pt_try: crate::geo2d::GeoPoint2D| {
                 self.fast_grid.is_straight_movement_authorized(
                     pt_start.into(),
                     pt_try.into(),
@@ -685,7 +685,7 @@ impl EngineInner {
                 )
             };
 
-            let mut chosen: Option<crate::geo2d::Point2D> = None;
+            let mut chosen: Option<crate::geo2d::GeoPoint2D> = None;
             // 100%
             let pt_full = try_pt(1.0);
             if authorized(pt_full) {
@@ -1042,7 +1042,7 @@ impl EngineInner {
         entity_id: EntityId,
         normal: [f32; 3],
         check_increment: bool,
-    ) -> Option<crate::geo2d::Point2D> {
+    ) -> Option<crate::geo2d::GeoPoint2D> {
         // Use the lying-posture move-box, not the actor's *current*
         // move-box: at call time (post-fall or mid-roll) the posture
         // is typically not yet Lying, so the live box has the wrong
@@ -1108,7 +1108,7 @@ impl EngineInner {
             return None;
         }
         let center = dest_box.center();
-        Some(crate::geo2d::Point2D {
+        Some(crate::geo2d::GeoPoint2D {
             x: center.x,
             y: center.y,
         })

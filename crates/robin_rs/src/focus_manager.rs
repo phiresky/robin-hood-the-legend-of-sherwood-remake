@@ -12,16 +12,9 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
-use crate::geo2d::Point2D;
-
-// ─── SDL scancodes for navigation keys ───────────────────────────────
-
-const SDL_SCANCODE_LEFT: u16 = 80;
-const SDL_SCANCODE_RIGHT: u16 = 79;
-const SDL_SCANCODE_UP: u16 = 82;
-const SDL_SCANCODE_DOWN: u16 = 81;
-const SDL_SCANCODE_RETURN: u16 = 40;
+use robin_engine::coordinates::ScreenPoint;
 
 // ─── Public types ────────────────────────────────────────────────────
 
@@ -97,14 +90,14 @@ pub struct KeyInfo {
 /// Full keyboard state for one frame.
 #[derive(Debug, Clone)]
 pub struct KeyboardState {
-    pub keys: [KeyInfo; 256],
+    pub keys: HashMap<KeyCode, KeyInfo>,
     pub has_changed: bool,
 }
 
 impl Default for KeyboardState {
     fn default() -> Self {
         Self {
-            keys: [KeyInfo::default(); 256],
+            keys: HashMap::new(),
             has_changed: false,
         }
     }
@@ -113,7 +106,7 @@ impl Default for KeyboardState {
 /// Combined UI input state for one frame.
 #[derive(Debug, Clone)]
 pub struct UiInput {
-    pub mouse_position: Point2D,
+    pub mouse_position: ScreenPoint,
     pub keyboard: KeyboardState,
 }
 
@@ -129,7 +122,7 @@ pub trait WidgetGroupable {
     /// Whether the widget is sleeping (inactive).
     fn is_sleeping(&self) -> bool;
     /// Whether the given point is inside this widget's bounds.
-    fn is_mouse_inside(&self, point: Point2D) -> bool;
+    fn is_mouse_inside(&self, point: ScreenPoint) -> bool;
     /// Show or hide the focus indicator.
     fn hide_focus(&mut self, hide: bool);
     /// Set group-focus state; returns resulting UI events.
@@ -216,11 +209,11 @@ pub struct FocusManager {
     focused_focusable_idx: Option<usize>,
     navigation_enabled: bool,
     shortcuts_enabled: bool,
-    /// Maps scancode → widget ID for keyboard shortcuts.
-    shortcuts: HashMap<u16, WidgetId>,
-    /// Scancodes currently held down for shortcut activation.
-    pending_shortcuts: Vec<u16>,
-    old_mouse_pos: Point2D,
+    /// Maps physical key → widget ID for keyboard shortcuts.
+    shortcuts: HashMap<KeyCode, WidgetId>,
+    /// Physical keys currently held down for shortcut activation.
+    pending_shortcuts: Vec<KeyCode>,
+    old_mouse_pos: ScreenPoint,
 }
 
 impl FocusManager {
@@ -253,7 +246,7 @@ impl FocusManager {
             shortcuts_enabled: true,
             shortcuts: HashMap::new(),
             pending_shortcuts: Vec::new(),
-            old_mouse_pos: Point2D { x: -1.0, y: -1.0 },
+            old_mouse_pos: ScreenPoint::new(-1.0, -1.0),
         }
     }
 
@@ -296,8 +289,8 @@ impl FocusManager {
     ///
     /// The widget must already be registered via [`add_groupable`](Self::add_groupable).
     /// On key-down the widget is focused and selected; on key-up it is activated.
-    pub fn add_shortcut(&mut self, widget_id: WidgetId, scancode: u16) {
-        self.shortcuts.insert(scancode, widget_id);
+    pub fn add_shortcut(&mut self, widget_id: WidgetId, key: KeyCode) {
+        self.shortcuts.insert(key, widget_id);
     }
 
     /// Mark a widget ID as ignored — its events won't trigger mouse-based
@@ -398,29 +391,26 @@ impl FocusManager {
 
     /// Extract the first navigation-relevant key from the keyboard state.
     ///
-    /// Scans all 256 scancodes and returns the first arrow/enter key found.
     /// Returns [`Key::None`] if no relevant key is pressed/released.
     fn get_key(keyboard: &KeyboardState) -> Key {
-        for scancode in 0..256u16 {
-            let info = &keyboard.keys[scancode as usize];
-
+        for (key, info) in &keyboard.keys {
             if info.press_state == KeyPressState::Down
                 && (info.typewriter == TypewriterState::Repeat
                     || info.typewriter == TypewriterState::None)
             {
-                match scancode {
-                    SDL_SCANCODE_LEFT => return Key::LeftArrow,
-                    SDL_SCANCODE_UP => return Key::UpArrow,
-                    SDL_SCANCODE_RIGHT => return Key::RightArrow,
-                    SDL_SCANCODE_DOWN => return Key::DownArrow,
-                    SDL_SCANCODE_RETURN if info.typewriter == TypewriterState::None => {
+                match key {
+                    KeyCode::ArrowLeft => return Key::LeftArrow,
+                    KeyCode::ArrowUp => return Key::UpArrow,
+                    KeyCode::ArrowRight => return Key::RightArrow,
+                    KeyCode::ArrowDown => return Key::DownArrow,
+                    KeyCode::Enter if info.typewriter == TypewriterState::None => {
                         return Key::ReturnDown;
                     }
                     _ => {}
                 }
             } else if info.press_state == KeyPressState::Up
                 && info.has_changed
-                && scancode == SDL_SCANCODE_RETURN
+                && *key == KeyCode::Enter
             {
                 return Key::ReturnUp;
             }
@@ -677,7 +667,7 @@ impl FocusManager {
 
     /// If no groupable is currently focused and the mouse is over a
     /// groupable widget, focus that widget.
-    fn synchronize_groupable_with_mouse(&mut self, mouse_pos: Point2D) {
+    fn synchronize_groupable_with_mouse(&mut self, mouse_pos: ScreenPoint) {
         if self.focused_groupable_idx.is_some() {
             return;
         }
@@ -750,17 +740,15 @@ impl FocusManager {
             return events;
         }
 
-        for scancode in 0..256u16 {
-            let info = &input.keyboard.keys[scancode as usize];
-
+        for (key, info) in &input.keyboard.keys {
             // Key down: focus the shortcut's widget and select it.
             if info.press_state == KeyPressState::Down
                 && info.typewriter == TypewriterState::None
                 && self.focused_groupable_idx.is_none()
                 && self.focused_focusable_idx.is_none()
             {
-                if let Some(&widget_id) = self.shortcuts.get(&scancode) {
-                    self.pending_shortcuts.push(scancode);
+                if let Some(&widget_id) = self.shortcuts.get(key) {
+                    self.pending_shortcuts.push(*key);
                     events.extend(self.focus_groupable_by_id(widget_id));
                     if let Some(idx) = self.focused_groupable_idx {
                         events.extend(self.group[idx].widget.set_group_selected(true));
@@ -771,11 +759,11 @@ impl FocusManager {
             // Key up: release pending shortcut and activate the widget.
             else if info.press_state == KeyPressState::Up
                 && info.has_changed
-                && let Some(pos) = self.pending_shortcuts.iter().position(|&s| s == scancode)
+                && let Some(pos) = self.pending_shortcuts.iter().position(|&s| s == *key)
             {
                 self.pending_shortcuts.remove(pos);
 
-                if let Some(&widget_id) = self.shortcuts.get(&scancode)
+                if let Some(&widget_id) = self.shortcuts.get(key)
                     && let Some(idx) = self.focused_groupable_idx
                     && self.group[idx].widget.widget_id() == widget_id
                 {
@@ -848,7 +836,7 @@ mod tests {
         fn is_sleeping(&self) -> bool {
             self.sleeping
         }
-        fn is_mouse_inside(&self, point: Point2D) -> bool {
+        fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
             if let Some((x1, y1, x2, y2)) = self.mouse_rect {
                 point.x >= x1 && point.x <= x2 && point.y >= y1 && point.y <= y2
             } else {
@@ -908,43 +896,49 @@ mod tests {
 
     // ── Helpers ─────────────────────────────────────────────────────
 
-    fn keyboard_with_key_down(scancode: u16) -> KeyboardState {
+    fn keyboard_with_key_down(key: KeyCode) -> KeyboardState {
         let mut state = KeyboardState {
             has_changed: true,
             ..Default::default()
         };
-        state.keys[scancode as usize] = KeyInfo {
-            press_state: KeyPressState::Down,
-            has_changed: true,
-            typewriter: TypewriterState::None,
-        };
+        state.keys.insert(
+            key,
+            KeyInfo {
+                press_state: KeyPressState::Down,
+                has_changed: true,
+                typewriter: TypewriterState::None,
+            },
+        );
         state
     }
 
-    fn keyboard_with_key_up(scancode: u16) -> KeyboardState {
+    fn keyboard_with_key_up(key: KeyCode) -> KeyboardState {
         let mut state = KeyboardState {
             has_changed: true,
             ..Default::default()
         };
-        state.keys[scancode as usize] = KeyInfo {
-            press_state: KeyPressState::Up,
-            has_changed: true,
-            typewriter: TypewriterState::None,
-        };
+        state.keys.insert(
+            key,
+            KeyInfo {
+                press_state: KeyPressState::Up,
+                has_changed: true,
+                typewriter: TypewriterState::None,
+            },
+        );
         state
     }
 
-    fn input_with_key_down(scancode: u16) -> UiInput {
+    fn input_with_key_down(key: KeyCode) -> UiInput {
         UiInput {
-            mouse_position: Point2D { x: 0.0, y: 0.0 },
-            keyboard: keyboard_with_key_down(scancode),
+            mouse_position: ScreenPoint::new(0.0, 0.0),
+            keyboard: keyboard_with_key_down(key),
         }
     }
 
-    fn input_with_key_up(scancode: u16) -> UiInput {
+    fn input_with_key_up(key: KeyCode) -> UiInput {
         UiInput {
-            mouse_position: Point2D { x: 0.0, y: 0.0 },
-            keyboard: keyboard_with_key_up(scancode),
+            mouse_position: ScreenPoint::new(0.0, 0.0),
+            keyboard: keyboard_with_key_up(key),
         }
     }
 
@@ -1011,19 +1005,19 @@ mod tests {
     #[test]
     fn get_key_arrow_keys() {
         assert_eq!(
-            FocusManager::get_key(&keyboard_with_key_down(SDL_SCANCODE_LEFT)),
+            FocusManager::get_key(&keyboard_with_key_down(KeyCode::ArrowLeft)),
             Key::LeftArrow
         );
         assert_eq!(
-            FocusManager::get_key(&keyboard_with_key_down(SDL_SCANCODE_UP)),
+            FocusManager::get_key(&keyboard_with_key_down(KeyCode::ArrowUp)),
             Key::UpArrow
         );
         assert_eq!(
-            FocusManager::get_key(&keyboard_with_key_down(SDL_SCANCODE_RIGHT)),
+            FocusManager::get_key(&keyboard_with_key_down(KeyCode::ArrowRight)),
             Key::RightArrow
         );
         assert_eq!(
-            FocusManager::get_key(&keyboard_with_key_down(SDL_SCANCODE_DOWN)),
+            FocusManager::get_key(&keyboard_with_key_down(KeyCode::ArrowDown)),
             Key::DownArrow
         );
     }
@@ -1031,11 +1025,11 @@ mod tests {
     #[test]
     fn get_key_return() {
         assert_eq!(
-            FocusManager::get_key(&keyboard_with_key_down(SDL_SCANCODE_RETURN)),
+            FocusManager::get_key(&keyboard_with_key_down(KeyCode::Enter)),
             Key::ReturnDown
         );
         assert_eq!(
-            FocusManager::get_key(&keyboard_with_key_up(SDL_SCANCODE_RETURN)),
+            FocusManager::get_key(&keyboard_with_key_up(KeyCode::Enter)),
             Key::ReturnUp
         );
     }
@@ -1048,22 +1042,28 @@ mod tests {
     #[test]
     fn get_key_with_typewriter_repeat() {
         let mut state = KeyboardState::default();
-        state.keys[SDL_SCANCODE_DOWN as usize] = KeyInfo {
-            press_state: KeyPressState::Down,
-            has_changed: true,
-            typewriter: TypewriterState::Repeat,
-        };
+        state.keys.insert(
+            KeyCode::ArrowDown,
+            KeyInfo {
+                press_state: KeyPressState::Down,
+                has_changed: true,
+                typewriter: TypewriterState::Repeat,
+            },
+        );
         assert_eq!(FocusManager::get_key(&state), Key::DownArrow);
     }
 
     #[test]
     fn get_key_return_ignored_on_repeat() {
         let mut state = KeyboardState::default();
-        state.keys[SDL_SCANCODE_RETURN as usize] = KeyInfo {
-            press_state: KeyPressState::Down,
-            has_changed: true,
-            typewriter: TypewriterState::Repeat,
-        };
+        state.keys.insert(
+            KeyCode::Enter,
+            KeyInfo {
+                press_state: KeyPressState::Down,
+                has_changed: true,
+                typewriter: TypewriterState::Repeat,
+            },
+        );
         // Return is only recognized on first press (TypewriterState::None),
         // not on repeat.
         assert_eq!(FocusManager::get_key(&state), Key::None);
@@ -1077,7 +1077,7 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
         fm.add_groupable(Box::new(MockGroupable::new(2)), true);
 
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
         assert!(
             events
@@ -1092,13 +1092,13 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
         fm.add_groupable(Box::new(MockGroupable::new(2)), true);
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(1));
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
     }
 
@@ -1108,7 +1108,7 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
         fm.add_groupable(Box::new(MockGroupable::new(2)), true);
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_UP), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowUp), false);
         assert_eq!(fm.focused_groupable_idx, Some(1));
     }
 
@@ -1120,19 +1120,19 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(3)), true);
 
         // First up → last widget (index 2)
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_UP), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowUp), false);
         assert_eq!(fm.focused_groupable_idx, Some(2));
 
         // Second up → index 1
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_UP), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowUp), false);
         assert_eq!(fm.focused_groupable_idx, Some(1));
 
         // Third up → index 0
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_UP), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowUp), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Fourth up → wraps to index 2
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_UP), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowUp), false);
         assert_eq!(fm.focused_groupable_idx, Some(2));
     }
 
@@ -1143,11 +1143,11 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(2).disabled()), true);
         fm.add_groupable(Box::new(MockGroupable::new(3)), true);
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Skips disabled widget 2 → goes to widget 3
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(2));
     }
 
@@ -1158,10 +1158,10 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(2)), false);
         fm.add_groupable(Box::new(MockGroupable::new(3)), true);
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(2));
     }
 
@@ -1171,7 +1171,7 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1).disabled()), true);
         fm.add_groupable(Box::new(MockGroupable::new(2).disabled()), true);
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, None);
     }
 
@@ -1183,11 +1183,11 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
 
         // Focus widget 1
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Enter down → select
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_RETURN), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::Enter), false);
         assert!(
             events
                 .iter()
@@ -1196,7 +1196,7 @@ mod tests {
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Enter up → activate and clear focus
-        let events = fm.process_input(vec![], &input_with_key_up(SDL_SCANCODE_RETURN), false);
+        let events = fm.process_input(vec![], &input_with_key_up(KeyCode::Enter), false);
         assert!(
             events
                 .iter()
@@ -1223,8 +1223,8 @@ mod tests {
             true,
         );
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
-        let events = fm.process_input(vec![], &input_with_key_up(SDL_SCANCODE_RETURN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
+        let events = fm.process_input(vec![], &input_with_key_up(KeyCode::Enter), false);
 
         assert!(
             events
@@ -1240,7 +1240,7 @@ mod tests {
         let mut fm = FocusManager::new(GroupOrientation::Vertical);
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
 
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_RETURN), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::Enter), false);
         assert!(events.is_empty());
         assert_eq!(fm.focused_groupable_idx, None);
     }
@@ -1255,7 +1255,7 @@ mod tests {
         fm.add_focusable(Box::new(MockFocusable::new(11)));
 
         // Left → focus last focusable (entering from end)
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_LEFT), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowLeft), false);
         assert_eq!(fm.focused_focusable_idx, Some(1));
         assert!(events.iter().any(|e| e.origin == 11));
     }
@@ -1268,19 +1268,19 @@ mod tests {
         fm.add_focusable(Box::new(MockFocusable::new(11)));
 
         // Left → focus last focusable (11)
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_LEFT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowLeft), false);
         assert_eq!(fm.focused_focusable_idx, Some(1));
 
         // Left again → focus previous focusable (10)
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_LEFT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowLeft), false);
         assert_eq!(fm.focused_focusable_idx, Some(0));
 
         // Right → focus next focusable (11)
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_RIGHT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowRight), false);
         assert_eq!(fm.focused_focusable_idx, Some(1));
 
         // Right → past end, no focused focusable
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_RIGHT), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowRight), false);
         assert_eq!(fm.focused_focusable_idx, None);
         assert!(events.iter().any(|e| e.origin == 11));
     }
@@ -1293,11 +1293,11 @@ mod tests {
         fm.add_focusable(Box::new(MockFocusable::new(10)));
 
         // Focus a focusable via Left
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_LEFT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowLeft), false);
         assert_eq!(fm.focused_focusable_idx, Some(0));
 
         // Down arrow should NOT move groupable focus while focusable is active
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, None);
     }
 
@@ -1310,14 +1310,14 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(2)), true);
 
         // Right → next groupable
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_RIGHT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowRight), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_RIGHT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowRight), false);
         assert_eq!(fm.focused_groupable_idx, Some(1));
 
         // Left → previous groupable
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_LEFT), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowLeft), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
     }
 
@@ -1327,10 +1327,10 @@ mod tests {
     fn shortcut_focus_and_activate() {
         let mut fm = FocusManager::new(GroupOrientation::Vertical);
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
-        fm.add_shortcut(1, 30); // arbitrary scancode
+        fm.add_shortcut(1, KeyCode::KeyA); // arbitrary shortcut key
 
         // Key down → focus + select
-        let events = fm.process_input(vec![], &input_with_key_down(30), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::KeyA), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
         assert!(
             events
@@ -1344,7 +1344,7 @@ mod tests {
         );
 
         // Key up → activate and clear focus
-        let events = fm.process_input(vec![], &input_with_key_up(30), false);
+        let events = fm.process_input(vec![], &input_with_key_up(KeyCode::KeyA), false);
         assert!(events.iter().any(|e| e.msg_type == UiEventType::Activated));
         assert_eq!(fm.focused_groupable_idx, None);
     }
@@ -1354,14 +1354,14 @@ mod tests {
         let mut fm = FocusManager::new(GroupOrientation::Vertical);
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
         fm.add_groupable(Box::new(MockGroupable::new(2)), true);
-        fm.add_shortcut(2, 30);
+        fm.add_shortcut(2, KeyCode::KeyA);
 
         // Focus widget 1 via arrow key
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Shortcut should not fire when a widget is already focused
-        fm.process_input(vec![], &input_with_key_down(30), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::KeyA), false);
         // Focus didn't change to widget 2
         assert_eq!(fm.focused_groupable_idx, Some(0));
     }
@@ -1370,10 +1370,10 @@ mod tests {
     fn shortcuts_disabled() {
         let mut fm = FocusManager::new(GroupOrientation::Vertical);
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
-        fm.add_shortcut(1, 30);
+        fm.add_shortcut(1, KeyCode::KeyA);
         fm.set_shortcuts_enabled(false);
 
-        fm.process_input(vec![], &input_with_key_down(30), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::KeyA), false);
         assert_eq!(fm.focused_groupable_idx, None);
     }
 
@@ -1385,7 +1385,7 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
         fm.add_focusable(Box::new(MockFocusable::new(10)));
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         let events = fm.reset_focused_widgets();
@@ -1402,12 +1402,12 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
 
         // Focus via keyboard
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Mouse moves, with a non-FrameFocus event present → resets focus
         let mouse_input = UiInput {
-            mouse_position: Point2D { x: 100.0, y: 200.0 },
+            mouse_position: ScreenPoint::new(100.0, 200.0),
             keyboard: KeyboardState::default(),
         };
         let existing = vec![UiEvent {
@@ -1425,12 +1425,12 @@ mod tests {
         fm.add_widget_to_ignore(999);
 
         // Focus via keyboard
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, Some(0));
 
         // Mouse moves, but the only event is from an ignored widget
         let mouse_input = UiInput {
-            mouse_position: Point2D { x: 100.0, y: 200.0 },
+            mouse_position: ScreenPoint::new(100.0, 200.0),
             keyboard: KeyboardState::default(),
         };
         let existing = vec![UiEvent {
@@ -1447,7 +1447,7 @@ mod tests {
         let mut fm = FocusManager::new(GroupOrientation::Vertical);
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
 
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), true);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), true);
         assert_eq!(fm.focused_groupable_idx, None);
         assert!(events.is_empty());
     }
@@ -1460,14 +1460,14 @@ mod tests {
         fm.add_groupable(Box::new(MockGroupable::new(1)), true);
         fm.set_navigation_enabled(false);
 
-        fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert_eq!(fm.focused_groupable_idx, None);
     }
 
     #[test]
     fn empty_group_no_crash() {
         let mut fm = FocusManager::new(GroupOrientation::Vertical);
-        let events = fm.process_input(vec![], &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        let events = fm.process_input(vec![], &input_with_key_down(KeyCode::ArrowDown), false);
         assert!(events.is_empty());
         assert_eq!(fm.focused_groupable_idx, None);
     }
@@ -1490,7 +1490,7 @@ mod tests {
             },
         ];
 
-        let events = fm.process_input(existing, &input_with_key_down(SDL_SCANCODE_DOWN), false);
+        let events = fm.process_input(existing, &input_with_key_down(KeyCode::ArrowDown), false);
 
         // Old event for origin 1 should be removed, event for origin 2 kept,
         // and new navigation events for origin 1 appended.

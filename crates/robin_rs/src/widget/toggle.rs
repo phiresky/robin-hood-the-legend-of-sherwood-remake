@@ -21,7 +21,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::Point2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{
@@ -29,6 +28,7 @@ use crate::ui::{
         TOGGLE_FOCUSED_TWO, TOGGLE_SELECTED_ONE, TOGGLE_SELECTED_TWO,
     },
 };
+use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetInput};
 
@@ -199,7 +199,7 @@ impl WidgetToggleButton {
     /// bakes one for any widget whose `resource_id` resolves to a known
     /// sprite pack). Toggle widgets without a baked mask gracefully
     /// fall back to bbox-only.
-    pub fn is_mouse_inside(&self, point: Point2D) -> bool {
+    pub fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         self.base.is_inside(point)
     }
 
@@ -307,8 +307,8 @@ impl WidgetToggleButton {
         }
 
         // Accelerator key handling.
-        if self.base.fast_key != 0 {
-            let key_state = input.keyboard.get_state_of_key(self.base.fast_key);
+        if let Some(fast_key) = self.base.fast_key {
+            let key_state = input.keyboard.get_state_of_key(fast_key);
             match key_state {
                 KeyState::KeyDown => {
                     self.base.state = if self.second_state {
@@ -556,7 +556,7 @@ impl WidgetGroupable for WidgetToggleButton {
         WidgetToggleButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: Point2D) -> bool {
+    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         WidgetToggleButton::is_mouse_inside(self, point)
     }
 
@@ -580,12 +580,12 @@ impl WidgetGroupable for WidgetToggleButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::{BBox2D, pt};
     use crate::ui::UiKeyboard;
+    use robin_engine::coordinates::ScreenBBox;
 
     fn test_widget() -> WidgetToggleButton {
         let mut w = WidgetToggleButton::new(1);
-        w.base.bbox = BBox2D::from_coords(0.0, 0.0, 10.0, 10.0);
+        w.base.bbox = ScreenBBox::from_coords(0.0, 0.0, 10.0, 10.0);
         // No renderer attached → `is_real_point` would return false and
         // `is_inside` would fail. Give it a bitmap renderer with the
         // same bbox so hit-testing succeeds.
@@ -598,11 +598,7 @@ mod tests {
         w
     }
 
-    fn input<'a>(
-        pos: crate::geo2d::Point2D,
-        buttons: MouseButtons,
-        kb: &'a UiKeyboard,
-    ) -> WidgetInput<'a> {
+    fn input<'a>(pos: ScreenPoint, buttons: MouseButtons, kb: &'a UiKeyboard) -> WidgetInput<'a> {
         WidgetInput {
             mouse_position: pos,
             mouse_z: 0,
@@ -614,7 +610,7 @@ mod tests {
     }
 
     fn input_with_capture<'a>(
-        pos: crate::geo2d::Point2D,
+        pos: ScreenPoint,
         buttons: MouseButtons,
         kb: &'a UiKeyboard,
         capture: &'a super::super::CaptureSlot,
@@ -633,7 +629,11 @@ mod tests {
     fn selected_first_hover_focuses() {
         let mut w = test_widget();
         let kb = UiKeyboard::default();
-        let events = w.process_input(&input(pt(5.0, 5.0), MouseButtons::empty(), &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(5.0, 5.0),
+            MouseButtons::empty(),
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::FocusedFirst);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].msg_type, UiMsg::WidgetFocused);
@@ -645,7 +645,11 @@ mod tests {
         let kb = UiKeyboard::default();
         w.base.state = UiState::PushedFirst;
 
-        let events = w.process_input(&input(pt(5.0, 5.0), MouseButtons::LEFT_CLICK, &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(5.0, 5.0),
+            MouseButtons::LEFT_CLICK,
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::SelectedSecond);
         assert!(w.second_state);
         assert_eq!(events.len(), 1);
@@ -658,7 +662,11 @@ mod tests {
         let kb = UiKeyboard::default();
         w.base.state = UiState::PushedFirst;
 
-        let events = w.process_input(&input(pt(5.0, 5.0), MouseButtons::LEFT_DOUBLE_CLICK, &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(5.0, 5.0),
+            MouseButtons::LEFT_DOUBLE_CLICK,
+            &kb,
+        ));
         assert_eq!(events[0].msg_type, UiMsg::WidgetActivated);
         assert!(w.second_state);
     }
@@ -670,7 +678,11 @@ mod tests {
         w.base.state = UiState::PushedFirst;
         w.second_state = false;
 
-        let events = w.process_input(&input(pt(100.0, 100.0), MouseButtons::LEFT_DOWN, &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(100.0, 100.0),
+            MouseButtons::LEFT_DOWN,
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::FocusedFirst);
         assert!(!w.second_state);
         assert!(events.is_empty());
@@ -682,7 +694,11 @@ mod tests {
         let kb = UiKeyboard::default();
         w.base.state = UiState::FocusedFirst;
 
-        let events = w.process_input(&input(pt(100.0, 100.0), MouseButtons::empty(), &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(100.0, 100.0),
+            MouseButtons::empty(),
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::SelectedFirst);
         assert!(events.is_empty());
     }
@@ -694,7 +710,11 @@ mod tests {
         w.second_state = true;
         w.base.state = UiState::FocusedSecond;
 
-        let events = w.process_input(&input(pt(100.0, 100.0), MouseButtons::empty(), &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(100.0, 100.0),
+            MouseButtons::empty(),
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::SelectedSecond);
         assert!(w.second_state);
         assert!(events.is_empty());
@@ -707,7 +727,11 @@ mod tests {
         w.second_state = true;
         w.base.state = UiState::PushedSecond;
 
-        let events = w.process_input(&input(pt(5.0, 5.0), MouseButtons::LEFT_CLICK, &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(5.0, 5.0),
+            MouseButtons::LEFT_CLICK,
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::SelectedFirst);
         assert!(!w.second_state);
         assert_eq!(events.len(), 1);
@@ -721,7 +745,11 @@ mod tests {
         w.second_state = true;
         w.base.state = UiState::PushedSecond;
 
-        let events = w.process_input(&input(pt(5.0, 5.0), MouseButtons::LEFT_DOUBLE_CLICK, &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(5.0, 5.0),
+            MouseButtons::LEFT_DOUBLE_CLICK,
+            &kb,
+        ));
         assert_eq!(w.base.state, UiState::SelectedSecond);
         assert!(w.second_state);
         assert_eq!(events.len(), 2);
@@ -801,7 +829,11 @@ mod tests {
         let mut w = test_widget();
         w.base.state = UiState::PushedFirst;
         let kb = UiKeyboard::default();
-        let events = w.process_input(&input(pt(5.0, 5.0), MouseButtons::LEFT_CLICK, &kb));
+        let events = w.process_input(&input(
+            ScreenPoint::new(5.0, 5.0),
+            MouseButtons::LEFT_CLICK,
+            &kb,
+        ));
         match events[0].data {
             Some(UiEventData::ListIndex(1)) => {}
             ref other => panic!("expected ListIndex(1), got {other:?}"),
@@ -817,7 +849,7 @@ mod tests {
         // Focused → Pushed sets capture.
         w.base.state = UiState::FocusedFirst;
         w.process_input(&input_with_capture(
-            pt(5.0, 5.0),
+            ScreenPoint::new(5.0, 5.0),
             MouseButtons::LEFT_DOWN,
             &kb,
             &capture,
@@ -826,7 +858,7 @@ mod tests {
 
         // Pushed → Selected (click) clears capture.
         w.process_input(&input_with_capture(
-            pt(5.0, 5.0),
+            ScreenPoint::new(5.0, 5.0),
             MouseButtons::LEFT_CLICK,
             &kb,
             &capture,

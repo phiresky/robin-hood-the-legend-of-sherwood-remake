@@ -568,7 +568,7 @@ pub enum FieldValue {
     Bool(bool),
     Integer(u32),
     Float(f32),
-    Point2D {
+    GeoPoint2D {
         x: f32,
         y: f32,
     },

@@ -12,7 +12,7 @@ use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self, BBox2D, Point2D};
+use crate::geo2d::{self, BBox2D, GeoPoint2D};
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
 use crate::profiles::ProfileManager;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
@@ -742,7 +742,7 @@ pub fn apply_anti_collision_step(
             BBox2D::new()
         };
 
-        let offset = |b: &BBox2D, p: Point2D| -> BBox2D {
+        let offset = |b: &BBox2D, p: GeoPoint2D| -> BBox2D {
             if let Some(r) = b.0 {
                 BBox2D(Some(geo::Rect::new(
                     geo2d::pt(r.min().x + p.x, r.min().y + p.y),

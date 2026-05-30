@@ -58,7 +58,7 @@ fn camera_clip_view() {
     let mut camera = CameraState {
         level_size: geo2d::pt(2000.0, 1500.0),
         zoom_factor: 1.0,
-        view_position: geo2d::pt(-100.0, -50.0),
+        view_position: crate::coordinates::MapPoint::new(-100.0, -50.0),
         ..Default::default()
     };
     let clipped = camera.clip_view();
@@ -225,7 +225,7 @@ fn hourglass_locked_skips_logic() {
 #[test]
 fn fast_forward() {
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.camera_slide = geo2d::pt(100.0, 200.0);
+    engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(100.0, 200.0);
     engine.set_fast_forward();
     assert!(engine.is_fast_forward());
     // Camera should have jumped to slide target
@@ -345,13 +345,14 @@ fn serde_roundtrip_stays_in_sync() {
 #[test]
 fn camera_display_scratch_is_not_serialized_or_hashed() {
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.old_view_position = geo2d::pt(11.0, 22.0);
+    engine.cutscene_camera.old_view_position = crate::coordinates::MapPoint::new(11.0, 22.0);
     engine.cutscene_camera.old_zoom_factor = 0.5;
     engine.cutscene_camera.zoom_init_done = true;
     engine.cutscene_camera.mechanized_zoom = true;
     engine.cutscene_camera.displacement = geo2d::pt(3.0, 4.0);
     engine.cutscene_camera.displacement_counter = 7;
-    engine.cutscene_camera.pending_zoom_mouse_screen = Some(geo2d::pt(123.0, 456.0));
+    engine.cutscene_camera.pending_zoom_mouse_screen =
+        Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
 
     let baseline_hash = crate::replay::state_hash(&engine);
     let json = serde_json::to_string(&engine).expect("serialize engine");
@@ -363,7 +364,7 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     assert!(!json.contains("pending_zoom_mouse_screen"));
 
     let mut changed = engine.clone();
-    changed.cutscene_camera.old_view_position = geo2d::pt(99.0, 100.0);
+    changed.cutscene_camera.old_view_position = crate::coordinates::MapPoint::new(99.0, 100.0);
     changed.cutscene_camera.old_zoom_factor = 2.0;
     changed.cutscene_camera.zoom_init_done = false;
     changed.cutscene_camera.mechanized_zoom = false;
@@ -375,7 +376,7 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     let restored: EngineInner = serde_json::from_str(&json).expect("deserialize engine");
     assert_eq!(
         restored.cutscene_camera.old_view_position,
-        geo2d::pt(0.0, 0.0)
+        crate::coordinates::MapPoint::new(0.0, 0.0)
     );
     assert_eq!(restored.cutscene_camera.old_zoom_factor, 1.0);
     assert!(!restored.cutscene_camera.zoom_init_done);
@@ -392,7 +393,7 @@ fn host_display_scroll_does_not_mutate_script_camera() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
-    engine.cutscene_camera.view_position = geo2d::pt(100.0, 200.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
     display.display_op = DisplayOpCode::Scroll;
     display.background_transform.scrolling_vector = geo2d::pt(25.0, 0.0);
@@ -401,7 +402,7 @@ fn host_display_scroll_does_not_mutate_script_camera() {
 
     assert_eq!(
         engine.cutscene_camera.view_position,
-        geo2d::pt(100.0, 200.0)
+        crate::coordinates::MapPoint::new(100.0, 200.0)
     );
 }
 
@@ -412,7 +413,7 @@ fn camera_display_scroll_mutates_script_camera() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
-    engine.cutscene_camera.view_position = geo2d::pt(100.0, 200.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
     engine.cutscene_camera.display.display_op = DisplayOpCode::Scroll;
     engine
@@ -425,7 +426,7 @@ fn camera_display_scroll_mutates_script_camera() {
 
     assert_eq!(
         engine.cutscene_camera.view_position,
-        geo2d::pt(125.0, 200.0)
+        crate::coordinates::MapPoint::new(125.0, 200.0)
     );
 }
 
@@ -745,7 +746,7 @@ fn ambiance_night_colors() {
 fn center_on_point() {
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
-    engine.center_on_point(0, geo2d::pt(1000.0, 800.0));
+    engine.center_on_point(0, crate::coordinates::MapPoint::new(1000.0, 800.0));
     // View should be offset by half the full screen on both axes
     // (raw screen vector divided by 2*zoom; the bottom-panel exclusion
     // applies only to the clamp, not the centering).  The result is
@@ -1152,7 +1153,7 @@ fn perform_check_scroll_clamps_right() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(2000.0, 1500.0);
-    engine.cutscene_camera.view_position = geo2d::pt(1500.0, 0.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(1500.0, 0.0);
     display.background_transform.scrolling_vector = geo2d::pt(400.0, 0.0);
 
     let valid = engine.perform_check_scroll(&mut display);
@@ -1167,7 +1168,7 @@ fn perform_check_scroll_clamps_left() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(2000.0, 1500.0);
-    engine.cutscene_camera.view_position = geo2d::pt(10.0, 0.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(10.0, 0.0);
     display.background_transform.scrolling_vector = geo2d::pt(-50.0, 0.0);
 
     let valid = engine.perform_check_scroll(&mut display);
@@ -1180,7 +1181,7 @@ fn perform_check_scroll_valid() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
-    engine.cutscene_camera.view_position = geo2d::pt(500.0, 500.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 500.0);
     display.background_transform.scrolling_vector = geo2d::pt(10.0, 10.0);
 
     let valid = engine.perform_check_scroll(&mut display);
@@ -1753,9 +1754,9 @@ fn camera_slide_approaches_target() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
-    engine.cutscene_camera.view_position = geo2d::pt(100.0, 100.0);
-    engine.cutscene_camera.camera_slide = geo2d::pt(500.0, 300.0);
-    engine.cutscene_camera.camera_wanted = geo2d::pt(500.0, 300.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+    engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.cutscene_camera.camera_wanted = crate::coordinates::MapPoint::new(500.0, 300.0);
     engine.speed = 1.0;
 
     engine.perform_director_work(&mut display);
@@ -1772,8 +1773,8 @@ fn camera_slide_cancels_at_target() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
-    engine.cutscene_camera.view_position = geo2d::pt(500.0, 300.0);
-    engine.cutscene_camera.camera_slide = geo2d::pt(500.0, 300.0);
+    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
 
     engine.perform_director_work(&mut display);
 
@@ -1809,7 +1810,7 @@ fn dead_pc_triggers_failure() {
         kind: crate::element::ElementKind::ActorPc,
         ..Default::default()
     };
-    pc_elem.set_position_map(geo2d::pt(100.0, 200.0).into());
+    pc_elem.set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0).into());
     let entity = Entity::Pc(crate::element::ActorPc {
         element: pc_elem,
         actor: Default::default(),
@@ -3356,12 +3357,12 @@ fn seed_macro_slot(
     let state = engine.macro_store.get_or_insert(pc);
     state.begin_recording(slot);
     for (x, y) in steps {
-        let pos = crate::geo2d::pt(x, y);
+        let pos = crate::coordinates::MapPoint::new(x, y);
         state.append_if_recording(QuickActionStep {
             action: crate::profiles::Action::NoAction,
             position: pos,
             replay: QaReplayCommand::Move {
-                destination: pos.into(),
+                destination: pos,
                 running: false,
             },
         });

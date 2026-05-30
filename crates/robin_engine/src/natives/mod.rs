@@ -139,7 +139,7 @@ const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
 pub struct ScriptZonePolygon {
     pub layer: u16,
     pub bounding_box: BBox2D,
-    pub points: Vec<crate::geo2d::Point2D>,
+    pub points: Vec<crate::geo2d::GeoPoint2D>,
 }
 
 /// A host-function implementation that handles the global-variable
@@ -1185,7 +1185,7 @@ impl GameHost {
                 let mut turn = SequenceElement::new_generic(0, Command::Turn, owner);
                 turn.set_property(
                     Field::CameraPoint,
-                    FieldValue::Point2D {
+                    FieldValue::GeoPoint2D {
                         x: cam_pt.0,
                         y: cam_pt.1,
                     },
@@ -3649,7 +3649,7 @@ impl HostFunctions for GameHost {
                     };
                     let level = self.recording_level();
                     let mut elem = SequenceElement::new_generic(level, Command::CameraGoto, None);
-                    elem.set_property(Field::CameraPoint, FieldValue::Point2D { x, y });
+                    elem.set_property(Field::CameraPoint, FieldValue::GeoPoint2D { x, y });
                     // The CameraSpeed field must be an Integer (the
                     // engine reader in tick.rs only accepts Integer);
                     // a literal 0 means "default speed".
@@ -3675,7 +3675,7 @@ impl HostFunctions for GameHost {
                     };
                     let level = self.recording_level();
                     let mut elem = SequenceElement::new_generic(level, Command::CameraJumpTo, None);
-                    elem.set_property(Field::CameraPoint, FieldValue::Point2D { x, y });
+                    elem.set_property(Field::CameraPoint, FieldValue::GeoPoint2D { x, y });
                     self.record_element(elem)
                 }
                 RecordSetZoom => {
@@ -3720,7 +3720,7 @@ impl HostFunctions for GameHost {
                     };
                     let level = self.recording_level();
                     let mut elem = SequenceElement::new_generic(level, Command::CameraGoto, None);
-                    elem.set_property(Field::CameraPoint, FieldValue::Point2D { x, y });
+                    elem.set_property(Field::CameraPoint, FieldValue::GeoPoint2D { x, y });
                     // CameraSpeed must be an Integer (the engine
                     // reader in tick.rs only unwraps Integer).
                     elem.set_property(Field::CameraSpeed, FieldValue::Integer(speed as u32));
@@ -4361,7 +4361,7 @@ impl HostFunctions for GameHost {
                     let level = self.recording_level();
                     let mut elem =
                         SequenceElement::new_generic(level, Command::Turn, Self::actor_id(actor));
-                    elem.set_property(Field::CameraPoint, FieldValue::Point2D { x, y });
+                    elem.set_property(Field::CameraPoint, FieldValue::GeoPoint2D { x, y });
                     self.record_element(elem)
                 }
 

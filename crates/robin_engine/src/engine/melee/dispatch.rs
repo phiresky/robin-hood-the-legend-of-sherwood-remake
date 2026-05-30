@@ -556,7 +556,7 @@ impl EngineInner {
                                 z: *z,
                             }),
                         ),
-                        Some(FieldValue::Point2D { x, y }) => (
+                        Some(FieldValue::GeoPoint2D { x, y }) => (
                             Some(crate::coordinates::MapPoint { x: *x, y: *y }),
                             Some(crate::coordinates::WorldPoint3D {
                                 x: *x,

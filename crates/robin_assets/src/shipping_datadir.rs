@@ -13,7 +13,6 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::frame_holder::FrameDictionary;
-use crate::keyconfig::KeyConfig;
 use crate::res_descr::LevelDescriptors;
 use crate::resource_manager::{EncodedPicture, ResourceManager};
 use crate::scb::ScbFile;
@@ -29,7 +28,6 @@ use robin_engine::sprite_script::SpriteInfo;
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct ShippingDatadir {
     pub profiles: Option<ProfileManager>,
-    pub keysets: std::collections::BTreeMap<String, KeyConfig>,
     pub res_files: std::collections::BTreeMap<String, ResourceManager>,
     pub pak_files: std::collections::BTreeMap<String, Vec<EncodedPicture>>,
     pub red_files: std::collections::BTreeMap<String, LevelDescriptors>,

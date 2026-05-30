@@ -461,11 +461,11 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
         return;
     }
     let rect = robin_engine::sprite::BBox::new(
-        robin_engine::geo2d::Point2D {
+        robin_engine::geo2d::GeoPoint2D {
             x: x as f32,
             y: y as f32,
         },
-        robin_engine::geo2d::Point2D {
+        robin_engine::geo2d::GeoPoint2D {
             x: (x + w) as f32,
             y: (y + h) as f32,
         },
@@ -497,12 +497,7 @@ pub(super) fn update_mouse_and_cursor(
     last_cursor_id: &mut i32,
 ) {
     let mouse_screen = threaded_input.position();
-    let Some(mouse_map) =
-        host.viewport
-            .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                mouse_screen,
-            ))
-    else {
+    let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) else {
         return;
     };
     // `is_alt_effective()` so the permanent-alt toggle affects
@@ -513,7 +508,7 @@ pub(super) fn update_mouse_and_cursor(
         host,
         assets,
         dev,
-        mouse_map.to_geo(),
+        mouse_map,
         alt_for_cursor,
         shift_held,
     );
@@ -851,8 +846,7 @@ pub(super) fn render_frame(
                 next_idx,
                 &mission_team,
                 &selected,
-            ) && let Some(slot_idx) =
-                crate::ui_panel::hit_test_requirements_bar(sw, &req, mp.x as i32, mp.y as i32)
+            ) && let Some(slot_idx) = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp)
                 && let Some(RequirementSlot::RequiredAction { action, .. }) =
                     req.slots.get(slot_idx)
             {
@@ -1063,8 +1057,7 @@ pub(super) fn render_frame(
             // crosses the idle threshold.
             let mp = threaded_input.position();
             let sw = renderer.screen_width();
-            let hovered_slot =
-                crate::ui_panel::hit_test_requirements_bar(sw, &req, mp.x as i32, mp.y as i32);
+            let hovered_slot = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp);
             requirements_tooltip.update(hovered_slot);
             if let Some(slot_idx) = requirements_tooltip.ready_slot()
                 && let Some(slot) = req.slots.get(slot_idx)

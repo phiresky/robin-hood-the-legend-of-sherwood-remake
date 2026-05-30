@@ -20,8 +20,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{EngineInner, LevelAssets};
+use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
-use crate::geo2d::{self, Point2D};
 
 /// Scroll reveal status.  Persisted in `GameHost::scroll_status`
 /// (keyed by actor script handle); the script natives
@@ -66,7 +66,7 @@ impl ScrollStatus {
 /// are copied onto the spawned amulet.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PendingScrollAmulet {
-    pub position_map: Point2D,
+    pub position_map: MapPoint,
     pub layer: u16,
     pub sector: Option<crate::position_interface::SectorHandle>,
     pub direction: i16,
@@ -288,7 +288,7 @@ impl EngineInner {
                 let e = self.get_entity(eid)?;
                 let ed = e.element_data();
                 (
-                    geo2d::pt(ed.position_map().x, ed.position_map().y),
+                    ed.position_map(),
                     ed.layer(),
                     ed.sector(),
                     ed.direction(),
@@ -472,10 +472,7 @@ impl EngineInner {
             assets.static_sight_obstacles.as_slice(),
         );
         element.sprite.apply_placement(
-            crate::coordinates::MapPoint {
-                x: req.position_map.x,
-                y: req.position_map.y,
-            },
+            req.position_map,
             req.layer,
             req.sector,
             req.direction,

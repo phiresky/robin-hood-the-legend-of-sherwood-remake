@@ -8,7 +8,7 @@
 //! layout helpers drive the *rendering*.
 
 use crate::cursor::CursorRenderer;
-use crate::geo2d::{self, BBox2D};
+use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
@@ -20,6 +20,7 @@ use crate::widget::{
     CaptureSlot, FrameWnd, Widget, WidgetButton, WidgetId, WidgetInput, WidgetLabel,
     WidgetMultiPicture, WidgetPicture, WidgetRenderer,
 };
+use robin_engine::coordinates::ScreenBBox;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sprite::BBox;
 
@@ -80,7 +81,7 @@ pub fn make_button_with_resource(
     // heartbeat) — the base button state machine has subtly different
     // transitions.
     btn.is_menu_button = true;
-    let bbox = BBox2D::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+    let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     btn.base.create_with_resource(label, bbox, 0, resource_id);
     btn.base.enabled = enabled;
     // `create_with_resource` leaves `renderer` as `None`; give it a
@@ -126,7 +127,7 @@ pub fn make_picture_with_resource(
     h: i32,
 ) -> Widget {
     let mut pic = WidgetPicture::new(id);
-    let bbox = BBox2D::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+    let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     pic.base.create_with_resource("", bbox, 0, resource_id);
     pic.base.with_focus = false;
     let renderer_base = match pic.base.renderer.base() {
@@ -154,7 +155,7 @@ pub fn make_multi_picture_with_resource(
     h: i32,
 ) -> Widget {
     let mut pic = WidgetMultiPicture::new(id);
-    let bbox = BBox2D::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+    let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     pic.base.create_with_resource("", bbox, 0, resource_id);
     pic.base.with_focus = false;
     pic.select_picture(sub_picture);
@@ -175,7 +176,7 @@ pub fn make_multi_picture_with_resource(
 /// Create a non-interactive text label widget.
 pub fn make_label(id: WidgetId, text: &str, x: i32, y: i32, w: i32, h: i32) -> Widget {
     let mut label = WidgetLabel::new(id);
-    let bbox = BBox2D::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
+    let bbox = ScreenBBox::from_coords(x as f32, y as f32, (x + w) as f32, (y + h) as f32);
     label.base.create(text, bbox, 0);
     label.set_text(text);
     Widget::Label(label)
@@ -193,9 +194,9 @@ pub struct ModalInputState {
     pub virt_y: f32,
     pub buttons: MouseButtons,
     keyboard: UiKeyboard,
-    /// Raw per-scancode pressed-state buffer; SDL `KeyDown`/`KeyUp`
-    /// events toggle bytes here and [`refresh_keyboard`](Self::refresh_keyboard)
-    /// feeds the buffer into [`UiKeyboard::refresh`] each frame so
+    /// Raw physical-key pressed-state set; `KeyDown`/`KeyUp` events
+    /// toggle entries here and [`refresh_keyboard`](Self::refresh_keyboard)
+    /// feeds the set into [`UiKeyboard::refresh`] each frame so
     /// the widget state machine sees the same pressed/released/
     /// typewriter transitions the in-game path uses.
     raw_keyboard: crate::input::KeyboardState,
@@ -358,17 +359,17 @@ impl ModalInputState {
             GameEvent::TextInput { text } => {
                 self.text_input.push_str(text);
             }
-            GameEvent::KeyDown { scancode, .. } => {
-                let i = *scancode as usize;
-                if i < self.raw_keyboard.keys.len() {
-                    self.raw_keyboard.keys[i] = 1;
-                }
+            GameEvent::KeyDown {
+                physical_key: Some(physical_key),
+                ..
+            } => {
+                self.raw_keyboard.keys.insert(*physical_key);
             }
-            GameEvent::KeyUp { scancode, .. } => {
-                let i = *scancode as usize;
-                if i < self.raw_keyboard.keys.len() {
-                    self.raw_keyboard.keys[i] = 0;
-                }
+            GameEvent::KeyUp {
+                physical_key: Some(physical_key),
+                ..
+            } => {
+                self.raw_keyboard.keys.remove(physical_key);
             }
             _ => {}
         }
@@ -392,7 +393,7 @@ impl ModalInputState {
         let now_ms = self.start_time.elapsed().as_millis() as u32;
         self.keyboard.refresh(&self.raw_keyboard, now_ms);
         WidgetInput {
-            mouse_position: geo2d::pt(self.virt_x, self.virt_y),
+            mouse_position: robin_engine::coordinates::ScreenPoint::new(self.virt_x, self.virt_y),
             mouse_z: 0,
             mouse_button: self.buttons,
             keyboard: &self.keyboard,
@@ -709,7 +710,7 @@ pub fn draw_picture_surface_rect(
     let mut widget = WidgetPicture::new(WidgetId::MAX);
     widget.base.create(
         "",
-        BBox2D::from_coords(
+        ScreenBBox::from_coords(
             dst_x as f32,
             dst_y as f32,
             (dst_x + dst_w) as f32,

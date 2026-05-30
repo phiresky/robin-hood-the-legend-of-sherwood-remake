@@ -1,6 +1,6 @@
 //! Low-level input system.
 //!
-//! Captures SDL keyboard/mouse events into a persistent keyboard state,
+//! Captures winit keyboard/mouse events into a persistent keyboard state,
 //! absolute mouse position, and per-frame wheel accumulator that the
 //! game loop reads.  SDL polling is driven by `GameWindow` in `sdl.rs`
 //! rather than a blocking polling thread; per-device input-manager
@@ -13,13 +13,14 @@
 //!   `ingame_menu::widget_bridge::ModalInputState`.
 //! - Gamepad/joystick state → `gamepad.rs`.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
-use crate::geo2d::{BBox2D, Point2D};
+use crate::geo2d::BBox2D;
 use crate::gfx_types::{GameEvent, Keycode};
-
-/// Maximum SDL scancodes (matches `SDL_NUM_SCANCODES`).
-pub const MAX_SCANCODES: usize = 512;
+use robin_engine::coordinates::ScreenPoint;
 
 /// Mouse button identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -29,16 +30,16 @@ pub enum MouseButton {
     Middle,
 }
 
-/// Keyboard state: one byte per scancode.  Non-zero = pressed.
+/// Keyboard state keyed by winit physical key location.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyboardState {
-    pub keys: Vec<u8>,
+    pub keys: BTreeSet<KeyCode>,
 }
 
 impl Default for KeyboardState {
     fn default() -> Self {
         Self {
-            keys: vec![0u8; MAX_SCANCODES],
+            keys: BTreeSet::new(),
         }
     }
 }
@@ -48,11 +49,10 @@ impl KeyboardState {
         Self::default()
     }
 
-    /// Check whether a scancode is currently pressed.
+    /// Check whether a physical key is currently pressed.
     #[inline]
-    pub fn is_pressed(&self, scancode: u16) -> bool {
-        let i = scancode as usize;
-        i < self.keys.len() && self.keys[i] != 0
+    pub fn is_pressed(&self, key: KeyCode) -> bool {
+        self.keys.contains(&key)
     }
 }
 
@@ -69,7 +69,7 @@ impl KeyboardState {
 pub struct ThreadedInput {
     keyboard_state: KeyboardState,
     wheel_delta: i16,
-    position: Point2D,
+    position: ScreenPoint,
     has_position: bool,
     clipping: BBox2D,
     ended: bool,
@@ -86,7 +86,7 @@ impl Default for ThreadedInput {
         Self {
             keyboard_state: KeyboardState::default(),
             wheel_delta: 0,
-            position: Point2D::default(),
+            position: ScreenPoint::default(),
             has_position: false,
             clipping: BBox2D::default(),
             ended: false,
@@ -103,7 +103,7 @@ impl ThreadedInput {
 
     // ── Mouse position ──
 
-    pub fn position(&self) -> Point2D {
+    pub fn position(&self) -> ScreenPoint {
         self.position
     }
 
@@ -156,8 +156,8 @@ impl ThreadedInput {
     /// (returns `false`), otherwise teleports `position` to `target`,
     /// enqueues a `MouseMove` event with the full delta as `xrel/yrel`,
     /// and returns `true`.
-    pub fn reach_position(&mut self, target: Point2D) -> bool {
-        if self.clipping.is_somewhere() && !self.clipping.contains_point(target) {
+    pub fn reach_position(&mut self, target: ScreenPoint) -> bool {
+        if self.clipping.is_somewhere() && !self.clipping.contains_point(target.to_geo()) {
             return false;
         }
 
@@ -223,19 +223,18 @@ impl ThreadedInput {
 
     /// Simulate a key press by enqueuing a synthetic `KeyDown` event.
     /// No in-game caller exists today; kept so any future synthetic-key
-    /// path doesn't have to re-introduce the queue.  `keycode` defaults
-    /// to `Unknown` because the queued event only carries a scancode.
-    pub fn push_key(&mut self, scancode: u16) {
+    /// path doesn't have to re-introduce the queue.
+    pub fn push_key(&mut self, physical_key: KeyCode) {
         self.synthetic_events.push(GameEvent::KeyDown {
-            scancode,
+            physical_key: Some(physical_key),
             keycode: Keycode::Unknown,
         });
     }
 
     /// Simulate a key release.  See [`push_key`](Self::push_key).
-    pub fn release_key(&mut self, scancode: u16) {
+    pub fn release_key(&mut self, physical_key: KeyCode) {
         self.synthetic_events.push(GameEvent::KeyUp {
-            scancode,
+            physical_key: Some(physical_key),
             keycode: Keycode::Unknown,
         });
     }
@@ -270,18 +269,24 @@ impl ThreadedInput {
 
         for event in events {
             match event {
-                GameEvent::KeyDown { scancode, .. } => {
-                    let sc = *scancode as usize;
-                    if sc < self.keyboard_state.keys.len() {
-                        self.keyboard_state.keys[sc] = 1;
-                    }
+                GameEvent::KeyDown {
+                    physical_key: Some(physical_key),
+                    ..
+                } => {
+                    self.keyboard_state.keys.insert(*physical_key);
                 }
-                GameEvent::KeyUp { scancode, .. } => {
-                    let sc = *scancode as usize;
-                    if sc < self.keyboard_state.keys.len() {
-                        self.keyboard_state.keys[sc] = 0;
-                    }
+                GameEvent::KeyUp {
+                    physical_key: Some(physical_key),
+                    ..
+                } => {
+                    self.keyboard_state.keys.remove(physical_key);
                 }
+                GameEvent::KeyDown {
+                    physical_key: None, ..
+                }
+                | GameEvent::KeyUp {
+                    physical_key: None, ..
+                } => {}
                 GameEvent::MouseMove { x, y, .. } => {
                     // Skip the entire mouse-event branch when disabled
                     // so cinematics / movie playback / mission briefings
@@ -347,7 +352,7 @@ impl ThreadedInput {
         }
     }
 
-    /// Current persistent keyboard state (indexed by SDL scancode).
+    /// Current persistent keyboard state.
     pub fn keyboard_state(&self) -> &KeyboardState {
         &self.keyboard_state
     }
@@ -358,7 +363,7 @@ impl ThreadedInput {
     /// during the modal don't re-fire as actions the instant control
     /// returns to the gameplay loop.
     pub fn reset_input_state(&mut self) {
-        self.keyboard_state.keys.fill(0);
+        self.keyboard_state.keys.clear();
         self.wheel_delta = 0;
         self.synthetic_events.clear();
     }
@@ -374,44 +379,37 @@ impl ThreadedInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::pt;
 
     #[test]
     fn keyboard_state_default_all_released() {
         let ks = KeyboardState::default();
-        assert!(!ks.is_pressed(0));
-        assert!(!ks.is_pressed(100));
-        assert!(!ks.is_pressed(511));
+        assert!(!ks.is_pressed(KeyCode::KeyA));
+        assert!(!ks.is_pressed(KeyCode::Backspace));
+        assert!(!ks.is_pressed(KeyCode::F12));
     }
 
     #[test]
     fn keyboard_state_press() {
         let mut ks = KeyboardState::default();
-        ks.keys[42] = 1;
-        assert!(ks.is_pressed(42));
-        assert!(!ks.is_pressed(43));
-    }
-
-    #[test]
-    fn keyboard_state_out_of_range() {
-        let ks = KeyboardState::default();
-        assert!(!ks.is_pressed(999));
+        ks.keys.insert(KeyCode::Backspace);
+        assert!(ks.is_pressed(KeyCode::Backspace));
+        assert!(!ks.is_pressed(KeyCode::Tab));
     }
 
     #[test]
     fn feed_sdl_key_updates_persistent_state() {
         let mut ti = ThreadedInput::new();
         ti.feed_sdl_events(&[GameEvent::KeyDown {
-            scancode: 42,
-            keycode: Keycode::Char(b'a'),
+            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            physical_key: Some(KeyCode::KeyA),
         }]);
-        assert!(ti.keyboard_state().is_pressed(42));
+        assert!(ti.keyboard_state().is_pressed(KeyCode::KeyA));
 
         ti.feed_sdl_events(&[GameEvent::KeyUp {
-            scancode: 42,
-            keycode: Keycode::Char(b'a'),
+            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            physical_key: Some(KeyCode::KeyA),
         }]);
-        assert!(!ti.keyboard_state().is_pressed(42));
+        assert!(!ti.keyboard_state().is_pressed(KeyCode::KeyA));
     }
 
     #[test]
@@ -458,10 +456,10 @@ mod tests {
 
         // After Quit, subsequent events are ignored.
         ti.feed_sdl_events(&[GameEvent::KeyDown {
-            scancode: 10,
-            keycode: Keycode::Char(b'a'),
+            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            physical_key: Some(KeyCode::KeyA),
         }]);
-        assert!(!ti.keyboard_state().is_pressed(10));
+        assert!(!ti.keyboard_state().is_pressed(KeyCode::KeyA));
     }
 
     #[test]
@@ -470,7 +468,7 @@ mod tests {
         ti.set_clipping(BBox2D::from_coords(0.0, 0.0, 800.0, 600.0));
 
         // Inside clip — teleport, returns true.
-        assert!(ti.reach_position(pt(500.0, 400.0)));
+        assert!(ti.reach_position(ScreenPoint::new(500.0, 400.0)));
         assert_eq!(ti.position().x, 500.0);
         assert_eq!(ti.position().y, 400.0);
         let evs = ti.drain_synthetic_events();
@@ -485,7 +483,7 @@ mod tests {
         ));
 
         // Outside clip — refuses, position unchanged.
-        assert!(!ti.reach_position(pt(900.0, 400.0)));
+        assert!(!ti.reach_position(ScreenPoint::new(900.0, 400.0)));
         assert_eq!(ti.position().x, 500.0);
         assert!(ti.drain_synthetic_events().is_empty());
     }
@@ -521,11 +519,23 @@ mod tests {
     #[test]
     fn synthetic_keys_drain_as_game_events() {
         let mut ti = ThreadedInput::new();
-        ti.push_key(42);
-        ti.release_key(42);
+        ti.push_key(KeyCode::Backspace);
+        ti.release_key(KeyCode::Backspace);
         let evs = ti.drain_synthetic_events();
-        assert!(matches!(evs[0], GameEvent::KeyDown { scancode: 42, .. }));
-        assert!(matches!(evs[1], GameEvent::KeyUp { scancode: 42, .. }));
+        assert!(matches!(
+            evs[0],
+            GameEvent::KeyDown {
+                physical_key: Some(KeyCode::Backspace),
+                ..
+            }
+        ));
+        assert!(matches!(
+            evs[1],
+            GameEvent::KeyUp {
+                physical_key: Some(KeyCode::Backspace),
+                ..
+            }
+        ));
     }
 
     #[test]

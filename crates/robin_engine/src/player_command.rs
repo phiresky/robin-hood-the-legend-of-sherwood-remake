@@ -9,7 +9,7 @@
 //! and command types determined at resolution time.  During replay,
 //! the same commands are applied verbatim without re-resolving.
 
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapPoint, ScreenPoint};
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
 use crate::geo2d;
@@ -442,25 +442,25 @@ pub enum PlayerCommand {
     // ── Minimap ─────────────────────────────────────────────────
     /// Window resize: reposition the minimap button / map boxes.
     MinimapResize {
-        base: geo2d::Point2D,
+        base: ScreenPoint,
         corner_size: geo2d::Vec2D,
     },
     /// Left mouse down on the minimap widget. Starts a drag when the
     /// map is deployed.
     MinimapMouseDown {
-        click_pt: geo2d::Point2D,
+        click_pt: ScreenPoint,
     },
     /// Mouse move — drives hover state, drag continuation, and the
     /// entered-nicely / capture flags.
     MinimapMouseMove {
-        mouse_pt: geo2d::Point2D,
+        mouse_pt: ScreenPoint,
         left_mouse_down: bool,
     },
     /// Left mouse up while interacting with the minimap (either the
     /// cursor is over the widget or a drag is in progress).  Handles
     /// the click / drag-end / center-on-map-click branch.
     MinimapMouseUp {
-        click_pt: geo2d::Point2D,
+        click_pt: ScreenPoint,
         on_minimap: bool,
     },
     /// Right-click on the displayed minimap — close the map and clear

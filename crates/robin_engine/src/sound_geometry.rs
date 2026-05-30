@@ -5,7 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, Point2D};
+use crate::coordinates::MapPoint;
+use crate::geo2d::{self, GeoPoint2D};
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ pub struct SoundSourceInfo {
     pub outer_distance: u16,
     pub inner_volume: u16,
     pub outer_volume: u16,
-    pub shape: Vec<Point2D>,
+    pub shape: Vec<GeoPoint2D>,
 }
 
 /// Sound settings passed to `get_logical_playing_params`.  The union
@@ -103,7 +104,7 @@ pub struct SoundSourceInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SoundSettings {
     pub sound_type: SoundType,
-    pub position: Point2D,
+    pub position: MapPoint,
     pub identifier: u32,
     pub source: SoundSettingsSource,
 }
@@ -161,7 +162,7 @@ impl Default for PlayingParameters {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct SoundGeometry {
     /// Current listener position in level coordinates.
-    listen_point: Point2D,
+    listen_point: MapPoint,
     /// Current zoom level (0.5 = zoomed out, 2.0 = zoomed in).
     zoom_factor: f32,
 
@@ -182,11 +183,11 @@ pub struct SoundGeometry {
 }
 
 struct GeometryScratch {
-    decrunched_geometry: Vec<Point2D>,
+    decrunched_geometry: Vec<GeoPoint2D>,
     point_distances: Vec<f32>,
     segment_distances: Vec<f32>,
-    segment_intersections: Vec<Point2D>,
-    closest_point: Point2D,
+    segment_intersections: Vec<GeoPoint2D>,
+    closest_point: GeoPoint2D,
     source_distance: f32,
 }
 
@@ -204,7 +205,7 @@ impl SoundGeometry {
     // same observable behaviour for any well-ordered call sequence.
     pub fn new() -> Self {
         Self {
-            listen_point: geo2d::pt(0.0, 0.0),
+            listen_point: MapPoint::ZERO,
             zoom_factor: 0.0,
             exclamation_volume: 0.0,
             fx_volume: 0.0,
@@ -220,11 +221,11 @@ impl SoundGeometry {
 
     // ── Accessors ──
 
-    pub fn listen_point(&self) -> Point2D {
+    pub fn listen_point(&self) -> MapPoint {
         self.listen_point
     }
 
-    pub fn set_listen_point(&mut self, point: Point2D) {
+    pub fn set_listen_point(&mut self, point: MapPoint) {
         self.listen_point = point;
     }
 
@@ -313,7 +314,7 @@ impl SoundGeometry {
 
     /// Compute panning for a single point relative to the listener.
     /// Returns -1.0 (full left) to 1.0 (full right), 0.0 = centered.
-    fn panning_for_point(position: Point2D, range: &SoundRange) -> f32 {
+    fn panning_for_point(position: GeoPoint2D, range: &SoundRange) -> f32 {
         let x_abs = position.x.abs();
 
         if x_abs < range.inner_distance {
@@ -845,7 +846,7 @@ mod tests {
     #[test]
     fn single_point_source_panning() {
         let mut sg = make_geometry();
-        sg.set_listen_point(geo2d::pt(0.0, 0.0));
+        sg.set_listen_point(MapPoint::ZERO);
         sg.set_zoom_factor(1.0);
 
         // Place a sound source 300 units to the right (within FX range at zoom=1.0)
@@ -861,7 +862,7 @@ mod tests {
 
         let settings = SoundSettings {
             sound_type: SoundType::Source,
-            position: geo2d::pt(0.0, 0.0),
+            position: MapPoint::ZERO,
             identifier: 0,
             source: SoundSettingsSource::SoundSource {
                 info,
@@ -891,7 +892,7 @@ mod tests {
 
         let settings = SoundSettings {
             sound_type: SoundType::Source,
-            position: geo2d::pt(0.0, 0.0),
+            position: MapPoint::ZERO,
             identifier: 0,
             source: SoundSettingsSource::SoundSource {
                 info,
@@ -908,11 +909,11 @@ mod tests {
     #[test]
     fn position_fx_too_far_returns_none() {
         let mut sg = make_geometry();
-        sg.set_listen_point(geo2d::pt(0.0, 0.0));
+        sg.set_listen_point(MapPoint::ZERO);
 
         let settings = SoundSettings {
             sound_type: SoundType::Fx,
-            position: geo2d::pt(10000.0, 10000.0),
+            position: MapPoint::new(10000.0, 10000.0),
             identifier: 0,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -923,7 +924,7 @@ mod tests {
     #[test]
     fn multi_point_source_geometry() {
         let mut sg = make_geometry();
-        sg.set_listen_point(geo2d::pt(150.0, 0.0));
+        sg.set_listen_point(MapPoint::new(150.0, 0.0));
         sg.set_zoom_factor(1.0);
 
         // A horizontal line segment from (100,0) to (200,0)
@@ -940,7 +941,7 @@ mod tests {
 
         let settings = SoundSettings {
             sound_type: SoundType::Source,
-            position: geo2d::pt(0.0, 0.0),
+            position: MapPoint::ZERO,
             identifier: 0,
             source: SoundSettingsSource::SoundSource {
                 info,
@@ -956,7 +957,7 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let mut sg = make_geometry();
-        sg.set_listen_point(geo2d::pt(100.0, 200.0));
+        sg.set_listen_point(MapPoint::new(100.0, 200.0));
         sg.set_zoom_factor(1.5);
 
         let json = serde_json::to_string(&sg).unwrap();
