@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, SpriteAnchor, SpriteLocalPoint};
+use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint};
 use crate::element::EntityId;
 use crate::geo2d::{GeoPoint2D, Vec2D};
 use crate::order::OrderType;
@@ -728,8 +728,8 @@ impl Sprite {
     }
 
     /// Get the draw offset for a given row and frame.
-    #[must_use = "method returns Vec2D by value; assigning to its fields silently modifies a temporary"]
-    pub fn offset(&self, row: u16, frame: u16) -> Vec2D {
+    #[must_use = "method returns SpriteFrameOffset by value; assigning to its fields silently modifies a temporary"]
+    pub fn offset(&self, row: u16, frame: u16) -> SpriteFrameOffset {
         self.current_scripts()[row as usize].offsets[frame as usize]
     }
 
@@ -796,8 +796,8 @@ impl Sprite {
 
     // -- Current frame accessors --
 
-    #[must_use = "method returns Vec2D by value; assigning to its fields silently modifies a temporary"]
-    pub fn current_offset(&self) -> Vec2D {
+    #[must_use = "method returns SpriteFrameOffset by value; assigning to its fields silently modifies a temporary"]
+    pub fn current_offset(&self) -> SpriteFrameOffset {
         self.offset(self.current_row, self.current_frame)
     }
 
@@ -1106,7 +1106,7 @@ impl Sprite {
             sprite.profile_cache_key = cache_key.to_owned();
             sprite.scripts = info.scripts.clone();
             sprite.conversion = info.conversion.clone();
-            sprite.center = SpriteAnchor::from_geo(info.center);
+            sprite.center = info.center;
         } else {
             sprite.alternate_profile_cache_key = cache_key.to_owned();
             sprite.alternate_scripts = Some(info.scripts.clone());
@@ -1859,10 +1859,10 @@ mod tests {
             delays: vec![2, 2, 2, 2],
             distances: vec![3, 3, 3, 3],
             offsets: vec![
-                Vec2D { x: -16.0, y: -32.0 },
-                Vec2D { x: -16.0, y: -32.0 },
-                Vec2D { x: -16.0, y: -32.0 },
-                Vec2D { x: -16.0, y: -32.0 },
+                SpriteFrameOffset::new(-16.0, -32.0),
+                SpriteFrameOffset::new(-16.0, -32.0),
+                SpriteFrameOffset::new(-16.0, -32.0),
+                SpriteFrameOffset::new(-16.0, -32.0),
             ],
             sound_ids: vec![0, 1, 0, 0],
         };
@@ -1876,9 +1876,9 @@ mod tests {
             delays: vec![3, 3, 3],
             distances: vec![4, 4, 0],
             offsets: vec![
-                Vec2D { x: -8.0, y: -16.0 },
-                Vec2D { x: -8.0, y: -16.0 },
-                Vec2D { x: -8.0, y: -16.0 },
+                SpriteFrameOffset::new(-8.0, -16.0),
+                SpriteFrameOffset::new(-8.0, -16.0),
+                SpriteFrameOffset::new(-8.0, -16.0),
             ],
             sound_ids: vec![0, 0, 2],
         };

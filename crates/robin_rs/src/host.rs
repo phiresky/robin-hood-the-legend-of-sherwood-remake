@@ -10,7 +10,7 @@ use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_assets::shipping_datadir::ShippingDatadir;
-use robin_engine::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
+use robin_engine::coordinates::{MapPoint, MapSize, ScreenPoint, ScreenSize, WorldPoint3D};
 use robin_engine::element::{EntityId, TrajectoryPoint};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{
@@ -18,7 +18,6 @@ use robin_engine::engine::{
     SoundCommand,
 };
 use robin_engine::game_operation::GameCode;
-use robin_engine::geo2d as engine_geo2d;
 use robin_engine::geo2d::Vec2D;
 use robin_engine::markers as engine_markers;
 use robin_engine::markers::GroundMark;
@@ -78,8 +77,8 @@ pub struct ViewportState {
     pub old_view_position: MapPoint,
     pub zoom_factor: f32,
     pub old_zoom_factor: f32,
-    pub screen_size: Vec2D,
-    pub level_size: Vec2D,
+    pub screen_size: ScreenSize,
+    pub level_size: MapSize,
 }
 
 impl ViewportState {
@@ -89,18 +88,18 @@ impl ViewportState {
             old_view_position: MapPoint::ZERO,
             zoom_factor: 1.0,
             old_zoom_factor: 1.0,
-            screen_size: engine_geo2d::pt(screen_width, screen_height),
-            level_size: engine_geo2d::pt(0.0, 0.0),
+            screen_size: ScreenSize::new(screen_width, screen_height),
+            level_size: MapSize::ZERO,
         }
     }
 
     pub fn set_screen_size(&mut self, width: f32, height: f32) {
-        self.screen_size = engine_geo2d::pt(width, height);
+        self.screen_size = ScreenSize::new(width, height);
         self.clip_view();
     }
 
     pub fn set_level_size(&mut self, width: f32, height: f32) {
-        self.level_size = engine_geo2d::pt(width, height);
+        self.level_size = MapSize::new(width, height);
         self.clip_view();
     }
 
@@ -217,7 +216,7 @@ pub struct Host {
     // ── Rendering / GPU surfaces ─────────────────────────────────
     pub map_surface: u32,
     pub minimap_corner_surfaces: Vec<u32>,
-    pub minimap_corner_size: Vec2D,
+    pub minimap_corner_size: ScreenSize,
     /// Per-`DotType` dot sprite `(surface, width, height)`. Indexed by
     /// `DotType as usize`. Populated at mission start; empty until then.
     pub minimap_dot_surfaces: Vec<(u32, u16, u16)>,

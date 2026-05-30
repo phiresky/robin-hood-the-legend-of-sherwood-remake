@@ -1,7 +1,7 @@
 //! Camera control: director work, zoom, scrolling, resize, coordinate conversion.
 
 use super::*;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapPoint, MapSize, ScreenSize};
 use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 
@@ -16,11 +16,11 @@ impl EngineInner {
     /// Called by level loading after the `.map` picture is decoded so
     /// scroll/zoom clamps against the true map extents.
     pub(crate) fn set_level_size(&mut self, width: f32, height: f32) {
-        self.cutscene_camera.level_size = geo2d::pt(width, height);
+        self.cutscene_camera.level_size = MapSize::new(width, height);
     }
 
-    pub(super) fn director_camera_view_size() -> geo2d::Vec2D {
-        geo2d::pt(1024.0, 768.0)
+    pub(super) fn director_camera_view_size() -> ScreenSize {
+        ScreenSize::new(1024.0, 768.0)
     }
 
     // ─── Display-op update ──────────────────────────────────────

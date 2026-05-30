@@ -102,6 +102,19 @@ coord2!(
     sprite_anchor
 );
 coord2!(
+    /// Pixel dimensions of a loaded sprite profile.
+    SpriteSize,
+    sprite_size
+);
+coord2!(
+    /// Per-frame draw offset from a sprite script row.
+    ///
+    /// C++ `spriteScript[row].avOffset[frame]`: added to the sprite top-left
+    /// draw origin before blitting the frame.
+    SpriteFrameOffset,
+    sprite_frame_offset
+);
+coord2!(
     /// Point local to a sprite frame, such as a hand/action hotspot.
     SpriteLocalPoint,
     sprite_local_pt
@@ -115,6 +128,28 @@ coord2!(
     /// Screen-space point after viewport transform.
     ScreenPoint,
     screen_pt
+);
+coord2!(
+    /// Screen/UI dimensions.
+    ScreenSize,
+    screen_size
+);
+coord2!(
+    /// Projected map dimensions.
+    MapSize,
+    map_size
+);
+coord2!(
+    /// Pixel dimensions of the minimap texture/widget.
+    MinimapSize,
+    minimap_size
+);
+coord2!(
+    /// Half diagonal of a movement box in projected map space.
+    ///
+    /// C++ `GetHalfDiagonal()` returns `GetMoveBox(...).GetBottomRight()`.
+    MoveBoxHalfDiagonal,
+    move_box_half_diagonal
 );
 
 /// Screen-space axis-aligned bounding box.

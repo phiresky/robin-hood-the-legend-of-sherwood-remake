@@ -1111,7 +1111,7 @@ impl CharacterProfile {
         let mut center = self.center.to_geo();
         geo2d::serialize_geo_point(file, &mut center)?;
         if file.is_read_mode() {
-            self.center = SpriteAnchor::from_geo(center);
+            self.center = SpriteAnchor::new(center.x, center.y);
         }
         file.serialize_u16(&mut self.wake_up)?;
 
@@ -1209,7 +1209,7 @@ impl SoldierProfile {
         let mut center = self.center.to_geo();
         geo2d::serialize_geo_point(file, &mut center)?;
         if file.is_read_mode() {
-            self.center = SpriteAnchor::from_geo(center);
+            self.center = SpriteAnchor::new(center.x, center.y);
         }
         file.serialize_u16(&mut self.wake_up)?;
 

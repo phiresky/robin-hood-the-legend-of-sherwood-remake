@@ -26,7 +26,6 @@ use super::{
 };
 use crate::campaign::Campaign;
 use crate::element::EntityId;
-use crate::geo2d;
 use crate::minimap::HitMask;
 use crate::player_command::{PlayerCommand, PlayerInput};
 
@@ -99,7 +98,7 @@ pub struct GroundMarkSpriteData {
 /// Engine uses the canonical director view for this legacy minimap
 /// setup; local widget placement lives host-side.
 pub struct MinimapWidgetSetup {
-    pub corner_size: geo2d::Vec2D,
+    pub corner_size: crate::coordinates::ScreenSize,
     pub button_hit_mask: Option<HitMask>,
 }
 
@@ -742,7 +741,7 @@ mod tests {
     fn restore_preserves_host_level_fields() {
         let mut source_inner = EngineInner::new();
 
-        source_inner.cutscene_camera.level_size = crate::geo2d::pt(1234.0, 5678.0);
+        source_inner.cutscene_camera.level_size = crate::coordinates::MapSize::new(1234.0, 5678.0);
 
         let source = Engine {
             inner: source_inner,
@@ -760,7 +759,7 @@ mod tests {
 
         assert_eq!(
             restored.inner.cutscene_camera.level_size,
-            crate::geo2d::pt(1234.0, 5678.0)
+            crate::coordinates::MapSize::new(1234.0, 5678.0)
         );
     }
 }

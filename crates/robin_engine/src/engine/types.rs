@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // order on every client.
 use std::collections::BTreeMap;
 
-use crate::coordinates::{MapPoint, ScreenPoint};
+use crate::coordinates::{MapPoint, MapSize, ScreenPoint};
 use crate::geo2d::{self, Vec2D};
 use crate::natives::GameHost;
 use crate::script_manager::{ScriptInstance, ScriptManager};
@@ -375,7 +375,7 @@ pub struct CameraState {
     pub mechanized_zoom: bool,
 
     /// Level size in map units.
-    pub level_size: Vec2D,
+    pub level_size: MapSize,
 
     // Elastic/follow-camera display interpolation buffer. It still
     // lives beside the shared script camera until the legacy director
@@ -434,7 +434,7 @@ impl Default for CameraState {
             desired_zoom_factor: 1.0,
             zoom_init_done: false,
             mechanized_zoom: false,
-            level_size: geo2d::pt(0.0, 0.0),
+            level_size: MapSize::ZERO,
             displacement: geo2d::pt(0.0, 0.0),
             displacement_counter: 0,
             position_saved: ScreenPoint::ZERO,

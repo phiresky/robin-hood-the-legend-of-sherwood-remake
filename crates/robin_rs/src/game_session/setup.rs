@@ -7,7 +7,6 @@ use crate::Host;
 use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
-use crate::geo2d;
 use crate::hud_text::HudFonts;
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
@@ -33,10 +32,11 @@ use robin_assets::frame_holder as assets_frame_holder;
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::scb as assets_scb;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::SpriteLocalPoint;
+use robin_engine::coordinates::{
+    ScreenSize, SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize,
+};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::geo2d::Vec2D;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sbfile as engine_sbfile;
 use robin_engine::scb as engine_scb;
@@ -199,10 +199,9 @@ fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets) {
                         script.frame_ids.push(bank_id);
                         script.delays.push(frame.delay);
                         script.distances.push(frame.distance);
-                        script.offsets.push(Vec2D {
-                            x: frame.offset_x,
-                            y: frame.offset_y,
-                        });
+                        script
+                            .offsets
+                            .push(SpriteFrameOffset::new(frame.offset_x, frame.offset_y));
                         script.sound_ids.push(frame.sound_id);
                         script.sum_distance = script.sum_distance.saturating_add(frame.distance);
                     }
@@ -214,14 +213,8 @@ fn preload_hackable_character_dirs(host: &mut Host, assets: &mut LevelAssets) {
                     SpriteInfo {
                         scripts: std::sync::Arc::new(scripts),
                         conversion: std::sync::Arc::new(conversion),
-                        size: Vec2D {
-                            x: profile.width,
-                            y: profile.height,
-                        },
-                        center: Vec2D {
-                            x: profile.center_x,
-                            y: profile.center_y,
-                        },
+                        size: SpriteSize::new(profile.width, profile.height),
+                        center: SpriteAnchor::new(profile.center_x, profile.center_y),
                     },
                 );
                 tracing::info!("Loaded hackable character profile {cache_key}");
@@ -682,7 +675,7 @@ pub(super) fn load_mission_sprites(
     // the HUD layout.
     match cursor_res.get_dimension(resource_ids::RHMAP_CORNER) {
         Ok((btn_w, btn_h)) => {
-            host.minimap_corner_size = geo2d::pt(btn_w as f32, btn_h as f32);
+            host.minimap_corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
             if let Ok(pics) = cursor_res.get_pictures(resource_ids::RHMAP_CORNER) {
                 let corner_surfaces: Vec<u32> = pics
                     .iter()
@@ -872,7 +865,7 @@ pub(super) fn extract_minimap_widget_setup(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::MinimapWidgetSetup> {
     let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
-    let corner_size = geo2d::pt(btn_w as f32, btn_h as f32);
+    let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
     let mut button_hit_mask = None;
     if let Ok(pics) = cursor_res.get_pictures(resource_ids::RHMAP_CORNER)
         && let Some(Some(pic)) = pics.get(1)

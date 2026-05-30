@@ -22,9 +22,11 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{
+    MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal, WorldPoint3D, WorldVec3D,
+};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
-use crate::geo2d::{self, Vec2D};
+use crate::geo2d;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 
 // ---------------------------------------------------------------------------
@@ -1065,11 +1067,10 @@ impl PositionInterface {
     pub fn configure_for_actor(
         &mut self,
         pathfinder_idx: u8,
-        half_diagonal: Option<crate::geo2d::Vec2D>,
+        half_diagonal: Option<MoveBoxHalfDiagonal>,
         position_map: MapPoint,
     ) {
-        use crate::geo2d;
-        let hd = half_diagonal.unwrap_or(geo2d::pt(1.0, 1.0));
+        let hd = half_diagonal.unwrap_or(MoveBoxHalfDiagonal::new(1.0, 1.0));
         self.set_pathfinder_index(pathfinder_idx as u16);
         self.set_move_box(MoveBox::from_corners(
             MapVec::new(-hd.x, -hd.y),
@@ -1079,9 +1080,10 @@ impl PositionInterface {
     }
 
     /// Half diagonal of the current move box (bottom-right corner).
-    #[must_use = "method returns Vec2D by value; `pi.get_half_diagonal().x = v` silently modifies a temporary."]
-    pub fn get_half_diagonal(&self) -> Vec2D {
-        self.move_box.bottom_right().to_geo()
+    #[must_use = "method returns MoveBoxHalfDiagonal by value; `pi.get_half_diagonal().x = v` silently modifies a temporary."]
+    pub fn get_half_diagonal(&self) -> MoveBoxHalfDiagonal {
+        let hd = self.move_box.bottom_right();
+        MoveBoxHalfDiagonal::new(hd.x, hd.y)
     }
 
     #[inline]

@@ -25,7 +25,6 @@ use robin_engine::coordinates::{GroundPoint, MapPoint};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Ambiance, DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
-use robin_engine::geo2d as engine_geo2d;
 use robin_engine::markers::GroundMark;
 use robin_engine::mask as engine_mask;
 use robin_engine::minimap as engine_minimap;
@@ -2064,7 +2063,7 @@ pub(crate) fn render_minimap(
 fn refresh_dot(
     host: &Host,
     mm: &engine_minimap::MinimapState,
-    level_size: engine_geo2d::Vec2D,
+    level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
     dot_type: engine_minimap::DotType,
     widget_box: &engine_coordinates::ScreenBBox,

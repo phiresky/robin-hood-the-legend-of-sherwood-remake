@@ -15,12 +15,11 @@ use robin_assets::frame_holder::ProgressUpdate;
 use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{MapPoint, ScreenBBox};
+use robin_engine::coordinates::{MapPoint, MinimapSize, ScreenBBox};
 use robin_engine::engine::level_loading::{
     MinimapBitmapSetup, PreDecodedBackground, PreDecodedMinimap,
 };
 use robin_engine::engine::{Ambiance, Engine, GlobalOptions, PANNEL_HEIGHT};
-use robin_engine::geo2d;
 use robin_engine::minimap as engine_minimap;
 use robin_engine::player_profile::PlayerProfileManager;
 use robin_engine::sbfile;
@@ -375,7 +374,7 @@ pub fn apply_minimap(
 
     MinimapBitmapSetup {
         hit_mask,
-        map_size: geo2d::pt(map_w, map_h),
+        map_size: MinimapSize::new(map_w, map_h),
         saved_position,
     }
 }

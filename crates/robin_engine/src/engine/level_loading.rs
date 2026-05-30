@@ -4,7 +4,6 @@ use super::scroll_reveal::ScrollStatus;
 use super::*;
 use crate::coordinates::MapPoint;
 use crate::element::{BonusItemTypeExt, Entity, EntityId};
-use crate::geo2d;
 
 /// CPU-decoded background map ready for GPU upload.
 ///
@@ -36,7 +35,7 @@ pub struct PreDecodedMinimap {
 /// off-screen.
 pub struct MinimapBitmapSetup {
     pub hit_mask: crate::minimap::HitMask,
-    pub map_size: geo2d::Vec2D,
+    pub map_size: crate::coordinates::MinimapSize,
     pub saved_position: crate::coordinates::ScreenPoint,
 }
 
@@ -2051,7 +2050,7 @@ impl EngineInner {
                         Ok(info) => {
                             sprite.scripts = info.scripts.clone();
                             sprite.conversion = info.conversion.clone();
-                            sprite.center = crate::coordinates::SpriteAnchor::from_geo(info.center);
+                            sprite.center = info.center;
                             sprite.frame_profile_name = raw.filename.clone();
                             sprite.profile_cache_key = cache_key;
                             let w = info.size.x as u16;

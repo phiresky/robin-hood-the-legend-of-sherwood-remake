@@ -3834,12 +3834,11 @@ pub fn build_shoot_bow_element(shooter: EntityId, target: EntityId) -> SequenceE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coordinates::SpriteLocalPoint;
+    use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
     use crate::element::{
         ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
     };
     use crate::element::{ActorPc, ActorSoldier, NpcData, PcData, SoldierData};
-    use crate::geo2d::Vec2D;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
@@ -3960,7 +3959,7 @@ mod tests {
                 frame_ids: vec![1, 2, 3],
                 delays: vec![0, 0, 0],
                 distances: vec![0, 0, 0],
-                offsets: vec![Vec2D { x: 0.0, y: 0.0 }; 3],
+                offsets: vec![SpriteFrameOffset::ZERO; 3],
                 sound_ids: vec![0, 0, 0],
             });
         }

@@ -7957,7 +7957,7 @@ pub(super) fn apply_drunken_path_deviation(
     is_running: bool,
     layer: u16,
     move_box: &crate::coordinates::MoveBox,
-    half_diagonal: crate::geo2d::Vec2D,
+    half_diagonal: crate::coordinates::MoveBoxHalfDiagonal,
     grid: &crate::fast_find_grid::FastFindGrid,
     rng: &mut fastrand::Rng,
 ) -> Vec<crate::coordinates::MapPoint> {

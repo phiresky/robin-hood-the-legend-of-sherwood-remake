@@ -8,7 +8,7 @@
 //! no live call site.
 
 use crate::ai::RepulsivePoint as StaticRepulsivePoint;
-use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox};
+use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
 use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
 use crate::entities::Entities;
@@ -470,7 +470,7 @@ pub struct AntiCollisionState<'a> {
     /// `find_authorized_position` fallback.
     pub move_box: crate::coordinates::MoveBox,
     /// Half-diagonal used by `is_reachable_thick`.
-    pub half_diagonal: geo2d::Vec2D,
+    pub half_diagonal: MoveBoxHalfDiagonal,
     /// Current movement goal (for the break-through barge).
     pub goal_map: MapPoint,
 }

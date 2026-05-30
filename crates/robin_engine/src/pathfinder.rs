@@ -35,7 +35,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapBBox, MapPoint};
+use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
 use crate::element::EntityId;
 use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d::{self, BBox2D, Vec2D, pt};
@@ -351,7 +351,7 @@ pub struct PathGraphStatic {
     /// Alternative motion areas.
     pub alternative_move_layers: Vec<Vec<MotionArea>>,
     /// Half-diagonal vectors for each unit size.
-    pub half_diagonals: Vec<Vec2D>,
+    pub half_diagonals: Vec<MoveBoxHalfDiagonal>,
     /// Sector-to-area conversion table.
     pub sector_conversion: Vec<SectorToArea>,
 }
@@ -486,8 +486,9 @@ impl PathGraph {
             let y =
                 f32::from_le_bytes([data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7]]);
             pos += 8;
-            self.static_mut().half_diagonals.push(pt(x, y));
-            grid.add_move_box_half_diagonal(pt(x, y));
+            let half_diagonal = MoveBoxHalfDiagonal::new(x, y);
+            self.static_mut().half_diagonals.push(half_diagonal);
+            grid.add_move_box_half_diagonal(half_diagonal);
         }
         Ok(pos)
     }
@@ -565,8 +566,9 @@ impl PathGraph {
             let x = read_f32(data, &mut pos)?;
             let y = read_f32(data, &mut pos)?;
             if !already_loaded {
-                self.static_mut().half_diagonals.push(pt(x, y));
-                grid.add_move_box_half_diagonal(pt(x, y));
+                let half_diagonal = MoveBoxHalfDiagonal::new(x, y);
+                self.static_mut().half_diagonals.push(half_diagonal);
+                grid.add_move_box_half_diagonal(half_diagonal);
             }
         }
 
@@ -841,7 +843,7 @@ pub struct PathFinderRuntime {
     current_half_diagonal_idx: u16,
 
     /// Current half-diagonal vector.
-    current_half_diagonal: Vec2D,
+    current_half_diagonal: MoveBoxHalfDiagonal,
 
     /// Current motion area indices (layer, area).
     current_motion_area: (usize, usize),
@@ -990,7 +992,7 @@ impl PathFinderRuntime {
             shortest_distance_found: 2e10,
             current_layer: 0,
             current_half_diagonal_idx: 0,
-            current_half_diagonal: pt(0.0, 0.0),
+            current_half_diagonal: MoveBoxHalfDiagonal::ZERO,
             current_motion_area: (0, 0),
             current_graph_area: (0, 0),
         }
@@ -1479,7 +1481,12 @@ impl PathFinderRuntime {
 
     /// Compute the world position of a docking point.
     #[inline]
-    pub fn docking_point(&self, node: NodeIdx, place: u8, half_diagonal: Vec2D) -> MapPoint {
+    pub fn docking_point(
+        &self,
+        node: NodeIdx,
+        place: u8,
+        half_diagonal: MoveBoxHalfDiagonal,
+    ) -> MapPoint {
         let pos = self.graph.nodes[node.0 as usize].position;
         match place {
             TOP_LEFT => MapPoint::new(pos.x - half_diagonal.x, pos.y - half_diagonal.y),
@@ -1496,7 +1503,7 @@ impl PathFinderRuntime {
         point: MapPoint,
         node: NodeIdx,
         docking_place: u8,
-        half_diagonal: Vec2D,
+        half_diagonal: MoveBoxHalfDiagonal,
         direct: bool,
     ) -> bool {
         let dock_pt = self.docking_point(node, docking_place, half_diagonal);
@@ -2244,7 +2251,7 @@ mod tests {
         });
 
         let node = NodeIdx(0);
-        let hd = pt(10.0, 8.0);
+        let hd = MoveBoxHalfDiagonal::new(10.0, 8.0);
 
         assert_eq!(
             runtime.docking_point(node, TOP_LEFT, hd),
@@ -2515,7 +2522,11 @@ mod tests {
                 motion_obstacles: Vec::new(),
             }]);
 
-        runtime.graph.static_mut().half_diagonals.push(pt(5.0, 5.0));
+        runtime
+            .graph
+            .static_mut()
+            .half_diagonals
+            .push(MoveBoxHalfDiagonal::new(5.0, 5.0));
         runtime.graph.layers.push(vec![Vec::new()]); // One layer, one area, no obstacles
         runtime.graph.alternative_layers.push(vec![Vec::new()]);
         runtime.graph.states.push(vec![0]);

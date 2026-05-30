@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{GroundBBox, MapBBox, MapPoint, MapVec, MoveBox};
+use crate::coordinates::{GroundBBox, MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
 use crate::geo2d::{self, BBox2D, Vec2D, pt};
 
 // ---------------------------------------------------------------------------
@@ -731,7 +731,7 @@ pub struct LevelGrid {
     pub layers: Vec<GridLayer>,
 
     /// Move-box half-diagonals for each unit size.
-    pub move_box_half_diagonals: Vec<Vec2D>,
+    pub move_box_half_diagonals: Vec<MoveBoxHalfDiagonal>,
 
     /// Lookup from sector_number (i16) to index in `sectors` vec.
     /// Populated during level loading for O(1) sector lookups by number.
@@ -1076,7 +1076,7 @@ impl FastFindGrid {
 
     // ── Move box half-diagonals ──
 
-    pub fn add_move_box_half_diagonal(&mut self, hd: Vec2D) {
+    pub fn add_move_box_half_diagonal(&mut self, hd: MoveBoxHalfDiagonal) {
         self.level_mut().move_box_half_diagonals.push(hd);
     }
 
@@ -1084,7 +1084,7 @@ impl FastFindGrid {
     /// been populated yet (e.g. pre-level-load) or the index is out of
     /// range.  Callers building a `PositionInterface` fall back to a
     /// unit-sized box in that case.
-    pub fn try_move_box_half_diagonal(&self, index: usize) -> Option<Vec2D> {
+    pub fn try_move_box_half_diagonal(&self, index: usize) -> Option<MoveBoxHalfDiagonal> {
         self.level.move_box_half_diagonals.get(index).copied()
     }
 
@@ -2532,7 +2532,7 @@ impl FastFindGrid {
     pub fn build_thick_move_corridor(
         p1: MapPoint,
         p2: MapPoint,
-        half_diagonal: Vec2D,
+        half_diagonal: MoveBoxHalfDiagonal,
     ) -> Option<ThickMoveCorridor> {
         let move_vec = pt(p2.x - p1.x, p2.y - p1.y);
 
@@ -2669,7 +2669,7 @@ impl FastFindGrid {
         p1: MapPoint,
         p2: MapPoint,
         layer: u16,
-        half_diagonal: Vec2D,
+        half_diagonal: MoveBoxHalfDiagonal,
     ) -> bool {
         if p1 == p2 {
             return true;
@@ -2928,7 +2928,7 @@ impl FastFindGrid {
             return false;
         }
         // Check thick corridor is clear
-        let half_diag = pt(move_box.x_max(), move_box.y_max());
+        let half_diag = MoveBoxHalfDiagonal::new(move_box.x_max(), move_box.y_max());
         self.is_reachable_thick(p1, p2, layer, half_diag)
     }
 
@@ -2949,7 +2949,7 @@ impl FastFindGrid {
         p1: MapPoint,
         p2: MapPoint,
         layer: u16,
-        half_diagonal: Vec2D,
+        half_diagonal: MoveBoxHalfDiagonal,
         mobile_lines: &[GridLine],
     ) -> bool {
         if !self.is_reachable_thick(p1, p2, layer, half_diagonal) {
@@ -3404,7 +3404,7 @@ mod tests {
     #[test]
     fn test_is_reachable_thick() {
         let grid = make_grid_with_line();
-        let hd = pt(5.0, 5.0);
+        let hd = MoveBoxHalfDiagonal::new(5.0, 5.0);
 
         // Movement entirely above the line — reachable
         assert!(grid.is_reachable_thick(
@@ -3433,7 +3433,7 @@ mod tests {
 
     #[test]
     fn test_thick_move_corridor_construction() {
-        let hd = pt(10.0, 10.0);
+        let hd = MoveBoxHalfDiagonal::new(10.0, 10.0);
 
         // Right + down
         let corridor = FastFindGrid::build_thick_move_corridor(
@@ -3507,7 +3507,7 @@ mod tests {
     #[test]
     fn test_is_reachable_thick_mobile() {
         let grid = make_grid_with_line();
-        let hd = pt(5.0, 5.0);
+        let hd = MoveBoxHalfDiagonal::new(5.0, 5.0);
 
         // With no mobile repulsive lines the call collapses to
         // `is_reachable_thick`.

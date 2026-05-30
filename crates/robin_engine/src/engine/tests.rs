@@ -3,8 +3,9 @@
 use super::movement::mercenary_formation_destinations;
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapPoint, MapSize, SpriteFrameOffset};
 use crate::game_operation::GameCode;
+use crate::geo2d;
 
 #[test]
 fn engine_creation() {
@@ -36,7 +37,7 @@ fn scrolling_table_generation() {
 fn zoom_state_machine() {
     let display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     engine.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
 
     assert!(engine.is_zoom_possible(&display));
@@ -57,7 +58,7 @@ fn zoom_state_machine() {
 #[test]
 fn camera_clip_view() {
     let mut camera = CameraState {
-        level_size: geo2d::pt(2000.0, 1500.0),
+        level_size: MapSize::new(2000.0, 1500.0),
         zoom_factor: 1.0,
         view_position: crate::coordinates::MapPoint::new(-100.0, -50.0),
         ..Default::default()
@@ -393,7 +394,7 @@ fn host_display_scroll_does_not_mutate_script_camera() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
     display.display_op = DisplayOpCode::Scroll;
@@ -413,7 +414,7 @@ fn camera_display_scroll_mutates_script_camera() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
     engine.cutscene_camera.display.display_op = DisplayOpCode::Scroll;
@@ -746,7 +747,7 @@ fn ambiance_night_colors() {
 #[test]
 fn center_on_point() {
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
+    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.center_on_point(0, crate::coordinates::MapPoint::new(1000.0, 800.0));
     // View should be offset by half the full screen on both axes
     // (raw screen vector divided by 2*zoom; the bottom-panel exclusion
@@ -820,7 +821,7 @@ fn post_load_fixups_aborts_midzoom() {
     // `EngineInner::post_load_fixups` so `Engine::restore` can't
     // leave the engine mid-zoom.
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     engine
         .cutscene_camera
         .display
@@ -960,7 +961,7 @@ fn mission_stat_resets_on_new_mission() {
 fn resize_snaps_zoom() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(500.0, 400.0); // Small level
+    engine.cutscene_camera.level_size = MapSize::new(500.0, 400.0); // Small level
     engine.cutscene_camera.zoom_factor = 0.5;
     display.background_transform.current_zoom_level = 0;
 
@@ -1153,7 +1154,7 @@ fn is_sherwood_mission_no_mission() {
 fn perform_check_scroll_clamps_right() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(2000.0, 1500.0);
+    engine.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(1500.0, 0.0);
     display.background_transform.scrolling_vector = geo2d::pt(400.0, 0.0);
 
@@ -1168,7 +1169,7 @@ fn perform_check_scroll_clamps_right() {
 fn perform_check_scroll_clamps_left() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(2000.0, 1500.0);
+    engine.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(10.0, 0.0);
     display.background_transform.scrolling_vector = geo2d::pt(-50.0, 0.0);
 
@@ -1181,7 +1182,7 @@ fn perform_check_scroll_clamps_left() {
 fn perform_check_scroll_valid() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
+    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 500.0);
     display.background_transform.scrolling_vector = geo2d::pt(10.0, 10.0);
 
@@ -1236,7 +1237,7 @@ fn win_respects_show_window_true() {
 fn zoom_change_state_updates_level() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     assert_eq!(display.background_transform.current_zoom_level, 1);
 
     // Zoom up: level should increment to 2
@@ -1259,7 +1260,7 @@ fn zoom_change_state_updates_level() {
 fn zoom_deferred_when_scrolling() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     // Simulate active scrolling
     display.background_transform.current_x_scrolling_level = 5;
 
@@ -1754,7 +1755,7 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
 fn camera_slide_approaches_target() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
+    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 100.0);
     engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
     engine.cutscene_camera.camera_wanted = crate::coordinates::MapPoint::new(500.0, 300.0);
@@ -1773,7 +1774,7 @@ fn camera_slide_approaches_target() {
 fn camera_slide_cancels_at_target() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
+    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 300.0);
     engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
 
@@ -1787,7 +1788,7 @@ fn camera_slide_cancels_at_target() {
 fn resize_aborts_zoom() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     display.display_op = DisplayOpCode::InZoom;
     display.background_transform.zoom_to_up = true;
     engine.cutscene_camera.zoom_init_done = true;
@@ -1804,7 +1805,7 @@ fn dead_pc_triggers_failure() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4000.0, 3000.0);
+    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
 
     // Add a PC entity
     let mut pc_elem = crate::element::ElementData {
@@ -1831,7 +1832,7 @@ fn dead_pc_triggers_failure() {
 fn zoom_step_completes_after_8_steps() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = geo2d::pt(4096.0, 4096.0);
+    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     display.background_transform.zoom_to_up = true;
     display.background_transform.zoom_count = 0;
     display.background_transform.number_of_zoom_steps = 8;
@@ -2116,7 +2117,7 @@ fn bind_test_action_point(
         frame_ids: vec![1],
         delays: vec![1],
         distances: vec![0],
-        offsets: vec![crate::geo2d::pt(0.0, 0.0)],
+        offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
     let mut conversion =

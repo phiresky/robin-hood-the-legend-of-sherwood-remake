@@ -74,7 +74,6 @@ use crate::ai::AiGlobalState;
 use crate::element::{Entity, EntityId};
 use crate::entities::Entities;
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self};
 use crate::markers::GroundMark;
 use crate::messenger::{Message, MessageType, Messenger, SimpleMessage};
 use crate::mission_stat::MissionStat;
@@ -552,7 +551,7 @@ impl EngineInner {
         //
         Self {
             cutscene_camera: CameraState {
-                level_size: geo2d::pt(0.0, 0.0),
+                level_size: crate::coordinates::MapSize::ZERO,
                 zoom_factor: 1.0,
                 desired_zoom_factor: 1.0,
                 camera_slide: crate::coordinates::MapPoint::new(-1.0, -1.0),

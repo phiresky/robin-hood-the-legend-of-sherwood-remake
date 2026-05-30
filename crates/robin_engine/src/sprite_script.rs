@@ -12,8 +12,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::SpriteLocalPoint;
-use crate::geo2d::Vec2D;
+use crate::coordinates::{SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteSize};
 use crate::order::OrderType;
 use crate::sbfile::SbFile;
 
@@ -123,7 +122,7 @@ pub struct SpriteScript {
     /// Movement distance per frame.
     pub distances: Vec<u16>,
     /// X/Y draw offset per frame.
-    pub offsets: Vec<Vec2D>,
+    pub offsets: Vec<SpriteFrameOffset>,
     /// Sound effect ID per frame (0 = none).
     pub sound_ids: Vec<u16>,
 }
@@ -166,9 +165,9 @@ pub struct SpriteInfo {
     /// [`UNMAPPED`] (`0xFFFF`) means no row is assigned for that action.
     pub conversion: std::sync::Arc<Vec<u16>>,
     /// Sprite bounding size (width, height).
-    pub size: Vec2D,
+    pub size: SpriteSize,
     /// Rotation center point.
-    pub center: Vec2D,
+    pub center: SpriteAnchor,
 }
 
 impl SpriteInfo {
@@ -474,14 +473,8 @@ impl SpriteScriptor {
         let info = SpriteInfo {
             scripts: std::sync::Arc::new(scripts),
             conversion: std::sync::Arc::new(conversion),
-            size: Vec2D {
-                x: header.width as f32,
-                y: header.height as f32,
-            },
-            center: Vec2D {
-                x: header.rotation_x as f32,
-                y: header.rotation_y as f32,
-            },
+            size: SpriteSize::new(header.width as f32, header.height as f32),
+            center: SpriteAnchor::new(header.rotation_x as f32, header.rotation_y as f32),
         };
 
         self.cache.insert(cache_key.to_owned(), info);
@@ -567,14 +560,8 @@ impl SpriteScriptor {
             let info = SpriteInfo {
                 scripts: std::sync::Arc::new(scripts),
                 conversion: std::sync::Arc::new(conversion),
-                size: Vec2D {
-                    x: header.width as f32,
-                    y: header.height as f32,
-                },
-                center: Vec2D {
-                    x: header.rotation_x as f32,
-                    y: header.rotation_y as f32,
-                },
+                size: SpriteSize::new(header.width as f32, header.height as f32),
+                center: SpriteAnchor::new(header.rotation_x as f32, header.rotation_y as f32),
             };
             out.push((header.name, info));
         }
@@ -636,10 +623,10 @@ impl SpriteScriptor {
                 // Distance is stored as an unsigned but interpreted as signed —
                 // take the absolute value.
                 script.distances.push((fh.distance as i16).unsigned_abs());
-                script.offsets.push(Vec2D {
-                    x: fh.x_offset as f32,
-                    y: fh.y_offset as f32,
-                });
+                script.offsets.push(SpriteFrameOffset::new(
+                    fh.x_offset as f32,
+                    fh.y_offset as f32,
+                ));
                 script.sound_ids.push(fh.sound_id);
 
                 speed_accum += fh.distance as f32;
@@ -725,8 +712,8 @@ mod tests {
         let info = SpriteInfo {
             scripts: std::sync::Arc::new(vec![SpriteScript::default(), SpriteScript::default()]),
             conversion: std::sync::Arc::new(conversion),
-            size: Vec2D { x: 64.0, y: 64.0 },
-            center: Vec2D { x: 32.0, y: 32.0 },
+            size: SpriteSize::new(64.0, 64.0),
+            center: SpriteAnchor::new(32.0, 32.0),
         };
 
         assert_eq!(info.row_for_action(0), Some(0));
@@ -746,9 +733,9 @@ mod tests {
             delays: vec![3, 3, 3],
             distances: vec![5, 5, 5],
             offsets: vec![
-                Vec2D { x: 0.0, y: 0.0 },
-                Vec2D { x: 1.0, y: 0.0 },
-                Vec2D { x: 2.0, y: 0.0 },
+                SpriteFrameOffset::new(0.0, 0.0),
+                SpriteFrameOffset::new(1.0, 0.0),
+                SpriteFrameOffset::new(2.0, 0.0),
             ],
             sound_ids: vec![0, 0, 1],
             ..Default::default()
@@ -757,8 +744,8 @@ mod tests {
         let info = SpriteInfo {
             scripts: std::sync::Arc::new(vec![script]),
             conversion: std::sync::Arc::new(conversion),
-            size: Vec2D { x: 128.0, y: 128.0 },
-            center: Vec2D { x: 64.0, y: 64.0 },
+            size: SpriteSize::new(128.0, 128.0),
+            center: SpriteAnchor::new(64.0, 64.0),
         };
 
         let s = info.script_for_action(0).unwrap();
@@ -817,9 +804,9 @@ mod tests {
             delays: vec![10, 10, 10],
             distances: vec![2, 2, 2],
             offsets: vec![
-                Vec2D { x: 0.0, y: 0.0 },
-                Vec2D { x: 1.0, y: 1.0 },
-                Vec2D { x: 2.0, y: 2.0 },
+                SpriteFrameOffset::new(0.0, 0.0),
+                SpriteFrameOffset::new(1.0, 1.0),
+                SpriteFrameOffset::new(2.0, 2.0),
             ],
             sound_ids: vec![0, 0, 0],
             average_speed: 0.2,
@@ -830,8 +817,8 @@ mod tests {
         let info = SpriteInfo {
             scripts: std::sync::Arc::new(vec![script]),
             conversion: std::sync::Arc::new(conversion),
-            size: Vec2D { x: 48.0, y: 48.0 },
-            center: Vec2D { x: 24.0, y: 24.0 },
+            size: SpriteSize::new(48.0, 48.0),
+            center: SpriteAnchor::new(24.0, 24.0),
         };
 
         let json = serde_json::to_string(&info).unwrap();

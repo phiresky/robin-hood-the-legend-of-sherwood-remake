@@ -8,8 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, ScreenBBox, ScreenPoint};
-use crate::geo2d::{Vec2D, pt};
+use crate::coordinates::{MapPoint, MapSize, MinimapSize, ScreenBBox, ScreenPoint, ScreenSize};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constants
@@ -22,7 +21,7 @@ const MINUS_VALUE: f32 = 0.1;
 const DELAYED_REFRESH_TIMEOUT: u32 = 25;
 
 /// Dead zone around the minimap edges that is not part of the usable map area.
-pub const NON_MAP_AREA: Vec2D = Vec2D { x: 14.0, y: 24.0 };
+pub const NON_MAP_AREA: ScreenSize = ScreenSize { x: 14.0, y: 24.0 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CustomDot — script-overridable dot appearance
@@ -293,7 +292,7 @@ pub struct MinimapState {
     pub(crate) position_before_dragging: ScreenPoint,
 
     /// Size of the map bitmap in pixels.
-    pub(crate) map_size: Vec2D,
+    pub(crate) map_size: MinimapSize,
 
     /// Current bounding box of the deployed map.
     pub(crate) map_box: ScreenBBox,
@@ -334,7 +333,7 @@ impl Default for MinimapState {
             capture: false,
             dragging_point: ScreenPoint::ZERO,
             position_before_dragging: ScreenPoint::ZERO,
-            map_size: pt(0.0, 0.0),
+            map_size: MinimapSize::ZERO,
             map_box: ScreenBBox::new(),
             button_box: ScreenBBox::new(),
             ui_state: UIState::Default,
@@ -368,7 +367,7 @@ impl MinimapState {
     }
 
     /// Size of the map bitmap in pixels (zero vector until loaded).
-    pub fn map_size(&self) -> Vec2D {
+    pub fn map_size(&self) -> MinimapSize {
         self.map_size
     }
 
@@ -578,8 +577,8 @@ impl MinimapState {
 
     /// Convert a world (engine) position to a minimap pixel position.
     ///
-    /// `level_size` is the total level dimensions in world units.
-    pub fn real_to_map(&self, engine_pos: MapPoint, level_size: Vec2D) -> Option<ScreenPoint> {
+    /// `level_size` is the total projected level dimensions in map units.
+    pub fn real_to_map(&self, engine_pos: MapPoint, level_size: MapSize) -> Option<ScreenPoint> {
         if !self.map_box.is_somewhere() {
             return None;
         }
@@ -610,8 +609,8 @@ impl MinimapState {
 
     /// Convert a minimap pixel position back to a world (engine) position.
     ///
-    /// `level_size` is the total level dimensions in world units.
-    pub fn map_to_real(&self, map_pos: ScreenPoint, level_size: Vec2D) -> Option<MapPoint> {
+    /// `level_size` is the total projected level dimensions in map units.
+    pub fn map_to_real(&self, map_pos: ScreenPoint, level_size: MapSize) -> Option<MapPoint> {
         if !self.map_box.is_somewhere() {
             return None;
         }
@@ -633,7 +632,7 @@ impl MinimapState {
             return None;
         }
 
-        let local = pt(
+        let local = ScreenPoint::new(
             map_pos.x - usable.top_left().x,
             map_pos.y - usable.top_left().y,
         );
@@ -651,7 +650,7 @@ impl MinimapState {
     pub(crate) fn set_widget_position(
         &mut self,
         base: ScreenPoint,
-        corner_size: Vec2D,
+        corner_size: ScreenSize,
         screen_width: f32,
         screen_height: f32,
     ) {
@@ -1346,7 +1345,7 @@ mod tests {
         let mut mm = MinimapState::new();
         mm.map_box = ScreenBBox::from_coords(100.0, 100.0, 300.0, 300.0);
 
-        let level_size = pt(1000.0, 1000.0);
+        let level_size = MapSize::new(1000.0, 1000.0);
 
         // Top-left corner of the world → near top-left of usable area.
         let result = mm.real_to_map(MapPoint::new(0.0, 0.0), level_size).unwrap();

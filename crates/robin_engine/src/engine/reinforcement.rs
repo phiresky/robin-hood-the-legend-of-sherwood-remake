@@ -243,7 +243,7 @@ impl EngineInner {
             .get_entity(new_id)
             .map(|e| e.position_iface())
             .map(|pi| pi.get_half_diagonal())
-            .unwrap_or_else(|| crate::geo2d::pt(12.0, 8.0));
+            .unwrap_or_else(|| crate::coordinates::MoveBoxHalfDiagonal::new(12.0, 8.0));
         let mut jitter: Option<MapPoint> = None;
         for _ in 0..10 {
             let dx = crate::sim_rng::i32(-50..=50) as f32;

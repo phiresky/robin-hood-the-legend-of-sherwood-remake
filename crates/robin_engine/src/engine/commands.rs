@@ -2680,7 +2680,7 @@ impl EngineInner {
         let aggressor_vec = aggressor_line.vector();
         let aggressor_len = aggressor_line.norm().max(f32::EPSILON);
         let inv_len = 1.0 / aggressor_len;
-        let pt_on_line = crate::geo2d::pt(
+        let pt_on_line = crate::coordinates::MapPoint::new(
             aggressor_line.point_b.x - coeff * aggressor_vec.x * inv_len,
             aggressor_line.point_b.y - coeff * aggressor_vec.y * inv_len,
         );
@@ -2700,10 +2700,7 @@ impl EngineInner {
             ..
         } = &mut move_elem.data
         {
-            *destination = crate::coordinates::MapPoint {
-                x: pt_on_line.x,
-                y: pt_on_line.y,
-            };
+            *destination = pt_on_line;
             *tolerance = 0.0;
             *flags |= crate::sequence::MoveFlags::LINE;
             *line_id = crate::jump_line::JumpLineIndex::new(aggressor_line_idx);
@@ -3778,7 +3775,7 @@ mod tests {
         id: EntityId,
         action: crate::order::OrderType,
         hotspot: crate::coordinates::SpriteLocalPoint,
-        center: crate::geo2d::GeoPoint2D,
+        center: crate::coordinates::SpriteAnchor,
     ) {
         let script = SpriteScript {
             action_id: action as u16,
@@ -3789,7 +3786,7 @@ mod tests {
             frame_ids: vec![1],
             delays: vec![1],
             distances: vec![0],
-            offsets: vec![crate::geo2d::pt(0.0, 0.0)],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
         let mut conversion = vec![UNMAPPED; crate::sprite_script::NONANIMATION_END];
@@ -3798,7 +3795,7 @@ mod tests {
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
-        sprite.center = crate::coordinates::SpriteAnchor::from_geo(center);
+        sprite.center = center;
         let element = engine.get_entity_mut(id).unwrap().element_data_mut();
         let position = element.position_map();
         let direction = element.direction();
@@ -3882,7 +3879,7 @@ mod tests {
             pc_id,
             crate::order::OrderType::Listening,
             crate::coordinates::SpriteLocalPoint::new(30.0, 0.0),
-            crate::geo2d::pt(0.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
         );
 
         let mut npc = ActorCivilian {
@@ -4041,7 +4038,7 @@ mod tests {
             pc_id,
             crate::order::OrderType::WakingUp,
             crate::coordinates::SpriteLocalPoint::new(33.0, 0.0),
-            crate::geo2d::pt(10.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(10.0, 0.0),
         );
         let mut victim = ActorPc {
             element: ElementData {
@@ -4087,7 +4084,7 @@ mod tests {
             pc_id,
             crate::order::OrderType::DroppingAle,
             crate::coordinates::SpriteLocalPoint::new(13.0, 0.0),
-            crate::geo2d::pt(0.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
         );
 
         engine.apply_drop_ale_at(
@@ -4119,7 +4116,7 @@ mod tests {
             pc_id,
             crate::order::OrderType::Searching,
             crate::coordinates::SpriteLocalPoint::new(19.0, 0.0),
-            crate::geo2d::pt(0.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 
@@ -4172,7 +4169,7 @@ mod tests {
             pc_id,
             crate::order::OrderType::ClimbingUpOnShoulders,
             crate::coordinates::SpriteLocalPoint::new(11.0, 0.0),
-            crate::geo2d::pt(0.0, 0.0),
+            crate::coordinates::SpriteAnchor::new(0.0, 0.0),
         );
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
 

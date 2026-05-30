@@ -12,7 +12,6 @@
 use crate::coordinates::{MapPoint, ScreenPoint};
 use crate::element::{Command, EntityId};
 use crate::engine::EngineStateRequest;
-use crate::geo2d;
 use crate::sequence::Field;
 use serde::{Deserialize, Serialize};
 
@@ -443,7 +442,7 @@ pub enum PlayerCommand {
     /// Window resize: reposition the minimap button / map boxes.
     MinimapResize {
         base: ScreenPoint,
-        corner_size: geo2d::Vec2D,
+        corner_size: crate::coordinates::ScreenSize,
     },
     /// Left mouse down on the minimap widget. Starts a drag when the
     /// map is deployed.
