@@ -3938,7 +3938,6 @@ dependencies = [
  "kira",
  "libc",
  "librashader",
- "md-5",
  "mint",
  "mlua",
  "num_enum",
