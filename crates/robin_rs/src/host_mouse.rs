@@ -135,7 +135,7 @@ pub fn choose_mouse_pointer_for_no_action(
     let num_selected = selected.len();
 
     // Outside of grid → can't go there.
-    if !engine.fast_grid().is_inside_grid_point(mouse_map.to_geo()) {
+    if !engine.fast_grid().is_inside_grid_point(mouse_map) {
         return RHMOUSE_CANTGOTHERE;
     }
 

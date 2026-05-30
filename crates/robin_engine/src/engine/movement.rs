@@ -792,7 +792,7 @@ impl EngineInner {
         );
         if self
             .fast_grid
-            .find_authorized_position_toward(&mut bbox, reference.to_geo(), layer)
+            .find_authorized_position_toward(&mut bbox, reference, layer)
         {
             Some(MapPoint::from_geo(bbox.center()))
         } else {

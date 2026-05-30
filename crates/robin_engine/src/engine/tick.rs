@@ -3640,12 +3640,11 @@ impl EngineInner {
                                 // `find_authorized_position` to nudge
                                 // it onto a walkable cell.
                                 let spawn_pos = {
-                                    let pos_geo = crate::geo2d::pt(pos.x, pos.y);
                                     let mut b = crate::geo2d::BBox2D::new();
-                                    b.expand_point(pos_geo);
+                                    b.expand_point(pos.to_geo());
                                     if self
                                         .fast_grid
-                                        .find_authorized_position_toward(&mut b, pos_geo, layer)
+                                        .find_authorized_position_toward(&mut b, pos, layer)
                                     {
                                         crate::coordinates::MapPoint::from(b.center())
                                     } else {
@@ -3787,12 +3786,11 @@ impl EngineInner {
                             // when possible (same authorized-position
                             // handoff as generic DropAmmo above).
                             let spawn_pos = {
-                                let pos_geo = crate::geo2d::pt(pos.x, pos.y);
                                 let mut b = crate::geo2d::BBox2D::new();
-                                b.expand_point(pos_geo);
+                                b.expand_point(pos.to_geo());
                                 if self
                                     .fast_grid
-                                    .find_authorized_position_toward(&mut b, pos_geo, layer)
+                                    .find_authorized_position_toward(&mut b, pos, layer)
                                 {
                                     crate::coordinates::MapPoint::from(b.center())
                                 } else {
@@ -7434,7 +7432,7 @@ impl EngineInner {
                             let mut box_at = move_box.translated(dest_geo);
                             if self.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
-                                dest_geo,
+                                dest,
                                 probe.layer,
                             ) {
                                 let center = box_at.center();

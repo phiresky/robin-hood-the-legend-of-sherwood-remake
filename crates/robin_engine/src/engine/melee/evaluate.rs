@@ -352,7 +352,7 @@ impl EngineInner {
             box_at_dest.translate(crate::geo2d::pt(destination.x, destination.y));
             if self
                 .fast_grid
-                .find_authorized_position_toward(&mut box_at_dest, p1, my_layer)
+                .find_authorized_position_toward(&mut box_at_dest, my_pos_map, my_layer)
                 && let Some(rect) = box_at_dest.0
             {
                 let center = rect.center();

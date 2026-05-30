@@ -1040,9 +1040,14 @@ impl FastFindGrid {
 
     // ── Grid indexing ──
 
-    /// Test if a world-space point is inside the grid.
+    /// Test if a projected map point is inside the grid.
     #[inline]
-    pub fn is_inside_grid_point(&self, point: GeoPoint2D) -> bool {
+    pub fn is_inside_grid_point(&self, point: MapPoint) -> bool {
+        self.is_inside_grid_point_geo(point.to_geo())
+    }
+
+    #[inline]
+    fn is_inside_grid_point_geo(&self, point: GeoPoint2D) -> bool {
         let x = point.x as i32;
         let y = point.y as i32;
         x >= 0
@@ -1075,9 +1080,14 @@ impl FastFindGrid {
         }
     }
 
-    /// Compute the flat block index for a world-space point on a given layer.
+    /// Compute the flat block index for a projected map point on a given layer.
     #[inline]
-    pub fn get_block_index(&self, point: GeoPoint2D, layer: u16) -> usize {
+    pub fn get_block_index(&self, point: MapPoint, layer: u16) -> usize {
+        self.get_block_index_geo(point.to_geo(), layer)
+    }
+
+    #[inline]
+    fn get_block_index_geo(&self, point: GeoPoint2D, layer: u16) -> usize {
         let bx = (point.x as i32) >> 6; // divide by 64
         let by = (point.y as i32) >> 6;
         (bx as usize)
@@ -1712,7 +1722,7 @@ impl FastFindGrid {
     /// (=light-at-night) sector.
     pub fn is_in_shadow_sector(&self, point: GeoPoint2D, layer: u16) -> bool {
         use crate::sector::SectorType;
-        let block_idx = self.get_block_index(point, layer);
+        let block_idx = self.get_block_index_geo(point, layer);
         self.get_sectors_at_block(block_idx, SectorType::SHADOW)
             .iter()
             .any(|(_, s)| s.contains_point(point))
@@ -1792,8 +1802,8 @@ impl FastFindGrid {
         }
 
         let mut sector = None;
-        if self.is_inside_grid_point(landing_screen) {
-            let block_idx = self.get_block_index(landing_screen, layer);
+        if self.is_inside_grid_point_geo(landing_screen) {
+            let block_idx = self.get_block_index_geo(landing_screen, layer);
             for (_, motion_sector) in self.get_sectors_at_block(block_idx, SectorType::MOTION) {
                 if motion_sector.sector_type.is_area() {
                     if motion_sector.contains_point(landing_screen) {
@@ -1836,10 +1846,10 @@ impl FastFindGrid {
         let pt = pt.to_geo();
         let reference = reference.to_geo();
 
-        if !self.is_inside_grid_point(pt) {
+        if !self.is_inside_grid_point_geo(pt) {
             return SectorHit::None;
         }
-        let block_idx = self.get_block_index(pt, layer);
+        let block_idx = self.get_block_index_geo(pt, layer);
         let sectors = self.get_sectors_at_block(block_idx, SectorType::MOUSE);
         if sectors.is_empty() {
             return SectorHit::None;
@@ -2757,7 +2767,11 @@ impl FastFindGrid {
     }
 
     /// Check thin (zero-width) reachability between two points.
-    pub fn is_reachable_thin(&self, p1: GeoPoint2D, p2: GeoPoint2D, layer: u16) -> bool {
+    pub fn is_reachable_thin(&self, p1: MapPoint, p2: MapPoint, layer: u16) -> bool {
+        self.is_reachable_thin_geo(p1.to_geo(), p2.to_geo(), layer)
+    }
+
+    fn is_reachable_thin_geo(&self, p1: GeoPoint2D, p2: GeoPoint2D, layer: u16) -> bool {
         let seg = geo2d::segment(p1, p2);
         let mut bbox = BBox2D::new();
         bbox.expand_point(p1);
@@ -2915,7 +2929,7 @@ impl FastFindGrid {
         destination: GeoPoint2D,
         layer: u16,
     ) -> bool {
-        self.is_reachable_thin(origin, destination, layer)
+        self.is_reachable_thin_geo(origin, destination, layer)
     }
 
     /// Find the earliest intersection ratio along a trajectory segment
@@ -3118,6 +3132,15 @@ impl FastFindGrid {
     pub fn find_authorized_position_toward(
         &self,
         bbox: &mut BBox2D,
+        click: MapPoint,
+        layer: u16,
+    ) -> bool {
+        self.find_authorized_position_toward_geo(bbox, click.to_geo(), layer)
+    }
+
+    fn find_authorized_position_toward_geo(
+        &self,
+        bbox: &mut BBox2D,
         click: GeoPoint2D,
         layer: u16,
     ) -> bool {
@@ -3171,6 +3194,15 @@ impl FastFindGrid {
     /// Find an authorized position along the segment from `start` to the box
     /// center, then refine by pushing away from the box itself.
     pub fn find_authorized_position_straight(
+        &self,
+        bbox: &mut BBox2D,
+        start: MapPoint,
+        layer: u16,
+    ) -> bool {
+        self.find_authorized_position_straight_geo(bbox, start.to_geo(), layer)
+    }
+
+    fn find_authorized_position_straight_geo(
         &self,
         bbox: &mut BBox2D,
         start: GeoPoint2D,
@@ -3262,7 +3294,7 @@ impl FastFindGrid {
                 let vy = -angle.cos();
                 *bbox = initial;
                 bbox.translate(pt(vx * radius_try, vy * radius_try));
-                if self.find_authorized_position_toward(bbox, center_initial, layer) {
+                if self.find_authorized_position_toward_geo(bbox, center_initial, layer) {
                     return true;
                 }
             }
@@ -3379,11 +3411,11 @@ mod tests {
         grid.allocate_layers(1);
 
         // Point (65, 65) should be in cell (1, 1) on layer 0
-        let idx = grid.get_block_index(pt(65.0, 65.0), 0);
+        let idx = grid.get_block_index(MapPoint::new(65.0, 65.0), 0);
         assert_eq!(idx, 1 + 4); // x=1, y=1, width=4
 
         // Same point on layer 1
-        let idx_l1 = grid.get_block_index(pt(65.0, 65.0), 1);
+        let idx_l1 = grid.get_block_index(MapPoint::new(65.0, 65.0), 1);
         assert_eq!(idx_l1, 1 + 4 * (1 + 8)); // height is 4+4=8
     }
 
@@ -3563,7 +3595,7 @@ mod tests {
         // Box straddling the line, push toward a click point below (on the
         // normal side — the line's normal points +Y for a left-to-right line)
         let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
-        let found = grid.find_authorized_position_toward(&mut bbox, pt(130.0, 200.0), 0);
+        let found = grid.find_authorized_position_toward(&mut bbox, MapPoint::new(130.0, 200.0), 0);
         assert!(found, "should find position toward click");
         assert!(grid.is_position_authorized(&bbox, 0));
         // Box should have been pushed below the line
@@ -3576,7 +3608,8 @@ mod tests {
 
         // Box straddling the line, push along segment from a start point below
         let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
-        let found = grid.find_authorized_position_straight(&mut bbox, pt(130.0, 200.0), 0);
+        let found =
+            grid.find_authorized_position_straight(&mut bbox, MapPoint::new(130.0, 200.0), 0);
         assert!(found, "should find straight authorized position");
         assert!(grid.is_position_authorized(&bbox, 0));
     }

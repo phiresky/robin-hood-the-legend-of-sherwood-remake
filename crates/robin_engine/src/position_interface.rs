@@ -2136,12 +2136,12 @@ impl PositionInterface {
 
     /// Test whether the current map position is inside the grid bounds.
     pub fn is_inside_grid(&self, grid: &FastFindGrid) -> bool {
-        grid.is_inside_grid_point(self.position_map.to_geo())
+        grid.is_inside_grid_point(self.position_map)
     }
 
     /// Get the flat block index for the current map position on the current layer.
     pub fn grid_block_index(&self, grid: &FastFindGrid) -> usize {
-        grid.get_block_index(self.position_map.to_geo(), self.layer.get())
+        grid.get_block_index(self.position_map, self.layer.get())
     }
 
     /// Check whether the current map position (with its move box) is free of

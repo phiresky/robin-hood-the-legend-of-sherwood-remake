@@ -173,7 +173,9 @@ fn test_hiking_path_fine(
         if wp.level == prev.level && wp.sector == prev.sector {
             let p1 = geo2d::pt(prev.x as f32, prev.y as f32);
             let p2 = geo2d::pt(wp.x as f32, wp.y as f32);
-            if !grid.is_reachable_thin(p1, p2, wp.level) {
+            let p1_map = crate::coordinates::MapPoint::from_geo(p1);
+            let p2_map = crate::coordinates::MapPoint::from_geo(p2);
+            if !grid.is_reachable_thin(p1_map, p2_map, wp.level) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,
@@ -200,7 +202,7 @@ fn test_hiking_path_fine(
                 ok = false;
             }
             let hd = crate::geo2d::pt(move_box.x_max(), move_box.y_max());
-            if !grid.is_reachable_thick(p1.into(), p2.into(), wp.level, hd) {
+            if !grid.is_reachable_thick(p1_map, p2_map, wp.level, hd) {
                 tracing::debug!(
                     wp_idx = i,
                     p1 = ?p1,
