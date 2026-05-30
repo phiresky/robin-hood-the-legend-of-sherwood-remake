@@ -30,6 +30,7 @@
 //! candidate obstacles from the FastFindGrid cells crossed by the ray,
 //! then checking opaque blockers on that smaller candidate list.
 
+use crate::coordinates::MapPoint;
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
 use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::order::OrderType;
@@ -148,8 +149,8 @@ pub const ALPHA_START: u16 = 154;
 /// viewer's sector, and the target's human data lives in here.
 #[derive(Debug, Clone, Copy)]
 pub struct VisibilityQuery<'a> {
-    /// Viewer's ground-plane position.
-    pub viewer: GeoPoint2D,
+    /// Viewer's projected map position.
+    pub viewer: MapPoint,
     /// Viewer body direction, 16-sector compass (0 = north, CW).
     /// Used only for the close-range halfcircle test.
     pub viewer_direction: i16,
@@ -198,8 +199,8 @@ pub struct VisibilityQuery<'a> {
     /// target.  When false, the test returns 0.
     pub target_is_active_and_outside_building: bool,
 
-    /// Target ground-plane position.
-    pub target: GeoPoint2D,
+    /// Target projected map position.
+    pub target: MapPoint,
     /// Target posture (`Posture::Crouched`, `Posture::Spy`, etc).
     pub target_posture: Posture,
     /// Viewer's eye-point Z, i.e. `viewer.z + eye_z_for_posture(viewer_posture)`.
@@ -354,8 +355,8 @@ pub fn compute_visibility(q: &VisibilityQuery<'_>) -> f32 {
 /// forward-halfplane + cone + LOS gate.
 #[derive(Debug, Clone, Copy)]
 pub struct ObjectVisibilityQuery<'a> {
-    /// Viewer's ground-plane position.
-    pub viewer: GeoPoint2D,
+    /// Viewer's projected map position.
+    pub viewer: MapPoint,
     /// Viewer body direction, 16-sector compass (0 = north, CW).
     /// Used only for the close-range halfcircle test inside
     /// `is_detecting` — though note the object path rejects any
@@ -375,8 +376,8 @@ pub struct ObjectVisibilityQuery<'a> {
     /// `true` for beggar-dropped coins, which are invisible to
     /// soldiers.
     pub object_belongs_to_beggar: bool,
-    /// Target object's ground-plane position.
-    pub target: GeoPoint2D,
+    /// Target object's projected map position.
+    pub target: MapPoint,
     /// Sight obstacle list plus FastFindGrid for the LOS check.
     pub sight_obstacles: crate::sight_obstacle::ObstacleList<'a>,
     pub fast_grid: &'a crate::fast_find_grid::FastFindGrid,
@@ -515,13 +516,13 @@ fn is_detecting(
 /// those short-circuits earlier in their own bodies.
 #[allow(clippy::too_many_arguments)]
 fn is_detecting_cone_and_los(
-    viewer: GeoPoint2D,
+    viewer: MapPoint,
     viewer_direction: i16,
     real_half_aperture: f32,
     layer: u16,
     sight_obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
-    target: GeoPoint2D,
+    target: MapPoint,
     los_z: Option<(f32, f32)>,
     view_x: f32,
     view_y: f32,
@@ -576,8 +577,8 @@ fn is_detecting_cone_and_los(
 }
 
 fn los_clear_for_detection(
-    viewer: GeoPoint2D,
-    target: GeoPoint2D,
+    viewer: MapPoint,
+    target: MapPoint,
     layer: u16,
     sight_obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -691,7 +692,7 @@ pub fn distance_sharpness(sqr_distance: f32, view_radius: f32) -> f32 {
 /// intentionally skipped — we recompute once per call.
 #[allow(clippy::too_many_arguments)]
 pub fn compute_view_radius(
-    eye: GeoPoint2D,
+    eye: MapPoint,
     eye_z: f32,
     view_radius: u16,
     view_forward: (f32, f32),
@@ -862,8 +863,8 @@ fn rotate_unit(x: f32, y: f32, theta: f32) -> (f32, f32) {
 /// LOS query: ask the grid for obstacles crossed by the ray, then run
 /// the opaque / layer / polygon checks on that smaller candidate list.
 pub fn los_clear_spatial(
-    viewer: GeoPoint2D,
-    target: GeoPoint2D,
+    viewer: MapPoint,
+    target: MapPoint,
     layer: u16,
     obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -902,7 +903,7 @@ pub fn los_clear_spatial(
         if obs.layer != u16::MAX && obs.layer != layer {
             continue;
         }
-        if obs.is_blocking_sight(viewer, target) {
+        if obs.is_blocking_sight(viewer.to_geo(), target.to_geo()) {
             return false;
         }
     }
@@ -916,7 +917,7 @@ pub fn los_clear_spatial(
         if obs.layer != u16::MAX && obs.layer != layer {
             continue;
         }
-        if obs.is_blocking_sight(viewer, target) {
+        if obs.is_blocking_sight(viewer.to_geo(), target.to_geo()) {
             return false;
         }
     }
@@ -935,12 +936,12 @@ pub fn los_clear_spatial(
 /// the raw inputs.
 #[allow(clippy::too_many_arguments)]
 pub fn is_detecting_target(
-    viewer: GeoPoint2D,
+    viewer: MapPoint,
     viewer_direction: i16,
     view_forward: (f32, f32),
     real_half_aperture: f32,
     view_radius: u16,
-    target: GeoPoint2D,
+    target: MapPoint,
     layer: u16,
     obstacles: ObstacleList<'_>,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
@@ -1006,11 +1007,11 @@ pub struct RefreshViewContext {
     /// runtime via script natives and the swordfight drunk-roll path
     /// — a cached copy on `NpcData` would go stale.
     pub blood_alcohol: u8,
-    /// NPC's own ground position (for stare/follow vector).
-    pub own_position: GeoPoint2D,
-    /// Ground position of the follow target, if [`EyeStatus::Follow`]
+    /// NPC's own projected map position (for stare/follow vector).
+    pub own_position: MapPoint,
+    /// Projected map position of the follow target, if [`EyeStatus::Follow`]
     /// and the target is alive.
-    pub follow_target_position: Option<GeoPoint2D>,
+    pub follow_target_position: Option<MapPoint>,
 }
 
 /// Per-frame view parameter update.
@@ -1201,7 +1202,7 @@ pub fn focus_entity(npc: &mut NpcData, target: EntityId) {
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
 }
 
-pub fn focus_point(npc: &mut NpcData, point: GeoPoint2D) {
+pub fn focus_point(npc: &mut NpcData, point: MapPoint) {
     npc.stare_point = point;
     npc.eye_status = EyeStatus::Stare;
     npc.view_half_angle_range = STARE_HALF_ANGLE_RANGE;
@@ -1270,7 +1271,7 @@ fn refresh_view_look(npc: &mut NpcData, ctx: &RefreshViewContext, vdx: f32, vdy:
 }
 
 /// Handler for `Stare` and `Follow` (after stare-point update).
-fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &GeoPoint2D) {
+fn refresh_view_stare(npc: &mut NpcData, vdx: f32, vdy: f32, own_position: &MapPoint) {
     // Stare vector from own position to stare point.
     let mut svx = npc.stare_point.x - own_position.x;
     let mut svy = npc.stare_point.y - own_position.y;
@@ -1388,9 +1389,12 @@ fn vec_angle(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::pt;
 
     const NO_OBSTACLES: &[SightObstacle] = &[];
+
+    fn pt(x: f32, y: f32) -> MapPoint {
+        MapPoint::new(x, y)
+    }
 
     fn empty_grid() -> &'static [SightObstacle] {
         NO_OBSTACLES
@@ -1410,9 +1414,9 @@ mod tests {
     }
 
     fn query<'a>(
-        viewer: GeoPoint2D,
+        viewer: MapPoint,
         dir: i16,
-        target: GeoPoint2D,
+        target: MapPoint,
         obstacles: &'a [SightObstacle],
     ) -> VisibilityQuery<'a> {
         VisibilityQuery {
@@ -2042,9 +2046,9 @@ mod tests {
     // ── compute_object_visibility ─────────────────────────────────
 
     fn obj_query<'a>(
-        viewer: GeoPoint2D,
+        viewer: MapPoint,
         dir: i16,
-        target: GeoPoint2D,
+        target: MapPoint,
         obstacles: &'a [SightObstacle],
     ) -> ObjectVisibilityQuery<'a> {
         ObjectVisibilityQuery {

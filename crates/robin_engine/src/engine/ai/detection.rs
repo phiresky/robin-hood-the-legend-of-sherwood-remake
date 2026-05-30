@@ -44,9 +44,11 @@ fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
     };
     let ground_z = entity.element_data().position().z;
     // `compute_eyes_point` returns the engine's render-space 3D point,
-    // where `y = map_y + elevation`. C++ `ComputeVisibility` compares
-    // map-space XY and keeps Z separate, so remove only the feet
-    // elevation here. Posture XY offsets such as LeaningOut remain.
+    // where `y = map_y + elevation`.
+    // TODO(coord-parity): original C++ `ComputeVisibility` subtracts
+    // `SBGeoPoint3D` eye/detection points directly. Rust visibility
+    // currently consumes projected `MapPoint`s; audit before changing
+    // that behavior.
     (MapPoint::new(eye.x, eye.y - ground_z), eye.z)
 }
 
@@ -872,7 +874,7 @@ impl EngineInner {
         // get a per-target re-call below, so the night/fog modulation
         // accounts for the target's elevation.
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye.to_geo(),
+            eye,
             eye_z,
             view_radius,
             view_forward,
@@ -1067,7 +1069,7 @@ impl EngineInner {
                         .and_then(|h| sight_obstacles.get(usize::from(h)))
                         .map(|obs| {
                             ai_vision::compute_view_radius(
-                                eye.to_geo(),
+                                eye,
                                 eye_z,
                                 view_radius,
                                 view_forward,
@@ -1080,7 +1082,7 @@ impl EngineInner {
                         })
                         .unwrap_or(effective_view_radius_ground);
                     let q = ai_vision::VisibilityQuery {
-                        viewer: eye.to_geo(),
+                        viewer: eye,
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -1102,10 +1104,12 @@ impl EngineInner {
                         // "active and outside building" reduces to
                         // "not in a building".
                         target_is_active_and_outside_building: pc.building_sector.is_none(),
-                        target: crate::stealth::detection_point_xy(
-                            pc.position.to_geo(),
-                            pc.posture,
-                            pc.direction as i16,
+                        target: crate::coordinates::MapPoint::from_geo(
+                            crate::stealth::detection_point_xy(
+                                pc.position.to_geo(),
+                                pc.posture,
+                                pc.direction as i16,
+                            ),
                         ),
                         target_posture: pc.posture,
                         target_action_state: pc.action_state,
@@ -1463,8 +1467,8 @@ impl EngineInner {
                         continue;
                     }
                     if !ai_vision::los_clear_spatial(
-                        eye.to_geo(),
-                        pc.position.to_geo(),
+                        eye,
+                        pc.position,
                         layer,
                         sight_obstacles,
                         &self.fast_grid,
@@ -1690,12 +1694,12 @@ impl EngineInner {
                             false
                         } else {
                             crate::ai_vision::is_detecting_target(
-                                ss.position.to_geo(),
+                                ss.position,
                                 ss.direction as i16,
                                 (ss.view_direction[0], ss.view_direction[1]),
                                 ss.real_half_aperture,
                                 ss.view_radius,
-                                me_pos_map.to_geo(),
+                                me_pos_map,
                                 layer,
                                 sight_obstacles,
                                 &self.fast_grid,
@@ -2558,7 +2562,7 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye.to_geo(),
+            eye,
             eye_z,
             view_radius,
             view_forward,
@@ -2579,7 +2583,7 @@ impl EngineInner {
                     let h = t.obstacle_idx?;
                     let obs = obstacles.get(usize::from(h))?;
                     let r = ai_vision::compute_view_radius(
-                        eye.to_geo(),
+                        eye,
                         eye_z,
                         view_radius,
                         view_forward,
@@ -2684,7 +2688,7 @@ impl EngineInner {
                         .copied()
                         .unwrap_or(effective_view_radius_ground);
                     let q = ai_vision::VisibilityQuery {
-                        viewer: eye.to_geo(),
+                        viewer: eye,
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -2702,10 +2706,12 @@ impl EngineInner {
                         // are filtered to active/alive above,
                         // so this reduces to "not in a building".
                         target_is_active_and_outside_building: target.building_sector.is_none(),
-                        target: crate::stealth::detection_point_xy(
-                            target.position.to_geo(),
-                            target.posture,
-                            target.direction,
+                        target: crate::coordinates::MapPoint::from_geo(
+                            crate::stealth::detection_point_xy(
+                                target.position.to_geo(),
+                                target.posture,
+                                target.direction,
+                            ),
                         ),
                         target_posture: target.posture,
                         target_action_state: target.action_state,
@@ -2976,7 +2982,7 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye.to_geo(),
+            eye,
             eye_z,
             view_radius,
             view_forward,
@@ -3000,7 +3006,7 @@ impl EngineInner {
                     let h = t.obstacle_idx?;
                     let obs = obstacles.get(usize::from(h))?;
                     let r = ai_vision::compute_view_radius(
-                        eye.to_geo(),
+                        eye,
                         eye_z,
                         view_radius,
                         view_forward,
@@ -3365,7 +3371,7 @@ impl EngineInner {
                     .copied()
                     .unwrap_or(ctx.effective_view_radius_ground);
                 let q = ai_vision::VisibilityQuery {
-                    viewer: ctx.eye.to_geo(),
+                    viewer: ctx.eye,
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3378,10 +3384,12 @@ impl EngineInner {
                     effective_view_radius,
                     target_is_active_and_outside_building: target.active
                         && target.building_sector.is_none(),
-                    target: crate::stealth::detection_point_xy(
-                        target.position.to_geo(),
-                        target.posture,
-                        target.direction,
+                    target: crate::coordinates::MapPoint::from_geo(
+                        crate::stealth::detection_point_xy(
+                            target.position.to_geo(),
+                            target.posture,
+                            target.direction,
+                        ),
                     ),
                     target_posture: target.posture,
                     target_action_state: target.action_state,
@@ -3583,7 +3591,7 @@ impl EngineInner {
                 0.0
             } else if gate_open {
                 let q = ai_vision::ObjectVisibilityQuery {
-                    viewer: ctx.eye.to_geo(),
+                    viewer: ctx.eye,
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3591,7 +3599,7 @@ impl EngineInner {
                     real_half_aperture: ctx.real_half_aperture,
                     viewer_in_building: ctx.viewer_in_building,
                     object_belongs_to_beggar: object.belongs_to_beggar,
-                    target: object.position.to_geo(),
+                    target: object.position,
                     sight_obstacles: *ctx.sight_obstacles,
                     fast_grid: ctx.fast_grid,
                     layer: ctx.layer,

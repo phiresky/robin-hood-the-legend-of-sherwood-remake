@@ -1388,7 +1388,7 @@ pub struct NpcData {
     pub drunken_cone_iterators: [f32; 4],
 
     /// Point the NPC is staring at (for `EyeStatus::Stare`).
-    pub stare_point: GeoPoint2D,
+    pub stare_point: MapPoint,
 
     /// Entity the view cone follows (for `EyeStatus::Follow`).
     pub follow_target: Option<EntityId>,
@@ -1486,7 +1486,7 @@ impl Default for NpcData {
             view_direction: [1.0, 0.0],
             view_lean_out: false,
             drunken_cone_iterators: [0.0; 4],
-            stare_point: GeoPoint2D { x: 0.0, y: 0.0 },
+            stare_point: MapPoint::new(0.0, 0.0),
             follow_target: None,
         }
     }

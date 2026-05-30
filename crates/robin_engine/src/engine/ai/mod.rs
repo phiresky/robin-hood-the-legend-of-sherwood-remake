@@ -1150,7 +1150,7 @@ impl EngineInner {
         let me_brawler_data = me_brawler.map(|s| {
             let pos = s.element.position_map();
             (
-                crate::geo2d::pt(pos.x, pos.y),
+                crate::coordinates::MapPoint::new(pos.x, pos.y),
                 s.element.layer(),
                 self.entity_data_inside_building(&s.element),
             )
@@ -1235,7 +1235,7 @@ impl EngineInner {
                 Some((me_pos, me_layer, me_in_building))
                     if !eye_blind && !in_building && able_to_fight && !me_in_building =>
                 {
-                    let viewer = crate::geo2d::pt(position.x, position.y);
+                    let viewer = crate::coordinates::MapPoint::new(position.x, position.y);
                     crate::ai_vision::is_detecting_target(
                         viewer,
                         s.element.direction(),
@@ -3189,7 +3189,10 @@ impl EngineInner {
                 };
 
                 let edata = entity.element_data();
-                let pos = crate::geo2d::pt(edata.position_map().x, edata.position_map().y);
+                let pos = crate::coordinates::MapPoint::new(
+                    edata.position_map().x,
+                    edata.position_map().y,
+                );
 
                 let is_active_and_outside_building =
                     edata.active && !self.entity_data_inside_building(edata);
@@ -3207,7 +3210,7 @@ impl EngineInner {
                         .and_then(|e| e.as_ref())
                         .map(|e| {
                             let p = &e.element_data().position_map();
-                            crate::geo2d::pt(p.x, p.y)
+                            crate::coordinates::MapPoint::new(p.x, p.y)
                         })
                 });
 
@@ -4262,7 +4265,10 @@ impl EngineInner {
         if let Some(point) = do_focus_point
             && let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize)
         {
-            crate::ai_vision::focus_point(&mut s.npc, crate::geo2d::pt(point.x, point.y));
+            crate::ai_vision::focus_point(
+                &mut s.npc,
+                crate::coordinates::MapPoint::new(point.x, point.y),
+            );
             focus_channel_fired = true;
         }
 
@@ -6196,8 +6202,12 @@ impl EngineInner {
                             if sqr_dist > chief_view_radius_sq {
                                 admit = false;
                             } else {
-                                let viewer = crate::geo2d::pt(chief_pos.x, chief_pos.y);
-                                let target = crate::geo2d::pt(snap.position.x, snap.position.y);
+                                let viewer =
+                                    crate::coordinates::MapPoint::new(chief_pos.x, chief_pos.y);
+                                let target = crate::coordinates::MapPoint::new(
+                                    snap.position.x,
+                                    snap.position.y,
+                                );
                                 if !crate::ai_vision::los_clear_spatial(
                                     viewer,
                                     target,
@@ -6349,8 +6359,10 @@ impl EngineInner {
                     if sqr_dist > radius * radius {
                         continue;
                     }
-                    let viewer = crate::geo2d::pt(chief_s.position.x, chief_s.position.y);
-                    let target = crate::geo2d::pt(member_s.position.x, member_s.position.y);
+                    let viewer =
+                        crate::coordinates::MapPoint::new(chief_s.position.x, chief_s.position.y);
+                    let target =
+                        crate::coordinates::MapPoint::new(member_s.position.x, member_s.position.y);
                     if !crate::ai_vision::los_clear_spatial(
                         viewer,
                         target,

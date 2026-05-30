@@ -6024,7 +6024,7 @@ impl HostFunctions for GameHost {
 
                     let sight_obstacles = script_sight_obstacles();
                     let q = crate::ai_vision::VisibilityQuery {
-                        viewer: crate::geo2d::pt(viewer_eye_3d.x, viewer_eye_3d.y),
+                        viewer: crate::coordinates::MapPoint::new(viewer_eye_3d.x, viewer_eye_3d.y),
                         viewer_direction: npc_dir,
                         view_forward,
                         view_radius,
@@ -6039,7 +6039,10 @@ impl HostFunctions for GameHost {
                         // not carry mission ambiance.
                         effective_view_radius: view_radius as f32,
                         target_is_active_and_outside_building: tgt_active && !tgt_in_building,
-                        target: crate::geo2d::pt(tgt_detection_3d.x, tgt_detection_3d.y),
+                        target: crate::coordinates::MapPoint::new(
+                            tgt_detection_3d.x,
+                            tgt_detection_3d.y,
+                        ),
                         target_posture: tgt_posture,
                         target_action_state: tgt_action_state,
                         target_is_pc: tgt_is_pc,
