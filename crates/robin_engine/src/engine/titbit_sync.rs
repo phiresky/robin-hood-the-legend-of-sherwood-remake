@@ -250,12 +250,10 @@ impl EngineInner {
                 }
                 continue; // Particle effects (smoke, dust) with no supplier
             }
-            let idx = t.element_supplier.0 as usize;
-            let Some(entity) = self
-                .entities
-                .get_at_index(idx as u32)
-                .map(|(_, entity)| entity)
-            else {
+            let Some(entity_id) = self.entities.id_at_index(t.element_supplier.0) else {
+                continue;
+            };
+            let Some(entity) = self.entities.get(entity_id) else {
                 continue;
             };
             let elem = entity.element_data();
