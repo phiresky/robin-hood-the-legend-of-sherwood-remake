@@ -138,7 +138,7 @@ pub async fn show_debriefing(
     mission_length_seconds: u32,
     won: bool,
     restart_allowed: bool,
-    quick_load_scancode: Option<u16>,
+    quick_load_key: Option<winit::keyboard::KeyCode>,
     // Restart only triggers a load request when a restart snapshot
     // exists; when the snapshot is missing the body window closes and
     // the stat panel still shows.  The caller probes the save-manager
@@ -159,7 +159,7 @@ pub async fn show_debriefing(
         mission_length_seconds,
         won,
         restart_allowed,
-        quick_load_scancode,
+        quick_load_key,
         restart_snapshot_exists,
         start_at_stat,
     );
@@ -191,7 +191,7 @@ pub struct DebriefingModalState {
     phase: DebriefingPhase,
     restart_allowed: bool,
     restart_snapshot_exists: bool,
-    active_quick_load: Option<u16>,
+    active_quick_load: Option<winit::keyboard::KeyCode>,
     current_page: Option<DebriefingPageState>,
 }
 
@@ -204,7 +204,7 @@ impl DebriefingModalState {
         mission_length_seconds: u32,
         won: bool,
         restart_allowed: bool,
-        quick_load_scancode: Option<u16>,
+        quick_load_key: Option<winit::keyboard::KeyCode>,
         restart_snapshot_exists: bool,
         start_at_stat: bool,
     ) -> Self {
@@ -221,7 +221,7 @@ impl DebriefingModalState {
             },
             restart_allowed,
             restart_snapshot_exists,
-            active_quick_load: restart_allowed.then_some(quick_load_scancode).flatten(),
+            active_quick_load: restart_allowed.then_some(quick_load_key).flatten(),
             current_page: None,
         }
     }
@@ -495,7 +495,7 @@ struct DebriefingPageState {
     body: String,
     restart_snapshot_exists: bool,
     body_font: BodyFont,
-    quick_load_scancode: Option<u16>,
+    quick_load_key: Option<winit::keyboard::KeyCode>,
     transform: MenuTransform,
     virt_x: i32,
     virt_y: i32,
@@ -516,7 +516,7 @@ impl DebriefingPageState {
         restart_allowed: bool,
         restart_snapshot_exists: bool,
         body_font: BodyFont,
-        quick_load_scancode: Option<u16>,
+        quick_load_key: Option<winit::keyboard::KeyCode>,
     ) -> Self {
         let sw = renderer.screen_width() as i32;
         let sh = renderer.screen_height() as i32;
@@ -577,7 +577,7 @@ impl DebriefingPageState {
             body,
             restart_snapshot_exists,
             body_font,
-            quick_load_scancode,
+            quick_load_key,
             transform,
             virt_x,
             virt_y,
@@ -612,9 +612,7 @@ impl DebriefingPageState {
                         text_remaining: self.text_remaining.clone(),
                     });
                 }
-                GameEvent::KeyDown { scancode, .. }
-                    if Some(scancode) == self.quick_load_scancode =>
-                {
+                GameEvent::KeyDown { physical_key, .. } if physical_key == self.quick_load_key => {
                     outcome = Some(PageOutcome::LoadClicked);
                 }
                 _ => {}

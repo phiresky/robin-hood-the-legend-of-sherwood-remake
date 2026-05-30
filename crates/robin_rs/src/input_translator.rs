@@ -3,65 +3,23 @@
 //! Translates raw keyboard state and mouse position/wheel into high-level
 //! [`GameAction`]s, returning the actions for the caller to dispatch.
 
+use std::collections::BTreeSet;
+
 use bitflags::bitflags;
+use enum_map::{Enum, EnumMap};
 use geo::Rect;
 use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
 use robin_engine::coordinates::ScreenPoint;
-
-// ---------------------------------------------------------------------------
-// SDL scancodes used for hardcoded key checks.
-// These match the SDL_Scancode enum values (SDL_scancode.h).
-// ---------------------------------------------------------------------------
-
-// -- Existing key constants used by translation logic --
-const SDL_SCANCODE_TAB: u16 = 43;
-const SDL_SCANCODE_ESCAPE: u16 = 41;
-const SDL_SCANCODE_PRINTSCREEN: u16 = 70;
-const SDL_SCANCODE_PAUSE: u16 = 72;
-const SDL_SCANCODE_HOME: u16 = 74;
-const SDL_SCANCODE_F7: u16 = 64;
-const SDL_SCANCODE_KP_ENTER: u16 = 88;
-const SDL_SCANCODE_GRAVE: u16 = 53;
-const SDL_SCANCODE_LCTRL: u16 = 224;
-const SDL_SCANCODE_LALT: u16 = 226;
-const SDL_SCANCODE_RCTRL: u16 = 228;
-
-// -- Additional scancode constants for default bindings --
-const SDL_SCANCODE_A: u16 = 4;
-const SDL_SCANCODE_C: u16 = 6;
-const SDL_SCANCODE_D: u16 = 7;
-const SDL_SCANCODE_H: u16 = 11;
-const SDL_SCANCODE_M: u16 = 16;
-const SDL_SCANCODE_S: u16 = 22;
-const SDL_SCANCODE_X: u16 = 27;
-const SDL_SCANCODE_1: u16 = 30;
-const SDL_SCANCODE_2: u16 = 31;
-const SDL_SCANCODE_3: u16 = 32;
-const SDL_SCANCODE_4: u16 = 33;
-const SDL_SCANCODE_5: u16 = 34;
-const SDL_SCANCODE_LSHIFT: u16 = 225;
-const SDL_SCANCODE_PAGEUP: u16 = 75;
-const SDL_SCANCODE_PAGEDOWN: u16 = 78;
-const SDL_SCANCODE_LEFT: u16 = 80;
-const SDL_SCANCODE_RIGHT: u16 = 79;
-const SDL_SCANCODE_DOWN: u16 = 81;
-const SDL_SCANCODE_UP: u16 = 82;
-const SDL_SCANCODE_F2: u16 = 59;
-const SDL_SCANCODE_F3: u16 = 60;
-const SDL_SCANCODE_F5: u16 = 62;
-const SDL_SCANCODE_F6: u16 = 63;
-const SDL_SCANCODE_F8: u16 = 65;
-const SDL_SCANCODE_F9: u16 = 66;
-const SDL_SCANCODE_F12: u16 = 69;
 
 // ---------------------------------------------------------------------------
 // GameKey — bindable action slots
 // ---------------------------------------------------------------------------
 
-/// Bindable game key slots.  Each slot maps to a scancode via the key
+/// Bindable game key slots.  Each slot maps to a physical key via the key
 /// configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]
 #[repr(u16)]
 pub enum GameKey {
     ZoomIn = 0,
@@ -296,19 +254,16 @@ bitflags! {
 // Key state edge-detection helpers
 // ---------------------------------------------------------------------------
 
-fn key_hit(cur: &[u8], prev: &[u8], sc: u16) -> bool {
-    let i = sc as usize;
-    i < cur.len() && i < prev.len() && cur[i] != 0 && prev[i] == 0
+fn key_hit(cur: &BTreeSet<KeyCode>, prev: &BTreeSet<KeyCode>, key: Option<KeyCode>) -> bool {
+    key.is_some_and(|key| cur.contains(&key) && !prev.contains(&key))
 }
 
-fn key_released(cur: &[u8], prev: &[u8], sc: u16) -> bool {
-    let i = sc as usize;
-    i < cur.len() && i < prev.len() && cur[i] == 0 && prev[i] != 0
+fn key_released(cur: &BTreeSet<KeyCode>, prev: &BTreeSet<KeyCode>, key: Option<KeyCode>) -> bool {
+    key.is_some_and(|key| !cur.contains(&key) && prev.contains(&key))
 }
 
-fn key_held(cur: &[u8], sc: u16) -> bool {
-    let i = sc as usize;
-    i < cur.len() && cur[i] != 0
+fn key_held(cur: &BTreeSet<KeyCode>, key: Option<KeyCode>) -> bool {
+    key.is_some_and(|key| cur.contains(&key))
 }
 
 // ---------------------------------------------------------------------------
@@ -330,19 +285,16 @@ fn is_in_dead_zone(dead_zones: &[Rect<f32>], point: ScreenPoint) -> bool {
 // InputTranslator
 // ---------------------------------------------------------------------------
 
-/// Maximum number of scancodes tracked (covers full SDL scancode range).
-const MAX_SCANCODES: usize = 512;
-
 /// Translates raw input events into [`GameAction`]s.
 ///
 /// Maintains previous keyboard state for edge-detection and dead-zone
 /// rectangles for mouse edge-scroll suppression.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InputTranslator {
-    /// Scancode bound to each [`GameKey`] slot.
-    bindings: Vec<u16>,
+    /// Physical key bound to each [`GameKey`] slot.
+    bindings: EnumMap<GameKey, Option<KeyCode>>,
     /// Previous frame's keyboard state for edge detection.
-    prev_keys: Vec<u8>,
+    prev_keys: BTreeSet<KeyCode>,
     /// Rectangular screen regions where mouse edge-scrolling is suppressed
     /// (e.g. UI panels along screen borders).
     dead_zones: Vec<Rect<f32>>,
@@ -355,8 +307,8 @@ pub struct InputTranslator {
 impl Default for InputTranslator {
     fn default() -> Self {
         Self {
-            bindings: vec![0u16; GameKey::COUNT],
-            prev_keys: vec![0u8; MAX_SCANCODES],
+            bindings: EnumMap::default(),
+            prev_keys: BTreeSet::new(),
             dead_zones: Vec::new(),
             screen_width: 1024.0,
             screen_height: 768.0,
@@ -379,99 +331,91 @@ impl InputTranslator {
 
     /// Set the default rebindable key bindings.
     ///
-    /// Matches the original game's keyset1.cfg preset (converted from
-    /// DirectInput DIK codes to SDL scancodes).
+    /// Matches the runtime Default1 preset used for new profiles.
     fn set_default_bindings(&mut self) {
+        use KeyCode::*;
         // Camera
-        self.bindings[GameKey::ZoomIn as usize] = SDL_SCANCODE_PAGEUP;
-        self.bindings[GameKey::ZoomOut as usize] = SDL_SCANCODE_PAGEDOWN;
-        self.bindings[GameKey::ScrollUp as usize] = SDL_SCANCODE_UP;
-        self.bindings[GameKey::ScrollDown as usize] = SDL_SCANCODE_DOWN;
-        self.bindings[GameKey::ScrollLeft as usize] = SDL_SCANCODE_LEFT;
-        self.bindings[GameKey::ScrollRight as usize] = SDL_SCANCODE_RIGHT;
+        self.bindings[GameKey::ZoomIn] = Some(PageUp);
+        self.bindings[GameKey::ZoomOut] = Some(PageDown);
+        self.bindings[GameKey::ScrollUp] = Some(ArrowUp);
+        self.bindings[GameKey::ScrollDown] = Some(ArrowDown);
+        self.bindings[GameKey::ScrollLeft] = Some(ArrowLeft);
+        self.bindings[GameKey::ScrollRight] = Some(ArrowRight);
 
         // Map
-        self.bindings[GameKey::DisplayMap as usize] = SDL_SCANCODE_M;
+        self.bindings[GameKey::DisplayMap] = Some(KeyM);
 
         // Character selection
-        self.bindings[GameKey::SelectCharacter1 as usize] = SDL_SCANCODE_1;
-        self.bindings[GameKey::SelectCharacter2 as usize] = SDL_SCANCODE_2;
-        self.bindings[GameKey::SelectCharacter3 as usize] = SDL_SCANCODE_3;
-        self.bindings[GameKey::SelectCharacter4 as usize] = SDL_SCANCODE_4;
-        self.bindings[GameKey::SelectCharacter5 as usize] = SDL_SCANCODE_5;
-        self.bindings[GameKey::SelectAll as usize] = SDL_SCANCODE_F2;
-        self.bindings[GameKey::SelectNone as usize] = SDL_SCANCODE_F3;
+        self.bindings[GameKey::SelectCharacter1] = Some(Digit1);
+        self.bindings[GameKey::SelectCharacter2] = Some(Digit2);
+        self.bindings[GameKey::SelectCharacter3] = Some(Digit3);
+        self.bindings[GameKey::SelectCharacter4] = Some(Digit4);
+        self.bindings[GameKey::SelectCharacter5] = Some(Digit5);
+        self.bindings[GameKey::SelectAll] = Some(F2);
+        self.bindings[GameKey::SelectNone] = Some(F3);
 
         // Stance
-        self.bindings[GameKey::CrouchDown as usize] = SDL_SCANCODE_C;
-        self.bindings[GameKey::StandUp as usize] = SDL_SCANCODE_X;
+        self.bindings[GameKey::CrouchDown] = Some(KeyC);
+        self.bindings[GameKey::StandUp] = Some(KeyX);
 
         // Vision modifiers
-        self.bindings[GameKey::ShowDoors as usize] = SDL_SCANCODE_LSHIFT;
-        self.bindings[GameKey::SwitchHiddenDisplay as usize] = SDL_SCANCODE_H;
-        self.bindings[GameKey::ShowViewCone as usize] = SDL_SCANCODE_LALT;
+        self.bindings[GameKey::ShowDoors] = Some(ShiftLeft);
+        self.bindings[GameKey::SwitchHiddenDisplay] = Some(KeyH);
+        self.bindings[GameKey::ShowViewCone] = Some(AltLeft);
 
         // Action slots
-        self.bindings[GameKey::Action1 as usize] = SDL_SCANCODE_A;
-        self.bindings[GameKey::Action2 as usize] = SDL_SCANCODE_S;
-        self.bindings[GameKey::Action3 as usize] = SDL_SCANCODE_D;
-        self.bindings[GameKey::MoveDuringAction as usize] = SDL_SCANCODE_LCTRL;
+        self.bindings[GameKey::Action1] = Some(KeyA);
+        self.bindings[GameKey::Action2] = Some(KeyS);
+        self.bindings[GameKey::Action3] = Some(KeyD);
+        self.bindings[GameKey::MoveDuringAction] = Some(ControlLeft);
 
         // Quick actions (macro recording)
-        self.bindings[GameKey::RecordQa as usize] = SDL_SCANCODE_F5;
-        self.bindings[GameKey::StartQa as usize] = SDL_SCANCODE_F6;
-        self.bindings[GameKey::DeleteQa as usize] = SDL_SCANCODE_F8;
+        self.bindings[GameKey::RecordQa] = Some(F5);
+        self.bindings[GameKey::StartQa] = Some(F6);
+        self.bindings[GameKey::DeleteQa] = Some(F8);
 
         // Save / Load
-        self.bindings[GameKey::QuickSave1 as usize] = SDL_SCANCODE_F9;
-        self.bindings[GameKey::QuickLoad1 as usize] = SDL_SCANCODE_F12;
+        self.bindings[GameKey::QuickSave1] = Some(F9);
+        self.bindings[GameKey::QuickLoad1] = Some(F12);
     }
 
     /// Set the non-rebindable key bindings (console, print screen, menu,
     /// and debug keys).
     fn set_reserved_bindings(&mut self) {
-        self.bindings[GameKey::DisplayConsole as usize] = SDL_SCANCODE_GRAVE;
-        self.bindings[GameKey::PrintScreen as usize] = SDL_SCANCODE_PRINTSCREEN;
-        self.bindings[GameKey::DisplayMenu as usize] = SDL_SCANCODE_ESCAPE;
+        use KeyCode::*;
+        self.bindings[GameKey::DisplayConsole] = Some(Backquote);
+        self.bindings[GameKey::PrintScreen] = Some(PrintScreen);
+        self.bindings[GameKey::DisplayMenu] = Some(Escape);
 
         // Debug keys (only in non-shipping builds)
-        self.bindings[GameKey::SlowMotion as usize] = SDL_SCANCODE_PAUSE;
-        self.bindings[GameKey::Teleport as usize] = SDL_SCANCODE_F7;
-        self.bindings[GameKey::RecordMovie as usize] = SDL_SCANCODE_KP_ENTER;
-        self.bindings[GameKey::RequestInfo as usize] = SDL_SCANCODE_HOME;
+        self.bindings[GameKey::SlowMotion] = Some(Pause);
+        self.bindings[GameKey::Teleport] = Some(F7);
+        self.bindings[GameKey::RecordMovie] = Some(NumpadEnter);
+        self.bindings[GameKey::RequestInfo] = Some(Home);
     }
 
     // --- Binding management ---
 
-    pub fn set_binding(&mut self, key: GameKey, scancode: u16) {
-        self.bindings[key as usize] = scancode;
+    pub fn set_binding(&mut self, key: GameKey, physical_key: Option<KeyCode>) {
+        self.bindings[key] = physical_key;
     }
 
     /// Apply the shipping-build deity easter egg rebind. The original
-    /// uses raw DIK scancodes (0x46/0xc7/0x9c/0xcf); this port
-    /// consistently uses SDL scancodes for the bindings table, so we
-    /// translate to the SDL equivalents here (the rest of
-    /// `set_default_bindings` / `set_reserved_bindings` already does
-    /// the same mapping).
-    ///
     /// Triggered from `EngineInner::run_console_command` via
     /// `ConsoleResponse::DeityInvoked`, drained by the host game loop.
     pub fn deity_call(&mut self) {
-        // 0x46 DIK_SCROLL  → SDL_SCANCODE_SCROLLLOCK (71)
-        self.bindings[GameKey::SlowMotion as usize] = 71;
-        // 0xc7 DIK_HOME    → SDL_SCANCODE_HOME (74)
-        self.bindings[GameKey::Teleport as usize] = SDL_SCANCODE_HOME;
-        // 0x9c DIK_NUMPADENTER → SDL_SCANCODE_KP_ENTER (88)
-        self.bindings[GameKey::RecordMovie as usize] = SDL_SCANCODE_KP_ENTER;
-        // 0xcf DIK_END     → SDL_SCANCODE_END (77)
-        self.bindings[GameKey::RequestInfo as usize] = 77;
+        use KeyCode::*;
+        self.bindings[GameKey::SlowMotion] = Some(ScrollLock);
+        self.bindings[GameKey::Teleport] = Some(Home);
+        self.bindings[GameKey::RecordMovie] = Some(NumpadEnter);
+        self.bindings[GameKey::RequestInfo] = Some(End);
         // The reference duplicates the SLOW_MOTION assignment;
         // preserved here as a redundant write for literal parity.
-        self.bindings[GameKey::SlowMotion as usize] = 71;
+        self.bindings[GameKey::SlowMotion] = Some(ScrollLock);
     }
 
-    pub fn get_binding(&self, key: GameKey) -> u16 {
-        self.bindings[key as usize]
+    pub fn get_binding(&self, key: GameKey) -> Option<KeyCode> {
+        self.bindings[key]
     }
 
     /// Load rebindable keys from a [`KeyConfig`](robin_assets::keyconfig::KeyConfig).
@@ -480,41 +424,38 @@ impl InputTranslator {
     /// flat array.
     pub fn load_bindings_from_keyconfig(&mut self, cfg: &robin_assets::keyconfig::KeyConfig) {
         for i in 0..robin_assets::keyconfig::REAL_KEY_COUNT as usize {
-            if i < self.bindings.len() {
-                self.bindings[i] = cfg.get_key_by_index(i as u16);
+            if let Some(game_key) = GameKey::ALL.get(i).copied() {
+                self.bindings[game_key] = cfg.get_key_by_index(i as u16);
             }
         }
         // Re-apply reserved bindings so they can't be overwritten by config.
         self.set_reserved_bindings();
     }
 
-    /// Edge detection helper for scancodes that aren't routed through the
+    /// Edge detection helper for physical keys that aren't routed through the
     /// standard [`GameAction`] translation path. Returns `true` on the
-    /// frame the scancode transitions from up -> down. Must be called
+    /// frame the key transitions from up -> down. Must be called
     /// before [`Self::translate_keyboard`] advances `prev_keys`.
-    pub fn was_scancode_pressed(&self, scancode: u16, current: &[u8]) -> bool {
-        key_hit(current, &self.prev_keys, scancode)
+    pub fn was_key_pressed(&self, key: KeyCode, current: &BTreeSet<KeyCode>) -> bool {
+        key_hit(current, &self.prev_keys, Some(key))
     }
 
-    /// Edge detection helper for scancodes that aren't routed through the
+    /// Edge detection helper for physical keys that aren't routed through the
     /// standard [`GameAction`] translation path — e.g. the minimap
     /// accelerator, which is stored on the widget rather than bound to
     /// a [`GameAction`] variant.  Returns `true` on the frame the
-    /// scancode transitions from down → up.  Must be called before
+    /// key transitions from down to up.  Must be called before
     /// [`Self::translate_keyboard`] (which advances `prev_keys`).
-    pub fn was_scancode_released(&self, scancode: u16, current: &[u8]) -> bool {
-        key_released(current, &self.prev_keys, scancode)
+    pub fn was_key_released(&self, key: KeyCode, current: &BTreeSet<KeyCode>) -> bool {
+        key_released(current, &self.prev_keys, Some(key))
     }
 
-    /// Look up which [`GameKey`] a scancode is bound to.
-    pub fn translate_key(&self, scancode: u16) -> Option<GameKey> {
-        if scancode == 0 {
-            return None;
-        }
+    /// Look up which [`GameKey`] a physical key is bound to.
+    pub fn translate_key(&self, key: KeyCode) -> Option<GameKey> {
         GameKey::ALL
             .iter()
             .copied()
-            .find(|&gk| self.bindings[gk as usize] == scancode)
+            .find(|&gk| self.bindings[gk] == Some(key))
     }
 
     // --- Dead zones ---
@@ -586,7 +527,7 @@ impl InputTranslator {
 
     /// Reset stored keyboard state.  Called when re-entering gameplay.
     pub fn reset_state(&mut self) {
-        self.prev_keys.fill(0);
+        self.prev_keys.clear();
     }
 
     // --- Mouse translation ---
@@ -635,64 +576,68 @@ impl InputTranslator {
 
     // --- Keyboard translation ---
 
-    /// Shorthand to get the scancode for a game key slot.
-    fn sc(&self, gk: GameKey) -> u16 {
-        self.bindings[gk as usize]
+    /// Shorthand to get the physical key for a game key slot.
+    fn key(&self, gk: GameKey) -> Option<KeyCode> {
+        self.bindings[gk]
     }
 
     /// Translate a full keyboard state array into game actions.
     ///
-    /// Call once per frame with the current key state (indexed by SDL
-    /// scancode; non-zero = pressed). Updates internal previous-state
-    /// for next-frame edge detection.
-    pub fn translate_keyboard(&mut self, keys: &[u8], flags: TranslationFlags) -> Vec<GameAction> {
+    /// Call once per frame with the current key state. Updates internal
+    /// previous-state for next-frame edge detection.
+    pub fn translate_keyboard(
+        &mut self,
+        keys: &BTreeSet<KeyCode>,
+        flags: TranslationFlags,
+    ) -> Vec<GameAction> {
         let mut actions = Vec::new();
         let prev = &self.prev_keys;
 
         // --- Always-active keys ---
-        if key_released(keys, prev, self.sc(GameKey::SlowMotion)) {
+        if key_released(keys, prev, self.key(GameKey::SlowMotion)) {
             actions.push(GameAction::SlowMotion);
         }
-        if key_released(keys, prev, self.sc(GameKey::PrintScreen)) {
+        if key_released(keys, prev, self.key(GameKey::PrintScreen)) {
             actions.push(GameAction::PrintScreen);
         }
 
         // --- Ingame menu ---
         if flags.contains(TranslationFlags::INGAME_MENU)
-            && key_released(keys, prev, self.sc(GameKey::DisplayMenu))
+            && key_released(keys, prev, self.key(GameKey::DisplayMenu))
         {
             actions.push(GameAction::DisplayMenu);
         }
 
         // --- Quick load/save ---
         if flags.contains(TranslationFlags::QUICK_LOAD)
-            && key_released(keys, prev, self.sc(GameKey::QuickLoad1))
+            && key_released(keys, prev, self.key(GameKey::QuickLoad1))
         {
             actions.push(GameAction::QuickLoad);
         }
         if flags.contains(TranslationFlags::QUICK_SAVE)
-            && key_released(keys, prev, self.sc(GameKey::QuickSave1))
+            && key_released(keys, prev, self.key(GameKey::QuickSave1))
         {
             actions.push(GameAction::QuickSave);
         }
 
         // --- Mission keys ---
         if flags.contains(TranslationFlags::MISSION) {
-            if key_released(keys, prev, self.sc(GameKey::DisplayConsole)) {
+            if key_released(keys, prev, self.key(GameKey::DisplayConsole)) {
                 actions.push(GameAction::DisplayConsole);
             }
 
-            // Alt+Tab or Ctrl+Esc → SwitchTask (raw scancodes, not bindings).
-            if key_held(keys, SDL_SCANCODE_TAB) && key_held(keys, SDL_SCANCODE_LALT) {
+            // Alt+Tab or Ctrl+Esc -> SwitchTask (physical keys, not bindings).
+            if key_held(keys, Some(KeyCode::Tab)) && key_held(keys, Some(KeyCode::AltLeft)) {
                 actions.push(GameAction::SwitchTask);
             }
-            if key_held(keys, SDL_SCANCODE_ESCAPE)
-                && (key_held(keys, SDL_SCANCODE_LCTRL) || key_held(keys, SDL_SCANCODE_RCTRL))
+            if key_held(keys, Some(KeyCode::Escape))
+                && (key_held(keys, Some(KeyCode::ControlLeft))
+                    || key_held(keys, Some(KeyCode::ControlRight)))
             {
                 actions.push(GameAction::SwitchTask);
             }
 
-            if key_released(keys, prev, self.sc(GameKey::RecordMovie)) {
+            if key_released(keys, prev, self.key(GameKey::RecordMovie)) {
                 actions.push(GameAction::RecordMovie);
             }
 
@@ -701,9 +646,9 @@ impl InputTranslator {
                 // Modifier key hit (down-edge) and release (up-edge) produce
                 // separate actions. Order: all three hits first, then all
                 // three releases (group-by-edge).
-                let show_doors = self.sc(GameKey::ShowDoors);
-                let view_cone = self.sc(GameKey::ShowViewCone);
-                let move_action = self.sc(GameKey::MoveDuringAction);
+                let show_doors = self.key(GameKey::ShowDoors);
+                let view_cone = self.key(GameKey::ShowViewCone);
+                let move_action = self.key(GameKey::MoveDuringAction);
 
                 if key_hit(keys, prev, show_doors) {
                     actions.push(GameAction::KeyShift);
@@ -725,108 +670,103 @@ impl InputTranslator {
                     actions.push(GameAction::KeyReleaseControl);
                 }
 
-                if key_released(keys, prev, self.sc(GameKey::Teleport)) {
+                if key_released(keys, prev, self.key(GameKey::Teleport)) {
                     actions.push(GameAction::Teleport);
                 }
-                if key_released(keys, prev, self.sc(GameKey::SwitchHiddenDisplay)) {
+                if key_released(keys, prev, self.key(GameKey::SwitchHiddenDisplay)) {
                     actions.push(GameAction::SwitchMaskedDisplay);
                 }
-                if key_released(keys, prev, self.sc(GameKey::AiInfo)) {
+                if key_released(keys, prev, self.key(GameKey::AiInfo)) {
                     actions.push(GameAction::DisplayAiInfo);
                 }
 
                 // Macro keys
-                if key_released(keys, prev, self.sc(GameKey::StartQa)) {
+                if key_released(keys, prev, self.key(GameKey::StartQa)) {
                     actions.push(GameAction::StartMacro);
                 }
-                if key_released(keys, prev, self.sc(GameKey::DeleteQa)) {
+                if key_released(keys, prev, self.key(GameKey::DeleteQa)) {
                     actions.push(GameAction::DeleteAllMacros);
                 }
                 // RECORD_QA keybind — clock-widget accelerator.
-                if key_released(keys, prev, self.sc(GameKey::RecordQa)) {
+                if key_released(keys, prev, self.key(GameKey::RecordQa)) {
                     actions.push(GameAction::RecordQa);
                 }
 
                 // Selection
-                if key_released(keys, prev, self.sc(GameKey::SelectNone)) {
+                if key_released(keys, prev, self.key(GameKey::SelectNone)) {
                     actions.push(GameAction::UnselectAll);
                 }
-                if key_released(keys, prev, self.sc(GameKey::SelectAll)) {
+                if key_released(keys, prev, self.key(GameKey::SelectAll)) {
                     actions.push(GameAction::SelectAll);
                 }
 
                 // Stance
-                if key_released(keys, prev, self.sc(GameKey::CrouchDown)) {
+                if key_released(keys, prev, self.key(GameKey::CrouchDown)) {
                     actions.push(GameAction::CrouchDown);
                 }
-                if key_released(keys, prev, self.sc(GameKey::StandUp)) {
+                if key_released(keys, prev, self.key(GameKey::StandUp)) {
                     actions.push(GameAction::StandUp);
                 }
 
-                if key_released(keys, prev, self.sc(GameKey::RequestInfo)) {
+                if key_released(keys, prev, self.key(GameKey::RequestInfo)) {
                     actions.push(GameAction::DisplayInfo);
                 }
 
                 // Scroll keys use held (continuous while pressed)
-                if key_held(keys, self.sc(GameKey::ScrollLeft)) {
+                if key_held(keys, self.key(GameKey::ScrollLeft)) {
                     actions.push(GameAction::ScrollLeft);
                 }
-                if key_held(keys, self.sc(GameKey::ScrollRight)) {
+                if key_held(keys, self.key(GameKey::ScrollRight)) {
                     actions.push(GameAction::ScrollRight);
                 }
-                if key_held(keys, self.sc(GameKey::ScrollUp)) {
+                if key_held(keys, self.key(GameKey::ScrollUp)) {
                     actions.push(GameAction::ScrollUp);
                 }
-                if key_held(keys, self.sc(GameKey::ScrollDown)) {
+                if key_held(keys, self.key(GameKey::ScrollDown)) {
                     actions.push(GameAction::ScrollDown);
                 }
 
                 // Zoom uses released (single trigger)
-                if key_released(keys, prev, self.sc(GameKey::ZoomOut)) {
+                if key_released(keys, prev, self.key(GameKey::ZoomOut)) {
                     actions.push(GameAction::ZoomOut);
                 }
-                if key_released(keys, prev, self.sc(GameKey::ZoomIn)) {
+                if key_released(keys, prev, self.key(GameKey::ZoomIn)) {
                     actions.push(GameAction::ZoomIn);
                 }
 
                 // Action slots
-                if key_released(keys, prev, self.sc(GameKey::Action1)) {
+                if key_released(keys, prev, self.key(GameKey::Action1)) {
                     actions.push(GameAction::SelectAction { index: 0 });
                 }
-                if key_released(keys, prev, self.sc(GameKey::Action2)) {
+                if key_released(keys, prev, self.key(GameKey::Action2)) {
                     actions.push(GameAction::SelectAction { index: 1 });
                 }
-                if key_released(keys, prev, self.sc(GameKey::Action3)) {
+                if key_released(keys, prev, self.key(GameKey::Action3)) {
                     actions.push(GameAction::SelectAction { index: 2 });
                 }
 
                 // Character selection (portrait index 0–4).
                 // We just emit the index — the caller resolves the entity.
-                if key_released(keys, prev, self.sc(GameKey::SelectCharacter1)) {
+                if key_released(keys, prev, self.key(GameKey::SelectCharacter1)) {
                     actions.push(GameAction::SelectCharacter { portrait_index: 0 });
                 }
-                if key_released(keys, prev, self.sc(GameKey::SelectCharacter2)) {
+                if key_released(keys, prev, self.key(GameKey::SelectCharacter2)) {
                     actions.push(GameAction::SelectCharacter { portrait_index: 1 });
                 }
-                if key_released(keys, prev, self.sc(GameKey::SelectCharacter3)) {
+                if key_released(keys, prev, self.key(GameKey::SelectCharacter3)) {
                     actions.push(GameAction::SelectCharacter { portrait_index: 2 });
                 }
-                if key_released(keys, prev, self.sc(GameKey::SelectCharacter4)) {
+                if key_released(keys, prev, self.key(GameKey::SelectCharacter4)) {
                     actions.push(GameAction::SelectCharacter { portrait_index: 3 });
                 }
-                if key_released(keys, prev, self.sc(GameKey::SelectCharacter5)) {
+                if key_released(keys, prev, self.key(GameKey::SelectCharacter5)) {
                     actions.push(GameAction::SelectCharacter { portrait_index: 4 });
                 }
             }
         }
 
         // Save current state as previous for next frame.
-        self.prev_keys.resize(MAX_SCANCODES, 0);
-        let copy_len = keys.len().min(MAX_SCANCODES);
-        self.prev_keys[..copy_len].copy_from_slice(&keys[..copy_len]);
-        if copy_len < MAX_SCANCODES {
-            self.prev_keys[copy_len..].fill(0);
-        }
+        self.prev_keys.clone_from(keys);
 
         actions
     }
@@ -839,52 +779,46 @@ impl InputTranslator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+    use winit::keyboard::KeyCode;
 
     fn make_translator() -> InputTranslator {
         let mut t = InputTranslator::new(1024.0, 768.0);
         // Bind some keys for testing
-        t.set_binding(GameKey::ZoomIn, 10);
-        t.set_binding(GameKey::ZoomOut, 11);
-        t.set_binding(GameKey::ScrollLeft, 20);
-        t.set_binding(GameKey::ScrollRight, 21);
-        t.set_binding(GameKey::ScrollUp, 22);
-        t.set_binding(GameKey::ScrollDown, 23);
-        t.set_binding(GameKey::SelectCharacter1, 30);
-        t.set_binding(GameKey::SelectAll, 35);
-        t.set_binding(GameKey::Action1, 40);
-        t.set_binding(GameKey::ShowDoors, 50);
-        t.set_binding(GameKey::QuickSave1, 60);
-        t.set_binding(GameKey::QuickLoad1, 61);
+        t.set_binding(GameKey::ZoomIn, Some(KeyCode::Equal));
+        t.set_binding(GameKey::ZoomOut, Some(KeyCode::Minus));
+        t.set_binding(GameKey::ScrollLeft, Some(KeyCode::ArrowLeft));
+        t.set_binding(GameKey::ScrollRight, Some(KeyCode::ArrowRight));
+        t.set_binding(GameKey::ScrollUp, Some(KeyCode::ArrowUp));
+        t.set_binding(GameKey::ScrollDown, Some(KeyCode::ArrowDown));
+        t.set_binding(GameKey::SelectCharacter1, Some(KeyCode::Digit1));
+        t.set_binding(GameKey::SelectAll, Some(KeyCode::KeyQ));
+        t.set_binding(GameKey::Action1, Some(KeyCode::KeyG));
+        t.set_binding(GameKey::ShowDoors, Some(KeyCode::ShiftLeft));
+        t.set_binding(GameKey::QuickSave1, Some(KeyCode::F1));
+        t.set_binding(GameKey::QuickLoad1, Some(KeyCode::F5));
         t
     }
 
-    /// Build a key state array with specific scancodes pressed.
-    fn keys_down(scancodes: &[u16]) -> Vec<u8> {
-        let mut keys = vec![0u8; MAX_SCANCODES];
-        for &sc in scancodes {
-            keys[sc as usize] = 1;
-        }
-        keys
+    fn keys_down(keys: &[KeyCode]) -> BTreeSet<KeyCode> {
+        keys.iter().copied().collect()
     }
 
     #[test]
     fn translate_key_returns_bound_game_key() {
         let t = make_translator();
-        assert_eq!(t.translate_key(10), Some(GameKey::ZoomIn));
-        assert_eq!(t.translate_key(11), Some(GameKey::ZoomOut));
-        assert_eq!(t.translate_key(30), Some(GameKey::SelectCharacter1));
+        assert_eq!(t.translate_key(KeyCode::Equal), Some(GameKey::ZoomIn));
+        assert_eq!(t.translate_key(KeyCode::Minus), Some(GameKey::ZoomOut));
+        assert_eq!(
+            t.translate_key(KeyCode::Digit1),
+            Some(GameKey::SelectCharacter1)
+        );
     }
 
     #[test]
     fn translate_key_returns_none_for_unbound() {
         let t = make_translator();
-        assert_eq!(t.translate_key(99), None);
-    }
-
-    #[test]
-    fn translate_key_returns_none_for_zero_scancode() {
-        let t = make_translator();
-        assert_eq!(t.translate_key(0), None);
+        assert_eq!(t.translate_key(KeyCode::F24), None);
     }
 
     #[test]
@@ -964,31 +898,28 @@ mod tests {
     #[test]
     fn keyboard_released_triggers_action() {
         let mut t = make_translator();
-        // Frame 1: key 10 (ZoomIn) is pressed
-        let frame1 = keys_down(&[10]);
+        let frame1 = keys_down(&[KeyCode::Equal]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
 
-        // Frame 2: key 10 released → should produce ZoomIn action
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
         assert!(actions.contains(&GameAction::ZoomIn));
     }
 
     #[test]
-    fn raw_scancode_pressed_is_edge_triggered() {
+    fn raw_key_pressed_is_edge_triggered() {
         let mut t = make_translator();
-        let frame1 = keys_down(&[55]);
-        assert!(t.was_scancode_pressed(55, &frame1));
+        let frame1 = keys_down(&[KeyCode::Period]);
+        assert!(t.was_key_pressed(KeyCode::Period, &frame1));
 
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
-        assert!(!t.was_scancode_pressed(55, &frame1));
+        assert!(!t.was_key_pressed(KeyCode::Period, &frame1));
     }
 
     #[test]
     fn keyboard_held_scroll() {
         let mut t = make_translator();
-        // Frame 1: start holding scroll left
-        let frame1 = keys_down(&[20]);
+        let frame1 = keys_down(&[KeyCode::ArrowLeft]);
         let actions = t.translate_keyboard(&frame1, TranslationFlags::ALL);
         assert!(actions.contains(&GameAction::ScrollLeft));
 
@@ -1000,8 +931,7 @@ mod tests {
     #[test]
     fn keyboard_show_doors_hit_and_release() {
         let mut t = make_translator();
-        // Frame 1: ShowDoors (50) just pressed → KeyShift
-        let frame1 = keys_down(&[50]);
+        let frame1 = keys_down(&[KeyCode::ShiftLeft]);
         let actions = t.translate_keyboard(&frame1, TranslationFlags::ALL);
         assert!(actions.contains(&GameAction::KeyShift));
         assert!(!actions.contains(&GameAction::KeyReleaseShift));
@@ -1016,8 +946,7 @@ mod tests {
     #[test]
     fn keyboard_flags_filter_categories() {
         let mut t = make_translator();
-        // Press QuickSave key
-        let frame1 = keys_down(&[60]);
+        let frame1 = keys_down(&[KeyCode::F1]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
 
         // Release with QUICK_SAVE disabled → no action
@@ -1030,8 +959,7 @@ mod tests {
     fn keyboard_user_locked_blocks_mission_keys() {
         let mut t = make_translator();
         t.set_user_locked(true);
-        // Press and release SelectAll
-        let frame1 = keys_down(&[35]);
+        let frame1 = keys_down(&[KeyCode::KeyQ]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
@@ -1041,7 +969,7 @@ mod tests {
     #[test]
     fn keyboard_select_character() {
         let mut t = make_translator();
-        let frame1 = keys_down(&[30]);
+        let frame1 = keys_down(&[KeyCode::Digit1]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
@@ -1051,7 +979,7 @@ mod tests {
     #[test]
     fn keyboard_select_action_index() {
         let mut t = make_translator();
-        let frame1 = keys_down(&[40]);
+        let frame1 = keys_down(&[KeyCode::KeyG]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
         let frame2 = keys_down(&[]);
         let actions = t.translate_keyboard(&frame2, TranslationFlags::ALL);
@@ -1061,7 +989,7 @@ mod tests {
     #[test]
     fn reset_state_clears_previous_keys() {
         let mut t = make_translator();
-        let frame1 = keys_down(&[10]);
+        let frame1 = keys_down(&[KeyCode::Equal]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
 
         t.reset_state();
@@ -1085,15 +1013,15 @@ mod tests {
     fn load_bindings_from_keyconfig() {
         let mut t = InputTranslator::new(1024.0, 768.0);
         let mut cfg = robin_assets::keyconfig::KeyConfig::default();
-        cfg.set_binding("ZoomIn", 0x49, 0x00);
-        cfg.set_binding("ScrollUp", 0xC8, 0x00);
+        cfg.set_binding("ZoomIn", Some(KeyCode::PageUp), None);
+        cfg.set_binding("ScrollUp", Some(KeyCode::ArrowUp), None);
 
         t.load_bindings_from_keyconfig(&cfg);
 
-        assert_eq!(t.get_binding(GameKey::ZoomIn), 0x49);
-        assert_eq!(t.get_binding(GameKey::ScrollUp), 0xC8);
+        assert_eq!(t.get_binding(GameKey::ZoomIn), Some(KeyCode::PageUp));
+        assert_eq!(t.get_binding(GameKey::ScrollUp), Some(KeyCode::ArrowUp));
         // Reserved bindings survive
-        assert_eq!(t.get_binding(GameKey::DisplayMenu), SDL_SCANCODE_ESCAPE);
+        assert_eq!(t.get_binding(GameKey::DisplayMenu), Some(KeyCode::Escape));
     }
 
     #[test]
@@ -1129,7 +1057,7 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: InputTranslator = serde_json::from_str(&json).unwrap();
         assert_eq!(back.screen_width, 1024.0);
-        assert_eq!(back.get_binding(GameKey::ZoomIn), 10);
+        assert_eq!(back.get_binding(GameKey::ZoomIn), Some(KeyCode::Equal));
         assert_eq!(back.dead_zones.len(), 1);
     }
 

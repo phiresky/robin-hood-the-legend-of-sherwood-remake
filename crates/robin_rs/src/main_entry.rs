@@ -86,10 +86,6 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_default_loose: bool,
 
-    /// Make the shortcuts menu record the current key config as default.
-    #[arg(long)]
-    pub record_default_key_config: bool,
-
     /// Validate cached sound data during startup.
     #[arg(long)]
     pub check_sound_data: bool,
@@ -284,7 +280,6 @@ impl Default for CliArgs {
             no_fog: false,
             whatsup: false,
             no_default_loose: false,
-            record_default_key_config: false,
             check_sound_data: false,
             view_cones: false,
             debug_surfaces: false,
@@ -325,15 +320,13 @@ fn install_global_options(args: &mut CliArgs) {
         debug_surfaces: args.debug_surfaces,
         golden_eye: args.goldeneye,
         ignore_default_loose: args.no_default_loose,
-        record_default_key_config: args.record_default_key_config,
         check_sound_data: args.check_sound_data,
         ..Default::default()
     };
 
     args.global_options = opts.clone();
     // Install the process-wide `GlobalOptions` so UI layers that don't
-    // have a `Game` or `CliArgs` in scope (e.g. the main-menu shortcuts
-    // screen) can still read flags like `record_default_key_config`.
+    // have a `Game` or `CliArgs` in scope can still read startup flags.
     robin_engine::engine::GlobalOptions::set_global(opts);
 }
 
@@ -428,7 +421,6 @@ mod tests {
             "--whatsup",
             "--goldeneye",
             "--no-default-loose",
-            "--record-default-key-config",
             "--check-sound-data",
         ])
         .unwrap();
@@ -441,7 +433,6 @@ mod tests {
         assert!(args.goldeneye);
         assert!(args.global_options.golden_eye);
         assert!(args.global_options.ignore_default_loose);
-        assert!(args.global_options.record_default_key_config);
         assert!(args.global_options.check_sound_data);
     }
 
@@ -843,7 +834,7 @@ pub(crate) struct RustCallbacks {
     pub pending_save_banner: Option<SaveBannerKind>,
     /// Pending request to re-forward an input-reset after a load.
     /// Consumed by the frame loop, which clears the input translator's
-    /// scancode ring so half-pressed keys at save time do not stick
+    /// key-edge state so half-pressed keys at save time do not stick
     /// across the load.
     pub pending_reset_input: bool,
     /// Cross-mission load request stashed by `perform_pending_save_load`
@@ -1297,7 +1288,7 @@ pub(crate) fn perform_pending_save_load(
                                 .unwrap_or(false);
                             callbacks.post_load_sync = Some(PostLoadSync { is_continue });
                             // The frame loop clears the translator's
-                            // scancode ring so half-pressed keys at save
+                            // key-edge state so half-pressed keys at save
                             // time don't stick across the load.
                             callbacks.pending_reset_input = true;
                             // Mirror the load into the Continue slot,

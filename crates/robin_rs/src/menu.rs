@@ -162,7 +162,8 @@ impl MenuScreenState {
     //     it to `DebriefingOutcome::EmergencyEnd` so the caller can
     //     propagate `GameCode::Quit` (see `game_session.rs`).
     //   * Game-input-translator enable (only quick-load needs it) →
-    //     `show_debriefing` takes a `quick_load_scancode: Option<u16>`
+    //     `show_debriefing` takes a physical quick-load key supplied
+    //     by the caller.
     //     supplied by the caller.
     //   * Translator-flag save/disable/restore around a nested modal:
     //     the equivalent call site (`game_session.rs` →

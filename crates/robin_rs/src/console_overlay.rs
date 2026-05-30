@@ -8,7 +8,7 @@
 //! The console is intentionally non-modal: the game keeps running
 //! underneath, so cheats execute against the live simulation and the
 //! player can watch the effect.  Uses SDL's native text-input events
-//! rather than a hand-rolled scancode-to-character translation table,
+//! rather than a hand-rolled physical-key-to-character translation table,
 //! which gives us correct keyboard layouts and IME for free.
 //!
 //! ## Features

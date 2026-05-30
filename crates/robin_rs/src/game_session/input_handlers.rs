@@ -161,13 +161,9 @@ pub(super) fn handle_hold_to_rewind(
     // replay playback (which owns the command stream) and when
     // the buffer hasn't accumulated any history yet.
     //
-    // SDL scancode for BACKSPACE — not in `input_translator`'s
-    // scancode table because this debug binding isn't part of the
-    // remappable game-key set.
-    const SDL_SCANCODE_BACKSPACE: u16 = 42;
     let rewind_held = threaded_input
         .keyboard_state()
-        .is_pressed(SDL_SCANCODE_BACKSPACE);
+        .is_pressed(winit::keyboard::KeyCode::Backspace);
     // Edge detection: open/close the rewind-session cache so
     // consecutive rewind steps reuse earlier replay work instead
     // of re-ticking from a snapshot each frame.

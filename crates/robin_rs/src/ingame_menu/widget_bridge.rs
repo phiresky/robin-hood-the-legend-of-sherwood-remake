@@ -194,9 +194,9 @@ pub struct ModalInputState {
     pub virt_y: f32,
     pub buttons: MouseButtons,
     keyboard: UiKeyboard,
-    /// Raw per-scancode pressed-state buffer; SDL `KeyDown`/`KeyUp`
-    /// events toggle bytes here and [`refresh_keyboard`](Self::refresh_keyboard)
-    /// feeds the buffer into [`UiKeyboard::refresh`] each frame so
+    /// Raw physical-key pressed-state set; `KeyDown`/`KeyUp` events
+    /// toggle entries here and [`refresh_keyboard`](Self::refresh_keyboard)
+    /// feeds the set into [`UiKeyboard::refresh`] each frame so
     /// the widget state machine sees the same pressed/released/
     /// typewriter transitions the in-game path uses.
     raw_keyboard: crate::input::KeyboardState,
@@ -359,17 +359,17 @@ impl ModalInputState {
             GameEvent::TextInput { text } => {
                 self.text_input.push_str(text);
             }
-            GameEvent::KeyDown { scancode, .. } => {
-                let i = *scancode as usize;
-                if i < self.raw_keyboard.keys.len() {
-                    self.raw_keyboard.keys[i] = 1;
-                }
+            GameEvent::KeyDown {
+                physical_key: Some(physical_key),
+                ..
+            } => {
+                self.raw_keyboard.keys.insert(*physical_key);
             }
-            GameEvent::KeyUp { scancode, .. } => {
-                let i = *scancode as usize;
-                if i < self.raw_keyboard.keys.len() {
-                    self.raw_keyboard.keys[i] = 0;
-                }
+            GameEvent::KeyUp {
+                physical_key: Some(physical_key),
+                ..
+            } => {
+                self.raw_keyboard.keys.remove(physical_key);
             }
             _ => {}
         }

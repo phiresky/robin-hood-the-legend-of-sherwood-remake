@@ -2,7 +2,6 @@
 
 pub mod actor_names;
 pub mod adpcm_check;
-pub mod convertkeys;
 pub mod decompile;
 pub mod disasm;
 pub mod frame_holder;
