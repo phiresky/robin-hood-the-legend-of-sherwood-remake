@@ -47,7 +47,7 @@ use crate::element::{
     ActionState, Animation, Command, ElementData, ElementKind, ElementProjectile, Entity, EntityId,
     ObjectData, ObjectType, Posture, ProjectileData, TargetFilter, TrajectoryPoint,
 };
-use crate::entities::Entities;
+use crate::entities::{Entities, EntitySlots};
 use crate::movement::ActiveShot;
 use crate::order::{Order, OrderType};
 use crate::profiles::Action;
@@ -1713,15 +1713,13 @@ pub fn tick_bow_shots(
 ) -> BowTickEvents {
     let mut events = BowTickEvents::default();
     let mut pending_fired = Vec::new();
-    let mut target_ground_positions = vec![None; entities.len()];
+    let mut target_ground_positions = EntitySlots::filled(entities.len(), None);
     for (entity_id, entity) in entities.occupied() {
-        target_ground_positions[entity_id.index() as usize] =
-            Some(bow_target_ground_position(entity));
+        target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
     }
 
     for (actor_id, entity) in entities.actors_mut() {
         let shooter_id = EntityId::from(actor_id);
-        let idx = shooter_id.index() as usize;
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -1771,7 +1769,7 @@ pub fn tick_bow_shots(
                 continue;
             }
             tracing::debug!(
-                shooter = idx,
+                shooter = shooter_id.index(),
                 ?shot_seq_id,
                 shot_elem_idx,
                 ?current_order_type,
@@ -1785,7 +1783,7 @@ pub fn tick_bow_shots(
         let mut frame_progression = crate::sprite::FrameProgression::Default;
         if is_shoot_order(current_order_type)
             && let Some(target_id) = shot.target
-            && let Some(Some(target_pos)) = target_ground_positions.get(target_id.index() as usize)
+            && let Some(Some(target_pos)) = target_ground_positions.get(target_id)
         {
             let shooter_pos = entity.element_data().position();
             let dx = target_pos.x - shooter_pos.x;
@@ -1800,7 +1798,7 @@ pub fn tick_bow_shots(
         }
         let Ok(dir_u16) = u16::try_from(direction) else {
             tracing::warn!(
-                shooter = idx,
+                shooter = shooter_id.index(),
                 direction,
                 "Bow shot tick skipped: invalid shooter direction"
             );
@@ -1912,7 +1910,8 @@ pub fn tick_bow_shots(
             // animation continues until Terminated.
             let Some(shot_mode) = shot.shoot_mode else {
                 panic!(
-                    "active bow shot missing resolved shoot mode at release: shooter={idx} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}"
+                    "active bow shot missing resolved shoot mode at release: shooter={} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}",
+                    shooter_id.index()
                 );
             };
             actor.action_state = ActionState::AimingWithBow;
@@ -1925,7 +1924,7 @@ pub fn tick_bow_shots(
             let Some(sprite_hand_point) = bow_sprite_hand_point(entity, shot_mode, direction)
             else {
                 tracing::warn!(
-                    shooter = idx,
+                    shooter = shooter_id.index(),
                     ?shot_mode,
                     dir_u16,
                     "Bow release skipped: missing bow-point sprite hotspot"
@@ -1935,7 +1934,7 @@ pub fn tick_bow_shots(
 
             let Some(target) = shot.target else {
                 tracing::warn!(
-                    shooter = idx,
+                    shooter = shooter_id.index(),
                     "Bow release skipped: active shot missing target"
                 );
                 continue;
@@ -1955,7 +1954,8 @@ pub fn tick_bow_shots(
         }
 
         panic!(
-            "active bow shot reached unhandled active bow order: shooter={idx} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}"
+            "active bow shot reached unhandled active bow order: shooter={} seq_id={shot_seq_id:?} elem_idx={shot_elem_idx} order={current_order_type:?}",
+            shooter_id.index()
         );
     }
 
