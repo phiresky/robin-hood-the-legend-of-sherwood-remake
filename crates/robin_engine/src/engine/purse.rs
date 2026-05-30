@@ -329,8 +329,8 @@ impl EngineInner {
                     y: source_pos.y + scatter_y,
                 };
                 if self.fast_grid.is_straight_movement_authorized(
-                    crate::geo2d::pt(corrected_2d.x, corrected_2d.y).into(),
-                    crate::geo2d::pt(candidate.x, candidate.y).into(),
+                    MapPoint::new(corrected_2d.x, corrected_2d.y),
+                    candidate,
                     layer,
                     &shooter_move_box,
                 ) {

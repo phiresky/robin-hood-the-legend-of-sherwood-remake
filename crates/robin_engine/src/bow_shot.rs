@@ -3191,17 +3191,17 @@ fn tick_arrows_matching(
                 // Active in-flight projectiles don't carry a cached
                 // obstacle reference, so re-derive the obstacle here
                 // by scanning active projection-area obstacles whose
-                // screen polygon contains the landing point — the same
+                // projected polygon contains the landing point — the same
                 // lookup `FastFindGrid::resolve_projectile_landing`
                 // runs after tick to populate the cached obstacle.
                 let pos = proj.element.position();
-                let landing_screen = crate::geo2d::pt(pos.x, pos.y - pos.z);
+                let landing_map = pos.to_map();
                 let mut top_plane_z: Option<f32> = None;
                 for (obs_idx, obstacle) in sight_obstacles.iter_indexed() {
                     if !sight_obstacles.is_active(obs_idx as usize)
                         || !obstacle.is_projection_area()
                         || obstacle.layer == u16::MAX
-                        || !obstacle.contains_point_screen(landing_screen)
+                        || !obstacle.contains_point_projection(landing_map.to_geo())
                     {
                         continue;
                     }

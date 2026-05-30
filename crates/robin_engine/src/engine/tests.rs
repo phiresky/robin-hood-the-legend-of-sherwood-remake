@@ -3,6 +3,7 @@
 use super::movement::mercenary_formation_destinations;
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
+use crate::coordinates::MapPoint;
 use crate::game_operation::GameCode;
 
 #[test]
@@ -595,7 +596,7 @@ fn measure_engine_size() {
             kind: crate::element::ElementKind::ActorSoldier,
             ..Default::default()
         };
-        element.set_position_map(geo2d::pt(i as f32 * 10.0, i as f32 * 10.0).into());
+        element.set_position_map(MapPoint::new(i as f32 * 10.0, i as f32 * 10.0));
         let entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
             element,
             actor: Default::default(),
@@ -610,7 +611,7 @@ fn measure_engine_size() {
             kind: crate::element::ElementKind::ActorPc,
             ..Default::default()
         };
-        element.set_position_map(geo2d::pt(100.0 + i as f32 * 20.0, 100.0).into());
+        element.set_position_map(MapPoint::new(100.0 + i as f32 * 20.0, 100.0));
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {
             element,
             actor: Default::default(),
@@ -1281,7 +1282,7 @@ fn sort_for_minimap_priority_order() {
         kind: ElementKind::ActorSoldier,
         ..Default::default()
     };
-    soldier_elem.set_position_map(geo2d::pt(20.0, 20.0).into());
+    soldier_elem.set_position_map(MapPoint::new(20.0, 20.0));
     let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
         element: soldier_elem,
         actor: Default::default(),
@@ -1294,7 +1295,7 @@ fn sort_for_minimap_priority_order() {
         kind: ElementKind::ActorPc,
         ..Default::default()
     };
-    pc_elem.set_position_map(geo2d::pt(30.0, 30.0).into());
+    pc_elem.set_position_map(MapPoint::new(30.0, 30.0));
     let pc_id = engine.add_entity(Entity::Pc(ActorPc {
         element: pc_elem,
         actor: Default::default(),
@@ -1306,7 +1307,7 @@ fn sort_for_minimap_priority_order() {
         kind: ElementKind::ObjectBonus,
         ..Default::default()
     };
-    bonus_elem.set_position_map(geo2d::pt(40.0, 40.0).into());
+    bonus_elem.set_position_map(MapPoint::new(40.0, 40.0));
     let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
         element: bonus_elem,
         object: Default::default(),

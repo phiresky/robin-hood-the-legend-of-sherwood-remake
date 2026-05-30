@@ -1669,7 +1669,7 @@ impl EngineInner {
                                 raw.obstacle_index,
                             );
                         }
-                        if !obs.box_screen.contains_point(initial_position.to_geo()) {
+                        if !obs.box_projection.contains_point(initial_position.to_geo()) {
                             tracing::warn!(
                                 "Rescue PC profile {} at ({},{}) map position not lying in projection area screen box (obstacle {})",
                                 raw.profile_index,
@@ -3005,7 +3005,7 @@ impl EngineInner {
                                     beam_me.projection_area,
                                 );
                             }
-                            if !obs.box_screen.contains_point(beam_me.position.to_geo()) {
+                            if !obs.box_projection.contains_point(beam_me.position.to_geo()) {
                                 tracing::warn!(
                                     "Beam-me {} at ({},{}) map position not lying in projection area screen box (obstacle {})",
                                     bm_idx,

@@ -15,7 +15,7 @@ impl EngineInner {
     ///
     /// Iterates the sight-obstacle table, restricts to projection-area
     /// obstacles whose `(sector, layer)` match, then returns the
-    /// obstacle whose screen-space bbox **and** screen-space polygon
+    /// obstacle whose projected bbox **and** projected polygon
     /// (vertices `(x, y - z_top)`) both contain `point`.  When several
     /// candidates match, picks the one with the greatest `box_3d_max.z`
     /// ("highest obstacle" rule).
@@ -41,10 +41,10 @@ impl EngineInner {
             if obs.sector != sector || obs.layer != layer {
                 continue;
             }
-            if !obs.box_screen.contains_point(point_geo) {
+            if !obs.box_projection.contains_point(point_geo) {
                 continue;
             }
-            if !obs.contains_point_screen(point_geo) {
+            if !obs.contains_point_projection(point_geo) {
                 continue;
             }
             let z_max = obs.box_3d_max[2];

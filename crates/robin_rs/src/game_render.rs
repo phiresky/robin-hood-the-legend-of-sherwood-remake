@@ -643,7 +643,8 @@ fn view_cone_polys_for_render(
                     (*idx != projection_idx
                         && o.is_projection_area()
                         && o.layer >= projection_area.layer
-                        && o.box_screen.intersects_bbox(&projection_area.box_screen))
+                        && o.box_projection
+                            .intersects_bbox(&projection_area.box_projection))
                     .then_some(*o)
                 })
                 .collect();
@@ -1433,7 +1434,7 @@ fn transition_crenel_climb_up_mask_position(
         if !obs.is_projection_area()
             || obs.layer != door.layer_out
             || obs.sector != u16::from(door.sector_out)
-            || !obs.contains_point_screen(point_out)
+            || !obs.contains_point_projection(point_out)
         {
             continue;
         }

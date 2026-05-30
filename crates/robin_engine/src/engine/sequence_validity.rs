@@ -1455,7 +1455,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(crate::geo2d::pt(0.0, 0.0).into());
+        element.set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
         element
     }
 
@@ -1465,7 +1465,7 @@ mod tests {
             active: true,
             ..ElementData::default()
         };
-        element.set_position_map(crate::geo2d::pt(10.0, 0.0).into());
+        element.set_position_map(crate::coordinates::MapPoint::new(10.0, 0.0));
         Entity::Bonus(ElementBonus {
             element,
             object: ObjectData {

@@ -5313,10 +5313,10 @@ impl EngineInner {
             if obs.layer != layer {
                 continue;
             }
-            if !obs.box_screen.contains_point(bbox_at.to_geo()) {
+            if !obs.box_projection.contains_point(bbox_at.to_geo()) {
                 continue;
             }
-            if !obs.contains_point_screen(polygon_at.to_geo()) {
+            if !obs.contains_point_projection(polygon_at.to_geo()) {
                 continue;
             }
             return Some(oi as u16);

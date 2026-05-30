@@ -266,8 +266,8 @@ pub struct SightObstacle {
     /// 2D ground-plane bounding box.
     pub box_ground: BBox2D,
 
-    /// 2D screen-space bounding box (Y shifted by Z for isometric projection).
-    pub box_screen: BBox2D,
+    /// 2D projected bounding box (Y shifted by Z for isometric projection).
+    pub box_projection: BBox2D,
 
     /// Per-vertex obstacle data (x, y, z_top, z_bottom).
     pub obstacle_points: Vec<ObstaclePoint>,
@@ -275,12 +275,12 @@ pub struct SightObstacle {
     /// Ground-plane polygon (CCW winding, convex).
     pub polygon: Polygon2D<f32>,
 
-    /// Screen-space polygon — vertices `(x, y - z_top)`.  Used to
+    /// Projected polygon — vertices `(x, y - z_top)`.  Used to
     /// discriminate candidate projection-area obstacles by
-    /// point-in-polygon at the position's screen-space coordinates.
+    /// point-in-polygon at the position's projected map coordinates.
     /// Only meaningful when `is_projection_area()` is set; for
     /// ground-flat obstacles it coincides with `polygon`.
-    pub polygon_screen: Polygon2D<f32>,
+    pub polygon_projection: Polygon2D<f32>,
 
     /// Top plane defined by three points `[origin, p1, p2]` (each `[x,y,z]`).
     /// Stored as raw triples so we don't depend on sb3d serde.
@@ -345,10 +345,10 @@ impl SightObstacle {
             box_3d_min: [0.0; 3],
             box_3d_max: [0.0; 3],
             box_ground: BBox2D::new(),
-            box_screen: BBox2D::new(),
+            box_projection: BBox2D::new(),
             obstacle_points: Vec::new(),
             polygon: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
-            polygon_screen: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
+            polygon_projection: Polygon2D::new(geo::LineString::new(vec![]), vec![]),
             top_plane_points: [[0.0; 3]; 3],
             bottom_plane_points: [[0.0; 3]; 3],
             on_ground: true,
@@ -420,11 +420,11 @@ impl SightObstacle {
         geo2d::polygon_contains_point(&self.polygon, p)
     }
 
-    /// Test if a screen-space point lies inside the obstacle's
-    /// screen-space polygon (vertices `(x, y - z_top)`).  Used by the
+    /// Test if a projected map point lies inside the obstacle's
+    /// projected polygon (vertices `(x, y - z_top)`).  Used by the
     /// projection-area sector lookup.
-    pub fn contains_point_screen(&self, p: GeoPoint2D) -> bool {
-        geo2d::polygon_contains_point(&self.polygon_screen, p)
+    pub fn contains_point_projection(&self, p: GeoPoint2D) -> bool {
+        geo2d::polygon_contains_point(&self.polygon_projection, p)
     }
 
     /// Test if a sight line (segment from `from` to `to` on the ground plane)
@@ -456,15 +456,15 @@ impl SightObstacle {
 
         self.polygon = Polygon2D::new(geo::LineString::from(coords), vec![]);
 
-        // Build screen-space polygon (vertices `(x, y - z_top)`). Used
-        // for screen-coord point-in-polygon discrimination by the
+        // Build projected polygon (vertices `(x, y - z_top)`). Used
+        // for projected point-in-polygon discrimination by the
         // projection-area sector lookup.
         let coords_screen: Vec<geo::Coord<f32>> = self
             .obstacle_points
             .iter()
             .map(|op| pt(op.x, op.y - op.z_top))
             .collect();
-        self.polygon_screen = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
+        self.polygon_projection = Polygon2D::new(geo::LineString::from(coords_screen), vec![]);
 
         // Rebuild 2D ground bbox.
         self.box_ground = BBox2D::new();
@@ -486,11 +486,12 @@ impl SightObstacle {
         self.box_3d_min = min;
         self.box_3d_max = max;
 
-        // Rebuild screen bbox (isometric: screen_y = y - z_top).
-        self.box_screen = BBox2D::new();
+        // Rebuild projected bbox (isometric: projected_y = y - z_top).
+        self.box_projection = BBox2D::new();
         for op in &self.obstacle_points {
-            self.box_screen.expand_point(pt(op.x, op.y - op.z_top));
-            self.box_screen.expand_point(pt(op.x, op.y - op.z_bottom));
+            self.box_projection.expand_point(pt(op.x, op.y - op.z_top));
+            self.box_projection
+                .expand_point(pt(op.x, op.y - op.z_bottom));
         }
 
         // Check on_ground.

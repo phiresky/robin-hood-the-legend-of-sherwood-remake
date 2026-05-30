@@ -3423,8 +3423,8 @@ impl AiContext {
                     if !obstacle.is_projection_area()
                         || obstacle.sector != handle.get()
                         || obstacle.layer != position.level
-                        || !obstacle.box_screen.contains_point(point_geo)
-                        || !obstacle.contains_point_screen(point_geo)
+                        || !obstacle.box_projection.contains_point(point_geo)
+                        || !obstacle.contains_point_projection(point_geo)
                     {
                         continue;
                     }

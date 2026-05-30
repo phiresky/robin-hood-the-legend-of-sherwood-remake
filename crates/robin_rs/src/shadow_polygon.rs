@@ -267,13 +267,13 @@ fn points_to_polygon(points: &[GeoPoint2D]) -> Option<geo::Polygon<f32>> {
 }
 
 /// Project computed visibility polygons onto a projection-area plane and
-/// clip them to that surface's screen-space polygon.
+/// clip them to that surface's projected polygon.
 ///
 /// This mirrors the original `RHShadowPolygon::GetProjectionAreas` /
 /// `SetScreenCoords` display path for non-ground slices: points are
 /// converted to `(x, y - plane.ComputeZ(x, y))`. C++ then adds the
 /// projection area's sector plane as slice iterators in `PrepareSlice`;
-/// clipping to `polygon_screen` gives the same surface outline to the GPU
+/// clipping to `polygon_projection` gives the same surface outline to the GPU
 /// polygon path.
 pub fn project_and_clip_to_projection_area(
     visible_polygons: &[Vec<GeoPoint2D>],
@@ -287,9 +287,9 @@ pub fn project_and_clip_to_projection_area(
         y: p.y - projection_plane.compute_z(p.x, p.y),
     };
 
-    if projection_area.polygon_screen.exterior().0.len() < 3 {
+    if projection_area.polygon_projection.exterior().0.len() < 3 {
         tracing::warn!(
-            "projection-area obstacle {} has no screen polygon for view-cone clipping",
+            "projection-area obstacle {} has no projected polygon for view-cone clipping",
             projection_area.id
         );
         return (Vec::new(), project(viewer));
@@ -298,8 +298,8 @@ pub fn project_and_clip_to_projection_area(
     let mut rings = Vec::new();
     let blockers: Vec<geo::Polygon<f32>> = occluding_projection_areas
         .iter()
-        .filter(|obs| obs.polygon_screen.exterior().0.len() >= 3)
-        .map(|obs| obs.polygon_screen.clone())
+        .filter(|obs| obs.polygon_projection.exterior().0.len() >= 3)
+        .map(|obs| obs.polygon_projection.clone())
         .collect();
     let blocker_union = (!blockers.is_empty()).then(|| unary_union(&blockers));
     for poly in visible_polygons {
@@ -307,7 +307,7 @@ pub fn project_and_clip_to_projection_area(
         let Some(projected_poly) = points_to_polygon(&projected) else {
             continue;
         };
-        let clipped = projected_poly.intersection(&projection_area.polygon_screen);
+        let clipped = projected_poly.intersection(&projection_area.polygon_projection);
         let clipped = if let Some(blocker_union) = &blocker_union {
             clipped.difference(blocker_union)
         } else {

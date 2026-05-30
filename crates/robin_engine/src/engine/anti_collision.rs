@@ -995,7 +995,7 @@ mod tests {
             posture: Posture::Upright,
             ..Default::default()
         };
-        element.set_position_map(geo2d::pt(10.0, 20.0).into());
+        element.set_position_map(MapPoint::new(10.0, 20.0));
 
         let mut human = crate::element::HumanData::default();
         human.opponents.push(EntityId::Pc(2));
