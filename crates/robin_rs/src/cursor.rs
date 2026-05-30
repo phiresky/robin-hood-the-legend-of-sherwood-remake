@@ -8,6 +8,7 @@
 //! When no resource is available a simple arrow fallback is drawn.
 
 use crate::geo2d;
+use crate::gfx_types::BlendMode;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16, rgb565_to_rgb8};
 use crate::resource_manager::{ResourceId, ResourceManager};
 use robin_assets::frame_holder::SHADOW_KEY;
@@ -353,7 +354,7 @@ impl CursorRenderer {
                 shadow,
                 Some(&src_box),
                 Some(&dst_box),
-                crate::gfx_types::BlendMode::Blend,
+                BlendMode::Blend,
                 [
                     1.0,
                     1.0,
@@ -363,12 +364,7 @@ impl CursorRenderer {
             );
         }
         if let Some(color) = frame.color.as_ref() {
-            renderer.render_gpu_image(
-                color,
-                Some(&src_box),
-                Some(&dst_box),
-                crate::gfx_types::BlendMode::Blend,
-            );
+            renderer.render_gpu_image(color, Some(&src_box), Some(&dst_box), BlendMode::Blend);
         }
     }
 

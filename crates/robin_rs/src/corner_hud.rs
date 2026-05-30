@@ -21,7 +21,7 @@
 //!   - QuickStart: enabled when any PC has slot 0 populated AND we're not
 //!     currently recording.
 
-use crate::gfx_types::Rect as SdlRect;
+use crate::gfx_types::{Point, Rect as SdlRect};
 
 use robin_engine::engine::PANNEL_HEIGHT;
 
@@ -173,7 +173,7 @@ impl CornerHudLayout {
     /// Hit-test a screen-space click.  Returns the first matching
     /// button that is currently enabled, or `None`.
     pub fn hit_test(&self, x: i32, y: i32, enable: CornerButtonEnable) -> Option<CornerButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if enable.clock && self.clock.contains_point(pt) {
             return Some(CornerButton::Clock);
         }
@@ -189,7 +189,7 @@ impl CornerHudLayout {
     /// Geometric hit-test that ignores the enable mask — used so the
     /// tooltip still surfaces when the button is disabled.
     pub fn hit_test_geometric(&self, x: i32, y: i32) -> Option<CornerButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if self.clock.contains_point(pt) {
             return Some(CornerButton::Clock);
         }

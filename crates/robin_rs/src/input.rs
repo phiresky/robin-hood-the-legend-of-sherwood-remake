@@ -403,13 +403,13 @@ mod tests {
         let mut ti = ThreadedInput::new();
         ti.feed_sdl_events(&[GameEvent::KeyDown {
             scancode: 42,
-            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            keycode: Keycode::Char(b'a'),
         }]);
         assert!(ti.keyboard_state().is_pressed(42));
 
         ti.feed_sdl_events(&[GameEvent::KeyUp {
             scancode: 42,
-            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            keycode: Keycode::Char(b'a'),
         }]);
         assert!(!ti.keyboard_state().is_pressed(42));
     }
@@ -459,7 +459,7 @@ mod tests {
         // After Quit, subsequent events are ignored.
         ti.feed_sdl_events(&[GameEvent::KeyDown {
             scancode: 10,
-            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            keycode: Keycode::Char(b'a'),
         }]);
         assert!(!ti.keyboard_state().is_pressed(10));
     }

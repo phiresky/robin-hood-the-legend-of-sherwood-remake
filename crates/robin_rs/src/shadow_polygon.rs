@@ -23,6 +23,7 @@
 //! edges and darkens every pixel that falls outside all visible regions.
 
 use crate::geo2d::Point2D;
+use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
@@ -713,7 +714,7 @@ fn render_darken_inside_gpu_spans(
                 alpha,
             );
             renderer.render_view_cone_span(
-                crate::gfx_types::Rect::new(start, y, (end - start) as u32, 1),
+                Rect::new(start, y, (end - start) as u32, 1),
                 tint,
                 alpha_left,
                 alpha_right,
@@ -1144,7 +1145,7 @@ mod tests {
 
     /// Helper to build a SightObstacle with given ground points.
     fn make_obstacle_with_points(pts: &[(f32, f32)]) -> crate::sight_obstacle::SightObstacle {
-        let mut obs = crate::sight_obstacle::SightObstacle::new_default(0);
+        let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = pts
             .iter()
             .map(|&(x, y)| crate::sight_obstacle::ObstaclePoint {
@@ -1264,7 +1265,7 @@ mod tests {
         let right_side = iso(rotate(dir, params.half_aperture));
 
         // Behind-left obstacle: (-200..-180, -10..10)
-        let mut obs = crate::sight_obstacle::SightObstacle::new_default(0);
+        let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
             crate::sight_obstacle::ObstaclePoint {
                 x: -200.0,
@@ -1313,7 +1314,7 @@ mod tests {
         let right_side = iso(rotate(dir, params.half_aperture));
 
         // Obstacle directly ahead along +x.
-        let mut obs = crate::sight_obstacle::SightObstacle::new_default(0);
+        let mut obs = SightObstacle::new_default(0);
         obs.obstacle_points = vec![
             crate::sight_obstacle::ObstaclePoint {
                 x: 100.0,

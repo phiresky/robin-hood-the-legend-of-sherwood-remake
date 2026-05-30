@@ -44,6 +44,7 @@
 //! match the original behaviour.
 
 use crate::geo2d::Point2D;
+use crate::gfx_types::BlendMode;
 use crate::mouse_way::MouseWay;
 use crate::renderer::{GpuImage, Renderer, TRANSPARENT_COLOR_KEY_16};
 use robin_assets::picture::{Picture, PixelFormat};
@@ -253,12 +254,7 @@ impl MouseTrailRenderer {
             crate::geo2d::pt(x as f32, y as f32),
             crate::geo2d::pt((x + 1) as f32, (y + height) as f32),
         );
-        renderer.render_gpu_image(
-            &self.images[idx],
-            Some(&src),
-            Some(&dst),
-            crate::gfx_types::BlendMode::Add,
-        );
+        renderer.render_gpu_image(&self.images[idx], Some(&src), Some(&dst), BlendMode::Add);
     }
 
     /// Draw a segment between two polyline points by interpolating

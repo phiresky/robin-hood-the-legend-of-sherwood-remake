@@ -18,7 +18,7 @@
 //! host-side — the aggregate stature can shift any frame the selection
 //! or posture changes.
 
-use crate::gfx_types::Rect as SdlRect;
+use crate::gfx_types::{Point, Rect as SdlRect};
 
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
 use robin_engine::resource_ids::{RHID_DOWN_ARROW, RHID_UP_ARROW};
@@ -219,7 +219,7 @@ impl StatureHudLayout {
     }
 
     pub fn hit_test(&self, x: i32, y: i32, enable: StatureEnable) -> Option<StatureButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if enable.up_enabled && self.up.contains_point(pt) {
             return Some(StatureButton::Up);
         }
@@ -234,7 +234,7 @@ impl StatureHudLayout {
     /// disabled (tooltips are tied to the widget rect, not its enable
     /// state).
     pub fn hit_test_geometric(&self, x: i32, y: i32) -> Option<StatureButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if self.up.contains_point(pt) {
             return Some(StatureButton::Up);
         }

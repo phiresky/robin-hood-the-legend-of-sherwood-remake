@@ -8,7 +8,7 @@ pub use robin_engine::markers::{
     GroundMark, GroundMarkEntry, NUMBER_OF_GROUND_FRAMES, SelectionMark,
 };
 
-use crate::gfx_types::Rect;
+use crate::gfx_types::{BlendMode, Rect};
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
 use crate::resource_manager::ResourceManager;
 use robin_assets::picture::Picture;
@@ -113,7 +113,7 @@ impl SelectionMarkRenderer {
             dst_rect,
             [0.0, 0.0, 1.0, 1.0],
             [1.0, 1.0, 1.0, 1.0],
-            crate::gfx_types::BlendMode::Blend,
+            BlendMode::Blend,
         );
     }
 }
