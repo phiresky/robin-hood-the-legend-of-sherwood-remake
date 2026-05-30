@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
+use crate::coordinates::MapPoint;
 use crate::parameters_ai::{
     AB_DELTA_DEFAULT_LOOK_TIME, AB_MIN_DEFAULT_LOOK_TIME, AI_FIRST_LOOK_TIME,
     AI_STANDARD_PANIC_RUNS, AI_TALK_DISTANCE,
@@ -2079,7 +2080,7 @@ impl FriendlyAi {
         // 0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7.
         let rel_sequence: [i32; 15] = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
 
-        let origin_pt = crate::geo2d::pt(ctx.position.x, ctx.position.y);
+        let origin_pt = MapPoint::new(ctx.position.x, ctx.position.y);
 
         // Outer loop walks distance from
         // `APPLE_CHASE_IDEAL_DISTANCE` down to 20 in steps of -10.
@@ -2112,8 +2113,8 @@ impl FriendlyAi {
                 // stack (unit tests), accept.
                 let accepted = match grid {
                     Some(g) => g.is_straight_movement_authorized(
-                        origin_pt.into(),
-                        crate::geo2d::pt(dest.x, dest.y).into(),
+                        origin_pt,
+                        MapPoint::new(dest.x, dest.y),
                         ctx.position.level,
                         &ctx.move_box,
                     ),

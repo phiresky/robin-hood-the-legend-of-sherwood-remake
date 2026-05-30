@@ -10,6 +10,7 @@ use std::sync::Arc;
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::MapPoint;
 use crate::element::EntityId;
 use crate::order::AiOrderIntent;
 
@@ -505,19 +506,19 @@ impl PatrolPath {
             // Try the full offset, then fall back to 60% / 30% / 0% if
             // `IsStraightMovementAutorized` rejects.  Without a grid
             // (tests), always accept full.
-            let on_path = crate::geo2d::pt(entry.position.x, entry.position.y);
+            let on_path = MapPoint::new(entry.position.x, entry.position.y);
             let mut chosen = sidewards;
             if let Some(grid) = fast_grid {
                 const FALLBACK_SCALES: &[f32] = &[1.0, 0.6, 0.3, 0.0];
                 for &scale in FALLBACK_SCALES {
-                    let candidate = crate::geo2d::pt(
+                    let candidate = MapPoint::new(
                         on_path.x + sidewards[0] * scale,
                         on_path.y + sidewards[1] * scale,
                     );
                     if scale == 0.0
                         || grid.is_straight_movement_authorized(
-                            on_path.into(),
-                            candidate.into(),
+                            on_path,
+                            candidate,
                             entry.position.level,
                             chief_move_box,
                         )
@@ -3415,14 +3416,15 @@ impl AiContext {
                     );
                 }
 
-                let point = crate::geo2d::pt(position.x, position.y);
+                let point = MapPoint::new(position.x, position.y);
+                let point_geo = point.to_geo();
                 let mut best: Option<(f32, f32)> = None;
                 for (_, obstacle) in self.sight_obstacles.list().iter_indexed() {
                     if !obstacle.is_projection_area()
                         || obstacle.sector != handle.get()
                         || obstacle.layer != position.level
-                        || !obstacle.box_screen.contains_point(point)
-                        || !obstacle.contains_point_screen(point)
+                        || !obstacle.box_screen.contains_point(point_geo)
+                        || !obstacle.contains_point_screen(point_geo)
                     {
                         continue;
                     }
@@ -9034,19 +9036,15 @@ mod tests {
     #[test]
     fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
         let mut bbox = crate::geo2d::BBox2D::new();
-        let points_geo = vec![
-            crate::geo2d::pt(0.0, 0.0),
-            crate::geo2d::pt(100.0, 0.0),
-            crate::geo2d::pt(100.0, 100.0),
-            crate::geo2d::pt(0.0, 100.0),
+        let points = vec![
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(100.0, 0.0),
+            MapPoint::new(100.0, 100.0),
+            MapPoint::new(0.0, 100.0),
         ];
-        for &point in &points_geo {
-            bbox.expand_point(point);
+        for &point in &points {
+            bbox.expand_point(point.to_geo());
         }
-        let points = points_geo
-            .into_iter()
-            .map(crate::coordinates::MapPoint::from_geo)
-            .collect();
 
         let sector_number = crate::sector::SectorNumber::new(7);
         let mut level = crate::fast_find_grid::LevelGrid::default();
