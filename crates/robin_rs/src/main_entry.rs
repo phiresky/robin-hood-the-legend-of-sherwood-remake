@@ -18,6 +18,13 @@ use clap::Parser;
 use serde::Deserialize;
 
 use crate::campaign::Campaign;
+use crate::game::{Jingle as GameJingle, SoundMode as GameSoundMode};
+use crate::player_profile::{DifficultyLevel, PlayerProfileManager};
+use crate::replay_format::COMPACT_PREFIX;
+use crate::save_file::special_slots;
+use crate::savegame::{SaveGameManager, SpecialSlot};
+use crate::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR, SbFile};
+use crate::sound::{Jingle as SoundJingle, SoundMode as AudioSoundMode};
 
 /// Extension required for replay files — keeps the format searchable
 /// and future-proofs us if we ever want to associate `.rhrec.jsonl` with
@@ -42,9 +49,7 @@ fn parse_record_path(s: &str) -> Result<String, String> {
 /// (`replay_format::load_replay_spec`) auto-detects JSONL vs. a file
 /// holding a `rhrec-…` string, regardless of extension.
 fn parse_replay_spec(s: &str) -> Result<String, String> {
-    if s.trim_start()
-        .starts_with(crate::replay_format::COMPACT_PREFIX)
-    {
+    if s.trim_start().starts_with(COMPACT_PREFIX) {
         return Ok(s.to_string());
     }
     // A path — we don't require any particular extension, but a
@@ -460,6 +465,7 @@ mod tests {
 }
 use crate::game_operation::GameCode;
 use crate::game_session::{SessionResult, run_mission, run_mission_headless, run_session};
+use crate::main_menu::multiplayer_lobby::MultiplayerRole;
 use crate::main_menu::{MainMenuChoice, show_main_menu};
 use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
@@ -502,9 +508,9 @@ fn add_overlay_data_dirs() {
             continue;
         }
         let path = path.to_string_lossy().into_owned();
-        match crate::sbfile::SbFile::add_overlay_path(&path) {
-            crate::sbfile::SBFILE_NO_ERROR => tracing::info!("Registered overlay datadir: {path}"),
-            crate::sbfile::SBFILE_ERROR_PATH_ALREADY_PRESENT => {
+        match SbFile::add_overlay_path(&path) {
+            SBFILE_NO_ERROR => tracing::info!("Registered overlay datadir: {path}"),
+            SBFILE_ERROR_PATH_ALREADY_PRESENT => {
                 tracing::debug!("Overlay datadir already registered: {path}")
             }
             err => tracing::warn!("Failed to register overlay datadir {path}: {err}"),
@@ -526,14 +532,14 @@ fn add_language_folder() {
     // English fallback — always added in the international build, even if
     // the folder doesn't exist (the alt-path lookup is harmless when there's
     // no `1033/`).
-    let _ = crate::sbfile::SbFile::add_alternate_path(FALLBACK_LOCALE_FOLDER);
+    let _ = SbFile::add_alternate_path(FALLBACK_LOCALE_FOLDER);
 
     // Probe each candidate with `SbFile::exists` (which also walks already-
     // registered alternate paths) and stop at the first hit.
     for &folder in LANGUAGE_FOLDERS {
-        if crate::sbfile::SbFile::exists(folder) {
+        if SbFile::exists(folder) {
             tracing::info!("Detected language folder: {folder}");
-            let _ = crate::sbfile::SbFile::add_alternate_path(folder);
+            let _ = SbFile::add_alternate_path(folder);
             return;
         }
     }
@@ -547,7 +553,7 @@ fn add_language_folder() {
 fn setup_data_dir() -> Result<(), String> {
     if let Ok(data_dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         tracing::info!("ROBINHOOD_DATA_DIR set, using primary datadir {}", data_dir);
-        crate::sbfile::SbFile::set_primary_path(&data_dir);
+        SbFile::set_primary_path(&data_dir);
     } else if !Path::new("Data").is_dir()
         && let Ok(exe) = std::env::current_exe()
         && let Some(parent) = exe.parent()
@@ -556,13 +562,13 @@ fn setup_data_dir() -> Result<(), String> {
             "Using executable directory as primary datadir: {}",
             parent.display()
         );
-        crate::sbfile::SbFile::set_primary_path(&parent.to_string_lossy());
+        SbFile::set_primary_path(&parent.to_string_lossy());
     } else {
-        crate::sbfile::SbFile::set_primary_path(".");
+        SbFile::set_primary_path(".");
     }
 
     // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
-    if !crate::sbfile::SbFile::exists("Data") {
+    if !SbFile::exists("Data") {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| "?".into());
@@ -699,7 +705,7 @@ fn rust_init_finish(
 ///      legacy CPF reader.
 fn load_profiles(
     shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
-) -> Result<crate::profiles::ProfileManager, String> {
+) -> Result<ProfileManager, String> {
     if let Some(dd) = shipping
         && let Some(p) = &dd.profiles
     {
@@ -725,7 +731,7 @@ fn load_profiles(
     let json_path = "Data/Configuration/profile.cpf.json";
     if robin_engine::sbfile::SbFile::exists(json_path) {
         tracing::info!("Profiles: loading JSON dump {json_path}");
-        let mut mgr = crate::profiles::ProfileManager::load_json(json_path)?;
+        let mut mgr = ProfileManager::load_json(json_path)?;
         mgr.import_beam_mes(&level_dir);
         return Ok(mgr);
     }
@@ -733,7 +739,7 @@ fn load_profiles(
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
     let mut file = robin_engine::sbfile::SbFile::open(cpf_path, robin_engine::sbfile::SB_FILE_READ)
         .map_err(|e| format!("Failed to open {cpf_path}: error {e}"))?;
-    let mut mgr = crate::profiles::ProfileManager::new();
+    let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)
         .map_err(|e| format!("Failed to read profiles from {cpf_path}: error {e}"))?;
     mgr.import_beam_mes(&level_dir);
@@ -746,7 +752,6 @@ fn load_profiles(
 /// fails, a fresh default manager is installed so subsequent saves still
 /// succeed (there's always at least one profile).
 fn init_global_player_profile_manager() {
-    use crate::player_profile::PlayerProfileManager;
     let save_dir = crate::save_file::default_save_directory();
     let save_dir_str = save_dir.to_string_lossy().into_owned();
     let mgr = match PlayerProfileManager::load(&save_dir_str) {
@@ -756,10 +761,7 @@ fn init_global_player_profile_manager() {
                 "Failed to load player profiles from {save_dir_str} ({err}); creating defaults"
             );
             let mut mgr = PlayerProfileManager::new(save_dir_str);
-            let idx = mgr.create_profile(
-                "Robin".to_owned(),
-                crate::player_profile::DifficultyLevel::Medium,
-            );
+            let idx = mgr.create_profile("Robin".to_owned(), DifficultyLevel::Medium);
             mgr.set_active(idx);
             mgr
         }
@@ -802,7 +804,7 @@ pub(crate) fn init_global_key_config_store() {
 /// engine tick, using [`crate::save_file::GameSaveFile`].
 pub(crate) struct RustCallbacks {
     /// Save-slot metadata manager, persists slot list as `saves.json`.
-    pub save_manager: crate::savegame::SaveGameManager,
+    pub save_manager: SaveGameManager,
     /// Pending save/load request queued by the state machine, handled
     /// before the next engine tick in `game_session`.
     pub pending: Option<SaveLoadRequest>,
@@ -816,10 +818,10 @@ pub(crate) struct RustCallbacks {
     /// sound manager (they're owned by the game_session frame loop), so
     /// we record the intent here and the frame loop flushes it to
     /// `host.sound.set_mode` via `flush_pending_callbacks`.
-    pub pending_sound_mode: Option<crate::game::SoundMode>,
+    pub pending_sound_mode: Option<GameSoundMode>,
     /// Pending mission-end jingle queued by `play_jingle`, flushed the
     /// same way as the sound mode.
-    pub pending_jingle: Option<crate::game::Jingle>,
+    pub pending_jingle: Option<GameJingle>,
     /// `set_mouse_enabled` intent, flushed to `SDL_ShowCursor` by the
     /// frame loop. The state machine toggles this on mission-end
     /// transitions.
@@ -923,7 +925,7 @@ pub enum SaveLoadRequest {
 impl RustCallbacks {
     pub fn new() -> Self {
         Self {
-            save_manager: crate::savegame::SaveGameManager::open_default(),
+            save_manager: SaveGameManager::open_default(),
             pending: None,
             loading_requested: false,
             debriefing_code: GameCode::LevelInProgress,
@@ -984,7 +986,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
     fn save_profiles(&mut self) {
         // Persist the currently loaded profile manager to
         // `<save_dir>/profiles.json` on quit.
-        let guard = crate::player_profile::PlayerProfileManager::global();
+        let guard = PlayerProfileManager::global();
         if let Some(ref mgr) = *guard {
             if let Err(err) = mgr.save() {
                 tracing::error!("save_profiles failed: {err}");
@@ -1006,7 +1008,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
         // index, then drop the lock before `synchronize_with_campaign`
         // re-locks internally.
         let active_idx = {
-            let guard = crate::player_profile::PlayerProfileManager::global();
+            let guard = PlayerProfileManager::global();
             guard.as_ref().and_then(|m| m.active_index)
         };
         if let Some(idx) = active_idx {
@@ -1020,24 +1022,24 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
     fn save_game_file_exists(&self) -> bool {
         self.save_manager
-            .find_by_filename(crate::save_file::special_slots::CONTINUE)
+            .find_by_filename(special_slots::CONTINUE)
             .map(|idx| self.save_manager.slot_file_exists(idx))
             .unwrap_or(false)
     }
     fn save_game_mission_id(&self) -> u32 {
         self.save_manager
-            .find_by_filename(crate::save_file::special_slots::CONTINUE)
+            .find_by_filename(special_slots::CONTINUE)
             .and_then(|idx| self.save_manager.slot_mission_id(idx))
             .unwrap_or(0)
     }
-    fn set_sound_mode(&mut self, mode: crate::game::SoundMode) {
+    fn set_sound_mode(&mut self, mode: GameSoundMode) {
         // Queued and flushed by `flush_pending_callbacks` in the frame
         // loop, which has the audio backend + sound manager in scope.
         // Last-write-wins if the state machine queues twice in a frame
         // (the underlying `set_mode` is idempotent to the current mode).
         self.pending_sound_mode = Some(mode);
     }
-    fn play_jingle(&mut self, jingle: crate::game::Jingle) {
+    fn play_jingle(&mut self, jingle: GameJingle) {
         self.pending_jingle = Some(jingle);
     }
     fn set_mouse_enabled(&mut self, enabled: bool) {
@@ -1108,8 +1110,8 @@ pub(crate) fn flush_pending_callbacks(
         && let Some(backend) = audio_backend.as_deref_mut()
     {
         let sound_mode = match mode {
-            crate::game::SoundMode::Menu => crate::sound::SoundMode::Menu,
-            crate::game::SoundMode::Mission => crate::sound::SoundMode::Mission,
+            GameSoundMode::Menu => AudioSoundMode::Menu,
+            GameSoundMode::Mission => AudioSoundMode::Mission,
         };
         host.sound.set_mode(sound_mode, backend);
     }
@@ -1118,8 +1120,8 @@ pub(crate) fn flush_pending_callbacks(
         && let Some(backend) = audio_backend
     {
         let sound_jingle = match jingle {
-            crate::game::Jingle::MissionWon => crate::sound::Jingle::MissionWon,
-            crate::game::Jingle::MissionLost => crate::sound::Jingle::MissionLost,
+            GameJingle::MissionWon => SoundJingle::MissionWon,
+            GameJingle::MissionLost => SoundJingle::MissionLost,
         };
         host.sound.play_jingle(sound_jingle, backend);
     }
@@ -1209,8 +1211,7 @@ pub(crate) fn perform_pending_save_load(
                         .and_then(|s| s.special);
                     let is_continue_or_restart = matches!(
                         is_special,
-                        Some(crate::savegame::SpecialSlot::Continue)
-                            | Some(crate::savegame::SpecialSlot::Restart)
+                        Some(SpecialSlot::Continue) | Some(SpecialSlot::Restart)
                     );
                     if !is_continue_or_restart
                         && let Err(err) = callbacks.save_manager.write_continue_save(
@@ -1226,8 +1227,7 @@ pub(crate) fn perform_pending_save_load(
                     }
                     // Show "Game saved." banner unless the slot is one
                     // of the filtered types (Restart / Sherwood).
-                    let is_sherwood =
-                        matches!(is_special, Some(crate::savegame::SpecialSlot::Sherwood));
+                    let is_sherwood = matches!(is_special, Some(SpecialSlot::Sherwood));
                     if !is_continue_or_restart && !is_sherwood {
                         callbacks.pending_save_banner = Some(SaveBannerKind::Saved);
                     }
@@ -1407,9 +1407,9 @@ pub(crate) fn perform_pending_save_load(
             // Shift+F12 loads `ExQuickSave` (the backup).
             // Plain F12 loads `QuickSave`.
             let slot_name = if use_backup {
-                crate::save_file::special_slots::EX_QUICK
+                special_slots::EX_QUICK
             } else {
-                crate::save_file::special_slots::QUICK
+                special_slots::QUICK
             };
             let idx = callbacks.save_manager.find_by_filename(slot_name);
             match idx {
@@ -1487,7 +1487,7 @@ pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 
 /// Returns `(mission_name, proto_name, pc_string, location)` if a demo is detected.
 pub(crate) fn detect_demo_mode()
 -> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
-    let resolve = crate::sbfile::SbFile::exists;
+    let resolve = SbFile::exists;
     let shipping_has_level = |mission: &str| {
         robin_assets::shipping_datadir::global().is_some_and(|dd| dd.levels.contains_key(mission))
     };
@@ -1938,7 +1938,7 @@ pub async fn run_rust_game(
                 campaign.force_next_mission(idx);
                 let mut mp_args = args.clone();
                 match launch.role {
-                    crate::main_menu::multiplayer_lobby::MultiplayerRole::Host { bind_addr } => {
+                    MultiplayerRole::Host { bind_addr } => {
                         tracing::info!(
                             mission = %launch.mission_name,
                             bind = %bind_addr,
@@ -1947,9 +1947,7 @@ pub async fn run_rust_game(
                         mp_args.server = Some(bind_addr);
                         mp_args.connect = None;
                     }
-                    crate::main_menu::multiplayer_lobby::MultiplayerRole::Client {
-                        connect_addr,
-                    } => {
+                    MultiplayerRole::Client { connect_addr } => {
                         tracing::info!(
                             mission = %launch.mission_name,
                             connect = %connect_addr,

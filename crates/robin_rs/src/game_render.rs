@@ -12,7 +12,14 @@ use crate::element::{
 };
 use crate::geo2d::{self, BBox2D};
 use crate::gfx_types::Rect;
+use crate::hud_text::{self, HudFonts};
+use crate::ingame_menu::layout;
+use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
+use crate::minimap::UIState;
+use crate::player_command::PlayerCommand;
+use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
+use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::markers::GroundMark;
 use robin_engine::sprite::BBox;
@@ -991,7 +998,7 @@ pub(crate) fn render_entities_gpu(
     assets: &LevelAssets,
     dev: &DevState,
     renderer: &mut Renderer,
-    titbit_renderer: &mut crate::titbit_renderer::TitbitRenderer,
+    titbit_renderer: &mut TitbitRenderer,
 ) {
     let view = host.viewport.view_position;
     let zoom = host.viewport.zoom_factor;
@@ -1005,7 +1012,7 @@ pub(crate) fn render_entities_gpu(
     // not render.  The flag defaults to `true` so the live datadir is
     // unaffected; it only bites when the user toggles it off in the
     // options menu.
-    let display_anim = crate::player_profile::PlayerProfileManager::global()
+    let display_anim = PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
         .map(|p| p.graphic_config.display_anim)
@@ -1816,7 +1823,7 @@ pub(crate) fn clear_status_bar_flags(
         display,
         input,
         assets,
-        &crate::player_command::PlayerCommand::ClearNpcDoubleStatusBarFlags,
+        &PlayerCommand::ClearNpcDoubleStatusBarFlags,
     );
 }
 
@@ -1874,9 +1881,9 @@ pub(crate) fn render_minimap(
     if !mm.is_displayed() && mm.transition_counter() == 0.0 {
         if mm.button_box().is_somewhere() && !host.minimap_corner_surfaces.is_empty() {
             let state_idx = match mm.ui_state() {
-                crate::minimap::UIState::Default => 0,
-                crate::minimap::UIState::Focused => 1,
-                crate::minimap::UIState::Selected => 2,
+                UIState::Default => 0,
+                UIState::Focused => 1,
+                UIState::Selected => 2,
             };
             let surface = host
                 .minimap_corner_surfaces
@@ -2163,7 +2170,7 @@ where
     // unless `force_display` or `patch_index` overrides.  See
     // `render_entities_gpu` for the full gate; identical logic via
     // `Entity::is_to_be_displayed`.
-    let display_anim = crate::player_profile::PlayerProfileManager::global()
+    let display_anim = PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
         .map(|p| p.graphic_config.display_anim)
@@ -2909,7 +2916,7 @@ pub(crate) fn render_noise_display(
     engine: &Engine,
     assets: &LevelAssets,
     dev: &robin_engine::engine::DevState,
-    fonts: Option<&crate::hud_text::HudFonts>,
+    fonts: Option<&HudFonts>,
     selected_view_element: Option<robin_engine::element::EntityId>,
     renderer: &mut Renderer,
 ) {
@@ -3224,8 +3231,8 @@ fn fill_box_whatsup(
 pub(crate) fn render_ransom_amulet_overlay(
     engine: &Engine,
     renderer: &mut Renderer,
-    fonts: &crate::hud_text::HudFonts,
-    menu_resources: Option<&crate::ingame_menu::resources::IngameMenuResources>,
+    fonts: &HudFonts,
+    menu_resources: Option<&IngameMenuResources>,
 ) {
     let campaign = match engine.campaign() {
         Some(c) => c,
@@ -3241,10 +3248,8 @@ pub(crate) fn render_ransom_amulet_overlay(
     // table is unavailable.
     let (ransom_tpl, amulet_tpl) = if let Some(res) = menu_resources {
         (
-            res.menu_text
-                .get(crate::ingame_menu::resources::MT_STR_RANSOM),
-            res.menu_text
-                .get(crate::ingame_menu::resources::MT_STR_AMULETS),
+            res.menu_text.get(MT_STR_RANSOM),
+            res.menu_text.get(MT_STR_AMULETS),
         )
     } else {
         ("Ransom: %d".into(), "Amulets: %d".into())
@@ -3280,21 +3285,15 @@ fn substitute_int(template: &str, value: i32) -> String {
 /// for the ransom/amulet overlay and dev noise labels.  Routes the
 /// shadow+foreground pass through `Renderer::render_text_argb` instead of
 /// the old HUD surface-raster path.
-fn render_text_with_shadow(
-    renderer: &mut Renderer,
-    fonts: &crate::hud_text::HudFonts,
-    text: &str,
-    x: i32,
-    y: i32,
-) {
-    crate::hud_text::render_text_background(
+fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str, x: i32, y: i32) {
+    hud_text::render_text_background(
         &fonts.tooltip_font,
         fonts.shadow_font.as_ref(),
         text,
         x,
         y,
         |f, t, fx, fy| {
-            crate::ingame_menu::layout::render_text_screen(renderer, f, t, fx, fy);
+            layout::render_text_screen(renderer, f, t, fx, fy);
         },
     );
 }
