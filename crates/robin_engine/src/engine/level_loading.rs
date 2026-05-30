@@ -3356,11 +3356,10 @@ impl EngineInner {
         for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
             let first_door = building_first_door_info.get(bld_idx).copied();
             for &elem_idx in &tenants.tenant_element_indices {
-                let Some(entity) = self
-                    .entities
-                    .get_mut_at_index(elem_idx as usize as u32)
-                    .map(|(_, entity)| entity)
-                else {
+                let Some(entity_id) = self.entities.id_at_index(u32::from(elem_idx)) else {
+                    continue;
+                };
+                let Some(entity) = self.entities.get_mut(entity_id) else {
                     continue;
                 };
                 // Only humans participate in InitOccupant; warn and skip
@@ -5905,7 +5904,6 @@ impl EngineInner {
                     continue;
                 };
                 let entity_id = EntityId::Pc(pc_id);
-                let entity_idx = entity_id.index() as usize;
 
                 let (Some(layer), Some(sector_idx)) = (plan.zone_layer, plan.zone_sector) else {
                     // No script-zone for this production type — cannot
@@ -5975,11 +5973,7 @@ impl EngineInner {
                 }
                 if plan.heal_gain > 0 {
                     let amount = plan.heal_gain.min(i16::MAX as u16) as i16;
-                    if let Some(crate::element::Entity::Pc(pc)) = self
-                        .entities
-                        .get_mut_at_index(entity_idx as u32)
-                        .map(|(_, entity)| entity)
-                    {
+                    if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
                         crate::pc_status::heal(&mut pc.pc.life_points, amount, false);
                     }
                     if let Some(campaign) = self.campaign.as_mut()

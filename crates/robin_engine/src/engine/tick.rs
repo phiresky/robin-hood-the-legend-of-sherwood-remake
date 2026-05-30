@@ -5536,10 +5536,9 @@ impl EngineInner {
             // display order using each supplier entity's Y position
             // as a stand-in (we don't compute display order yet).
             self.titbit_manager.prepare_refresh(|handle| {
-                let idx = handle.0 as usize;
                 self.entities
-                    .get_at_index(idx as u32)
-                    .map(|(_, entity)| entity)
+                    .id_at_index(handle.0)
+                    .and_then(|entity_id| self.entities.get(entity_id))
                     .map(|e| e.element_data().position_map().y)
             });
         }
@@ -8038,11 +8037,10 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         use crate::ai::Substate;
         use crate::order::OrderType;
 
-        let Some(entity) = self
-            .entities
-            .get_at_index(element.0 as usize as u32)
-            .map(|(_, entity)| entity)
-        else {
+        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+            return false;
+        };
+        let Some(entity) = self.entities.get(entity_id) else {
             return false;
         };
 
@@ -8056,7 +8054,6 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         // Otherwise, check if the current animation is weak/stunned sword.
         // Orders live on the owning `SequenceElement.orders` now —
         // look up via the actor's current in-progress element.
-        let entity_id = crate::engine::entity_id_for_occupied_slot(element.0, entity);
         matches!(
             self.sequence_manager
                 .current_order_for_actor(entity_id)
@@ -8066,11 +8063,10 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
     }
 
     fn is_unconscious_and_alive(&self, element: crate::titbit::ElementHandle) -> bool {
-        let Some(entity) = self
-            .entities
-            .get_at_index(element.0 as usize as u32)
-            .map(|(_, entity)| entity)
-        else {
+        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+            return false;
+        };
+        let Some(entity) = self.entities.get(entity_id) else {
             return false;
         };
         match entity {
@@ -8090,11 +8086,10 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 
     fn is_hidden_posture(&self, element: crate::titbit::ElementHandle) -> bool {
         use crate::element::Posture;
-        let Some(entity) = self
-            .entities
-            .get_at_index(element.0 as usize as u32)
-            .map(|(_, entity)| entity)
-        else {
+        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+            return false;
+        };
+        let Some(entity) = self.entities.get(entity_id) else {
             return false;
         };
         matches!(
