@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::engine::{Engine, LevelAssets};
+use crate::engine::{DevState, Engine, HostDisplayState, LevelAssets};
 use crate::player_command::PlayerInput;
 use crate::sim_timeline::{SimSnapshot as Snapshot, replay_one_frame};
 
@@ -204,8 +204,8 @@ impl RewindBuffer {
         }
 
         let mut scratch_host = crate::Host::default();
-        let mut scratch_dev = crate::engine::DevState::default();
-        let mut scratch_display = crate::engine::HostDisplayState::default();
+        let mut scratch_dev = DevState::default();
+        let mut scratch_display = HostDisplayState::default();
         while snapshot.frame < target_frame {
             let cmd_idx = snapshot.frame.checked_sub(self.oldest_cmd_frame)? as usize;
             let cmds = self.commands.get(cmd_idx)?;

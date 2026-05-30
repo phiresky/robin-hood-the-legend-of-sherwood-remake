@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::campaign::Campaign;
 use crate::game_operation::{GameCode, GameOperationState};
 use crate::profiles::MissionLocation;
+use crate::stature_hud::StatureFocusLatch;
 use robin_engine::engine::{Engine, LevelAssets};
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ pub struct Game {
     // sim transition is still in flight" so the persistent-widget
     // simulator latches the initiating arrow into a visually-pressed
     // state for the duration.
-    pub stature_focus: crate::stature_hud::StatureFocusLatch,
+    pub stature_focus: StatureFocusLatch,
 
     // ── Frame timing ──
     pub frame_times: [u32; NUMBER_OF_SAMPLES],
@@ -129,7 +130,7 @@ impl Default for Game {
             level_of_qa: 0,
             message_text: String::new(),
             message_delay: 0,
-            stature_focus: crate::stature_hud::StatureFocusLatch::default(),
+            stature_focus: StatureFocusLatch::default(),
             frame_times: [0; NUMBER_OF_SAMPLES],
             last_tick: 0,
             global_options: robin_engine::engine::GlobalOptions::default(),
@@ -730,6 +731,7 @@ pub trait GameCallbacks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::campaign::CampaignValue;
 
     fn fresh_engine() -> (Engine, robin_engine::engine::LevelAssets) {
         use crate::campaign::Campaign;
@@ -914,7 +916,7 @@ mod tests {
         fn start_play_time(&mut self) {}
         fn suspend_play_time(&mut self) {}
         fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
-            campaign.get_value(crate::campaign::CampaignValue::MissionLength) as u32
+            campaign.get_value(CampaignValue::MissionLength) as u32
         }
     }
 
@@ -1167,10 +1169,10 @@ mod tests {
         game.finalize_mission(&mut engine, &assets, &mut campaign, &mut cb);
 
         assert_eq!(
-            campaign.get_value(crate::campaign::CampaignValue::Ransom),
+            campaign.get_value(CampaignValue::Ransom),
             crate::campaign::INITIAL_RANSOM
         );
-        assert_eq!(campaign.get_value(crate::campaign::CampaignValue::Score), 0);
+        assert_eq!(campaign.get_value(CampaignValue::Score), 0);
     }
 
     #[test]
