@@ -2127,7 +2127,7 @@ impl EngineInner {
             );
             return;
         };
-        let Some(scroll_entity_idx) = crate::natives::GameHost::actor_index(scroll_handle) else {
+        let Some(scroll_id) = self.entity_id_for_actor_handle(scroll_handle) else {
             tracing::warn!(
                 ?actor,
                 ?target,
@@ -2136,10 +2136,6 @@ impl EngineInner {
             );
             return;
         };
-        let scroll_id = self.expect_entity_id_for_index(
-            scroll_entity_idx as u32,
-            "apply_scroll_read_with_seek scroll handle",
-        );
 
         if is_recording {
             // Macro recording already installed the QA titbit and stored

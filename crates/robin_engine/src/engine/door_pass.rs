@@ -884,24 +884,16 @@ impl EngineInner {
                         .cloned()
                         .unwrap_or_default();
                     let any_pc_remains = occupants.iter().any(|&h| {
-                        crate::natives::GameHost::actor_index(h)
-                            .and_then(|idx| {
-                                self.entities
-                                    .get_at_index(idx as u32)
-                                    .map(|(_, entity)| entity)
-                            })
+                        self.entity_id_for_actor_handle(h)
+                            .and_then(|id| self.entities.get(id))
                             .is_some_and(|e| e.is_pc())
                     });
                     if !any_pc_remains {
                         for occ_h in occupants {
-                            let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
+                            let Some(occ_id) = self.entity_id_for_actor_handle(occ_h) else {
                                 continue;
                             };
-                            let Some(occ) = self
-                                .entities
-                                .get_mut_at_index(occ_idx as u32)
-                                .map(|(_, entity)| entity)
-                            else {
+                            let Some(occ) = self.entities.get_mut(occ_id) else {
                                 continue;
                             };
                             let elem = occ.element_data_mut();
@@ -1091,14 +1083,10 @@ impl EngineInner {
                     .cloned()
                     .unwrap_or_default();
                 for occ_h in occupants {
-                    let Some(occ_idx) = crate::natives::GameHost::actor_index(occ_h) else {
+                    let Some(occ_id) = self.entity_id_for_actor_handle(occ_h) else {
                         continue;
                     };
-                    let Some(occ) = self
-                        .entities
-                        .get_mut_at_index(occ_idx as u32)
-                        .map(|(_, entity)| entity)
-                    else {
+                    let Some(occ) = self.entities.get_mut(occ_id) else {
                         continue;
                     };
                     let Some(hd) = occ.human_data() else { continue };

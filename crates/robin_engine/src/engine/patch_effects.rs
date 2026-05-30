@@ -71,8 +71,7 @@ impl EngineInner {
                     }
 
                     if let Some(handle) = ctx.animation_entity_handle
-                        && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
-                            .map(|i| crate::element::EntityId::Fx(crate::entity_id::FxId(i as u32)))
+                        && let Some(entity_id) = self.entity_id_for_actor_handle(handle)
                     {
                         if applied {
                             // Bake the last transition frame into the
@@ -115,8 +114,7 @@ impl EngineInner {
                     // drain will replay the saved rectangle and
                     // re-compose affected mask textures.
                     if let Some(handle) = ctx.animation_entity_handle
-                        && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
-                            .map(|i| crate::element::EntityId::Fx(crate::entity_id::FxId(i as u32)))
+                        && let Some(entity_id) = self.entity_id_for_actor_handle(handle)
                     {
                         self.queue_restore_fx_bg(entity_id);
                     }
@@ -452,15 +450,11 @@ impl EngineInner {
         };
 
         // Activate the entity and set the animation frame.
-        let Some(entity_idx) = crate::natives::GameHost::actor_index(handle) else {
+        let Some(entity_id) = self.entity_id_for_actor_handle(handle) else {
             tracing::warn!(handle, "patch_effects: invalid animation entity handle");
             return;
         };
-        if let Some(entity) = self
-            .entities
-            .get_mut_at_index(entity_idx as u32)
-            .map(|(_, entity)| entity)
-        {
+        if let Some(entity) = self.entities.get_mut(entity_id) {
             entity.element_data_mut().active = true;
             {
                 let sprite = entity.sprite_mut();
@@ -503,15 +497,11 @@ impl EngineInner {
             None => return,
         };
 
-        let Some(entity_idx) = crate::natives::GameHost::actor_index(handle) else {
+        let Some(entity_id) = self.entity_id_for_actor_handle(handle) else {
             tracing::warn!(handle, "patch_effects: invalid animation entity handle");
             return;
         };
-        if let Some(entity) = self
-            .entities
-            .get_mut_at_index(entity_idx as u32)
-            .map(|(_, entity)| entity)
-        {
+        if let Some(entity) = self.entities.get_mut(entity_id) {
             entity.element_data_mut().active = false;
         }
 

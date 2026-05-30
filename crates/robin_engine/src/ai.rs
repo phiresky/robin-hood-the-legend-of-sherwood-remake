@@ -3718,7 +3718,7 @@ pub struct MyExitDoorInfo {
 /// exposed to `ReconsiderEnemyApproach` for the target-swap heuristic.
 #[derive(Debug, Clone, Copy)]
 pub struct FriendSwapCandidate {
-    pub friend_handle: HumanHandle,
+    pub friend_id: EntityId,
     pub friend_position: Position,
     pub friend_primary_target: HumanHandle,
     pub friend_primary_target_position: Position,
@@ -4539,11 +4539,11 @@ pub struct AiController {
     /// AI requests that the engine promote this handle to principal opponent.
     pub pending_set_principal: Option<HumanHandle>,
 
-    /// AI requests that `friend_handle`'s `primary_target` be reassigned
+    /// AI requests that `friend_id`'s `primary_target` be reassigned
     /// to `new_primary_target` — the friend target-swap. The evaluating
     /// NPC updates its own `primary_target` in place — this field covers
     /// the friend half.
-    pub pending_friend_primary_target_swap: Option<(HumanHandle, HumanHandle)>,
+    pub pending_friend_primary_target_swap: Option<(EntityId, HumanHandle)>,
 
     /// AI requests that the engine launch a bow shot at this target.
     /// Set by `shoot_arrow_at`, drained by the engine post-think loop.

@@ -609,13 +609,13 @@ impl GameHost {
 
     /// Look up an entity by actor handle. Returns None for null or invalid handles.
     fn get_entity(&self, handle: i32) -> Option<&Entity> {
-        let idx = Self::actor_index(handle)?;
+        let idx = Self::actor_handle_index(handle)?;
         self.entities.get(idx)?.as_ref()
     }
 
     /// Look up an entity mutably by its actor handle.
     fn get_entity_mut(&mut self, handle: i32) -> Option<&mut Entity> {
-        let idx = Self::actor_index(handle)?;
+        let idx = Self::actor_handle_index(handle)?;
         self.entities.get_mut(idx)?.as_mut()
     }
 
@@ -693,11 +693,12 @@ impl GameHost {
         self.recording.as_ref().map_or(1, |r| r.command_level)
     }
 
-    /// Convert a script actor handle to an `Option<EntityId>`.
-    /// 0 (null handle) maps to `None`.
-    fn actor_id(handle: i32) -> Option<EntityId> {
-        Self::actor_index(handle)
-            .map(|idx| EntityId::Soldier(crate::entity_id::SoldierId(idx as u32)))
+    /// Convert a script actor handle to the live typed entity ID.
+    /// 0 (null handle) or stale handles map to `None`.
+    fn actor_id(&self, handle: i32) -> Option<EntityId> {
+        let idx = Self::actor_handle_index(handle)?;
+        let entity = self.entities.get(idx)?.as_ref()?;
+        Some(EntityId::new(idx as u32, entity.entity_id_kind()))
     }
 
     /// Add a sequence element to the current recording session.
@@ -818,7 +819,7 @@ impl GameHost {
             return false;
         }
 
-        let owner = Self::actor_id(actor_handle);
+        let owner = self.actor_id(actor_handle);
         let to_pt = |(x, y): (f32, f32)| crate::coordinates::MapPoint { x, y };
 
         // Original AppendMoveToSequence rewrites the source when the
@@ -921,7 +922,7 @@ impl GameHost {
             if let Some(pc_id) = self
                 .get_entity(actor_handle)
                 .filter(|e| e.is_pc())
-                .and_then(|_| Self::actor_id(actor_handle))
+                .and_then(|_| self.actor_id(actor_handle))
             {
                 self.commands.push(EngineCommand::HeroSpeak {
                     pc_id,
@@ -1393,6 +1394,7 @@ impl GameHost {
     /// `RecordSeekActorMessage[WithArguments]` natives to append the
     /// post-seek notification after the seek element.
     fn build_send_message_element(
+        &self,
         level: u16,
         target_actor: i32,
         msg_id: i32,
@@ -1400,7 +1402,7 @@ impl GameHost {
         arg2: i32,
     ) -> SequenceElement {
         let mut elem =
-            SequenceElement::new_generic(level, Command::SendMessage, Self::actor_id(target_actor));
+            SequenceElement::new_generic(level, Command::SendMessage, self.actor_id(target_actor));
         elem.set_property(Field::Message, FieldValue::Integer(msg_id as u32));
         elem.set_property(Field::MessageArgument, FieldValue::Integer(arg1 as u32));
         elem.set_property(
@@ -2423,7 +2425,7 @@ impl GameHost {
         Self::make_script_handle(SCRIPT_HANDLE_BUILDING_TAG, index)
     }
 
-    pub fn actor_index(handle: i32) -> Option<usize> {
+    pub fn actor_handle_index(handle: i32) -> Option<usize> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_ACTOR_TAG)
     }
 
@@ -3432,7 +3434,7 @@ impl HostFunctions for GameHost {
                 | GetBuildingIndex | GetWayIndex => {
                     let handle = stack.pop_i32();
                     let idx = match f {
-                        GetActorIndex => Self::actor_index(handle),
+                        GetActorIndex => Self::actor_handle_index(handle),
                         GetDoorIndex => Self::door_index(handle),
                         GetPatchIndex => Self::patch_index(handle),
                         GetLocationIndex => Self::location_index(handle),
@@ -3731,7 +3733,7 @@ impl HostFunctions for GameHost {
                         level,
                         Command::LockCameraOn,
                         None,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     self.record_element(elem)
                 }
@@ -3774,7 +3776,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::ActionAvailable,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(Field::ActionId, FieldValue::Integer(action_id as u32));
                     elem.set_property(Field::ActionAvailable, FieldValue::Bool(available != 0));
@@ -3794,7 +3796,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::CharacterAvailable,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(Field::CharacterAvailable, FieldValue::Bool(available != 0));
                     self.record_element(elem)
@@ -3816,7 +3818,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::SendMessage,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(Field::Message, FieldValue::Integer(msg as u32));
                     elem.set_property(Field::MessageArgument, FieldValue::Integer(0));
@@ -3839,7 +3841,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::SendMessage,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(Field::Message, FieldValue::Integer(msg as u32));
                     elem.set_property(Field::MessageArgument, FieldValue::Integer(arg1 as u32));
@@ -4203,7 +4205,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_movement(
                         level,
                         Command::Move,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                         action,
                     );
                     if let crate::sequence::SequenceElementData::Movement {
@@ -4314,7 +4316,7 @@ impl HostFunctions for GameHost {
                     let mut elem2 = SequenceElement::new_movement(
                         level2,
                         Command::Move,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                         action,
                     );
                     if let crate::sequence::SequenceElementData::Movement {
@@ -4354,7 +4356,7 @@ impl HostFunctions for GameHost {
                     };
                     let level = self.recording_level();
                     let mut elem =
-                        SequenceElement::new_generic(level, Command::Turn, Self::actor_id(actor));
+                        SequenceElement::new_generic(level, Command::Turn, self.actor_id(actor));
                     elem.set_property(Field::CameraPoint, FieldValue::GeoPoint2D { x, y });
                     self.record_element(elem)
                 }
@@ -4375,7 +4377,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::PlayAnim,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(
                         Field::AnimationId,
@@ -4397,7 +4399,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::PlayAnimLoop,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(
                         Field::AnimationId,
@@ -4423,7 +4425,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::PlayAnimFreeze,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(
                         Field::AnimationId,
@@ -4447,7 +4449,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::ReplaceAnim,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(Field::OldAnimation, FieldValue::Integer(old_anim as u32));
                     elem.set_property(Field::NewAnimation, FieldValue::Integer(new_anim as u32));
@@ -4465,7 +4467,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_generic(
                         level,
                         Command::RestoreAnim,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                     );
                     elem.set_property(Field::OldAnimation, FieldValue::Integer(old_anim as u32));
                     self.record_element(elem)
@@ -4502,7 +4504,7 @@ impl HostFunctions for GameHost {
                     }
                     let level = self.recording_level();
                     let mut elem =
-                        SequenceElement::new_generic(level, Command::Speak, Self::actor_id(actor));
+                        SequenceElement::new_generic(level, Command::Speak, self.actor_id(actor));
                     elem.set_property(Field::SpeakId, FieldValue::Integer(speak_id as u32));
                     // SpeakVariant = 0; SpeakFlags = SPEECH_SCRIPT |
                     // SPEECH_ALWAYS.  The ALWAYS bit is load-bearing
@@ -4529,7 +4531,7 @@ impl HostFunctions for GameHost {
                     }
                     let level = self.recording_level();
                     let mut elem =
-                        SequenceElement::new_generic(level, Command::Speak, Self::actor_id(actor));
+                        SequenceElement::new_generic(level, Command::Speak, self.actor_id(actor));
                     elem.set_property(Field::SpeakId, FieldValue::Integer(speak_id as u32));
                     elem.set_property(Field::SpeakVariant, FieldValue::Integer(variant as u32));
                     self.record_element(elem)
@@ -4544,7 +4546,7 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
                     let level = self.recording_level();
-                    let elem = SequenceElement::new(level, Command::LockAi, Self::actor_id(actor));
+                    let elem = SequenceElement::new(level, Command::LockAi, self.actor_id(actor));
                     self.record_element(elem)
                 }
                 RecordUnlockAI => {
@@ -4555,8 +4557,7 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
                     let level = self.recording_level();
-                    let elem =
-                        SequenceElement::new(level, Command::UnlockAi, Self::actor_id(actor));
+                    let elem = SequenceElement::new(level, Command::UnlockAi, self.actor_id(actor));
                     self.record_element(elem)
                 }
                 RecordLockUser => {
@@ -4597,7 +4598,7 @@ impl HostFunctions for GameHost {
                     let mut elem = SequenceElement::new_movement(
                         level,
                         Command::Seek,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                         action,
                     );
                     if let crate::sequence::SequenceElementData::Movement {
@@ -4607,7 +4608,7 @@ impl HostFunctions for GameHost {
                         ..
                     } = &mut elem.data
                     {
-                        *element = Self::actor_id(target);
+                        *element = self.actor_id(target);
                         *tolerance = f32::from_bits(distance as u32);
                         *flags |= MoveFlags::SEEK;
                     }
@@ -4632,7 +4633,7 @@ impl HostFunctions for GameHost {
                     let mut seek_elem = SequenceElement::new_movement(
                         level,
                         Command::Seek,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                         action,
                     );
                     // Builds a single-element sub-sequence with a
@@ -4642,9 +4643,9 @@ impl HostFunctions for GameHost {
                     // only on successful seek completion, not when
                     // the seek is interrupted/aborted.
                     let mut post_seek = crate::sequence::Sequence::new();
-                    post_seek.append_element(Self::build_send_message_element(
-                        1, msg_actor, msg_id, 0, 0,
-                    ));
+                    post_seek.append_element(
+                        self.build_send_message_element(1, msg_actor, msg_id, 0, 0),
+                    );
                     if let crate::sequence::SequenceElementData::Movement {
                         element,
                         tolerance,
@@ -4653,7 +4654,7 @@ impl HostFunctions for GameHost {
                         ..
                     } = &mut seek_elem.data
                     {
-                        *element = Self::actor_id(target);
+                        *element = self.actor_id(target);
                         *tolerance = f32::from_bits(distance as u32);
                         *flags |= MoveFlags::SEEK;
                         *post_seek_sequence = Some(Box::new(post_seek));
@@ -4687,15 +4688,15 @@ impl HostFunctions for GameHost {
                     let mut seek_elem = SequenceElement::new_movement(
                         level,
                         Command::Seek,
-                        Self::actor_id(actor),
+                        self.actor_id(actor),
                         action,
                     );
                     // Same post-seek sub-sequence wiring as
                     // `RecordSeekActorMessage` above.
                     let mut post_seek = crate::sequence::Sequence::new();
-                    post_seek.append_element(Self::build_send_message_element(
-                        1, msg_actor, msg_id, arg1, arg2,
-                    ));
+                    post_seek.append_element(
+                        self.build_send_message_element(1, msg_actor, msg_id, arg1, arg2),
+                    );
                     if let crate::sequence::SequenceElementData::Movement {
                         element,
                         tolerance,
@@ -4704,7 +4705,7 @@ impl HostFunctions for GameHost {
                         ..
                     } = &mut seek_elem.data
                     {
-                        *element = Self::actor_id(target);
+                        *element = self.actor_id(target);
                         *tolerance = f32::from_bits(distance as u32);
                         *flags |= MoveFlags::SEEK;
                         *post_seek_sequence = Some(Box::new(post_seek));
@@ -4729,7 +4730,7 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
                     let level = self.recording_level();
-                    let owner = Self::actor_id(actor);
+                    let owner = self.actor_id(actor);
                     // Antagonist lookup for SHOOT / ENTER_SF /
                     // THRUST_*: `number` is a 0-based index into the
                     // script-element array; we abort with `false`
@@ -4743,9 +4744,7 @@ impl HostFunctions for GameHost {
                                 // Slot may be None (a null antagonist
                                 // is accepted once the bounds check
                                 // passes).
-                                Some(Self::actor_id(Self::actor_handle_from_index(
-                                    number as usize,
-                                )))
+                                Some(self.actor_id(Self::actor_handle_from_index(number as usize)))
                             }
                         };
                     // Script command constants.
@@ -4950,8 +4949,8 @@ impl HostFunctions for GameHost {
                     let elem = SequenceElement::new_interaction(
                         level,
                         Command::TakeCorpse,
-                        Self::actor_id(actor),
-                        Self::actor_id(corpse),
+                        self.actor_id(actor),
+                        self.actor_id(corpse),
                     );
                     self.record_element(elem)
                 }
@@ -4966,7 +4965,7 @@ impl HostFunctions for GameHost {
                     }
                     let level = self.recording_level();
                     let elem =
-                        SequenceElement::new(level, Command::DropCorpse, Self::actor_id(actor));
+                        SequenceElement::new(level, Command::DropCorpse, self.actor_id(actor));
                     self.record_element(elem)
                 }
 
@@ -4994,7 +4993,7 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
                     let level = self.recording_level();
-                    let elem = SequenceElement::new(level, Command::Unblip, Self::actor_id(actor));
+                    let elem = SequenceElement::new(level, Command::Unblip, self.actor_id(actor));
                     self.record_element(elem)
                 }
 
@@ -5735,7 +5734,8 @@ impl HostFunctions for GameHost {
                     // negative scripts wrap.
                     let damage = amount as u16;
                     let concussion = if pain_type != 0 { 100u16 } else { 0u16 };
-                    let target = Self::actor_id(actor)
+                    let target = self
+                        .actor_id(actor)
                         .expect("InflictPain: actor_exists check passed but actor_id None");
                     self.completed_sequences
                         .push(Sequence::single_damage(target, damage, concussion));
@@ -5787,7 +5787,7 @@ impl HostFunctions for GameHost {
                             enemy.set_alert_status(AlertLevel::Yellow);
                         }
                     }
-                    if launch_enter && let Some(target_id) = Self::actor_id(actor) {
+                    if launch_enter && let Some(target_id) = self.actor_id(actor) {
                         let mut seq = Sequence::new();
                         seq.append_element(SequenceElement::new(
                             1,
@@ -6091,7 +6091,7 @@ impl HostFunctions for GameHost {
                     if self.ai_global.ezekiel_2517 {
                         // "Dies irae" cheat: 10000 HP info-priority
                         // damage on the target (asserts IsHuman).
-                        if let Some(target) = Self::actor_id(actor)
+                        if let Some(target) = self.actor_id(actor)
                             && self
                                 .get_entity(actor)
                                 .is_some_and(|e| e.human_data().is_some())
@@ -6100,7 +6100,7 @@ impl HostFunctions for GameHost {
                                 .push(Sequence::single_damage(target, 10000, 0));
                         }
                     } else if is_npc {
-                        let target_idx = Self::actor_index(actor);
+                        let target_idx = Self::actor_handle_index(actor);
                         for (idx, slot) in self.entities.iter_mut().enumerate() {
                             let Some(entity) = slot else {
                                 continue;
@@ -7114,7 +7114,8 @@ impl HostFunctions for GameHost {
                     // convention used by `theoretical_patrol`
                     // (0-based EntityId, matching `tick_patrol_coordination`'s
                     // `eid.0` push at engine/ai/mod.rs:5035).
-                    let Some(sub_handle) = Self::actor_index(subordinate).map(|idx| idx as u32)
+                    let Some(sub_handle) =
+                        Self::actor_handle_index(subordinate).map(|idx| idx as u32)
                     else {
                         tracing::error!(
                             "Script Error: AddAsSubordinate with invalid subordinate handle {subordinate}"
@@ -7367,13 +7368,19 @@ impl HostFunctions for GameHost {
                     // somewhere to read.
                     let fx_h = stack.pop_i32();
                     let target_h = stack.pop_i32();
-                    let fx_id = match Self::actor_index(fx_h) {
-                        Some(idx) => {
-                            crate::element::EntityId::Fx(crate::entity_id::FxId(idx as u32))
+                    let fx_id = match self.actor_id(fx_h) {
+                        Some(id) if self.get_entity(fx_h).is_some_and(|entity| entity.is_fx()) => {
+                            id
                         }
                         None => {
                             tracing::warn!(
                                 "Script error (LinkTargetToFX): null/invalid FX handle {fx_h}"
+                            );
+                            return 0;
+                        }
+                        Some(_) => {
+                            tracing::warn!(
+                                "Script error (LinkTargetToFX): handle {fx_h} is not an FX"
                             );
                             return 0;
                         }
@@ -8331,7 +8338,7 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
                     let level = self.recording_level();
-                    let elem = SequenceElement::new(level, Command::Unblip, Self::actor_id(actor));
+                    let elem = SequenceElement::new(level, Command::Unblip, self.actor_id(actor));
                     self.record_element(elem)
                 }
                 IsActorOutOfAction => {

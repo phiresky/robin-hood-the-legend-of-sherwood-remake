@@ -236,16 +236,16 @@ impl EngineInner {
         }
 
         let sight_obstacles = self.sight_obstacles(assets);
-        let mut to_reveal: Vec<usize> = Vec::new();
+        let mut to_reveal: Vec<EntityId> = Vec::new();
         // Perched PCs that saw an enemy this frame via Path A
         // (SeesBlip) — trigger `HERO_PERCHED_AND_SEE_ENNEMY` speech
         // after the reveal loop.
         let mut perched_detection_triggers: Vec<EntityId> = Vec::new();
         // FX targets within listening range; `Heard(pc)` gets
-        // invoked on each below.  Pair: (target_idx, listening_pc_id)
+        // invoked on each below.  Pair: (target_id, listening_pc_id)
         // so we can pass the PC handle to
         // `IElementTargetScript::ActivatedByListenable`.
-        let mut to_hear: Vec<(usize, EntityId)> = Vec::new();
+        let mut to_hear: Vec<(EntityId, EntityId)> = Vec::new();
 
         // ── FX target Heard() check. ─────────────────────
         // Independent of the blip state — targets are always
@@ -265,7 +265,7 @@ impl EngineInner {
                     let dz = target_z - pc.position_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
                     if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        to_hear.push((entity_id.0 as usize, pc.pc_id));
+                        to_hear.push((EntityId::from(entity_id), pc.pc_id));
                         break;
                     }
                 }
@@ -295,7 +295,7 @@ impl EngineInner {
                 && let Entity::Soldier(s) = entity
                 && s.soldier.cached_camp == Camp::Royalists
             {
-                to_reveal.push(entity_id.index() as usize);
+                to_reveal.push(entity_id);
                 continue;
             }
 
@@ -455,18 +455,14 @@ impl EngineInner {
             }
 
             if revealed {
-                to_reveal.push(entity_id.index() as usize);
+                to_reveal.push(entity_id);
             }
         }
 
-        for idx in to_reveal {
-            if let Some(entity) = self
-                .entities
-                .get_mut_at_index(idx as u32)
-                .map(|(_, entity)| entity)
-            {
+        for entity_id in to_reveal {
+            if let Some(entity) = self.entities.get_mut(entity_id) {
                 tracing::debug!(
-                    entity = idx,
+                    entity = entity_id.index(),
                     "reveal_blip: shadow revealed by blip detection"
                 );
                 entity.reveal_blip();
@@ -500,11 +496,8 @@ impl EngineInner {
         // the mission script (which needs its own engine state
         // swap).
         let mut listenable_calls: Vec<(i32, i32)> = Vec::new();
-        for (idx, listening_pc) in to_hear {
-            if let Some(Entity::Target(t)) = self
-                .entities
-                .get_mut_at_index(idx as u32)
-                .map(|(_, entity)| entity)
+        for (target_id, listening_pc) in to_hear {
+            if let Some(Entity::Target(t)) = self.entities.get_mut(target_id)
                 && t.target
                     .action_filter
                     .contains(crate::element::TargetFilter::LISTEN)
@@ -513,7 +506,7 @@ impl EngineInner {
                     .action_filter
                     .remove(crate::element::TargetFilter::LISTEN);
                 if !t.target.script_class.is_empty() {
-                    let target_handle = crate::natives::GameHost::actor_handle_from_index(idx);
+                    let target_handle = crate::natives::GameHost::actor_handle(target_id);
                     let pc_handle = crate::natives::GameHost::actor_handle(listening_pc);
                     listenable_calls.push((target_handle, pc_handle));
                 }

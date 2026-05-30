@@ -1603,7 +1603,7 @@ impl EnemyAi {
         let mut working_target = self.base.primary_target;
         let mut working_target_pos = live_target_pos;
         let mut working_distance = distance;
-        let mut swap_action: Option<(crate::ai::HumanHandle, crate::ai::HumanHandle)> = None;
+        let mut swap_action: Option<(crate::element::EntityId, crate::ai::HumanHandle)> = None;
         // Iterate friends only when we have our own target —
         // Position(primary_target) would crash on NULL otherwise. Skip
         // the swap heuristic if our primary_target is unset so we never
@@ -1633,7 +1633,7 @@ impl EnemyAi {
             if me_to_friend_target + friend_to_my_target
                 < working_distance + friend_to_friend_target
             {
-                swap_action = Some((cand.friend_handle, working_target));
+                swap_action = Some((cand.friend_id, working_target));
                 working_target = cand.friend_primary_target;
                 working_target_pos = cand.friend_primary_target_position;
                 working_distance = me_to_friend_target;

@@ -552,7 +552,7 @@ pub(super) fn build_friend_swap_candidates(
             level: ft_elem.layer(),
         };
         out.push(crate::ai::FriendSwapCandidate {
-            friend_handle: friend_id.index(),
+            friend_id,
             friend_position: friend_pos,
             friend_primary_target: friend_target_handle,
             friend_primary_target_position: friend_target_pos,
@@ -4254,11 +4254,8 @@ impl EngineInner {
         // other soldier when the swap heuristic fires; we hand it off
         // here so both soldiers are updated consistently after their
         // AI ticks ran.
-        if let Some((friend_handle, new_target)) = friend_target_swap
-            && let Some(Entity::Soldier(s)) = self
-                .entities
-                .get_mut_at_index(friend_handle as usize as u32)
-                .map(|(_, entity)| entity)
+        if let Some((friend_id, new_target)) = friend_target_swap
+            && let Some(Entity::Soldier(s)) = self.entities.get_mut(friend_id)
             && let Some(friend_ai) = s.npc.ai_brain.base_mut()
         {
             friend_ai.primary_target = new_target;
