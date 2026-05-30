@@ -22,8 +22,9 @@
 //!     currently recording.
 
 use crate::gfx_types::{Point, Rect as SdlRect};
-
+use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
+use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -79,7 +80,7 @@ pub struct CornerButtonEnable {
 
 impl CornerButtonEnable {
     /// Snapshot the enable / selected mask from the engine + game state.
-    pub fn from_engine(engine: &robin_engine::engine::Engine) -> Self {
+    pub fn from_engine(engine: &engine_api::Engine) -> Self {
         // Clock and QuickStart are always drawn, but dim to
         // semi-transparent when their click gate isn't satisfied:
         //   - Clock dims when no PC is selected.
@@ -346,7 +347,7 @@ pub fn draw_with_sprites(
         // No placeholder-rect fallback — if the sprite is missing from
         // DEFAULT.RES we simply don't draw the button (matches `zoom_hud`).
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
-            let dst = robin_engine::sprite::BBox::new(
+            let dst = engine_sprite::BBox::new(
                 crate::geo2d::GeoPoint2D {
                     x: rect.x() as f32,
                     y: rect.y() as f32,

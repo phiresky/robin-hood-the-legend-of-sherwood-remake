@@ -20,6 +20,9 @@
 //! Buttons are driven by the [`crate::widget`] system via the
 //! [`super::widget_bridge`].
 
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::player_command::DialogResult;
+use robin_engine::sprite::BBox;
 use std::time::Duration;
 use web_time::Instant;
 
@@ -30,8 +33,6 @@ use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::sound::{AudioBackend, SoundManager};
-use robin_engine::player_command::DialogResult;
-use robin_engine::sprite::BBox;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
@@ -464,8 +465,7 @@ pub async fn show_dialogue(
         // Hover-tooltip: track which button the cursor is over and
         // paint the tooltip text after the idle delay.  Shared helper —
         // see `super::layout::TooltipState`.
-        let mouse_pt =
-            robin_engine::coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
+        let mouse_pt = engine_coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
         tooltip.update(&frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             tooltip.draw(renderer, font, transform, &frame, mouse_pt);
@@ -818,10 +818,8 @@ impl DialogueModalState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
-            self.input_state.virt_x,
-            self.input_state.virt_y,
-        );
+        let mouse_pt =
+            engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             self.tooltip

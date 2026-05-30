@@ -7,13 +7,14 @@
 //! rendering rather than going through the standard listbox widget.
 
 use crate::gfx_types::Keycode;
+use robin_engine::sound_cache::SampleLoader;
+use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_assets::keyconfig::{KeyConfig, REAL_KEY_COUNT};
-use robin_engine::sound_cache::SampleLoader;
 use winit::keyboard::KeyCode;
 
 use super::layout::{
@@ -333,7 +334,7 @@ pub async fn show_shortcuts(
         } else {
             let (sx, sy) = transform.to_screen(LIST_RECT.x, LIST_RECT.y);
             renderer.fill_screen(
-                Some(&robin_engine::sprite::BBox::new(
+                Some(&engine_sprite::BBox::new(
                     crate::geo2d::pt(sx as f32, sy as f32),
                     crate::geo2d::pt((sx + LIST_RECT.w) as f32, (sy + LIST_RECT.h) as f32),
                 )),

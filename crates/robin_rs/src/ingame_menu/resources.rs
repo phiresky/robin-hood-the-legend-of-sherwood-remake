@@ -12,6 +12,8 @@
 //!   `1000040` / `1000034` for the demo variants) — loaded from
 //!   whichever `.sxt` file already lives on disk.
 
+use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::sherwood_stat as engine_sherwood_stat;
 use std::collections::HashMap;
 
 use crate::main_entry::picture_to_surface;
@@ -703,7 +705,7 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
     m
 }
 
-impl robin_engine::sherwood_stat::MenuTextLookup for MenuText {
+impl engine_sherwood_stat::MenuTextLookup for MenuText {
     fn get(&self, id: usize) -> String {
         MenuText::get(self, id)
     }
@@ -894,7 +896,7 @@ impl IngameMenuResources {
     /// `Data/Interface/DEFAULT.RES` cannot be opened at all.
     pub fn new(
         renderer: &mut Renderer,
-        shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     ) -> Option<Self> {
         let mut res = ResourceManager::new();
         if let Err(e) = res.attach_or_from_shipping("Data/Interface/DEFAULT.RES", shipping) {

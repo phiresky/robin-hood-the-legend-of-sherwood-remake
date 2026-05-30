@@ -13,6 +13,9 @@ use robin_engine::widget_state::blazon_set::{
 };
 
 use crate::renderer::Renderer;
+use robin_engine::campaign as engine_campaign;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sprite as engine_sprite;
 
 use super::layout::MenuTransform;
 use super::resources::{
@@ -27,8 +30,8 @@ use super::resources::{
 /// one-shot blink latch is inactive.
 #[allow(clippy::too_many_arguments)]
 pub fn build_for_mission(
-    campaign: &robin_engine::campaign::Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    campaign: &engine_campaign::Campaign,
+    profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     box_x: i32,
     box_y: i32,
@@ -40,7 +43,7 @@ pub fn build_for_mission(
     let total = profile.number_of_blazons_to_win as u32;
     let to_be_collected = profile.number_of_blazons_to_be_collected as u32;
     let owned = campaign
-        .get_value(robin_engine::campaign::CampaignValue::Blazon)
+        .get_value(engine_campaign::CampaignValue::Blazon)
         .max(0) as u32;
     build_blazon_set_state(
         box_x,
@@ -123,7 +126,7 @@ pub fn render(
                     BlazonSlotKind::Empty => Renderer::create_color_16(90, 70, 40),
                 };
                 let (sx, sy) = transform.to_screen(vx, vy);
-                let dst = robin_engine::sprite::BBox::new(
+                let dst = engine_sprite::BBox::new(
                     crate::geo2d::pt(sx as f32, sy as f32),
                     crate::geo2d::pt(
                         (sx + state.slot_w as i32) as f32,

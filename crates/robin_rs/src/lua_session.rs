@@ -35,11 +35,11 @@
 //! their global `Initialize` path but miss the per-entity dispatch —
 //! follow-up commits add the engine hooks.
 
+use robin_engine::natives::GameHost;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use robin_engine::natives::GameHost;
 use robin_lua::{MissionLuaError, MissionLuaState, register_natives};
 use tempfile::TempDir;
 

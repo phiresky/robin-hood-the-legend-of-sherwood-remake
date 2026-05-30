@@ -13,8 +13,9 @@ mod toggle;
 // Sim-side widget state (campaign-derived derived values) lives in
 // `robin_engine::widget_state` now (Decision 7B). Re-export for
 // compatibility.
-pub use robin_engine::widget_state::blazon_bar;
-pub use robin_engine::widget_state::requirements;
+pub use engine_widget_state::blazon_bar;
+pub use engine_widget_state::requirements;
+use robin_engine::widget_state as engine_widget_state;
 
 pub use button::WidgetButton;
 pub use frame_wnd::FrameWnd;

@@ -1,3 +1,4 @@
+use robin_engine::multiplayer as engine_multiplayer;
 use robin_engine::player_command::{DialogResult, ModalKind};
 
 /// Multiplayer synchronization hook for blocking modal UI.
@@ -7,12 +8,12 @@ use robin_engine::player_command::{DialogResult, ModalKind};
 /// helper lets those nested loops consume only immediate modal-dismiss
 /// messages and defer every other network event back to the main loop.
 pub struct ModalNet<'a> {
-    net: &'a robin_engine::multiplayer::NetChannels,
+    net: &'a engine_multiplayer::NetChannels,
     kind: ModalKind,
 }
 
 impl<'a> ModalNet<'a> {
-    pub fn new(net: &'a robin_engine::multiplayer::NetChannels, kind: ModalKind) -> Self {
+    pub fn new(net: &'a engine_multiplayer::NetChannels, kind: ModalKind) -> Self {
         Self { net, kind }
     }
 
@@ -32,7 +33,7 @@ impl<'a> ModalNet<'a> {
         let mut matched = None;
         while let Ok(event) = self.net.try_recv_transport_event() {
             match event {
-                robin_engine::multiplayer::NetEvent::ModalDismiss { kind, result }
+                engine_multiplayer::NetEvent::ModalDismiss { kind, result }
                     if kind == self.kind =>
                 {
                     matched = Some(result);

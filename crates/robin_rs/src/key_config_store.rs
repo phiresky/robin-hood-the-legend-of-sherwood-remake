@@ -7,12 +7,12 @@
 //!
 //! Stored as `<save_directory>/keyconfigs.json` next to `profiles.json`.
 
+use robin_assets::keyconfig::KeyConfig;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use robin_assets::keyconfig::KeyConfig;
 use serde::{Deserialize, Serialize};
 
 /// One profile's two key-config slots.

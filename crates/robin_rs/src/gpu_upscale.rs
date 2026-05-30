@@ -3,9 +3,8 @@
 //! Simple upscalers use local WGSL final-blit shaders. RetroArch
 //! `.slangp` presets are delegated to [`crate::shader_preset`].
 
-use std::collections::HashMap;
-
 use robin_engine::graphic_config::TextureScaleMode;
+use std::collections::HashMap;
 
 use crate::shader_preset::ShaderPresetRenderer;
 use crate::window::GpuContext;

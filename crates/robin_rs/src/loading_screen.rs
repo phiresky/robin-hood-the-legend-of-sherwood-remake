@@ -14,6 +14,10 @@
 //! Rendering uses GPU quads/textures. The dissolve itself is a shader that
 //! samples the initial picture, final picture, and normalized mask texture.
 
+use robin_assets::picture as assets_picture;
+use robin_assets::picture::Picture;
+use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::graphic_config::TextureScaleMode;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -23,11 +27,9 @@ use crate::loading_dissolve_gpu::LoadingDissolveTextures;
 use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::sbfile::SbFile;
-use robin_assets::picture::Picture;
-use robin_engine::graphic_config::TextureScaleMode;
 
 fn shipping_loading_pak_pictures(pak_path: &str) -> Option<Vec<Picture>> {
-    let dd = robin_assets::shipping_datadir::global()?;
+    let dd = assets_shipping_datadir::global()?;
     let key = shipping_pak_key(pak_path);
     let encoded = dd.pak_files.get(&key)?;
     let mut pictures = Vec::with_capacity(encoded.len());
@@ -548,17 +550,17 @@ impl LoadingScreenRenderer {
         // upload depends on the RGB565 layout.
         assert_eq!(
             pic_initial.pixel_format,
-            robin_assets::picture::PixelFormat::Rgb16,
+            assets_picture::PixelFormat::Rgb16,
             "loading-screen initial picture must be RGB565"
         );
         assert_eq!(
             pic_final.pixel_format,
-            robin_assets::picture::PixelFormat::Rgb16,
+            assets_picture::PixelFormat::Rgb16,
             "loading-screen final picture must be RGB565"
         );
         assert_eq!(
             pic_mask.pixel_format,
-            robin_assets::picture::PixelFormat::Rgb16,
+            assets_picture::PixelFormat::Rgb16,
             "loading-screen mask must be RGB565"
         );
         let height_field = HeightField::from_rgb565(&mask_pixels, width as u32, height as u32);

@@ -5,12 +5,12 @@
 //!
 //! Runtime primitives queue GPU overlay draws.
 
+use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
 
 use crate::geo2d::GeoPoint2D;
 use crate::{gfx_types::Rect, renderer::Renderer};
 use robin_engine::coordinates::{MapPoint, ScreenPoint};
-use robin_engine::sprite::BBox;
 
 // ---------------------------------------------------------------------------
 // Constants

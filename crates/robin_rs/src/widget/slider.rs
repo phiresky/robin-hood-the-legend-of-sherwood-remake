@@ -16,13 +16,15 @@
 //!   `LEFT_CLICK` (release) emits `WidgetActivated` and drops to
 //!   FOCUSED/DEFAULT depending on whether the release was inside.
 
+use robin_engine::coordinates::ScreenBBox;
+#[cfg(test)]
+use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{
     MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{BUTTON_DEFAULT, BUTTON_DISABLED, BUTTON_FOCUSED, BUTTON_SELECTED},
 };
-use robin_engine::coordinates::ScreenBBox;
 
 use super::{WidgetBase, WidgetInput, WidgetRadioButton};
 
@@ -334,7 +336,6 @@ mod tests {
     use super::*;
     use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
     use crate::widget::WidgetRenderer;
-    use robin_engine::coordinates::ScreenPoint;
 
     fn make_slider(step_count: u32) -> WidgetSlider {
         let mut slider = WidgetSlider::new(7);

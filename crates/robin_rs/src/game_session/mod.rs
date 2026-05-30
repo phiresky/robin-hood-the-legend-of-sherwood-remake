@@ -33,6 +33,19 @@ use render::{
     print_screen_request_from_modifiers, render_frame, update_mouse_and_cursor,
 };
 use replay_init::{ReplayAndRollback, init_replay_and_rollback};
+use robin_assets::res_descr as assets_res_descr;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element as engine_element;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::{Engine, ScrollDirection};
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::messenger as engine_messenger;
+use robin_engine::mission as engine_mission;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::position_interface as engine_position_interface;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sight_obstacle as engine_sight_obstacle;
 use setup::{
     MissionSprites, extract_ground_mark_sprite_data, extract_minimap_widget_setup,
     extract_titbit_row_frame_counts, init_audio_backend, load_level_and_sprite_bank,
@@ -96,8 +109,6 @@ use crate::window::GameWindow;
 use crate::zoom_hud::{
     ZoomButton, ZoomButtonEnable, ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker,
 };
-use robin_engine::engine::Engine;
-use robin_engine::graphic_config::TextureScaleMode;
 use std::sync::Arc;
 
 /// Read the active player profile's texture scale mode, falling back to
@@ -123,8 +134,8 @@ fn active_profile_shader_preset() -> String {
 fn center_on_reselected_portrait_pc(
     host: &mut Host,
     engine: &Engine,
-    local_seat: robin_engine::player_command::PlayerId,
-    pc_id: robin_engine::element::EntityId,
+    local_seat: engine_player_command::PlayerId,
+    pc_id: engine_element::EntityId,
     append: bool,
     area: PortraitHitArea,
 ) -> bool {
@@ -174,14 +185,14 @@ pub(super) enum HandlerAction {
 }
 
 pub(super) fn selected_pc_profile_indices(
-    engine: &robin_engine::engine::Engine,
-    seat: robin_engine::player_command::PlayerId,
-) -> Vec<robin_engine::profiles::CharacterProfileIdx> {
+    engine: &engine_api::Engine,
+    seat: engine_player_command::PlayerId,
+) -> Vec<engine_profiles::CharacterProfileIdx> {
     engine
         .seat_selection(seat)
         .iter()
         .filter_map(|&id| match engine.get_entity(id)? {
-            robin_engine::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
+            engine_element::Entity::Pc(pc) => Some(pc.pc.profile_index),
             _ => None,
         })
         .collect()
@@ -190,7 +201,7 @@ pub(super) fn selected_pc_profile_indices(
 pub(crate) async fn run_mission_headless(
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
     args: &crate::main_entry::CliArgs,
@@ -280,7 +291,7 @@ pub(crate) async fn run_mission_headless(
         engine_rng_seed,
         host.net.is_some(),
     );
-    let mut manager = robin_engine::engine_manager::EngineManager::new(engine, host.local_seat);
+    let mut manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
     let mut manual_pause = start_paused;
 
     loop {
@@ -338,13 +349,13 @@ pub(crate) async fn run_mission_headless(
         host.net = net;
         if host.pending_mission_state_popup {
             host.pending_mission_state_popup = false;
-            let kind = robin_engine::player_command::ModalKind::MissionState {
-                kind: robin_engine::player_command::MissionStateModalKind::LeaveMissionNow,
+            let kind = engine_player_command::ModalKind::MissionState {
+                kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
             };
             let result = pop_matching_dismissal(&mut replay_modal_dismissals, &kind)
-                .unwrap_or(robin_engine::player_command::DialogResult::Completed);
+                .unwrap_or(engine_player_command::DialogResult::Completed);
             frame_modal_dismissals.push(PlayerCommand::ModalDismiss { kind, result });
-            if result == robin_engine::player_command::DialogResult::Completed {
+            if result == engine_player_command::DialogResult::Completed {
                 let cmd = PlayerCommand::QuitMissionRequested;
                 if let Some(net) = host.net.as_ref() {
                     net.send_input(cmd.clone());
@@ -434,7 +445,7 @@ pub(crate) async fn run_mission_headless(
 pub(crate) async fn run_session(
     window: &mut GameWindow,
     campaign: &mut Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     args: &crate::main_entry::CliArgs,
     initial_load: Option<SaveLoadRequest>,
 ) -> Result<SessionResult, String> {
@@ -577,33 +588,27 @@ enum SettledDebriefingOutcome {
 
 fn final_debriefing_result(
     outcome: &SettledDebriefingOutcome,
-) -> robin_engine::player_command::DialogResult {
+) -> engine_player_command::DialogResult {
     match outcome {
-        SettledDebriefingOutcome::Ok => robin_engine::player_command::DialogResult::Completed,
-        SettledDebriefingOutcome::Restart => robin_engine::player_command::DialogResult::Restart,
+        SettledDebriefingOutcome::Ok => engine_player_command::DialogResult::Completed,
+        SettledDebriefingOutcome::Restart => engine_player_command::DialogResult::Restart,
         SettledDebriefingOutcome::Load { slot } => {
-            robin_engine::player_command::DialogResult::Load { slot: *slot as u32 }
+            engine_player_command::DialogResult::Load { slot: *slot as u32 }
         }
-        SettledDebriefingOutcome::EmergencyEnd => {
-            robin_engine::player_command::DialogResult::Aborted
-        }
+        SettledDebriefingOutcome::EmergencyEnd => engine_player_command::DialogResult::Aborted,
     }
 }
 
 fn final_debriefing_outcome_from_replay(
-    result: robin_engine::player_command::DialogResult,
+    result: engine_player_command::DialogResult,
 ) -> SettledDebriefingOutcome {
     match result {
-        robin_engine::player_command::DialogResult::Completed => SettledDebriefingOutcome::Ok,
-        robin_engine::player_command::DialogResult::Aborted => {
-            SettledDebriefingOutcome::EmergencyEnd
-        }
-        robin_engine::player_command::DialogResult::Restart => SettledDebriefingOutcome::Restart,
-        robin_engine::player_command::DialogResult::Load { slot } => {
-            SettledDebriefingOutcome::Load {
-                slot: slot as usize,
-            }
-        }
+        engine_player_command::DialogResult::Completed => SettledDebriefingOutcome::Ok,
+        engine_player_command::DialogResult::Aborted => SettledDebriefingOutcome::EmergencyEnd,
+        engine_player_command::DialogResult::Restart => SettledDebriefingOutcome::Restart,
+        engine_player_command::DialogResult::Load { slot } => SettledDebriefingOutcome::Load {
+            slot: slot as usize,
+        },
     }
 }
 
@@ -622,7 +627,7 @@ fn final_debriefing_outcome_from_replay(
 async fn confirm_quickload_cross_mission(
     callbacks: &mut RustCallbacks,
     engine: &Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     _host: &Host,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
@@ -688,7 +693,7 @@ pub(crate) async fn run_mission(
     window: &mut GameWindow,
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
     args: &crate::main_entry::CliArgs,
@@ -1088,7 +1093,7 @@ pub(crate) async fn run_mission(
                 campaign.last_pseudo_mission_status,
             )
         };
-        if last_status != robin_engine::mission::MissionStatus::Lost {
+        if last_status != engine_mission::MissionStatus::Lost {
             tracing::warn!(
                 ?last_status,
                 "Lost-Leicester gate: ARES=0 but last pseudo-mission status != Lost"
@@ -1098,13 +1103,13 @@ pub(crate) async fn run_mission(
         // Resolve the per-mission loose text from the pseudo-mission's
         // .red descriptor.
         let pseudo_red = {
-            let filename = robin_assets::res_descr::red_filename(last_id);
+            let filename = assets_res_descr::red_filename(last_id);
             host.shipping
                 .as_deref()
                 .and_then(|dd| dd.red_files.get(&filename).cloned())
                 .or_else(|| {
                     let path = format!("Data/Text/{filename}");
-                    robin_assets::res_descr::load(&path)
+                    assets_res_descr::load(&path)
                         .map_err(|e| {
                             tracing::warn!(
                                 "Lost-Leicester: failed to load pseudo-mission .red {path}: {e}"
@@ -1312,7 +1317,7 @@ pub(crate) async fn run_mission(
     // as a separate binding — use `manager.engine`, `manager.sim_frame`,
     // and `manager.pending_inputs` (or the methods on `manager`) for
     // the rest of `run_mission`.
-    let mut manager = robin_engine::engine_manager::EngineManager::new(engine, host.local_seat);
+    let mut manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
     // Multiplayer: peer state hashes received from the host (only the
     // server broadcasts).  Each entry is `(frame → host_hash)`; the
     // client compares its locally-computed hash at the same sampling
@@ -1331,7 +1336,7 @@ pub(crate) async fn run_mission(
     // enable it (and step one frame forward/back), Enter clears it.
     let mut mp_start_gate = None;
     let mut mp_waiting_for_initial_snapshot =
-        host.net.is_some() && host.local_seat != robin_engine::player_command::PlayerId::HOST;
+        host.net.is_some() && host.local_seat != engine_player_command::PlayerId::HOST;
     let mut mp_waiting_for_begin_sim = host.net.is_some();
     let mut mp_host_frame_schedule: Option<(u32, u32)> = None;
     let mut last_mp_rollback: Option<MultiplayerRollbackTelemetry> = None;
@@ -1419,7 +1424,7 @@ pub(crate) async fn run_mission(
             manual_pause = true;
         }
         if host.net.is_some()
-            && host.local_seat != robin_engine::player_command::PlayerId::HOST
+            && host.local_seat != engine_player_command::PlayerId::HOST
             && let Some((clock_frame, ms_until_next_frame)) = net_drain.latest_host_clock_sample
         {
             accept_host_frame_schedule(
@@ -1431,7 +1436,7 @@ pub(crate) async fn run_mission(
         }
         let mut mp_clock_pause = false;
         if host.net.is_some()
-            && host.local_seat != robin_engine::player_command::PlayerId::HOST
+            && host.local_seat != engine_player_command::PlayerId::HOST
             && !mp_waiting_for_initial_snapshot
             && !mp_waiting_for_begin_sim
             && mp_start_gate.is_none()
@@ -1663,7 +1668,7 @@ pub(crate) async fn run_mission(
                 // Reposition minimap.
                 if host.minimap_corner_size.x > 0.0 {
                     let cmd = PlayerCommand::MinimapResize {
-                        base: robin_engine::coordinates::ScreenPoint::new(w - 83.0, 38.0),
+                        base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
                         corner_size: host.minimap_corner_size,
                     };
                     dispatch_local_command(
@@ -1743,9 +1748,7 @@ pub(crate) async fn run_mission(
                 };
                 host.viewport.zoom_by(
                     factor,
-                    Some(robin_engine::coordinates::ScreenPoint::new(
-                        mx as f32, my as f32,
-                    )),
+                    Some(engine_coordinates::ScreenPoint::new(mx as f32, my as f32)),
                 );
             }
         }
@@ -1951,7 +1954,6 @@ pub(crate) async fn run_mission(
         // user wants to pan/zoom around the paused world.  Suppressed
         // only when the console or the pause menu has focus.
         {
-            use robin_engine::engine::ScrollDirection;
             let view_suppressed =
                 console_overlay.is_visible() || pause_menu.is_some() || pause_closed_this_frame;
             if !view_suppressed {
@@ -1984,14 +1986,14 @@ pub(crate) async fn run_mission(
                             let mp = threaded_input.position();
                             host.viewport.zoom_by(
                                 2.0,
-                                Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
+                                Some(engine_coordinates::ScreenPoint::new(mp.x, mp.y)),
                             );
                         }
                         GameAction::ZoomOut => {
                             let mp = threaded_input.position();
                             host.viewport.zoom_by(
                                 0.5,
-                                Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
+                                Some(engine_coordinates::ScreenPoint::new(mp.x, mp.y)),
                             );
                         }
                         _ => {}
@@ -2314,7 +2316,7 @@ pub(crate) async fn run_mission(
                                 // symmetrically with the hide-console
                                 // path.
                                 manager.engine.send_simple_message(
-                                    robin_engine::messenger::SimpleMessage::SwitchTask,
+                                    engine_messenger::SimpleMessage::SwitchTask,
                                 );
                             }
                             GameAction::Teleport => {
@@ -2341,7 +2343,7 @@ pub(crate) async fn run_mission(
                                                 sector: u16::try_from(u32::from(sector_idx))
                                                     .ok()
                                                     .and_then(
-                                                    robin_engine::position_interface::SectorHandle::new,
+                                                    engine_position_interface::SectorHandle::new,
                                                 ),
                                             };
                                             dispatch_local_command(
@@ -2364,11 +2366,11 @@ pub(crate) async fn run_mission(
                                         // pipeline.
                                         let p3d = manager.engine.fast_grid().convert_2d_to_3d(
                                             mouse_map,
-                                            robin_engine::sight_obstacle::SIGHTOBSTACLE_MOUSE,
+                                            engine_sight_obstacle::SIGHTOBSTACLE_MOUSE,
                                             manager.engine.sight_obstacles(&assets),
                                         );
                                         dev.cheat_free_shadow_polygon_pos =
-                                            Some(robin_engine::coordinates::WorldPoint3D {
+                                            Some(engine_coordinates::WorldPoint3D {
                                                 x: p3d.x,
                                                 y: p3d.y,
                                                 z: p3d.z + 45.0,
@@ -2701,7 +2703,7 @@ pub(crate) async fn run_mission(
                 manual_pause = true;
             }
             if host.net.is_some()
-                && host.local_seat != robin_engine::player_command::PlayerId::HOST
+                && host.local_seat != engine_player_command::PlayerId::HOST
                 && let Some((clock_frame, ms_until_next_frame)) =
                     pre_tick_net_drain.latest_host_clock_sample
             {
@@ -2713,7 +2715,7 @@ pub(crate) async fn run_mission(
                 );
             }
             if host.net.is_some()
-                && host.local_seat != robin_engine::player_command::PlayerId::HOST
+                && host.local_seat != engine_player_command::PlayerId::HOST
                 && !mp_waiting_for_initial_snapshot
                 && !mp_waiting_for_begin_sim
                 && mp_start_gate.is_none()
@@ -2765,7 +2767,7 @@ pub(crate) async fn run_mission(
                 .sim_frame
                 .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL)
         {
-            if host.local_seat == robin_engine::player_command::PlayerId::HOST
+            if host.local_seat == engine_player_command::PlayerId::HOST
                 && last_mp_state_hash_frame != Some(manager.sim_frame)
             {
                 last_mp_state_hash_frame = Some(manager.sim_frame);
@@ -2820,7 +2822,7 @@ pub(crate) async fn run_mission(
         let mut paused = pause_menu.is_some() || manual_pause || mp_clock_pause || modal_pause;
 
         let mut replay_modal_dismissals: std::collections::VecDeque<
-            robin_engine::player_command::PlayerCommand,
+            engine_player_command::PlayerCommand,
         > = std::collections::VecDeque::new();
         if let Some(ref mut player) = replay_player
             && !paused
@@ -2842,7 +2844,7 @@ pub(crate) async fn run_mission(
                 let mut sim_cmds: Vec<PlayerInput> = Vec::with_capacity(replay_cmds.len());
                 for cmd in replay_cmds {
                     match cmd.command {
-                        robin_engine::player_command::PlayerCommand::ModalDismiss { .. } => {
+                        engine_player_command::PlayerCommand::ModalDismiss { .. } => {
                             replay_modal_dismissals.push_back(cmd.command.clone());
                         }
                         _ => sim_cmds.push(cmd.clone()),
@@ -2918,11 +2920,10 @@ pub(crate) async fn run_mission(
             && !paused
             && manager.engine.locker_active()
             && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
-            && let Some(id) = manager.engine.find_focusable_npc(
-                &assets,
-                mouse_map,
-                robin_engine::element::Focus::View,
-            )
+            && let Some(id) =
+                manager
+                    .engine
+                    .find_focusable_npc(&assets, mouse_map, engine_element::Focus::View)
         {
             let cmd = PlayerCommand::SelectFollowElement {
                 entity_id: Some(id),
@@ -2949,7 +2950,7 @@ pub(crate) async fn run_mission(
             && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
         {
             let bow_armed = manager.engine.selected_action_for_seat(host.local_seat)
-                == robin_engine::profiles::Action::Bow;
+                == engine_profiles::Action::Bow;
             if host.time_no_mouse_move != 0 || bow_armed {
                 let cmd = PlayerCommand::PerformOrientation { mouse_map };
                 dispatch_local_command(
@@ -3032,7 +3033,7 @@ pub(crate) async fn run_mission(
             }
             manager.sim_frame += 1;
             if let Some(net) = host.net.as_ref()
-                && host.local_seat == robin_engine::player_command::PlayerId::HOST
+                && host.local_seat == engine_player_command::PlayerId::HOST
             {
                 net.set_initial_snapshot(manager.sim_frame, &manager.engine);
             }
@@ -3217,14 +3218,11 @@ pub(crate) async fn run_mission(
                 let lose = descriptors.debriefing.lose_count as usize;
                 let win = descriptors.debriefing.win_count as usize;
                 host.pending_debriefings.extend(
-                    (0..lose).map(
-                        |index| robin_engine::player_command::DebriefingTextId::Lose { index },
-                    ),
+                    (0..lose).map(|index| engine_player_command::DebriefingTextId::Lose { index }),
                 );
-                host.pending_debriefings
-                    .extend((0..win).map(|index| {
-                        robin_engine::player_command::DebriefingTextId::Win { index }
-                    }));
+                host.pending_debriefings.extend(
+                    (0..win).map(|index| engine_player_command::DebriefingTextId::Win { index }),
+                );
             } else {
                 tracing::warn!("cheat all_debriefings: level descriptors unavailable");
             }
@@ -3420,8 +3418,8 @@ pub(crate) async fn run_mission(
                     );
                     frame_cmds.push(cmd);
                 } else if let Some(resources) = menu_resources.as_ref() {
-                    let kind = robin_engine::player_command::ModalKind::MissionState {
-                        kind: robin_engine::player_command::MissionStateModalKind::LeaveMissionNow,
+                    let kind = engine_player_command::ModalKind::MissionState {
+                        kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
                     };
                     let replay_result = pop_matching_dismissal(&mut replay_modal_dismissals, &kind);
                     let message = resources.menu_text.get(MT_MSG_LEAVE_MISSION_NOW);
@@ -3548,23 +3546,23 @@ pub(crate) async fn run_mission(
                 &menu_resources,
             ) {
                 let won = exit_code == GameCode::LevelSucceeded;
-                let mission_state_kind = robin_engine::player_command::ModalKind::MissionState {
-                    kind: robin_engine::player_command::MissionStateModalKind::EndState { won },
+                let mission_state_kind = engine_player_command::ModalKind::MissionState {
+                    kind: engine_player_command::MissionStateModalKind::EndState { won },
                 };
                 let mission_state_result = match pop_matching_dismissal(
                     &mut replay_modal_dismissals,
                     &mission_state_kind,
                 ) {
                     Some(
-                        result @ (robin_engine::player_command::DialogResult::Completed
-                        | robin_engine::player_command::DialogResult::Aborted),
+                        result @ (engine_player_command::DialogResult::Completed
+                        | engine_player_command::DialogResult::Aborted),
                     ) => result,
                     Some(result) => {
                         tracing::warn!(
                             ?result,
                             "final mission-state replay result is only yes/no; treating as aborted"
                         );
-                        robin_engine::player_command::DialogResult::Aborted
+                        engine_player_command::DialogResult::Aborted
                     }
                     None => {
                         let cursor = Some(default_modal_cursor(
@@ -3583,14 +3581,14 @@ pub(crate) async fn run_mission(
                         )
                         .await;
                         if confirmed {
-                            robin_engine::player_command::DialogResult::Completed
+                            engine_player_command::DialogResult::Completed
                         } else {
-                            robin_engine::player_command::DialogResult::Aborted
+                            engine_player_command::DialogResult::Aborted
                         }
                     }
                 };
                 if let Some(recorder) = replay_recorder.as_mut() {
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: mission_state_kind,
                         result: mission_state_result,
                     });
@@ -3603,8 +3601,8 @@ pub(crate) async fn run_mission(
                 // failure, fall back to a placeholder so the body is
                 // never empty.
                 let debriefing_index = manager.engine.mission().victory_defeat_id as usize;
-                let debriefing_kind = robin_engine::player_command::ModalKind::FinalDebriefing {
-                    text_id: robin_engine::player_command::DebriefingTextId::from_outcome(
+                let debriefing_kind = engine_player_command::ModalKind::FinalDebriefing {
+                    text_id: engine_player_command::DebriefingTextId::from_outcome(
                         won,
                         debriefing_index,
                     ),
@@ -3756,7 +3754,7 @@ pub(crate) async fn run_mission(
                     }
                 };
                 if let Some(recorder) = replay_recorder.as_mut() {
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: debriefing_kind,
                         result: final_debriefing_result(&post_load_outcome),
                     });
@@ -4009,13 +4007,13 @@ pub(crate) async fn run_mission(
         } else if host.slow_motion {
             // While SlowMotion is on (and neither console nor engine
             // fast-forward are active), each frame waits 40 * 10 ms.
-            robin_engine::engine::FRAME_TIME_MS * 10
+            engine_api::FRAME_TIME_MS * 10
         } else {
-            robin_engine::engine::FRAME_TIME_MS
+            engine_api::FRAME_TIME_MS
         };
         let mut remaining_sleep_ms = target.saturating_sub(elapsed);
         if host.net.is_some()
-            && host.local_seat != robin_engine::player_command::PlayerId::HOST
+            && host.local_seat != engine_player_command::PlayerId::HOST
             && !args.fast_forward
             && !args.headless
             && let Some(desired_deadline_ms) =
@@ -4040,7 +4038,7 @@ pub(crate) async fn run_mission(
         }
         if let Some((hash_frame, hash)) = pending_mp_state_hash
             && let Some(net) = host.net.as_ref()
-            && host.local_seat == robin_engine::player_command::PlayerId::HOST
+            && host.local_seat == engine_player_command::PlayerId::HOST
         {
             net.publish_frame(manager.sim_frame);
             tracing::info!(

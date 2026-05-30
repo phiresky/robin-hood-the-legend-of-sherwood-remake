@@ -12,6 +12,7 @@
 //! this picker only cares about discovery and the proto-level filename
 //! peeked out of each `.rhm` header.
 
+use robin_engine::sprite::BBox;
 use std::path::{Path, PathBuf};
 
 use crate::geo2d;
@@ -26,7 +27,6 @@ use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mods
 use crate::renderer::Renderer;
 use crate::ui::MouseButtons;
 use crate::widget::FrameWnd;
-use robin_engine::sprite::BBox;
 
 /// What the picker returns when the player chooses to launch.
 #[derive(Debug, Clone, PartialEq, Eq)]

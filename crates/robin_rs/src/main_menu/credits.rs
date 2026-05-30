@@ -11,6 +11,9 @@
 //! for the duration of `show_credits`, so nothing draws over the scroll.
 
 use crate::gfx_types::Keycode;
+use robin_assets::shipping_datadir as assets_shipping_datadir;
+use robin_engine::engine::GlobalOptions;
+use robin_engine::sprite::BBox;
 
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
@@ -18,14 +21,12 @@ use crate::main_entry::picture_to_surface;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids;
 use crate::resource_manager::ResourceManager;
-use robin_engine::engine::GlobalOptions;
-use robin_engine::sprite::BBox;
 
 /// Show the credits scroll.  Returns once the player dismisses it.
 pub(crate) async fn show_credits(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) {
     // The original wraps the entire credits flow in a `sound_enabled`
     // guard — the sound-manager suspend/resume hooks around the roll

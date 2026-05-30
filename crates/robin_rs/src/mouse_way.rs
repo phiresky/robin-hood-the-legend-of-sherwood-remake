@@ -6,11 +6,10 @@
 //! into one of nine sword-strike patterns, an unrecognized "attempt",
 //! or "none" (no stroke).
 
+use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::f32::consts::PI;
-
-use robin_engine::coordinates::ScreenPoint;
 
 use crate::geo2d::{self, Segment2D, Vec2D, segments_intersect};
 

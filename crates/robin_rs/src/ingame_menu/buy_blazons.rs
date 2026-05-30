@@ -17,6 +17,7 @@
 //!   Escape               → Quit
 
 use crate::gfx_types::Keycode;
+use robin_engine::sprite::BBox;
 
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
@@ -24,7 +25,6 @@ use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::ui_screens::BuyBlazonsScreen;
 use crate::widget::FrameWnd;
-use robin_engine::sprite::BBox;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_background,

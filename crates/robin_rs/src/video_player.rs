@@ -30,12 +30,13 @@ pub async fn play_video(_window: &mut crate::window::GameWindow, path: &str) -> 
 /// than playing the cinematic silently.
 #[cfg(feature = "video")]
 fn sound_enabled() -> bool {
-    robin_engine::engine::GlobalOptions::global()
+    engine_api::GlobalOptions::global()
         .as_ref()
         .is_none_or(|opts| opts.sound_enabled)
 }
 
 #[cfg(feature = "video")]
+use robin_engine::engine as engine_api;
 use std::sync::{Arc, Once};
 
 #[cfg(feature = "video")]

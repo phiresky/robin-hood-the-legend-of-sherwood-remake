@@ -6,6 +6,11 @@
 //! management** and **transition logic** for those flows.
 
 use crate::Host;
+use robin_engine::engine as engine_api;
+#[cfg(test)]
+use robin_engine::mission_stat as engine_mission_stat;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::profiles as engine_profiles;
 use serde::{Deserialize, Serialize};
 
 use crate::campaign::Campaign;
@@ -110,7 +115,7 @@ pub struct Game {
     /// Application-wide startup options.  Only the directory fields are
     /// consulted today; the rest is here so `evaluate_arg` has somewhere
     /// to land.
-    pub global_options: robin_engine::engine::GlobalOptions,
+    pub global_options: engine_api::GlobalOptions,
 }
 
 impl Default for Game {
@@ -133,7 +138,7 @@ impl Default for Game {
             stature_focus: StatureFocusLatch::default(),
             frame_times: [0; NUMBER_OF_SAMPLES],
             last_tick: 0,
-            global_options: robin_engine::engine::GlobalOptions::default(),
+            global_options: engine_api::GlobalOptions::default(),
         }
     }
 }
@@ -157,7 +162,7 @@ impl Game {
     pub fn process_operation(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
         match self.operation.get_current() {
@@ -193,7 +198,7 @@ impl Game {
     fn handle_level_load(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
         if !callbacks.save_game_file_exists() {
@@ -226,7 +231,7 @@ impl Game {
     fn handle_quit(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         callbacks: &mut dyn GameCallbacks,
     ) {
         callbacks.suspend_play_time();
@@ -245,7 +250,7 @@ impl Game {
     fn handle_level_succeeded(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
         callbacks.suspend_play_time();
@@ -275,7 +280,7 @@ impl Game {
     fn handle_level_failed(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
         let was_interrupted = self.operation.get_current() == GameCode::LevelInterrupted;
@@ -492,10 +497,10 @@ impl Game {
     pub fn run_engine_tick(
         &mut self,
         host: &mut Host,
-        display: &mut robin_engine::engine::HostDisplayState,
+        display: &mut engine_api::HostDisplayState,
         assets: &LevelAssets,
         engine: &mut Engine,
-        dev: &mut robin_engine::engine::DevState,
+        dev: &mut engine_api::DevState,
         console_displayed: bool,
         dummy_pause: bool,
     ) -> Option<GameCode> {
@@ -589,7 +594,7 @@ impl Game {
     pub fn initialize_for_mission(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
     ) {
         let idx = campaign
             .current_mission_idx
@@ -612,7 +617,7 @@ impl Game {
     pub fn finalize_mission(
         &mut self,
         engine: &mut Engine,
-        assets: &robin_engine::engine::LevelAssets,
+        assets: &engine_api::LevelAssets,
         campaign: &mut Campaign,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
@@ -621,13 +626,13 @@ impl Game {
         // duration of the quit-mission sync so stats land in the
         // right place, then hand it back.
         engine.install_campaign(std::mem::take(campaign));
-        let mut input = robin_engine::engine::InputState::default();
-        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut input = engine_api::InputState::default();
+        let mut display = engine_api::HostDisplayState::default();
         engine.apply_command(
             &mut display,
             &mut input,
             assets,
-            &robin_engine::player_command::PlayerCommand::ApplyQuitMissionUpdates {
+            &engine_player_command::PlayerCommand::ApplyQuitMissionUpdates {
                 exit_code: self.operation.get_current(),
             },
         );
@@ -673,11 +678,7 @@ pub enum Jingle {
 /// Callbacks the game state machine fires at transition points.
 pub trait GameCallbacks {
     // ── Serialization ──
-    fn serialize_save(
-        &mut self,
-        campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
-    );
+    fn serialize_save(&mut self, campaign: &Campaign, profiles: &engine_profiles::ProfileManager);
     fn serialize_load(&mut self, mission_id: u32);
     fn serialize_for_restart(&mut self, write: bool);
     fn serialize_continue_save(&mut self, mission_id: u32);
@@ -685,7 +686,7 @@ pub trait GameCallbacks {
     fn synchronize_profile_with_campaign(
         &mut self,
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
     );
 
     // ── Save game queries ──
@@ -733,9 +734,9 @@ mod tests {
     use super::*;
     use crate::campaign::CampaignValue;
 
-    fn fresh_engine() -> (Engine, robin_engine::engine::LevelAssets) {
+    fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
         use crate::campaign::Campaign;
-        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut assets = engine_api::LevelAssets::new();
         let engine =
             Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
         (engine, assets)
@@ -884,7 +885,7 @@ mod tests {
     }
 
     impl GameCallbacks for StubCallbacks {
-        fn serialize_save(&mut self, _: &Campaign, _: &robin_engine::profiles::ProfileManager) {}
+        fn serialize_save(&mut self, _: &Campaign, _: &engine_profiles::ProfileManager) {}
         fn serialize_load(&mut self, _: u32) {}
         fn serialize_for_restart(&mut self, _: bool) {}
         fn serialize_continue_save(&mut self, _: u32) {}
@@ -892,7 +893,7 @@ mod tests {
         fn synchronize_profile_with_campaign(
             &mut self,
             _: &Campaign,
-            _: &robin_engine::profiles::ProfileManager,
+            _: &engine_profiles::ProfileManager,
         ) {
         }
         fn save_game_file_exists(&self) -> bool {
@@ -925,7 +926,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelSave);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
@@ -938,7 +939,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelRestart);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
@@ -951,7 +952,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::Quit);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
@@ -963,7 +964,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelNext);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks::default();
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
@@ -975,7 +976,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelLoad);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks {
             save_exists: false,
             ..Default::default()
@@ -991,7 +992,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelFailed);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks {
             loading_requested: false,
             ..Default::default()
@@ -1006,7 +1007,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelInterrupted);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks {
             loading_requested: false,
             ..Default::default()
@@ -1021,7 +1022,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelFailed);
         let campaign = Campaign::default();
-        let profiles = robin_engine::profiles::ProfileManager::new();
+        let profiles = engine_profiles::ProfileManager::new();
         let mut cb = StubCallbacks {
             loading_requested: true,
             debriefing_code: GameCode::LevelLoad,
@@ -1038,10 +1039,10 @@ mod tests {
     #[test]
     fn run_engine_tick_in_progress() {
         let mut game = Game::default();
-        let mut dev = robin_engine::engine::DevState::default();
+        let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut display = engine_api::HostDisplayState::default();
 
         // Normal state — engine should tick and return None (still in progress)
         let result = game.run_engine_tick(
@@ -1061,10 +1062,10 @@ mod tests {
     #[test]
     fn run_engine_tick_skips_when_paused() {
         let mut game = Game::default();
-        let mut dev = robin_engine::engine::DevState::default();
+        let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut display = engine_api::HostDisplayState::default();
 
         // Paused — engine should NOT tick
         let result = game.run_engine_tick(
@@ -1083,10 +1084,10 @@ mod tests {
     #[test]
     fn run_engine_tick_skips_when_console() {
         let mut game = Game::default();
-        let mut dev = robin_engine::engine::DevState::default();
+        let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut display = engine_api::HostDisplayState::default();
 
         // Console displayed — engine should NOT tick
         let result = game.run_engine_tick(
@@ -1105,10 +1106,10 @@ mod tests {
     #[test]
     fn run_engine_tick_mission_won() {
         let mut game = Game::default();
-        let mut dev = robin_engine::engine::DevState::default();
+        let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut display = engine_api::HostDisplayState::default();
         engine.test_set_mission_flags(true, false, false);
 
         let result = game.run_engine_tick(
@@ -1127,10 +1128,10 @@ mod tests {
     #[test]
     fn run_engine_tick_mission_lost() {
         let mut game = Game::default();
-        let mut dev = robin_engine::engine::DevState::default();
+        let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let mut display = robin_engine::engine::HostDisplayState::default();
+        let mut display = engine_api::HostDisplayState::default();
         engine.test_set_mission_flags(false, true, false);
 
         let result = game.run_engine_tick(
@@ -1156,7 +1157,7 @@ mod tests {
         let mut game = Game::default();
         game.operation.set(GameCode::LevelSucceeded);
         let (mut engine, _assets) = fresh_engine();
-        engine.test_set_mission_stat(robin_engine::mission_stat::MissionStat {
+        engine.test_set_mission_stat(engine_mission_stat::MissionStat {
             collected_money: 300,
             added_score: 500,
             ..Default::default()
@@ -1165,7 +1166,7 @@ mod tests {
         let mut campaign = Campaign::default();
         let mut cb = StubCallbacks::default();
 
-        let assets = robin_engine::engine::LevelAssets::new();
+        let assets = engine_api::LevelAssets::new();
         game.finalize_mission(&mut engine, &assets, &mut campaign, &mut cb);
 
         assert_eq!(

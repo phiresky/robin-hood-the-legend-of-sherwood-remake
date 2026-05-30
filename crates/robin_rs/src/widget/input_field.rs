@@ -20,6 +20,9 @@
 //!                  emit TextChanged + Activated
 //! ```
 
+#[cfg(test)]
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::sound_cache as engine_sound_cache;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
@@ -612,7 +615,7 @@ impl WidgetInputField {
         events: &[crate::ui::UiEvent],
         sound: &mut crate::sound::SoundManager,
         backend: Option<&mut dyn crate::sound::AudioBackend>,
-        loader: &robin_engine::sound_cache::SampleLoader,
+        loader: &engine_sound_cache::SampleLoader,
     ) {
         play_widget_noise(events, WIDGET_NOISY_INPUTFIELD, sound, backend, loader);
     }
@@ -686,7 +689,7 @@ mod tests {
 
     fn make_input<'a>(kb: &'a UiKeyboard, text: &'a str) -> WidgetInput<'a> {
         WidgetInput {
-            mouse_position: robin_engine::coordinates::ScreenPoint::new(-1.0, -1.0),
+            mouse_position: engine_coordinates::ScreenPoint::new(-1.0, -1.0),
             mouse_z: 0,
             mouse_button: MouseButtons::empty(),
             keyboard: kb,

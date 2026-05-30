@@ -15,6 +15,11 @@
 //! Buttons are driven by the [`crate::widget`] system via the
 //! [`super::widget_bridge`].
 
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::coordinates::ScreenBBox;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::player_command::DialogResult;
+use robin_engine::sound_cache::SampleLoader;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::gfx_types::Keycode;
@@ -25,9 +30,6 @@ use crate::resource_ids;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
 use crate::widget::{FrameWnd, WidgetPicture};
-use robin_engine::coordinates::ScreenBBox;
-use robin_engine::player_command::DialogResult;
-use robin_engine::sound_cache::SampleLoader;
 
 use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TextFontTable, TextWidgetState, TooltipState,
@@ -116,9 +118,9 @@ pub async fn show_popup_scroll(
     body_font_name: Option<&str>,
     align: TextAlign,
     universal_frame: u32,
-    replay_result: Option<robin_engine::player_command::DialogResult>,
+    replay_result: Option<engine_player_command::DialogResult>,
     modal_net: Option<super::ModalNet<'_>>,
-) -> robin_engine::player_command::DialogResult {
+) -> engine_player_command::DialogResult {
     // During replay, skip the interactive pages entirely — the window
     // is purely informational so the only thing to reproduce is the
     // dismissal edge. Matches what `show_dialogue` does.
@@ -447,10 +449,8 @@ impl PopupScrollModalState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
-            self.input_state.virt_x,
-            self.input_state.virt_y,
-        );
+        let mouse_pt =
+            engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             self.tooltip

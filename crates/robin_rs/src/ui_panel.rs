@@ -14,6 +14,17 @@
 //! the full UI chrome height including the panel and its transition zone.
 
 use crate::Host;
+use robin_assets::picture::Picture;
+use robin_engine::character_kind::CharacterKind;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::coordinates::ScreenPoint;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::Engine;
+use robin_engine::geo2d as engine_geo2d;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::player_command::PlayerId;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
 use crate::element::Entity;
@@ -26,12 +37,6 @@ use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::{ResourceId, ResourceManager};
 use crate::titbit::SpriteRow;
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
-use robin_assets::picture::Picture;
-use robin_engine::character_kind::CharacterKind;
-use robin_engine::coordinates::ScreenPoint;
-use robin_engine::engine::Engine;
-use robin_engine::player_command::PlayerId;
-use robin_engine::sprite::BBox;
 
 // ─── Layout constants ─────────────────────────────────────────────
 
@@ -786,10 +791,10 @@ impl PortraitCache {
     pub fn generate_peasant_names(
         &mut self,
         res: &mut ResourceManager,
-        engine: &mut robin_engine::engine::Engine,
-        display: &mut robin_engine::engine::HostDisplayState,
-        input: &mut robin_engine::engine::InputState,
-        assets: &robin_engine::engine::LevelAssets,
+        engine: &mut engine_api::Engine,
+        display: &mut engine_api::HostDisplayState,
+        input: &mut engine_api::InputState,
+        assets: &engine_api::LevelAssets,
     ) {
         const FIRSTNAME_BASE: usize = 100;
         const SURNAME_BASE: usize = 122;
@@ -853,7 +858,7 @@ impl PortraitCache {
                         display,
                         input,
                         assets,
-                        &robin_engine::player_command::PlayerCommand::RegisterPeasantName {
+                        &engine_player_command::PlayerCommand::RegisterPeasantName {
                             name: full.clone(),
                         },
                     );
@@ -1059,7 +1064,7 @@ fn is_pc_in_coma(engine: &Engine, entity: &Entity) -> bool {
 /// Returns `None` if `current_action == NoAction` or doesn't match any slot.
 fn active_action_index(
     engine: &Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     entity: &Entity,
 ) -> Option<u8> {
     use crate::profiles::Action;
@@ -1205,7 +1210,7 @@ pub fn draw_panel(
     host: &mut Host,
     engine: &Engine,
     local_seat: PlayerId,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     mouse_x: f32,
@@ -1866,7 +1871,7 @@ pub fn draw_requirements_bar(
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     campaign: &crate::campaign::Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     state: &crate::widget::requirements::RequirementsState,
 ) {
     let _ = campaign;
@@ -1964,8 +1969,8 @@ pub fn draw_requirements_bar(
 /// requirements-bar selected ring).
 fn bbox_i32(x0: i32, y0: i32, x1: i32, y1: i32) -> BBox {
     BBox::new(
-        robin_engine::geo2d::pt(x0 as f32, y0 as f32),
-        robin_engine::geo2d::pt(x1 as f32, y1 as f32),
+        engine_geo2d::pt(x0 as f32, y0 as f32),
+        engine_geo2d::pt(x1 as f32, y1 as f32),
     )
 }
 
@@ -2233,7 +2238,7 @@ pub fn draw_screen_tooltip(
 pub fn draw_pc_info_overlay(
     host: &mut Host,
     engine: &Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     mouse: ScreenPoint,
@@ -2326,10 +2331,8 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
     // Snapshot the PC positions first — the draw call borrows engine.host
     // mutably for the draw_manager and its phase store, so we can't
     // still be iterating `engine.pc_ids()` while calling it.
-    let mut per_pc: Vec<(
-        crate::element::EntityId,
-        robin_engine::coordinates::MapPoint,
-    )> = Vec::with_capacity(engine.pc_ids().len());
+    let mut per_pc: Vec<(crate::element::EntityId, engine_coordinates::MapPoint)> =
+        Vec::with_capacity(engine.pc_ids().len());
     for &pc_id in engine.pc_ids() {
         if let Some(ent) = engine.get_entity(pc_id) {
             let pos = ent.element_data().position_map();
@@ -2758,7 +2761,7 @@ mod tests {
         let state = RequirementsState {
             slots: vec![
                 RequirementSlot::RequiredCharacter {
-                    character_profile_idx: robin_engine::profiles::CharacterProfileIdx(1),
+                    character_profile_idx: engine_profiles::CharacterProfileIdx(1),
                     status: RequirementStatus::Fulfilled,
                     selected: false,
                 },
@@ -2821,7 +2824,7 @@ mod tests {
         use crate::widget::requirements::{RequirementSlot, RequirementStatus};
         assert_eq!(
             requirements_slot_tooltip_mt_id(&RequirementSlot::RequiredCharacter {
-                character_profile_idx: robin_engine::profiles::CharacterProfileIdx(1),
+                character_profile_idx: engine_profiles::CharacterProfileIdx(1),
                 status: RequirementStatus::Fulfilled,
                 selected: false,
             }),
@@ -2837,7 +2840,7 @@ mod tests {
         );
         assert_eq!(
             requirements_slot_tooltip_mt_id(&RequirementSlot::OptionalCharacter {
-                character_profile_idx: Some(robin_engine::profiles::CharacterProfileIdx(2)),
+                character_profile_idx: Some(engine_profiles::CharacterProfileIdx(2)),
             }),
             MT_INFOBULLE_QG_OTHER_PC
         );

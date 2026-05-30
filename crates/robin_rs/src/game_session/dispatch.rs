@@ -4,6 +4,7 @@
 use crate::Host;
 use crate::geo2d;
 use crate::player_command::{FrameCommands, PlayerCommand};
+use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 
 /// Apply a batch of locally-produced [`PlayerCommand`]s.
@@ -70,16 +71,13 @@ pub(crate) fn dispatch_local_command(
     }
 }
 
-pub(super) fn apply_local_viewport_scroll(
-    host: &mut Host,
-    dir: robin_engine::engine::ScrollDirection,
-) {
+pub(super) fn apply_local_viewport_scroll(host: &mut Host, dir: engine_api::ScrollDirection) {
     const STEP: f32 = 24.0;
     let delta = match dir {
-        robin_engine::engine::ScrollDirection::Up => geo2d::pt(0.0, -STEP),
-        robin_engine::engine::ScrollDirection::Down => geo2d::pt(0.0, STEP),
-        robin_engine::engine::ScrollDirection::Left => geo2d::pt(-STEP, 0.0),
-        robin_engine::engine::ScrollDirection::Right => geo2d::pt(STEP, 0.0),
+        engine_api::ScrollDirection::Up => geo2d::pt(0.0, -STEP),
+        engine_api::ScrollDirection::Down => geo2d::pt(0.0, STEP),
+        engine_api::ScrollDirection::Left => geo2d::pt(-STEP, 0.0),
+        engine_api::ScrollDirection::Right => geo2d::pt(STEP, 0.0),
     };
     host.viewport.scroll_by(delta);
     host.input.cancel_multi_selection();

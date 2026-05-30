@@ -12,10 +12,10 @@
 //! [`PcInfoOverlay::visible`], [`PcInfoOverlay::position`], and the derived
 //! pip counts each frame.
 
+use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
 use crate::element::EntityId;
-use robin_engine::coordinates::ScreenPoint;
 
 /// Offset from the mouse cursor to the top-left of the popup.
 pub const POSITION_OFFSET: (f32, f32) = (25.0, 10.0);

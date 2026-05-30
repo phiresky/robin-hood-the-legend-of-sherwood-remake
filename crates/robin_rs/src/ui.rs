@@ -5,6 +5,7 @@
 //! widget-specific drawing code (see `widget/` and `game_session`); this
 //! module is a serializable state + layout/event skeleton.
 
+use robin_engine::sprite::BBox;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bitflags::bitflags;
@@ -15,7 +16,6 @@ use crate::geo2d::{BBox2D, GeoPoint2D, pt};
 use crate::input::KeyboardState;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
-use robin_engine::sprite::BBox;
 
 // ═════════════════════════════════════════════════════════════════════
 //  Enums & constants

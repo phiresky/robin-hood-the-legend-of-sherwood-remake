@@ -29,9 +29,20 @@ use crate::sound_config::SoundConfig;
 use crate::titbit::SpriteRow;
 use crate::titbit_renderer::TitbitRenderer;
 use crate::ui_panel::{PortraitCache, load_localized_character_names};
+use robin_assets::frame_holder as assets_frame_holder;
+use robin_assets::res_descr as assets_res_descr;
+use robin_assets::scb as assets_scb;
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::SpriteLocalPoint;
+use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::geo2d::Vec2D;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sbfile as engine_sbfile;
+use robin_engine::scb as engine_scb;
+use robin_engine::script_manager as engine_script_manager;
+use robin_engine::sound::ExclamationGroup;
+use robin_engine::sound_cache as engine_sound_cache;
 use robin_engine::sprite_script::{NONANIMATION_END, SpriteInfo, SpriteScript, UNMAPPED};
 
 #[derive(Debug, serde::Deserialize)]
@@ -73,7 +84,7 @@ struct HackableRhsFrame {
 }
 
 fn overlay_roots_from_env() -> Vec<std::path::PathBuf> {
-    robin_engine::sbfile::SbFile::overlay_paths()
+    engine_sbfile::SbFile::overlay_paths()
         .into_iter()
         .map(std::path::PathBuf::from)
         .collect()
@@ -230,7 +241,7 @@ pub(super) fn setup_mission_audio(
     backend: Option<&mut SdlMixerBackend>,
     engine: &Engine,
     assets: &mut LevelAssets,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     location: MissionLocation,
     sound_dir: &str,
 ) {
@@ -411,7 +422,7 @@ pub(super) fn setup_mission_audio(
     // sweep here because `add_entry` doesn't have a loader at insert
     // time. The resulting `data_check_succeeded` flag is consulted by
     // `SoundManager::activate` (fatal panic on miss).
-    let check = robin_engine::engine::GlobalOptions::global()
+    let check = engine_api::GlobalOptions::global()
         .as_ref()
         .map(|o| o.check_sound_data)
         .unwrap_or(false);
@@ -434,10 +445,9 @@ pub(super) fn setup_mission_audio(
 fn populate_sound_duration_tables(
     host: &Host,
     assets: &mut LevelAssets,
-    profiles: &robin_engine::profiles::ProfileManager,
-    loader: &robin_engine::sound_cache::SampleLoader,
+    profiles: &engine_profiles::ProfileManager,
+    loader: &engine_sound_cache::SampleLoader,
 ) {
-    use robin_engine::sound::ExclamationGroup;
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
 
@@ -471,7 +481,7 @@ fn populate_sound_duration_tables(
         if profile.exclamation_id != 0 {
             let entry = groups_by_profile.entry(profile.exclamation_id).or_default();
             entry.insert(ExclamationGroup::Civilian);
-            if profile.civilian_type == robin_engine::profiles::CivilianType::Vip {
+            if profile.civilian_type == engine_profiles::CivilianType::Vip {
                 entry.insert(ExclamationGroup::Vip);
             }
         }
@@ -539,13 +549,13 @@ pub(super) fn pre_decode_maps_and_resources(
     mut event_pump: Option<&mut crate::window::GameWindow>,
     loading_screen: &mut Option<crate::loading_screen::LoadingScreenRenderer>,
     engine: &mut Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     host: &Host,
     game: &Game,
 ) -> (
-    Option<robin_engine::engine::level_loading::PreDecodedBackground>,
-    Option<robin_engine::engine::level_loading::PreDecodedMinimap>,
-    Option<robin_assets::res_descr::LevelDescriptors>,
+    Option<engine_api::level_loading::PreDecodedBackground>,
+    Option<engine_api::level_loading::PreDecodedMinimap>,
+    Option<assets_res_descr::LevelDescriptors>,
     Option<HudFonts>,
 ) {
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -562,7 +572,7 @@ pub(super) fn pre_decode_maps_and_resources(
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
     let level_descriptors = engine.campaign().and_then(|campaign| {
         let mission_id = current_mission_id(campaign, profiles);
-        let filename = robin_assets::res_descr::red_filename(mission_id);
+        let filename = assets_res_descr::red_filename(mission_id);
         if let Some(dd) = host.shipping.as_deref()
             && let Some(desc) = dd.red_files.get(&filename)
         {
@@ -573,7 +583,7 @@ pub(super) fn pre_decode_maps_and_resources(
             return Some(desc.clone());
         }
         let path = format!("Data/Text/{filename}");
-        match robin_assets::res_descr::load(&path) {
+        match assets_res_descr::load(&path) {
             Ok(desc) => {
                 tracing::info!(
                     "Loaded level descriptors from {path}: {} dialogues",
@@ -648,7 +658,7 @@ pub(super) struct MissionSprites {
 pub(super) fn load_mission_sprites(
     engine: &mut Engine,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
     text_res: &mut ResourceManager,
@@ -860,7 +870,7 @@ pub(super) fn load_mission_sprites(
 /// is missing or has no pictures.
 pub(super) fn extract_minimap_widget_setup(
     cursor_res: &mut ResourceManager,
-) -> Option<robin_engine::engine::MinimapWidgetSetup> {
+) -> Option<engine_api::MinimapWidgetSetup> {
     let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
     let corner_size = geo2d::pt(btn_w as f32, btn_h as f32);
     let mut button_hit_mask = None;
@@ -879,7 +889,7 @@ pub(super) fn extract_minimap_widget_setup(
             TRANSPARENT_COLOR_KEY_16,
         ));
     }
-    Some(robin_engine::engine::MinimapWidgetSetup {
+    Some(engine_api::MinimapWidgetSetup {
         corner_size,
         button_hit_mask,
     })
@@ -894,7 +904,7 @@ pub(super) fn extract_minimap_widget_setup(
 /// and the engine leaves the marker disabled.
 pub(super) fn extract_ground_mark_sprite_data(
     cursor_res: &mut ResourceManager,
-) -> Option<robin_engine::engine::GroundMarkSpriteData> {
+) -> Option<engine_api::GroundMarkSpriteData> {
     let pics = cursor_res
         .get_pictures(resource_ids::RHID_GROUND_FOCUS)
         .ok()?;
@@ -927,7 +937,7 @@ pub(super) fn extract_ground_mark_sprite_data(
                 .unwrap_or((0, 0))
         })
         .collect();
-    Some(robin_engine::engine::GroundMarkSpriteData {
+    Some(engine_api::GroundMarkSpriteData {
         half_w: cw as f32 * 0.5,
         half_h: ch as f32 * 0.5,
         frame_sizes,
@@ -1007,10 +1017,10 @@ fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<S
 /// fields so each call ticks the bar and drains WM events.
 pub(super) type LoadedLevelAndSpriteBank = (
     Engine,
-    robin_engine::engine::LevelAssets,
-    robin_engine::engine::DevState,
-    Option<robin_engine::engine::level_loading::PreDecodedBackground>,
-    Option<robin_engine::engine::level_loading::PreDecodedMinimap>,
+    engine_api::LevelAssets,
+    engine_api::DevState,
+    Option<engine_api::level_loading::PreDecodedBackground>,
+    Option<engine_api::level_loading::PreDecodedMinimap>,
     u64,
 );
 
@@ -1021,22 +1031,22 @@ pub(super) fn load_level_and_sprite_bank(
     host: &mut Host,
     game: &mut Game,
     campaign_ref: &mut Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     text_res: &mut ResourceManager,
     args: &crate::main_entry::CliArgs,
     _screen_width: f32,
     _screen_height: f32,
-    ground_mark_sprite: Option<robin_engine::engine::GroundMarkSpriteData>,
+    ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
     titbit_row_frame_counts: Vec<u16>,
-    minimap_widget: Option<robin_engine::engine::MinimapWidgetSetup>,
+    minimap_widget: Option<engine_api::MinimapWidgetSetup>,
 ) -> Result<LoadedLevelAndSpriteBank, String> {
-    let mut assets = robin_engine::engine::LevelAssets::new();
+    let mut assets = engine_api::LevelAssets::new();
     // Stamp the canonical loaded profile manager onto LevelAssets — the
     // engine reads profiles via `&assets.profile_manager` everywhere now
     // (Campaign no longer owns its own copy).
     assets.profile_manager = std::sync::Arc::new(profiles.clone());
-    let mut dev = robin_engine::engine::DevState::new();
-    if let Some(opts) = robin_engine::engine::GlobalOptions::global().as_ref() {
+    let mut dev = engine_api::DevState::new();
+    if let Some(opts) = engine_api::GlobalOptions::global().as_ref() {
         dev.debug.surface_display = opts.debug_surfaces;
     }
 
@@ -1053,11 +1063,11 @@ pub(super) fn load_level_and_sprite_bank(
     const SPRITE_BANK_START: f32 = 0.12;
     const SPRITE_BANK_END: f32 = 0.56;
     {
-        let mut update = |u: robin_assets::frame_holder::ProgressUpdate| match u {
-            robin_assets::frame_holder::ProgressUpdate::Tick(d) => {
+        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
+            assets_frame_holder::ProgressUpdate::Tick(d) => {
                 tick_progress(loading_screen, event_pump.as_deref_mut(), d);
             }
-            robin_assets::frame_holder::ProgressUpdate::Phase(text, local) => {
+            assets_frame_holder::ProgressUpdate::Phase(text, local) => {
                 if let Some(ls) = loading_screen.as_mut() {
                     let overall = SPRITE_BANK_START + local * (SPRITE_BANK_END - SPRITE_BANK_START);
                     // Use the end-of-local-phase target for the ceiling
@@ -1109,7 +1119,7 @@ pub(super) fn load_level_and_sprite_bank(
             .mission_filename
             .clone()
     });
-    let mut scripts: std::collections::BTreeMap<String, robin_engine::scb::ScbFile> = host
+    let mut scripts: std::collections::BTreeMap<String, engine_scb::ScbFile> = host
         .shipping
         .as_ref()
         .map(|dd| dd.scripts.clone().into_iter().collect())
@@ -1118,11 +1128,10 @@ pub(super) fn load_level_and_sprite_bank(
         && !scripts.contains_key(name)
     {
         let path = format!("Data/Levels/{name}.scb");
-        match robin_engine::sbfile::SbFile::read_all(&path)
+        match engine_sbfile::SbFile::read_all(&path)
             .map_err(|e| format!("read {path}: error {e}"))
-            .and_then(|b| {
-                robin_assets::scb::parse_bytes(&b).map_err(|e| format!("parse {path}: {e}"))
-            }) {
+            .and_then(|b| assets_scb::parse_bytes(&b).map_err(|e| format!("parse {path}: {e}")))
+        {
             Ok(scb) => {
                 scripts.insert(name.clone(), scb);
             }
@@ -1134,9 +1143,7 @@ pub(super) fn load_level_and_sprite_bank(
         .map(|(name, scb)| {
             (
                 name.clone(),
-                std::sync::Arc::new(robin_engine::script_manager::ScriptProgram::from_scb(
-                    scb.clone(),
-                )),
+                std::sync::Arc::new(engine_script_manager::ScriptProgram::from_scb(scb.clone())),
             )
         })
         .collect();
@@ -1169,7 +1176,7 @@ pub(super) fn load_level_and_sprite_bank(
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
-        robin_engine::engine::level_loading::load_mission_for_campaign(
+        engine_api::level_loading::load_mission_for_campaign(
             &campaign,
             &assets.profile_manager,
             &level_directory,
@@ -1180,16 +1187,16 @@ pub(super) fn load_level_and_sprite_bank(
 
     // Pre-decode the background bitmap before `Engine::new` — the
     // constructor wants `bg_pixel_dims` to size the fast-find grid.
-    let ambiance_dir = robin_engine::engine::Ambiance::from_raw(loaded.mission.header.ambiance)
+    let ambiance_dir = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance)
         .directory()
         .to_string();
     let map_name = loaded.mission.header.map_filename.clone();
     let pre_decoded_bg = {
-        let mut update = |u: robin_assets::frame_holder::ProgressUpdate| match u {
-            robin_assets::frame_holder::ProgressUpdate::Tick(d) => {
+        let mut update = |u: assets_frame_holder::ProgressUpdate| match u {
+            assets_frame_holder::ProgressUpdate::Tick(d) => {
                 tick_progress(loading_screen, event_pump.as_deref_mut(), d);
             }
-            robin_assets::frame_holder::ProgressUpdate::Phase(text, _local) => {
+            assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
                 if let Some(ls) = loading_screen.as_mut() {
                     ls.set_status(text, 0.85);
                 }
@@ -1245,7 +1252,7 @@ pub(super) fn load_level_and_sprite_bank(
     let goldeneye_initial = args.goldeneye || args.global_options.golden_eye;
     if let Some(mm) = minimap_widget {
         host.engine_display.setup_minimap_widget(
-            robin_engine::coordinates::ScreenPoint::new(_screen_width - 83.0, 38.0),
+            engine_coordinates::ScreenPoint::new(_screen_width - 83.0, 38.0),
             mm.corner_size,
             mm.button_hit_mask,
             _screen_width,
@@ -1257,9 +1264,9 @@ pub(super) fn load_level_and_sprite_bank(
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
-        Engine::new(robin_engine::engine::EngineArgs {
+        Engine::new(engine_api::EngineArgs {
             campaign,
-            level: robin_engine::engine::LevelLoadArgs {
+            level: engine_api::LevelLoadArgs {
                 assets: &mut assets,
                 level_directory: &level_directory,
                 progress: &mut progress,
@@ -1318,7 +1325,7 @@ pub(super) fn load_level_and_sprite_bank(
 pub(super) fn setup_input_and_camera(
     engine: &mut Engine,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     args: &crate::main_entry::CliArgs,
     window_width: u32,
     window_height: u32,

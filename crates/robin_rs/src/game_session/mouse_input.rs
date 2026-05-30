@@ -45,7 +45,16 @@ use crate::ui_panel::{self, PortraitCache, PortraitHitArea};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
 use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
+use robin_assets::keyconfig as assets_keyconfig;
+use robin_assets::res_descr as assets_res_descr;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::mission as engine_mission;
+use robin_engine::player_command as engine_player_command;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sherwood_stat as engine_sherwood_stat;
 
 /// Per-frame mouse-input dispatch.
 ///
@@ -65,9 +74,9 @@ use robin_engine::engine::Engine;
 ///   Right drag  = red deselection box
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_mouse_input(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     renderer: &Renderer,
     portrait_cache: &PortraitCache,
     frame_cmds: &mut FrameCommands,
@@ -126,7 +135,7 @@ pub(super) fn handle_mouse_input(
                     host.input.left_mouse_down = true;
                     host.input.is_dragging = true;
                     host.input.left_mouse_start_screen =
-                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
+                        engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
                     // When `next_left_double_is_simple` is set, the
                     // next left-click is demoted to simple even if SDL
                     // reports a double-click.  Set by the multi-select
@@ -143,8 +152,7 @@ pub(super) fn handle_mouse_input(
                     // start of every left-drag.
                     host.mouse_way.clear();
 
-                    let click_pt =
-                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
+                    let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
 
                     if on_minimap {
@@ -232,14 +240,16 @@ pub(super) fn handle_mouse_input(
                     // from starting.
                     let guard_ok = !engine.is_seat_selection_swordfighting(local_seat)
                         && engine.selected_action_for_seat(local_seat)
-                            == robin_engine::profiles::Action::NoAction
+                            == engine_profiles::Action::NoAction
                         && !host.input.is_alt
                         && !engine.locker_active()
                         && host.input.has_focus;
                     if guard_ok
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::new(_mx as f32, _my as f32),
-                        )
+                        && let Some(map_pt) =
+                            host.viewport
+                                .screen_to_map(engine_coordinates::ScreenPoint::new(
+                                    _mx as f32, _my as f32,
+                                ))
                     {
                         host.input.start_multi_unselection(map_pt);
                     }
@@ -247,7 +257,7 @@ pub(super) fn handle_mouse_input(
 
                 // Mouse move: update minimap drag or multi-select box
                 GameEvent::MouseMove { x, y, .. } => {
-                    let mouse_pt = robin_engine::coordinates::ScreenPoint::new(x as f32, y as f32);
+                    let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
 
                     // While a left drag is in progress and the player
                     // has a swordfighting PC selected (and isn't
@@ -351,8 +361,7 @@ pub(super) fn handle_mouse_input(
                     // to open or center-on-click.  Also handles drag
                     // release outside the minimap (cleans up drag
                     // state so it doesn't linger).
-                    let click_pt =
-                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
+                    let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
                     let minimap_handled = on_minimap || host.engine_display.minimap().drag_start();
                     if minimap_handled {
@@ -838,9 +847,7 @@ pub(super) fn handle_mouse_input(
 
                             if !swallow_click
                                 && let Some(map_pt) = host.viewport.screen_to_map(
-                                    robin_engine::coordinates::ScreenPoint::new(
-                                        mx as f32, my as f32,
-                                    ),
+                                    engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
                                 )
                             {
                                 // Resolve swordfight first, then regular click
@@ -931,7 +938,7 @@ pub(super) fn handle_mouse_input(
                         // Right-click on minimap closes it.
                         if host.engine_display.minimap().is_displayed()
                             && host.engine_display.minimap().is_over_widget(
-                                robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32),
+                                engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
                             )
                         {
                             let cmd = PlayerCommand::MinimapRightClick;
@@ -1050,9 +1057,9 @@ pub(super) async fn handle_pause_menu_events(
     pause_menu: &mut Option<PauseMenu>,
     pause_closed_this_frame: &mut bool,
     host: &mut Host,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     game: &mut Game,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
     event_pump: &mut GameWindow,
@@ -1151,7 +1158,7 @@ pub(super) async fn handle_pause_menu_events(
                         // still exercisable in tooling / headless runs.
                         let mut graphic = GraphicConfig::default();
                         let mut sound_cfg = SoundConfig::default();
-                        let mut key_cfg = robin_assets::keyconfig::KeyConfig::default_preset();
+                        let mut key_cfg = assets_keyconfig::KeyConfig::default_preset();
                         let mut custom_key_cfg = key_cfg.clone();
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
@@ -1197,7 +1204,7 @@ pub(super) async fn handle_pause_menu_events(
                         input_translator.install_hud_dead_zones();
                         if host.minimap_corner_size.x > 0.0 {
                             let cmd = PlayerCommand::MinimapResize {
-                                base: robin_engine::coordinates::ScreenPoint::new(w - 83.0, 38.0),
+                                base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
                                 corner_size: host.minimap_corner_size,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -1373,10 +1380,10 @@ pub(super) async fn handle_pause_menu_events(
 ///   slot-0 macros.
 pub(super) fn dispatch_corner_button_left_click(
     btn: crate::corner_hud::CornerButton,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     game: &mut Game,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     frame_cmds: &mut FrameCommands,
 ) {
     let local_seat = host.local_seat;
@@ -1421,9 +1428,9 @@ pub(super) fn dispatch_corner_button_left_click(
 /// * QuickStart — drop all slot-0 macros (same as Clock).
 pub(super) fn dispatch_corner_button_right_click(
     btn: crate::corner_hud::CornerButton,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     frame_cmds: &mut FrameCommands,
 ) {
     match btn {
@@ -1448,7 +1455,7 @@ pub(super) fn dispatch_corner_button_right_click(
 /// already populated.  Defaults to slot 0 when every slot is taken.
 pub(super) fn choose_recording_place(
     engine: &Engine,
-    local_seat: robin_engine::player_command::PlayerId,
+    local_seat: engine_player_command::PlayerId,
 ) -> u8 {
     let selected = engine.seat_selection(local_seat);
     for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
@@ -1471,10 +1478,10 @@ pub(super) fn choose_recording_place(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_sherwood_hud_buttons(
     game: &mut Game,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     frame_cmds: &mut FrameCommands,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
     event_pump: &mut GameWindow,
@@ -1726,10 +1733,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_sherwood_campaign_map_overlay(
     game: &mut Game,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     frame_cmds: &mut FrameCommands,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     campaign_ref: &mut Campaign,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
@@ -1766,8 +1773,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             .campaign()
             .expect("campaign")
             .get_last_pseudo_mission_status();
-        let pseudo_debrief_pending =
-            pseudo_status != robin_engine::mission::MissionStatus::Available;
+        let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
 
         let campaign = engine.campaign().expect("campaign");
         sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
@@ -1776,11 +1782,10 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // empty string for every id, so the status bar just shows
         // the raw numbers.
         let default_menu_text = resources::MenuText::default();
-        let menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup =
-            match menu_resources.as_ref() {
-                Some(r) => &r.menu_text,
-                None => &default_menu_text,
-            };
+        let menu_text: &dyn engine_sherwood_stat::MenuTextLookup = match menu_resources.as_ref() {
+            Some(r) => &r.menu_text,
+            None => &default_menu_text,
+        };
         sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
 
         let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
@@ -1837,20 +1842,20 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // reach that clear.
         match choice {
             CampaignMapChoice::PseudoDebriefTimer => {
-                let won = pseudo_status == robin_engine::mission::MissionStatus::Won;
+                let won = pseudo_status == engine_mission::MissionStatus::Won;
                 if let Some(resources) = menu_resources.as_ref() {
                     // Try the per-mission win/lose text first, fall
                     // back to the generic strategical-mission text
                     // only if the resource lookup fails.
                     let last_id = engine.campaign().expect("campaign").last_pseudo_mission_id;
                     let pseudo_red = {
-                        let filename = robin_assets::res_descr::red_filename(last_id);
+                        let filename = assets_res_descr::red_filename(last_id);
                         host.shipping
                             .as_deref()
                             .and_then(|dd| dd.red_files.get(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
-                                robin_assets::res_descr::load(&path)
+                                assets_res_descr::load(&path)
                                     .map_err(|e| {
                                         tracing::warn!(
                                             "Pseudo-mission debriefing: failed to load .red {path}: {e}"
@@ -1920,13 +1925,13 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         let campaign = engine.campaign().expect("campaign");
                         let mission = &campaign.missions[idx];
                         let mission_id = mission.profile(&assets.profile_manager).id;
-                        let filename = robin_assets::res_descr::red_filename(mission_id);
+                        let filename = assets_res_descr::red_filename(mission_id);
                         host.shipping
                             .as_deref()
                             .and_then(|dd| dd.red_files.get(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
-                                robin_assets::res_descr::load(&path).ok()
+                                assets_res_descr::load(&path).ok()
                             })
                     };
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));

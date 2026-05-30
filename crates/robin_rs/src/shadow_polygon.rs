@@ -27,6 +27,9 @@ use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
+use robin_engine::geo2d as engine_geo2d;
+use robin_engine::mask as engine_mask;
+use robin_engine::position_interface as engine_position_interface;
 use robin_engine::sprite::BBox;
 
 // Shared constants + types from the engine side.
@@ -42,7 +45,7 @@ pub type TintedCone = (
     GeoPoint2D,
     f32,
     u8,
-    Option<robin_engine::position_interface::PlaneZCoeffs>,
+    Option<engine_position_interface::PlaneZCoeffs>,
 );
 
 // Constants/structs imported from robin_engine::shadow_polygon (see top of file).
@@ -275,7 +278,7 @@ fn points_to_polygon(points: &[GeoPoint2D]) -> Option<geo::Polygon<f32>> {
 pub fn project_and_clip_to_projection_area(
     visible_polygons: &[Vec<GeoPoint2D>],
     viewer: GeoPoint2D,
-    projection_plane: robin_engine::position_interface::PlaneZCoeffs,
+    projection_plane: engine_position_interface::PlaneZCoeffs,
     projection_area: &SightObstacle,
     occluding_projection_areas: &[&SightObstacle],
 ) -> (Vec<Vec<GeoPoint2D>>, GeoPoint2D) {
@@ -337,7 +340,7 @@ pub fn project_and_clip_to_projection_area(
 /// directions (not scaled by radius).
 fn is_box_inside_field(
     viewer: GeoPoint2D,
-    box_ground: &robin_engine::geo2d::BBox2D,
+    box_ground: &engine_geo2d::BBox2D,
     left_side: [f32; 2],
     right_side: [f32; 2],
 ) -> bool {
@@ -600,8 +603,8 @@ pub fn render_darken_inside(
     alpha: u8,
     viewer: GeoPoint2D,
     radius: f32,
-    projection_plane: Option<robin_engine::position_interface::PlaneZCoeffs>,
-    masks: &[&robin_engine::mask::RuntimeMask],
+    projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
+    masks: &[&engine_mask::RuntimeMask],
 ) {
     if alpha == 0 || visible_polygons.is_empty() {
         return;
@@ -638,8 +641,8 @@ fn render_darken_inside_gpu_spans(
     alpha: u8,
     viewer: GeoPoint2D,
     radius: f32,
-    projection_plane: Option<robin_engine::position_interface::PlaneZCoeffs>,
-    masks: &[&robin_engine::mask::RuntimeMask],
+    projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
+    masks: &[&engine_mask::RuntimeMask],
 ) {
     let w = renderer.screen_width() as i32;
     let h = renderer.screen_height() as i32;
@@ -724,7 +727,7 @@ fn render_darken_inside_gpu_spans(
 }
 
 fn mask_spans_for_row(
-    masks: &[&robin_engine::mask::RuntimeMask],
+    masks: &[&engine_mask::RuntimeMask],
     view_rect: &BBox,
     zoom: f32,
     inv_zoom: f32,

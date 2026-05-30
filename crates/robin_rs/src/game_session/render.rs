@@ -28,8 +28,16 @@ use crate::ui_panel::{PortraitHitArea, hit_test_portrait_detailed};
 use crate::widget::blazon_bar;
 use crate::widget::requirements::{RequirementSlot, build_requirements_state};
 use crate::zoom_hud::{self, ZoomButtonEnable, ZoomHoverState, ZoomTooltipTracker};
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element as engine_element;
+use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::geo2d as engine_geo2d;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::resource_ids as engine_resource_ids;
+use robin_engine::sprite as engine_sprite;
 
 /// Render a throwaway frame per pending `/screenshot` request, reply
 /// with the captured PNG, then clear the offscreen target for the
@@ -43,10 +51,10 @@ use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 /// restored because the live `render_frame` overwrites it anyway.
 pub(super) fn drain_screenshots(
     engine: &Engine,
-    display: &robin_engine::engine::HostDisplayState,
+    display: &engine_api::HostDisplayState,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
     let pending = crate::http_server::take_pending_screenshots();
@@ -98,10 +106,10 @@ pub(super) fn drain_screenshots(
 /// later in the loop starts clean.
 pub(super) fn capture_save_thumbnail(
     engine: &Engine,
-    display: &robin_engine::engine::HostDisplayState,
+    display: &engine_api::HostDisplayState,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> Option<Thumbnail> {
     let saved_zoom = ctx.zoom_tooltip.clone();
@@ -223,10 +231,10 @@ fn write_print_screen_png(w: u32, h: u32, rgba: Vec<u8>) {
 
 pub(super) fn drain_wide_print_screen(
     engine: &Engine,
-    display: &robin_engine::engine::HostDisplayState,
+    display: &engine_api::HostDisplayState,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> bool {
     let level_w = host.viewport.level_size.x.ceil() as u32;
@@ -236,7 +244,7 @@ pub(super) fn drain_wide_print_screen(
         return false;
     }
     if level_w > u16::MAX as u32
-        || level_h.saturating_add(robin_engine::engine::PANNEL_HEIGHT as u32) > u16::MAX as u32
+        || level_h.saturating_add(engine_api::PANNEL_HEIGHT as u32) > u16::MAX as u32
     {
         tracing::warn!(
             "PrintScreen Ctrl wide snapshot: level {level_w}x{level_h} exceeds renderer limits"
@@ -252,8 +260,8 @@ pub(super) fn drain_wide_print_screen(
     let saved_renderer_w = ctx.renderer.screen_width();
     let saved_renderer_h = ctx.renderer.screen_height();
 
-    let render_h = level_h + robin_engine::engine::PANNEL_HEIGHT as u32;
-    host.viewport.view_position = robin_engine::coordinates::MapPoint::ZERO;
+    let render_h = level_h + engine_api::PANNEL_HEIGHT as u32;
+    host.viewport.view_position = engine_coordinates::MapPoint::ZERO;
     host.viewport.old_view_position = host.viewport.view_position;
     host.viewport.zoom_factor = 1.0;
     host.viewport.old_zoom_factor = 1.0;
@@ -338,7 +346,7 @@ fn render_display_info_overlay(
 
     let now = crate::window::process_uptime_ms();
     let frame_ms = if host.display_info_last_tick_ms == 0 {
-        robin_engine::engine::FRAME_TIME_MS
+        engine_api::FRAME_TIME_MS
     } else {
         now.saturating_sub(host.display_info_last_tick_ms).max(1)
     };
@@ -360,7 +368,7 @@ fn render_display_info_overlay(
         });
     };
 
-    let version = robin_engine::engine::GlobalOptions::global()
+    let version = engine_api::GlobalOptions::global()
         .as_ref()
         .map(|opts| {
             format!(
@@ -465,12 +473,12 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
     if w <= 0 || h <= 0 {
         return;
     }
-    let rect = robin_engine::sprite::BBox::new(
-        robin_engine::geo2d::GeoPoint2D {
+    let rect = engine_sprite::BBox::new(
+        engine_geo2d::GeoPoint2D {
             x: x as f32,
             y: y as f32,
         },
-        robin_engine::geo2d::GeoPoint2D {
+        engine_geo2d::GeoPoint2D {
             x: (x + w) as f32,
             y: (y + h) as f32,
         },
@@ -489,10 +497,10 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
 /// before rollback/replay command logging commits the tick.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update_mouse_and_cursor(
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
     renderer: &mut crate::renderer::Renderer,
     cursor_res: &mut crate::resource_manager::ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
@@ -529,9 +537,9 @@ pub(super) fn update_mouse_and_cursor(
     let armed = manager.engine.selected_action_for_seat(local_seat);
     if matches!(
         armed,
-        robin_engine::profiles::Action::Heal
-            | robin_engine::profiles::Action::Shield
-            | robin_engine::profiles::Action::BigShield
+        engine_profiles::Action::Heal
+            | engine_profiles::Action::Shield
+            | engine_profiles::Action::BigShield
     ) && let Some(hit) = hit_test_portrait_detailed(
         &manager.engine,
         local_seat,
@@ -550,27 +558,27 @@ pub(super) fn update_mouse_and_cursor(
             .map(|pc| pc.life_points)
             .unwrap_or(0);
         let override_cursor = match armed {
-            robin_engine::profiles::Action::Heal => {
+            engine_profiles::Action::Heal => {
                 // Same predicate as the portrait Heal commit (alive +
                 // injured).
                 if life > 0 && life < 100 {
-                    Some(robin_engine::resource_ids::RHMOUSE_HEAL_YES)
+                    Some(engine_resource_ids::RHMOUSE_HEAL_YES)
                 } else {
-                    Some(robin_engine::resource_ids::RHMOUSE_HEAL_NO)
+                    Some(engine_resource_ids::RHMOUSE_HEAL_NO)
                 }
             }
-            robin_engine::profiles::Action::Shield => {
+            engine_profiles::Action::Shield => {
                 if life > 0 {
-                    Some(robin_engine::resource_ids::RHMOUSE_SHIELD_YES)
+                    Some(engine_resource_ids::RHMOUSE_SHIELD_YES)
                 } else {
-                    Some(robin_engine::resource_ids::RHMOUSE_SHIELD_NO)
+                    Some(engine_resource_ids::RHMOUSE_SHIELD_NO)
                 }
             }
-            robin_engine::profiles::Action::BigShield => {
+            engine_profiles::Action::BigShield => {
                 if life > 0 {
-                    Some(robin_engine::resource_ids::RHMOUSE_BIG_SHIELD_YES)
+                    Some(engine_resource_ids::RHMOUSE_BIG_SHIELD_YES)
                 } else {
-                    Some(robin_engine::resource_ids::RHMOUSE_BIG_SHIELD_NO)
+                    Some(engine_resource_ids::RHMOUSE_BIG_SHIELD_NO)
                 }
             }
             _ => None,
@@ -656,10 +664,10 @@ pub struct RenderContext<'a> {
 /// - skipping the whole trio in fast-forward (`host.skip_render`).
 pub(super) fn render_frame(
     engine: &Engine,
-    display: &robin_engine::engine::HostDisplayState,
+    display: &engine_api::HostDisplayState,
     host: &mut Host,
-    assets: &robin_engine::engine::LevelAssets,
-    dev: &robin_engine::engine::DevState,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
     // Unpack once — the function body is long and every deref is
@@ -768,7 +776,7 @@ pub(super) fn render_frame(
             continue;
         }
         let map_pos =
-            robin_engine::coordinates::MapPoint::new(elem.position_map().x, elem.position_map().y);
+            engine_coordinates::MapPoint::new(elem.position_map().x, elem.position_map().y);
         let in_building = match engine
             .fast_grid()
             .get_sector(map_pos, map_pos, elem.layer())
@@ -866,7 +874,7 @@ pub(super) fn render_frame(
             hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y)
             && hit.is_burned
             && hit.area == PortraitHitArea::Guard
-            && let Some(robin_engine::element::Entity::Pc(pc)) = engine.get_entity(hit.pc_id)
+            && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(hit.pc_id)
             && let Some(guard_id) = pc.pc.guard
         {
             host.input.marked_pc_ids.push(guard_id);
@@ -1304,7 +1312,7 @@ pub(super) fn render_frame(
         if let Some((slot, btn)) = pc_action_tooltip.ready_button()
             && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
             && let Some(&pc_id) = engine.pc_ids().get(slot as usize)
-            && let Some(robin_engine::element::Entity::Pc(pc)) = engine.get_entity(pc_id)
+            && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(pc_id)
             && engine.campaign().is_some()
             && let Some(profile) = assets.profile_manager.get_character(pc.pc.profile_index)
             && let Some(&action) = profile.actions.get(btn as usize)

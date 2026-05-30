@@ -9,6 +9,7 @@
 use crate::geo2d;
 use crate::native_font::{Font, NativeFont};
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::sprite::BBox;
 
 use super::resources::IngameMenuResources;
@@ -1342,7 +1343,7 @@ impl TooltipState {
     pub fn update(
         &mut self,
         frame: &crate::widget::FrameWnd,
-        mouse_virt: robin_engine::coordinates::ScreenPoint,
+        mouse_virt: engine_coordinates::ScreenPoint,
     ) {
         let hovered_now = frame
             .widgets()
@@ -1363,7 +1364,7 @@ impl TooltipState {
         font: &NativeFont,
         transform: MenuTransform,
         frame: &crate::widget::FrameWnd,
-        mouse_virt: robin_engine::coordinates::ScreenPoint,
+        mouse_virt: engine_coordinates::ScreenPoint,
     ) {
         let Some(id) = self.hover_widget else { return };
         let Some(started) = self.hover_since else {

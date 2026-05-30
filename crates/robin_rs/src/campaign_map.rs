@@ -19,7 +19,10 @@ use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
 use crate::widget::FrameWnd;
 use robin_assets::res_descr::{self, LevelDescriptors};
+use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::coordinates::ScreenBBox;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::widget_state as engine_widget_state;
 
 const MAP_W: i32 = 640;
 const MAP_H: i32 = 480;
@@ -128,7 +131,7 @@ struct ShortMissionDescriptionWindow {
     frame: FrameWnd,
     x: i32,
     y: i32,
-    blazons: Option<robin_engine::widget_state::blazon_set::BlazonSetState>,
+    blazons: Option<engine_widget_state::blazon_set::BlazonSetState>,
 }
 
 impl CampaignMapAssets {
@@ -184,11 +187,11 @@ pub(crate) async fn show_campaign_map(
     renderer: &mut Renderer,
     game: &mut crate::game::Game,
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     campaign_map: &CampaignMapState,
     menu_resources: Option<&mut IngameMenuResources>,
     text_resources: &mut ResourceManager,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     cursor: Option<ModalCursor<'_>>,
     pseudo_debrief_pending: bool,
 ) -> Result<CampaignMapChoice, String> {
@@ -344,10 +347,10 @@ pub(crate) async fn show_campaign_map(
 
 fn campaign_map_items(
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     campaign_map: &CampaignMapState,
     text_resources: &mut ResourceManager,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) -> Vec<CampaignMapItem> {
     campaign_map
         .locations
@@ -389,7 +392,7 @@ fn campaign_map_items(
 
 fn load_level_descriptors(
     mission_id: u32,
-    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
 ) -> Option<LevelDescriptors> {
     let filename = res_descr::red_filename(mission_id);
     shipping
@@ -529,7 +532,7 @@ fn render_campaign_map(
     renderer: &mut Renderer,
     transform: MenuTransform,
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     campaign_map: &CampaignMapState,
     items: &[CampaignMapItem],
     selected: usize,
@@ -612,7 +615,7 @@ fn render_tooltip(
     renderer: &mut Renderer,
     transform: MenuTransform,
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     item: &CampaignMapItem,
     assets: &CampaignMapAssets,
     resources: Option<&IngameMenuResources>,
@@ -683,7 +686,7 @@ fn render_tooltip(
 impl ShortMissionDescriptionWindow {
     fn new(
         campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
+        profiles: &engine_profiles::ProfileManager,
         item: &CampaignMapItem,
         input: &ModalInputState,
         assets: &CampaignMapAssets,

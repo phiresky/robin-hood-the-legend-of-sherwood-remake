@@ -5,6 +5,7 @@
 //! caller — this widget only tracks its own two-state toggle and emits
 //! events that the group manager can react to.
 
+use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
@@ -15,7 +16,6 @@ use crate::ui::{
         RADIO_EX_FOCUSED2, RADIO_EX_PUSHED1, RADIO_EX_PUSHED2,
     },
 };
-use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetId, WidgetInput};
 
