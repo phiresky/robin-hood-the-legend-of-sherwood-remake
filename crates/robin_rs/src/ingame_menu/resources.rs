@@ -1475,6 +1475,7 @@ fn load_sprite_pack(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::font::TrueTypeFont;
 
     #[test]
     fn menu_text_fallback_is_english() {
@@ -1518,7 +1519,7 @@ mod tests {
         name[..12].copy_from_slice(b"MissionTitle");
         let mut tt_name = [0u8; 32];
         tt_name[..11].copy_from_slice(b"MissingFace");
-        let tt = crate::font::TrueTypeFont::from_parts(&name, 14, 0, 0, &tt_name, 0x00FF_FFFF, &[]);
+        let tt = TrueTypeFont::from_parts(&name, 14, 0, 0, &tt_name, 0x00FF_FFFF, &[]);
         let mut resources = IngameMenuResources::stub();
         resources.fonts.mission_title_any = Some(Font::TrueType(tt));
 
