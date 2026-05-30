@@ -249,10 +249,8 @@ pub async fn show_mission_description(
 
         let widget_input = input_state.as_widget_input();
         let events = frame.process_input(&widget_input);
-        let mouse_virt = geo2d::GeoPoint2D {
-            x: input_state.virt_x,
-            y: input_state.virt_y,
-        };
+        let mouse_virt =
+            robin_engine::coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
         tooltip.update(&frame, mouse_virt);
 
         // Rebuild the blazon-set state for this frame from current

@@ -717,7 +717,7 @@ mod tests {
 
     fn make_input<'a>(kb: &'a UiKeyboard, text: &'a str) -> WidgetInput<'a> {
         WidgetInput {
-            mouse_position: crate::geo2d::pt(-1.0, -1.0),
+            mouse_position: robin_engine::coordinates::ScreenPoint::new(-1.0, -1.0),
             mouse_z: 0,
             mouse_button: MouseButtons::empty(),
             keyboard: kb,

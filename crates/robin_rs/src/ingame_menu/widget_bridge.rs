@@ -392,7 +392,7 @@ impl ModalInputState {
         let now_ms = self.start_time.elapsed().as_millis() as u32;
         self.keyboard.refresh(&self.raw_keyboard, now_ms);
         WidgetInput {
-            mouse_position: geo2d::pt(self.virt_x, self.virt_y),
+            mouse_position: robin_engine::coordinates::ScreenPoint::new(self.virt_x, self.virt_y),
             mouse_z: 0,
             mouse_button: self.buttons,
             keyboard: &self.keyboard,

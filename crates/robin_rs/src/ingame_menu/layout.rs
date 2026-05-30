@@ -1476,7 +1476,7 @@ impl TooltipState {
     pub fn update(
         &mut self,
         frame: &crate::widget::FrameWnd,
-        mouse_virt: crate::geo2d::GeoPoint2D,
+        mouse_virt: robin_engine::coordinates::ScreenPoint,
     ) {
         let hovered_now = frame
             .widgets()
@@ -1497,7 +1497,7 @@ impl TooltipState {
         font: &NativeFont,
         transform: MenuTransform,
         frame: &crate::widget::FrameWnd,
-        mouse_virt: crate::geo2d::GeoPoint2D,
+        mouse_virt: robin_engine::coordinates::ScreenPoint,
     ) {
         let Some(id) = self.hover_widget else { return };
         let Some(started) = self.hover_since else {

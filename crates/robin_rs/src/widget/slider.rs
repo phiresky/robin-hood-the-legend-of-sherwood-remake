@@ -340,9 +340,10 @@ impl WidgetSlider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::{BBox2D, pt};
+    use crate::geo2d::BBox2D;
     use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
     use crate::widget::WidgetRenderer;
+    use robin_engine::coordinates::ScreenPoint;
 
     fn make_slider(step_count: u32) -> WidgetSlider {
         let mut slider = WidgetSlider::new(7);
@@ -361,7 +362,7 @@ mod tests {
 
     fn input_at(x: f32, buttons: MouseButtons, keyboard: &UiKeyboard) -> WidgetInput<'_> {
         WidgetInput {
-            mouse_position: pt(x, 5.0),
+            mouse_position: ScreenPoint::new(x, 5.0),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard,

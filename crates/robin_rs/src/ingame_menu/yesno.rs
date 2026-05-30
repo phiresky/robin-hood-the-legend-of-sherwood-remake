@@ -227,7 +227,10 @@ impl YesNoModalState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = geo2d::pt(self.input_state.virt_x, self.input_state.virt_y);
+        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
+            self.input_state.virt_x,
+            self.input_state.virt_y,
+        );
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             self.tooltip

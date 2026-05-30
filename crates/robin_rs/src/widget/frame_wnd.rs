@@ -286,7 +286,7 @@ impl FrameWnd {
         }
 
         // Check if mouse is over the frame → emit FrameFocus.
-        let mouse_in_frame = self.bbox.contains_point(input.mouse_position);
+        let mouse_in_frame = self.bbox.contains_point(input.mouse_position.to_geo());
         if mouse_in_frame {
             events.push(UiEvent {
                 msg_type: UiMsg::FrameFocus,
@@ -415,7 +415,7 @@ mod tests {
 
     fn make_input(x: f32, y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
         WidgetInput {
-            mouse_position: crate::geo2d::pt(x, y),
+            mouse_position: robin_engine::coordinates::ScreenPoint::new(x, y),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard: make_keyboard(),

@@ -24,13 +24,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
-use crate::geo2d::GeoPoint2D;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiMsg, UiState,
     resource_widget_id::{
         BUTTON_DEFAULT, BUTTON_DISABLED, BUTTON_FOCUSED, BUTTON_SELECTED, NO_RESOURCE,
     },
 };
+use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetInput};
 
@@ -421,7 +421,7 @@ impl WidgetButton {
 
     /// Hit-test for the focus manager. Combines the bbox test with the
     /// renderer's per-pixel transparency check.
-    pub fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
+    pub fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         self.base.is_inside(point)
     }
 }
@@ -474,7 +474,7 @@ impl WidgetGroupable for WidgetButton {
         WidgetButton::is_sleeping(self)
     }
 
-    fn is_mouse_inside(&self, point: GeoPoint2D) -> bool {
+    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         WidgetButton::is_mouse_inside(self, point)
     }
 
@@ -505,7 +505,7 @@ mod tests {
         // Leak a keyboard for test convenience (tests are short-lived).
         let kb = Box::leak(Box::new(UiKeyboard::default()));
         WidgetInput {
-            mouse_position: crate::geo2d::pt(mouse_x, mouse_y),
+            mouse_position: ScreenPoint::new(mouse_x, mouse_y),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard: kb,
@@ -522,7 +522,7 @@ mod tests {
     ) -> WidgetInput<'a> {
         let kb = Box::leak(Box::new(UiKeyboard::default()));
         WidgetInput {
-            mouse_position: crate::geo2d::pt(mouse_x, mouse_y),
+            mouse_position: ScreenPoint::new(mouse_x, mouse_y),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard: kb,

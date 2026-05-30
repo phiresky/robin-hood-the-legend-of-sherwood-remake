@@ -13,6 +13,7 @@ use crate::ingame_menu::layout::{MenuTransform, TextAlign, VAlign, render_text_i
 use crate::input::{KeyboardState, MAX_SCANCODES};
 use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
+use robin_engine::coordinates::ScreenPoint;
 use robin_engine::sprite::BBox;
 
 // ═════════════════════════════════════════════════════════════════════
@@ -337,7 +338,7 @@ impl UiKeyboard {
 /// the input.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiInput {
-    pub mouse_position: GeoPoint2D,
+    pub mouse_position: ScreenPoint,
     pub mouse_z: i16,
     pub mouse_button: u16,
 }
@@ -577,12 +578,12 @@ impl RendererBase {
         self.bbox = bbox;
     }
 
-    pub fn set_position_point(&mut self, point: GeoPoint2D) {
+    pub fn set_position_point(&mut self, point: ScreenPoint) {
         // Actual dimensions are resolved by the concrete widget type
         // (see `widget/picture.rs` etc.), which queries `ResourceManager`
         // and calls `set_position_bbox`. This 1×1 fallback is a
         // safety net for callers that haven't been ported yet.
-        self.bbox = BBox2D::from_point(point);
+        self.bbox = BBox2D::from_point(point.to_geo());
     }
 
     pub fn set_resource(&mut self, id: ResourceId) -> bool {
@@ -626,8 +627,8 @@ impl RendererBase {
     /// When no mask is set (text labels, sliders, listboxes — anything
     /// not bound to a pre-loaded sprite pack), the bbox check stands
     /// alone.
-    pub fn is_real_point(&self, point: GeoPoint2D) -> bool {
-        if !self.bbox.contains_point(point) {
+    pub fn is_real_point(&self, point: ScreenPoint) -> bool {
+        if !self.bbox.contains_point(point.to_geo()) {
             return false;
         }
         let Some(mask) = self.alpha_mask.as_ref() else {
@@ -740,7 +741,7 @@ impl RendererAlphaConstant {
     /// A fully-faded widget (`target_alpha == 0`) cannot receive
     /// clicks. Otherwise defer to the base renderer (bbox +
     /// pixel-alpha).
-    pub fn is_real_point(&self, point: GeoPoint2D) -> bool {
+    pub fn is_real_point(&self, point: ScreenPoint) -> bool {
         if self.target_alpha == 0 {
             return false;
         }
@@ -2052,10 +2053,10 @@ mod tests {
     fn renderer_base_is_real_point_bbox_only() {
         let mut r = RendererBase::default();
         r.set_position_bbox(BBox2D::from_coords(10.0, 10.0, 30.0, 30.0));
-        assert!(r.is_real_point(pt(15.0, 15.0)));
-        assert!(!r.is_real_point(pt(5.0, 5.0)));
+        assert!(r.is_real_point(ScreenPoint::new(15.0, 15.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
         // Without a mask, every in-bbox pixel is opaque.
-        assert!(r.is_real_point(pt(10.0, 10.0)));
+        assert!(r.is_real_point(ScreenPoint::new(10.0, 10.0)));
     }
 
     #[test]
@@ -2072,11 +2073,11 @@ mod tests {
         r.set_alpha_mask(Some(mask));
 
         // bbox top-left = (10, 20); only local (1, 1) is opaque.
-        assert!(r.is_real_point(pt(11.0, 21.0)));
-        assert!(!r.is_real_point(pt(10.0, 20.0)));
-        assert!(!r.is_real_point(pt(13.0, 23.0)));
+        assert!(r.is_real_point(ScreenPoint::new(11.0, 21.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(10.0, 20.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(13.0, 23.0)));
         // Outside the bbox: rejected before the mask check.
-        assert!(!r.is_real_point(pt(50.0, 50.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(50.0, 50.0)));
     }
 
     #[test]
@@ -2084,9 +2085,9 @@ mod tests {
         let mut r = RendererAlphaConstant::default();
         r.base
             .set_position_bbox(BBox2D::from_coords(0.0, 0.0, 10.0, 10.0));
-        assert!(r.is_real_point(pt(5.0, 5.0)));
+        assert!(r.is_real_point(ScreenPoint::new(5.0, 5.0)));
         r.set_alpha_level(0);
-        assert!(!r.is_real_point(pt(5.0, 5.0)));
+        assert!(!r.is_real_point(ScreenPoint::new(5.0, 5.0)));
     }
 
     #[test]

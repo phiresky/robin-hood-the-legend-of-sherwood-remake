@@ -709,7 +709,10 @@ impl DebriefingPageState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = crate::geo2d::pt(self.input_state.virt_x, self.input_state.virt_y);
+        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
+            self.input_state.virt_x,
+            self.input_state.virt_y,
+        );
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = body_font_ref {
             self.tooltip
