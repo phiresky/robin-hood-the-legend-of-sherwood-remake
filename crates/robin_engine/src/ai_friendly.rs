@@ -2460,7 +2460,9 @@ mod tests {
     #[test]
     fn patrol_coordinate_uses_real_chief_position_for_near_backwards_gate() {
         let mut ai = FriendlyAi::new(1);
-        ai.base.patrol_chief = 2;
+        ai.base.patrol_chief = Some(crate::element::EntityId::Soldier(
+            crate::entity_id::SoldierId(2),
+        ));
         ai.set_state(AiState::Default, Substate::DefaultPatrolEnroute);
 
         let ctx = AiContext {

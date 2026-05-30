@@ -205,8 +205,8 @@ pub(super) struct SoldierSnapshot {
     pub(super) alert_soldiers_point: crate::ai::Position,
     /// Ground-plane elevation (`element.position.z`).
     pub(super) elevation: u16,
-    /// Soldier's patrol chief handle, 0 if none.
-    pub(super) patrol_chief: u32,
+    /// Soldier's patrol chief, if any.
+    pub(super) patrol_chief: Option<EntityId>,
     /// Soldier's current antagonist handle.
     pub(super) antagonist: u32,
     /// Soldier profile duty flag — part of the
@@ -689,7 +689,7 @@ impl EngineInner {
                     0u32,
                     crate::ai::Position::default(),
                     false,
-                    0u32,
+                    None,
                     0u32,
                     crate::ai::Position::default(),
                 )

@@ -4380,10 +4380,10 @@ pub struct AiController {
     pub looted_after_money_fight: bool,
 
     // -- Patrol --
-    pub patrol_chief: NpcHandle,
-    pub patrol: Vec<NpcHandle>,
-    pub missed_patrol_members: Vec<NpcHandle>,
-    pub theoretical_patrol: Vec<NpcHandle>,
+    pub patrol_chief: Option<EntityId>,
+    pub patrol: Vec<EntityId>,
+    pub missed_patrol_members: Vec<EntityId>,
+    pub theoretical_patrol: Vec<EntityId>,
     pub patrol_stopped: bool,
     pub patrol_direction: u16,
 
@@ -4884,7 +4884,7 @@ impl Default for AiController {
             my_reconnaissance_report: ReconnaissanceReport::default(),
             knocked_out_in_money_fight: false,
             looted_after_money_fight: false,
-            patrol_chief: 0,
+            patrol_chief: None,
             patrol: Vec::new(),
             missed_patrol_members: Vec::new(),
             theoretical_patrol: Vec::new(),
@@ -7547,8 +7547,8 @@ impl AiController {
         // the minion closes. Only abandon the goto-chief path when
         // `couldnt_reachpoint` fires (then fall through to the normal
         // return-to-post logic below).
-        if self.patrol_chief != 0
-            && let Some(chief_view) = ctx.entity_view(self.patrol_chief)
+        if let Some(chief_id) = self.patrol_chief
+            && let Some(chief_view) = ctx.entity_view(chief_id.index())
             && chief_view.is_able_to_fight
         {
             // `IsDetecting360Degrees`: aspect-ratio-corrected distance
@@ -7895,7 +7895,7 @@ impl AiController {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
-        if self.patrol_chief == 0 {
+        if self.patrol_chief.is_none() {
             // Can happen when stimulus was postponed on door
             return;
         }

@@ -890,15 +890,18 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         let my_handle = self.base.me;
+        let my_id = crate::element::EntityId::Soldier(crate::entity_id::SoldierId(my_handle));
 
         // Belongs-to-another-patrol gate.
-        if cs.patrol_chief != 0 && cs.patrol_chief != my_handle {
+        if let Some(chief_id) = cs.patrol_chief
+            && chief_id != my_id
+        {
             let chief_pos_opt = tick
                 .camp_soldiers
                 .iter()
-                .find(|o| o.handle == cs.patrol_chief)
+                .find(|o| o.handle == chief_id.index())
                 .map(|o| o.position)
-                .or_else(|| ctx.entity_view(cs.patrol_chief).map(|v| v.position));
+                .or_else(|| ctx.entity_view(chief_id.index()).map(|v| v.position));
             if let Some(chief_pos) = chief_pos_opt {
                 let ddx = (cs.position.x - chief_pos.x).abs();
                 let ddy = (cs.position.y - chief_pos.y).abs();
@@ -1215,8 +1218,8 @@ impl EnemyAi {
         // Delegate to the chief only when the chief exists, is a
         // soldier, and we currently 360°-detect them.  Otherwise we
         // proceed as a would-be chief ourselves.
-        let chief = self.base.patrol_chief;
-        if chief != 0 {
+        if let Some(chief_id) = self.base.patrol_chief {
+            let chief = chief_id.index();
             let chief_is_soldier = ctx
                 .entity_view(chief)
                 .map(|v| v.is_soldier())
@@ -1285,9 +1288,13 @@ impl EnemyAi {
             .patrol
             .iter()
             .copied()
-            .filter(|&m| {
-                ctx.entity_view(m).map(|v| v.is_soldier()).unwrap_or(false)
-                    && self.is_detecting_360_degrees(m as HumanHandle, ctx)
+            .filter_map(|member_id| {
+                let member = member_id.index();
+                (ctx.entity_view(member)
+                    .map(|v| v.is_soldier())
+                    .unwrap_or(false)
+                    && self.is_detecting_360_degrees(member as HumanHandle, ctx))
+                .then_some(member)
             })
             .collect();
         for member in members {
@@ -3555,7 +3562,7 @@ mod tests {
             report_seen_bodies: Vec::new(),
             report_charly: 0,
             alert_soldiers_point: Position::default(),
-            patrol_chief: 0,
+            patrol_chief: None,
             antagonist: 0,
             duty_flag: false,
             is_tower_guard: false,
