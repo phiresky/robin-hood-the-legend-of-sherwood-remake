@@ -2683,11 +2683,11 @@ impl EngineInner {
         // Remove previous frame's dynamic shield obstacles.
         self.dynamic_sight_obstacles.clear();
 
-        for idx in 0..self.entities.len() {
-            let entity = match &self.entities[idx] {
-                Some(e) => e,
-                None => continue,
-            };
+        let mut clear_obstacles = Vec::new();
+        let mut set_obstacles = Vec::new();
+        let mut dynamic_sight_obstacles = Vec::new();
+
+        for (id, entity) in self.entities_iter_with_id() {
             if !entity.is_human() || !entity.is_active() || entity.is_dead() {
                 continue;
             }
@@ -2698,11 +2698,8 @@ impl EngineInner {
 
             if !actor.action_state.is_shield() {
                 // Not holding shield — clear any stale obstacle.
-                if actor.shield_obstacle.is_some()
-                    && let Some(Some(e)) = self.entities.get_mut(idx)
-                    && let Some(a) = e.actor_data_mut()
-                {
-                    a.shield_obstacle = None;
+                if actor.shield_obstacle.is_some() {
+                    clear_obstacles.push(id);
                 }
                 continue;
             }
@@ -2725,15 +2722,12 @@ impl EngineInner {
                         s.soldier.soldier_profile_index,
                     ) else {
                         tracing::warn!(
-                            soldier = ?crate::element::EntityId::from_raw(idx as u32),
+                            soldier = ?id,
                             profile_index = ?s.soldier.soldier_profile_index,
                             "shield update: missing soldier HtH weapon profile; clearing shield obstacle"
                         );
-                        if actor.shield_obstacle.is_some()
-                            && let Some(Some(e)) = self.entities.get_mut(idx)
-                            && let Some(a) = e.actor_data_mut()
-                        {
-                            a.shield_obstacle = None;
+                        if actor.shield_obstacle.is_some() {
+                            clear_obstacles.push(id);
                         }
                         continue;
                     };
@@ -2752,13 +2746,21 @@ impl EngineInner {
 
             // Store on the entity (for tick_arrows per-arrow directional check)
             // and append to the global obstacle list (for all other systems).
-            let global_copy = obstacle.clone();
-            if let Some(Some(e)) = self.entities.get_mut(idx)
-                && let Some(a) = e.actor_data_mut()
-            {
-                a.shield_obstacle = Some(obstacle);
+            dynamic_sight_obstacles.push(obstacle.clone());
+            set_obstacles.push((id, obstacle));
+        }
+
+        self.dynamic_sight_obstacles = dynamic_sight_obstacles;
+
+        for id in clear_obstacles {
+            if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
+                actor.shield_obstacle = None;
             }
-            self.dynamic_sight_obstacles.push(global_copy);
+        }
+        for (id, obstacle) in set_obstacles {
+            if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
+                actor.shield_obstacle = Some(obstacle);
+            }
         }
     }
 
