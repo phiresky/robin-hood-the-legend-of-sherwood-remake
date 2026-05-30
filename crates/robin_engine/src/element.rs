@@ -56,7 +56,7 @@ pub type Animation = OrderType;
 // ═══════════════════════════════════════════════════════════════════
 
 pub use crate::element_kinds::*;
-pub use crate::entity_id::EntityId;
+pub use crate::entity_id::{EntityId, EntityIdKind};
 // ═══════════════════════════════════════════════════════════════════
 //  Data structs — one per hierarchy level
 // ═══════════════════════════════════════════════════════════════════
@@ -2059,6 +2059,20 @@ macro_rules! dispatch_element {
 }
 
 impl Entity {
+    pub fn entity_id_kind(&self) -> EntityIdKind {
+        match self {
+            Self::Pc(_) => EntityIdKind::Pc,
+            Self::Soldier(_) => EntityIdKind::Soldier,
+            Self::Civilian(_) => EntityIdKind::Civilian,
+            Self::Fx(_) => EntityIdKind::Fx,
+            Self::Target(_) => EntityIdKind::Target,
+            Self::Bonus(_) => EntityIdKind::Bonus,
+            Self::Scroll(_) => EntityIdKind::Scroll,
+            Self::Projectile(_) => EntityIdKind::Projectile,
+            Self::Net(_) => EntityIdKind::Net,
+        }
+    }
+
     // — Element data access —
 
     pub fn element_data(&self) -> &ElementData {
@@ -4155,7 +4169,7 @@ mod tests {
         use crate::ai::AiState;
         use crate::ai_enemy::EnemyAi;
 
-        let entity_id = EntityId(42);
+        let entity_id = EntityId::from_raw(42);
         let mut enemy_ai = EnemyAi::new(7);
         enemy_ai.base.owner_entity_id = Some(entity_id);
         assert_eq!(enemy_ai.base.me, 7);

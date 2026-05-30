@@ -23,6 +23,7 @@ struct WithSerdeSkip {
     // Field exists solely to verify `#[serde(skip)]` is honored by StateHash;
     // it's set with different values in the test but never read.
     #[allow(dead_code)]
+    #[serde(skip)]
     b: u32,
     c: u32,
 }

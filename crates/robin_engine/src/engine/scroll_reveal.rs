@@ -358,7 +358,7 @@ impl EngineInner {
             // Reveal each scroll and queue it onto the minimap.
             for &scroll_id in &current_set {
                 if let Some(revealed) = self.reveal_scroll(assets, scroll_id) {
-                    display.minimap.set_highlighted(revealed.0);
+                    display.minimap.set_highlighted(revealed.index());
                 }
             }
             let screen = Self::director_camera_view_size();

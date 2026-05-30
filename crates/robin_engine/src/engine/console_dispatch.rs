@@ -559,7 +559,7 @@ impl EngineInner {
                         slot.as_ref().and_then(|e| {
                             if e.is_npc() && e.human_data().map(|h| h.unconscious).unwrap_or(false)
                             {
-                                Some(EntityId(idx as u32))
+                                Some(EntityId::from_raw(idx as u32))
                             } else {
                                 None
                             }
@@ -776,7 +776,7 @@ impl EngineInner {
                     .filter_map(|(idx, slot)| {
                         slot.as_ref()
                             .filter(|e| e.is_soldier())
-                            .map(|_| EntityId(idx as u32))
+                            .map(|_| EntityId::from_raw(idx as u32))
                     })
                     .collect();
                 for id in soldier_ids {
@@ -979,7 +979,7 @@ impl EngineInner {
                 ConsoleResponse::Ok(format!(
                     "{verb} interface for ActorPC({}:{})",
                     c.to_ascii_uppercase(),
-                    id.0
+                    id.index()
                 ))
             }
             Fps => {
@@ -1070,7 +1070,7 @@ impl EngineInner {
                         .map(|pc| !pc.interface_hidden)
                         .unwrap_or(true);
                     dev.console
-                        .push_output(format!("Actor id ........................ {}", id.0));
+                        .push_output(format!("Actor id ........................ {}", id.index()));
                     dev.console.push_output(format!(
                         "Interface Displayed ............. {}",
                         if displayed { "YES" } else { "NO" }

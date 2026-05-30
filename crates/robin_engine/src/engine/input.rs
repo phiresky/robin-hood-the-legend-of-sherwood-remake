@@ -2684,7 +2684,7 @@ impl EngineInner {
             if (dx != 0.0 || dy != 0.0)
                 && let Some(Entity::Pc(pc)) = self
                     .entities
-                    .get_mut(pc_id.0 as usize)
+                    .get_mut(pc_id.index() as usize)
                     .and_then(|s| s.as_mut())
             {
                 pc.element
@@ -2745,7 +2745,7 @@ impl EngineInner {
             ) {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             let Some(Entity::Pc(pc)) = entity.as_mut() else {
@@ -2773,7 +2773,7 @@ impl EngineInner {
 
         let ids = self.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             let Some(Entity::Pc(pc)) = entity.as_mut() else {
@@ -2822,7 +2822,7 @@ impl EngineInner {
 
         let ids = self.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             let Some(Entity::Pc(pc)) = entity.as_mut() else {

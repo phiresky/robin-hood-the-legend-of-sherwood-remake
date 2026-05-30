@@ -350,7 +350,10 @@ pub fn begin_carry(
     }
 
     // Validate target: must exist, be human, out-of-order, in a carryable posture.
-    let target_valid = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let target_valid = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) => {
             if !e.is_human() {
                 false
@@ -374,7 +377,7 @@ pub fn begin_carry(
     // Save target posture (Dead is mapped to DeadBack so the
     // dropped-body posture restored later carries the back-down variant).
     let target_posture = {
-        let target = entities[target_id.0 as usize].as_ref().unwrap();
+        let target = entities[target_id.index() as usize].as_ref().unwrap();
         let p = target.element_data().posture;
         if p == Posture::Dead {
             Posture::DeadBack
@@ -383,13 +386,13 @@ pub fn begin_carry(
         }
     };
     let target_pos = {
-        let target = entities[target_id.0 as usize].as_ref().unwrap();
+        let target = entities[target_id.index() as usize].as_ref().unwrap();
         target.element_data().position_map()
     };
 
     // Validate carrier: must be a living PC, not already carrying.
     let carrier = match entities
-        .get_mut(carrier_id.0 as usize)
+        .get_mut(carrier_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -441,7 +444,7 @@ pub fn begin_carry(
         target_pos.y,
         order_id,
     );
-    order.target_actor = Some(target_id.0);
+    order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -466,7 +469,7 @@ pub fn begin_carry(
     //   returns `Started`, so the cascade-interrupt on the target's
     //   current sequence element happens with the full engine context
     //   available.
-    if let Some(Some(target)) = entities.get_mut(target_id.0 as usize) {
+    if let Some(Some(target)) = entities.get_mut(target_id.index() as usize) {
         if let Some(human) = target.human_data_mut() {
             human.carrier = Some(carrier_id);
         }
@@ -508,7 +511,7 @@ pub fn begin_drop(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let carrier = match entities
-        .get_mut(carrier_id.0 as usize)
+        .get_mut(carrier_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -616,20 +619,21 @@ pub fn begin_climb_on_shoulders(
     // `HelpingToClimb` posture.  Snapshot the helper's position + 3D
     // position here to feed the headroom check before borrowing the
     // climber.
-    let (helper_pos_map, helper_pos_3d, helper_valid) =
-        match entities.get(helper_id.0 as usize).and_then(|s| s.as_ref()) {
-            Some(e) => {
-                let valid = e.is_pc()
-                    && !e.is_dead()
-                    && e.element_data().posture == Posture::HelpingToClimb;
-                (
-                    e.element_data().position_map(),
-                    e.position_iface().get_position(),
-                    valid,
-                )
-            }
-            None => (MapPoint { x: 0.0, y: 0.0 }, Default::default(), false),
-        };
+    let (helper_pos_map, helper_pos_3d, helper_valid) = match entities
+        .get(helper_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
+        Some(e) => {
+            let valid =
+                e.is_pc() && !e.is_dead() && e.element_data().posture == Posture::HelpingToClimb;
+            (
+                e.element_data().position_map(),
+                e.position_iface().get_position(),
+                valid,
+            )
+        }
+        None => (MapPoint { x: 0.0, y: 0.0 }, Default::default(), false),
+    };
     if !helper_valid {
         return ClimbResult::Impossible;
     }
@@ -644,7 +648,7 @@ pub fn begin_climb_on_shoulders(
     // Validate climber: must be a living PC, not already busy with an
     // ability, not already on shoulders.
     let climber = match entities
-        .get_mut(climber_id.0 as usize)
+        .get_mut(climber_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -686,11 +690,11 @@ pub fn begin_climb_on_shoulders(
     // Helper hasn't been touched yet, so read its direction here and
     // mirror it onto the climber for the lifetime of the climb.
     let helper_dir = entities
-        .get(helper_id.0 as usize)
+        .get(helper_id.index() as usize)
         .and_then(|s| s.as_ref())
         .map(|e| e.element_data().direction())
         .unwrap_or(0);
-    if let Some(Some(climber)) = entities.get_mut(climber_id.0 as usize) {
+    if let Some(Some(climber)) = entities.get_mut(climber_id.index() as usize) {
         climber
             .element_data_mut()
             .set_direction_instantly((helper_dir + 8) & 15);
@@ -705,7 +709,7 @@ pub fn begin_climb_on_shoulders(
         helper_pos_map.y,
         order_id,
     );
-    order.target_actor = Some(helper_id.0);
+    order.target_actor = Some(helper_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -715,7 +719,7 @@ pub fn begin_climb_on_shoulders(
     // helper's TransitionHelpingClimbingUp sync each frame.  Also face
     // the climber.
     let helper = match entities
-        .get_mut(helper_id.0 as usize)
+        .get_mut(helper_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -731,11 +735,11 @@ pub fn begin_climb_on_shoulders(
     }
     // Snapshot climber pos for the facing computation.
     let climber_pos = entities
-        .get(climber_id.0 as usize)
+        .get(climber_id.index() as usize)
         .and_then(|s| s.as_ref())
         .map(|e| e.element_data().position_map())
         .unwrap_or(helper_pos_map);
-    if let Some(Some(helper)) = entities.get_mut(helper_id.0 as usize) {
+    if let Some(Some(helper)) = entities.get_mut(helper_id.index() as usize) {
         let dx = climber_pos.x - helper_pos_map.x;
         let dy = climber_pos.y - helper_pos_map.y;
         helper.element_data_mut().set_direction_instantly(
@@ -766,7 +770,10 @@ pub fn begin_climb_down_from_shoulders(
 ) -> BeginResult {
     // Validate climber: must be a living PC currently OnShoulders with
     // a carrier reference.
-    let carrier_id = match entities.get(climber_id.0 as usize).and_then(|s| s.as_ref()) {
+    let carrier_id = match entities
+        .get(climber_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) => {
             if !e.is_pc() || e.is_dead() {
                 return BeginResult::Impossible;
@@ -787,7 +794,7 @@ pub fn begin_climb_down_from_shoulders(
 
     let order_id = alloc_order_id(order_id_counter);
     let climber = match entities
-        .get_mut(climber_id.0 as usize)
+        .get_mut(climber_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -807,7 +814,7 @@ pub fn begin_climb_down_from_shoulders(
     // Push the climbing-down animation order on the climber's sequence
     // element.  Direction is locked.
     let mut order = Order::new(OrderType::ClimbingDownFromShoulders, 0.0, 0.0, order_id);
-    order.target_actor = Some(carrier_id.0);
+    order.target_actor = Some(carrier_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -843,7 +850,10 @@ pub fn begin_tie(
     }
 
     // Validate target: must be unconscious and lying (not already tied).
-    let target_valid = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let target_valid = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) => {
             let posture = e.element_data().posture;
             let unconscious = e.human_data().is_some_and(|h| h.unconscious);
@@ -856,13 +866,13 @@ pub fn begin_tie(
     }
 
     let target_pos = {
-        let target = entities[target_id.0 as usize].as_ref().unwrap();
+        let target = entities[target_id.index() as usize].as_ref().unwrap();
         target.element_data().position_map()
     };
 
     // Validate actor: must be alive, human, not already busy.
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -891,7 +901,7 @@ pub fn begin_tie(
     actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(OrderType::Tying, target_pos.x, target_pos.y, order_id);
-    order.target_actor = Some(target_id.0);
+    order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -928,7 +938,10 @@ pub fn begin_heal(
     // Validate target: living PC with HP < max, OR an FX target (which
     // just runs the animation so the target's `ActivatedByHeal` script
     // can fire on Done — see `HealDone` in `engine/combat.rs`).
-    let target_valid = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let target_valid = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) => {
             if e.kind().is_fx_target() {
                 true
@@ -946,13 +959,13 @@ pub fn begin_heal(
     }
 
     let target_pos = {
-        let target = entities[target_id.0 as usize].as_ref().unwrap();
+        let target = entities[target_id.index() as usize].as_ref().unwrap();
         target.element_data().position_map()
     };
 
     // Validate healer: must be alive PC.
     let healer = match entities
-        .get_mut(healer_id.0 as usize)
+        .get_mut(healer_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -983,7 +996,7 @@ pub fn begin_heal(
     // Queue the canonical Healing order; `tick_abilities` swaps to
     // `OrderType::Eating` when the target is the healer itself.
     let mut order = Order::new(OrderType::Healing, target_pos.x, target_pos.y, order_id);
-    order.target_actor = Some(target_id.0);
+    order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1022,7 +1035,7 @@ pub fn begin_whistle(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1080,7 +1093,7 @@ pub fn begin_eat(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1147,17 +1160,19 @@ pub fn begin_hit(
 
     // The completion path asserts the antagonist is human; gate on the
     // same condition up-front instead of panicking later.
-    let (target_pos, target_alive) =
-        match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
-            Some(e) if e.is_human() => (e.element_data().position_map(), !e.is_dead()),
-            _ => return BeginResult::Impossible,
-        };
+    let (target_pos, target_alive) = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
+        Some(e) if e.is_human() => (e.element_data().position_map(), !e.is_dead()),
+        _ => return BeginResult::Impossible,
+    };
     if !target_alive {
         return BeginResult::Impossible;
     }
 
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1186,7 +1201,7 @@ pub fn begin_hit(
     actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(OrderType::Hitting, target_pos.x, target_pos.y, order_id);
-    order.target_actor = Some(target_id.0);
+    order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1232,13 +1247,16 @@ pub fn begin_strangle(
     // Invalid-target rejection happens in
     // `EngineInner::check_sequence_element_validity`, which runs before
     // dispatch.  This helper just rejects any non-living-human-NPC.
-    let target_pos = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let target_pos = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) if e.is_human() && !e.is_dead() && !e.is_pc() => e.element_data().position_map(),
         _ => return BeginResult::Impossible,
     };
 
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1267,7 +1285,7 @@ pub fn begin_strangle(
     actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(OrderType::Strangling, target_pos.x, target_pos.y, order_id);
-    order.target_actor = Some(target_id.0);
+    order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1294,7 +1312,7 @@ pub fn begin_strangle(
     // dispatch).  Push the stimulus BEFORE setting the FREEZE lock —
     // ordering matters: the stimulus is a sequence transition (earlier)
     // and the lock is part of the strangle init (later).
-    if let Some(Some(victim)) = entities.get_mut(target_id.0 as usize) {
+    if let Some(Some(victim)) = entities.get_mut(target_id.index() as usize) {
         victim.element_data_mut().set_direction_instantly(facing);
         let is_moving = victim
             .actor_data()
@@ -1304,7 +1322,7 @@ pub fn begin_strangle(
             if is_moving {
                 ai.pending_cross_npc_actions
                     .push(crate::ai::CrossNpcAction::SendStimulus {
-                        target: target_id.0,
+                        target: target_id.index(),
                         stimulus_type: crate::ai::StimulusType::EventStop,
                         info: crate::ai::StimulusInfo::None,
                         fallback_to_sender: None,
@@ -1353,7 +1371,7 @@ pub fn begin_listen(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1441,7 +1459,7 @@ pub fn begin_leave_listen(
     order_id_counter: &mut u32,
 ) -> bool {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1493,7 +1511,7 @@ pub fn begin_throw_net(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1609,12 +1627,15 @@ fn begin_throw_at_entity(
     kind: AbilityKind,
     order_type: OrderType,
 ) -> BeginResult {
-    let target_pos = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let target_pos = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) => e.element_data().position_map(),
         None => return BeginResult::Impossible,
     };
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1677,7 +1698,7 @@ pub fn begin_throw_wasp_nest(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1746,7 +1767,7 @@ pub fn begin_throw_purse(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let actor_entity = match entities
-        .get_mut(actor_id.0 as usize)
+        .get_mut(actor_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1823,7 +1844,10 @@ pub fn begin_pay(
     }
 
     // Validate beggar: civilian, alive, conscious, non-scroll-attached.
-    let beggar_valid = match entities.get(beggar_id.0 as usize).and_then(|s| s.as_ref()) {
+    let beggar_valid = match entities
+        .get(beggar_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e @ Entity::Civilian(c)) => {
             !e.is_dead()
                 && !c.human.unconscious
@@ -1836,14 +1860,17 @@ pub fn begin_pay(
         return BeginResult::Impossible;
     }
 
-    let beggar_direction = entities[beggar_id.0 as usize]
+    let beggar_direction = entities[beggar_id.index() as usize]
         .as_ref()
         .unwrap()
         .element_data()
         .direction();
 
     let order_id = alloc_order_id(order_id_counter);
-    let pc_entity = match entities.get_mut(pc_id.0 as usize).and_then(|s| s.as_mut()) {
+    let pc_entity = match entities
+        .get_mut(pc_id.index() as usize)
+        .and_then(|s| s.as_mut())
+    {
         Some(e) => e,
         None => return BeginResult::Impossible,
     };
@@ -1870,7 +1897,7 @@ pub fn begin_pay(
     actor.action_state = ActionState::Waiting;
 
     let mut order = Order::new(OrderType::Paying, pc_pos.x, pc_pos.y, order_id);
-    order.target_actor = Some(beggar_id.0);
+    order.target_actor = Some(beggar_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1904,7 +1931,7 @@ pub fn begin_receive_purse(
     order_id_counter: &mut u32,
 ) -> BeginResult {
     let beggar = match entities
-        .get_mut(beggar_id.0 as usize)
+        .get_mut(beggar_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -2059,7 +2086,7 @@ pub fn tick_abilities(
             }
 
             // Animation completed — advance the phase machine.
-            let entity_id = EntityId(idx as u32);
+            let entity_id = EntityId::from_raw(idx as u32);
             let actor = match entity.actor_data_mut() {
                 Some(a) => a,
                 None => continue,
@@ -2150,7 +2177,7 @@ pub fn tick_abilities(
                 continue;
             }
 
-            let entity_id = EntityId(idx as u32);
+            let entity_id = EntityId::from_raw(idx as u32);
             let actor = match entity.actor_data_mut() {
                 Some(a) => a,
                 None => continue,
@@ -2195,7 +2222,7 @@ pub fn tick_abilities(
         let order_id = ability.order_id;
         // Self-heal swaps Healing → Eating; all other abilities use
         // the canonical per-kind animation.
-        let entity_id_here = EntityId(idx as u32);
+        let entity_id_here = EntityId::from_raw(idx as u32);
         let order_type = if kind == AbilityKind::Heal && ability.target == Some(entity_id_here) {
             OrderType::Eating
         } else {
@@ -2234,7 +2261,7 @@ pub fn tick_abilities(
         }
 
         // Animation finished — collect the result and clear the ability.
-        let entity_id = EntityId(idx as u32);
+        let entity_id = EntityId::from_raw(idx as u32);
         let actor_pos = entity.element_data().position_map();
         let actor_direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
 
@@ -2507,7 +2534,7 @@ pub fn sync_carried_positions(
         let Some(target_id) = pc.carried else {
             continue;
         };
-        let carrier_id = EntityId(idx as u32);
+        let carrier_id = EntityId::from_raw(idx as u32);
 
         let elem = entity.element_data();
 
@@ -2544,7 +2571,7 @@ pub fn sync_carried_positions(
         // the climber's `ClimbingUpOnShoulders`.  For corpse-carry this is
         // unused; the carrier-driven path overwrites these fields anyway.
         let (target_last_action, target_frame, target_frame_count) = entities
-            .get(target_id.0 as usize)
+            .get(target_id.index() as usize)
             .and_then(|s| s.as_ref())
             .map(|e| {
                 let s = &e.element_data().sprite;
@@ -2577,7 +2604,7 @@ pub fn sync_carried_positions(
     for snap in snapshots {
         let on_shoulders = snap.carried_posture == Posture::OnShoulders;
 
-        let Some(Some(target)) = entities.get_mut(snap.target_id.0 as usize) else {
+        let Some(Some(target)) = entities.get_mut(snap.target_id.index() as usize) else {
             continue;
         };
 
@@ -2683,7 +2710,7 @@ pub fn sync_carried_positions(
                 _ => None,
             };
             if let Some(anim) = helper_anim
-                && let Some(Some(helper)) = entities.get_mut(snap.carrier_id.0 as usize)
+                && let Some(Some(helper)) = entities.get_mut(snap.carrier_id.index() as usize)
             {
                 let helper_dir = u16::try_from(helper.element_data().direction()).unwrap_or(0);
                 let sprite = &mut helper.element_data_mut().sprite;

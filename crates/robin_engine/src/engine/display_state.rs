@@ -636,7 +636,7 @@ impl EngineInner {
         let mut depths: HashMap<EntityId, f32> = HashMap::with_capacity(self.entities.len());
         for (i, slot) in self.entities.iter().enumerate() {
             if let Some(e) = slot {
-                depths.insert(EntityId(i as u32), e.element_data().position().y);
+                depths.insert(EntityId::from_raw(i as u32), e.element_data().position().y);
             }
         }
 
@@ -654,7 +654,7 @@ impl EngineInner {
             } else {
                 0.001
             };
-            depths.insert(EntityId(i as u32), ref_depth + offset);
+            depths.insert(EntityId::from_raw(i as u32), ref_depth + offset);
         }
 
         // ── Phase 2: Classify and sort ───────────────────────────
@@ -672,7 +672,7 @@ impl EngineInner {
 
         for (i, slot) in self.entities.iter().enumerate() {
             let Some(entity) = slot else { continue };
-            let id = EntityId(i as u32);
+            let id = EntityId::from_raw(i as u32);
             // Scrolls whose current status is neither Visible nor
             // Opened are filtered out entirely — Invisible / Taken
             // scrolls don't render, and dropping them from the draw
@@ -705,18 +705,18 @@ impl EngineInner {
             let db = depths.get(b).copied().unwrap_or(f32::MAX);
             da.partial_cmp(&db)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| a.index().cmp(&b.index()))
         });
 
         // Sort animations by the minimum Y of their display polyline.
         animations.sort_by(|&a, &b| {
             let ya = entities
-                .get(a.0 as usize)
+                .get(a.index() as usize)
                 .and_then(|e| e.as_ref())
                 .map(|e| y_min_polyline(e.display_polyline()))
                 .unwrap_or(f32::MAX);
             let yb = entities
-                .get(b.0 as usize)
+                .get(b.index() as usize)
                 .and_then(|e| e.as_ref())
                 .map(|e| y_min_polyline(e.display_polyline()))
                 .unwrap_or(f32::MAX);
@@ -737,7 +737,10 @@ impl EngineInner {
             let mut consumed = vec![false; non_animations.len()];
 
             for &anim_id in &animations {
-                let anim_entity = match entities.get(anim_id.0 as usize).and_then(|e| e.as_ref()) {
+                let anim_entity = match entities
+                    .get(anim_id.index() as usize)
+                    .and_then(|e| e.as_ref())
+                {
                     Some(e) => e,
                     None => continue,
                 };
@@ -750,7 +753,10 @@ impl EngineInner {
                     if consumed[i] {
                         continue;
                     }
-                    let na_entity = match entities.get(na_id.0 as usize).and_then(|e| e.as_ref()) {
+                    let na_entity = match entities
+                        .get(na_id.index() as usize)
+                        .and_then(|e| e.as_ref())
+                    {
                         Some(e) => e,
                         None => continue,
                     };
@@ -845,14 +851,14 @@ impl EngineInner {
             .entities
             .iter()
             .enumerate()
-            .filter_map(|(i, slot)| slot.as_ref().map(|_| EntityId(i as u32)))
+            .filter_map(|(i, slot)| slot.as_ref().map(|_| EntityId::from_raw(i as u32)))
             .collect();
 
         ids.sort_by(|&a, &b| {
-            let ea = self.entities[a.0 as usize]
+            let ea = self.entities[a.index() as usize]
                 .as_ref()
                 .expect("entity present in sort input");
-            let eb = self.entities[b.0 as usize]
+            let eb = self.entities[b.index() as usize]
                 .as_ref()
                 .expect("entity present in sort input");
 
@@ -871,7 +877,7 @@ impl EngineInner {
                         if let Some(ref_id) = sprite.display_order_ref
                             && let Some(ref_entity) = self
                                 .entities
-                                .get(ref_id.0 as usize)
+                                .get(ref_id.index() as usize)
                                 .and_then(|s| s.as_ref())
                         {
                             let base = ref_entity.element_data().position().y;
@@ -890,7 +896,7 @@ impl EngineInner {
                 })
                 // Final tiebreak by creation order: EntityId is a
                 // monotonic slot index that's never reused.
-                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| a.index().cmp(&b.index()))
         });
 
         ids

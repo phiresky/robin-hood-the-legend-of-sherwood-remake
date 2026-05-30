@@ -48,7 +48,7 @@ impl EngineInner {
         );
         if let Some(entity) = self
             .entities
-            .get_mut(projectile_id.0 as usize)
+            .get_mut(projectile_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
@@ -400,7 +400,7 @@ impl EngineInner {
                         result.target,
                         crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventArrowLaunched,
-                            result.shooter.0,
+                            result.shooter.index(),
                         ),
                     );
                 }
@@ -547,7 +547,7 @@ impl EngineInner {
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
     fn start_arrow_ricochet(&mut self, arrow_id: EntityId) {
-        let Some(Some(entity)) = self.entities.get_mut(arrow_id.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get_mut(arrow_id.index() as usize) else {
             return;
         };
         let Entity::Projectile(proj) = entity else {
@@ -818,7 +818,7 @@ impl EngineInner {
     /// `pending_refill_bow_ammo` restocks).
     fn decrement_bow_ammo(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
         // Soldier branch — saturating sub on the live NPC field.
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(shooter_id.0 as usize) {
+        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(shooter_id.index() as usize) {
             s.npc.number_of_arrows = s.npc.number_of_arrows.saturating_sub(1);
             tracing::debug!(
                 shooter = ?shooter_id,
@@ -1167,7 +1167,7 @@ impl EngineInner {
             .iter()
             .enumerate()
             .filter_map(|(i, s)| match s {
-                Some(Entity::Pc(_)) => Some(EntityId(i as u32)),
+                Some(Entity::Pc(_)) => Some(EntityId::from_raw(i as u32)),
                 _ => None,
             })
             .collect();
@@ -1419,7 +1419,7 @@ impl EngineInner {
                 if dx * dx + dy * dy <= PICKUP_RADIUS_SQ {
                     pickups.push(Pickup {
                         pc_id,
-                        bonus_id: EntityId(idx as u32),
+                        bonus_id: EntityId::from_raw(idx as u32),
                         obj_type,
                         assoc_action,
                         quantity,
@@ -1593,7 +1593,7 @@ impl EngineInner {
                         // back to the world bonus and leave it active.
                         match self
                             .entities
-                            .get_mut(bonus_id.0 as usize)
+                            .get_mut(bonus_id.index() as usize)
                             .and_then(|s| s.as_mut())
                         {
                             Some(Entity::Bonus(b)) => {
@@ -1620,7 +1620,7 @@ impl EngineInner {
             // coins or non-burst purses).
             match self
                 .entities
-                .get_mut(bonus_id.0 as usize)
+                .get_mut(bonus_id.index() as usize)
                 .and_then(|s| s.as_mut())
             {
                 Some(Entity::Bonus(bonus)) => {
@@ -2041,7 +2041,7 @@ impl EngineInner {
                                 // flying and skip the sound / despawn
                                 // sections below.
                                 if let Some(Some(Entity::Projectile(p))) =
-                                    self.entities.get_mut(result.arrow.0 as usize)
+                                    self.entities.get_mut(result.arrow.index() as usize)
                                 {
                                     p.projectile.flying = true;
                                 }
@@ -2176,7 +2176,8 @@ impl EngineInner {
         projectile: EntityId,
         old_pos: crate::coordinates::WorldPoint3D,
     ) {
-        let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.0 as usize) else {
+        let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.index() as usize)
+        else {
             tracing::warn!(
                 ?projectile,
                 "projectile human-hit rewind skipped: projectile entity missing"
@@ -2306,7 +2307,7 @@ impl EngineInner {
     /// Set the 1500-frame apple-smell counter on a soldier.  Titbit
     /// creation is driven event-free by `sync_apple_smell_titbits`.
     fn set_soldier_apple_smell(&mut self, victim: EntityId) {
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(victim.0 as usize) {
+        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(victim.index() as usize) {
             s.soldier.apple_smell = APPLE_SMELL_DURATION;
         }
     }
@@ -2336,7 +2337,8 @@ impl EngineInner {
         let npc_ids = self.npc_ids.clone();
         for npc_id in npc_ids {
             let target_handle = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
+                else {
                     continue;
                 };
                 let Some(ai) = s.npc.ai_brain.base() else {
@@ -2359,14 +2361,14 @@ impl EngineInner {
                 Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
-            let target_pos = match self.get_entity(EntityId(target_handle)) {
+            let target_pos = match self.get_entity(EntityId::from_raw(target_handle)) {
                 Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
             let dx = target_pos.x - my_pos.x;
             let dy = target_pos.y - my_pos.y;
             let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize) {
+            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize) {
                 s.element.set_direction_instantly(sector);
             }
         }
@@ -2560,7 +2562,7 @@ impl EngineInner {
         // the same tick the landing is detected.
         let is_water = matches!(material, crate::sound_cache::Material::Water);
         if !is_water
-            && let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(arrow.0 as usize)
+            && let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(arrow.index() as usize)
         {
             p.projectile.disappear = true;
         }
@@ -2724,7 +2726,7 @@ impl EngineInner {
                         s.soldier.soldier_profile_index,
                     ) else {
                         tracing::warn!(
-                            soldier = ?crate::element::EntityId(idx as u32),
+                            soldier = ?crate::element::EntityId::from_raw(idx as u32),
                             profile_index = ?s.soldier.soldier_profile_index,
                             "shield update: missing soldier HtH weapon profile; clearing shield obstacle"
                         );
@@ -3643,7 +3645,7 @@ impl EngineInner {
                     if !stranglable {
                         let stimulus = crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventGotHit,
-                            actor_id.0,
+                            actor_id.index(),
                         );
                         self.dispatch_ai_stimulus(target_id, stimulus);
                         self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -3716,7 +3718,7 @@ impl EngineInner {
             if elem.posture != crate::element::Posture::CarryingOnShoulders {
                 continue;
             }
-            let carrier_id = crate::element::EntityId(idx as u32);
+            let carrier_id = crate::element::EntityId::from_raw(idx as u32);
             let carrier_pos = elem.position();
 
             let obstacles = self.sight_obstacles(assets);
@@ -3731,7 +3733,7 @@ impl EngineInner {
                 let v = vslot.as_ref()?;
                 let hd = v.human_data()?;
                 if hd.carrier == Some(carrier_id) {
-                    Some(crate::element::EntityId(vidx as u32))
+                    Some(crate::element::EntityId::from_raw(vidx as u32))
                 } else {
                     None
                 }

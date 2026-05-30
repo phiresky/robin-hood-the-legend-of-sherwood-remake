@@ -1986,7 +1986,7 @@ mod tests {
         // stare vector, and rotates the view cone toward it by
         // `view_angle_step`.
         let mut npc = default_npc();
-        focus_entity(&mut npc, EntityId(42));
+        focus_entity(&mut npc, EntityId::from_raw(42));
         assert_eq!(npc.eye_status, EyeStatus::Follow);
 
         // Target off to the NPC's right (body facing east, target south-east).
@@ -2021,7 +2021,7 @@ mod tests {
     #[test]
     fn unfocus_returns_to_look_forward() {
         let mut npc = default_npc();
-        focus_entity(&mut npc, EntityId(7));
+        focus_entity(&mut npc, EntityId::from_raw(7));
         unfocus(&mut npc);
         assert_eq!(npc.eye_status, EyeStatus::LookForward);
         assert_eq!(npc.view_half_angle_range, NORMAL_HALF_ANGLE_RANGE);

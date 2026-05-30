@@ -75,7 +75,7 @@ impl EngineInner {
                 }
                 Some(prev) if prev != is_lying => {
                     human.last_is_lying_for_corpse_intersection = Some(is_lying);
-                    transitions.push((EntityId(idx as u32), is_lying));
+                    transitions.push((EntityId::from_raw(idx as u32), is_lying));
                 }
                 _ => {}
             }
@@ -181,7 +181,7 @@ impl EngineInner {
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
         for (idx, slot) in self.entities.iter().enumerate() {
-            let id = EntityId(idx as u32);
+            let id = EntityId::from_raw(idx as u32);
             if id == corpse {
                 continue;
             }

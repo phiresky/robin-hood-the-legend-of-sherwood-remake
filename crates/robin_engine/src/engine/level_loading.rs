@@ -205,7 +205,11 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         id: crate::element::EntityId,
     ) {
-        let Some(entity) = self.entities.get(id.0 as usize).and_then(|e| e.as_ref()) else {
+        let Some(entity) = self
+            .entities
+            .get(id.index() as usize)
+            .and_then(|e| e.as_ref())
+        else {
             return;
         };
         let object_type = match entity {
@@ -226,7 +230,7 @@ impl EngineInner {
             return;
         };
         let sprite = prototype.clone();
-        if let Some(Some(entity)) = self.entities.get_mut(id.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(id.index() as usize) {
             entity.element_data_mut().sprite = sprite;
         }
     }
@@ -1997,14 +2001,14 @@ impl EngineInner {
             // `ai.base.me` and `owner_entity_id` so trace logs, filter-event
             // dispatch, and any `self.me`/`self.owner_entity_id` reads see
             // the real id instead of 0.
-            if let Some(Some(e)) = self.entities.get_mut(eid.0 as usize)
+            if let Some(Some(e)) = self.entities.get_mut(eid.index() as usize)
                 && let Some(ai) = e.ai_controller_mut()
             {
-                ai.me = eid.0;
+                ai.me = eid.index();
                 ai.owner_entity_id = Some(eid);
             }
             tracing::trace!(
-                eid = eid.0,
+                eid = eid.index(),
                 path_id = raw.path_id,
                 action = raw.action,
                 "spawn soldier"
@@ -5483,7 +5487,7 @@ impl EngineInner {
             let captured = per_sector_occupants.entry(prod_type).or_default();
 
             for &elem_idx in &zone.occupant_indices {
-                let slot = self.entities.get(elem_idx.0 as usize);
+                let slot = self.entities.get(elem_idx.index() as usize);
                 let Some(Some(entity)) = slot else { continue };
                 let crate::element::Entity::Pc(pc) = entity else {
                     continue;
@@ -5966,7 +5970,7 @@ impl EngineInner {
                 };
                 self.set_obstacle_and_material(
                     assets,
-                    crate::entity_id::EntityId(entity_idx as u32),
+                    crate::entity_id::EntityId::from_raw(entity_idx as u32),
                     occupant_obstacle_opt,
                 );
                 if let Some(Some(crate::element::Entity::Pc(pc))) =

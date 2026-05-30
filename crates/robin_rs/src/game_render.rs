@@ -1980,7 +1980,7 @@ pub(crate) fn render_minimap(
 
     let sorted = engine.sort_for_minimap();
     for id in sorted {
-        if mm.is_element_highlighted(id.0) {
+        if mm.is_element_highlighted(id.index()) {
             continue;
         }
         let info = match engine.minimap_dot_info(id, assets) {
@@ -2014,10 +2014,11 @@ pub(crate) fn render_minimap(
         if !h.refresh {
             continue;
         }
-        let entity = match engine.get_entity(robin_engine::element::EntityId(h.element_index)) {
-            Some(e) => e,
-            None => continue,
-        };
+        let entity =
+            match engine.get_entity(robin_engine::element::EntityId::from_raw(h.element_index)) {
+                Some(e) => e,
+                None => continue,
+            };
         refresh_dot(
             host,
             mm,

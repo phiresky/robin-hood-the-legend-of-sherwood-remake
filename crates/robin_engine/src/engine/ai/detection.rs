@@ -192,7 +192,7 @@ impl EngineInner {
         let mut firing_listeners: Vec<FiringListener> = Vec::new();
         let next_order_id = &mut self.next_order_id;
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
@@ -228,7 +228,7 @@ impl EngineInner {
                 Some(crate::abilities::next_listen_order_id(next_order_id));
             firing_listeners.push(fl);
             tracing::debug!(
-                pc = pc_id.0,
+                pc = pc_id.index(),
                 "Listen: one-shot reveal fired after TIME_LISTEN_WAIT frames"
             );
         }
@@ -559,7 +559,7 @@ impl EngineInner {
         for npc_id in npc_ids {
             // Read NPC state (layer, position, current_state, active).
             let (layer, position, elevation, current_state, active, expects_pc_detectables) = {
-                let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                     continue;
                 };
                 // Every NPC runs the acoustic pass — it lives on the
@@ -599,7 +599,7 @@ impl EngineInner {
             if matches!(current_state, AiState::Attacking) {
                 continue;
             }
-            let modified_frame = universal_frame.wrapping_add(npc_id.0);
+            let modified_frame = universal_frame.wrapping_add(npc_id.index());
             if !modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS) {
                 continue;
             }
@@ -615,7 +615,7 @@ impl EngineInner {
                 .sources
                 .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
 
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
                 continue;
             };
             let Some(npc) = entity.npc_data_mut() else {
@@ -713,7 +713,7 @@ impl EngineInner {
                         noise_type,
                         volume: pc_volume,
                         elevation: pc.ground_elevation,
-                        element_id: pc.id.0 as u16,
+                        element_id: pc.id.index() as u16,
                     };
                     let stimulus =
                         crate::ai::Stimulus::with_noise(crate::ai::StimulusType::EventHear, noise);
@@ -798,7 +798,7 @@ impl EngineInner {
     /// P3 inner — per-NPC body of [`Self::tick_enemy_ai_refresh_detection`].
     /// Carries the per-NPC tracing span so all events emitted inside the
     /// detection pass automatically include `npc=<id>` in their span context.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.0))]
+    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     #[allow(clippy::too_many_arguments)]
     fn tick_enemy_ai_refresh_detection_for_npc(
         &mut self,
@@ -823,7 +823,7 @@ impl EngineInner {
 
         // -- Read enemy state in a scoped borrow --
         let viewer = {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 return;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Lacklandists) else {
@@ -886,7 +886,7 @@ impl EngineInner {
         // re-runs detection on the same tick.  EntityId (monotonic
         // slot index, never reused) stands in for the creation
         // counter directly.
-        let modified_frame = universal_frame.wrapping_add(npc_id.0);
+        let modified_frame = universal_frame.wrapping_add(npc_id.index());
         // Gate fires when the modified frame counter aligns with
         // `DETECTION_FREQUENCY_ENEMY_PC`.  `refresh_always` is true
         // when eye status is Stare / Follow or when alert_status is
@@ -932,7 +932,8 @@ impl EngineInner {
             // nested scope below; the now-deferred stimulus pushes
             // at this level don't need it.
             let _ai_global = &mut self.ai_global;
-            let Some(Some(Entity::Soldier(soldier))) = self.entities.get_mut(npc_id.0 as usize)
+            let Some(Some(Entity::Soldier(soldier))) =
+                self.entities.get_mut(npc_id.index() as usize)
             else {
                 return;
             };
@@ -1297,7 +1298,7 @@ impl EngineInner {
                     if target_handle != 0
                         && let Some(pc) = pc_snapshots
                             .iter()
-                            .find(|p| p.id == EntityId(target_handle))
+                            .find(|p| p.id == EntityId::from_raw(target_handle))
                     {
                         (
                             Some(crate::ai::Position {
@@ -1374,7 +1375,7 @@ impl EngineInner {
                     if det.seen_last_frame
                         && let Some(elem) = det.element
                     {
-                        tick_data.seen_last_frame_enemies.push(elem.0);
+                        tick_data.seen_last_frame_enemies.push(elem.index());
                     }
                 }
                 for det in soldier.npc.detectable_lists[enemy_idx].iter() {
@@ -1393,7 +1394,7 @@ impl EngineInner {
                                 tick_data
                                     .unconscious_enemies
                                     .push(crate::ai::SleepingEnemyInfo {
-                                        handle: target_id.0,
+                                        handle: target_id.index(),
                                         position: crate::ai::Position {
                                             x: pc.position.x,
                                             y: pc.position.y,
@@ -1413,7 +1414,9 @@ impl EngineInner {
                         let dy = (pc.position.y - eye.y)
                             * crate::position_interface::INVERSE_ASPECT_RATIO;
                         let sq_dist = (dx * dx + dy * dy) as i32;
-                        tick_data.enemy_sq_distances.push((target_id.0, sq_dist));
+                        tick_data
+                            .enemy_sq_distances
+                            .push((target_id.index(), sq_dist));
                         if sq_dist < tick_data.min_sq_enemy_distance {
                             tick_data.min_sq_enemy_distance = sq_dist;
                         }
@@ -1471,7 +1474,7 @@ impl EngineInner {
                     tick_data
                         .nearby_sleeping_enemies
                         .push(crate::ai::SleepingEnemyInfo {
-                            handle: pc.id.0,
+                            handle: pc.id.index(),
                             position: crate::ai::Position {
                                 x: pc.position.x,
                                 y: pc.position.y,
@@ -1531,7 +1534,7 @@ impl EngineInner {
                         | AiState::Attacking => {}
                         _ => continue,
                     }
-                    enemy_ai.base.list_us.push(ss.id.0);
+                    enemy_ai.base.list_us.push(ss.id.index());
 
                     // Company number tracking.
                     if my_company > ss.company_number
@@ -1611,13 +1614,17 @@ impl EngineInner {
                 // Primary target multiplicity
                 tick_data.primary_target_multiplicity.clear();
                 for (&eid, &mult) in primary_target_multiplicity {
-                    tick_data.primary_target_multiplicity.push((eid.0, mult));
+                    tick_data
+                        .primary_target_multiplicity
+                        .push((eid.index(), mult));
                 }
                 for &(attacker, target) in &self.ai_global.same_frame_target_claims {
                     if attacker == enemy_ai.base.me || target == 0 {
                         continue;
                     }
-                    let Some(claimant) = soldier_snapshots.iter().find(|ss| ss.id.0 == attacker)
+                    let Some(claimant) = soldier_snapshots
+                        .iter()
+                        .find(|ss| ss.id.index() == attacker)
                     else {
                         continue;
                     };
@@ -1652,7 +1659,7 @@ impl EngineInner {
                     if *ko_id == npc_id || *ko_camp != my_camp {
                         continue;
                     }
-                    tick_data.camp_ko_money_fighters.push(ko_id.0);
+                    tick_data.camp_ko_money_fighters.push(ko_id.index());
                 }
                 // is_detecting_360 is computed lazily by the AI consumer
                 // (see EnemyAi::is_detecting_360_degrees) — eager LOS here
@@ -1697,7 +1704,7 @@ impl EngineInner {
                     tick_data
                         .camp_soldiers
                         .push(crate::ai_enemy::CampSoldierInfo {
-                            handle: ss.id.0,
+                            handle: ss.id.index(),
                             position: ss_position,
                             direction: ss.direction,
                             rank: ss.rank,
@@ -1753,7 +1760,9 @@ impl EngineInner {
                     let my_layer = layer;
 
                     // Self entry first.
-                    if let Some(me_snap) = soldier_snapshots.iter().find(|s| s.id.0 == me_handle) {
+                    if let Some(me_snap) =
+                        soldier_snapshots.iter().find(|s| s.id.index() == me_handle)
+                    {
                         tick_data.nearby_fighters.push(FighterSnapshot {
                             handle: me_handle,
                             position: crate::ai::Position {
@@ -1833,7 +1842,7 @@ impl EngineInner {
                     // let multiple observers miss a friend already
                     // walking / running / charging the same target.
                     for ss in soldier_snapshots {
-                        if ss.id.0 == me_handle || ss.camp != my_camp || !ss.able_to_fight {
+                        if ss.id.index() == me_handle || ss.camp != my_camp || !ss.able_to_fight {
                             continue;
                         }
                         if ss.layer != my_layer {
@@ -1846,7 +1855,7 @@ impl EngineInner {
                             continue;
                         }
                         tick_data.nearby_fighters.push(FighterSnapshot {
-                            handle: ss.id.0,
+                            handle: ss.id.index(),
                             position: crate::ai::Position {
                                 x: ss.position.x,
                                 y: ss.position.y,
@@ -1910,7 +1919,8 @@ impl EngineInner {
 
                     // Hostile PCs from the them-list.
                     for &enemy_handle in &enemy_ai.list_them {
-                        let Some(pc) = pc_snapshots.iter().find(|p| p.id.0 == enemy_handle) else {
+                        let Some(pc) = pc_snapshots.iter().find(|p| p.id.index() == enemy_handle)
+                        else {
                             continue;
                         };
                         if pc.layer != my_layer {
@@ -1946,7 +1956,7 @@ impl EngineInner {
                             is_soldier: false,
                             rank: crate::profiles::ProfileRank::None,
                             // Pull the PC's melee target from PcData.
-                            primary_target: pc.melee_target.map(|id| id.0).unwrap_or(0),
+                            primary_target: pc.melee_target.map(|id| id.index()).unwrap_or(0),
                             principal_opponent: pc.principal_opponent,
                             number_of_opponents,
                             opponent_handles: pc.opponent_handles.clone(),
@@ -2144,7 +2154,7 @@ impl EngineInner {
 
                         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
                             let stimulus =
-                                crate::ai::Stimulus::with_human(stimulus_type, target_id.0);
+                                crate::ai::Stimulus::with_human(stimulus_type, target_id.index());
                             enemy_ai.base.seek_position = crate::ai::Position {
                                 x: target_pos.x,
                                 y: target_pos.y,
@@ -2214,7 +2224,7 @@ impl EngineInner {
                 let is_seen = det.seen_now;
                 let falling_edge = !is_seen && was_seen;
                 if falling_edge && let Some(target_id) = det.element {
-                    out_of_view_dispatches.push((npc_id, target_id.0));
+                    out_of_view_dispatches.push((npc_id, target_id.index()));
                 }
                 if committed {
                     det.seen_last_frame = is_seen;
@@ -2264,13 +2274,15 @@ impl EngineInner {
                 let dx = (pc.position.x - eye.x).abs();
                 let dy = (pc.position.y - eye.y).abs();
                 if dx <= half_dx && dy <= half_dy {
-                    near_pc = Some(pc.id.0);
+                    near_pc = Some(pc.id.index());
                     break;
                 }
             }
             if let Some(pc_handle) = near_pc {
                 let ai_global = &mut self.ai_global;
-                if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize) {
+                if let Some(Some(Entity::Soldier(s))) =
+                    self.entities.get_mut(npc_id.index() as usize)
+                {
                     let ctx = AiContext {
                         position: crate::ai::Position {
                             x: s.element.position_map().x,
@@ -2352,7 +2364,7 @@ impl EngineInner {
                         // distance / posture.
                         let me_pos = s.element.position_map();
                         let mut tick_data = AiPerTickData::stub();
-                        if let Some(pc) = pc_snapshots.iter().find(|p| p.id.0 == pc_handle) {
+                        if let Some(pc) = pc_snapshots.iter().find(|p| p.id.index() == pc_handle) {
                             let pos = crate::ai::Position {
                                 x: pc.position.x,
                                 y: pc.position.y,
@@ -2410,7 +2422,8 @@ impl EngineInner {
                 obstacle_idx,
                 direction,
             ) = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
+                else {
                     continue;
                 };
                 if s.soldier.cached_camp != Camp::Lacklandists {
@@ -2475,11 +2488,11 @@ impl EngineInner {
         }
 
         for target_id in to_reveal {
-            if let Some(Some(entity)) = self.entities.get_mut(target_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(target_id.index() as usize)
                 && entity.element_data().blipped
             {
                 tracing::debug!(
-                    entity = target_id.0,
+                    entity = target_id.index(),
                     "reveal_blip: royalist detected blipped enemy"
                 );
                 entity.reveal_blip();
@@ -2496,7 +2509,7 @@ impl EngineInner {
 
     /// P3b inner — per-NPC body of [`Self::tick_enemy_ai_royalist_detection`].
     /// Carries the per-NPC tracing span.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.0))]
+    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     #[allow(clippy::too_many_arguments)]
     fn tick_enemy_ai_royalist_detection_for_npc(
         &mut self,
@@ -2511,7 +2524,7 @@ impl EngineInner {
     ) {
         // -- Read royalist soldier viewer state --
         let viewer = {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 return;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Royalists) else {
@@ -2583,7 +2596,7 @@ impl EngineInner {
         // Per-NPC frame-counter phase offset — EntityId stands in
         // for the creation counter since slots are monotonic and
         // never reused.
-        let modified_frame = universal_frame.wrapping_add(npc_id.0);
+        let modified_frame = universal_frame.wrapping_add(npc_id.index());
         // Royalists detecting enemy NPCs use
         // `DETECTION_FREQUENCY_ENEMY_NPC` (16), not the PC variant
         // (2).  `refresh_always` is true when eye status is
@@ -2619,7 +2632,8 @@ impl EngineInner {
             // the now-deferred EVENT_VIEW push doesn't
             // need it).
             let _ai_global = &mut self.ai_global;
-            let Some(Some(Entity::Soldier(soldier))) = self.entities.get_mut(npc_id.0 as usize)
+            let Some(Some(Entity::Soldier(soldier))) =
+                self.entities.get_mut(npc_id.index() as usize)
             else {
                 return;
             };
@@ -2781,7 +2795,7 @@ impl EngineInner {
                         };
                         let stimulus = crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventView,
-                            target_id.0,
+                            target_id.index(),
                         );
                         // Queue for post-detection drain — see
                         // the EventHear site for rationale.
@@ -2903,7 +2917,7 @@ impl EngineInner {
     /// Per-NPC body-of-`tick_enemy_ai_refresh_per_type_detection`.
     /// One full iteration of the per-type loop body for
     /// `type ∈ {Body, Object, Friend, MissedFriend, Beggar}`.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.0))]
+    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     #[allow(clippy::too_many_arguments)]
     fn tick_enemy_ai_refresh_per_type_for_npc(
         &mut self,
@@ -2918,7 +2932,7 @@ impl EngineInner {
 
         // -- Read NPC view-state in a scoped read borrow --
         let viewer = {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 return;
             };
             // RefreshDetection runs the per-type loop for both
@@ -3001,7 +3015,7 @@ impl EngineInner {
                 .collect()
         };
         // Per-NPC frame phase offset.
-        let modified_frame = universal_frame.wrapping_add(npc_id.0);
+        let modified_frame = universal_frame.wrapping_add(npc_id.index());
 
         // refresh-always gate: Stare / Follow eye status and alert
         // levels above Green force the per-type frequency gate open
@@ -3030,7 +3044,8 @@ impl EngineInner {
             static_active: &self.static_sight_obstacle_active,
         };
         let _ai_global = &mut self.ai_global;
-        let Some(Some(Entity::Soldier(soldier))) = self.entities.get_mut(npc_id.0 as usize) else {
+        let Some(Some(Entity::Soldier(soldier))) = self.entities.get_mut(npc_id.index() as usize)
+        else {
             return;
         };
 
@@ -3493,7 +3508,7 @@ impl EngineInner {
             && let Some(ai) = soldier.npc.ai_brain.base_mut()
         {
             for target_id in rising_dispatches {
-                let stimulus = crate::ai::Stimulus::with_human(event_type, target_id.0);
+                let stimulus = crate::ai::Stimulus::with_human(event_type, target_id.index());
                 ai.pending_stimuli.push(stimulus);
                 tracing::trace!(
                     npc = ?npc_id,
@@ -3644,7 +3659,7 @@ impl EngineInner {
             for target_id in rising_dispatches {
                 let stimulus = crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventSeesObject,
-                    target_id.0,
+                    target_id.index(),
                 );
                 ai.pending_stimuli.push(stimulus);
                 tracing::trace!(

@@ -34,7 +34,7 @@ impl EngineInner {
             .find_authorized_position_toward(&mut bbox, click, layer)
         {
             let center = bbox.center();
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
                 entity
                     .element_data_mut()
                     .set_position_map(crate::coordinates::MapPoint {
@@ -241,7 +241,7 @@ impl EngineInner {
         // Read defender context
         let victim = match self
             .entities
-            .get(victim_id.0 as usize)
+            .get(victim_id.index() as usize)
             .and_then(|s| s.as_ref())
         {
             Some(e) => e,
@@ -289,7 +289,7 @@ impl EngineInner {
         // Apply damage (requires mutable access to human_data + life_points)
         let victim = match self
             .entities
-            .get_mut(victim_id.0 as usize)
+            .get_mut(victim_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             Some(e) => e,
@@ -515,7 +515,7 @@ impl EngineInner {
         }
 
         // Soldier learning: bad sword strike experience.
-        if let Some(Some(Entity::Soldier(_))) = self.entities.get(victim_id.0 as usize)
+        if let Some(Some(Entity::Soldier(_))) = self.entities.get(victim_id.index() as usize)
             && attacker_id.is_some()
             && !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
@@ -802,7 +802,7 @@ impl EngineInner {
 
         let victim = match self
             .entities
-            .get(victim_id.0 as usize)
+            .get(victim_id.index() as usize)
             .and_then(|s| s.as_ref())
         {
             Some(e) => e,
@@ -813,7 +813,7 @@ impl EngineInner {
 
         let victim = match self
             .entities
-            .get_mut(victim_id.0 as usize)
+            .get_mut(victim_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             Some(e) => e,
@@ -928,7 +928,7 @@ impl EngineInner {
 
         let victim = match self
             .entities
-            .get(victim_id.0 as usize)
+            .get(victim_id.index() as usize)
             .and_then(|s| s.as_ref())
         {
             Some(e) => e,
@@ -939,7 +939,7 @@ impl EngineInner {
 
         let victim = match self
             .entities
-            .get_mut(victim_id.0 as usize)
+            .get_mut(victim_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             Some(e) => e,
@@ -1072,7 +1072,7 @@ impl EngineInner {
         }
         let victim = match self
             .entities
-            .get(victim_id.0 as usize)
+            .get(victim_id.index() as usize)
             .and_then(|s| s.as_ref())
         {
             Some(e) => e,
@@ -1086,7 +1086,7 @@ impl EngineInner {
 
         let victim = match self
             .entities
-            .get_mut(victim_id.0 as usize)
+            .get_mut(victim_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             Some(e) => e,
@@ -1112,8 +1112,10 @@ impl EngineInner {
         // Dispatch EventGotHit to the victim's AI so it can re-target
         // the attacker.
         if let Some(atk_id) = attacker_id {
-            let stimulus =
-                crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventGotHit, atk_id.0);
+            let stimulus = crate::ai::Stimulus::with_human(
+                crate::ai::StimulusType::EventGotHit,
+                atk_id.index(),
+            );
             self.dispatch_ai_stimulus(victim_id, stimulus);
         }
 
@@ -1309,7 +1311,7 @@ impl EngineInner {
                 .unwrap_or(0)
         };
 
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
             entity
                 .element_data_mut()
                 .set_direction_instantly(facing_sector);
@@ -1332,7 +1334,7 @@ impl EngineInner {
         // ActiveFlight is applied unconditionally (it's separate from
         // animation state — the per-frame flight tick reads it).
         if !is_harder_hit
-            && let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+            && let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             let dx = goal_x - victim_pos.x;
@@ -1399,7 +1401,7 @@ impl EngineInner {
         }
 
         // SetStates(StuckUnderNet, Waiting).
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
             entity.set_posture_stuck_under_net_for_human();
         }
 
@@ -1445,7 +1447,7 @@ impl EngineInner {
         let (life_points, is_unconscious, is_pc, in_coma) = {
             let victim = match self
                 .entities
-                .get(victim_id.0 as usize)
+                .get(victim_id.index() as usize)
                 .and_then(|s| s.as_ref())
             {
                 Some(e) => e,
@@ -1494,7 +1496,11 @@ impl EngineInner {
             // PC.  Resolve the attacker identity here so
             // `handle_knockout` can gate the broadcast.
             let attacker_is_pc = attacker_id
-                .and_then(|id| self.entities.get(id.0 as usize).and_then(|s| s.as_ref()))
+                .and_then(|id| {
+                    self.entities
+                        .get(id.index() as usize)
+                        .and_then(|s| s.as_ref())
+                })
                 .map(|e| e.kind().is_pc())
                 .unwrap_or(false);
             self.handle_knockout(assets, victim_id, damage_element, attacker_is_pc);
@@ -1572,7 +1578,7 @@ impl EngineInner {
             .unwrap_or(false);
 
         if let Some(direction) = flight_direction
-            && let Some(Some(victim)) = self.entities.get_mut(victim_id.0 as usize)
+            && let Some(Some(victim)) = self.entities.get_mut(victim_id.index() as usize)
         {
             victim
                 .element_data_mut()
@@ -1625,11 +1631,12 @@ impl EngineInner {
             if npc_id == subject {
                 continue;
             }
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize)
+            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 s.npc.detectable_lists[det_idx].retain(|d| d.element != Some(subject));
-            } else if let Some(Some(Entity::Civilian(c))) = self.entities.get_mut(npc_id.0 as usize)
+            } else if let Some(Some(Entity::Civilian(c))) =
+                self.entities.get_mut(npc_id.index() as usize)
                 && det_idx < c.npc.detectable_lists.len()
             {
                 c.npc.detectable_lists[det_idx].retain(|d| d.element != Some(subject));
@@ -1653,7 +1660,7 @@ impl EngineInner {
     pub(super) fn apply_pc_kill_cascade(&mut self, assets: &LevelAssets, victim_id: EntityId) {
         let pc_info = self
             .entities
-            .get(victim_id.0 as usize)
+            .get(victim_id.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.pc_data())
             .map(|pc| pc.profile_index);
@@ -1699,7 +1706,7 @@ impl EngineInner {
                 })
                 .is_some();
             if has_replacement
-                && let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+                && let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
                 && let Some(pc) = entity.pc_data_mut()
             {
                 pc.trumpet_enabled = true;
@@ -1811,7 +1818,11 @@ impl EngineInner {
                 crate::sequence::SequenceElementData::Damage { origin, .. } => *origin,
                 _ => None,
             })
-            .and_then(|k| self.entities.get(k.0 as usize).and_then(|s| s.as_ref()))
+            .and_then(|k| {
+                self.entities
+                    .get(k.index() as usize)
+                    .and_then(|s| s.as_ref())
+            })
             .map(|e| e.is_pc())
             .unwrap_or(false);
 
@@ -1836,7 +1847,7 @@ impl EngineInner {
 
         let victim = match self
             .entities
-            .get_mut(victim_id.0 as usize)
+            .get_mut(victim_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             Some(e) => e,
@@ -1913,15 +1924,15 @@ impl EngineInner {
         // turns false a tick later.
         let still_unconscious = self
             .entities
-            .get(victim_id.0 as usize)
+            .get(victim_id.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.human_data())
             .is_some_and(|h| h.unconscious);
         self.titbit_manager.remove_unconscious_stars_if(
-            crate::titbit::ElementHandle(victim_id.0),
+            crate::titbit::ElementHandle(victim_id.index()),
             still_unconscious,
         );
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
             && let Some(human) = entity.human_data_mut()
         {
             human.unconscious = false;
@@ -2047,7 +2058,7 @@ impl EngineInner {
     ) {
         let Some(victim) = self
             .entities
-            .get_mut(victim_id.0 as usize)
+            .get_mut(victim_id.index() as usize)
             .and_then(|s| s.as_mut())
         else {
             return;

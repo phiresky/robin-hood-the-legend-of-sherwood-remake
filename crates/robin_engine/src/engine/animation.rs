@@ -110,7 +110,7 @@ mod tests {
             &entity,
             OrderType::BeingHitSword,
             MotionState::Done,
-            EntityId(7),
+            EntityId::from_raw(7),
             &mut terminated,
         );
         assert!(terminated.is_empty());
@@ -119,10 +119,10 @@ mod tests {
             &entity,
             OrderType::BeingHitSword,
             MotionState::Terminated,
-            EntityId(7),
+            EntityId::from_raw(7),
             &mut terminated,
         );
-        assert_eq!(terminated, vec![EntityId(7)]);
+        assert_eq!(terminated, vec![EntityId::from_raw(7)]);
     }
 
     #[test]
@@ -135,7 +135,7 @@ mod tests {
             OrderType::BeingStunnedSword,
             MotionState::Start,
             None,
-            EntityId(7),
+            EntityId::from_raw(7),
             &mut ExecuteSideOutcomes::default(),
             &crate::profiles::ProfileManager::default(),
         );
@@ -507,8 +507,8 @@ mod tests {
             &mut entity,
             OrderType::StrikingDownSword,
             MotionState::Start,
-            Some(EntityId(9)),
-            EntityId(7),
+            Some(EntityId::from_raw(9)),
+            EntityId::from_raw(7),
             &mut outcomes,
         );
 
@@ -523,12 +523,15 @@ mod tests {
             &mut entity,
             OrderType::StrikingDownSword,
             MotionState::Done,
-            Some(EntityId(9)),
-            EntityId(7),
+            Some(EntityId::from_raw(9)),
+            EntityId::from_raw(7),
             &mut outcomes,
         );
 
-        assert_eq!(outcomes.killed_at_bottom, vec![(EntityId(9), EntityId(7))]);
+        assert_eq!(
+            outcomes.killed_at_bottom,
+            vec![(EntityId::from_raw(9), EntityId::from_raw(7))]
+        );
     }
 
     #[test]
@@ -537,7 +540,7 @@ mod tests {
         let mut next_order_id = 1;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId(7),
+            entity_id: EntityId::from_raw(7),
             is_npc: true,
             is_unconscious: false,
             seq_id: crate::sequence::SequenceId(1),
@@ -565,7 +568,7 @@ mod tests {
         let mut next_order_id = 1;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId(7),
+            entity_id: EntityId::from_raw(7),
             is_npc: true,
             is_unconscious: true,
             seq_id: crate::sequence::SequenceId(1),
@@ -594,7 +597,7 @@ mod tests {
             OrderType::BeingUnconsciousSword,
             MotionState::Start,
             None,
-            EntityId(7),
+            EntityId::from_raw(7),
             &mut ExecuteSideOutcomes::default(),
             &crate::profiles::ProfileManager::default(),
         );
@@ -614,8 +617,11 @@ mod tests {
     ) {
         let mut sequence_manager = crate::sequence::SequenceManager::new();
         let mut sequence = crate::sequence::Sequence::new();
-        let mut elem =
-            crate::sequence::SequenceElement::new_generic(1, Command::Wait, Some(EntityId(7)));
+        let mut elem = crate::sequence::SequenceElement::new_generic(
+            1,
+            Command::Wait,
+            Some(EntityId::from_raw(7)),
+        );
         elem.push_order(crate::order::Order::test_new(order_type, 0.0, 0.0));
         sequence.append_element(elem);
         let seq_id = sequence_manager.launch_sequence(sequence);
@@ -709,7 +715,7 @@ mod tests {
         let mut next_order_id = 9;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId(7),
+            entity_id: EntityId::from_raw(7),
             is_npc: true,
             is_unconscious: false,
             seq_id,
@@ -745,7 +751,7 @@ mod tests {
         let mut next_order_id = 9;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId(7),
+            entity_id: EntityId::from_raw(7),
             is_npc: true,
             is_unconscious: false,
             seq_id,
@@ -771,7 +777,10 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, ExecuteOutcome::Consumed));
         assert_eq!(order.order_type, OrderType::WriggleUnderNet);
-        assert_eq!(side_outcomes.cry_for_help_under_net, vec![EntityId(7)]);
+        assert_eq!(
+            side_outcomes.cry_for_help_under_net,
+            vec![EntityId::from_raw(7)]
+        );
     }
 }
 
@@ -2841,7 +2850,7 @@ impl EngineInner {
                 // `self` distinct from `self.entities`, so the compiler
                 // accepts holding `&self.sequence_manager` while iterating
                 // `self.entities.iter_mut()`.
-                let entity_id = EntityId(entity_idx as u32);
+                let entity_id = EntityId::from_raw(entity_idx as u32);
                 let order_snapshot = self.sequence_manager.current_order_for_actor(entity_id);
                 let (order_seq_elem, anim_type, order_id, antagonist, completion) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
@@ -3003,7 +3012,7 @@ impl EngineInner {
                         matches!(anim_type, OrderType::DrinkingAle)
                             && antagonist.is_some_and(|a| {
                                 !active_entity_flags
-                                    .get(a.0 as usize)
+                                    .get(a.index() as usize)
                                     .copied()
                                     .unwrap_or(false)
                             });
@@ -3255,7 +3264,7 @@ impl EngineInner {
                             .and_then(|h| h.opponents.first().copied())
                             .and_then(|opponent| {
                                 frames_from_now_till_action_done
-                                    .get(opponent.0 as usize)
+                                    .get(opponent.index() as usize)
                                     .copied()
                                     .flatten()
                             });
@@ -3264,7 +3273,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                             &assets.profile_manager,
                         );
@@ -3273,7 +3282,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         // Universal walk/run Start handler — applies
@@ -3292,14 +3301,14 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_waking_up_done_side_effect(
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_pc_taking_side_effect(
@@ -3307,7 +3316,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_pc_target_interaction_side_effect(
@@ -3315,7 +3324,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_sword_parry_side_effect(
@@ -3336,7 +3345,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
@@ -3345,7 +3354,7 @@ impl EngineInner {
                             entity,
                             anim_type,
                             motion_state,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_standing_up_start_side_effect(entity, anim_type, motion_state);
@@ -3364,7 +3373,7 @@ impl EngineInner {
                             entity,
                             anim_type,
                             motion_state,
-                            EntityId(entity_idx as u32),
+                            EntityId::from_raw(entity_idx as u32),
                             &mut combat_injury_terminated,
                         );
                         if matches!(motion_state, MotionState::Done)
@@ -3379,7 +3388,7 @@ impl EngineInner {
                             completion_outcomes
                                 .execute_sides
                                 .smalltalk_swipes
-                                .push(EntityId(entity_idx as u32));
+                                .push(EntityId::from_raw(entity_idx as u32));
                         }
                         // Lift sequence-element priority to
                         // NonInterruptable on initialisation for the
@@ -3396,7 +3405,7 @@ impl EngineInner {
                             && cur_command == Some(Command::PlayAnimFreeze)
                         {
                             completion_outcomes.play_anim_frozen.push((
-                                EntityId(entity_idx as u32),
+                                EntityId::from_raw(entity_idx as u32),
                                 cur_command_level.unwrap_or(1),
                                 anim_type,
                             ));

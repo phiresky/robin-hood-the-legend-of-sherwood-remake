@@ -786,7 +786,7 @@ mod tests {
         let mut elem = SequenceElement::new(
             1,
             crate::element::Command::Move,
-            Some(crate::element::EntityId(0)),
+            Some(crate::element::EntityId::from_raw(0)),
         );
         let waypoints = vec![map_pt(10.0, 20.0), map_pt(30.0, 40.0), map_pt(50.0, 60.0)];
 
@@ -820,7 +820,7 @@ mod tests {
         let mut elem = SequenceElement::new(
             1,
             crate::element::Command::Move,
-            Some(crate::element::EntityId(0)),
+            Some(crate::element::EntityId::from_raw(0)),
         );
         elem.push_order(Order::test_new(
             OrderType::TransitionWaitingCapeWaitingUpright,
