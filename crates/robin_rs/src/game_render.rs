@@ -2625,6 +2625,7 @@ fn locate_surface(
     graph: &robin_engine::pathfinder::PathGraph,
     pt: robin_engine::geo2d::GeoPoint2D,
 ) -> Option<(usize, usize)> {
+    let pt = robin_engine::coordinates::MapPoint::from_geo(pt);
     (0..graph.static_data.move_layers.len())
         .find_map(|l| graph.find_area_at_point(l, pt).map(|a| (l, a)))
 }
@@ -2697,9 +2698,8 @@ fn selected_surface(
     let entity = engine.get_entity(pc_id)?;
     let ed = entity.element_data();
     let layer = ed.layer() as usize;
-    let pm = ed.position_map();
-    let pos2 = robin_engine::geo2d::pt(pm.x, pm.y);
-    let area = graph.find_area_at_point(layer, pos2)?;
+    let pos = ed.position_map();
+    let area = graph.find_area_at_point(layer, pos)?;
     Some((layer, area))
 }
 

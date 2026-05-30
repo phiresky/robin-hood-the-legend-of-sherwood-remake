@@ -238,7 +238,7 @@ pub(super) fn handle_mouse_input(
                         && engine.selected_action_for_seat(local_seat) == Action::NoAction
                         && engine.is_seat_selection_swordfighting(local_seat)
                     {
-                        host.mouse_way.add_point(mouse_pt.to_geo());
+                        host.mouse_way.add_point(mouse_pt);
                     }
 
                     // ── Minimap hover / drag update ──
