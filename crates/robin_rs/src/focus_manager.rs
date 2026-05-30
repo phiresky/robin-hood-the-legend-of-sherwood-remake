@@ -88,13 +88,11 @@ pub struct KeyInfo {
 }
 
 /// Full keyboard state for one frame.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct KeyboardState {
     pub keys: HashMap<KeyCode, KeyInfo>,
     pub has_changed: bool,
 }
-
 
 /// Combined UI input state for one frame.
 #[derive(Debug, Clone)]

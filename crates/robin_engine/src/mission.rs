@@ -6,7 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-
 /// Mission completion status.
 #[repr(u32)]
 #[derive(

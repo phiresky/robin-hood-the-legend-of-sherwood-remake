@@ -170,8 +170,7 @@ pub async fn show_shortcuts(
                     physical_key,
                 } => {
                     if let Some(row) = rebinding_row {
-                        if keycode == Keycode::Escape || physical_key.is_none_or(is_reserved_key)
-                        {
+                        if keycode == Keycode::Escape || physical_key.is_none_or(is_reserved_key) {
                             // Pressing a reserved key shows the localised
                             // "Reserved" string in the row and *stays* in
                             // edit mode for another attempt.  Surfaced via
