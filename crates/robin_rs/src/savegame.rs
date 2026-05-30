@@ -12,15 +12,17 @@
 //! defined in [`save_file::special_slots`].
 
 use crate::Host;
+use robin_engine::campaign as engine_campaign;
+use robin_engine::campaign::CampaignValue;
+use robin_engine::engine as engine_api;
+use robin_engine::engine::Engine;
+use robin_engine::profiles::ProfileManager;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::save_file::{self, GameSaveFile, SaveHeader, Thumbnail};
-use robin_engine::campaign::CampaignValue;
-use robin_engine::engine::Engine;
-use robin_engine::profiles::ProfileManager;
 
 /// Metadata for a single save game slot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -364,7 +366,7 @@ impl SaveGameManager {
         host: &mut Host,
         game: &mut crate::game::Game,
         engine: &mut Engine,
-        assets: &robin_engine::engine::LevelAssets,
+        assets: &engine_api::LevelAssets,
     ) -> Result<bool> {
         let Some(idx) = self.find_by_filename(save_file::special_slots::RESTART) else {
             return Ok(false);
@@ -611,7 +613,7 @@ impl SaveGameManager {
 
     fn sync_slot_campaign_metadata(
         slot: &mut SaveGame,
-        campaign: &robin_engine::campaign::Campaign,
+        campaign: &engine_campaign::Campaign,
         mission_id: u32,
         profiles: Option<&ProfileManager>,
     ) {
@@ -651,7 +653,7 @@ impl SaveGameManager {
         engine: &mut Engine,
         host: &mut Host,
         game: &mut crate::game::Game,
-        assets: &robin_engine::engine::LevelAssets,
+        assets: &engine_api::LevelAssets,
     ) -> Result<()> {
         let path = self.save_path(index);
         let save = GameSaveFile::read_from(&path)?;
@@ -699,8 +701,8 @@ mod tests {
     use crate::save_file::special_slots;
     use robin_engine::campaign::Campaign;
 
-    fn fresh_engine() -> (Engine, robin_engine::engine::LevelAssets) {
-        let mut assets = robin_engine::engine::LevelAssets::new();
+    fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
+        let mut assets = engine_api::LevelAssets::new();
         let engine =
             Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).expect("engine");
         (engine, assets)

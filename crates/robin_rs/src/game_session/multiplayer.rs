@@ -5,7 +5,9 @@
 use crate::Host;
 use crate::player_command::PlayerInput;
 use crate::rewind::RewindBuffer;
+use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine_manager as engine_manager_api;
 
 fn canonicalize_player_input_order(inputs: &mut Vec<PlayerInput>) {
     if inputs.len() <= 1 {
@@ -69,7 +71,7 @@ pub(crate) struct MultiplayerRollbackTelemetry {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn drain_net_inputs(
     host: &mut Host,
-    manager: &mut robin_engine::engine_manager::EngineManager,
+    manager: &mut engine_manager_api::EngineManager,
     assets: &LevelAssets,
     rewind_buffer: &mut RewindBuffer,
     peer_hashes: &mut std::collections::BTreeMap<u32, u64>,
@@ -436,8 +438,8 @@ fn rewind_from_recent_timeline_history(
 
     recent_timeline_history.truncate_after(start_frame);
     let mut scratch_host = Host::default();
-    let mut scratch_dev = robin_engine::engine::DevState::default();
-    let mut scratch_display = robin_engine::engine::HostDisplayState::default();
+    let mut scratch_dev = engine_api::DevState::default();
+    let mut scratch_display = engine_api::HostDisplayState::default();
     let mut replay_remember_us = 0;
     let mut replay_command_lookup_us = 0;
     let mut replay_apply_us = 0;
@@ -526,10 +528,7 @@ pub(super) fn host_scheduled_frame_deadline_ms(
 ) -> Option<i64> {
     let (scheduled_frame, scheduled_deadline_ms) = mp_host_frame_schedule?;
     let frame_delta = i64::from(local_frame) - i64::from(scheduled_frame);
-    Some(
-        i64::from(scheduled_deadline_ms)
-            + frame_delta * i64::from(robin_engine::engine::FRAME_TIME_MS),
-    )
+    Some(i64::from(scheduled_deadline_ms) + frame_delta * i64::from(engine_api::FRAME_TIME_MS))
 }
 
 /// Initialise the multiplayer transport based on `--server` /

@@ -4,6 +4,7 @@
 //! `robin_engine::markers`; this module re-exports those types and adds the
 //! GPU/SDL renderer for the selection circle sprite.
 
+use robin_assets::picture::Picture;
 pub use robin_engine::markers::{
     GroundMark, GroundMarkEntry, NUMBER_OF_GROUND_FRAMES, SelectionMark,
 };
@@ -11,7 +12,6 @@ pub use robin_engine::markers::{
 use crate::gfx_types::{BlendMode, Rect};
 use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
 use crate::resource_manager::ResourceManager;
-use robin_assets::picture::Picture;
 use robin_engine::resource_ids::{RHID_GROUND_SELECT, RHID_GROUND_SELECT_SWORD};
 
 /// The "pure blue" shadow sentinel used in raw sprite pixel data.

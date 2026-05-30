@@ -22,24 +22,23 @@ use crate::sherwood_stat::{ScoreInfo, SherwoodStat};
 use crate::sound_cache::SampleLoader;
 use crate::sound_config::SoundConfig;
 use crate::window::{GameWindow, start_text_input};
+use robin_assets::res_descr as assets_res_descr;
 use robin_engine::engine::Engine;
+use robin_engine::player_command as engine_player_command;
 use robin_engine::player_command::DebriefingTextId;
+use robin_engine::profiles as engine_profiles;
 use std::collections::VecDeque;
 
 pub(super) struct ActiveDialogueItem {
     dialog_id: i32,
-    kind: robin_engine::player_command::ModalKind,
+    kind: engine_player_command::ModalKind,
     sentences: Vec<DialogueSentence>,
-    replay_result: Option<robin_engine::player_command::DialogResult>,
+    replay_result: Option<engine_player_command::DialogResult>,
 }
 
 pub(super) struct ActiveDialogueBatch {
     pending: VecDeque<ActiveDialogueItem>,
-    current: Option<(
-        i32,
-        robin_engine::player_command::ModalKind,
-        DialogueModalState,
-    )>,
+    current: Option<(i32, engine_player_command::ModalKind, DialogueModalState)>,
 }
 
 impl ActiveDialogueBatch {
@@ -49,22 +48,19 @@ impl ActiveDialogueBatch {
 }
 
 pub(super) struct ActivePopupScrollItem {
-    kind: robin_engine::player_command::ModalKind,
+    kind: engine_player_command::ModalKind,
     title: Option<String>,
     picture: Option<MenuSurface>,
     body: String,
     body_font_name: Option<String>,
     align: TextAlign,
     universal_frame: u32,
-    replay_result: Option<robin_engine::player_command::DialogResult>,
+    replay_result: Option<engine_player_command::DialogResult>,
 }
 
 pub(super) struct ActivePopupScrollBatch {
     pending: VecDeque<ActivePopupScrollItem>,
-    current: Option<(
-        robin_engine::player_command::ModalKind,
-        PopupScrollModalState,
-    )>,
+    current: Option<(engine_player_command::ModalKind, PopupScrollModalState)>,
 }
 
 impl ActivePopupScrollBatch {
@@ -74,18 +70,15 @@ impl ActivePopupScrollBatch {
 }
 
 pub(super) struct ActiveDebriefingItem {
-    kind: robin_engine::player_command::ModalKind,
+    kind: engine_player_command::ModalKind,
     body: String,
     won: bool,
-    replay_result: Option<robin_engine::player_command::DialogResult>,
+    replay_result: Option<engine_player_command::DialogResult>,
 }
 
 pub(super) struct ActiveDebriefingBatch {
     pending: VecDeque<ActiveDebriefingItem>,
-    current: Option<(
-        robin_engine::player_command::ModalKind,
-        DebriefingModalState,
-    )>,
+    current: Option<(engine_player_command::ModalKind, DebriefingModalState)>,
 }
 
 impl ActiveDebriefingBatch {
@@ -99,9 +92,9 @@ pub(super) enum ActiveModal {
     PopupScroll(Box<ActivePopupScrollBatch>),
     Debriefing(Box<ActiveDebriefingBatch>),
     MissionState {
-        kind: robin_engine::player_command::ModalKind,
+        kind: engine_player_command::ModalKind,
         state: MissionStatePopupState,
-        replay_result: Option<robin_engine::player_command::DialogResult>,
+        replay_result: Option<engine_player_command::DialogResult>,
     },
 }
 
@@ -138,32 +131,30 @@ pub(super) enum ActiveModalOutcome {
 /// and a popup both fired), and lets an unrelated modal without a
 /// recording fall through to interactive handling.
 pub(super) fn pop_matching_dismissal(
-    queue: &mut std::collections::VecDeque<robin_engine::player_command::PlayerCommand>,
-    target: &robin_engine::player_command::ModalKind,
-) -> Option<robin_engine::player_command::DialogResult> {
+    queue: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
+    target: &engine_player_command::ModalKind,
+) -> Option<engine_player_command::DialogResult> {
     let pos = queue.iter().position(|c| {
         matches!(
             c,
-            robin_engine::player_command::PlayerCommand::ModalDismiss { kind, .. }
+            engine_player_command::PlayerCommand::ModalDismiss { kind, .. }
                 if kind == target
         )
     })?;
     match queue.remove(pos)? {
-        robin_engine::player_command::PlayerCommand::ModalDismiss { result, .. } => Some(result),
+        engine_player_command::PlayerCommand::ModalDismiss { result, .. } => Some(result),
         _ => None,
     }
 }
 
-fn debriefing_replay_result(
-    result: robin_engine::player_command::DialogResult,
-) -> DebriefingOutcome {
+fn debriefing_replay_result(result: engine_player_command::DialogResult) -> DebriefingOutcome {
     match result {
-        robin_engine::player_command::DialogResult::Completed => DebriefingOutcome::Ok {
+        engine_player_command::DialogResult::Completed => DebriefingOutcome::Ok {
             text_remaining: String::new(),
         },
-        robin_engine::player_command::DialogResult::Aborted => DebriefingOutcome::EmergencyEnd,
-        robin_engine::player_command::DialogResult::Restart
-        | robin_engine::player_command::DialogResult::Load { .. } => {
+        engine_player_command::DialogResult::Aborted => DebriefingOutcome::EmergencyEnd,
+        engine_player_command::DialogResult::Restart
+        | engine_player_command::DialogResult::Load { .. } => {
             tracing::warn!(
                 ?result,
                 "queued debriefing replay result is only valid for final debriefing; treating as completed"
@@ -205,10 +196,8 @@ pub(super) fn start_active_dialogue_batch(
     host: &mut Host,
     text_res: &mut ResourceManager,
     game: &Game,
-    level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActiveDialogueBatch> {
     if host.pending_dialogues.is_empty() {
         return None;
@@ -234,7 +223,7 @@ pub(super) fn start_active_dialogue_batch(
         if sentences.is_empty() {
             continue;
         }
-        let kind = robin_engine::player_command::ModalKind::Dialog { dialog_id };
+        let kind = engine_player_command::ModalKind::Dialog { dialog_id };
         let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
         pending.push_back(ActiveDialogueItem {
             dialog_id,
@@ -274,7 +263,7 @@ fn tick_active_dialogue_batch(
     {
         if let Some(result) = item.replay_result {
             if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: item.kind,
                     result,
                 });
@@ -310,8 +299,8 @@ fn tick_active_dialogue_batch(
         modal_net.as_ref(),
     ) {
         if let Some(recorder) = replay_recorder.as_mut() {
-            recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                kind: robin_engine::player_command::ModalKind::Dialog {
+            recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
+                kind: engine_player_command::ModalKind::Dialog {
                     dialog_id: *dialog_id,
                 },
                 result,
@@ -331,12 +320,10 @@ pub(super) async fn drain_pending_dialogues(
     audio_backend: &mut Option<SdlMixerBackend>,
     text_res: &mut ResourceManager,
     game: &Game,
-    level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
+    level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     headless: bool,
 ) {
     // ── Drain pending dialogues ──
@@ -357,14 +344,12 @@ pub(super) async fn drain_pending_dialogues(
                 "headless: auto-dismissing pending dialogues"
             );
             for dialog_id in dialog_ids {
-                let kind = robin_engine::player_command::ModalKind::Dialog { dialog_id };
+                let kind = engine_player_command::ModalKind::Dialog { dialog_id };
                 let result = pop_matching_dismissal(replay_modal_dismissals, &kind)
-                    .unwrap_or(robin_engine::player_command::DialogResult::Completed);
+                    .unwrap_or(engine_player_command::DialogResult::Completed);
                 if let Some(recorder) = replay_recorder.as_mut() {
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                        kind,
-                        result,
-                    });
+                    recorder
+                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }
             }
             return;
@@ -394,7 +379,7 @@ pub(super) async fn drain_pending_dialogues(
             let entries: Vec<BatchDialogue<'_>> = sentences_per_id
                 .iter()
                 .map(|(dialog_id, sentences)| {
-                    let kind = robin_engine::player_command::ModalKind::Dialog {
+                    let kind = engine_player_command::ModalKind::Dialog {
                         dialog_id: *dialog_id,
                     };
                     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
@@ -429,13 +414,11 @@ pub(super) async fn drain_pending_dialogues(
             if let Some(recorder) = replay_recorder {
                 for ((dialog_id, _), result) in sentences_per_id.iter().zip(results.iter().copied())
                 {
-                    let kind = robin_engine::player_command::ModalKind::Dialog {
+                    let kind = engine_player_command::ModalKind::Dialog {
                         dialog_id: *dialog_id,
                     };
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                        kind,
-                        result,
-                    });
+                    recorder
+                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }
             }
         }
@@ -447,11 +430,9 @@ pub(super) fn start_active_popup_scroll_batch(
     host: &mut Host,
     renderer: &mut Renderer,
     text_res: &mut ResourceManager,
-    level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
+    level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     universal_frame: u32,
 ) -> Option<ActivePopupScrollBatch> {
     if host.pending_popup_texts.is_empty() {
@@ -492,7 +473,7 @@ pub(super) fn start_active_popup_scroll_batch(
             )
         };
         let picture = resources.picture_from(renderer, text_res, picture_id);
-        let kind = robin_engine::player_command::ModalKind::PopupText { text_id };
+        let kind = engine_player_command::ModalKind::PopupText { text_id };
         let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
         pending.push_back(ActivePopupScrollItem {
             kind,
@@ -516,11 +497,9 @@ pub(super) fn start_active_popup_scroll_batch(
 pub(super) fn start_active_sherwood_report(
     host: &mut Host,
     engine: &Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActivePopupScrollBatch> {
     if !host.pending_sherwood_report {
         return None;
@@ -553,7 +532,7 @@ pub(super) fn start_active_sherwood_report(
         &score_info,
         &resources.menu_text,
     );
-    let kind = robin_engine::player_command::ModalKind::SherwoodReport;
+    let kind = engine_player_command::ModalKind::SherwoodReport;
     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
     let item = ActivePopupScrollItem {
         kind,
@@ -575,11 +554,9 @@ pub(super) fn start_active_sherwood_report(
 pub(super) fn start_active_debriefing_batch(
     host: &mut Host,
     text_res: &mut ResourceManager,
-    level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
+    level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
     menu_resources: &Option<IngameMenuResources>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) -> Option<ActiveDebriefingBatch> {
     if host.pending_debriefings.is_empty() {
         return None;
@@ -605,7 +582,7 @@ pub(super) fn start_active_debriefing_batch(
         let table_id = descriptors.debriefing.lose_text_table_id;
         match text_res.get_string(table_id, index) {
             Ok(s) => {
-                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
+                let kind = engine_player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 pending.push_back(ActiveDebriefingItem {
                     kind,
@@ -624,7 +601,7 @@ pub(super) fn start_active_debriefing_batch(
         let table_id = descriptors.debriefing.win_text_table_id;
         match text_res.get_string(table_id, index) {
             Ok(s) => {
-                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
+                let kind = engine_player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 pending.push_back(ActiveDebriefingItem {
                     kind,
@@ -668,7 +645,7 @@ fn tick_active_popup_scroll_batch(
     {
         if let Some(result) = item.replay_result {
             if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: item.kind,
                     result,
                 });
@@ -711,7 +688,7 @@ fn tick_active_popup_scroll_batch(
         modal_net.as_ref(),
     ) {
         if let Some(recorder) = replay_recorder.as_mut() {
-            recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+            recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                 kind: kind.clone(),
                 result,
             });
@@ -744,7 +721,7 @@ fn tick_active_debriefing_batch(
     {
         if let Some(result) = item.replay_result {
             if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: item.kind,
                     result,
                 });
@@ -764,12 +741,12 @@ fn tick_active_debriefing_batch(
     let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(outcome) = state.tick(event_pump, renderer, resources, Some(cursor)) {
         let result = if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
-            robin_engine::player_command::DialogResult::Aborted
+            engine_player_command::DialogResult::Aborted
         } else {
-            robin_engine::player_command::DialogResult::Completed
+            engine_player_command::DialogResult::Completed
         };
         if let Some(recorder) = replay_recorder.as_mut() {
-            recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+            recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                 kind: kind.clone(),
                 result,
             });
@@ -860,19 +837,19 @@ pub(super) fn tick_active_modal(
         } => {
             if let Some(result) = replay_result.take() {
                 if let Some(recorder) = replay_recorder.as_mut() {
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: kind.clone(),
                         result,
                     });
                 }
                 *active_modal = None;
                 return match result {
-                    robin_engine::player_command::DialogResult::Completed => {
+                    engine_player_command::DialogResult::Completed => {
                         ActiveModalOutcome::QuitMissionRequested
                     }
-                    robin_engine::player_command::DialogResult::Aborted => ActiveModalOutcome::None,
-                    robin_engine::player_command::DialogResult::Restart
-                    | robin_engine::player_command::DialogResult::Load { .. } => {
+                    engine_player_command::DialogResult::Aborted => ActiveModalOutcome::None,
+                    engine_player_command::DialogResult::Restart
+                    | engine_player_command::DialogResult::Load { .. } => {
                         tracing::warn!(
                             ?result,
                             "mission-state replay result is only yes/no; treating as aborted"
@@ -890,11 +867,11 @@ pub(super) fn tick_active_modal(
             if let Some(confirmed) = state.tick(event_pump, renderer, resources, Some(cursor)) {
                 if let Some(recorder) = replay_recorder.as_mut() {
                     let result = if confirmed {
-                        robin_engine::player_command::DialogResult::Completed
+                        engine_player_command::DialogResult::Completed
                     } else {
-                        robin_engine::player_command::DialogResult::Aborted
+                        engine_player_command::DialogResult::Aborted
                     };
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
+                    recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: kind.clone(),
                         result,
                     });
@@ -926,12 +903,10 @@ pub(super) async fn drain_pending_popup_scroll(
     audio_backend: &mut Option<SdlMixerBackend>,
     sample_loader: &SampleLoader,
     text_res: &mut ResourceManager,
-    level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
+    level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
     universal_frame: u32,
 ) {
     // ── Drain pending popup-scroll texts ──
@@ -995,7 +970,7 @@ pub(super) async fn drain_pending_popup_scroll(
                 )
             };
             let picture = resources.picture_from(renderer, text_res, picture_id);
-            let kind = robin_engine::player_command::ModalKind::PopupText { text_id };
+            let kind = engine_player_command::ModalKind::PopupText { text_id };
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
                 .net
@@ -1025,10 +1000,7 @@ pub(super) async fn drain_pending_popup_scroll(
             )
             .await;
             if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                    kind,
-                    result,
-                });
+                recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
         }
     }
@@ -1045,14 +1017,12 @@ pub(super) async fn drain_pending_sherwood_stat(
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
     engine: &Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     audio_backend: &mut Option<SdlMixerBackend>,
     sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) {
     // ── Drain pending Sherwood stat report ──
     // Script native `DisplaySherwoodReport` sets
@@ -1086,7 +1056,7 @@ pub(super) async fn drain_pending_sherwood_stat(
             );
             let sound_cfg = SoundConfig::default();
             let sound_enabled = audio_backend.is_some();
-            let kind = robin_engine::player_command::ModalKind::SherwoodReport;
+            let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
                 .net
@@ -1118,10 +1088,7 @@ pub(super) async fn drain_pending_sherwood_stat(
             )
             .await;
             if let Some(recorder) = replay_recorder.as_mut() {
-                recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                    kind,
-                    result,
-                });
+                recorder.push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
             }
         } else {
             tracing::warn!(
@@ -1143,12 +1110,10 @@ pub(super) async fn drain_pending_debriefings(
     cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
     text_res: &mut ResourceManager,
-    level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
+    level_descriptors: &Option<assets_res_descr::LevelDescriptors>,
     menu_resources: &Option<IngameMenuResources>,
     replay_recorder: &mut Option<ReplayRecorder>,
-    replay_modal_dismissals: &mut std::collections::VecDeque<
-        robin_engine::player_command::PlayerCommand,
-    >,
+    replay_modal_dismissals: &mut std::collections::VecDeque<engine_player_command::PlayerCommand>,
 ) {
     // ── Drain pending debriefing requests ──
     // The lose phase and win phase run as two distinct calls — each
@@ -1169,7 +1134,7 @@ pub(super) async fn drain_pending_debriefings(
                 let DebriefingTextId::Lose { index } = text_id else {
                     unreachable!("lose_ids was partitioned from DebriefingTextId::Lose");
                 };
-                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
+                let kind = engine_player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 let table_id = descriptors.debriefing.lose_text_table_id;
                 let text = match text_res.get_string(table_id, index) {
@@ -1196,15 +1161,13 @@ pub(super) async fn drain_pending_debriefings(
                     .await
                 };
                 let result = if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
-                    robin_engine::player_command::DialogResult::Aborted
+                    engine_player_command::DialogResult::Aborted
                 } else {
-                    robin_engine::player_command::DialogResult::Completed
+                    engine_player_command::DialogResult::Completed
                 };
                 if let Some(recorder) = replay_recorder.as_mut() {
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                        kind,
-                        result,
-                    });
+                    recorder
+                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }
                 // The iteration breaks out when an emergency-end
                 // fires — but only for THIS phase, not the win phase
@@ -1219,7 +1182,7 @@ pub(super) async fn drain_pending_debriefings(
                 let DebriefingTextId::Win { index } = text_id else {
                     unreachable!("win_ids was partitioned from DebriefingTextId::Win");
                 };
-                let kind = robin_engine::player_command::ModalKind::Debriefing { text_id };
+                let kind = engine_player_command::ModalKind::Debriefing { text_id };
                 let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
                 let table_id = descriptors.debriefing.win_text_table_id;
                 let text = match text_res.get_string(table_id, index) {
@@ -1240,15 +1203,13 @@ pub(super) async fn drain_pending_debriefings(
                     .await
                 };
                 let result = if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
-                    robin_engine::player_command::DialogResult::Aborted
+                    engine_player_command::DialogResult::Aborted
                 } else {
-                    robin_engine::player_command::DialogResult::Completed
+                    engine_player_command::DialogResult::Completed
                 };
                 if let Some(recorder) = replay_recorder.as_mut() {
-                    recorder.push(robin_engine::player_command::PlayerCommand::ModalDismiss {
-                        kind,
-                        result,
-                    });
+                    recorder
+                        .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
                 }
                 if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
                     break;
@@ -1271,7 +1232,7 @@ pub(super) async fn drain_pending_debriefings(
 /// own event loop without needing the resource manager.
 fn build_dialogue_sentences(
     dialog_id: i32,
-    descriptors: &robin_assets::res_descr::LevelDescriptors,
+    descriptors: &assets_res_descr::LevelDescriptors,
     res: &mut ResourceManager,
     text_directory: &str,
 ) -> Vec<DialogueSentence> {

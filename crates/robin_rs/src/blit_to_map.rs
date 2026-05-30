@@ -9,6 +9,7 @@
 use super::{BackgroundDecal, Host, PendingBgBlit};
 use crate::gfx_types::Rect;
 use robin_assets::frame_holder::SpriteVariant;
+use robin_engine::element as engine_element;
 use robin_engine::engine::PendingBgBlitDecal;
 
 /// Drain queued `BlitToMap` / `RestoreBackground` requests into
@@ -101,7 +102,7 @@ fn apply_bg_blit(host: &mut Host, blit: PendingBgBlit) -> bool {
 
 fn build_background_decal(
     host: &Host,
-    entity_id: robin_engine::element::EntityId,
+    entity_id: engine_element::EntityId,
     snapshot: Option<PendingBgBlitDecal>,
 ) -> Option<BackgroundDecal> {
     if let Some(snapshot) = snapshot {

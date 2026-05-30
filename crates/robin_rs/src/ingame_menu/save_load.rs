@@ -19,6 +19,10 @@
 //! caret and edit buffer stay in sync with no local bookkeeping.
 
 use crate::gfx_types::Keycode;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::profiles::ProfileManager;
+use robin_engine::sound_cache::SampleLoader;
+use robin_engine::sprite::BBox;
 
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
@@ -28,9 +32,6 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
-use robin_engine::profiles::ProfileManager;
-use robin_engine::sound_cache::SampleLoader;
-use robin_engine::sprite::BBox;
 
 use super::layout::{
     MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
@@ -191,7 +192,7 @@ pub async fn show_save_load(
     input_widget.set_max_length(MAX_NAME_LEN);
     // Give the widget a bbox so the state machine's bookkeeping stays
     // sane — not used for hit-testing because we never leave edit mode.
-    input_widget.base.bbox = robin_engine::coordinates::ScreenBBox::from_coords(
+    input_widget.base.bbox = engine_coordinates::ScreenBBox::from_coords(
         INPUT_RECT.x as f32,
         INPUT_RECT.y as f32,
         (INPUT_RECT.x + INPUT_RECT.w) as f32,
@@ -870,7 +871,7 @@ fn draw_preview(
         let mut widget = thumb_widget.clone();
         widget
             .base
-            .set_position(robin_engine::coordinates::ScreenBBox::from_coords(
+            .set_position(engine_coordinates::ScreenBBox::from_coords(
                 (THUMB_RECT.x + 4) as f32,
                 (THUMB_RECT.y + 4) as f32,
                 (THUMB_RECT.x + THUMB_RECT.w - 4) as f32,

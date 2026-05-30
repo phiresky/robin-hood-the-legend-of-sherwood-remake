@@ -21,6 +21,9 @@
 //!    └──────release outside (LEFT_CLICK)─────┘
 //! ```
 
+#[cfg(test)]
+use robin_engine::coordinates::ScreenBBox;
+use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
 use crate::focus_manager::WidgetGroupable;
@@ -30,7 +33,6 @@ use crate::ui::{
         BUTTON_DEFAULT, BUTTON_DISABLED, BUTTON_FOCUSED, BUTTON_SELECTED, NO_RESOURCE,
     },
 };
-use robin_engine::coordinates::ScreenPoint;
 
 use super::{WidgetBase, WidgetInput};
 
@@ -499,7 +501,6 @@ impl WidgetGroupable for WidgetButton {
 mod tests {
     use super::*;
     use crate::ui::UiKeyboard;
-    use robin_engine::coordinates::ScreenBBox;
 
     fn make_input(mouse_x: f32, mouse_y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
         // Leak a keyboard for test convenience (tests are short-lived).

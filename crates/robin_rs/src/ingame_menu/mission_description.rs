@@ -20,6 +20,11 @@
 //! tooltips use.
 
 use crate::gfx_types::Keycode;
+use robin_engine::campaign::CampaignValue;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::engine::Engine;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sprite::BBox;
 
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
@@ -32,9 +37,6 @@ use crate::ui_screens::{
     mission_description_layout as layout_consts,
 };
 use crate::widget::FrameWnd;
-use robin_engine::campaign::CampaignValue;
-use robin_engine::engine::Engine;
-use robin_engine::sprite::BBox;
 
 use super::blazon_set::{self, BlazonTooltipTracker};
 use super::buy_blazons::{BuyBlazonsOutcome, show_buy_blazons};
@@ -96,7 +98,7 @@ pub async fn show_mission_description(
     mut cursor: Option<ModalCursor<'_>>,
     mission_index: usize,
     engine: &mut Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     level_descriptors: Option<&LevelDescriptors>,
     text_resources: &mut ResourceManager,
 ) -> (MissionChoice, bool) {
@@ -252,7 +254,7 @@ pub async fn show_mission_description(
         let widget_input = input_state.as_widget_input();
         let events = frame.process_input(&widget_input);
         let mouse_virt =
-            robin_engine::coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
+            engine_coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
         tooltip.update(&frame, mouse_virt);
 
         // Rebuild the blazon-set state for this frame from current
@@ -500,7 +502,7 @@ async fn dispatch_convert_money(
     resources: &mut IngameMenuResources,
     cursor: Option<ModalCursor<'_>>,
     engine: &mut Engine,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
     mission_index: usize,
     screen: &mut MissionDescriptionScreen,
     frame: &mut FrameWnd,

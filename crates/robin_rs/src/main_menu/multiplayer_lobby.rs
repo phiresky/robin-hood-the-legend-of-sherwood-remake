@@ -14,6 +14,8 @@ use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::widget::{ColumnAlign, ColumnLayout, FrameWnd};
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
+use robin_engine::player_profile as engine_player_profile;
+use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
 
@@ -74,7 +76,7 @@ pub(crate) async fn show_multiplayer_lobby(
     resources: &IngameMenuResources,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
 ) -> Option<MultiplayerLaunch> {
     let lobby_url = match lobby::lobby_url_from_env() {
         Ok(url) => url,
@@ -698,7 +700,7 @@ fn draw_scrollbar(
 
 fn mission_choices(
     campaign: &Campaign,
-    profiles: &robin_engine::profiles::ProfileManager,
+    profiles: &engine_profiles::ProfileManager,
 ) -> Vec<MissionChoice> {
     campaign
         .missions
@@ -724,7 +726,7 @@ fn mission_choices(
 }
 
 fn multiplayer_nickname() -> String {
-    if let Some(name) = robin_engine::player_profile::PlayerProfileManager::global()
+    if let Some(name) = engine_player_profile::PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
         .map(|p| p.name.clone())

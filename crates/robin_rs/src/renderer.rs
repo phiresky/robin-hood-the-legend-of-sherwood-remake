@@ -16,11 +16,11 @@
 //!   runtime drawing is queued as GPU quads and submitted in `present()`.
 //! - Upscale shaders run as native WGSL pipelines (see [`crate::gpu_upscale`]).
 
+use robin_engine::graphic_config::TextureScaleMode;
+use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
 use robin_assets::frame_holder::{FrameHolder, SHADOW_KEY, SpriteVariant};
-use robin_engine::graphic_config::TextureScaleMode;
-use robin_engine::sprite::BBox;
 
 use crate::font::TrueTypeFont;
 use crate::gfx_types::{BlendMode, Color, Rect};

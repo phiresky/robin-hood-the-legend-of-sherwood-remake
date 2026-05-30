@@ -27,6 +27,9 @@
 //! - hiking_paths, profile_manager (Arc'd immutable data reloaded at level init)
 
 use crate::Host;
+#[cfg(test)]
+use robin_engine::engine as engine_api;
+use robin_engine::engine::Engine;
 use std::fs;
 use std::path::{Path, PathBuf};
 use web_time::{SystemTime, UNIX_EPOCH};
@@ -37,7 +40,6 @@ use serde::{Deserialize, Serialize};
 use crate::game::GamePersistentState;
 use crate::player_profile::PlayerProfileManager;
 use crate::sound::SoundManager;
-use robin_engine::engine::Engine;
 
 // ─── Thumbnail ───────────────────────────────────────────────────────
 
@@ -623,9 +625,9 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn fresh_engine() -> (Engine, robin_engine::engine::LevelAssets) {
+    fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
         use crate::campaign::Campaign;
-        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut assets = engine_api::LevelAssets::new();
         let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
             .expect("new_for_test");
         (engine, assets)

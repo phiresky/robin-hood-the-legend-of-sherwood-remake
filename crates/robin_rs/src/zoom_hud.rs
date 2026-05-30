@@ -14,6 +14,10 @@
 //! missing in the resource pack.
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::engine as engine_api;
+#[cfg(test)]
+use robin_engine::player_command::PlayerCommand;
+use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -63,8 +67,8 @@ impl ZoomButtonEnable {
     /// that's active so its widget stays visually "pressed" for the
     /// duration.
     pub fn from_engine(
-        engine: &robin_engine::engine::Engine,
-        display: &robin_engine::engine::HostDisplayState,
+        engine: &engine_api::Engine,
+        display: &engine_api::HostDisplayState,
     ) -> Self {
         let gated = engine.is_zoom_possible(display);
         let zoom_up_in_progress = engine.is_zoom_up_in_progress(display);
@@ -276,7 +280,7 @@ pub fn draw_with_sprites(
         let state = button_sprite_state(enabled, hovered || selected, pressed);
 
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
-            let dst = robin_engine::sprite::BBox::new(
+            let dst = engine_sprite::BBox::new(
                 crate::geo2d::GeoPoint2D {
                     x: rect.x() as f32,
                     y: rect.y() as f32,
@@ -402,10 +406,9 @@ mod tests {
     fn enable_mask_gates_on_is_zoom_possible() {
         use crate::campaign::Campaign;
         use robin_engine::engine::{EngineStateRequest, HostDisplayState, InputState, LevelAssets};
-        use robin_engine::player_command::PlayerCommand;
 
         let mut assets = LevelAssets::new();
-        let mut engine = robin_engine::engine::Engine::new_for_test_with_level_size(
+        let mut engine = engine_api::Engine::new_for_test_with_level_size(
             1024.0,
             768.0,
             Campaign::default(),

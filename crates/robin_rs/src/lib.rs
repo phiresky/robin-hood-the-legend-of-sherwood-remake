@@ -11,6 +11,7 @@
 // carry an `#[allow(clippy::disallowed_methods)]` with a comment.
 #![warn(clippy::disallowed_methods)]
 
+use robin_engine::engine as engine_api;
 use std::sync::{Mutex, Once, OnceLock};
 
 static TRACING_INIT: Once = Once::new();
@@ -190,7 +191,7 @@ pub use host::Host;
 // Convenience re-exports so host-side submodules can use
 // `crate::Engine` / `crate::LevelAssets` etc. without fully qualifying
 // every call. These are stable entry points, not migration shims.
-pub use robin_engine::engine::level_loading;
+pub use engine_api::level_loading;
 pub use robin_engine::engine::{Engine, LevelAssets, PendingBgBlit};
 pub mod ingame_menu;
 pub mod input;
@@ -338,8 +339,8 @@ mod tests {
     #[test]
     fn scoped_filter_keeps_warning_floor() {
         assert_eq!(
-            compose_env_filter("robin_engine::engine::movement=debug"),
-            "warn,robin_engine::engine::movement=debug"
+            compose_env_filter("engine_api::movement=debug"),
+            "warn,engine_api::movement=debug"
         );
     }
 

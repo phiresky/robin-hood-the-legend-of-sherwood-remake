@@ -22,6 +22,7 @@
 //!   back out).
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -437,7 +438,7 @@ pub fn draw_with_sprites(
             // typically authored at the button's native size, but we
             // blit into the logical rect anyway so the visuals track
             // our layout.
-            let dst = robin_engine::sprite::BBox::new(
+            let dst = engine_sprite::BBox::new(
                 crate::geo2d::GeoPoint2D {
                     x: rect.x() as f32,
                     y: rect.y() as f32,

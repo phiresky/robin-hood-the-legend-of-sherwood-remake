@@ -8,13 +8,22 @@
 //! earlier in the frame so replay / rollback can record them.
 
 use crate::Host;
+use crate::element::Focus;
+use crate::profiles::Action;
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
+use robin_engine::element as engine_element;
 use robin_engine::element::Entity;
 use robin_engine::engine::input::{
     BowTarget, MOUSE_BOW_CIVIL_COLOR, MOUSE_BOW_NO_COLOR, MOUSE_BOW_VIP_COLOR,
     MOUSE_OPACITY_DEFAULT, TrajectoryPreview,
 };
 use robin_engine::engine::{DevState, Engine, LevelAssets};
+use robin_engine::fast_find_grid as engine_fast_find_grid;
+use robin_engine::geo2d as engine_geo2d;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sector as engine_sector;
+use robin_engine::weapons as engine_weapons;
 
 /// Apply a `TrajectoryPreview` returned from engine to host's
 /// trajectory-preview fields. See `TrajectoryPreview` docs.
@@ -78,7 +87,7 @@ pub fn update_pc_popup_information(
     let focused_pc = if drag_active || !engine.is_sherwood(&assets.profile_manager) {
         None
     } else {
-        engine.find_focusable_pc(assets, mouse_map, robin_engine::element::Focus::Select)
+        engine.find_focusable_pc(assets, mouse_map, engine_element::Focus::Select)
     };
 
     // Host-side mouse hover writes directly into the host-owned
@@ -105,7 +114,6 @@ pub fn choose_mouse_pointer_for_no_action(
     mouse_map: MapPoint,
     shift_held: bool,
 ) -> i32 {
-    use robin_engine::element::Focus;
     use robin_engine::resource_ids::*;
 
     // Door hover UI enabled by default in this function.
@@ -344,7 +352,7 @@ pub fn choose_mouse_pointer_for_no_action(
     // If mouse sector != PC's sector.
     let mouse_sector_idx = mouse_sector_result.sector_idx;
     let pc_sector_idx = match pc_sector_hit {
-        robin_engine::fast_find_grid::SectorHit::Found { sector_idx, .. } => Some(sector_idx),
+        engine_fast_find_grid::SectorHit::Found { sector_idx, .. } => Some(sector_idx),
         _ => None,
     };
 
@@ -385,7 +393,7 @@ pub fn choose_mouse_pointer_for_no_action(
                         if let Some(lt) = sector.lift_type {
                             match lt {
                                 // Wall → climbing cursor (if PC can climb).
-                                robin_engine::sector::LiftType::Wall => {
+                                engine_sector::LiftType::Wall => {
                                     // Gated on every selected PC
                                     // having the contextual Climb
                                     // action.  Without it the cursor
@@ -404,7 +412,7 @@ pub fn choose_mouse_pointer_for_no_action(
                                 // Stairs → default (intentional bug,
                                 // see "STAIRS CURSOR BUG" in the
                                 // original game).
-                                robin_engine::sector::LiftType::Stairs => {
+                                engine_sector::LiftType::Stairs => {
                                     return if is_swordfighting {
                                         if shift_held {
                                             RHMOUSE_DEFAULT_OUTLINE
@@ -452,7 +460,7 @@ pub fn choose_mouse_pointer_for_no_action(
                 }
 
                 // Jump sector.
-                if st.contains(robin_engine::sector::SectorType::JUMP) {
+                if st.contains(engine_sector::SectorType::JUMP) {
                     host.valid_trajectory = false;
                     // Walk selected PCs, find the first with the
                     // Jump action, then return the nearest
@@ -473,7 +481,7 @@ pub fn choose_mouse_pointer_for_no_action(
                         if !engine.selected_pc_has_contextual_action(
                             assets,
                             Some(pc_id),
-                            robin_engine::profiles::Action::Jump,
+                            engine_profiles::Action::Jump,
                         ) {
                             continue;
                         }
@@ -481,10 +489,10 @@ pub fn choose_mouse_pointer_for_no_action(
                             tracing::warn!(?pc_id, "jump hover: selected PC is missing");
                             continue;
                         };
-                        jumper_on_shoulders = entity.element_data().posture
-                            == robin_engine::element::Posture::OnShoulders;
+                        jumper_on_shoulders =
+                            entity.element_data().posture == engine_element::Posture::OnShoulders;
                         let p = entity.element_data().position_map();
-                        let pc_pos_map = robin_engine::geo2d::pt(p.x, p.y);
+                        let pc_pos_map = engine_geo2d::pt(p.x, p.y);
                         jump_line_idx = engine.get_nearest_jumpable_jump_line(
                             pc_id,
                             pc_pos_map,
@@ -519,7 +527,7 @@ pub fn choose_mouse_pointer_for_no_action(
                             let sector_dir = (angle / (2.0 * std::f32::consts::PI) * 16.0)
                                 .rem_euclid(16.0)
                                 as u16;
-                            let position = robin_engine::coordinates::WorldPoint3D {
+                            let position = engine_coordinates::WorldPoint3D {
                                 x: mid_x,
                                 y: mid_y,
                                 z: mid_z,
@@ -633,7 +641,6 @@ pub fn update_mouse(
     shift_held: bool,
 ) -> i32 {
     use robin_engine::element::{Camp, Focus, Posture};
-    use robin_engine::profiles::Action;
     use robin_engine::resource_ids::*;
 
     host.host_titbit_preview = None;
@@ -719,7 +726,7 @@ pub fn update_mouse(
         .and_then(|&id| engine.get_entity(id))
         .map(|e| {
             let p = e.element_data().position_map();
-            robin_engine::coordinates::MapPoint::new(p.x, p.y)
+            engine_coordinates::MapPoint::new(p.x, p.y)
         })
         .unwrap_or(mouse_map_pt);
     let sector_hit = if shift_held {
@@ -786,7 +793,7 @@ pub fn update_mouse(
                     let st = s.sector_type;
                     (st.is_motion() && st.is_area())
                         || st.is_door()
-                        || st.contains(robin_engine::sector::SectorType::JUMP)
+                        || st.contains(engine_sector::SectorType::JUMP)
                 })
         });
 
@@ -893,7 +900,7 @@ pub fn update_mouse(
                     // Get shoot type and bow target.
                     let (bow_target, shoot_mode) =
                         engine.can_shoot_with_bow_at(assets, pc_id, target_id);
-                    let is_long = shoot_mode == robin_engine::weapons::ShootMode::Long;
+                    let is_long = shoot_mode == engine_weapons::ShootMode::Long;
 
                     // Extract entity data before mutating host.input.
                     let target_info = engine.get_entity(target_id).map(|target| {
@@ -1052,7 +1059,7 @@ pub fn update_mouse(
                                 assets,
                                 pid,
                                 target_id,
-                                robin_engine::weapons::ShootMode::Long,
+                                engine_weapons::ShootMode::Long,
                             );
                             apply_trajectory_preview(host, preview);
                         }
@@ -1117,7 +1124,7 @@ pub fn update_mouse(
                                 assets,
                                 pid,
                                 target_id,
-                                robin_engine::weapons::ShootMode::Long,
+                                engine_weapons::ShootMode::Long,
                             );
                             apply_trajectory_preview(host, preview);
                         }
@@ -1381,8 +1388,8 @@ pub fn update_mouse(
                 .and_then(|&id| engine.get_entity(id))
                 .and_then(|e| e.actor_data())
                 .map(|a| a.action_state)
-                .unwrap_or(robin_engine::element::ActionState::Waiting);
-            if action_state == robin_engine::element::ActionState::Listening {
+                .unwrap_or(engine_element::ActionState::Waiting);
+            if action_state == engine_element::ActionState::Listening {
                 choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
             } else {
                 RHMOUSE_OK

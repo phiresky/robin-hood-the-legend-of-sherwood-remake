@@ -9,12 +9,11 @@
 //! selects/activates the focused groupable widget.  Keyboard shortcuts can
 //! focus and activate groupable widgets directly.
 
+use robin_engine::coordinates::ScreenPoint;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
-
-use robin_engine::coordinates::ScreenPoint;
 
 // ─── Public types ────────────────────────────────────────────────────
 

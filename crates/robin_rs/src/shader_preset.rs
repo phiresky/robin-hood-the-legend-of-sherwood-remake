@@ -1,6 +1,7 @@
 //! WGPU integration for RetroArch `.slangp` shader presets.
 
 #[cfg(not(target_arch = "wasm32"))]
+use robin_engine::graphic_config::TextureScaleMode;
 use std::collections::{HashMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
@@ -15,7 +16,6 @@ use librashader::presets::{ShaderFeatures, ShaderPreset};
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
 #[cfg(not(target_arch = "wasm32"))]
 use librashader::runtime::{Size, Viewport};
-use robin_engine::graphic_config::TextureScaleMode;
 
 use crate::window::GpuContext;
 

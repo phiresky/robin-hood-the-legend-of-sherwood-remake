@@ -13,6 +13,7 @@
 //!   `ingame_menu::widget_bridge::ModalInputState`.
 //! - Gamepad/joystick state → `gamepad.rs`.
 
+use robin_engine::coordinates::ScreenPoint;
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,6 @@ use winit::keyboard::KeyCode;
 
 use crate::geo2d::BBox2D;
 use crate::gfx_types::{GameEvent, Keycode};
-use robin_engine::coordinates::ScreenPoint;
 
 /// Mouse button identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

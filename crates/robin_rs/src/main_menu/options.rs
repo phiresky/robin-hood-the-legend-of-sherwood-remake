@@ -15,6 +15,7 @@ use crate::renderer::Renderer;
 use crate::sdl_audio::{self, SdlMixerBackend};
 use crate::sound::SoundManager;
 use crate::sound_config::SoundConfig;
+use robin_engine::engine as engine_api;
 
 /// Show the options dialog over the main-menu background.
 ///
@@ -124,7 +125,7 @@ pub(crate) async fn show_main_menu_options(
         resources,
         Some(ModalCursor::new(
             cursor_renderer,
-            robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
+            engine_api::input::MOUSE_OPACITY_DEFAULT,
             0,
         )),
         &mut graphic,

@@ -12,7 +12,11 @@ use crate::replay::ReplayPlayer;
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use crate::save_file::GameSaveFile;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
+use robin_engine::engine_manager as engine_manager_api;
+use robin_engine::messenger as engine_messenger;
 
 /// Translate the per-frame SDL3 controller events into joystick
 /// state, then dispatch. The gamepad's in-flight state persists
@@ -21,8 +25,8 @@ use robin_engine::engine::Engine;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_gamepad_events(
     host: &mut Host,
-    manager: &mut robin_engine::engine_manager::EngineManager,
-    assets: &robin_engine::engine::LevelAssets,
+    manager: &mut engine_manager_api::EngineManager,
+    assets: &engine_api::LevelAssets,
     threaded_input: &mut ThreadedInput,
     frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
@@ -91,17 +95,13 @@ pub(super) fn handle_gamepad_events(
             ViewportCommand::Scroll(dir) => apply_local_viewport_scroll(host, *dir),
             ViewportCommand::ZoomIn => {
                 let mp = threaded_input.position();
-                host.viewport.zoom_by(
-                    2.0,
-                    Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
-                );
+                host.viewport
+                    .zoom_by(2.0, Some(engine_coordinates::ScreenPoint::new(mp.x, mp.y)));
             }
             ViewportCommand::ZoomOut => {
                 let mp = threaded_input.position();
-                host.viewport.zoom_by(
-                    0.5,
-                    Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
-                );
+                host.viewport
+                    .zoom_by(0.5, Some(engine_coordinates::ScreenPoint::new(mp.x, mp.y)));
             }
         }
     }
@@ -149,8 +149,8 @@ pub(super) fn handle_gamepad_events(
 /// Returns `true` when a rewind step fired this frame.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_hold_to_rewind(
-    manager: &mut robin_engine::engine_manager::EngineManager,
-    assets: &robin_engine::engine::LevelAssets,
+    manager: &mut engine_manager_api::EngineManager,
+    assets: &engine_api::LevelAssets,
     threaded_input: &ThreadedInput,
     rewind_buffer: &mut RewindBuffer,
     rollback_checker: &mut Option<RollbackChecker>,
@@ -222,9 +222,9 @@ pub(super) fn handle_hold_to_rewind(
 pub(super) fn handle_console_overlay_events(
     console_overlay: &mut ConsoleOverlay,
     engine: &mut Engine,
-    assets: &robin_engine::engine::LevelAssets,
+    assets: &engine_api::LevelAssets,
     host: &mut Host,
-    dev: &mut robin_engine::engine::DevState,
+    dev: &mut engine_api::DevState,
     events: &[GameEvent],
     kb_actions: &[GameAction],
     input_translator: &mut InputTranslator,
@@ -311,7 +311,7 @@ pub(super) fn handle_console_overlay_events(
             // Route through the engine messenger so the drain handler
             // applies the reset symmetrically for any future
             // open→close path.
-            engine.send_simple_message(robin_engine::messenger::SimpleMessage::HideConsole);
+            engine.send_simple_message(engine_messenger::SimpleMessage::HideConsole);
         }
     }
 }

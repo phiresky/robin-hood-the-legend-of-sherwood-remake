@@ -19,6 +19,7 @@
 //! or posture changes.
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::sprite as engine_sprite;
 
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
 use robin_engine::resource_ids::{RHID_DOWN_ARROW, RHID_UP_ARROW};
@@ -348,7 +349,7 @@ pub fn draw_with_sprites(
         let Some((sid, _, _)) = sprites.frame(btn, state) else {
             continue;
         };
-        let dst = robin_engine::sprite::BBox::new(
+        let dst = engine_sprite::BBox::new(
             crate::geo2d::GeoPoint2D {
                 x: rect.x() as f32,
                 y: rect.y() as f32,

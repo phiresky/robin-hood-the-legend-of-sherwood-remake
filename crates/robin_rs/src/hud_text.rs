@@ -11,6 +11,8 @@ use crate::native_font::{self, NativeFont};
 use crate::profiles;
 use crate::renderer::Renderer;
 use crate::ui_panel::PortraitCache;
+use robin_engine::character_kind as engine_character_kind;
+use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerId;
 
@@ -198,9 +200,9 @@ fn is_vip_character(engine: &Engine, assets: &LevelAssets, entity: &Entity) -> b
             !matches!(
                 pc.pc.kind,
                 Some(
-                    robin_engine::character_kind::CharacterKind::MerryManA
-                        | robin_engine::character_kind::CharacterKind::MerryManB
-                        | robin_engine::character_kind::CharacterKind::MerryManC
+                    engine_character_kind::CharacterKind::MerryManA
+                        | engine_character_kind::CharacterKind::MerryManB
+                        | engine_character_kind::CharacterKind::MerryManC
                 ),
             )
         }
@@ -538,7 +540,7 @@ fn render_counter_titbits_gpu(
             continue;
         }
 
-        let map_pt = robin_engine::coordinates::MapPoint::new(titbit.position.x, titbit.position.y);
+        let map_pt = engine_coordinates::MapPoint::new(titbit.position.x, titbit.position.y);
         let Some(screen_pt) = camera.map_to_screen(map_pt) else {
             continue;
         };
