@@ -2362,8 +2362,8 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
                 let to = step.position;
                 host.draw_manager.draw_dotted_line(
                     renderer,
-                    from.to_geo(),
-                    to.to_geo(),
+                    from,
+                    to,
                     &mut phase,
                     DISTANCE_DOT,
                     1.0,

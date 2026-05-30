@@ -22,8 +22,10 @@ use robin_assets::frame_holder::{FrameHolder, SHADOW_KEY, SpriteVariant};
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::sprite::BBox;
 
+use crate::font::TrueTypeFont;
 use crate::gfx_types::{BlendMode, Color, Rect};
 use crate::gpu_upscale::GpuUpscale;
+use crate::ui::AlphaMask;
 use crate::window::{GpuContext, SharedSurface};
 
 // ---------------------------------------------------------------------
@@ -127,7 +129,7 @@ struct ManagedSurface {
     _shadow_texture: Option<wgpu::Texture>,
     _shadow_view: Option<wgpu::TextureView>,
     shadow_bg: Option<wgpu::BindGroup>,
-    alpha_mask: crate::ui::AlphaMask,
+    alpha_mask: AlphaMask,
     shadow_alpha: u8,
 }
 
@@ -1171,10 +1173,6 @@ impl Renderer {
         rgb8_to_rgb565(r, g, b)
     }
 
-    pub fn create_color_15(r: u8, g: u8, b: u8) -> u16 {
-        ((r as u16 & 0xF8) << 7) | ((g as u16 & 0xF8) << 2) | ((b as u16) >> 3)
-    }
-
     /// Create a managed RGB565 surface from decoded asset pixels.
     /// This is the compatibility entry point for older widget/minimap
     /// surfaces that still need a renderer surface ID; callers should not
@@ -1218,7 +1216,7 @@ impl Renderer {
         let opaque_rgba = rgb565_to_rgba_opaque(pixels, w, h);
         let (color_rgba, shadow_rgba, has_shadow) =
             rgb565_to_color_shadow_rgba(pixels, TRANSPARENT_COLOR_KEY_16);
-        let alpha_mask = crate::ui::AlphaMask::from_pixels(
+        let alpha_mask = AlphaMask::from_pixels(
             width,
             height,
             width as u32,
@@ -1317,7 +1315,7 @@ impl Renderer {
     /// the UI hit-test path (`RendererBase::is_real_point`) so widget
     /// clicks on visually-transparent corners of round/non-rectangular
     /// sprites get rejected via a viewport pixel sample.
-    pub fn build_alpha_mask(&self, id: u32) -> Option<crate::ui::AlphaMask> {
+    pub fn build_alpha_mask(&self, id: u32) -> Option<AlphaMask> {
         let id = self.resolve_id(id);
         let s = self.managed_surfaces.get(&id)?;
         Some(s.alpha_mask.clone())
@@ -2050,7 +2048,7 @@ impl Renderer {
             bytemuck::bytes_of(&screen_swap),
         );
 
-        let multipass_upscale = crate::gpu_upscale::GpuUpscale::is_multipass_mode(self.scale_mode);
+        let multipass_upscale = GpuUpscale::is_multipass_mode(self.scale_mode);
         let multipass_rendered = multipass_upscale
             && self
                 .gpu_upscale
@@ -3335,13 +3333,7 @@ impl Renderer {
     /// so we rasterise into a temporary ARGB buffer sized by
     /// `font.total_pixel_height()` and upload as a one-shot wgpu
     /// texture, then queue the same blended quad the native-font path uses.
-    pub fn render_text_truetype(
-        &mut self,
-        font: &crate::font::TrueTypeFont,
-        text: &str,
-        x: i32,
-        y: i32,
-    ) {
+    pub fn render_text_truetype(&mut self, font: &TrueTypeFont, text: &str, x: i32, y: i32) {
         if text.is_empty() || !font.is_valid() {
             return;
         }

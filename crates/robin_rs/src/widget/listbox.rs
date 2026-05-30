@@ -232,14 +232,6 @@ impl<T: Clone> WidgetListbox<T> {
     // ── Item management ────────────────────────────────────────────
 
     /// Recalculate how many items fit in the visible area.
-    fn update_visible_count(&mut self) {
-        if self.item_height > 0.0
-            && let Some(rect) = self.items_bbox.0
-        {
-            let height = rect.max().y - rect.min().y;
-            self.visible_count = (height / self.item_height) as usize;
-        }
-    }
 
     // ── Scrolling ──────────────────────────────────────────────────
 

@@ -612,7 +612,7 @@ impl EngineInner {
 
         // Broadcast the BONK so nearby NPCs react to the thud of the
         // landed net.
-        let origin = crate::geo2d::pt(landing_xy.0, landing_xy.1);
+        let origin = MapPoint::new(landing_xy.0, landing_xy.1);
         let layer_u16 = if layer == INVALID_LAYER { 0 } else { layer };
         self.broadcast_noise(
             crate::ai::NoiseType::Bonk,

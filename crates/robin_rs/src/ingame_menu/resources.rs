@@ -1274,11 +1274,6 @@ impl IngameMenuResources {
     /// font instead of substituting the bitmap default. This narrowed
     /// view exists for a couple of remaining bitmap-only callers
     /// (`ui.rs` widget shims) that haven't been migrated yet.
-    pub fn list_font_native(&self, focused: bool, selected: bool) -> Option<&NativeFont> {
-        self.list_font(focused, selected)
-            .and_then(|f| f.as_native())
-            .or(self.fonts.default.as_ref())
-    }
 
     /// 6-state list font lookup that preserves the `Font` enum so
     /// callers can render via either the native bitmap or the TrueType
@@ -1475,6 +1470,7 @@ fn load_sprite_pack(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::font::TrueTypeFont;
 
     #[test]
     fn menu_text_fallback_is_english() {
@@ -1518,7 +1514,7 @@ mod tests {
         name[..12].copy_from_slice(b"MissionTitle");
         let mut tt_name = [0u8; 32];
         tt_name[..11].copy_from_slice(b"MissingFace");
-        let tt = crate::font::TrueTypeFont::from_parts(&name, 14, 0, 0, &tt_name, 0x00FF_FFFF, &[]);
+        let tt = TrueTypeFont::from_parts(&name, 14, 0, 0, &tt_name, 0x00FF_FFFF, &[]);
         let mut resources = IngameMenuResources::stub();
         resources.fonts.mission_title_any = Some(Font::TrueType(tt));
 

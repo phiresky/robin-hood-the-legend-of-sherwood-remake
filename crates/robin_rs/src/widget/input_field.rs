@@ -23,6 +23,7 @@
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
+use crate::ingame_menu::widget_bridge::{WIDGET_NOISY_INPUTFIELD, play_widget_noise};
 use crate::ui::{
     KeyState, MouseButtons, ProbeCode, TypeWriter, UiEvent, UiMsg, UiProbe, UiState,
     resource_widget_id::{
@@ -613,13 +614,7 @@ impl WidgetInputField {
         backend: Option<&mut dyn crate::sound::AudioBackend>,
         loader: &robin_engine::sound_cache::SampleLoader,
     ) {
-        crate::ingame_menu::widget_bridge::play_widget_noise(
-            events,
-            crate::ingame_menu::widget_bridge::WIDGET_NOISY_INPUTFIELD,
-            sound,
-            backend,
-            loader,
-        );
+        play_widget_noise(events, WIDGET_NOISY_INPUTFIELD, sound, backend, loader);
     }
 }
 
@@ -671,15 +666,16 @@ fn byte_offset_for_char_index(s: &str, char_index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::{MouseButtons, UiKeyboard};
+    use crate::ui::{MouseButtons, RendererBase, RendererBitmap, UiKeyboard};
+    use crate::widget::WidgetRenderer;
     use robin_engine::coordinates::ScreenBBox;
 
     fn make_editable_field() -> WidgetInputField {
         let mut f = WidgetInputField::new(1);
         f.base
             .create("", ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0), 0);
-        f.base.renderer = crate::widget::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
-            base: crate::ui::RendererBase {
+        f.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
+            base: RendererBase {
                 bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0),
                 ..Default::default()
             },

@@ -183,7 +183,7 @@ impl EngineInner {
             let Some(_) = ent.actor_data() else {
                 return;
             };
-            let remaining: Vec<crate::geo2d::GeoPoint2D> = self
+            let remaining: Vec<crate::coordinates::MapPoint> = self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .map(|e| {
@@ -198,11 +198,11 @@ impl EngineInner {
                                     | OrderType::RunningWithSword
                             )
                         })
-                        .map(|o| crate::geo2d::pt(o.target_x, o.target_y))
+                        .map(|o| crate::coordinates::MapPoint::new(o.target_x, o.target_y))
                         .collect()
                 })
                 .unwrap_or_default();
-            let position = ent.element_data().position_map().to_geo();
+            let position = ent.element_data().position_map();
             let layer = ent.element_data().layer();
             let (half_diag, move_box) = {
                 let pi = ent.position_iface();

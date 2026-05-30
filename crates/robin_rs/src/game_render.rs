@@ -62,15 +62,16 @@ pub(crate) fn render_door_overlays(
 ) {
     use crate::element::Posture;
     use crate::gate::DoorType;
-    use crate::geo2d::{GeoPoint2D, pt};
+    use crate::geo2d::pt;
     use crate::profiles::Action;
     use crate::sector::SectorType;
+    use robin_engine::coordinates::MapPoint;
 
     let Some(game_host) = engine.mission_script().and_then(|m| m.game_host()) else {
         return;
     };
 
-    let draw_geo_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
+    let draw_geo_polygon = |renderer: &mut Renderer, pts: &[MapPoint], color: u32, alpha: u32| {
         if pts.len() < 3 {
             return;
         }
@@ -85,16 +86,19 @@ pub(crate) fn render_door_overlays(
         if pts.len() < 3 {
             return;
         }
-        let pts: Vec<GeoPoint2D> = pts.iter().map(|p| p.to_geo()).collect();
         host.draw_manager
-            .draw_alpha_polygon(renderer, &pts, color, alpha);
+            .draw_alpha_polygon(renderer, pts, color, alpha);
     };
 
     let draw_door = |renderer: &mut Renderer, door: &crate::gate::Door| {
         if door.click_polygon.len() < 3 {
             return;
         }
-        let pts: Vec<GeoPoint2D> = door.click_polygon.iter().map(|&(x, y)| pt(x, y)).collect();
+        let pts: Vec<MapPoint> = door
+            .click_polygon
+            .iter()
+            .map(|&(x, y)| MapPoint::new(x, y))
+            .collect();
         draw_geo_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
     };
 
@@ -731,7 +735,7 @@ pub(crate) fn render_shadow_polygon_sphere_debug(
     };
     host.draw_manager.draw_ellipse(
         renderer,
-        geo2d::pt(viewer.x, viewer.y),
+        robin_engine::coordinates::MapPoint::new(viewer.x, viewer.y),
         params.radius as u16,
         0xFFFF,
     );
@@ -2419,10 +2423,7 @@ pub(crate) fn render_listen_ping(host: &mut Host, engine: &Engine, renderer: &mu
             _ => continue,
         };
         host.draw_manager.draw_circle(
-            renderer,
-            geo2d::pt(position.x, position.y),
-            radius,
-            0xFFFF, // white
+            renderer, position, radius, 0xFFFF, // white
         );
     }
 }
@@ -2963,7 +2964,7 @@ pub(crate) fn render_noise_display(
             continue;
         };
         let position = pc.element.position_map();
-        let origin = geo2d::pt(position.x, position.y);
+        let origin = position;
 
         // Material name text.  Use the PC's cached position-interface
         // material (the same value `pc_noise_volume` reads) so the
@@ -2982,9 +2983,7 @@ pub(crate) fn render_noise_display(
                 GameMaterial::LightShadow => "shadow",
             };
             // Offset (+10, -40) from the centre, in screen space.
-            let screen = host
-                .draw_manager
-                .map_to_screen(robin_engine::coordinates::MapPoint::from_geo(origin));
+            let screen = host.draw_manager.map_to_screen(origin);
             render_text_with_shadow(
                 renderer,
                 fonts,
@@ -3012,7 +3011,7 @@ pub(crate) fn render_noise_display(
     // ── (2) Punctual noises ──────────────────────────────────────
     for displayed in &dev.displayed_noises {
         let noise = &displayed.noise;
-        let origin = geo2d::pt(noise.origin.x, noise.origin.y);
+        let origin = robin_engine::coordinates::MapPoint::new(noise.origin.x, noise.origin.y);
         let effective = (noise.volume as f32 * HEARING_FACTOR) as u16;
         let mut r = displayed.start_radius;
         while r < effective {
@@ -3035,7 +3034,7 @@ pub(crate) fn render_noise_display(
                 let radius = r2.sqrt() as u16;
                 host.draw_manager.draw_ellipse(
                     renderer,
-                    geo2d::pt(origin.x, origin.y - sw_height as f32),
+                    robin_engine::coordinates::MapPoint::new(origin.x, origin.y - sw_height as f32),
                     radius,
                     0x000A,
                 );
@@ -3061,7 +3060,7 @@ pub(crate) fn render_noise_display(
         if radius > 0 {
             let pos = entity.element_data().position_map();
             host.draw_manager
-                .draw_ellipse(renderer, geo2d::pt(pos.x, pos.y), radius, 0x0000);
+                .draw_ellipse(renderer, pos, radius, 0x0000);
         }
     }
 }

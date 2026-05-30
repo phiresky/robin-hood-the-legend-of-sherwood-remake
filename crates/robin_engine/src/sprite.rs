@@ -829,10 +829,6 @@ impl Sprite {
     /// Sums the per-frame `wait_time` delays for the given row.  The
     /// only live caller is [`Sprite::time_for_anim`], which wants the
     /// per-row total.
-    pub fn total_time_for_row(&self, row: u16) -> u16 {
-        let scripts = self.current_scripts();
-        scripts[row as usize].delays.iter().map(|&d| d + 1).sum()
-    }
 
     /// Current average speed from the script.
     pub fn current_average_speed(&self) -> f32 {
@@ -1437,32 +1433,6 @@ impl Sprite {
     }
 
     /// Speed-modulated frame increment (only supports Default/BeginWithDone).
-    pub fn increment_frame_modulated(&mut self, speed: f32, progression: FrameProgression) -> bool {
-        let num_frames = self.num_frames_for_row(self.current_row);
-
-        match progression {
-            FrameProgression::Default | FrameProgression::BeginWithDone => {
-                self.frame_count = self.frame_count.wrapping_add(1);
-                let threshold =
-                    (speed * self.wait_time(self.current_row, self.current_frame) as f32) as u16;
-                if self.frame_count > threshold {
-                    self.frame_count = 0;
-                    self.current_frame += 1;
-                }
-                if self.current_frame >= num_frames {
-                    self.current_frame = 0;
-                }
-                let threshold =
-                    (speed * self.wait_time(self.current_row, self.current_frame) as f32) as u16;
-                self.current_frame == num_frames - 1
-                    && (self.frame_count == threshold
-                        || self.wait_time(self.current_row, self.current_frame) == 0)
-            }
-            _ => {
-                panic!("IncrementFrameModulated only supports Default/BeginWithDone progression");
-            }
-        }
-    }
 
     // -- High-level animation methods --
 

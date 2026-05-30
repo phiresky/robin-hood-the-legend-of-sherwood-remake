@@ -23,6 +23,7 @@ use crate::gfx_types::Keycode;
 
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
+use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::res_descr::LevelDescriptors;
 use crate::resource_manager::ResourceManager;
@@ -30,6 +31,7 @@ use crate::ui_screens::{
     MissionChoice, MissionDescriptionButton, MissionDescriptionScreen, center_horizontally_x,
     mission_description_layout as layout_consts,
 };
+use crate::widget::FrameWnd;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::engine::Engine;
 use robin_engine::sprite::BBox;
@@ -150,7 +152,7 @@ pub async fn show_mission_description(
     let btn_y = layout_consts::BUTTON_ROW_Y;
 
     // ── Build the FrameWnd ──────────────────────────────────────
-    let mut frame = crate::widget::FrameWnd::default();
+    let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
     for (idx, button) in buttons.iter().enumerate() {
@@ -414,7 +416,7 @@ pub async fn show_mission_description(
                 let (drop_cap_w, drop_cap_h) =
                     screen.description_drop_cap(pic_w, pic_h).unwrap_or((0, 0));
                 match font {
-                    crate::native_font::Font::Native(native) => {
+                    Font::Native(native) => {
                         let fonts = TextFontTable::uniform(Some(native));
                         let _leftover = render_text_in_box_with_drop_cap(
                             renderer,
@@ -431,7 +433,7 @@ pub async fn show_mission_description(
                             TextAlign::Justified,
                         );
                     }
-                    crate::native_font::Font::TrueType(_) => {
+                    Font::TrueType(_) => {
                         let _leftover = render_text_in_box_font(
                             renderer,
                             font,
@@ -501,7 +503,7 @@ async fn dispatch_convert_money(
     profiles: &robin_engine::profiles::ProfileManager,
     mission_index: usize,
     screen: &mut MissionDescriptionScreen,
-    frame: &mut crate::widget::FrameWnd,
+    frame: &mut FrameWnd,
 ) {
     // Snapshot price + ransom for the child modal.  The
     // can-convert-money-to-blazons precondition is already guaranteed

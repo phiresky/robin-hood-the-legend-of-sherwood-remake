@@ -1130,7 +1130,7 @@ fn is_on_wall_or_ladder(
 pub(crate) fn nearest_jump_line_from_sector(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     home_sector_number: i16,
-    from_position: crate::geo2d::GeoPoint2D,
+    from_position: crate::coordinates::MapPoint,
     max_distance: f32,
     linked_sector_number: i16,
 ) -> Option<u32> {
@@ -1169,7 +1169,7 @@ pub(crate) fn nearest_jump_line_from_sector(
             continue;
         }
 
-        let d = jump_line.compute_distance(from_position.into());
+        let d = jump_line.compute_distance(from_position);
         if d >= max_distance {
             continue;
         }
@@ -1194,7 +1194,7 @@ pub(crate) fn table_swordfight_jump_line(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     attacker_sector_number: i16,
     victim_sector_number: i16,
-    victim_position: crate::geo2d::GeoPoint2D,
+    victim_position: crate::coordinates::MapPoint,
     max_range: f32,
 ) -> Option<u32> {
     // Same sector → no table swordfight needed.
@@ -1225,7 +1225,7 @@ pub(crate) fn table_swordfight_jump_line(
     let dx = mid_aggressor.x - mid_victim.x;
     let dy = mid_aggressor.y - mid_victim.y;
     let middle_distance = (dx * dx + dy * dy).sqrt();
-    let victim_offset = victim_line.compute_distance(victim_position.into());
+    let victim_offset = victim_line.compute_distance(victim_position);
     if middle_distance + victim_offset > max_range {
         return None;
     }
@@ -1261,7 +1261,7 @@ pub(crate) fn is_table_swordfight_needed(
         fast_grid,
         i16::from(pc_sector),
         i16::from(victim_sector),
-        victim.element_data().position_map().to_geo(),
+        victim.element_data().position_map(),
         maximal_distance,
     )
 }
@@ -1307,12 +1307,12 @@ pub(crate) fn number_of_table_swordfight_opponents(
 /// has no free slot within [0, 1] (caller should interrupt the sequence).
 pub(crate) fn find_position_for_table_swordfight(
     entities: &[Option<Entity>],
-    self_position: crate::geo2d::GeoPoint2D,
+    self_position: crate::coordinates::MapPoint,
     self_sector: i16,
     self_id: EntityId,
     opponent_id: EntityId,
     jump_line: &crate::jump_line::JumpLine,
-) -> Option<crate::geo2d::GeoPoint2D> {
+) -> Option<crate::coordinates::MapPoint> {
     // The opponent must already be swordfighting at least one fighter
     // (us) when this runs.
     let opponent = entities.get(opponent_id.index() as usize)?.as_ref()?;
@@ -1325,7 +1325,7 @@ pub(crate) fn find_position_for_table_swordfight(
     }
     let displacement = 15.0 / line_norm;
 
-    let position_current = jump_line.compute_nearest_point_param(self_position.into());
+    let position_current = jump_line.compute_nearest_point_param(self_position);
 
     // Collect the "friends" — enemies of my enemy. Every opponent of
     // `opponent` that is NOT me and shares my sector.
@@ -1360,7 +1360,7 @@ pub(crate) fn find_position_for_table_swordfight(
                     jump_line.point_a.y + position_current * line_vec.y,
                 )
             };
-            return Some(pt.to_geo());
+            return Some(pt);
         }
         1 => {
             let p = occupied[0];
@@ -1393,11 +1393,11 @@ pub(crate) fn find_position_for_table_swordfight(
     if pos_left >= 0.0 {
         if pos_right <= 1.0 {
             // Both sides valid — pick whichever is closer in world space.
-            let right_pt = crate::geo2d::pt(
+            let right_pt = crate::coordinates::MapPoint::new(
                 jump_line.point_a.x + pos_right * line_vec.x,
                 jump_line.point_a.y + pos_right * line_vec.y,
             );
-            let left_pt = crate::geo2d::pt(
+            let left_pt = crate::coordinates::MapPoint::new(
                 jump_line.point_a.x + pos_left * line_vec.x,
                 jump_line.point_a.y + pos_left * line_vec.y,
             );
@@ -1414,14 +1414,14 @@ pub(crate) fn find_position_for_table_swordfight(
             Some(if dl < dr { left_pt } else { right_pt })
         } else {
             // Only left side valid.
-            Some(crate::geo2d::pt(
+            Some(crate::coordinates::MapPoint::new(
                 jump_line.point_a.x + pos_left * line_vec.x,
                 jump_line.point_a.y + pos_left * line_vec.y,
             ))
         }
     } else if pos_right <= 1.0 {
         // Only right side valid.
-        Some(crate::geo2d::pt(
+        Some(crate::coordinates::MapPoint::new(
             jump_line.point_a.x + pos_right * line_vec.x,
             jump_line.point_a.y + pos_right * line_vec.y,
         ))

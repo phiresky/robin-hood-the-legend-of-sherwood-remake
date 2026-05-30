@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::campaign::{Campaign, CampaignValue};
-use crate::profiles::{MissionLocation, MissionProfile, MissionType};
+use crate::profiles::{MissionLocation, MissionType};
 
 // ═══════════════════════════════════════════════════════════════════
 // Menu Screen — timer and window layer management
@@ -188,10 +188,6 @@ impl Rect {
             width: w,
             height: h,
         }
-    }
-
-    pub fn top_left(&self) -> (f32, f32) {
-        (self.x, self.y)
     }
 
     pub fn bottom_right(&self) -> (f32, f32) {
@@ -515,10 +511,6 @@ impl CampaignMapState {
     }
 
     /// Get the mission index at a given location, if any.
-    pub fn get_mission_at(&self, location: MissionLocation) -> Option<usize> {
-        let idx = location as usize;
-        self.locations.get(idx).and_then(|loc| loc.mission_idx)
-    }
 
     // ── Campaign interaction ───────────────────────────────────────
 

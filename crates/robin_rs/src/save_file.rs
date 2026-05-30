@@ -35,6 +35,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::game::GamePersistentState;
+use crate::player_profile::PlayerProfileManager;
 use crate::sound::SoundManager;
 use robin_engine::engine::Engine;
 
@@ -603,7 +604,7 @@ pub fn save_directory_for_profile(profile_id: u32) -> PathBuf {
 /// profile is set — matching the project rule of not silently falling
 /// back to placeholder data (see CLAUDE.md).
 pub fn save_directory_for_active_profile() -> PathBuf {
-    let guard = crate::player_profile::PlayerProfileManager::global();
+    let guard = PlayerProfileManager::global();
     let mgr = guard.as_ref().expect(
         "save_directory_for_active_profile: global PlayerProfileManager not initialised — \
              call init_global_player_profile_manager() before requesting a save directory",

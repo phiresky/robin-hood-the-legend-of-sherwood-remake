@@ -342,10 +342,6 @@ impl FrameHolder {
         self.sprites[index as usize].height
     }
 
-    pub fn dictionary_index(&self, sprite_index: u32) -> u16 {
-        self.sprites[sprite_index as usize].dictionary_index
-    }
-
     /// Packed pixel data for a sprite, or `None` for sentinel (zero-size)
     /// entries that were never populated.
     pub fn packed_data(&self, sprite_index: u32) -> Option<&[u16]> {
@@ -1355,21 +1351,6 @@ pub fn unpack_rgb565(color: u16) -> (u16, u16, u16) {
 /// 6-bit green channel is therefore discarded before scaling — a
 /// deliberate quirk of the original asm code that we preserve for
 /// pixel-exact parity.
-fn apply_color_scale_16(data: &mut [u16], level: u16, shadow_color: u16) {
-    for pixel in data.iter_mut() {
-        if *pixel != TRANSPARENT_COLOR_16 && *pixel != shadow_color {
-            let r = (*pixel & 0xF800) >> 11;
-            let g = (*pixel & 0x07C0) >> 5;
-            let b = *pixel & 0x001F;
-
-            let r2 = r * level / 100;
-            let g2 = g * level / 100;
-            let b2 = b * level / 100;
-
-            *pixel = ((r2 << 11) & 0xF800) | ((g2 << 5) & 0x07C0) | (b2 & 0x001F);
-        }
-    }
-}
 
 /// Blend pixels toward a fog color at the given intensity.
 ///

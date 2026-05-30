@@ -451,7 +451,7 @@ impl EnemyAi {
                 grid,
                 ctx.position.sector.map(i16::from).unwrap_or(-1),
                 enemy.position.sector.map(i16::from).unwrap_or(-1),
-                crate::geo2d::pt(enemy.position.x, enemy.position.y),
+                crate::coordinates::MapPoint::new(enemy.position.x, enemy.position.y),
                 my_max_range as f32,
             )
             && let Some(aggressor_line) = grid.level.jump_lines.get(aggressor_line_idx as usize)
@@ -3118,7 +3118,7 @@ impl EnemyAi {
                 grid,
                 ctx.position.sector.map(i16::from).unwrap_or(-1),
                 primary.position.sector.map(i16::from).unwrap_or(-1),
-                crate::geo2d::pt(primary.position.x, primary.position.y),
+                crate::coordinates::MapPoint::new(primary.position.x, primary.position.y),
                 my_max_range as f32,
             );
         }

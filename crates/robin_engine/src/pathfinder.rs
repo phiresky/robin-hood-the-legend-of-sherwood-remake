@@ -1761,7 +1761,7 @@ impl PathFinderRuntime {
     /// Builds a movement corridor and checks for intersecting motion lines.
     pub fn is_reachable_grid(&self, grid: &FastFindGrid, p1: MapPoint, p2: MapPoint) -> bool {
         let hd = self.current_half_diagonal;
-        let corridor = match FastFindGrid::build_thick_move_corridor(p1.to_geo(), p2.to_geo(), hd) {
+        let corridor = match FastFindGrid::build_thick_move_corridor(p1, p2, hd) {
             Some(c) => c,
             None => return true, // Zero movement
         };
@@ -1788,7 +1788,7 @@ impl PathFinderRuntime {
         // Check if any line endpoint lies inside the corridor
         for &idx in &line_indices {
             let p = grid.level.lines[usize::from(idx)].a;
-            if corridor.point_inside(p.to_geo()) {
+            if corridor.point_inside(p) {
                 return false;
             }
         }

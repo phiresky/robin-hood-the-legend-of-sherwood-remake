@@ -3304,7 +3304,7 @@ impl EngineInner {
             blipped: bool,
             sector: Option<crate::position_interface::SectorHandle>,
             in_door_transit: bool,
-            position: crate::geo2d::GeoPoint2D,
+            position: crate::coordinates::MapPoint,
             speech_id: u32,
             script_forbidden: bool,
             profile_name: String,
@@ -3328,7 +3328,7 @@ impl EngineInner {
                     s.element.blipped,
                     s.element.sector(),
                     s.element.is_in_door_transit(),
-                    s.element.position_map().to_geo(),
+                    s.element.position_map(),
                 ),
                 crate::element::Entity::Civilian(c) => (
                     &mut c.npc,
@@ -3342,7 +3342,7 @@ impl EngineInner {
                     c.element.blipped,
                     c.element.sector(),
                     c.element.is_in_door_transit(),
-                    c.element.position_map().to_geo(),
+                    c.element.position_map(),
                 ),
                 _ => continue,
             };
@@ -6461,7 +6461,7 @@ impl EngineInner {
     pub fn broadcast_noise(
         &mut self,
         noise_type: crate::ai::NoiseType,
-        origin: crate::geo2d::GeoPoint2D,
+        origin: crate::coordinates::MapPoint,
         origin_layer: u16,
         volume: u16,
         elevation: u16,
@@ -6547,7 +6547,7 @@ impl EngineInner {
                 if unconscious {
                     continue;
                 }
-                (elem.position_map().to_geo(), elem.position().z)
+                (elem.position_map(), elem.position().z)
             };
 
             // `noise()` does NOT filter by layer; every in-camp NPC

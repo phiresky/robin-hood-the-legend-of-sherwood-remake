@@ -404,22 +404,6 @@ impl Font {
             Font::TrueType(f) => f.get_extra_spacing(),
         }
     }
-
-    /// Borrow as a `NativeFont`, if this is the native variant.
-    ///
-    /// `Renderer::render_text_argb` (atlas + UV-mapped quads) only
-    /// handles native bitmap glyphs. The TrueType variant goes through
-    /// `Renderer::render_text_truetype` (per-string ARGB rasterise +
-    /// one-shot upload). Callers that want polymorphic rendering
-    /// across both variants should use the `Font`-typed
-    /// `render_text_virt_font` / `render_text_screen_font` helpers in
-    /// `ingame_menu::layout` instead of `as_native`.
-    pub fn as_native(&self) -> Option<&NativeFont> {
-        match self {
-            Font::Native(f) => Some(f),
-            Font::TrueType(_) => None,
-        }
-    }
 }
 
 /// Parse `Data/Interface/Fonts/manager.cfg` and return a map of

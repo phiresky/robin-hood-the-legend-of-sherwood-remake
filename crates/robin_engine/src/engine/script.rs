@@ -3135,7 +3135,7 @@ impl EngineInner {
                     // always broadcast at elevation 0.
                     self.broadcast_noise(
                         noise_type,
-                        crate::geo2d::pt(x, y),
+                        crate::coordinates::MapPoint::new(x, y),
                         layer,
                         volume,
                         0,

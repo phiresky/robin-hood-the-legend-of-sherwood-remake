@@ -381,7 +381,7 @@ impl FrameWnd {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::{MouseButtons, UiKeyboard, UiMsg};
+    use crate::ui::{MouseButtons, UiKeyboard, UiMsg, resource_widget_id::NO_RESOURCE};
     use crate::widget::{WidgetButton, WidgetRadioButton, WidgetRenderer};
 
     fn make_keyboard() -> &'static UiKeyboard {
@@ -780,8 +780,6 @@ mod tests {
 
     #[test]
     fn restore_region_skips_non_intersecting() {
-        use crate::ui::resource_widget_id::NO_RESOURCE;
-
         let mut frame = FrameWnd::new("Test", ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0), 0);
         frame.add_widget_absolute(make_button_widget(1, 10.0, 10.0, 80.0, 30.0));
 

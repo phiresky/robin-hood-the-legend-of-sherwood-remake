@@ -9,6 +9,7 @@ use crate::gfx_types::Keycode;
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
 use crate::renderer::Renderer;
+use crate::widget::FrameWnd;
 use robin_engine::graphic_config::TextureScaleMode;
 
 use super::layout::{
@@ -169,7 +170,7 @@ pub async fn show_graphics(
     align_on_first_widget(&mut scale_layout, scale_row_spacing);
 
     // Build the FrameWnd with all widgets.
-    let mut frame = crate::widget::FrameWnd::default();
+    let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
 

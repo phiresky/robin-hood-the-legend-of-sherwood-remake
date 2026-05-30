@@ -2544,7 +2544,7 @@ impl EngineInner {
                 if matches!(object_type, crate::element::ObjectType::Arrow) {
                     self.broadcast_noise(
                         crate::ai::NoiseType::Zonk,
-                        position_map.to_geo(),
+                        position_map,
                         layer,
                         crate::parameters_ai::NOISE_VOLUME_ZONK as u16,
                         position.z.max(0.0) as u16,
@@ -2603,7 +2603,7 @@ impl EngineInner {
         // `parameters_ai::NOISE_VOLUME_PLOUF` (300).
         self.broadcast_noise(
             crate::ai::NoiseType::Plouf,
-            position_map.to_geo(),
+            position_map,
             layer,
             crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
             position.z.max(0.0) as u16,
@@ -3244,7 +3244,7 @@ impl EngineInner {
                         .unwrap_or((0, 0));
                     self.broadcast_noise(
                         crate::ai::NoiseType::Pfiiit,
-                        crate::geo2d::pt(position.x, position.y),
+                        crate::coordinates::MapPoint::new(position.x, position.y),
                         layer,
                         crate::abilities::NOISE_VOLUME_WHISTLE,
                         elevation,

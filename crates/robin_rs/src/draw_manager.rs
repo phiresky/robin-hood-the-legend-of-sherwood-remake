@@ -207,11 +207,6 @@ impl DrawManager {
     }
 
     /// Fill a rectangle in world coordinates, clipped to the view.
-    pub fn fill_box(&self, renderer: &mut Renderer, bbox: &BBox, color: u16) {
-        if let Some(clipped) = self.clip_box(bbox) {
-            renderer.fill_screen(Some(&clipped), color);
-        }
-    }
 
     /// Draw a dotted line between two points.
     ///
@@ -221,8 +216,8 @@ impl DrawManager {
     pub fn draw_dotted_line(
         &self,
         renderer: &mut Renderer,
-        a: GeoPoint2D,
-        b: GeoPoint2D,
+        a: MapPoint,
+        b: MapPoint,
         start: &mut f32,
         spacing: f32,
         thickness: f32,
@@ -288,14 +283,14 @@ impl DrawManager {
     pub fn draw_ellipse(
         &self,
         renderer: &mut Renderer,
-        position: GeoPoint2D,
+        position: MapPoint,
         radius: u16,
         color: u16,
     ) {
         // cos(55°), the game's isometric projection angle.
         const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573576436351046096108031912826158;
 
-        let center = self.map_to_screen(MapPoint::from_geo(position)).to_geo();
+        let center = self.map_to_screen(position).to_geo();
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
             (radius as f32 * self.zoom_factor) as u16 as i32
@@ -311,11 +306,11 @@ impl DrawManager {
     pub fn draw_circle(
         &self,
         renderer: &mut Renderer,
-        position: GeoPoint2D,
+        position: MapPoint,
         radius: u16,
         color: u16,
     ) {
-        let center = self.map_to_screen(MapPoint::from_geo(position)).to_geo();
+        let center = self.map_to_screen(position).to_geo();
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
             (radius as f32 * self.zoom_factor) as u16 as i32
@@ -344,7 +339,7 @@ impl DrawManager {
     pub fn draw_alpha_polygon(
         &self,
         renderer: &mut Renderer,
-        points: &[GeoPoint2D],
+        points: &[MapPoint],
         color: u32,
         alpha: u32,
     ) {
@@ -356,7 +351,7 @@ impl DrawManager {
         let screen_pts: Vec<[f32; 2]> = points
             .iter()
             .map(|p| {
-                let s = self.map_to_screen(MapPoint::from_geo(*p)).to_geo();
+                let s = self.map_to_screen(*p).to_geo();
                 [s.x, s.y]
             })
             .collect();

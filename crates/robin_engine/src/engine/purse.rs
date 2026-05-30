@@ -244,7 +244,7 @@ impl EngineInner {
         // PLING noise so nearby NPCs hear the impact.
         self.broadcast_noise(
             crate::ai::NoiseType::Pling,
-            crate::geo2d::pt(source_pos.x, source_pos.y),
+            crate::coordinates::MapPoint::new(source_pos.x, source_pos.y),
             layer,
             crate::parameters_ai::NOISE_VOLUME_PLING as u16,
             source_pos.z.max(0.0) as u16,

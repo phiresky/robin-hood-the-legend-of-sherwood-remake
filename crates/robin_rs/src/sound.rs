@@ -20,8 +20,6 @@ use robin_engine::coordinates::MapPoint;
 
 const MUSIC_MODE_WEIGHT: u32 = 128;
 const DIALOGUE_ATTENUATION: f32 = 0.3;
-/// FX shorter than this (ms) are played immediately; longer ones are pending.
-const SAMPLE_LENGTH_POSITIONING_THRESHOLD: u32 = 800;
 /// Default number of mixing channels (matches SDL_mixer setup).
 pub const NUM_CHANNELS: u32 = 8;
 const EXCLAMATION_VARIANT_NONE: i32 = -1;
@@ -1298,17 +1296,6 @@ impl SoundManager {
     /// matching entry, and erases just that entry. Earlier Rust used
     /// `retain` which dropped *every* match — that broke when
     /// duplicate pendings exist.
-    pub fn deactivate_sound_source(&mut self, index: usize, backend: &mut dyn AudioBackend) {
-        if let Some(pos) = self.pending_sounds.iter().position(|p| {
-            p.settings.sound_type == SoundType::Source && p.source_index == Some(index)
-        }) {
-            let channel = self.pending_sounds[pos].channel;
-            if channel >= 0 {
-                self.stop_channel(channel, backend);
-            }
-            self.pending_sounds.remove(pos);
-        }
-    }
 
     // ── Hourglass (main update) ──────────────────────────────────────
 
@@ -1868,16 +1855,6 @@ impl SoundManager {
     // ── Cache entry info extraction ──────────────────────────────────
 
     /// Get sample length in ms for given sound settings.
-    fn get_sample_length_ms(
-        &mut self,
-        settings: &SoundSettings,
-        loader: &SampleLoader,
-        rng: &mut dyn FnMut(u32) -> u32,
-        sources: &SoundSourceManager,
-    ) -> u32 {
-        self.get_entry_info(settings, None, false, loader, rng, sources)
-            .map_or(0, |i| i.sample_length_ms)
-    }
 
     /// Extract cache entry info (file name, length, etc.) without holding a
     /// borrow on the cache. Calls the appropriate cache getter internally.
