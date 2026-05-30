@@ -11,6 +11,7 @@ use crate::gfx_types::Keycode;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
+use crate::widget::FrameWnd;
 use robin_assets::keyconfig::{KeyConfig, REAL_KEY_COUNT};
 use robin_engine::sound_cache::SampleLoader;
 use winit::keyboard::KeyCode;
@@ -110,7 +111,7 @@ pub async fn show_shortcuts(
     let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
 
     // Build FrameWnd with the five buttons.
-    let mut frame = crate::widget::FrameWnd::default();
+    let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
     for (i, mb) in menu_buttons.iter().enumerate() {

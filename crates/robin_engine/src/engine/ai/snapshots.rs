@@ -332,7 +332,7 @@ impl EngineInner {
 
         let mut pc_snapshots: Vec<PcSnapshot> = Vec::with_capacity(self.pc_ids.len());
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.0 as usize) else {
+            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.index() as usize) else {
                 continue;
             };
             // `is_able_to_fight` requires alive, but unconscious PCs are
@@ -425,11 +425,12 @@ impl EngineInner {
                 .position_iface
                 .is_using_emergency_lying_box();
             let eye_position = crate::stealth::eye_point_xy(
-                pos.to_geo(),
+                pos,
                 pc.element.posture,
                 pc.element.direction(),
                 emergency_lying,
             )
+            .to_geo()
             .into();
             let eye_z = pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture, false);
             let detection_z =
@@ -486,8 +487,8 @@ impl EngineInner {
                 eye_z,
                 detection_z,
                 melee_target: pc.pc.melee_target,
-                principal_opponent: pc.human.opponents.first().map(|id| id.0).unwrap_or(0),
-                opponent_handles: pc.human.opponents.iter().map(|id| id.0).collect(),
+                principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                opponent_handles: pc.human.opponents.iter().map(|id| id.index()).collect(),
                 unconscious: is_unconscious,
                 carried: is_carried,
                 passing_door: is_passing_door,
@@ -505,7 +506,7 @@ impl EngineInner {
         // can pick it up.  Stored on the human element so it carries
         // across frames.
         for snap in &pc_snapshots {
-            if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(snap.id.0 as usize) {
+            if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(snap.id.index() as usize) {
                 pc.actor.last_noise_volume = snap.noise_volume;
             }
         }
@@ -528,7 +529,7 @@ impl EngineInner {
             .unwrap_or(&[]);
         let mut forecasts = std::collections::HashMap::with_capacity(self.pc_ids.len());
         forecasts.extend(self.pc_ids.iter().filter_map(|&pc_id| {
-            let entity = self.entities.get(pc_id.0 as usize)?.as_ref()?;
+            let entity = self.entities.get(pc_id.index() as usize)?.as_ref()?;
             let input = extract_forecast_input(entity)?;
             let forecast = crate::ai::forecast_destination_for_ia(
                 &input,
@@ -536,7 +537,7 @@ impl EngineInner {
                 &self.fast_grid.level.sectors,
                 &self.fast_grid.level.sector_number_map,
             );
-            Some((pc_id.0, forecast))
+            Some((pc_id.index(), forecast))
         }));
         forecasts
     }
@@ -561,13 +562,13 @@ impl EngineInner {
         let mut primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32> =
             std::collections::BTreeMap::new();
         for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize)
+            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
                 && let Some(ai) = s.npc.ai_brain.base()
                 && ai.primary_target != 0
                 && ai.current_substate.is_any_swordfight()
             {
                 *primary_target_multiplicity
-                    .entry(EntityId(ai.primary_target))
+                    .entry(EntityId::from_raw(ai.primary_target))
                     .or_insert(0) += 1;
             }
         }
@@ -584,7 +585,7 @@ impl EngineInner {
         let mut npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>> =
             std::collections::HashMap::with_capacity(self.npc_ids.len());
         for &npc_id in &self.npc_ids {
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize)
+            if let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
                 && let Some(ai) = s.npc.ai_brain.enemy()
                 && ai.base.primary_target != 0
             {
@@ -593,7 +594,7 @@ impl EngineInner {
                     &self.fast_grid,
                     &assets.profile_manager,
                     npc_id,
-                    EntityId(ai.base.primary_target),
+                    EntityId::from_raw(ai.base.primary_target),
                 );
                 npc_jump_lines.insert(npc_id, jl);
             }
@@ -615,7 +616,7 @@ impl EngineInner {
     ) -> Vec<SoldierSnapshot> {
         let mut soldier_snapshots: Vec<SoldierSnapshot> = Vec::with_capacity(self.npc_ids.len());
         for &npc_id in &self.npc_ids {
-            let Some(Some(entity_ref)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity_ref)) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
             let Entity::Soldier(s) = entity_ref else {
@@ -714,7 +715,7 @@ impl EngineInner {
                     .get(idx)
                     .map(|list| {
                         let mut bodies = Vec::with_capacity(list.len());
-                        bodies.extend(list.iter().filter_map(|d| d.element.map(|e| e.0)));
+                        bodies.extend(list.iter().filter_map(|d| d.element.map(|e| e.index())));
                         bodies
                     })
                     .unwrap_or_default()
@@ -850,8 +851,8 @@ impl EngineInner {
                 company_number,
                 pride,
                 primary_target,
-                principal_opponent: s.human.opponents.first().map(|id| id.0).unwrap_or(0),
-                opponent_handles: s.human.opponents.iter().map(|id| id.0).collect(),
+                principal_opponent: s.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                opponent_handles: s.human.opponents.iter().map(|id| id.index()).collect(),
                 able_to_fight,
                 able_to_help,
                 alert_status,
@@ -913,18 +914,22 @@ impl EngineInner {
                 soldier_snapshots
                     .iter()
                     .filter(|s| s.shield_bearer_before_me != 0)
-                    .map(|s| (s.id.0, s.shield_bearer_before_me)),
+                    .map(|s| (s.id.index(), s.shield_bearer_before_me)),
             );
             for (archer_handle, sb_handle) in &pairs {
-                if let Some(sb) = soldier_snapshots.iter_mut().find(|s| s.id.0 == *sb_handle) {
+                if let Some(sb) = soldier_snapshots
+                    .iter_mut()
+                    .find(|s| s.id.index() == *sb_handle)
+                {
                     sb.archer_behind_me = *archer_handle;
                 }
             }
             // Write back to stored EnemyAi fields so direct self-reads
             // (outside snapshots) stay fresh.
             for snap in &soldier_snapshots {
-                let npc_id = EntityId(snap.id.0);
-                if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize)
+                let npc_id = EntityId::from_raw(snap.id.index());
+                if let Some(Some(Entity::Soldier(s))) =
+                    self.entities.get_mut(npc_id.index() as usize)
                     && let Some(enemy_ai) = s.npc.ai_brain.enemy_mut()
                 {
                     enemy_ai.archer_behind_me = snap.archer_behind_me;
@@ -943,7 +948,7 @@ impl EngineInner {
         let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
             Vec::with_capacity(self.npc_ids.len());
         for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
             if !s.element.active {
@@ -1006,7 +1011,7 @@ impl EngineInner {
         let mut object_ids: std::collections::HashSet<EntityId> =
             std::collections::HashSet::with_capacity(self.entities.len());
         for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
             let Some(npc) = entity.npc_data() else {
@@ -1040,7 +1045,7 @@ impl EngineInner {
         let mut human_targets: std::collections::HashMap<EntityId, HumanTarget> =
             std::collections::HashMap::with_capacity(human_ids.len());
         for id in human_ids {
-            let Some(Some(entity)) = self.entities.get(id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(id.index() as usize) else {
                 continue;
             };
             let position = entity.element_data().position_map();
@@ -1124,7 +1129,7 @@ impl EngineInner {
         let mut object_targets: std::collections::HashMap<EntityId, ObjectTarget> =
             std::collections::HashMap::with_capacity(object_ids.len());
         for id in object_ids {
-            let Some(Some(entity)) = self.entities.get(id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(id.index() as usize) else {
                 continue;
             };
             let position = entity.element_data().position_map();

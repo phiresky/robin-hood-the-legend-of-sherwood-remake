@@ -1668,7 +1668,7 @@ impl FriendlyAi {
             // me" checks later find it.
             if !check_door_path {
                 detectables_to_add.push((
-                    crate::element::EntityId(handle),
+                    crate::element::EntityId::from_raw(handle),
                     crate::element::DetectableType::Friend,
                 ));
             }
@@ -1756,7 +1756,7 @@ impl FriendlyAi {
                             ctx.self_is_rider,
                         );
                     let target_detection_xy = crate::stealth::detection_point_xy(
-                        crate::geo2d::pt(view.position.x, view.position.y),
+                        crate::coordinates::MapPoint::new(view.position.x, view.position.y),
                         view.posture,
                         view.direction as i16,
                     );

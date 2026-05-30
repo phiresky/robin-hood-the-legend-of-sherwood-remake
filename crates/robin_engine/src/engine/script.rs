@@ -3,7 +3,7 @@
 use super::*;
 use crate::ai::AiStateChangeSource;
 use crate::campaign::{Campaign, CampaignValue};
-use crate::element::{Entity, EntityId};
+use crate::element::Entity;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
@@ -31,9 +31,8 @@ impl EngineInner {
             .map(|i| self.sound_sim.sources.get(i).is_some())
             .collect();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
-            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
+        for (id, entity) in self.entities_iter_with_id() {
+            let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
 
             // FX / target active state (existing)
             if entity.kind().is_fx() || entity.kind().is_fx_target() {
@@ -93,13 +92,12 @@ impl EngineInner {
         // for the current frame.
         let mut current_animations: Vec<(i32, crate::order::OrderType)> =
             Vec::with_capacity(self.actor_ids.len() + self.animation_ids.len());
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in self.entities_iter_with_id() {
+            let idx = entity_id.index() as usize;
             let handle = crate::natives::GameHost::actor_handle_from_index(idx);
             if entity.is_actor() {
-                if let Some((_, _, order)) = self
-                    .sequence_manager
-                    .current_order_for_actor(EntityId(idx as u32))
+                if let Some((_, _, order)) =
+                    self.sequence_manager.current_order_for_actor(entity_id)
                 {
                     current_animations.push((handle, order.order_type));
                 }
@@ -146,9 +144,9 @@ impl EngineInner {
     pub(super) fn refresh_game_host_pc_auth_bits(&mut self) {
         let mut bits: Vec<(i32, u16)> = Vec::new();
         let mut pc_bit_idx = 0u16;
-        for (idx, slot) in self.entities.iter().enumerate() {
-            if let Some(Entity::Pc(_)) = slot {
-                let handle = crate::natives::GameHost::actor_handle_from_index(idx);
+        for (id, entity) in self.entities_iter_with_id() {
+            if let Entity::Pc(_) = entity {
+                let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
                 let bit = 1u16 << pc_bit_idx;
                 bits.push((handle, bit));
                 pc_bit_idx += 1;
@@ -429,7 +427,10 @@ impl EngineInner {
                                 self.unselect_all_pcs(0);
                             }
                         } else if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let id = EntityId(idx as u32);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::SelectPC",
+                            );
                             if select {
                                 // Script-path SelectPC uses `speak=false`
                                 // — script already owns the sound flow.
@@ -441,7 +442,10 @@ impl EngineInner {
                     }
                     crate::natives::DeferredCommand::StopActor { actor } => {
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let id = EntityId(idx as u32);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::StopActor",
+                            );
                             self.stop_owner(id, crate::sequence::SequencePriority::Script);
                         }
                     }
@@ -450,23 +454,41 @@ impl EngineInner {
                     }
                     crate::natives::DeferredCommand::HandleDeath { actor } => {
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let id = EntityId(idx as u32);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::HandleDeath",
+                            );
                             self.handle_death(assets, id);
                         }
                     }
                     crate::natives::DeferredCommand::SpawnDamageNumber { actor, damage } => {
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            self.add_damage_number(EntityId(idx as u32), damage);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::SpawnDamageNumber",
+                            );
+                            self.add_damage_number(id, damage);
                         }
                     }
                     crate::natives::DeferredCommand::PcSayOuchForLifeDrop { actor, damage } => {
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            self.say_ouch(assets, EntityId(idx as u32), Some(damage));
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::PcSayOuchForLifeDrop",
+                            );
+                            self.say_ouch(assets, id, Some(damage));
                         }
                     }
                     crate::natives::DeferredCommand::SetScriptedLifePoints { actor, amount } => {
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            self.apply_scripted_life_points(assets, EntityId(idx as u32), amount);
+                            self.apply_scripted_life_points(
+                                assets,
+                                self.expect_entity_id_for_index(
+                                    idx as u32,
+                                    "DeferredCommand::SetScriptedLifePoints",
+                                ),
+                                amount,
+                            );
                         }
                     }
                     crate::natives::DeferredCommand::SetScriptedConcussion {
@@ -479,12 +501,23 @@ impl EngineInner {
                             // before casting; `combat::set_concussion` clamps
                             // the upper bound to `CONCUSSION_MAX`.
                             let value = amount.max(0).min(u16::MAX as i32) as u16;
-                            self.apply_concussion(assets, EntityId(idx as u32), value, force_value);
+                            self.apply_concussion(
+                                assets,
+                                self.expect_entity_id_for_index(
+                                    idx as u32,
+                                    "DeferredCommand::SetScriptedConcussion",
+                                ),
+                                value,
+                                force_value,
+                            );
                         }
                     }
                     crate::natives::DeferredCommand::QuitSwordfight { actor } => {
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let id = EntityId(idx as u32);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::QuitSwordfight",
+                            );
                             self.quit_swordfight(assets, id);
                         }
                     }
@@ -517,7 +550,7 @@ impl EngineInner {
                             crate::messenger::PcMessage::DisableCharacter
                         };
                         let pc_id = crate::natives::GameHost::actor_index(actor)
-                            .map(|idx| crate::element::EntityId(idx as u32));
+                            .map(|idx| crate::element::EntityId::from_raw(idx as u32));
                         self.messenger.send(Message::pc(msg_type, pc_id));
                         tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
                     }
@@ -533,7 +566,10 @@ impl EngineInner {
                         // We implement that by peeking the sequence
                         // manager for the actor's in-flight command.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let owner = EntityId(idx as u32);
+                            let owner = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::ScriptLockAI",
+                            );
                             let from_lockai_command = self
                                 .sequence_manager
                                 .current_element_for_actor(owner)
@@ -569,7 +605,10 @@ impl EngineInner {
                         // Per-slot `SetQuickActionSequence(0, 0, i, 0xFFFFFFFF)`
                         // loop: drops QA titbits + clears macro_store slot.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let pc_id = EntityId(idx as u32);
+                            let pc_id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::ClearAllQuickActionSlots",
+                            );
                             for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
                                 self.remove_quick_action_titbits_for(pc_id, slot);
                                 if let Some(state) = self.macro_store.get_mut(pc_id) {
@@ -587,7 +626,10 @@ impl EngineInner {
                         // `SetActorActionState` (every arm), etc., right
                         // after the script stamps the new posture/action-state.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let owner = EntityId(idx as u32);
+                            let owner = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::LaunchWait",
+                            );
                             let mut elem = crate::sequence::SequenceElement::new(
                                 1,
                                 crate::element::Command::Wait,
@@ -606,7 +648,10 @@ impl EngineInner {
                         // wrapper so movement/path-request teardown stays
                         // in sync with the sequence-manager stop.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let id = EntityId(idx as u32);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::StopActorAtPriority",
+                            );
                             self.stop_owner(id, priority);
                         }
                     }
@@ -617,7 +662,10 @@ impl EngineInner {
                         // NPC-only (guarded by `is_npc()`); we no-op when
                         // the entity has no AI controller.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            let id = EntityId(idx as u32);
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::BroadcastLoseConsciousness",
+                            );
                             // Queue stimulus first so the AI's next think
                             // tick observes the "lose consciousness" event
                             // before the detect-me broadcast lands on
@@ -648,7 +696,11 @@ impl EngineInner {
                             && let Some(Some(entity)) = self.entities.get(idx)
                             && entity.is_npc()
                         {
-                            self.broadcast_resurrection(EntityId(idx as u32));
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::BroadcastResurrection",
+                            );
+                            self.broadcast_resurrection(id);
                         }
                     }
                     crate::natives::DeferredCommand::AddHiddenTitbitForActor { actor } => {
@@ -709,7 +761,11 @@ impl EngineInner {
                         // mid-segment instead of waiting for the next
                         // waypoint pickup.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor) {
-                            self.relaunch_path_at_new_speed(assets, EntityId(idx as u32));
+                            let id = self.expect_entity_id_for_index(
+                                idx as u32,
+                                "DeferredCommand::RelaunchPathAtNewSpeed",
+                            );
+                            self.relaunch_path_at_new_speed(assets, id);
                         }
                     }
                     crate::natives::DeferredCommand::SetPatrolShouldRun {
@@ -1114,8 +1170,8 @@ impl EngineInner {
         // in-progress sequence element.
         let mut changes: Vec<(usize, crate::order::OrderType, crate::order::OrderType)> =
             Vec::new();
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in self.entities_iter_with_id() {
+            let idx = entity_id.index() as usize;
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -1125,7 +1181,7 @@ impl EngineInner {
 
             let current_anim = self
                 .sequence_manager
-                .current_order_for_actor(EntityId(idx as u32))
+                .current_order_for_actor(entity_id)
                 .map(|(_, _, o)| o.order_type)
                 .unwrap_or(crate::order::OrderType::WaitingUpright);
 
@@ -1211,14 +1267,14 @@ impl EngineInner {
         // (it gets swapped into the script manager below), so the list
         // of ready-to-fire scrolls is captured first.
         let mut ready: Vec<i32> = Vec::new();
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(crate::element::Entity::Scroll(s)) = slot else {
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let crate::element::Entity::Scroll(s) = entity else {
                 continue;
             };
             if !s.element.active {
                 continue;
             }
-            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
+            let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
             let has_script = self
                 .mission_script
                 .as_ref()
@@ -1455,8 +1511,7 @@ impl EngineInner {
         if assets.script_zone_grid_indices.is_empty() {
             return entries;
         }
-        for (entity_idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in self.entities_iter_with_id() {
             if !entity.is_actor() {
                 continue;
             }
@@ -1470,7 +1525,8 @@ impl EngineInner {
             }
             let pos = crate::geo2d::pt(ed.position_map().x, ed.position_map().y);
             let layer = ed.layer();
-            let handle = crate::natives::GameHost::actor_handle_from_index(entity_idx);
+            let handle =
+                crate::natives::GameHost::actor_handle_from_index(entity_id.index() as usize);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip zones that `DefineFlatTrajectoryZone` converted
@@ -1484,12 +1540,10 @@ impl EngineInner {
                     continue;
                 }
                 let gs = &self.fast_grid.level.sectors[grid_idx as usize];
-                if gs.layer == layer && gs.contains_point(pos) {
-                    entries.push((
-                        zone_idx,
-                        crate::entity_id::EntityId(entity_idx as u32),
-                        handle,
-                    ));
+                if gs.layer == layer
+                    && gs.contains_point(crate::coordinates::MapPoint::from_geo(pos))
+                {
+                    entries.push((zone_idx, entity_id, handle));
                 }
             }
         }
@@ -1502,7 +1556,7 @@ impl EngineInner {
         let primary_len = entries.len();
         for i in 0..primary_len {
             let (zone_idx, eidx, _) = entries[i];
-            let Some(Some(entity)) = self.entities.get(eidx.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(eidx.index() as usize) else {
                 continue;
             };
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
@@ -1532,7 +1586,7 @@ impl EngineInner {
             self.script_zone_data[zone_idx].enter(entity_idx);
             let pt = self.script_zone_data[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(entity_idx.0 as usize, pt, true);
+                self.apply_production_work_icon(entity_idx.index() as usize, pt, true);
             }
         }
     }
@@ -1637,8 +1691,7 @@ impl EngineInner {
         let mut enter_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
         let mut exit_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
 
-        for (entity_idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (eidx, entity) in self.entities_iter_with_id() {
             if !entity.is_actor() {
                 continue;
             }
@@ -1646,8 +1699,7 @@ impl EngineInner {
             let active = ed.active && !ed.in_honolulu;
             let pos = crate::geo2d::pt(ed.position_map().x, ed.position_map().y);
             let layer = ed.layer();
-            let handle = crate::natives::GameHost::actor_handle_from_index(entity_idx);
-            let eidx = crate::entity_id::EntityId(entity_idx as u32);
+            let handle = crate::natives::GameHost::actor_handle_from_index(eidx.index() as usize);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
@@ -1656,7 +1708,9 @@ impl EngineInner {
                 }
                 let gs = &self.fast_grid.level.sectors[grid_idx as usize];
                 let was_inside = self.script_zone_data[zone_idx].is_inside(eidx);
-                let is_inside = active && gs.layer == layer && gs.contains_point(pos);
+                let is_inside = active
+                    && gs.layer == layer
+                    && gs.contains_point(crate::coordinates::MapPoint::from_geo(pos));
 
                 if is_inside && !was_inside {
                     enter_events.push((zone_idx, eidx, handle));
@@ -1675,7 +1729,7 @@ impl EngineInner {
         let primary_enter_len = enter_events.len();
         for i in 0..primary_enter_len {
             let (zone_idx, eidx, _) = enter_events[i];
-            let Some(Some(entity)) = self.entities.get(eidx.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(eidx.index() as usize) else {
                 continue;
             };
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
@@ -1696,7 +1750,7 @@ impl EngineInner {
         let primary_exit_len = exit_events.len();
         for i in 0..primary_exit_len {
             let (zone_idx, eidx, _) = exit_events[i];
-            let Some(Some(entity)) = self.entities.get(eidx.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(eidx.index() as usize) else {
                 continue;
             };
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
@@ -1724,14 +1778,14 @@ impl EngineInner {
             self.script_zone_data[zone_idx].enter(entity_idx);
             let pt = self.script_zone_data[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(entity_idx.0 as usize, pt, true);
+                self.apply_production_work_icon(entity_idx.index() as usize, pt, true);
             }
         }
         for &(zone_idx, entity_idx, _) in &exit_events {
             self.script_zone_data[zone_idx].leave(entity_idx);
             let pt = self.script_zone_data[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(entity_idx.0 as usize, pt, false);
+                self.apply_production_work_icon(entity_idx.index() as usize, pt, false);
             }
         }
 
@@ -2134,7 +2188,7 @@ impl EngineInner {
 
         let source = match stimulus.info {
             crate::ai::StimulusInfo::Human(h) => {
-                crate::natives::GameHost::actor_handle(crate::element::EntityId(h))
+                crate::natives::GameHost::actor_handle(crate::element::EntityId::from_raw(h))
             }
             _ => 0,
         };
@@ -2225,7 +2279,7 @@ impl EngineInner {
             .and_then(|ms| ms.game_host())
             .map(|gh| gh.doors.as_slice());
         let ai_global = &mut self.ai_global;
-        let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize) else {
             return false;
         };
         if let Some(enemy_ai) = entity.enemy_ai_mut() {
@@ -2264,8 +2318,7 @@ impl EngineInner {
 
         // Collect state changes: (npc_handle, source_handle, state_change_code).
         let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -2279,15 +2332,15 @@ impl EngineInner {
             if !is_scripted {
                 continue;
             }
-            let handle = crate::natives::GameHost::actor_handle_from_index(idx);
+            let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
             for (state, source_kind) in drained {
                 let code = state.state_change_event_code();
                 let source = match source_kind {
                     AiStateChangeSource::SelfActor => handle,
                     AiStateChangeSource::Null => 0,
-                    AiStateChangeSource::Human(h) => {
-                        crate::natives::GameHost::actor_handle(crate::element::EntityId(h))
-                    }
+                    AiStateChangeSource::Human(h) => crate::natives::GameHost::actor_handle(
+                        crate::element::EntityId::from_raw(h),
+                    ),
                 };
                 notifications.push((handle, source, code));
             }
@@ -2519,7 +2572,7 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    let id = crate::element::EntityId(actor_idx as u32);
+                    let id = crate::element::EntityId::from_raw(actor_idx as u32);
                     let Some(entity) = self.get_entity_mut(id) else {
                         tracing::warn!(
                             "CustomizeMinimapDisplay: invalid actor handle {actor_handle}"
@@ -2902,7 +2955,7 @@ impl EngineInner {
                     let Some(idx) = crate::natives::GameHost::actor_index(scroll_handle) else {
                         continue;
                     };
-                    let eid = crate::element::EntityId(idx as u32);
+                    let eid = crate::element::EntityId::from_raw(idx as u32);
                     let st = crate::engine::scroll_reveal::ScrollStatus::from_i32(status);
                     self.set_scroll_status(eid, st);
                     if matches!(st, crate::engine::scroll_reveal::ScrollStatus::Opened)
@@ -2925,7 +2978,7 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    let eid = crate::element::EntityId(idx as u32);
+                    let eid = crate::element::EntityId::from_raw(idx as u32);
                     if !matches!(self.get_entity(eid), Some(crate::element::Entity::Pc(_))) {
                         tracing::error!(
                             "Script Error: The Actor in MakePCCrouched is invalid (handle {actor_handle})"
@@ -2941,7 +2994,7 @@ impl EngineInner {
                     // outline pass, which flashes the outline for one
                     // frame.
                     if let Some(idx) = crate::natives::GameHost::actor_index(actor_handle) {
-                        let eid = crate::element::EntityId(idx as u32);
+                        let eid = crate::element::EntityId::from_raw(idx as u32);
                         if matches!(self.get_entity(eid), Some(crate::element::Entity::Pc(_))) {
                             self.pending_side_effects.pending_mark_pc_ids.push(eid);
                         } else {

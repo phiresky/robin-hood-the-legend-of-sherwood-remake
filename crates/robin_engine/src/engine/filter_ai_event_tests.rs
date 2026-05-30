@@ -359,7 +359,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
     let ctx = crate::ai::AiContext::default();
     let tick_data = crate::ai::AiPerTickData::stub();
-    let sensitive_entity_id = EntityId(sensitive_idx as u32);
+    let sensitive_entity_id = EntityId::from_raw(sensitive_idx as u32);
 
     let handled = engine.dispatch_filtered_stimulus(
         &LevelAssets::new(),

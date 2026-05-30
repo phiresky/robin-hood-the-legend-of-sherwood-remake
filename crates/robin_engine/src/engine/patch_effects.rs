@@ -71,7 +71,7 @@ impl EngineInner {
 
                     if let Some(handle) = ctx.animation_entity_handle
                         && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
-                            .map(|i| crate::element::EntityId(i as u32))
+                            .map(|i| crate::element::EntityId::from_raw(i as u32))
                     {
                         if applied {
                             // Bake the last transition frame into the
@@ -115,7 +115,7 @@ impl EngineInner {
                     // re-compose affected mask textures.
                     if let Some(handle) = ctx.animation_entity_handle
                         && let Some(entity_id) = crate::natives::GameHost::actor_index(handle)
-                            .map(|i| crate::element::EntityId(i as u32))
+                            .map(|i| crate::element::EntityId::from_raw(i as u32))
                     {
                         self.queue_restore_fx_bg(entity_id);
                     }
@@ -314,11 +314,8 @@ impl EngineInner {
         // So the move-box check only gates the `crushed` computation,
         // not target inclusion.
         let targets: Vec<(EntityId, bool)> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let entity = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(id, entity)| {
                 if !entity.is_actor() {
                     return None;
                 }
@@ -340,7 +337,7 @@ impl EngineInner {
                                 &move_box_map,
                             )
                     });
-                Some((EntityId(idx as u32), crushed))
+                Some((id, crushed))
             })
             .collect();
 

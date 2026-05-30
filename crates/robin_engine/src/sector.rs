@@ -945,20 +945,20 @@ mod tests {
     fn script_sector_enter_leave() {
         use crate::entity_id::EntityId;
         let mut script = ScriptSectorData::new();
-        script.enter(EntityId(10));
-        script.enter(EntityId(20));
+        script.enter(EntityId::from_raw(10));
+        script.enter(EntityId::from_raw(20));
 
-        assert!(script.is_inside(EntityId(10)));
-        assert!(script.is_inside(EntityId(20)));
-        assert!(!script.is_inside(EntityId(30)));
+        assert!(script.is_inside(EntityId::from_raw(10)));
+        assert!(script.is_inside(EntityId::from_raw(20)));
+        assert!(!script.is_inside(EntityId::from_raw(30)));
         assert_eq!(script.num_occupants(), 2);
 
         // Insert at front
-        assert_eq!(script.get_occupant(0), EntityId(20));
-        assert_eq!(script.get_occupant(1), EntityId(10));
+        assert_eq!(script.get_occupant(0), EntityId::from_raw(20));
+        assert_eq!(script.get_occupant(1), EntityId::from_raw(10));
 
-        script.leave(EntityId(10));
-        assert!(!script.is_inside(EntityId(10)));
+        script.leave(EntityId::from_raw(10));
+        assert!(!script.is_inside(EntityId::from_raw(10)));
         assert_eq!(script.num_occupants(), 1);
     }
 

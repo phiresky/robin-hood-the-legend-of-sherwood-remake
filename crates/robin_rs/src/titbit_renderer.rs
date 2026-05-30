@@ -17,6 +17,7 @@ use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
 use crate::host::HostTitbitPreview;
 
+use crate::profiles::Action;
 use crate::renderer::TRANSPARENT_COLOR_KEY_16;
 use crate::resource_ids::*;
 use crate::resource_manager::ResourceManager;
@@ -447,7 +448,7 @@ impl TitbitRenderer {
             ) && !titbit.blinking
             {
                 let mgr = titbit.element_manager.0;
-                if !engine.selected_pc_ids().iter().any(|&id| id.0 == mgr) {
+                if !engine.selected_pc_ids().iter().any(|&id| id.index() == mgr) {
                     continue;
                 }
             }
@@ -455,7 +456,7 @@ impl TitbitRenderer {
             // DangerPoint: only show when the managing PC is selected.
             if titbit.kind == TitbitKind::DangerPoint {
                 let mgr = titbit.element_manager.0;
-                if !engine.selected_pc_ids().iter().any(|&id| id.0 == mgr) {
+                if !engine.selected_pc_ids().iter().any(|&id| id.index() == mgr) {
                     continue;
                 }
             }
@@ -468,8 +469,8 @@ impl TitbitRenderer {
             // reactions through walls — active+alive guard stays.
             if titbit.kind == TitbitKind::Emoticon
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) =
-                    engine.get_entity(crate::element::EntityId(titbit.element_supplier.0))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
             {
                 let elem = entity.element_data();
                 if !elem.active {
@@ -484,8 +485,8 @@ impl TitbitRenderer {
             // inactive.
             if matches!(titbit.kind, TitbitKind::WeakStunned | TitbitKind::Speak)
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) =
-                    engine.get_entity(crate::element::EntityId(titbit.element_supplier.0))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
                 && !entity.is_active()
             {
                 continue;
@@ -496,8 +497,8 @@ impl TitbitRenderer {
             // the entity is neither blipped nor inside a building.
             if titbit.kind == TitbitKind::Speak
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) =
-                    engine.get_entity(crate::element::EntityId(titbit.element_supplier.0))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
             {
                 let elem = entity.element_data();
                 if elem.blipped || elem.hidden_in_building {
@@ -508,8 +509,8 @@ impl TitbitRenderer {
             // WorkIcon: skip if entity is inactive.
             if titbit.kind == TitbitKind::WorkIcon
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) =
-                    engine.get_entity(crate::element::EntityId(titbit.element_supplier.0))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
                 && !entity.is_active()
             {
                 continue;
@@ -529,14 +530,14 @@ impl TitbitRenderer {
             if titbit.kind == TitbitKind::WorkIcon
                 && titbit.sprite_row == SpriteRow::WorkIconBowTraining as u16
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) =
-                    engine.get_entity(crate::element::EntityId(titbit.element_supplier.0))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
             {
                 let has_bow = entity.pc_data().is_some_and(|pc| {
                     assets
                         .profile_manager
                         .get_character(pc.profile_index)
-                        .is_some_and(|p| p.has_action(crate::profiles::Action::Bow))
+                        .is_some_and(|p| p.has_action(Action::Bow))
                 });
                 if !has_bow {
                     continue;
@@ -560,7 +561,8 @@ impl TitbitRenderer {
             if titbit.kind == TitbitKind::UnconsciousStar
                 && titbit.element_supplier.is_valid()
                 && !engine
-                    .can_have_unconscious_stars(crate::element::EntityId(titbit.element_supplier.0))
+                    .entity_id_for_index(titbit.element_supplier.0)
+                    .is_some_and(|id| engine.can_have_unconscious_stars(id))
             {
                 continue;
             }

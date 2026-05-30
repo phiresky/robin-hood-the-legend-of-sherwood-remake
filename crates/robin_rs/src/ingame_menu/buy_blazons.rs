@@ -23,6 +23,7 @@ use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::ui_screens::BuyBlazonsScreen;
+use crate::widget::FrameWnd;
 use robin_engine::sprite::BBox;
 
 use super::layout::{
@@ -131,7 +132,7 @@ pub async fn show_buy_blazons(
     let quit_x = buy_x + btn_w + BUTTON_GAP;
     let btn_y = win_y + BUTTON_ROW_Y;
 
-    let mut frame = crate::widget::FrameWnd::default();
+    let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
     frame.add_widget_absolute(widget_bridge::make_button_with_resource(

@@ -133,7 +133,7 @@ pub const TACTICAL_HORSE_PARKING: u8 = 7;
     Debug, Clone, Copy, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct LevelRepulsivePoint {
-    pub position: GeoPoint2D,
+    pub position: MapPoint,
     pub layer: u16,
     /// Outward normal of the incoming-edge vector.
     pub limit_left: Vec2D,
@@ -229,8 +229,8 @@ impl std::fmt::Display for LineIndex {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GridLine {
     /// Segment endpoints.
-    pub a: GeoPoint2D,
-    pub b: GeoPoint2D,
+    pub a: MapPoint,
+    pub b: MapPoint,
     /// Whether this is a motion-blocking line (`LINE_MOTION`).
     pub is_motion: bool,
     /// Whether this is a repulsive line (`LINE_REPULSIVE`) — motion-area
@@ -279,10 +279,10 @@ pub struct GridLine {
 
 impl GridLine {
     /// Create a new grid line from two endpoints.
-    pub fn new(a: GeoPoint2D, b: GeoPoint2D, is_motion: bool) -> Self {
+    pub fn new(a: MapPoint, b: MapPoint, is_motion: bool) -> Self {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(a);
-        bbox.expand_point(b);
+        bbox.expand_point(a.to_geo());
+        bbox.expand_point(b.to_geo());
         // Compute outward normal (perpendicular to segment, normalized).
         let dx = b.x - a.x;
         let dy = b.y - a.y;
@@ -317,7 +317,7 @@ impl GridLine {
     /// `check_for_patch_line_crossing` can route into `Patch::enter` /
     /// `apply` without a reverse lookup.  Not motion-blocking — LINE_PATCH
     /// is purely a trigger surface.
-    pub fn new_patch(a: GeoPoint2D, b: GeoPoint2D, patch_index: crate::patch::PatchIndex) -> Self {
+    pub fn new_patch(a: MapPoint, b: MapPoint, patch_index: crate::patch::PatchIndex) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_patch = true;
         line.patch_index = Some(patch_index);
@@ -356,7 +356,7 @@ impl GridLine {
     /// to a script zone, `None` means the post-ctor state before any
     /// association call. Not motion-blocking; a script line is purely
     /// a trigger surface.
-    pub fn new_script(a: GeoPoint2D, b: GeoPoint2D, script_zone_index: u16) -> Self {
+    pub fn new_script(a: MapPoint, b: MapPoint, script_zone_index: u16) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_script = true;
         line.script_zone_index = Some(script_zone_index);
@@ -372,7 +372,7 @@ impl GridLine {
     /// `MaterialSectors::material_at(actor_pos)` which combines the
     /// polygon containment test with the obstacle/default fallback in
     /// one call.
-    pub fn new_sound(a: GeoPoint2D, b: GeoPoint2D) -> Self {
+    pub fn new_sound(a: MapPoint, b: MapPoint) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_sound = true;
         line
@@ -385,8 +385,8 @@ impl GridLine {
     /// indices into `EngineInner::sight_obstacles` for the obstacles on the
     /// left/right of the oriented segment.
     pub fn new_elevation(
-        a: GeoPoint2D,
-        b: GeoPoint2D,
+        a: MapPoint,
+        b: MapPoint,
         left_obstacle_index: Option<u16>,
         right_obstacle_index: Option<u16>,
     ) -> Self {
@@ -400,7 +400,7 @@ impl GridLine {
     /// The line as a geo segment.
     #[inline]
     pub fn segment(&self) -> geo::Line<f32> {
-        geo2d::segment(self.a, self.b)
+        geo2d::segment(self.a.to_geo(), self.b.to_geo())
     }
 
     /// Test if this line's segment intersects another segment.
@@ -433,7 +433,7 @@ impl GridLine {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GridSector {
     /// Polygon vertices defining this sector's boundary.
-    pub points: Vec<GeoPoint2D>,
+    pub points: Vec<MapPoint>,
     /// Axis-aligned bounding box (pre-computed for fast rejection).
     pub bounding_box: BBox2D,
     /// Bitflag combination of sector type properties (AREA, MOTION, DOOR, LIFT, etc.).
@@ -462,9 +462,9 @@ pub struct GridSector {
 
     // ── Lift endpoints (lifts only, populated at level load) ──
     /// Bottom lift-side exit point, mirroring legacy implementation `RHSectorLift::GetLowExitPoint`.
-    pub low_exit_point: Option<GeoPoint2D>,
+    pub low_exit_point: Option<MapPoint>,
     /// Top lift-side exit point, mirroring legacy implementation `RHSectorLift::GetHighExitPoint`.
-    pub high_exit_point: Option<GeoPoint2D>,
+    pub high_exit_point: Option<MapPoint>,
 
     // Door indices are ancillary references for code that still needs the
     // original door record (for example falling out of a lift to the outside
@@ -498,11 +498,12 @@ pub struct GridSector {
 
 impl GridSector {
     /// Point-in-polygon test using ray casting.
-    pub fn contains_point(&self, pt: GeoPoint2D) -> bool {
+    pub fn contains_point(&self, pt: MapPoint) -> bool {
         if self.points.len() < 3 {
             return false;
         }
-        if !self.bounding_box.contains_point(pt) {
+        let pt_geo = pt.to_geo();
+        if !self.bounding_box.contains_point(pt_geo) {
             return false;
         }
         let mut inside = false;
@@ -534,7 +535,7 @@ impl GridSector {
             return false;
         }
         if n == 1 {
-            return bbox.contains_point(self.points[0]);
+            return bbox.contains_point(self.points[0].to_geo());
         }
 
         let rect = match bbox.0 {
@@ -544,7 +545,7 @@ impl GridSector {
 
         // Any polygon point inside the box?
         for p in &self.points {
-            if bbox.contains_point(*p) {
+            if bbox.contains_point(p.to_geo()) {
                 return true;
             }
         }
@@ -553,7 +554,7 @@ impl GridSector {
         use geo::Intersects;
         let mut j = n - 1;
         for i in 0..n {
-            let seg = geo::Line::new(self.points[j], self.points[i]);
+            let seg = geo::Line::new(self.points[j].to_geo(), self.points[i].to_geo());
             if rect.intersects(&seg) {
                 return true;
             }
@@ -561,7 +562,7 @@ impl GridSector {
         }
 
         // Box fully contained in polygon — test top-left corner.
-        self.contains_point(pt(rect.min().x, rect.min().y))
+        self.contains_point(MapPoint::new(rect.min().x, rect.min().y))
     }
 }
 
@@ -1043,11 +1044,6 @@ impl FastFindGrid {
     /// Test if a projected map point is inside the grid.
     #[inline]
     pub fn is_inside_grid_point(&self, point: MapPoint) -> bool {
-        self.is_inside_grid_point_geo(point.to_geo())
-    }
-
-    #[inline]
-    fn is_inside_grid_point_geo(&self, point: GeoPoint2D) -> bool {
         let x = point.x as i32;
         let y = point.y as i32;
         x >= 0
@@ -1059,11 +1055,6 @@ impl FastFindGrid {
     /// Compute the flat block index for a world-space point on a given layer.
     #[inline]
     pub fn get_block_index(&self, point: MapPoint, layer: u16) -> usize {
-        self.get_block_index_geo(point.to_geo(), layer)
-    }
-
-    #[inline]
-    fn get_block_index_geo(&self, point: GeoPoint2D, layer: u16) -> usize {
         let bx = (point.x as i32) >> 6; // divide by 64
         let by = (point.y as i32) >> 6;
         (bx as usize)
@@ -1490,7 +1481,7 @@ impl FastFindGrid {
         &self,
         layer: u16,
         bbox: &BBox2D,
-        position: GeoPoint2D,
+        position: MapPoint,
     ) -> Vec<crate::mask::MaskIndex> {
         let rect = match bbox.0 {
             Some(r) => r,
@@ -1674,9 +1665,9 @@ impl FastFindGrid {
     /// polygon. Used by the per-element refresh paths to suppress
     /// fog/night variant tinting when the actor stands in a shadow
     /// (=light-at-night) sector.
-    pub fn is_in_shadow_sector(&self, point: GeoPoint2D, layer: u16) -> bool {
+    pub fn is_in_shadow_sector(&self, point: MapPoint, layer: u16) -> bool {
         use crate::sector::SectorType;
-        let block_idx = self.get_block_index_geo(point, layer);
+        let block_idx = self.get_block_index(point, layer);
         self.get_sectors_at_block(block_idx, SectorType::SHADOW)
             .iter()
             .any(|(_, s)| s.contains_point(point))
@@ -1694,7 +1685,7 @@ impl FastFindGrid {
     /// know the landing footprint.
     pub fn resolve_projectile_landing(
         &self,
-        landing_screen: GeoPoint2D,
+        landing_screen: MapPoint,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
         self.resolve_projectile_landing_with_obstacle(landing_screen, None, sight_obstacles)
@@ -1707,7 +1698,7 @@ impl FastFindGrid {
     /// still fall back to the screen polygon lookup.
     pub fn resolve_projectile_landing_with_obstacle(
         &self,
-        landing_screen: GeoPoint2D,
+        landing_screen: MapPoint,
         exact_obstacle_index: Option<crate::position_interface::ObstacleHandle>,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
@@ -1734,7 +1725,7 @@ impl FastFindGrid {
         for (idx, obstacle) in projection_iter.by_ref() {
             if !sight_obstacles.is_active(idx as usize)
                 || !obstacle.is_projection_area()
-                || !obstacle.contains_point_screen(landing_screen)
+                || !obstacle.contains_point_screen(landing_screen.to_geo())
             {
                 continue;
             }
@@ -1756,8 +1747,8 @@ impl FastFindGrid {
         }
 
         let mut sector = None;
-        if self.is_inside_grid_point_geo(landing_screen) {
-            let block_idx = self.get_block_index_geo(landing_screen, layer);
+        if self.is_inside_grid_point(landing_screen) {
+            let block_idx = self.get_block_index(landing_screen, layer);
             for (_, motion_sector) in self.get_sectors_at_block(block_idx, SectorType::MOTION) {
                 if motion_sector.sector_type.is_area() {
                     if motion_sector.contains_point(landing_screen) {
@@ -1797,13 +1788,10 @@ impl FastFindGrid {
     pub fn get_sector(&self, pt: MapPoint, reference: MapPoint, layer: u16) -> SectorHit {
         use crate::sector::SectorType;
 
-        let pt = pt.to_geo();
-        let reference = reference.to_geo();
-
-        if !self.is_inside_grid_point_geo(pt) {
+        if !self.is_inside_grid_point(pt) {
             return SectorHit::None;
         }
-        let block_idx = self.get_block_index_geo(pt, layer);
+        let block_idx = self.get_block_index(pt, layer);
         let sectors = self.get_sectors_at_block(block_idx, SectorType::MOUSE);
         if sectors.is_empty() {
             return SectorHit::None;
@@ -2126,7 +2114,7 @@ impl FastFindGrid {
         self.level
             .level_repulsive_points
             .iter()
-            .filter(|p| p.layer == layer && bbox.contains_point(p.position))
+            .filter(|p| p.layer == layer && bbox.contains_point(p.position.to_geo()))
             .collect()
     }
 
@@ -2178,12 +2166,12 @@ impl FastFindGrid {
     pub fn get_crossing_elevation_line_indices(
         &self,
         layer: u16,
-        old_pos: GeoPoint2D,
-        new_pos: GeoPoint2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos);
-        bbox.expand_point(new_pos);
+        bbox.expand_point(old_pos.to_geo());
+        bbox.expand_point(new_pos.to_geo());
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2198,7 +2186,7 @@ impl FastFindGrid {
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
-        let movement = geo2d::segment(old_pos, new_pos);
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
                 let block_idx = self.block_index_from_cell(cx, cy, layer);
@@ -2252,14 +2240,16 @@ impl FastFindGrid {
     fn remove_old_position_elevation_crossings(
         &self,
         indices: &mut Vec<LineIndex>,
-        old_pos: GeoPoint2D,
+        old_pos: MapPoint,
     ) {
         indices.retain(|&idx| {
             let Some(line) = self.level.lines.get(usize::from(idx)) else {
                 return false;
             };
-            let line_vec = line.b - line.a;
-            let test_vec = old_pos - line.a;
+            let line_a = line.a.to_geo();
+            let line_b = line.b.to_geo();
+            let line_vec = line_b - line_a;
+            let test_vec = old_pos.to_geo() - line_a;
             line_vec.x * test_vec.y - line_vec.y * test_vec.x != 0.0
         });
     }
@@ -2270,12 +2260,12 @@ impl FastFindGrid {
     pub fn get_crossing_patch_line_indices(
         &self,
         layer: u16,
-        old_pos: GeoPoint2D,
-        new_pos: GeoPoint2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos);
-        bbox.expand_point(new_pos);
+        bbox.expand_point(old_pos.to_geo());
+        bbox.expand_point(new_pos.to_geo());
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2288,7 +2278,7 @@ impl FastFindGrid {
         let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
             .min(self.level.grid_height.saturating_sub(1));
 
-        let movement = geo2d::segment(old_pos, new_pos);
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -2368,7 +2358,7 @@ impl FastFindGrid {
     pub fn add_sector_lines_for_sound(
         &mut self,
         layer: u16,
-        points: &[GeoPoint2D],
+        points: &[MapPoint],
         sector_active: bool,
     ) -> Vec<LineIndex> {
         if points.len() < 2 {
@@ -2392,12 +2382,12 @@ impl FastFindGrid {
     pub fn get_crossing_sound_line_indices(
         &self,
         layer: u16,
-        old_pos: GeoPoint2D,
-        new_pos: GeoPoint2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos);
-        bbox.expand_point(new_pos);
+        bbox.expand_point(old_pos.to_geo());
+        bbox.expand_point(new_pos.to_geo());
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2410,7 +2400,7 @@ impl FastFindGrid {
         let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
             .min(self.level.grid_height.saturating_sub(1));
 
-        let movement = geo2d::segment(old_pos, new_pos);
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -2712,7 +2702,7 @@ impl FastFindGrid {
         // Check if any line endpoint lies inside the corridor
         for &idx in &line_indices {
             let p = self.level.lines[usize::from(idx)].a;
-            if corridor.point_inside(p) {
+            if corridor.point_inside(p.to_geo()) {
                 return false;
             }
         }
@@ -2722,14 +2712,10 @@ impl FastFindGrid {
 
     /// Check thin (zero-width) reachability between two points.
     pub fn is_reachable_thin(&self, p1: MapPoint, p2: MapPoint, layer: u16) -> bool {
-        self.is_reachable_thin_geo(p1.to_geo(), p2.to_geo(), layer)
-    }
-
-    fn is_reachable_thin_geo(&self, p1: GeoPoint2D, p2: GeoPoint2D, layer: u16) -> bool {
-        let seg = geo2d::segment(p1, p2);
+        let seg = geo2d::segment(p1.to_geo(), p2.to_geo());
         let mut bbox = BBox2D::new();
-        bbox.expand_point(p1);
-        bbox.expand_point(p2);
+        bbox.expand_point(p1.to_geo());
+        bbox.expand_point(p2.to_geo());
 
         let mut reachable = true;
         self.visit_active_motion_line_indices(layer, &bbox, |idx| {
@@ -2993,7 +2979,7 @@ impl FastFindGrid {
             if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
                 return false;
             }
-            if corridor.point_inside(line.a) {
+            if corridor.point_inside(line.a.to_geo()) {
                 return false;
             }
         }
@@ -3077,22 +3063,13 @@ impl FastFindGrid {
         click: MapPoint,
         layer: u16,
     ) -> bool {
-        self.find_authorized_position_toward_geo(bbox, click.to_geo(), layer)
-    }
-
-    fn find_authorized_position_toward_geo(
-        &self,
-        bbox: &mut BBox2D,
-        click: GeoPoint2D,
-        layer: u16,
-    ) -> bool {
         for _ in 0..50 {
             // Collect lines from both the segment (center→click) and the box itself
             let center = bbox.center();
             let seg_bbox = {
                 let mut b = BBox2D::new();
                 b.expand_point(center);
-                b.expand_point(click);
+                b.expand_point(click.to_geo());
                 b
             };
             let seg_lines = self.get_active_motion_line_indices(layer, &seg_bbox);
@@ -3112,7 +3089,7 @@ impl FastFindGrid {
                 .filter(|&idx| {
                     let line = &self.level.lines[usize::from(idx)];
                     line.intersects_bbox(bbox)
-                        || line.intersects_segment(geo2d::segment(center, click))
+                        || line.intersects_segment(geo2d::segment(center, click.to_geo()))
                 })
                 .collect();
 
@@ -3141,22 +3118,13 @@ impl FastFindGrid {
         start: MapPoint,
         layer: u16,
     ) -> bool {
-        self.find_authorized_position_straight_geo(bbox, start.to_geo(), layer)
-    }
-
-    fn find_authorized_position_straight_geo(
-        &self,
-        bbox: &mut BBox2D,
-        start: GeoPoint2D,
-        layer: u16,
-    ) -> bool {
         // Phase 1: push along segment (center → start)
         for _ in 0..50 {
             let center = bbox.center();
             let seg_bbox = {
                 let mut b = BBox2D::new();
                 b.expand_point(center);
-                b.expand_point(start);
+                b.expand_point(start.to_geo());
                 b
             };
             let line_indices = self.get_active_motion_line_indices(layer, &seg_bbox);
@@ -3164,7 +3132,7 @@ impl FastFindGrid {
                 .into_iter()
                 .filter(|&idx| {
                     self.level.lines[usize::from(idx)]
-                        .intersects_segment(geo2d::segment(center, start))
+                        .intersects_segment(geo2d::segment(center, start.to_geo()))
                 })
                 .collect();
 
@@ -3236,7 +3204,11 @@ impl FastFindGrid {
                 let vy = -angle.cos();
                 *bbox = initial;
                 bbox.translate(pt(vx * radius_try, vy * radius_try));
-                if self.find_authorized_position_toward_geo(bbox, center_initial, layer) {
+                if self.find_authorized_position_toward(
+                    bbox,
+                    MapPoint::from_geo(center_initial),
+                    layer,
+                ) {
                     return true;
                 }
             }
@@ -3332,7 +3304,7 @@ mod tests {
         grid.allocate_layers(1); // 1 conventional layer
 
         // Add a horizontal motion line across the middle
-        let line = GridLine::new(pt(0.0, 128.0), pt(256.0, 128.0), true);
+        let line = GridLine::new(MapPoint::new(0.0, 128.0), MapPoint::new(256.0, 128.0), true);
         grid.add_line(line, 0);
         grid
     }
@@ -3378,11 +3350,12 @@ mod tests {
 
     #[test]
     fn test_motion_normal_matches_original_area_flag() {
-        let mut area_line = GridLine::new(pt(0.0, 0.0), pt(10.0, 0.0), true);
+        let mut area_line = GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         area_line.initialize_motion_normal(true);
         assert_eq!(area_line.normal, pt(0.0, 1.0));
 
-        let mut obstacle_line = GridLine::new(pt(0.0, 0.0), pt(10.0, 0.0), true);
+        let mut obstacle_line =
+            GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         obstacle_line.initialize_motion_normal(false);
         assert_eq!(obstacle_line.normal, pt(0.0, -1.0));
     }
@@ -3520,7 +3493,11 @@ mod tests {
 
         // Mobile repulsive line added: a vertical line at x=150 that
         // the corridor from (50,50)→(200,50) must cross.
-        let mobile = GridLine::new(pt(150.0, 30.0), pt(150.0, 70.0), false);
+        let mobile = GridLine::new(
+            MapPoint::new(150.0, 30.0),
+            MapPoint::new(150.0, 70.0),
+            false,
+        );
         assert!(!grid.is_reachable_thick_mobile(
             MapPoint::new(50.0, 50.0),
             MapPoint::new(200.0, 50.0),
@@ -3594,7 +3571,7 @@ mod tests {
             bbox.expand_point(p);
         }
         GridSector {
-            points: pts,
+            points: pts.iter().copied().map(MapPoint::from_geo).collect(),
             bounding_box: bbox,
             sector_type,
             layer,
@@ -3679,7 +3656,7 @@ mod tests {
         )];
 
         let resolution = grid.resolve_projectile_landing(
-            pt(64.0, 54.0),
+            MapPoint::new(64.0, 54.0),
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
 
@@ -3711,7 +3688,7 @@ mod tests {
         ];
 
         let resolution = grid.resolve_projectile_landing_with_obstacle(
-            pt(64.0, 54.0),
+            MapPoint::new(64.0, 54.0),
             ObstacleHandle::new(1),
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
@@ -3742,7 +3719,7 @@ mod tests {
         );
 
         let resolution = grid.resolve_projectile_landing(
-            pt(64.0, 64.0),
+            MapPoint::new(64.0, 64.0),
             crate::sight_obstacle::ObstacleList::empty(),
         );
 

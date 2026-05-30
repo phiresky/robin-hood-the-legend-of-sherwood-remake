@@ -10,12 +10,16 @@
 use crate::cursor::CursorRenderer;
 use crate::geo2d;
 use crate::gfx_types::GameEvent;
+use crate::input::KeyboardState;
 use crate::native_font::NativeFont;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::resource_manager::ResourceManager;
 use crate::sound::{AudioBackend, SoundManager};
-use crate::ui::{MouseButtons, UiEvent, UiKeyboard, UiMsg, UiState};
+use crate::ui::resource_widget_id::{
+    RADIO_FOCUS, RADIO_FOCUS_SELECTED, RADIO_SELECTED, RADIO_UNSELECTED,
+};
+use crate::ui::{MouseButtons, RendererBase, RendererBitmap, UiEvent, UiKeyboard, UiMsg, UiState};
 use crate::widget::{
     CaptureSlot, FrameWnd, Widget, WidgetButton, WidgetId, WidgetInput, WidgetLabel,
     WidgetMultiPicture, WidgetPicture, WidgetRenderer,
@@ -89,13 +93,13 @@ pub fn make_button_with_resource(
     // rendering is done by the bridge, not the widget's renderer).
     let renderer_base = match btn.base.renderer.base() {
         Some(b) => b.clone(),
-        None => crate::ui::RendererBase {
+        None => RendererBase {
             bbox,
             resource_id,
             ..Default::default()
         },
     };
-    btn.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
+    btn.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
         base: renderer_base,
     });
     Widget::Button(btn)
@@ -132,13 +136,13 @@ pub fn make_picture_with_resource(
     pic.base.with_focus = false;
     let renderer_base = match pic.base.renderer.base() {
         Some(b) => b.clone(),
-        None => crate::ui::RendererBase {
+        None => RendererBase {
             bbox,
             resource_id,
             ..Default::default()
         },
     };
-    pic.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
+    pic.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
         base: renderer_base,
     });
     Widget::Picture(pic)
@@ -161,13 +165,13 @@ pub fn make_multi_picture_with_resource(
     pic.select_picture(sub_picture);
     let renderer_base = match pic.base.renderer.base() {
         Some(b) => b.clone(),
-        None => crate::ui::RendererBase {
+        None => RendererBase {
             bbox,
             resource_id,
             ..Default::default()
         },
     };
-    pic.base.renderer = WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
+    pic.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
         base: renderer_base,
     });
     Widget::MultiPicture(pic)
@@ -199,7 +203,7 @@ pub struct ModalInputState {
     /// feeds the set into [`UiKeyboard::refresh`] each frame so
     /// the widget state machine sees the same pressed/released/
     /// typewriter transitions the in-game path uses.
-    raw_keyboard: crate::input::KeyboardState,
+    raw_keyboard: KeyboardState,
     /// Monotonic millisecond clock sampled from `web_time::Instant`
     /// at construction; `elapsed_ms` feeds it to `UiKeyboard::refresh`
     /// for double-press and typewriter-repeat timing.
@@ -229,7 +233,7 @@ impl Default for ModalInputState {
             virt_y: -1.0,
             buttons: MouseButtons::empty(),
             keyboard: UiKeyboard::default(),
-            raw_keyboard: crate::input::KeyboardState::default(),
+            raw_keyboard: KeyboardState::default(),
             start_time: web_time::Instant::now(),
             text_input: String::new(),
             capture: CaptureSlot::default(),
@@ -566,10 +570,10 @@ pub fn draw_widget_button(
             );
             let focused = matches!(base.state, UiState::Focused | UiState::Pushed);
             let radio_state = match (selected, focused) {
-                (true, true) => crate::ui::resource_widget_id::RADIO_FOCUS_SELECTED as usize,
-                (true, false) => crate::ui::resource_widget_id::RADIO_SELECTED as usize,
-                (false, true) => crate::ui::resource_widget_id::RADIO_FOCUS as usize,
-                (false, false) => crate::ui::resource_widget_id::RADIO_UNSELECTED as usize,
+                (true, true) => RADIO_FOCUS_SELECTED as usize,
+                (true, false) => RADIO_SELECTED as usize,
+                (false, true) => RADIO_FOCUS as usize,
+                (false, false) => RADIO_UNSELECTED as usize,
             };
             resources.radio_surface(radio_state)
         }

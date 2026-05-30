@@ -552,18 +552,13 @@ impl EngineInner {
                 // which drops them back to conscious via the normal
                 // threshold transition in `set_concussion`.
                 let ids: Vec<EntityId> = self
-                    .entities
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, slot)| {
-                        slot.as_ref().and_then(|e| {
-                            if e.is_npc() && e.human_data().map(|h| h.unconscious).unwrap_or(false)
-                            {
-                                Some(EntityId(idx as u32))
-                            } else {
-                                None
-                            }
-                        })
+                    .entities_iter_with_id()
+                    .filter_map(|(id, e)| {
+                        if e.is_npc() && e.human_data().map(|h| h.unconscious).unwrap_or(false) {
+                            Some(id)
+                        } else {
+                            None
+                        }
                     })
                     .collect();
                 for id in ids {
@@ -770,14 +765,8 @@ impl EngineInner {
                 // Sets attentive mode on every soldier — silent cheat,
                 // emits no console output.
                 let soldier_ids: Vec<EntityId> = self
-                    .entities
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, slot)| {
-                        slot.as_ref()
-                            .filter(|e| e.is_soldier())
-                            .map(|_| EntityId(idx as u32))
-                    })
+                    .entities_iter_with_id()
+                    .filter_map(|(id, entity)| entity.is_soldier().then_some(id))
                     .collect();
                 for id in soldier_ids {
                     self.set_soldier_attentive_mode(id, true, false);
@@ -979,7 +968,7 @@ impl EngineInner {
                 ConsoleResponse::Ok(format!(
                     "{verb} interface for ActorPC({}:{})",
                     c.to_ascii_uppercase(),
-                    id.0
+                    id.index()
                 ))
             }
             Fps => {
@@ -1070,7 +1059,7 @@ impl EngineInner {
                         .map(|pc| !pc.interface_hidden)
                         .unwrap_or(true);
                     dev.console
-                        .push_output(format!("Actor id ........................ {}", id.0));
+                        .push_output(format!("Actor id ........................ {}", id.index()));
                     dev.console.push_output(format!(
                         "Interface Displayed ............. {}",
                         if displayed { "YES" } else { "NO" }

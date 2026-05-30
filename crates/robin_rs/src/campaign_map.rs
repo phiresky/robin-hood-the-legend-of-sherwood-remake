@@ -5,7 +5,8 @@
 
 use crate::campaign::Campaign;
 use crate::gfx_types::{GameEvent, Keycode};
-use crate::ingame_menu::layout::{MenuTransform, TextAlign};
+use crate::ingame_menu::blazon_set;
+use crate::ingame_menu::layout::{self, MenuTransform, TextAlign};
 use crate::ingame_menu::resources::{IngameMenuResources, MenuSurface};
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::menu::{CampaignMapState, LOCATION_POSITIONS, mission_location_from_index};
@@ -14,6 +15,7 @@ use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::resource_manager::ResourceManager;
+use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
 use crate::widget::FrameWnd;
 use robin_assets::res_descr::{self, LevelDescriptors};
@@ -291,7 +293,7 @@ pub(crate) async fn show_campaign_map(
             for (idx, item) in items.iter().enumerate() {
                 if frame
                     .widget(item.loc_idx as u32)
-                    .is_some_and(|w| w.base().state != crate::ui::UiState::Default)
+                    .is_some_and(|w| w.base().state != UiState::Default)
                 {
                     selected = idx;
                 }
@@ -309,7 +311,7 @@ pub(crate) async fn show_campaign_map(
             }
         }
 
-        crate::ingame_menu::layout::enter_modal_gpu_phase(renderer);
+        layout::enter_modal_gpu_phase(renderer);
         render_campaign_map(
             renderer,
             transform,
@@ -566,7 +568,7 @@ fn render_campaign_map(
             if let Some(surface) = assets.locations[loc_idx] {
                 let focused = frame
                     .widget(loc_idx as u32)
-                    .is_some_and(|w| w.base().state != crate::ui::UiState::Default);
+                    .is_some_and(|w| w.base().state != UiState::Default);
                 if focused {
                     renderer.draw_rect_outline_screen(
                         transform.origin_x + x as i32 - 4,
@@ -667,7 +669,7 @@ fn render_tooltip(
         && let Some(resources) = resources
         && let Some(state) = &short_desc.blazons
     {
-        crate::ingame_menu::blazon_set::render(
+        blazon_set::render(
             renderer,
             transform,
             resources,
@@ -727,16 +729,7 @@ impl ShortMissionDescriptionWindow {
         ));
 
         let blazons = item.show_blazons.then(|| {
-            crate::ingame_menu::blazon_set::build_for_mission(
-                campaign,
-                profiles,
-                item.mission_idx,
-                5,
-                80,
-                210,
-                15,
-                0,
-            )
+            blazon_set::build_for_mission(campaign, profiles, item.mission_idx, 5, 80, 210, 15, 0)
         });
 
         Self {
@@ -756,7 +749,7 @@ fn draw_close_button(
 ) {
     let hovered = frame
         .widget(CLOSE_WIDGET_ID)
-        .is_some_and(|w| w.base().state != crate::ui::UiState::Default);
+        .is_some_and(|w| w.base().state != UiState::Default);
     if assets.close.is_none() {
         renderer.render_gpu_rect(
             transform.origin_x + 574,

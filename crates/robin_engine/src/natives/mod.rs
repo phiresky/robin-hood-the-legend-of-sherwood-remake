@@ -139,7 +139,7 @@ const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
 pub struct ScriptZonePolygon {
     pub layer: u16,
     pub bounding_box: BBox2D,
-    pub points: Vec<crate::geo2d::GeoPoint2D>,
+    pub points: Vec<crate::coordinates::MapPoint>,
 }
 
 /// A host-function implementation that handles the global-variable
@@ -696,7 +696,7 @@ impl GameHost {
     /// Convert a script actor handle to an `Option<EntityId>`.
     /// 0 (null handle) maps to `None`.
     fn actor_id(handle: i32) -> Option<EntityId> {
-        Self::actor_index(handle).map(|idx| EntityId(idx as u32))
+        Self::actor_index(handle).map(|idx| EntityId::from_raw(idx as u32))
     }
 
     /// Add a sequence element to the current recording session.
@@ -1852,12 +1852,12 @@ impl GameHost {
         };
 
         // Scan all entities for a matching active bonus object
-        for (idx, slot) in self.entities.iter().enumerate() {
-            if let Some(Entity::Bonus(e)) = slot
+        for (id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+            if let Entity::Bonus(e) = entity
                 && e.element.active
                 && e.object.object_type == object_type
             {
-                return Self::actor_handle_from_index(idx);
+                return Self::actor_handle_from_index(id.index() as usize);
             }
         }
         0 // not found
@@ -2399,7 +2399,7 @@ impl GameHost {
     }
 
     pub fn actor_handle(id: EntityId) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, id.0 as usize)
+        Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, id.index() as usize)
     }
 
     pub fn actor_handle_from_index(index: usize) -> i32 {
@@ -6024,7 +6024,7 @@ impl HostFunctions for GameHost {
 
                     let sight_obstacles = script_sight_obstacles();
                     let q = crate::ai_vision::VisibilityQuery {
-                        viewer: crate::geo2d::pt(viewer_eye_3d.x, viewer_eye_3d.y),
+                        viewer: crate::coordinates::MapPoint::new(viewer_eye_3d.x, viewer_eye_3d.y),
                         viewer_direction: npc_dir,
                         view_forward,
                         view_radius,
@@ -6039,7 +6039,10 @@ impl HostFunctions for GameHost {
                         // not carry mission ambiance.
                         effective_view_radius: view_radius as f32,
                         target_is_active_and_outside_building: tgt_active && !tgt_in_building,
-                        target: crate::geo2d::pt(tgt_detection_3d.x, tgt_detection_3d.y),
+                        target: crate::coordinates::MapPoint::new(
+                            tgt_detection_3d.x,
+                            tgt_detection_3d.y,
+                        ),
                         target_posture: tgt_posture,
                         target_action_state: tgt_action_state,
                         target_is_pc: tgt_is_pc,
@@ -6094,12 +6097,13 @@ impl HostFunctions for GameHost {
                         }
                     } else if is_npc {
                         let target_idx = Self::actor_index(actor);
-                        for (i, slot) in self.entities.iter_mut().enumerate() {
-                            let Some(entity) = slot else { continue };
+                        for (id, entity) in
+                            crate::engine::occupied_entity_slots_mut(&mut self.entities)
+                        {
                             let Some(ai) = entity.ai_controller_mut() else {
                                 continue;
                             };
-                            ai.debug_view_cone_enabled = Some(i) == target_idx;
+                            ai.debug_view_cone_enabled = Some(id.index() as usize) == target_idx;
                         }
                     }
                     0
@@ -7346,7 +7350,7 @@ impl HostFunctions for GameHost {
                     let fx_h = stack.pop_i32();
                     let target_h = stack.pop_i32();
                     let fx_id = match Self::actor_index(fx_h) {
-                        Some(idx) => crate::element::EntityId(idx as u32),
+                        Some(idx) => crate::element::EntityId::from_raw(idx as u32),
                         None => {
                             tracing::warn!(
                                 "Script error (LinkTargetToFX): null/invalid FX handle {fx_h}"

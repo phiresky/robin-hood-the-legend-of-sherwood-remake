@@ -370,7 +370,7 @@ fn hit_target_fires_activated_by_sword_when_defined() {
     // `TestTarget` doesn't define `ActivatedBySword` — this test
     // verifies the dispatcher is still a clean no-op in that case.
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(0);
+    let pc = EntityId::from_raw(0);
     let mut elem = SequenceElement::new(1, Command::HitTarget, Some(pc));
     elem.data = SequenceElementData::Interaction {
         antagonist: Some(target_id),
@@ -391,7 +391,7 @@ fn hit_target_fires_activated_by_sword_when_defined() {
 #[test]
 fn handle_target_and_take_target_both_route_to_activated_by_hand() {
     let (mut engine, target_id) = build_engine_with_target();
-    let pc = EntityId(0);
+    let pc = EntityId::from_raw(0);
     for cmd in [Command::HandleTarget, Command::TakeTarget] {
         let mut elem = SequenceElement::new(1, cmd, Some(pc));
         elem.data = SequenceElementData::Interaction {

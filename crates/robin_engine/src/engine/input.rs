@@ -1840,9 +1840,10 @@ impl EngineInner {
             && let Some(last) = points.last()
         {
             let impact_2d = crate::geo2d::pt(last.position.x, last.position.y - last.position.z);
-            let resolution = self
-                .fast_grid
-                .resolve_projectile_landing(impact_2d, self.sight_obstacles(assets));
+            let resolution = self.fast_grid.resolve_projectile_landing(
+                crate::coordinates::MapPoint::from_geo(impact_2d),
+                self.sight_obstacles(assets),
+            );
             if resolution.sector.is_none() || resolution.blocked_by_motion_obstacle {
                 return TrajectoryPreview::Invalid;
             }
@@ -2683,7 +2684,7 @@ impl EngineInner {
             if (dx != 0.0 || dy != 0.0)
                 && let Some(Entity::Pc(pc)) = self
                     .entities
-                    .get_mut(pc_id.0 as usize)
+                    .get_mut(pc_id.index() as usize)
                     .and_then(|s| s.as_mut())
             {
                 pc.element
@@ -2744,7 +2745,7 @@ impl EngineInner {
             ) {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             let Some(Entity::Pc(pc)) = entity.as_mut() else {
@@ -2772,7 +2773,7 @@ impl EngineInner {
 
         let ids = self.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             let Some(Entity::Pc(pc)) = entity.as_mut() else {
@@ -2821,7 +2822,7 @@ impl EngineInner {
 
         let ids = self.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id.0 as usize) else {
+            let Some(entity) = self.entities.get_mut(pc_id.index() as usize) else {
                 continue;
             };
             let Some(Entity::Pc(pc)) = entity.as_mut() else {

@@ -99,13 +99,10 @@ impl EngineInner {
         // 3D position with a Y-stretched isometric square-norm is used
         // for the proximity test.
         let candidates: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let e = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(id, e)| {
                 if e.is_active() && e.is_human() {
-                    Some(EntityId(idx as u32))
+                    Some(id)
                 } else {
                     None
                 }
@@ -165,7 +162,7 @@ impl EngineInner {
                 // VIP soldiers play the VipNetNo remark on the crumple
                 // path; this only fires for VIPs, not riders/Stuteley.
                 if is_soldier_vip
-                    && let Some(Some(entity)) = self.entities.get_mut(actor_id.0 as usize)
+                    && let Some(Some(entity)) = self.entities.get_mut(actor_id.index() as usize)
                     && let Some(npc) = entity.npc_data_mut()
                     && let Some(base) = npc.ai_brain.base_mut()
                 {
@@ -223,7 +220,7 @@ impl EngineInner {
             // Eager counter bump — posture is left alone;
             // `EngineInner::apply_net` snaps it to StuckUnderNet next
             // frame when the ReceiveNet element dispatches.
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
                 && let Some(human) = entity.human_data_mut()
             {
                 crate::combat::increment_stuck_under_net(human);
@@ -247,7 +244,7 @@ impl EngineInner {
             // net visually covers them. The display-order pipeline is
             // sprite-driven and only needs the reference + flag set
             // once per capture.
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
                 let sprite = &mut entity.element_data_mut().sprite;
                 sprite.display_order_ref = Some(net_id);
                 sprite.behind_display_order_ref = true;
@@ -339,7 +336,7 @@ impl EngineInner {
 
             // Clear the "behind net" sprite reference so the victim
             // goes back to normal Y-sorting.
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
                 let sprite = &mut entity.element_data_mut().sprite;
                 sprite.display_order_ref = None;
                 sprite.behind_display_order_ref = false;
@@ -383,12 +380,13 @@ impl EngineInner {
             if friend_id == body_id {
                 continue;
             }
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(friend_id.0 as usize)
+            if let Some(Some(Entity::Soldier(s))) =
+                self.entities.get_mut(friend_id.index() as usize)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 s.npc.detectable_lists[det_idx].retain(|d| d.element != Some(body_id));
             } else if let Some(Some(Entity::Civilian(c))) =
-                self.entities.get_mut(friend_id.0 as usize)
+                self.entities.get_mut(friend_id.index() as usize)
                 && det_idx < c.npc.detectable_lists.len()
             {
                 c.npc.detectable_lists[det_idx].retain(|d| d.element != Some(body_id));
@@ -433,16 +431,11 @@ impl EngineInner {
         let mut applies: Vec<EntityId> = Vec::new();
         let mut just_landed: Vec<EntityId> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (net_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let net = match entity {
                 Entity::Net(n) if n.element.active => n,
                 _ => continue,
             };
-            let net_id = EntityId(idx as u32);
 
             if net.projectile.flying {
                 advance_net_trajectory(net);
@@ -516,9 +509,9 @@ impl EngineInner {
         // Done in a separate read pass so we can borrow victim
         // entities.
         let mut wriggle_updates: Vec<(EntityId, crate::element::Animation)> = Vec::new();
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let net = match slot {
-                Some(Entity::Net(n)) if n.element.active && !n.projectile.flying => n,
+        for (id, entity) in self.entities_iter_with_id() {
+            let net = match entity {
+                Entity::Net(n) if n.element.active && !n.projectile.flying => n,
                 _ => continue,
             };
             if !matches!(
@@ -534,7 +527,7 @@ impl EngineInner {
                 crate::element::Animation::ObjectLying
             };
             if desired != net.object.animation {
-                wriggle_updates.push((EntityId(idx as u32), desired));
+                wriggle_updates.push((id, desired));
             }
         }
         for (id, anim) in wriggle_updates {
@@ -1299,7 +1292,7 @@ mod tests {
         ));
         // Seed the net with an already-captured victim so the
         // crumple guard sees a non-empty list.
-        if let Some(Some(Entity::Net(n))) = engine.entities.get_mut(net_id.0 as usize) {
+        if let Some(Some(Entity::Net(n))) = engine.entities.get_mut(net_id.index() as usize) {
             n.net.victims.push(existing_id);
         }
 
@@ -1419,7 +1412,7 @@ mod tests {
         // this unit test, so set the posture by hand to simulate the
         // post-dispatch state.
         engine.apply_net_falling_effect(&assets, net_id);
-        if let Some(Some(entity)) = engine.entities.get_mut(victim_id.0 as usize) {
+        if let Some(Some(entity)) = engine.entities.get_mut(victim_id.index() as usize) {
             entity.set_posture_stuck_under_net_for_human();
         }
         assert_eq!(

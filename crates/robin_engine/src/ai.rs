@@ -71,10 +71,8 @@ pub enum EnterSwordfightRequest {
 
 pub use crate::position_interface::SectorHandle;
 
-// NpcHandle is just a `u32` alias and EntityId is `EntityId(u32)`; the
-// old `From` impls would violate the orphan rule now that `EntityId`
-// lives in `robin_engine`, so call sites use explicit `.0` /
-// `EntityId(h)` construction instead.
+// NpcHandle is just a `u32` alias; `EntityId::from_raw` bridges legacy raw
+// handles when the concrete entity type has not been resolved yet.
 
 // ---------------------------------------------------------------------------
 // AI lock flags
@@ -3480,7 +3478,7 @@ impl AiContext {
             return false;
         }
         let viewer_eye = crate::stealth::eye_point_xy(
-            crate::geo2d::pt(self.position.x, self.position.y),
+            crate::coordinates::MapPoint::new(self.position.x, self.position.y),
             self.posture,
             self.direction as i16,
             false,
@@ -5624,7 +5622,7 @@ impl AiController {
         self.checkpoint_charly = target;
         if target != 0 {
             self.pending_add_detectables.push((
-                crate::element::EntityId(target),
+                crate::element::EntityId::from_raw(target),
                 DetectableType::MissedFriend,
             ));
         } else {
@@ -5664,7 +5662,7 @@ impl AiController {
                 // Unconditional `DeleteDetectable(body, BODY)` —
                 // fires whether or not UPDATE_BODIES is set.
                 self.pending_delete_detectable_entity
-                    .push((EntityId(body), DetectableType::Body));
+                    .push((EntityId::from_raw(body), DetectableType::Body));
             }
         }
 
@@ -5674,8 +5672,10 @@ impl AiController {
             && self.my_reconnaissance_report.charly == 0
         {
             self.my_reconnaissance_report.charly = other.charly;
-            self.pending_add_detectables
-                .push((EntityId(other.charly), DetectableType::MissedFriend));
+            self.pending_add_detectables.push((
+                EntityId::from_raw(other.charly),
+                DetectableType::MissedFriend,
+            ));
         }
 
         // Monotonically update type / seek_position.
@@ -9034,15 +9034,19 @@ mod tests {
     #[test]
     fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
         let mut bbox = crate::geo2d::BBox2D::new();
-        let points = vec![
+        let points_geo = vec![
             crate::geo2d::pt(0.0, 0.0),
             crate::geo2d::pt(100.0, 0.0),
             crate::geo2d::pt(100.0, 100.0),
             crate::geo2d::pt(0.0, 100.0),
         ];
-        for &point in &points {
+        for &point in &points_geo {
             bbox.expand_point(point);
         }
+        let points = points_geo
+            .into_iter()
+            .map(crate::coordinates::MapPoint::from_geo)
+            .collect();
 
         let sector_number = crate::sector::SectorNumber::new(7);
         let mut level = crate::fast_find_grid::LevelGrid::default();
@@ -9183,8 +9187,8 @@ mod tests {
             sector_index: 42,
             ..House::default()
         };
-        let a = EntityId(1);
-        let b = EntityId(2);
+        let a = EntityId::from_raw(1);
+        let b = EntityId::from_raw(2);
 
         // Enter A, then B
         if !h.occupant_ids.contains(&a) {
@@ -9216,11 +9220,11 @@ mod tests {
         use crate::element::EntityId;
         let mut h = House::default();
         assert_eq!(h.occupant_count(), 0);
-        h.occupant_ids.push(EntityId(1));
-        h.occupant_ids.push(EntityId(2));
+        h.occupant_ids.push(EntityId::from_raw(1));
+        h.occupant_ids.push(EntityId::from_raw(2));
         assert_eq!(h.occupant_count(), 2);
-        assert!(h.contains_occupant(EntityId(1)));
-        assert!(!h.contains_occupant(EntityId(99)));
+        assert!(h.contains_occupant(EntityId::from_raw(1)));
+        assert!(!h.contains_occupant(EntityId::from_raw(99)));
     }
 
     #[test]

@@ -12,7 +12,14 @@ use crate::element::{
 };
 use crate::geo2d::{self, BBox2D};
 use crate::gfx_types::Rect;
+use crate::hud_text::{self, HudFonts};
+use crate::ingame_menu::layout;
+use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
+use crate::minimap::UIState;
+use crate::player_command::PlayerCommand;
+use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
+use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::markers::GroundMark;
 use robin_engine::sprite::BBox;
@@ -63,7 +70,7 @@ pub(crate) fn render_door_overlays(
         return;
     };
 
-    let draw_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
+    let draw_geo_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
         if pts.len() < 3 {
             return;
         }
@@ -71,12 +78,24 @@ pub(crate) fn render_door_overlays(
             .draw_alpha_polygon(renderer, pts, color, alpha);
     };
 
+    let draw_map_polygon = |renderer: &mut Renderer,
+                            pts: &[robin_engine::coordinates::MapPoint],
+                            color: u32,
+                            alpha: u32| {
+        if pts.len() < 3 {
+            return;
+        }
+        let pts: Vec<GeoPoint2D> = pts.iter().map(|p| p.to_geo()).collect();
+        host.draw_manager
+            .draw_alpha_polygon(renderer, &pts, color, alpha);
+    };
+
     let draw_door = |renderer: &mut Renderer, door: &crate::gate::Door| {
         if door.click_polygon.len() < 3 {
             return;
         }
         let pts: Vec<GeoPoint2D> = door.click_polygon.iter().map(|&(x, y)| pt(x, y)).collect();
-        draw_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
+        draw_geo_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
     };
 
     // Walk a motion-area / building sector's gate list and paint each door.
@@ -160,7 +179,7 @@ pub(crate) fn render_door_overlays(
             if !sector.sector_type.contains(SectorType::JUMP) {
                 continue;
             }
-            draw_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
+            draw_map_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
         }
         return;
     }
@@ -255,7 +274,7 @@ pub(crate) fn render_door_overlays(
                 _ => {
                     if owning_patch.is_none() && !sector.points.is_empty() && selected_sector_active
                     {
-                        draw_polygon(renderer, &sector.points, COLOR_DOOR, ALPHA_DOOR);
+                        draw_map_polygon(renderer, &sector.points, COLOR_DOOR, ALPHA_DOOR);
                     }
                 }
             }
@@ -300,7 +319,7 @@ pub(crate) fn render_door_overlays(
                 break;
             }
             if paint {
-                draw_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
+                draw_map_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
             }
         }
     }
@@ -325,7 +344,7 @@ pub(crate) fn render_door_overlays(
                     continue;
                 };
                 if s.sector_type.is_patch() && engine.fast_grid().is_sector_active(grid_idx) {
-                    draw_polygon(renderer, &s.points, COLOR_DOOR, ALPHA_DOOR);
+                    draw_map_polygon(renderer, &s.points, COLOR_DOOR, ALPHA_DOOR);
                     break;
                 }
             }
@@ -941,7 +960,7 @@ fn render_ground_mark_set(
             renderer,
             mark.layer,
             &mark_world_bbox,
-            mark_position,
+            robin_engine::coordinates::MapPoint::from_geo(mark_position),
             mark_rect,
             view_pos.to_geo(),
             zoom,
@@ -955,7 +974,7 @@ fn render_character_masks_clipped(
     renderer: &mut Renderer,
     layer: u16,
     world_bbox: &crate::geo2d::BBox2D,
-    position: crate::geo2d::GeoPoint2D,
+    position: robin_engine::coordinates::MapPoint,
     clip_rect: Rect,
     view: crate::geo2d::GeoPoint2D,
     zoom: f32,
@@ -991,7 +1010,7 @@ pub(crate) fn render_entities_gpu(
     assets: &LevelAssets,
     dev: &DevState,
     renderer: &mut Renderer,
-    titbit_renderer: &mut crate::titbit_renderer::TitbitRenderer,
+    titbit_renderer: &mut TitbitRenderer,
 ) {
     let view = host.viewport.view_position;
     let zoom = host.viewport.zoom_factor;
@@ -1005,7 +1024,7 @@ pub(crate) fn render_entities_gpu(
     // not render.  The flag defaults to `true` so the live datadir is
     // unaffected; it only bites when the user toggles it off in the
     // options menu.
-    let display_anim = crate::player_profile::PlayerProfileManager::global()
+    let display_anim = PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
         .map(|p| p.graphic_config.display_anim)
@@ -1249,7 +1268,7 @@ pub(crate) fn render_entities_gpu(
                 sprite_y + sh as f32,
             );
             let actor_layer = elem.layer();
-            let actor_position = crate::geo2d::pt(world_x, world_y);
+            let actor_position = robin_engine::coordinates::MapPoint::new(world_x, world_y);
             // The mask lookup switches between
             // `get_masks_applied_to_character` and
             // `get_masks_applied_to_projectile` based on the masking
@@ -1428,7 +1447,7 @@ fn render_sprite_mask_debug_overlay(
     engine: &Engine,
     renderer: &mut Renderer,
     sprite_world_bbox: &crate::geo2d::BBox2D,
-    actor_position: crate::geo2d::GeoPoint2D,
+    actor_position: robin_engine::coordinates::MapPoint,
     position_3d: robin_engine::coordinates::WorldPoint3D,
     use_projectile_path: bool,
     mask_indices: &[robin_engine::mask::MaskIndex],
@@ -1449,10 +1468,10 @@ fn render_sprite_mask_debug_overlay(
         draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
     }
 
-    draw_world_cross(host, renderer, actor_position, 0x07e0);
+    draw_world_cross(host, renderer, actor_position.to_geo(), 0x07e0);
     if use_projectile_path {
         let projectile_test_point = crate::geo2d::pt(position_3d.x, position_3d.y);
-        let actor_screen = world_to_screen(host, actor_position);
+        let actor_screen = world_to_screen(host, actor_position.to_geo());
         let projectile_screen = world_to_screen(host, projectile_test_point);
         renderer.draw_line_screen(
             actor_screen.0,
@@ -1816,7 +1835,7 @@ pub(crate) fn clear_status_bar_flags(
         display,
         input,
         assets,
-        &crate::player_command::PlayerCommand::ClearNpcDoubleStatusBarFlags,
+        &PlayerCommand::ClearNpcDoubleStatusBarFlags,
     );
 }
 
@@ -1874,9 +1893,9 @@ pub(crate) fn render_minimap(
     if !mm.is_displayed() && mm.transition_counter() == 0.0 {
         if mm.button_box().is_somewhere() && !host.minimap_corner_surfaces.is_empty() {
             let state_idx = match mm.ui_state() {
-                crate::minimap::UIState::Default => 0,
-                crate::minimap::UIState::Focused => 1,
-                crate::minimap::UIState::Selected => 2,
+                UIState::Default => 0,
+                UIState::Focused => 1,
+                UIState::Selected => 2,
             };
             let surface = host
                 .minimap_corner_surfaces
@@ -1968,7 +1987,7 @@ pub(crate) fn render_minimap(
 
     let sorted = engine.sort_for_minimap();
     for id in sorted {
-        if mm.is_element_highlighted(id.0) {
+        if mm.is_element_highlighted(id.index()) {
             continue;
         }
         let info = match engine.minimap_dot_info(id, assets) {
@@ -2002,10 +2021,11 @@ pub(crate) fn render_minimap(
         if !h.refresh {
             continue;
         }
-        let entity = match engine.get_entity(robin_engine::element::EntityId(h.element_index)) {
-            Some(e) => e,
-            None => continue,
-        };
+        let entity =
+            match engine.get_entity(robin_engine::element::EntityId::from_raw(h.element_index)) {
+                Some(e) => e,
+                None => continue,
+            };
         refresh_dot(
             host,
             mm,
@@ -2163,7 +2183,7 @@ where
     // unless `force_display` or `patch_index` overrides.  See
     // `render_entities_gpu` for the full gate; identical logic via
     // `Entity::is_to_be_displayed`.
-    let display_anim = crate::player_profile::PlayerProfileManager::global()
+    let display_anim = PlayerProfileManager::global()
         .as_ref()
         .and_then(|mgr| mgr.get_active())
         .map(|p| p.graphic_config.display_anim)
@@ -2555,7 +2575,7 @@ pub(crate) fn render_debug_motion_graph(
         .map(|e| e.sprite().position_iface.get_pathfinder_index())
         .unwrap_or(0);
 
-    let world_to_screen = |p: robin_engine::geo2d::GeoPoint2D| -> (i32, i32) {
+    let world_to_screen = |p: robin_engine::coordinates::MapPoint| -> (i32, i32) {
         let sx = ((p.x - view.x) * zoom).round() as i32;
         let sy = ((p.y - view.y) * zoom).round() as i32;
         (sx, sy)
@@ -2909,7 +2929,7 @@ pub(crate) fn render_noise_display(
     engine: &Engine,
     assets: &LevelAssets,
     dev: &robin_engine::engine::DevState,
-    fonts: Option<&crate::hud_text::HudFonts>,
+    fonts: Option<&HudFonts>,
     selected_view_element: Option<robin_engine::element::EntityId>,
     renderer: &mut Renderer,
 ) {
@@ -2929,7 +2949,7 @@ pub(crate) fn render_noise_display(
         }
         // `draw_polyline` draws segments between consecutive points —
         // append the first point so the polygon closes.
-        let mut closed: Vec<geo2d::GeoPoint2D> = sector.points.clone();
+        let mut closed = sector.points.clone();
         closed.push(sector.points[0]);
         host.draw_manager.draw_polyline(renderer, &closed, 0x00AF);
     }
@@ -3064,10 +3084,7 @@ pub(crate) fn render_debug_animation_lines(
         }
         let color: u16 = if entity.is_active() { 0xFFFF } else { 0xFA00 };
 
-        // Convert GeoPoint2D (crate::element) to geo2d::GeoPoint2D for draw_polyline
-        let points: Vec<geo2d::GeoPoint2D> = polyline.iter().map(|p| geo2d::pt(p.x, p.y)).collect();
-
-        host.draw_manager.draw_polyline(renderer, &points, color);
+        host.draw_manager.draw_polyline(renderer, polyline, color);
     }
 }
 
@@ -3224,8 +3241,8 @@ fn fill_box_whatsup(
 pub(crate) fn render_ransom_amulet_overlay(
     engine: &Engine,
     renderer: &mut Renderer,
-    fonts: &crate::hud_text::HudFonts,
-    menu_resources: Option<&crate::ingame_menu::resources::IngameMenuResources>,
+    fonts: &HudFonts,
+    menu_resources: Option<&IngameMenuResources>,
 ) {
     let campaign = match engine.campaign() {
         Some(c) => c,
@@ -3241,10 +3258,8 @@ pub(crate) fn render_ransom_amulet_overlay(
     // table is unavailable.
     let (ransom_tpl, amulet_tpl) = if let Some(res) = menu_resources {
         (
-            res.menu_text
-                .get(crate::ingame_menu::resources::MT_STR_RANSOM),
-            res.menu_text
-                .get(crate::ingame_menu::resources::MT_STR_AMULETS),
+            res.menu_text.get(MT_STR_RANSOM),
+            res.menu_text.get(MT_STR_AMULETS),
         )
     } else {
         ("Ransom: %d".into(), "Amulets: %d".into())
@@ -3280,21 +3295,15 @@ fn substitute_int(template: &str, value: i32) -> String {
 /// for the ransom/amulet overlay and dev noise labels.  Routes the
 /// shadow+foreground pass through `Renderer::render_text_argb` instead of
 /// the old HUD surface-raster path.
-fn render_text_with_shadow(
-    renderer: &mut Renderer,
-    fonts: &crate::hud_text::HudFonts,
-    text: &str,
-    x: i32,
-    y: i32,
-) {
-    crate::hud_text::render_text_background(
+fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str, x: i32, y: i32) {
+    hud_text::render_text_background(
         &fonts.tooltip_font,
         fonts.shadow_font.as_ref(),
         text,
         x,
         y,
         |f, t, fx, fy| {
-            crate::ingame_menu::layout::render_text_screen(renderer, f, t, fx, fy);
+            layout::render_text_screen(renderer, f, t, fx, fy);
         },
     );
 }

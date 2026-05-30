@@ -56,7 +56,7 @@ pub type Animation = OrderType;
 // ═══════════════════════════════════════════════════════════════════
 
 pub use crate::element_kinds::*;
-pub use crate::entity_id::EntityId;
+pub use crate::entity_id::{EntityId, EntityIdKind};
 // ═══════════════════════════════════════════════════════════════════
 //  Data structs — one per hierarchy level
 // ═══════════════════════════════════════════════════════════════════
@@ -680,7 +680,7 @@ pub struct ActorData {
     /// Destination point for rolling after a death/knockout fall on a slope.
     /// When `combat_anim` finishes and this is set, a Rolling animation is
     /// queued toward this point.
-    pub pending_roll: Option<GeoPoint2D>,
+    pub pending_roll: Option<MapPoint>,
 
     /// World position the shield should face toward during movement.
     /// Set by `dispatch_raise_shield` from the danger point; cleared on
@@ -1388,7 +1388,7 @@ pub struct NpcData {
     pub drunken_cone_iterators: [f32; 4],
 
     /// Point the NPC is staring at (for `EyeStatus::Stare`).
-    pub stare_point: GeoPoint2D,
+    pub stare_point: MapPoint,
 
     /// Entity the view cone follows (for `EyeStatus::Follow`).
     pub follow_target: Option<EntityId>,
@@ -1486,7 +1486,7 @@ impl Default for NpcData {
             view_direction: [1.0, 0.0],
             view_lean_out: false,
             drunken_cone_iterators: [0.0; 4],
-            stare_point: GeoPoint2D { x: 0.0, y: 0.0 },
+            stare_point: MapPoint::new(0.0, 0.0),
             follow_target: None,
         }
     }
@@ -2059,6 +2059,20 @@ macro_rules! dispatch_element {
 }
 
 impl Entity {
+    pub fn entity_id_kind(&self) -> EntityIdKind {
+        match self {
+            Self::Pc(_) => EntityIdKind::Pc,
+            Self::Soldier(_) => EntityIdKind::Soldier,
+            Self::Civilian(_) => EntityIdKind::Civilian,
+            Self::Fx(_) => EntityIdKind::Fx,
+            Self::Target(_) => EntityIdKind::Target,
+            Self::Bonus(_) => EntityIdKind::Bonus,
+            Self::Scroll(_) => EntityIdKind::Scroll,
+            Self::Projectile(_) => EntityIdKind::Projectile,
+            Self::Net(_) => EntityIdKind::Net,
+        }
+    }
+
     // — Element data access —
 
     pub fn element_data(&self) -> &ElementData {
@@ -4129,7 +4143,7 @@ mod tests {
         use crate::ai::AiState;
         use crate::ai_enemy::EnemyAi;
 
-        let entity_id = EntityId(42);
+        let entity_id = EntityId::from_raw(42);
         let mut enemy_ai = EnemyAi::new(7);
         enemy_ai.base.owner_entity_id = Some(entity_id);
         assert_eq!(enemy_ai.base.me, 7);

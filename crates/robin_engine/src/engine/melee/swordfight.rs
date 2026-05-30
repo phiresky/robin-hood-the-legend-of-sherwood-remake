@@ -33,7 +33,7 @@ impl EngineInner {
         opponent_id: EntityId,
         jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
-        let Some(Some(entity)) = entities.get_mut(entity_id.0 as usize) else {
+        let Some(Some(entity)) = entities.get_mut(entity_id.index() as usize) else {
             return false;
         };
         let Some(human) = entity.human_data_mut() else {
@@ -65,7 +65,7 @@ impl EngineInner {
         entity_id: EntityId,
         opponent_id: EntityId,
     ) {
-        if let Some(Some(entity)) = entities.get_mut(entity_id.0 as usize)
+        if let Some(Some(entity)) = entities.get_mut(entity_id.index() as usize)
             && let Some(human) = entity.human_data_mut()
             && let Some(pos) = human.opponents.iter().position(|&id| id == opponent_id)
         {
@@ -236,7 +236,7 @@ impl EngineInner {
 
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
                 && let Some(human) = entity.human_data_mut()
             {
                 if human.opponent_jump_lines.len() < human.opponents.len() {
@@ -251,7 +251,7 @@ impl EngineInner {
             // Mirror onto the opponent's slot for `entity_id`.
             // Use a soft path here — opponent's list may legitimately
             // have removed the entry between snapshot and write-back.
-            if let Some(Some(entity)) = self.entities.get_mut(opp_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(opp_id.index() as usize)
                 && let Some(human) = entity.human_data_mut()
                 && let Some(pos) = human.opponents.iter().position(|&id| id == entity_id)
             {
@@ -356,7 +356,7 @@ impl EngineInner {
         };
 
         if new_principal != 0 {
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.opponents.swap(0, new_principal);
@@ -381,7 +381,7 @@ impl EngineInner {
         new_opponent_id: EntityId,
     ) {
         let found = {
-            let Some(Some(entity)) = self.entities.get(entity_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(entity_id.index() as usize) else {
                 return;
             };
             let Some(human) = entity.human_data() else {
@@ -392,7 +392,7 @@ impl EngineInner {
 
         if let Some(idx) = found {
             // Swap to front — makes this opponent the principal.
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.opponents.swap(0, idx);
@@ -466,7 +466,7 @@ impl EngineInner {
         aggressor_jump_line: Option<crate::jump_line::JumpLineIndex>,
     ) -> bool {
         let scratch = self.build_sim_scratch(assets);
-        if opponent.0 == 0 {
+        if opponent.index() == 0 {
             // Opponent==0 is a legitimate input upstream now — the
             // the `EnterSwordfightRequest::RaiseSword` drain branch in
             // `engine/ai/mod.rs::drain_pending_for_npc` routes around this
@@ -477,7 +477,7 @@ impl EngineInner {
             // bail rather than fabricating an opponent.
             tracing::trace!(
                 ?initiator,
-                "enter_swordfight called with opponent=EntityId(0) — \
+                "enter_swordfight called with opponent=EntityId::from_raw(0) — \
                  raise-sword-no-opponent should be routed via the \
                  EnterSwordfightRequest::RaiseSword drain instead"
             );
@@ -509,7 +509,7 @@ impl EngineInner {
         }
 
         // Cancel any pending AI bow shot.
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(initiator.0 as usize)
+        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(initiator.index() as usize)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
             ai.pending_shoot_target = None;
@@ -523,7 +523,7 @@ impl EngineInner {
         // opponent in their pre-swordfight state.
         let opponent_was_swordfighting = self
             .entities
-            .get(opponent.0 as usize)
+            .get(opponent.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.human_data())
             .map(|h| !h.opponents.is_empty())
@@ -533,7 +533,7 @@ impl EngineInner {
             // Synchronous Think on the opponent if they're a soldier.
             let is_soldier = matches!(
                 self.entities
-                    .get(opponent.0 as usize)
+                    .get(opponent.index() as usize)
                     .and_then(|s| s.as_ref()),
                 Some(Entity::Soldier(_))
             );
@@ -541,7 +541,7 @@ impl EngineInner {
                 let ctx = {
                     let entity = self
                         .entities
-                        .get(opponent.0 as usize)
+                        .get(opponent.index() as usize)
                         .and_then(|s| s.as_ref())
                         .expect("opponent existence checked above");
                     crate::engine::ai::build_ai_context_from_entity(
@@ -559,7 +559,7 @@ impl EngineInner {
                 };
                 let stimulus = crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventEnterSwordfight,
-                    initiator.0,
+                    initiator.index(),
                 );
                 let tick_data = self.build_npc_tick_data_for_target(
                     opponent,
@@ -588,7 +588,7 @@ impl EngineInner {
 
         let already_opponent = self
             .entities
-            .get(initiator.0 as usize)
+            .get(initiator.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.human_data())
             .map(|h| h.opponents.contains(&opponent))
@@ -605,11 +605,11 @@ impl EngineInner {
                 let (elev_a, elev_b, sector_a, sector_b) = {
                     let entity_a = self
                         .entities
-                        .get(initiator.0 as usize)
+                        .get(initiator.index() as usize)
                         .and_then(|s| s.as_ref());
                     let entity_b = self
                         .entities
-                        .get(opponent.0 as usize)
+                        .get(opponent.index() as usize)
                         .and_then(|s| s.as_ref());
                     let (Some(ea), Some(eb)) = (entity_a, entity_b) else {
                         return false;
@@ -639,7 +639,7 @@ impl EngineInner {
                 let dist = entity_distance(&self.entities, initiator, opponent);
                 let uber_a = self
                     .entities
-                    .get(initiator.0 as usize)
+                    .get(initiator.index() as usize)
                     .and_then(|s| s.as_ref())
                     .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
                     .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -647,7 +647,7 @@ impl EngineInner {
                     .unwrap_or(70.0);
                 let uber_b = self
                     .entities
-                    .get(opponent.0 as usize)
+                    .get(opponent.index() as usize)
                     .and_then(|s| s.as_ref())
                     .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
                     .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -699,7 +699,7 @@ impl EngineInner {
             if sword_hurted {
                 let initiator_opp_count = self
                     .entities
-                    .get(initiator.0 as usize)
+                    .get(initiator.index() as usize)
                     .and_then(|s| s.as_ref())
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.len())
@@ -712,7 +712,7 @@ impl EngineInner {
                 // opponent has >1 opponents, don't pile in.
                 let principal_opp_id = self
                     .entities
-                    .get(opponent.0 as usize)
+                    .get(opponent.index() as usize)
                     .and_then(|s| s.as_ref())
                     .and_then(|e| e.human_data())
                     .and_then(|h| h.opponents.first().copied());
@@ -720,7 +720,7 @@ impl EngineInner {
                 if let Some(principal_id) = principal_opp_id {
                     let principal_opp_count = self
                         .entities
-                        .get(principal_id.0 as usize)
+                        .get(principal_id.index() as usize)
                         .and_then(|s| s.as_ref())
                         .and_then(|e| e.human_data())
                         .map(|h| h.opponents.len())
@@ -734,7 +734,7 @@ impl EngineInner {
             // Don't enter swordfight with a charging knight.
             let opponent_is_charging_rider = self
                 .entities
-                .get(opponent.0 as usize)
+                .get(opponent.index() as usize)
                 .and_then(|s| s.as_ref())
                 .map(|e| {
                     e.soldier_data().map(|s| s.rider).unwrap_or(false)
@@ -749,7 +749,7 @@ impl EngineInner {
         }
 
         // Clear step-back flag on swordfight entry.
-        if let Some(Some(entity)) = self.entities.get_mut(initiator.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(initiator.index() as usize)
             && let Some(hd) = entity.human_data_mut()
         {
             hd.last_motion_was_step_back_in_combat = false;
@@ -758,7 +758,7 @@ impl EngineInner {
         // Multi-opponent purging.
         let opponent_is_swordfighting = self
             .entities
-            .get(opponent.0 as usize)
+            .get(opponent.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.human_data())
             .map(|h| !h.opponents.is_empty())
@@ -791,7 +791,7 @@ impl EngineInner {
             // break those fights to make room for the new 1-on-1.
             let opp_opponents: Vec<EntityId> = self
                 .entities
-                .get(opponent.0 as usize)
+                .get(opponent.index() as usize)
                 .and_then(|s| s.as_ref())
                 .and_then(|e| e.human_data())
                 .map(|h| h.opponents.clone())
@@ -800,7 +800,7 @@ impl EngineInner {
             for ally_id in &opp_opponents {
                 let ally_opp_count = self
                     .entities
-                    .get(ally_id.0 as usize)
+                    .get(ally_id.index() as usize)
                     .and_then(|s| s.as_ref())
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.len())
@@ -815,14 +815,14 @@ impl EngineInner {
             // opponents from the royalist side.
             let initiator_has_opps = self
                 .entities
-                .get(initiator.0 as usize)
+                .get(initiator.index() as usize)
                 .and_then(|s| s.as_ref())
                 .and_then(|e| e.human_data())
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
             let opponent_has_opps = self
                 .entities
-                .get(opponent.0 as usize)
+                .get(opponent.index() as usize)
                 .and_then(|s| s.as_ref())
                 .and_then(|e| e.human_data())
                 .map(|h| !h.opponents.is_empty())
@@ -838,7 +838,7 @@ impl EngineInner {
 
                 let purge_opponents: Vec<EntityId> = self
                     .entities
-                    .get(human_to_purge.0 as usize)
+                    .get(human_to_purge.index() as usize)
                     .and_then(|s| s.as_ref())
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.clone())
@@ -880,13 +880,13 @@ impl EngineInner {
         // Pre-compute shield bearer status and positions before mutable borrow.
         let initiator_is_shield_bearer = self
             .entities
-            .get(initiator.0 as usize)
+            .get(initiator.index() as usize)
             .and_then(|s| s.as_ref())
             .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
             .unwrap_or(false);
         let opponent_is_shield_bearer = self
             .entities
-            .get(opponent.0 as usize)
+            .get(opponent.index() as usize)
             .and_then(|s| s.as_ref())
             .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
             .unwrap_or(false);
@@ -906,14 +906,14 @@ impl EngineInner {
         // in-progress walk-away / strafe during combat.
         let initiator_fresh = self
             .entities
-            .get(initiator.0 as usize)
+            .get(initiator.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.actor_data())
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
             .unwrap_or(true);
         let opponent_fresh = self
             .entities
-            .get(opponent.0 as usize)
+            .get(opponent.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.actor_data())
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
@@ -954,7 +954,7 @@ impl EngineInner {
                 initiator_pos,
             ),
         ] {
-            if let Some(Some(entity)) = self.entities.get_mut(me.0 as usize) {
+            if let Some(Some(entity)) = self.entities.get_mut(me.index() as usize) {
                 let mut raised_sword = false;
                 if let Some(actor) = entity.actor_data_mut()
                     && !actor.action_state.is_sword()
@@ -1036,7 +1036,7 @@ impl EngineInner {
         // Collect opponent list first to avoid borrow issues
         let opponents: Vec<EntityId> = self
             .entities
-            .get(entity_id.0 as usize)
+            .get(entity_id.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.human_data())
             .map(|h| h.opponents.clone())
@@ -1057,14 +1057,14 @@ impl EngineInner {
             // target.
             let opp_count = self
                 .entities
-                .get(opp_id.0 as usize)
+                .get(opp_id.index() as usize)
                 .and_then(|s| s.as_ref())
                 .and_then(|e| e.human_data())
                 .map(|h| h.opponents.len())
                 .unwrap_or(0);
             if opp_count == 0 {
                 let pending_order =
-                    if let Some(Some(entity)) = self.entities.get_mut(opp_id.0 as usize) {
+                    if let Some(Some(entity)) = self.entities.get_mut(opp_id.index() as usize) {
                         let order_type = if let Some(actor) = entity.actor_data_mut() {
                             if actor.action_state.is_sword() {
                                 // Walking-animation swap: if
@@ -1183,7 +1183,7 @@ impl EngineInner {
         // after the first pass set the action state to Waiting, the
         // second pass's `is_sword`/`is_shield` checks always failed.
         let pending_order_self =
-            if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize) {
+            if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize) {
                 let order_type = if !entity_is_dead {
                     if let Some(actor) = entity.actor_data_mut() {
                         if actor.action_state.is_sword() {
@@ -1252,7 +1252,7 @@ impl EngineInner {
         if !entity_is_dead
             && matches!(
                 self.entities
-                    .get(entity_id.0 as usize)
+                    .get(entity_id.index() as usize)
                     .and_then(|s| s.as_ref()),
                 Some(Entity::Soldier(_))
             )
@@ -1270,7 +1270,7 @@ impl EngineInner {
         pc_id: EntityId,
         opponent_id: EntityId,
     ) {
-        if let Some(Some(entity)) = entities.get_mut(pc_id.0 as usize)
+        if let Some(Some(entity)) = entities.get_mut(pc_id.index() as usize)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.melee_target = Some(opponent_id);
@@ -1288,7 +1288,7 @@ impl EngineInner {
         let (opponents, uber_range) = {
             let entity = match self
                 .entities
-                .get(entity_id.0 as usize)
+                .get(entity_id.index() as usize)
                 .and_then(|s| s.as_ref())
             {
                 Some(e) => e,
@@ -1310,7 +1310,7 @@ impl EngineInner {
             let dist = entity_distance(&self.entities, entity_id, opp_id);
             let opp_uber = self
                 .entities
-                .get(opp_id.0 as usize)
+                .get(opp_id.index() as usize)
                 .and_then(|s| s.as_ref())
                 .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
                 .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -1340,7 +1340,7 @@ impl EngineInner {
         // `choose_principal_opponent` when two or more remain.
         let remaining = self
             .entities
-            .get(entity_id.0 as usize)
+            .get(entity_id.index() as usize)
             .and_then(|s| s.as_ref())
             .and_then(|e| e.human_data())
             .map(|h| h.opponents.len())
@@ -1480,7 +1480,7 @@ impl EngineInner {
         tracing::info!(entity = ?pc_id, "PC coma save activated — amulet consumed");
 
         // Set life to 5, max concussion, consume amulet
-        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.0 as usize) {
+        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) {
             pc.pc.life_points = 5;
             pc.human.concussion_of_the_brain = combat::CONCUSSION_MAX;
             pc.human.unconscious = true;
@@ -1504,7 +1504,7 @@ impl EngineInner {
             self.abort_quick_action(pc_id, slot);
         }
         // Close eyes / stop combat
-        if let Some(Some(entity)) = self.entities.get_mut(pc_id.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(pc_id.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.action_state = ActionState::Waiting;

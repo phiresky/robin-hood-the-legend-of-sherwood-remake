@@ -1239,7 +1239,7 @@ impl EngineInner {
                 let point = self
                     .get_entity(entity_id)
                     .map(|e| e.position_iface())
-                    .map(|pi| pi.map_position().to_geo());
+                    .map(|pi| pi.map_position());
                 let material = point.map(|p| assets.material_sectors.material_at(p));
                 (material, None)
             }

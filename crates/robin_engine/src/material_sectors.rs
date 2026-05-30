@@ -12,13 +12,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::MapPoint;
 use crate::element::GameMaterial;
-use crate::geo2d::{BBox2D, GeoPoint2D, pt};
+use crate::geo2d::{BBox2D, pt};
 use crate::level_data::RawMaterialSector;
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct MaterialSector {
-    pub points: Vec<GeoPoint2D>,
+    pub points: Vec<MapPoint>,
     pub bounding_box: BBox2D,
     pub material: GameMaterial,
 }
@@ -35,15 +36,15 @@ impl MaterialSector {
         if r.polygon.points.len() < 3 {
             return None;
         }
-        let points: Vec<GeoPoint2D> = r
+        let points: Vec<MapPoint> = r
             .polygon
             .points
             .iter()
-            .map(|&(x, y)| pt(x as f32, y as f32))
+            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
             .collect();
         let mut bbox = BBox2D::new();
         for &p in &points {
-            bbox.expand_point(p);
+            bbox.expand_point(p.to_geo());
         }
         let code = r.material as u32;
         debug_assert!(
@@ -64,11 +65,11 @@ impl MaterialSector {
 
     /// Ray-casting point-in-polygon test — same implementation as
     /// [`crate::water_zones::WaterZone::contains`].
-    pub fn contains(&self, p: GeoPoint2D) -> bool {
+    pub fn contains(&self, p: MapPoint) -> bool {
         if self.points.len() < 3 {
             return false;
         }
-        if !self.bounding_box.contains_point(p) {
+        if !self.bounding_box.contains_point(p.to_geo()) {
             return false;
         }
         let mut inside = false;
@@ -105,7 +106,7 @@ impl MaterialSector {
     /// polygons.
     pub fn approximate_distance_to_boundary(
         &self,
-        point: GeoPoint2D,
+        point: MapPoint,
         inverse_aspect_ratio: f32,
     ) -> f32 {
         let mut min_distance = f32::MAX / 2.0;
@@ -221,7 +222,7 @@ impl MaterialSectors {
 
     /// Material at the given map point — first SECTOR_SOUND polygon that
     /// contains the point wins, falling back to `default_material`.
-    pub fn material_at(&self, point: GeoPoint2D) -> GameMaterial {
+    pub fn material_at(&self, point: MapPoint) -> GameMaterial {
         for s in &self.sectors {
             if s.contains(point) {
                 return s.material;
@@ -229,10 +230,6 @@ impl MaterialSectors {
         }
         self.default_material
     }
-
-    /// First sector containing `point`, if any.  Same first-hit scan
-    /// as `material_at` but returns the sector itself so callers can
-    /// query boundary distance etc.
 
     /// Material at `point`, optionally constrained to a landing
     /// obstacle's sub-sector list.
@@ -249,7 +246,7 @@ impl MaterialSectors {
     pub fn material_at_with_obstacle(
         &self,
         obstacle: Option<&crate::sight_obstacle::SightObstacle>,
-        point: GeoPoint2D,
+        point: MapPoint,
     ) -> GameMaterial {
         match obstacle {
             None => self.material_at(point),
@@ -283,14 +280,17 @@ mod tests {
     fn polygon_hit_wins_over_default() {
         let raw = vec![square(2 /* Stone */, 0, 10)];
         let ms = MaterialSectors::build_from_raw(&raw, 3 /* Grass */);
-        assert_eq!(ms.material_at(pt(5.0, 5.0)), GameMaterial::Stone);
+        assert_eq!(ms.material_at(MapPoint::new(5.0, 5.0)), GameMaterial::Stone);
     }
 
     #[test]
     fn fallback_to_default_material() {
         let raw = vec![square(2 /* Stone */, 0, 10)];
         let ms = MaterialSectors::build_from_raw(&raw, 3 /* Grass */);
-        assert_eq!(ms.material_at(pt(50.0, 50.0)), GameMaterial::Grass);
+        assert_eq!(
+            ms.material_at(MapPoint::new(50.0, 50.0)),
+            GameMaterial::Grass
+        );
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
         let raw = vec![square(2 /* Stone */, 0, 10), square(1 /* Wood */, 5, 15)];
         let ms = MaterialSectors::build_from_raw(&raw, 0);
         // (7,7) is inside both; the scan returns the first hit (Stone).
-        assert_eq!(ms.material_at(pt(7.0, 7.0)), GameMaterial::Stone);
+        assert_eq!(ms.material_at(MapPoint::new(7.0, 7.0)), GameMaterial::Stone);
     }
 
     #[test]
@@ -308,7 +308,7 @@ mod tests {
         let raw = vec![square(7 /* Water */, 0, 10)];
         let ms = MaterialSectors::build_from_raw(&raw, 0);
         let s = &ms.sectors[0];
-        let d = s.approximate_distance_to_boundary(pt(5.0, 5.0), 1.0);
+        let d = s.approximate_distance_to_boundary(MapPoint::new(5.0, 5.0), 1.0);
         assert!((d - 5.0).abs() < 1e-3, "expected ~5.0, got {d}");
     }
 
@@ -321,7 +321,7 @@ mod tests {
         let raw = vec![square(7 /* Water */, 0, 10)];
         let ms = MaterialSectors::build_from_raw(&raw, 0);
         let s = &ms.sectors[0];
-        let d = s.approximate_distance_to_boundary(pt(5.0, 2.0), 2.0);
+        let d = s.approximate_distance_to_boundary(MapPoint::new(5.0, 2.0), 2.0);
         assert!((d - 4.0).abs() < 1e-3, "expected ~4.0, got {d}");
     }
 
@@ -332,7 +332,7 @@ mod tests {
             bounding_box: BBox2D::new(),
             material: GameMaterial::Water,
         };
-        let d = s.approximate_distance_to_boundary(pt(0.0, 0.0), 1.0);
+        let d = s.approximate_distance_to_boundary(MapPoint::new(0.0, 0.0), 1.0);
         assert!(d > 1e30, "empty polygon must return a large sentinel");
     }
 
@@ -358,7 +358,7 @@ mod tests {
         let obs = make_obstacle_with_sectors(1 /* Wood */, vec![inlay]);
         // (5,5) hits the Stone inlay → Stone, not the obstacle's Wood.
         assert_eq!(
-            ms.material_at_with_obstacle(Some(&obs), pt(5.0, 5.0)),
+            ms.material_at_with_obstacle(Some(&obs), MapPoint::new(5.0, 5.0)),
             GameMaterial::Stone
         );
     }
@@ -374,7 +374,7 @@ mod tests {
         // (50,50) is inside the global Stone sector but the obstacle
         // path bypasses it — must return the obstacle's Wood material.
         assert_eq!(
-            ms.material_at_with_obstacle(Some(&obs), pt(50.0, 50.0)),
+            ms.material_at_with_obstacle(Some(&obs), MapPoint::new(50.0, 50.0)),
             GameMaterial::Wood
         );
     }
@@ -386,11 +386,11 @@ mod tests {
         let raw = vec![square(2 /* Stone */, 0, 10)];
         let ms = MaterialSectors::build_from_raw(&raw, 3 /* Grass */);
         assert_eq!(
-            ms.material_at_with_obstacle(None, pt(5.0, 5.0)),
+            ms.material_at_with_obstacle(None, MapPoint::new(5.0, 5.0)),
             GameMaterial::Stone
         );
         assert_eq!(
-            ms.material_at_with_obstacle(None, pt(50.0, 50.0)),
+            ms.material_at_with_obstacle(None, MapPoint::new(50.0, 50.0)),
             GameMaterial::Grass
         );
     }

@@ -4,6 +4,7 @@
 
 use crate::Host;
 use crate::player_command::PlayerInput;
+use crate::rewind::RewindBuffer;
 use robin_engine::engine::{Engine, LevelAssets};
 
 fn canonicalize_player_input_order(inputs: &mut Vec<PlayerInput>) {
@@ -70,7 +71,7 @@ pub(crate) fn drain_net_inputs(
     host: &mut Host,
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &LevelAssets,
-    rewind_buffer: &mut crate::rewind::RewindBuffer,
+    rewind_buffer: &mut RewindBuffer,
     peer_hashes: &mut std::collections::BTreeMap<u32, u64>,
     recent_timeline_history: &mut crate::sim_timeline::RecentTimelineHistory,
 ) -> NetDrainResult {
@@ -199,7 +200,7 @@ pub(crate) fn drain_net_inputs(
                                     "multiplayer: adopted frame-0 host snapshot after \
                                      local init diverged"
                                 );
-                                *rewind_buffer = crate::rewind::RewindBuffer::new();
+                                *rewind_buffer = RewindBuffer::new();
                                 manager.drop_pending_inputs_before(frame);
                                 recent_timeline_history.clear();
                                 peer_hashes.retain(|&f, _| f >= frame);
@@ -243,7 +244,7 @@ pub(crate) fn drain_net_inputs(
                         if let Some(net) = host.net.as_ref() {
                             net.send_ready_to_sim(frame);
                         }
-                        *rewind_buffer = crate::rewind::RewindBuffer::new();
+                        *rewind_buffer = RewindBuffer::new();
                         manager.drop_pending_inputs_before(frame);
                         recent_timeline_history.clear();
                         peer_hashes.retain(|&f, _| f >= frame);
@@ -424,7 +425,7 @@ pub(crate) fn drain_net_inputs(
 fn rewind_from_recent_timeline_history(
     target_frame: u32,
     assets: &LevelAssets,
-    rewind_buffer: &crate::rewind::RewindBuffer,
+    rewind_buffer: &RewindBuffer,
     recent_timeline_history: &mut crate::sim_timeline::RecentTimelineHistory,
     start_frame: u32,
     late_input_count: usize,

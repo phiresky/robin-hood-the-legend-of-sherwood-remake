@@ -59,7 +59,9 @@ impl EngineInner {
             .into_iter()
             .zip(viewer_building_sectors)
         {
-            if let Some(Some(Entity::Soldier(soldier))) = self.entities.get_mut(npc_id.0 as usize) {
+            if let Some(Some(Entity::Soldier(soldier))) =
+                self.entities.get_mut(npc_id.index() as usize)
+            {
                 // `reinitialize_them_list` walks the enemy detectable
                 // list and rebuilds `list_them` from entries with
                 // `seen_now` true.  The dispatch reads the snapshot
@@ -82,7 +84,7 @@ impl EngineInner {
                         let dx = pc.position.x - soldier.element.position_map().x;
                         let dy = (pc.position.y - soldier.element.position_map().y)
                             * crate::position_interface::INVERSE_ASPECT_RATIO;
-                        visible_enemies.push((t_id.0, (dx * dx + dy * dy) as i32));
+                        visible_enemies.push((t_id.index(), (dx * dx + dy * dy) as i32));
                     }
                 }
                 if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
@@ -143,11 +145,11 @@ impl EngineInner {
         // `event_view_standard_procedure` (via `face_entity` +
         // `pending_focus`).
         for det in transitions {
-            if let Some(Some(entity)) = self.entities.get_mut(det.enemy.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(det.enemy.index() as usize)
                 && entity.element_data().blipped
             {
                 tracing::debug!(
-                    entity = det.enemy.0,
+                    entity = det.enemy.index(),
                     "reveal_blip: NPC revealed on detection commit"
                 );
                 entity.reveal_blip();
@@ -185,10 +187,14 @@ impl EngineInner {
         for enemy in panic_calls {
             // Look up the soldier's primary target.
             let target_id = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(enemy.0 as usize) else {
+                let Some(Some(Entity::Soldier(s))) = self.entities.get(enemy.index() as usize)
+                else {
                     continue;
                 };
-                s.npc.ai_brain.base().map(|ai| EntityId(ai.primary_target))
+                s.npc
+                    .ai_brain
+                    .base()
+                    .map(|ai| EntityId::from_raw(ai.primary_target))
             };
 
             // Set the soldier into combat stance.  Clearing
@@ -197,7 +203,7 @@ impl EngineInner {
             // interrupted by the subsequent combat-sequence launch
             // via priority arbitration (same pattern used by every
             // ability teardown).
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(enemy.0 as usize) {
+            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(enemy.index() as usize) {
                 s.actor.active_movement.clear();
                 s.actor.action_state = crate::element::ActionState::WaitingSword;
             }
@@ -205,8 +211,9 @@ impl EngineInner {
             // Stop the target PC's path so the soldier has a stable
             // melee anchor.
             if let Some(target_id) = target_id
-                && target_id.0 != 0
-                && let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(target_id.0 as usize)
+                && target_id.index() != 0
+                && let Some(Some(Entity::Pc(pc))) =
+                    self.entities.get_mut(target_id.index() as usize)
             {
                 pc.actor.active_movement.clear();
                 // Don't force the PC into WaitingSword — that's
@@ -231,7 +238,7 @@ impl EngineInner {
     /// in those substates indefinitely.  The soldier-only pre-dispatch
     /// facing snap and post-dispatch swordfight-entry detection are
     /// gated on `Entity::Soldier`.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.0))]
+    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     fn tick_enemy_ai_pursuit_approach_timer_for_npc(
         &mut self,
         npc_id: EntityId,
@@ -243,7 +250,7 @@ impl EngineInner {
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
         let (timer_fires, alerted, target_id, enemy_pos, is_soldier) = {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 return;
             };
             let Some(ai) = entity.ai_controller() else {
@@ -255,7 +262,7 @@ impl EngineInner {
             // `primary_target == 0` means "no target selected" — the AI
             // hasn't seen a PC yet.  Treating 0 as an EntityId would
             // route target lookups to the first level entity.
-            let tid = (ai.primary_target != 0).then_some(EntityId(ai.primary_target));
+            let tid = (ai.primary_target != 0).then_some(EntityId::from_raw(ai.primary_target));
             let alerted = match entity {
                 Entity::Soldier(s) => s.npc.alerted,
                 _ => false,
@@ -275,7 +282,8 @@ impl EngineInner {
         // transition into `AttackingSwordfight` so the post-dispatch
         // panic_calls push is gated on this snapshot too.
         let in_swordfight = if is_soldier {
-            let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(Entity::Soldier(soldier))) = self.entities.get(npc_id.index() as usize)
+            else {
                 return;
             };
             soldier.npc.ai_substate() == crate::ai::Substate::AttackingSwordfight
@@ -289,7 +297,7 @@ impl EngineInner {
         // `AiPerTickData` the builder assembles below.
         let face_dir = target_id.and_then(|tid| {
             self.entities
-                .get(tid.0 as usize)
+                .get(tid.index() as usize)
                 .and_then(|s| s.as_ref())
                 .map(|e| e.element_data().position_map())
                 .map(|tp| {
@@ -310,7 +318,7 @@ impl EngineInner {
         // Build ctx and stop the timer under a single mut borrow.
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let ctx = {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
                 return;
             };
             // Only snap facing when the AI is alerted and has a
@@ -352,7 +360,7 @@ impl EngineInner {
         // Civilians never enter `AttackingSwordfight`, so this check
         // can stay gated on the Soldier-only `enemy_ai()` accessor.
         if !in_swordfight
-            && let Some(Some(entity)) = self.entities.get(npc_id.0 as usize)
+            && let Some(Some(entity)) = self.entities.get(npc_id.index() as usize)
             && let Some(ai) = entity.enemy_ai()
             && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
         {
@@ -392,7 +400,7 @@ impl EngineInner {
     /// P6d inner — per-NPC body of [`Self::tick_enemy_ai_drain_pending_stimuli`].
     /// Replays deferred stimuli for one NPC; carries the per-NPC tracing
     /// span so the `dispatch_think_with_drain` events emit with `npc=<id>`.
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.0))]
+    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     fn tick_enemy_ai_drain_pending_stimuli_for_npc(
         &mut self,
         npc_id: EntityId,
@@ -400,7 +408,7 @@ impl EngineInner {
         scratch: &SimScratch,
     ) {
         let stimuli = {
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -414,12 +422,12 @@ impl EngineInner {
         for stimulus in stimuli {
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
-                let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                     break;
                 };
                 let entity_sector = entity.element_data().sector();
                 let building_sector = self.entity_building_sector(entity_sector);
-                let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                     break;
                 };
                 let mut ctx = build_ai_context_from_entity(
@@ -453,7 +461,7 @@ impl EngineInner {
                             | crate::ai::StimulusType::EventEnemyNear
                     ) =>
                 {
-                    Some(EntityId(handle))
+                    Some(EntityId::from_raw(handle))
                 }
                 _ => None,
             };

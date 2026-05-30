@@ -51,14 +51,14 @@ impl EngineInner {
     /// Called from `handle_knockout` and `try_pc_coma_save` when an
     /// entity transitions to unconscious.
     pub(super) fn add_unconscious_star(&mut self, entity_id: EntityId) {
-        let handle = ElementHandle(entity_id.0);
+        let handle = ElementHandle(entity_id.index());
         if self
             .titbit_manager
             .titbit_exists(TitbitKind::UnconsciousStar, handle)
         {
             return;
         }
-        let Some(Some(entity)) = self.entities.get(entity_id.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get(entity_id.index() as usize) else {
             return;
         };
         let epos = entity
@@ -114,8 +114,8 @@ impl EngineInner {
         if damage == 0 {
             return;
         }
-        let handle = ElementHandle(entity_id.0);
-        let Some(Some(entity)) = self.entities.get(entity_id.0 as usize) else {
+        let handle = ElementHandle(entity_id.index());
+        let Some(Some(entity)) = self.entities.get(entity_id.index() as usize) else {
             return;
         };
         let elem = entity.element_data();
@@ -152,14 +152,14 @@ impl EngineInner {
     /// BeingStunnedSword animation begins, and from `sync_apple_sauce_titbits`
     /// for the apple-in-visor AI substate.
     pub(super) fn add_weak_stunned(&mut self, entity_id: EntityId) {
-        let handle = ElementHandle(entity_id.0);
+        let handle = ElementHandle(entity_id.index());
         if self
             .titbit_manager
             .titbit_exists(TitbitKind::WeakStunned, handle)
         {
             return;
         }
-        let Some(Some(entity)) = self.entities.get(entity_id.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get(entity_id.index() as usize) else {
             return;
         };
         let epos = entity
@@ -207,14 +207,14 @@ impl EngineInner {
             })
             .unwrap_or(false);
 
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = false;
         }
         if let Some(pid) = principal_id
             && is_mutual
-            && let Some(Some(entity)) = self.entities.get_mut(pid.0 as usize)
+            && let Some(Some(entity)) = self.entities.get_mut(pid.index() as usize)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = true;
@@ -226,7 +226,7 @@ impl EngineInner {
                 opp_id,
                 crate::ai::Stimulus::with_human(
                     crate::ai::StimulusType::EventAdversaryWeak,
-                    entity_id.0,
+                    entity_id.index(),
                 ),
             );
         }
@@ -407,7 +407,7 @@ impl EngineInner {
             .collect();
 
         for npc_id in all_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
 
@@ -620,7 +620,7 @@ impl EngineInner {
 
         // Sync titbits.
         for state in &npc_states {
-            let handle = ElementHandle(state.entity_id.0);
+            let handle = ElementHandle(state.entity_id.index());
             let has_titbit = self
                 .titbit_manager
                 .titbit_exists(TitbitKind::Emoticon, handle);
@@ -686,7 +686,7 @@ impl EngineInner {
         // Only soldiers can enter the apple-sauce substate.
         let npc_ids: Vec<EntityId> = self.npc_ids.clone();
         for npc_id in npc_ids {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -718,7 +718,7 @@ impl EngineInner {
         }
 
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.0 as usize) else {
+            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.index() as usize) else {
                 continue;
             };
             if !pc.element.active || pc.pc.life_points <= 0 {
@@ -738,7 +738,8 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!(
                         "sync_hidden_titbits: PC entity {} has unknown profile_index {}",
-                        pc_id.0, pc.pc.profile_index
+                        pc_id.index(),
+                        pc.pc.profile_index
                     )
                 });
             let hidden_character = HiddenCharacter::for_pc(pc.pc.robin, &profile.filename);
@@ -756,7 +757,7 @@ impl EngineInner {
         }
 
         for state in &states {
-            let handle = ElementHandle(state.id.0);
+            let handle = ElementHandle(state.id.index());
             let has_titbit = self
                 .titbit_manager
                 .titbit_exists(TitbitKind::Hidden, handle);
@@ -794,7 +795,7 @@ impl EngineInner {
 
         let mut states: Vec<AppleState> = Vec::new();
         for &npc_id in &self.npc_ids {
-            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -813,7 +814,7 @@ impl EngineInner {
         }
 
         for state in &states {
-            let handle = ElementHandle(state.id.0);
+            let handle = ElementHandle(state.id.index());
             let has_titbit = self
                 .titbit_manager
                 .titbit_exists(TitbitKind::AppleSmell, handle);
@@ -878,7 +879,7 @@ impl EngineInner {
 
         let mut states: Vec<SpeakState> = Vec::new();
         for &npc_id in &self.npc_ids {
-            let Some(Some(entity)) = self.entities.get(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(npc_id.index() as usize) else {
                 continue;
             };
             let (pos, layer, active) = match entity {
@@ -912,7 +913,7 @@ impl EngineInner {
         }
 
         for state in &states {
-            let handle = ElementHandle(state.id.0);
+            let handle = ElementHandle(state.id.index());
             let has_titbit = self.titbit_manager.titbit_exists(TitbitKind::Speak, handle);
 
             // The scroll-attachment path pulses the SPEAK titbit
@@ -956,7 +957,7 @@ impl EngineInner {
 
         let mut states: Vec<DangerState> = Vec::new();
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.0 as usize) else {
+            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.index() as usize) else {
                 continue;
             };
             if !pc.element.active || pc.pc.life_points <= 0 || pc.human.unconscious {
@@ -989,7 +990,7 @@ impl EngineInner {
         }
 
         for state in &states {
-            let handle = ElementHandle(state.id.0);
+            let handle = ElementHandle(state.id.index());
             let has_titbit = self
                 .titbit_manager
                 .titbit_exists(TitbitKind::DangerPoint, handle);
@@ -1031,7 +1032,7 @@ impl EngineInner {
 
         let mut states: Vec<WorkState> = Vec::new();
         for &pc_id in &self.pc_ids {
-            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.0 as usize) else {
+            let Some(Some(Entity::Pc(pc))) = self.entities.get(pc_id.index() as usize) else {
                 continue;
             };
             if !pc.element.active || pc.pc.life_points <= 0 {
@@ -1050,7 +1051,7 @@ impl EngineInner {
         }
 
         for state in &states {
-            let handle = ElementHandle(state.id.0);
+            let handle = ElementHandle(state.id.index());
             let has_titbit = self
                 .titbit_manager
                 .titbit_exists(TitbitKind::WorkIcon, handle);

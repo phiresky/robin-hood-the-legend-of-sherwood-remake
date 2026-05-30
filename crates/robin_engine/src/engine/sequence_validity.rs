@@ -988,8 +988,7 @@ impl EngineInner {
         }
         let mut pending: Vec<Pending> = Vec::new();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in self.entities_iter_with_id() {
             if !entity.is_pc() || entity.is_dead() {
                 continue;
             }
@@ -1007,7 +1006,6 @@ impl EngineInner {
                 continue;
             }
 
-            let entity_id = EntityId(idx as u32);
             let snapshot = self
                 .sequence_manager
                 .current_order_for_actor(entity_id)
@@ -1218,9 +1216,10 @@ impl EngineInner {
         };
         let landing_screen =
             crate::geo2d::pt(landing.position.x, landing.position.y - landing.position.z);
-        let resolution = self
-            .fast_grid
-            .resolve_projectile_landing(landing_screen, self.sight_obstacles(assets));
+        let resolution = self.fast_grid.resolve_projectile_landing(
+            crate::coordinates::MapPoint::from_geo(landing_screen),
+            self.sight_obstacles(assets),
+        );
         resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle
     }
 }

@@ -1041,7 +1041,7 @@ fn compute_trajectory_ballistic_impl(
                 // continuing the bounce integration.  Stop here;
                 // `maybe_splash_on_landing` marks `dive`.
                 if let Some(water_zones) = check.water_zones {
-                    let map_pt = MapPoint::from_world_xyz(impact.x, impact.y, impact.z).to_geo();
+                    let map_pt = MapPoint::from_world_xyz(impact.x, impact.y, impact.z);
                     if water_zones.determine_water_hole(map_pt).is_some() {
                         break;
                     }
@@ -1078,8 +1078,8 @@ fn compute_trajectory_ballistic_impl(
     {
         let last = trajectory[trajectory.len() - 1].position;
         let prev = trajectory[trajectory.len() - 2].position;
-        let landing_map = MapPoint::from_world_xyz(last.x, last.y, last.z).to_geo();
-        let prev_map = MapPoint::from_world_xyz(prev.x, prev.y, prev.z).to_geo();
+        let landing_map = MapPoint::from_world_xyz(last.x, last.y, last.z);
+        let prev_map = MapPoint::from_world_xyz(prev.x, prev.y, prev.z);
         if let Some(exit) = water_zones.find_hole_far_exit(prev_map, landing_map) {
             // Duration proportional to the 2D distance from the
             // landing point to the exit.
@@ -1103,11 +1103,7 @@ fn compute_trajectory_ballistic_impl(
             trajectory.push(TrajectoryPoint {
                 position: WorldPoint3D {
                     x: exit.x,
-                    y: crate::coordinates::GroundPoint::from_map_and_z(
-                        MapPoint::from_geo(exit),
-                        last.z,
-                    )
-                    .y,
+                    y: crate::coordinates::GroundPoint::from_map_and_z(exit, last.z).y,
                     z: last.z,
                 },
                 time,
@@ -1486,7 +1482,10 @@ pub fn begin_bow_shot(
     if shooter_id == target_id {
         return BeginShotResult::Impossible;
     }
-    let target_valid = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let target_valid = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) if e.is_human() => !e.is_dead() && e.is_active(),
         Some(Entity::Target(t)) => {
             t.element.active && t.target.action_filter.contains(TargetFilter::ARROW)
@@ -1499,7 +1498,10 @@ pub fn begin_bow_shot(
     }
 
     // Read target ground position for direction/order selection.
-    let (tx, ty) = match entities.get(target_id.0 as usize).and_then(|s| s.as_ref()) {
+    let (tx, ty) = match entities
+        .get(target_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
         Some(e) => {
             let position = bow_target_ground_position(e);
             (position.x, position.y)
@@ -1508,31 +1510,33 @@ pub fn begin_bow_shot(
     };
 
     // Validate shooter.  Read posture before the mutable borrow.
-    let (shooter_valid, shooter_posture, current_state) =
-        match entities.get(shooter_id.0 as usize).and_then(|s| s.as_ref()) {
-            Some(e) if e.is_human() && !e.is_dead() => {
-                let posture = e.element_data().posture;
-                let Some(actor) = e.actor_data() else {
-                    tracing::warn!(
-                        shooter = ?shooter_id,
-                        "Begin bow shot rejected: human shooter missing actor data"
-                    );
-                    return BeginShotResult::Impossible;
-                };
-                if actor.active_shot.is_active() {
-                    (false, posture, ActionState::Waiting)
-                } else {
-                    (true, posture, actor.action_state)
-                }
+    let (shooter_valid, shooter_posture, current_state) = match entities
+        .get(shooter_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    {
+        Some(e) if e.is_human() && !e.is_dead() => {
+            let posture = e.element_data().posture;
+            let Some(actor) = e.actor_data() else {
+                tracing::warn!(
+                    shooter = ?shooter_id,
+                    "Begin bow shot rejected: human shooter missing actor data"
+                );
+                return BeginShotResult::Impossible;
+            };
+            if actor.active_shot.is_active() {
+                (false, posture, ActionState::Waiting)
+            } else {
+                (true, posture, actor.action_state)
             }
-            _ => return BeginShotResult::Impossible,
-        };
+        }
+        _ => return BeginShotResult::Impossible,
+    };
     if !shooter_valid {
         return BeginShotResult::Impossible;
     }
 
     let shooter = match entities
-        .get_mut(shooter_id.0 as usize)
+        .get_mut(shooter_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -1596,7 +1600,7 @@ pub fn begin_bow_shot(
     // Push the shoot animation order.
     let shoot_ot = shoot_order_type_for_mode(desired_mode, anonymous);
     let mut order = Order::new(shoot_ot, tx, ty, order_id);
-    order.target_actor = Some(target_id.0);
+    order.target_actor = Some(target_id.index());
     order.compute_direction = false;
     order.lock_ai = true;
     sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1653,7 +1657,7 @@ pub fn begin_bow_shot(
     // shoot animation's facing at initialization, then freezes the first
     // frame while Turn() rotates toward it; do not snap instantly here.
     let shooter = entities
-        .get_mut(shooter_id.0 as usize)
+        .get_mut(shooter_id.index() as usize)
         .and_then(|s| s.as_mut())
         .unwrap();
     let shooter_pos = shooter.element_data().position();
@@ -1729,11 +1733,8 @@ pub fn tick_bow_shots(
         .map(|slot| slot.as_ref().map(bow_target_ground_position))
         .collect();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
+    for (shooter_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
+        let idx = shooter_id.index() as usize;
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -1797,7 +1798,7 @@ pub fn tick_bow_shots(
         let mut frame_progression = crate::sprite::FrameProgression::Default;
         if is_shoot_order(current_order_type)
             && let Some(target_id) = shot.target
-            && let Some(Some(target_pos)) = target_ground_positions.get(target_id.0 as usize)
+            && let Some(Some(target_pos)) = target_ground_positions.get(target_id.index() as usize)
         {
             let shooter_pos = entity.element_data().position();
             let dx = target_pos.x - shooter_pos.x;
@@ -1954,7 +1955,7 @@ pub fn tick_bow_shots(
             };
 
             pending_fired.push(PendingShotTickResult {
-                shooter: EntityId(idx as u32),
+                shooter: shooter_id,
                 target,
                 seq_id: shot_seq_id,
                 elem_idx: shot.element_index,
@@ -1973,7 +1974,7 @@ pub fn tick_bow_shots(
 
     // Resolve target positions, 3D body points and forecasted movement (immutable re-borrow).
     for result in pending_fired {
-        let Some(Some(target_entity)) = entities.get(result.target.0 as usize) else {
+        let Some(Some(target_entity)) = entities.get(result.target.index() as usize) else {
             tracing::warn!(
                 shooter = ?result.shooter,
                 target = ?result.target,
@@ -2982,7 +2983,7 @@ fn tick_arrows_matching(
             };
             let holding_shield = actor.action_state.is_shield();
             Some(HumanSnapshot {
-                id: EntityId(idx as u32),
+                id: EntityId::from_raw(idx as u32),
                 belt,
                 eyes,
                 leaning_out: posture == crate::element::Posture::LeaningOut,
@@ -3035,7 +3036,7 @@ fn tick_arrows_matching(
                 return None;
             };
             Some(FxTargetSnapshot {
-                id: EntityId(idx as u32),
+                id: EntityId::from_raw(idx as u32),
                 center,
                 position_map: e.element_data().position_map(),
                 action_filter: filter,
@@ -3070,23 +3071,19 @@ fn tick_arrows_matching(
             // Un-compress Y for angular comparison.
             let look_dir = (dx, dy * INVERSE_ASPECT_RATIO);
             Some(ShieldSnapshot {
-                holder_id: EntityId(idx as u32),
+                holder_id: EntityId::from_raw(idx as u32),
                 look_dir,
                 obstacle,
             })
         })
         .collect();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
+    for (arrow_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
         if let Some(only_arrow_id) = only_arrow_id
-            && only_arrow_id.0 != idx as u32
+            && only_arrow_id != arrow_id
         {
             continue;
         }
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
         let is_arrow = matches!(entity, Entity::Projectile(_)) && entity.element_data().active;
         if !is_arrow {
             continue;
@@ -3095,7 +3092,6 @@ fn tick_arrows_matching(
             Entity::Projectile(p) => p,
             _ => continue,
         };
-        let arrow_id = EntityId(idx as u32);
         // `Entity::Projectile` is shared by arrows, apples, stones,
         // purses, coins, nets, wasp nests, and wasps.  Purses, coins,
         // wasp nests, and wasps follow their own per-tick update paths
@@ -3729,7 +3725,10 @@ pub fn apply_projectile_hit(
     // Resolve shooter PC-ness before the victim mutable borrow. C++
     // projectile damage carries a real origin pointer; missing shooter
     // state is invalid and must not become "not a PC" silently.
-    let Some(shooter) = entities.get(shooter_id.0 as usize).and_then(|s| s.as_ref()) else {
+    let Some(shooter) = entities
+        .get(shooter_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    else {
         tracing::warn!(
             ?victim_id,
             ?shooter_id,
@@ -3740,7 +3739,7 @@ pub fn apply_projectile_hit(
     let shooter_is_pc = shooter.is_pc();
 
     let victim = match entities
-        .get_mut(victim_id.0 as usize)
+        .get_mut(victim_id.index() as usize)
         .and_then(|s| s.as_mut())
     {
         Some(e) => e,
@@ -3993,12 +3992,13 @@ mod tests {
     fn begin_bow_shot_sets_shooter_state() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4015,7 +4015,7 @@ mod tests {
             "C++ ShootBow translation must not force the actor's action state before queued bow orders run"
         );
         assert!(actor.active_shot.is_active());
-        assert_eq!(actor.active_shot.target, Some(EntityId(1)));
+        assert_eq!(actor.active_shot.target, Some(EntityId::from_raw(1)));
         assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Normal));
         // Should have: shoot order + reload order (and possibly transition orders)
         assert!(sm.get_element(seq_id, elem_idx).unwrap().orders.len() >= 2);
@@ -4025,12 +4025,13 @@ mod tests {
     fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4069,12 +4070,13 @@ mod tests {
     fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4115,12 +4117,13 @@ mod tests {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
         bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4191,12 +4194,13 @@ mod tests {
     fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4223,7 +4227,8 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .action_state = ActionState::AimingWithBow;
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         set_test_action_state_after_transition(
             &mut sm,
             seq_id,
@@ -4234,8 +4239,8 @@ mod tests {
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4263,7 +4268,8 @@ mod tests {
     fn begin_bow_shot_uses_action_state_after_transition_for_setup_orders() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         set_test_action_state_after_transition(
             &mut sm,
             seq_id,
@@ -4274,8 +4280,8 @@ mod tests {
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4307,12 +4313,13 @@ mod tests {
         if let Some(Some(Entity::Soldier(s))) = entities.get_mut(1) {
             s.npc.life_points = 0; // dead
         }
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4327,12 +4334,13 @@ mod tests {
     fn begin_bow_shot_accepts_arrow_fx_target() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_arrow_target(50.0, 0.0))];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4349,7 +4357,7 @@ mod tests {
                 .unwrap()
                 .active_shot
                 .target,
-            Some(EntityId(1))
+            Some(EntityId::from_raw(1))
         );
     }
 
@@ -4359,13 +4367,14 @@ mod tests {
             Some(make_anonymous_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
         ];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
 
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4395,13 +4404,14 @@ mod tests {
             z: 100.0,
         });
         let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 100.0)), Some(target)];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
 
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4440,13 +4450,14 @@ mod tests {
         });
         let mut entities: Vec<Option<Entity>> = vec![Some(make_pc(0.0, 100.0)), Some(target)];
         bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
 
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4482,13 +4493,14 @@ mod tests {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
         bind_test_bow_release_rows(entities[0].as_mut().unwrap(), OrderType::ShootingWithBow);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
 
         begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -4514,8 +4526,8 @@ mod tests {
             "release should not terminate the sequence before the visual orders finish"
         );
         let r = &fired[0];
-        assert_eq!(r.shooter, EntityId(0));
-        assert_eq!(r.target, EntityId(1));
+        assert_eq!(r.shooter, EntityId::from_raw(0));
+        assert_eq!(r.target, EntityId::from_raw(1));
         assert_eq!(r.target_pos.x, 50.0);
 
         // Shooter should now be in AimingWithBow (sustained aim).
@@ -4602,14 +4614,14 @@ mod tests {
             },
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: traj,
             damage: 30,
@@ -4636,14 +4648,14 @@ mod tests {
     #[test]
     fn spawn_arrow_stores_shooter_map_position_as_trajectory_origin() {
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 100.0,
                 y: 40.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: WorldPoint3D {
@@ -4707,14 +4719,14 @@ mod tests {
             Some(make_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
             Some(spawn_arrow(SpawnArrowParams {
-                shooter: EntityId(0),
+                shooter: EntityId::from_raw(0),
                 bow_point: WorldPoint3D {
                     x: 0.0,
                     y: 0.0,
                     z: 40.0,
                 },
                 trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-                target: EntityId(1),
+                target: EntityId::from_raw(1),
                 target_pos: MapPoint { x: 50.0, y: 0.0 },
                 trajectory: traj,
                 damage: 30,
@@ -4742,7 +4754,11 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(hit, Some(EntityId(1)), "arrow should reach target");
+        assert_eq!(
+            hit,
+            Some(EntityId::from_raw(1)),
+            "arrow should reach target"
+        );
     }
 
     #[test]
@@ -4774,14 +4790,14 @@ mod tests {
             },
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: traj,
             damage: 30,
@@ -4804,7 +4820,7 @@ mod tests {
             let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
             hit = results
                 .into_iter()
-                .find(|result| result.hit_target == Some(EntityId(1)));
+                .find(|result| result.hit_target == Some(EntityId::from_raw(1)));
             if hit.is_some() {
                 break;
             }
@@ -4823,14 +4839,14 @@ mod tests {
     #[test]
     fn tick_arrow_resolves_spawn_primed_segment_only_for_requested_arrow() {
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: WorldPoint3D {
@@ -4850,14 +4866,14 @@ mod tests {
             },
         });
         let mut other_arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 1000.0,
                 y: 0.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: WorldPoint3D {
@@ -4895,14 +4911,14 @@ mod tests {
         let results = tick_arrow(
             &mut entities,
             crate::sight_obstacle::ObstacleList::empty(),
-            EntityId(2),
+            EntityId::from_raw(2),
         );
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].arrow, EntityId(2));
+        assert_eq!(results[0].arrow, EntityId::from_raw(2));
         assert_eq!(
             results[0].fx_target_hit,
-            Some((EntityId(1), Command::ActivateArrow))
+            Some((EntityId::from_raw(1), Command::ActivateArrow))
         );
 
         let Some(Entity::Projectile(p)) = entities[3].as_ref() else {
@@ -4917,14 +4933,14 @@ mod tests {
     #[test]
     fn tick_arrows_prefilters_friendly_candidate_before_selecting_victim() {
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 25.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(2),
+            target: EntityId::from_raw(2),
             target_pos: MapPoint { x: 100.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: WorldPoint3D {
@@ -4964,11 +4980,15 @@ mod tests {
 
         let results = tick_arrows(&mut entities, crate::sight_obstacle::ObstacleList::empty());
         assert!(
-            results.iter().all(|r| r.hit_target != Some(EntityId(1))),
+            results
+                .iter()
+                .all(|r| r.hit_target != Some(EntityId::from_raw(1))),
             "same-camp soldier must be filtered before hit selection"
         );
         assert!(
-            results.iter().any(|r| r.hit_target == Some(EntityId(2))),
+            results
+                .iter()
+                .any(|r| r.hit_target == Some(EntityId::from_raw(2))),
             "arrow should continue to the valid victim behind the filtered candidate"
         );
     }
@@ -4993,11 +5013,11 @@ mod tests {
                 object_type: ObjectType::Arrow,
                 animation: Animation::ObjectFlying,
                 quantity: 1,
-                reference: Some(EntityId(1)),
+                reference: Some(EntityId::from_raw(1)),
                 ..ObjectData::default()
             },
             projectile: ProjectileData {
-                shooter: Some(EntityId(0)),
+                shooter: Some(EntityId::from_raw(0)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
                     position: WorldPoint3D {
@@ -5031,14 +5051,14 @@ mod tests {
     #[test]
     fn tick_arrows_without_shooter_does_not_hit_human() {
         let mut arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory: vec![TrajectoryPoint {
                 position: WorldPoint3D {
@@ -5136,11 +5156,11 @@ mod tests {
                 object_type: ObjectType::Apple,
                 animation: Animation::ObjectFlying,
                 quantity: 1,
-                reference: Some(EntityId(0)),
+                reference: Some(EntityId::from_raw(0)),
                 ..ObjectData::default()
             },
             projectile: ProjectileData {
-                shooter: Some(EntityId(2)),
+                shooter: Some(EntityId::from_raw(2)),
                 flying: true,
                 trajectory,
                 ..ProjectileData::default()
@@ -5166,7 +5186,7 @@ mod tests {
         }
         assert_eq!(
             activation,
-            Some((EntityId(0), Command::ActivateApple)),
+            Some((EntityId::from_raw(0), Command::ActivateApple)),
             "apple projectile should activate APPLE-filter target with ActivateApple"
         );
         assert_eq!(impact, Some((Some(509), target_pos)));
@@ -5219,11 +5239,11 @@ mod tests {
                 object_type: ObjectType::Arrow,
                 animation: Animation::ObjectFlying,
                 quantity: 1,
-                reference: Some(EntityId(0)),
+                reference: Some(EntityId::from_raw(0)),
                 ..ObjectData::default()
             },
             projectile: ProjectileData {
-                shooter: Some(EntityId(2)),
+                shooter: Some(EntityId::from_raw(2)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
                     position: WorldPoint3D {
@@ -5244,7 +5264,8 @@ mod tests {
 
         assert!(
             results.iter().any(|r| {
-                r.fx_target_hit == Some((EntityId(0), Command::ActivateArrow)) && r.despawn
+                r.fx_target_hit == Some((EntityId::from_raw(0), Command::ActivateArrow))
+                    && r.despawn
             }),
             "arrow should activate target using C++ current-position range gate"
         );
@@ -5297,11 +5318,11 @@ mod tests {
                 object_type: ObjectType::Arrow,
                 animation: Animation::ObjectFlying,
                 quantity: 1,
-                reference: Some(EntityId(0)),
+                reference: Some(EntityId::from_raw(0)),
                 ..ObjectData::default()
             },
             projectile: ProjectileData {
-                shooter: Some(EntityId(2)),
+                shooter: Some(EntityId::from_raw(2)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
                     position: WorldPoint3D {
@@ -5339,14 +5360,14 @@ mod tests {
             })
             .collect();
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 40.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 3200.0, y: 0.0 },
             trajectory,
             damage: 30,
@@ -5427,7 +5448,7 @@ mod tests {
                 ..ObjectData::default()
             },
             projectile: ProjectileData {
-                shooter: Some(EntityId(2)),
+                shooter: Some(EntityId::from_raw(2)),
                 flying: true,
                 trajectory,
                 ..ProjectileData::default()
@@ -5474,7 +5495,7 @@ mod tests {
                 ..ObjectData::default()
             },
             projectile: ProjectileData {
-                shooter: Some(EntityId(2)),
+                shooter: Some(EntityId::from_raw(2)),
                 flying: true,
                 trajectory: vec![TrajectoryPoint {
                     position: WorldPoint3D {
@@ -5549,7 +5570,7 @@ mod tests {
                     ..ObjectData::default()
                 },
                 projectile: ProjectileData {
-                    shooter: Some(EntityId(1)),
+                    shooter: Some(EntityId::from_raw(1)),
                     flying: true,
                     // Empty trajectory → immediate "trajectory exhausted".
                     trajectory: Vec::new(),
@@ -5585,15 +5606,23 @@ mod tests {
             y: 0.0,
             z: 20.0,
         };
-        let apple = spawn_apple(EntityId(0), start, end, Some(EntityId(1)), None, 0, None);
+        let apple = spawn_apple(
+            EntityId::from_raw(0),
+            start,
+            end,
+            Some(EntityId::from_raw(1)),
+            None,
+            0,
+            None,
+        );
         match apple {
             Entity::Projectile(p) => {
                 assert!(p.projectile.flying);
                 assert_eq!(p.object.object_type, ObjectType::Apple);
                 assert_eq!(p.object.associated_action, Action::Apple);
                 assert_eq!(p.object.animation, Animation::ObjectFlying);
-                assert_eq!(p.projectile.shooter, Some(EntityId(0)));
-                assert_eq!(p.object.reference, Some(EntityId(1)));
+                assert_eq!(p.projectile.shooter, Some(EntityId::from_raw(0)));
+                assert_eq!(p.object.reference, Some(EntityId::from_raw(1)));
                 assert!(!p.projectile.trajectory.is_empty());
             }
             _ => panic!("expected apple projectile"),
@@ -5604,7 +5633,13 @@ mod tests {
     fn apply_arrow_hit_wounds_soldier() {
         let mut entities: Vec<Option<Entity>> =
             vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))];
-        let died = apply_arrow_hit(&mut entities, EntityId(1), EntityId(0), 30, 0);
+        let died = apply_arrow_hit(
+            &mut entities,
+            EntityId::from_raw(1),
+            EntityId::from_raw(0),
+            30,
+            0,
+        );
         assert!(!died, "30 damage shouldn't kill a 100hp soldier");
 
         let life = match entities[1].as_ref().unwrap() {
@@ -5621,7 +5656,13 @@ mod tests {
         if let Some(Some(Entity::Soldier(s))) = entities.get_mut(1) {
             s.npc.life_points = 5;
         }
-        let died = apply_arrow_hit(&mut entities, EntityId(1), EntityId(0), 30, 0);
+        let died = apply_arrow_hit(
+            &mut entities,
+            EntityId::from_raw(1),
+            EntityId::from_raw(0),
+            30,
+            0,
+        );
         assert!(died);
         let life = match entities[1].as_ref().unwrap() {
             Entity::Soldier(s) => s.npc.life_points,
@@ -5632,11 +5673,11 @@ mod tests {
 
     #[test]
     fn build_shoot_bow_element_produces_interaction_element() {
-        let elem = build_shoot_bow_element(EntityId(0), EntityId(1));
+        let elem = build_shoot_bow_element(EntityId::from_raw(0), EntityId::from_raw(1));
         assert_eq!(elem.command, Command::ShootBow);
         match &elem.data {
             SequenceElementData::Interaction { antagonist } => {
-                assert_eq!(*antagonist, Some(EntityId(1)));
+                assert_eq!(*antagonist, Some(EntityId::from_raw(1)));
             }
             other => panic!("expected Interaction, got {:?}", other),
         }
@@ -5813,13 +5854,14 @@ mod tests {
         let mut target = make_soldier(50.0, 0.0);
         target.element_data_mut().posture = Posture::LeaningOut;
         let mut entities: Vec<Option<Entity>> = vec![Some(pc), Some(target)];
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(EntityId(0), EntityId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::from_raw(0), EntityId::from_raw(1));
 
         begin_bow_shot(
             &mut entities,
             &mut sm,
-            EntityId(0),
-            EntityId(1),
+            EntityId::from_raw(0),
+            EntityId::from_raw(1),
             seq_id,
             elem_idx,
             false,
@@ -5921,14 +5963,14 @@ mod tests {
             time: 2,
         }];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 25.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 50.0, y: 0.0 },
             trajectory,
             damage: 30,
@@ -5994,14 +6036,14 @@ mod tests {
             },
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 82.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 90.0, y: 0.0 },
             trajectory,
             damage: 30,
@@ -6061,14 +6103,14 @@ mod tests {
             },
         ];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 30.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(1),
+            target: EntityId::from_raw(1),
             target_pos: MapPoint { x: 80.0, y: 0.0 },
             trajectory,
             damage: 30,
@@ -6096,7 +6138,7 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(hit, Some(EntityId(1)));
+        assert_eq!(hit, Some(EntityId::from_raw(1)));
     }
 
     /// Shield intersection flips the projectile into the falling state
@@ -6138,14 +6180,14 @@ mod tests {
                 time: 2,
             }];
             let arrow = spawn_arrow(SpawnArrowParams {
-                shooter: EntityId(0),
+                shooter: EntityId::from_raw(0),
                 bow_point: WorldPoint3D {
                     x: 100.0,
                     y: 40.0,
                     z: 40.0,
                 },
                 trajectory_origin: MapPoint { x: 100.0, y: 0.0 },
-                target: EntityId(1),
+                target: EntityId::from_raw(1),
                 target_pos: MapPoint { x: 50.0, y: 0.0 },
                 trajectory,
                 damage: 30,
@@ -6177,7 +6219,7 @@ mod tests {
             }
             assert_eq!(
                 shield_hit,
-                Some(EntityId(1)),
+                Some(EntityId::from_raw(1)),
                 "arrow must report shield hit on the holder"
             );
             assert!(
@@ -6224,14 +6266,14 @@ mod tests {
                 time: 2,
             }];
             let arrow = spawn_arrow(SpawnArrowParams {
-                shooter: EntityId(0),
+                shooter: EntityId::from_raw(0),
                 bow_point: WorldPoint3D {
                     x: 0.0,
                     y: 0.0,
                     z: 0.0,
                 },
                 trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-                target: EntityId(1),
+                target: EntityId::from_raw(1),
                 target_pos: MapPoint { x: 50.0, y: 0.0 },
                 trajectory,
                 damage: 30,
@@ -6284,14 +6326,14 @@ mod tests {
             time: 1,
         }];
         let arrow = spawn_arrow(SpawnArrowParams {
-            shooter: EntityId(0),
+            shooter: EntityId::from_raw(0),
             bow_point: WorldPoint3D {
                 x: 0.0,
                 y: 0.0,
                 z: 5.0,
             },
             trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
-            target: EntityId(0),
+            target: EntityId::from_raw(0),
             target_pos: MapPoint { x: 10.0, y: 0.0 },
             trajectory,
             damage: 30,
@@ -6339,7 +6381,7 @@ mod tests {
             y: 0.0,
             z: 0.0,
         };
-        let nest = spawn_wasp_nest(EntityId(0), throw_pos, target_pos, 0, None);
+        let nest = spawn_wasp_nest(EntityId::from_raw(0), throw_pos, target_pos, 0, None);
 
         match &nest {
             Entity::Projectile(p) => {

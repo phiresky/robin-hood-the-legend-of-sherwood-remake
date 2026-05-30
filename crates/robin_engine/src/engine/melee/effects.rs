@@ -108,7 +108,7 @@ impl EngineInner {
             }
             // Clear the marker so the actor isn't credited with an
             // occupancy slot they no longer hold.
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_lift = None;
@@ -123,7 +123,7 @@ impl EngineInner {
         // ActiveFlight is independent of animation state and is set
         // unconditionally so the victim is carried to the ladder's low
         // entry point.
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             {
@@ -222,7 +222,7 @@ impl EngineInner {
 
         // Side-state cleanup: clear carrier/carried pointers and
         // unfreeze the carried actor before the order insertion.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
             match posture {
                 Posture::OnShoulders => {
                     if let Some(human) = entity.human_data_mut() {
@@ -374,7 +374,7 @@ impl EngineInner {
         };
 
         // Side-state cleanup before queuing the animation.
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
             match posture {
                 Posture::OnShoulders => {
                     if let Some(human) = entity.human_data_mut() {
@@ -650,7 +650,7 @@ impl EngineInner {
             let flight_sector =
                 crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
             let facing = (flight_sector + 8) % 16;
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
                 entity.element_data_mut().set_direction_instantly(facing);
             }
         }
@@ -723,7 +723,7 @@ impl EngineInner {
                             .copied()
                     })
                     .and_then(|idx| self.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.contains_point(pt))
+                    .map(|gs| gs.contains_point(crate::coordinates::MapPoint::from_geo(pt)))
                     // Without a known sector, trust the
                     // `is_straight_movement_authorized` result.
                     .unwrap_or(true);
@@ -796,7 +796,7 @@ impl EngineInner {
             let inc_x = total_dx / flight_frames as f32;
             let inc_y = total_dy / flight_frames as f32;
             let inc_z = total_dz / flight_frames as f32;
-            if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_flight = Some(crate::element::ActiveFlight {
@@ -880,26 +880,26 @@ impl EngineInner {
             // centralised in `set_concussion`.
             if is_dead {
                 // Simplified death handling for push — sets posture, quits swordfight
-                let is_pc = if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
-                {
-                    entity.set_posture(Posture::Dead);
-                    if let Some(actor) = entity.actor_data_mut() {
-                        if actor.action_state.is_sword()
-                            || actor.action_state == ActionState::Menacing
-                        {
-                            actor.action_state = ActionState::Waiting;
+                let is_pc =
+                    if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
+                        entity.set_posture(Posture::Dead);
+                        if let Some(actor) = entity.actor_data_mut() {
+                            if actor.action_state.is_sword()
+                                || actor.action_state == ActionState::Menacing
+                            {
+                                actor.action_state = ActionState::Waiting;
+                            }
+                            actor.active_melee.clear();
+                            actor.clear_path();
                         }
-                        actor.active_melee.clear();
-                        actor.clear_path();
-                    }
-                    if let Some(npc) = entity.npc_data_mut() {
-                        crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
-                        npc.alerted = false;
-                    }
-                    entity.kind().is_pc()
-                } else {
-                    false
-                };
+                        if let Some(npc) = entity.npc_data_mut() {
+                            crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
+                            npc.alerted = false;
+                        }
+                        entity.kind().is_pc()
+                    } else {
+                        false
+                    };
                 self.quit_swordfight(assets, victim_id);
                 if is_pc {
                     // Run the PC kill cascade (gang removal, trumpet,
@@ -916,7 +916,7 @@ impl EngineInner {
                 self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, false);
             } else if concussion > STUNNING_THRESHOLD && !posture.is_lying() {
                 // Stumble to lying from concussion
-                if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+                if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
                     entity.set_posture(Posture::Lying);
                 }
             }
@@ -935,25 +935,25 @@ impl EngineInner {
         } else {
             // No falling animation (already lying/dead/carried).
             if is_dead {
-                let is_pc = if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
-                {
-                    if let Some(actor) = entity.actor_data_mut() {
-                        actor.active_melee.clear();
-                        actor.clear_path();
-                    }
-                    if let Some(npc) = entity.npc_data_mut() {
-                        crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
-                        npc.alerted = false;
-                    }
-                    entity.kind().is_pc()
-                } else {
-                    false
-                };
+                let is_pc =
+                    if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
+                        if let Some(actor) = entity.actor_data_mut() {
+                            actor.active_melee.clear();
+                            actor.clear_path();
+                        }
+                        if let Some(npc) = entity.npc_data_mut() {
+                            crate::ai_vision::set_view_status(npc, EyeStatus::DieOrGetUnconscious);
+                            npc.alerted = false;
+                        }
+                        entity.kind().is_pc()
+                    } else {
+                        false
+                    };
                 self.quit_swordfight(assets, victim_id);
                 if is_pc {
                     self.apply_pc_kill_cascade(assets, victim_id);
                 }
-                if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize) {
+                if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize) {
                     entity.set_posture(Posture::Dead);
                 }
             }
@@ -1042,7 +1042,7 @@ impl EngineInner {
         entity_id: EntityId,
         normal: [f32; 3],
         check_increment: bool,
-    ) -> Option<crate::geo2d::GeoPoint2D> {
+    ) -> Option<crate::coordinates::MapPoint> {
         // Use the lying-posture move-box, not the actor's *current*
         // move-box: at call time (post-fall or mid-roll) the posture
         // is typically not yet Lying, so the live box has the wrong
@@ -1108,10 +1108,7 @@ impl EngineInner {
             return None;
         }
         let center = dest_box.center();
-        Some(crate::geo2d::GeoPoint2D {
-            x: center.x,
-            y: center.y,
-        })
+        Some(crate::coordinates::MapPoint::new(center.x, center.y))
     }
 
     /// Queue a rolling animation after a fall if the entity is on a steep slope.
@@ -1137,7 +1134,7 @@ impl EngineInner {
         // on MotionState::Start to install `active_flight` toward the
         // destination (Order doesn't carry the dest separately from
         // `active_flight`'s per-frame increments).
-        if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.pending_roll = Some(dest);

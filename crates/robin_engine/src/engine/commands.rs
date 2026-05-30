@@ -270,8 +270,8 @@ impl EngineInner {
                     self.remove_quick_action_titbits_for(*actor, slot);
                     // Register a QuickAction titbit on the target so
                     // the renderer can look it up by id.
-                    let tgt_handle = crate::titbit::ElementHandle(target.0);
-                    let pc_handle = crate::titbit::ElementHandle(actor.0);
+                    let tgt_handle = crate::titbit::ElementHandle(target.index());
+                    let pc_handle = crate::titbit::ElementHandle(actor.index());
                     let titbit_id = self.titbit_manager.add_titbit(
                         crate::coordinates::WorldPoint3D {
                             x: pos.x,
@@ -326,7 +326,7 @@ impl EngineInner {
                     // Drop any titbit still sitting in this QA slot.
                     let slot = self.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
-                    let pc_handle = crate::titbit::ElementHandle(actor.0);
+                    let pc_handle = crate::titbit::ElementHandle(actor.index());
                     // The titbit position and per-action layer (Net=0,
                     // Wasp/Purse = selected layer) arrive pre-resolved
                     // on the `PlayerCommand` so the handler just forwards.
@@ -391,7 +391,7 @@ impl EngineInner {
                     };
                     let slot = self.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
-                    let pc_handle = crate::titbit::ElementHandle(actor.0);
+                    let pc_handle = crate::titbit::ElementHandle(actor.index());
                     let target_layer = self
                         .get_entity(*target)
                         .map(|e| e.element_data().layer())
@@ -404,7 +404,7 @@ impl EngineInner {
                         },
                         target_layer,
                         crate::titbit::TitbitKind::QuickAction,
-                        crate::titbit::ElementHandle(target.0),
+                        crate::titbit::ElementHandle(target.index()),
                         crate::titbit::QuickAction::Search as u16,
                         pc_handle,
                         false,
@@ -1252,7 +1252,7 @@ impl EngineInner {
             y: position.y,
             z: 0.0,
         };
-        let manager = ElementHandle(recording_pc.0);
+        let manager = ElementHandle(recording_pc.index());
         let titbit_id = self.titbit_manager.add_titbit(
             pos3d,
             layer,
@@ -2135,7 +2135,10 @@ impl EngineInner {
             );
             return;
         };
-        let scroll_id = EntityId(scroll_entity_idx as u32);
+        let scroll_id = self.expect_entity_id_for_index(
+            scroll_entity_idx as u32,
+            "apply_scroll_read_with_seek scroll handle",
+        );
 
         if is_recording {
             // Macro recording already installed the QA titbit and stored
@@ -2937,7 +2940,7 @@ impl EngineInner {
         // Stamp the new danger point on the acting PC so
         // `sync_danger_point_titbits` refreshes the `DangerPoint`
         // titbit next tick.
-        if let Some(Some(entity)) = self.entities.get_mut(actor.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(actor.index() as usize)
             && let Some(actor_data) = entity.actor_data_mut()
         {
             actor_data.shield_face_point = Some(danger_point);
@@ -3002,13 +3005,13 @@ impl EngineInner {
         protectee: Option<EntityId>,
     ) {
         if protectee.is_none()
-            && let Some(Some(me)) = self.entities.get_mut(protector_id.0 as usize)
+            && let Some(Some(me)) = self.entities.get_mut(protector_id.index() as usize)
             && let Some(pc) = me.pc_data_mut()
         {
             pc.shield_danger_point = crate::coordinates::WorldPoint3D::default();
         }
 
-        if let Some(Some(me)) = self.entities.get_mut(protector_id.0 as usize)
+        if let Some(Some(me)) = self.entities.get_mut(protector_id.index() as usize)
             && let Some(pc) = me.pc_data_mut()
         {
             pc.shield_protected = protectee;
@@ -4467,7 +4470,7 @@ mod tests {
         // handling (Interact / Sword / Use-beggar).
         let (engine, assets, pc_id) = setup_pc_engine(&[]);
         assert_eq!(
-            object_pickup_command(&engine, &assets, EntityId(u32::MAX), pc_id),
+            object_pickup_command(&engine, &assets, EntityId::from_raw(u32::MAX), pc_id),
             None
         );
     }
@@ -4516,7 +4519,7 @@ mod tests {
                 nickname: "bob".into(),
             })],
         );
-        engine.seats[2].selection = vec![EntityId(7), EntityId(8)];
+        engine.seats[2].selection = vec![EntityId::from_raw(7), EntityId::from_raw(8)];
 
         engine.apply_commands(
             &mut display,
@@ -4530,7 +4533,7 @@ mod tests {
         assert!(!seat2.connected);
         assert_eq!(
             seat2.selection,
-            vec![EntityId(7), EntityId(8)],
+            vec![EntityId::from_raw(7), EntityId::from_raw(8)],
             "selection must survive disconnect"
         );
 
@@ -4546,7 +4549,10 @@ mod tests {
         let seat2 = engine.seat(PlayerId(2)).unwrap();
         assert!(seat2.connected);
         assert_eq!(seat2.nickname, "bob_v2");
-        assert_eq!(seat2.selection, vec![EntityId(7), EntityId(8)]);
+        assert_eq!(
+            seat2.selection,
+            vec![EntityId::from_raw(7), EntityId::from_raw(8)]
+        );
     }
 
     #[test]

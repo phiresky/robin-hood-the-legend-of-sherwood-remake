@@ -524,7 +524,7 @@ pub fn entity_view_from_entity(
                 .and_then(|c| c.characters.get(pc.pc.list_index as usize))
                 .map(|p| p.status.in_coma)
                 .unwrap_or(false);
-            let guard_handle = pc.pc.guard.map(|eid| eid.0);
+            let guard_handle = pc.pc.guard.map(|eid| eid.index());
             (coma, guard_handle)
         }
         _ => (false, None),

@@ -3,7 +3,7 @@
 use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
-use crate::element::{Command, Entity, EntityId};
+use crate::element::{Command, Entity, EntityId, EntityIdKind};
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
 pub const APPLE_SMELL_DURATION: u32 = 1500;
@@ -42,12 +42,13 @@ impl EngineInner {
             let pos = entity.element_data().position();
             crate::geo2d::pt(pos.x, pos.y - pos.z)
         };
-        let resolution = self
-            .fast_grid
-            .resolve_projectile_landing(landing_screen, self.sight_obstacles(assets));
+        let resolution = self.fast_grid.resolve_projectile_landing(
+            crate::coordinates::MapPoint::from_geo(landing_screen),
+            self.sight_obstacles(assets),
+        );
         if let Some(entity) = self
             .entities
-            .get_mut(projectile_id.0 as usize)
+            .get_mut(projectile_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
@@ -399,7 +400,7 @@ impl EngineInner {
                         result.target,
                         crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventArrowLaunched,
-                            result.shooter.0,
+                            result.shooter.index(),
                         ),
                     );
                 }
@@ -490,10 +491,12 @@ impl EngineInner {
             // the last two points — one of them is the original
             // pre-extension landing.
             let lands_in_hole = trajectory.iter().rev().take(2).any(|tp| {
-                assets.water_zones.landing_is_in_hole(crate::geo2d::pt(
-                    tp.position.x,
-                    tp.position.y - tp.position.z,
-                ))
+                assets
+                    .water_zones
+                    .landing_is_in_hole(crate::coordinates::MapPoint::new(
+                        tp.position.x,
+                        tp.position.y - tp.position.z,
+                    ))
             });
             let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
@@ -546,7 +549,7 @@ impl EngineInner {
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
     fn start_arrow_ricochet(&mut self, arrow_id: EntityId) {
-        let Some(Some(entity)) = self.entities.get_mut(arrow_id.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get_mut(arrow_id.index() as usize) else {
             return;
         };
         let Entity::Projectile(proj) = entity else {
@@ -817,7 +820,7 @@ impl EngineInner {
     /// `pending_refill_bow_ammo` restocks).
     fn decrement_bow_ammo(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
         // Soldier branch — saturating sub on the live NPC field.
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(shooter_id.0 as usize) {
+        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(shooter_id.index() as usize) {
             s.npc.number_of_arrows = s.npc.number_of_arrows.saturating_sub(1);
             tracing::debug!(
                 shooter = ?shooter_id,
@@ -1162,13 +1165,8 @@ impl EngineInner {
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
         let ransom_ok = ransom >= threshold;
         let pcs: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| match s {
-                Some(Entity::Pc(_)) => Some(EntityId(i as u32)),
-                _ => None,
-            })
+            .entities_iter_with_id()
+            .filter_map(|(id, entity)| matches!(entity, Entity::Pc(_)).then_some(id))
             .collect();
         for pc_id in pcs {
             // Only PCs that have the Purse action in their profile
@@ -1418,7 +1416,7 @@ impl EngineInner {
                 if dx * dx + dy * dy <= PICKUP_RADIUS_SQ {
                     pickups.push(Pickup {
                         pc_id,
-                        bonus_id: EntityId(idx as u32),
+                        bonus_id: EntityId::new(idx as u32, EntityIdKind::Projectile),
                         obj_type,
                         assoc_action,
                         quantity,
@@ -1592,7 +1590,7 @@ impl EngineInner {
                         // back to the world bonus and leave it active.
                         match self
                             .entities
-                            .get_mut(bonus_id.0 as usize)
+                            .get_mut(bonus_id.index() as usize)
                             .and_then(|s| s.as_mut())
                         {
                             Some(Entity::Bonus(b)) => {
@@ -1619,7 +1617,7 @@ impl EngineInner {
             // coins or non-burst purses).
             match self
                 .entities
-                .get_mut(bonus_id.0 as usize)
+                .get_mut(bonus_id.index() as usize)
                 .and_then(|s| s.as_mut())
             {
                 Some(Entity::Bonus(bonus)) => {
@@ -2040,7 +2038,7 @@ impl EngineInner {
                                 // flying and skip the sound / despawn
                                 // sections below.
                                 if let Some(Some(Entity::Projectile(p))) =
-                                    self.entities.get_mut(result.arrow.0 as usize)
+                                    self.entities.get_mut(result.arrow.index() as usize)
                                 {
                                     p.projectile.flying = true;
                                 }
@@ -2175,7 +2173,8 @@ impl EngineInner {
         projectile: EntityId,
         old_pos: crate::coordinates::WorldPoint3D,
     ) {
-        let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.0 as usize) else {
+        let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(projectile.index() as usize)
+        else {
             tracing::warn!(
                 ?projectile,
                 "projectile human-hit rewind skipped: projectile entity missing"
@@ -2305,7 +2304,7 @@ impl EngineInner {
     /// Set the 1500-frame apple-smell counter on a soldier.  Titbit
     /// creation is driven event-free by `sync_apple_smell_titbits`.
     fn set_soldier_apple_smell(&mut self, victim: EntityId) {
-        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(victim.0 as usize) {
+        if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(victim.index() as usize) {
             s.soldier.apple_smell = APPLE_SMELL_DURATION;
         }
     }
@@ -2335,7 +2334,8 @@ impl EngineInner {
         let npc_ids = self.npc_ids.clone();
         for npc_id in npc_ids {
             let target_handle = {
-                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.0 as usize) else {
+                let Some(Some(Entity::Soldier(s))) = self.entities.get(npc_id.index() as usize)
+                else {
                     continue;
                 };
                 let Some(ai) = s.npc.ai_brain.base() else {
@@ -2358,14 +2358,16 @@ impl EngineInner {
                 Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
-            let target_pos = match self.get_entity(EntityId(target_handle)) {
+            let target_pos = match self.get_entity(
+                self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
+            ) {
                 Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
             let dx = target_pos.x - my_pos.x;
             let dy = target_pos.y - my_pos.y;
             let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize) {
+            if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize) {
                 s.element.set_direction_instantly(sector);
             }
         }
@@ -2525,8 +2527,8 @@ impl EngineInner {
         // is the correct one.  If none of the projection-area obstacles
         // cover the landing, fall through to the standalone water-zone
         // scan (branch 1).
-        let landing = position_map.to_geo();
-        let landing_obstacle = self.find_landing_water_obstacle(assets, landing);
+        let landing = position_map;
+        let landing_obstacle = self.find_landing_water_obstacle(assets, landing.to_geo());
         let resolved_material = if let Some(obs) = landing_obstacle {
             crate::water_zones::determine_water_hole_with_obstacle(obs, landing)
         } else {
@@ -2559,7 +2561,7 @@ impl EngineInner {
         // the same tick the landing is detected.
         let is_water = matches!(material, crate::sound_cache::Material::Water);
         if !is_water
-            && let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(arrow.0 as usize)
+            && let Some(Some(Entity::Projectile(p))) = self.entities.get_mut(arrow.index() as usize)
         {
             p.projectile.disappear = true;
         }
@@ -2681,11 +2683,11 @@ impl EngineInner {
         // Remove previous frame's dynamic shield obstacles.
         self.dynamic_sight_obstacles.clear();
 
-        for idx in 0..self.entities.len() {
-            let entity = match &self.entities[idx] {
-                Some(e) => e,
-                None => continue,
-            };
+        let mut clear_obstacles = Vec::new();
+        let mut set_obstacles = Vec::new();
+        let mut dynamic_sight_obstacles = Vec::new();
+
+        for (id, entity) in self.entities_iter_with_id() {
             if !entity.is_human() || !entity.is_active() || entity.is_dead() {
                 continue;
             }
@@ -2696,11 +2698,8 @@ impl EngineInner {
 
             if !actor.action_state.is_shield() {
                 // Not holding shield — clear any stale obstacle.
-                if actor.shield_obstacle.is_some()
-                    && let Some(Some(e)) = self.entities.get_mut(idx)
-                    && let Some(a) = e.actor_data_mut()
-                {
-                    a.shield_obstacle = None;
+                if actor.shield_obstacle.is_some() {
+                    clear_obstacles.push(id);
                 }
                 continue;
             }
@@ -2723,15 +2722,12 @@ impl EngineInner {
                         s.soldier.soldier_profile_index,
                     ) else {
                         tracing::warn!(
-                            soldier = ?crate::element::EntityId(idx as u32),
+                            soldier = ?id,
                             profile_index = ?s.soldier.soldier_profile_index,
                             "shield update: missing soldier HtH weapon profile; clearing shield obstacle"
                         );
-                        if actor.shield_obstacle.is_some()
-                            && let Some(Some(e)) = self.entities.get_mut(idx)
-                            && let Some(a) = e.actor_data_mut()
-                        {
-                            a.shield_obstacle = None;
+                        if actor.shield_obstacle.is_some() {
+                            clear_obstacles.push(id);
                         }
                         continue;
                     };
@@ -2750,13 +2746,21 @@ impl EngineInner {
 
             // Store on the entity (for tick_arrows per-arrow directional check)
             // and append to the global obstacle list (for all other systems).
-            let global_copy = obstacle.clone();
-            if let Some(Some(e)) = self.entities.get_mut(idx)
-                && let Some(a) = e.actor_data_mut()
-            {
-                a.shield_obstacle = Some(obstacle);
+            dynamic_sight_obstacles.push(obstacle.clone());
+            set_obstacles.push((id, obstacle));
+        }
+
+        self.dynamic_sight_obstacles = dynamic_sight_obstacles;
+
+        for id in clear_obstacles {
+            if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
+                actor.shield_obstacle = None;
             }
-            self.dynamic_sight_obstacles.push(global_copy);
+        }
+        for (id, obstacle) in set_obstacles {
+            if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
+                actor.shield_obstacle = Some(obstacle);
+            }
         }
     }
 
@@ -3642,7 +3646,7 @@ impl EngineInner {
                     if !stranglable {
                         let stimulus = crate::ai::Stimulus::with_human(
                             crate::ai::StimulusType::EventGotHit,
-                            actor_id.0,
+                            actor_id.index(),
                         );
                         self.dispatch_ai_stimulus(target_id, stimulus);
                         self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -3715,7 +3719,7 @@ impl EngineInner {
             if elem.posture != crate::element::Posture::CarryingOnShoulders {
                 continue;
             }
-            let carrier_id = crate::element::EntityId(idx as u32);
+            let carrier_id = crate::element::EntityId::from_raw(idx as u32);
             let carrier_pos = elem.position();
 
             let obstacles = self.sight_obstacles(assets);
@@ -3730,7 +3734,7 @@ impl EngineInner {
                 let v = vslot.as_ref()?;
                 let hd = v.human_data()?;
                 if hd.carrier == Some(carrier_id) {
-                    Some(crate::element::EntityId(vidx as u32))
+                    Some(crate::element::EntityId::from_raw(vidx as u32))
                 } else {
                     None
                 }

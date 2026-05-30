@@ -243,7 +243,10 @@ pub(super) fn enemies_are_blocking_my_movement(
 ) -> bool {
     use crate::position_interface::INVERSE_ASPECT_RATIO;
 
-    let Some(entity) = entities.get(entity_id.0 as usize).and_then(|s| s.as_ref()) else {
+    let Some(entity) = entities
+        .get(entity_id.index() as usize)
+        .and_then(|s| s.as_ref())
+    else {
         return false;
     };
     let Some(human) = entity.human_data() else {
@@ -275,7 +278,10 @@ pub(super) fn enemies_are_blocking_my_movement(
     let mut smallest_left = MAX_BLOCKING_ENEMIES_LATERAL_DISTANCE;
     let mut smallest_right = MAX_BLOCKING_ENEMIES_LATERAL_DISTANCE;
     for &opp_id in &human.opponents {
-        let Some(opp) = entities.get(opp_id.0 as usize).and_then(|s| s.as_ref()) else {
+        let Some(opp) = entities
+            .get(opp_id.index() as usize)
+            .and_then(|s| s.as_ref())
+        else {
             continue;
         };
         let opp_pt = opp.element_data().position_map();
@@ -707,7 +713,7 @@ impl EngineInner {
             if npc_id == waker_id {
                 continue;
             }
-            let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize) else {
                 continue;
             };
             if entity.camp() == waker_camp {
@@ -987,11 +993,11 @@ pub(crate) fn get_hth_weapon_id_full(
 
 /// Get the distance between two entities on the ground plane.
 fn entity_distance(entities: &[Option<Entity>], a: EntityId, b: EntityId) -> f32 {
-    let pos_a = match entities.get(a.0 as usize).and_then(|s| s.as_ref()) {
+    let pos_a = match entities.get(a.index() as usize).and_then(|s| s.as_ref()) {
         Some(e) => e.element_data().position_map(),
         None => return f32::MAX,
     };
-    let pos_b = match entities.get(b.0 as usize).and_then(|s| s.as_ref()) {
+    let pos_b = match entities.get(b.index() as usize).and_then(|s| s.as_ref()) {
         Some(e) => e.element_data().position_map(),
         None => return f32::MAX,
     };
@@ -1002,11 +1008,11 @@ fn entity_distance(entities: &[Option<Entity>], a: EntityId, b: EntityId) -> f32
 
 /// Get the 0-15 direction sector from entity A looking at entity B.
 fn direction_to(entities: &[Option<Entity>], from: EntityId, to: EntityId) -> i16 {
-    let pos_a = match entities.get(from.0 as usize).and_then(|s| s.as_ref()) {
+    let pos_a = match entities.get(from.index() as usize).and_then(|s| s.as_ref()) {
         Some(e) => e.element_data().position_map(),
         None => return 0,
     };
-    let pos_b = match entities.get(to.0 as usize).and_then(|s| s.as_ref()) {
+    let pos_b = match entities.get(to.index() as usize).and_then(|s| s.as_ref()) {
         Some(e) => e.element_data().position_map(),
         None => return 0,
     };
@@ -1058,7 +1064,7 @@ fn point_in_quad(
 
 /// Get an entity's camp (faction). PCs are always Royalists.
 fn entity_camp(entities: &[Option<Entity>], id: EntityId) -> crate::element::Camp {
-    match entities.get(id.0 as usize).and_then(|s| s.as_ref()) {
+    match entities.get(id.index() as usize).and_then(|s| s.as_ref()) {
         Some(Entity::Pc(_)) => crate::element::Camp::Royalists,
         Some(Entity::Soldier(s)) => s.soldier.cached_camp,
         Some(Entity::Civilian(c)) => c.civilian.cached_camp,
@@ -1240,8 +1246,8 @@ pub(crate) fn is_table_swordfight_needed(
     pc_id: EntityId,
     victim_id: EntityId,
 ) -> Option<u32> {
-    let pc = entities.get(pc_id.0 as usize)?.as_ref()?;
-    let victim = entities.get(victim_id.0 as usize)?.as_ref()?;
+    let pc = entities.get(pc_id.index() as usize)?.as_ref()?;
+    let victim = entities.get(victim_id.index() as usize)?.as_ref()?;
 
     let pc_sector = pc.element_data().sector()?;
     let victim_sector = victim.element_data().sector()?;
@@ -1269,7 +1275,7 @@ pub(crate) fn number_of_table_swordfight_opponents(
     from_sector: i16,
 ) -> u32 {
     let Some(opponent) = entities
-        .get(opponent_id.0 as usize)
+        .get(opponent_id.index() as usize)
         .and_then(|s| s.as_ref())
     else {
         return 0;
@@ -1279,7 +1285,10 @@ pub(crate) fn number_of_table_swordfight_opponents(
     };
     let mut count = 0;
     for fighter_id in &human.opponents {
-        let Some(fighter) = entities.get(fighter_id.0 as usize).and_then(|s| s.as_ref()) else {
+        let Some(fighter) = entities
+            .get(fighter_id.index() as usize)
+            .and_then(|s| s.as_ref())
+        else {
             continue;
         };
         if fighter.element_data().sector().map(i16::from) == Some(from_sector) {
@@ -1306,7 +1315,7 @@ pub(crate) fn find_position_for_table_swordfight(
 ) -> Option<crate::geo2d::GeoPoint2D> {
     // The opponent must already be swordfighting at least one fighter
     // (us) when this runs.
-    let opponent = entities.get(opponent_id.0 as usize)?.as_ref()?;
+    let opponent = entities.get(opponent_id.index() as usize)?.as_ref()?;
     let opp_human = opponent.human_data()?;
 
     let line_vec = jump_line.vector();
@@ -1325,7 +1334,10 @@ pub(crate) fn find_position_for_table_swordfight(
         if *fighter_id == self_id {
             continue;
         }
-        let Some(friend) = entities.get(fighter_id.0 as usize).and_then(|s| s.as_ref()) else {
+        let Some(friend) = entities
+            .get(fighter_id.index() as usize)
+            .and_then(|s| s.as_ref())
+        else {
             continue;
         };
         if friend.element_data().sector().map(i16::from) != Some(self_sector) {
@@ -1441,14 +1453,14 @@ fn can_enter_swordfight_with(
     profile_manager: &crate::profiles::ProfileManager,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
 ) -> bool {
-    let entity_a = match entities.get(a.0 as usize).and_then(|s| s.as_ref()) {
+    let entity_a = match entities.get(a.index() as usize).and_then(|s| s.as_ref()) {
         Some(e) => e,
         None => {
             tracing::info!(?a, ?b, "can_enter: entity_a missing");
             return false;
         }
     };
-    let entity_b = match entities.get(b.0 as usize).and_then(|s| s.as_ref()) {
+    let entity_b = match entities.get(b.index() as usize).and_then(|s| s.as_ref()) {
         Some(e) => e,
         None => {
             tracing::info!(?a, ?b, "can_enter: entity_b missing");
@@ -1568,7 +1580,7 @@ fn is_possible_sword_strike_victim(
     // the attacker is a PC who is NOT Robin, reject the victim.
     if target_entity.is_soldier()
         && is_vip_from_profile(target_entity, profile_manager)
-        && let Some(Some(attacker_entity)) = entities.get(attacker.0 as usize)
+        && let Some(Some(attacker_entity)) = entities.get(attacker.index() as usize)
     {
         let is_non_robin_pc = match attacker_entity {
             Entity::Pc(pc) => !pc.pc.robin,
@@ -1584,7 +1596,7 @@ fn is_possible_sword_strike_victim(
     // walls / counters / fences a sword can be swung over no longer
     // falsely block the strike, and ground-only obstacles (rubble
     // below belt height) don't block either.
-    if let Some(Some(attacker_entity)) = entities.get(attacker.0 as usize) {
+    if let Some(Some(attacker_entity)) = entities.get(attacker.index() as usize) {
         let att_belt = compute_belt_point(attacker_entity);
         let tgt_belt = compute_belt_point(target_entity);
         let att_layer = attacker_entity.element_data().layer();
@@ -1610,7 +1622,7 @@ fn is_possible_sword_strike_victim_id(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
-    let Some(Some(target_entity)) = entities.get(target_id.0 as usize) else {
+    let Some(Some(target_entity)) = entities.get(target_id.index() as usize) else {
         return false;
     };
     is_possible_sword_strike_victim(
@@ -1642,12 +1654,7 @@ fn collect_arc_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
-        let target_id = EntityId(idx as u32);
+    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1697,12 +1704,7 @@ fn collect_circle_warn_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
-        let target_id = EntityId(idx as u32);
+    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1789,12 +1791,7 @@ fn collect_push_victims(
     let sy = fx;
 
     let mut victims = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
-        let target_id = EntityId(idx as u32);
+    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -2201,7 +2198,7 @@ mod tests {
             .unwrap()
             .element_data()
             .position_map();
-        if let Some(Some(entity)) = engine.entities.get_mut(flyer.0 as usize)
+        if let Some(Some(entity)) = engine.entities.get_mut(flyer.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_flight = Some(ActiveFlight {
@@ -2715,7 +2712,7 @@ mod tests {
             .unwrap()
             .element_data()
             .position_map();
-        if let Some(Some(entity)) = engine.entities.get_mut(flyer.0 as usize)
+        if let Some(Some(entity)) = engine.entities.get_mut(flyer.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_flight = Some(ActiveFlight {

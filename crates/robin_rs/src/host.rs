@@ -680,7 +680,7 @@ impl Host {
             use robin_engine::engine::SoundCommand;
             match cmd {
                 SoundCommand::StopExclamation { actor_id } => {
-                    self.pending_stop_exclamations.push(actor_id.0);
+                    self.pending_stop_exclamations.push(actor_id.index());
                 }
                 SoundCommand::Exclamation {
                     group,
@@ -692,12 +692,13 @@ impl Host {
                 } => {
                     if let Some(actor_id) = actor_id {
                         let had_deferred_stop =
-                            self.pending_stop_exclamations.contains(&actor_id.0);
+                            self.pending_stop_exclamations.contains(&actor_id.index());
                         if had_deferred_stop {
                             self.pending_stop_exclamations
-                                .retain(|id| *id != actor_id.0);
-                            self.sound.drop_pending_exclamations(actor_id.0);
-                            self.pending_stop_exclamation_channels.push(actor_id.0);
+                                .retain(|id| *id != actor_id.index());
+                            self.sound.drop_pending_exclamations(actor_id.index());
+                            self.pending_stop_exclamation_channels
+                                .push(actor_id.index());
                         }
                     }
                     self.sound.play_exclamation(
@@ -706,7 +707,7 @@ impl Host {
                         exclamation_id,
                         variant,
                         position,
-                        actor_id.map(|id| id.0),
+                        actor_id.map(|id| id.index()),
                     );
                 }
                 SoundCommand::Fx {

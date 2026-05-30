@@ -4,11 +4,16 @@
 
 use super::modal_state::ActiveModal;
 use crate::Host;
+use crate::ai::AlertLevel;
 use crate::game::Game;
 use crate::game_render::clear_status_bar_flags;
 use crate::player_command::{PlayerCommand, PlayerInput};
+use crate::replay::ReplayPlayer;
+use crate::rewind::RewindBuffer;
+use crate::rollback_checker::RollbackChecker;
 use crate::sdl_audio::SdlMixerBackend;
 use crate::sound::AlertStatus;
+use crate::sound_cache::SampleLoader;
 
 /// Per-frame audio tick.
 ///
@@ -22,13 +27,13 @@ pub(super) fn tick_audio(
     manager: &mut robin_engine::engine_manager::EngineManager,
     host: &mut Host,
     backend: &mut SdlMixerBackend,
-    sample_loader: &crate::sound_cache::SampleLoader,
+    sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
 ) {
     let alert_status = match manager.engine.ai_global().overall_alert_status {
-        crate::ai::AlertLevel::Green => AlertStatus::Green,
-        crate::ai::AlertLevel::Yellow => AlertStatus::Yellow,
-        crate::ai::AlertLevel::Red => AlertStatus::Red,
+        AlertLevel::Green => AlertStatus::Green,
+        AlertLevel::Yellow => AlertStatus::Yellow,
+        AlertLevel::Red => AlertStatus::Red,
     };
     // Disjoint-borrow split: `host.sound` and the side-effect queues
     // on host are separate fields.
@@ -161,9 +166,9 @@ pub(super) fn drain_steps(
     assets: &robin_engine::engine::LevelAssets,
     dev: &mut robin_engine::engine::DevState,
     game: &mut Game,
-    rewind_buffer: &mut crate::rewind::RewindBuffer,
-    rollback_checker: &mut Option<crate::rollback_checker::RollbackChecker>,
-    replay_player: &mut Option<crate::replay::ReplayPlayer>,
+    rewind_buffer: &mut RewindBuffer,
+    rollback_checker: &mut Option<RollbackChecker>,
+    replay_player: &mut Option<ReplayPlayer>,
     manual_pause: &mut bool,
     active_modal: &mut Option<ActiveModal>,
 ) {
@@ -314,9 +319,9 @@ pub(super) fn run_forward_ticks(
     assets: &robin_engine::engine::LevelAssets,
     dev: &mut robin_engine::engine::DevState,
     game: &mut Game,
-    rewind_buffer: &mut crate::rewind::RewindBuffer,
-    rollback_checker: &mut Option<crate::rollback_checker::RollbackChecker>,
-    replay_player: &mut Option<crate::replay::ReplayPlayer>,
+    rewind_buffer: &mut RewindBuffer,
+    rollback_checker: &mut Option<RollbackChecker>,
+    replay_player: &mut Option<ReplayPlayer>,
     n: u32,
 ) -> (u32, usize) {
     let engine = &mut manager.engine;
@@ -378,8 +383,8 @@ pub(super) fn rewind_to_frame(
     manager: &mut robin_engine::engine_manager::EngineManager,
     host: &mut Host,
     assets: &robin_engine::engine::LevelAssets,
-    rewind_buffer: &mut crate::rewind::RewindBuffer,
-    replay_player: &mut Option<crate::replay::ReplayPlayer>,
+    rewind_buffer: &mut RewindBuffer,
+    replay_player: &mut Option<ReplayPlayer>,
     target: u32,
 ) -> Result<u32, String> {
     let _ = host; // reserved for future hooks (e.g. cursor reset on scrub)

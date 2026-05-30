@@ -999,7 +999,7 @@ impl EnemyAi {
                 continue;
             }
             let victim_pos = crate::stealth::detection_point_xy(
-                crate::geo2d::pt(victim_view.position.x, victim_view.position.y),
+                crate::coordinates::MapPoint::new(victim_view.position.x, victim_view.position.y),
                 victim_view.posture,
                 victim_view.direction as i16,
             );
@@ -1615,7 +1615,7 @@ impl EnemyAi {
         let target_eye_z =
             view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
         let target_detection_xy = crate::stealth::detection_point_xy(
-            crate::geo2d::pt(view.position.x, view.position.y),
+            crate::coordinates::MapPoint::new(view.position.x, view.position.y),
             view.posture,
             view.direction as i16,
         );
@@ -1688,7 +1688,7 @@ impl EnemyAi {
         }
 
         let viewer_eye = crate::stealth::eye_point_xy(
-            crate::geo2d::pt(ctx.position.x, ctx.position.y),
+            crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y),
             ctx.posture,
             ctx.direction as i16,
             false,
@@ -1696,7 +1696,7 @@ impl EnemyAi {
         let viewer_eye_z =
             ctx.elevation + crate::stealth::eye_z_for_posture(ctx.posture, ctx.self_is_rider);
         let target_detection_xy = crate::stealth::detection_point_xy(
-            crate::geo2d::pt(view.position.x, view.position.y),
+            crate::coordinates::MapPoint::new(view.position.x, view.position.y),
             view.posture,
             view.direction as i16,
         );

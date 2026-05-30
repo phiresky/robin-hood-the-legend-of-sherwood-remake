@@ -3,6 +3,9 @@
 //! Houses the `TeeWriter` adapter, the default replay path picker, the
 //! `ReplayAndRollback` bundle, and `init_replay_and_rollback` itself.
 
+use crate::replay::{ReplayPlayer, ReplayRecorder};
+use crate::rewind::RewindBuffer;
+use crate::rollback_checker::RollbackChecker;
 use robin_engine::engine::{Engine, LevelAssets};
 use std::sync::Arc;
 
@@ -67,10 +70,10 @@ fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
 /// [`init_replay_and_rollback`] — replay recorder, replay player,
 /// rollback checker, and the hold-to-rewind snapshot buffer.
 pub(super) struct ReplayAndRollback {
-    pub(super) recorder: Option<crate::replay::ReplayRecorder>,
-    pub(super) player: Option<crate::replay::ReplayPlayer>,
-    pub(super) rollback_checker: Option<crate::rollback_checker::RollbackChecker>,
-    pub(super) rewind_buffer: crate::rewind::RewindBuffer,
+    pub(super) recorder: Option<ReplayRecorder>,
+    pub(super) player: Option<ReplayPlayer>,
+    pub(super) rollback_checker: Option<RollbackChecker>,
+    pub(super) rewind_buffer: RewindBuffer,
     /// Final value of the "start paused" toggle — true if either
     /// `--start-paused` was passed on the command line, or a pending
     /// `load-replay` RPC call requested it.
@@ -176,7 +179,7 @@ pub(super) fn init_replay_and_rollback(
                 primary,
                 mirror: rpc_buffer.clone(),
             });
-            match crate::replay::ReplayRecorder::with_writer_and_campaign(
+            match ReplayRecorder::with_writer_and_campaign(
                 writer,
                 mission_id.to_string(),
                 engine_rng_seed,
@@ -199,7 +202,7 @@ pub(super) fn init_replay_and_rollback(
             p.paused,
         );
         engine.restore_rng_from_seed(p.data.header.rng_seed);
-        Some(crate::replay::ReplayPlayer::new(p.data))
+        Some(ReplayPlayer::new(p.data))
     } else if let Some(data) = args.replay_data.clone() {
         tracing::info!(
             "Loaded replay (decoded): mission `{}`, {} frames, seed {}",
@@ -210,7 +213,7 @@ pub(super) fn init_replay_and_rollback(
         // No restore_rng_from_seed here: see EngineArgs setup in
         // `load_level_and_sprite_bank` — the engine RNG was already
         // seeded at construction with this header's seed.
-        Some(crate::replay::ReplayPlayer::new(data))
+        Some(ReplayPlayer::new(data))
     } else {
         args.replay
             .as_ref()
@@ -226,7 +229,7 @@ pub(super) fn init_replay_and_rollback(
                     // setup in `load_level_and_sprite_bank` — the
                     // engine RNG was already seeded at construction
                     // with this header's seed.
-                    Some(crate::replay::ReplayPlayer::new(data))
+                    Some(ReplayPlayer::new(data))
                 }
                 Err(e) => {
                     tracing::error!("Failed to load replay: {e}");
@@ -247,10 +250,7 @@ pub(super) fn init_replay_and_rollback(
         && !is_multiplayer
     {
         let rollback_replay_path = recorder.as_ref().and(replay_path.clone());
-        Some(crate::rollback_checker::RollbackChecker::new(
-            assets,
-            rollback_replay_path,
-        ))
+        Some(RollbackChecker::new(assets, rollback_replay_path))
     } else {
         if is_multiplayer && args.rollback_check && player.is_none() {
             tracing::info!(
@@ -264,7 +264,7 @@ pub(super) fn init_replay_and_rollback(
     // clones so BACKSPACE can replay the game backwards at normal
     // speed.  Disabled during replay playback because the replay path
     // owns the command stream.
-    let rewind_buffer = crate::rewind::RewindBuffer::new();
+    let rewind_buffer = RewindBuffer::new();
 
     ReplayAndRollback {
         recorder,
