@@ -2789,7 +2789,7 @@ impl EngineInner {
         // Processed after the entity loop to avoid borrowing conflicts.
         let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
 
-        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (entity_id, entity) in self.entities.occupied_mut() {
             let entity_idx = entity_id.index() as usize;
 
             if !entity.is_active() {
@@ -3681,7 +3681,7 @@ impl EngineInner {
         // isn't interleaved with mutable entity iteration.
         let mut triggers: Vec<(u32, crate::coordinates::MapPoint, Option<Material>)> = Vec::new();
 
-        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (_, entity) in self.entities.occupied_mut() {
             if !entity.is_active() {
                 continue;
             }

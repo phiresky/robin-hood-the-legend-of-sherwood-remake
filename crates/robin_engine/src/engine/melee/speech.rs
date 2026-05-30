@@ -385,7 +385,7 @@ impl EngineInner {
 
     /// Per-frame refresh of all PCs' forbidden expression list counters.
     pub(super) fn tick_refresh_hero_mouth(&mut self) {
-        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (_, entity) in self.entities.occupied_mut() {
             if let Entity::Pc(pc) = entity {
                 pc.pc.forbidden_expressions.retain_mut(|(_, timer)| {
                     *timer = timer.saturating_sub(1);
@@ -433,7 +433,7 @@ impl EngineInner {
             m
         };
 
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             let Entity::Pc(pc) = entity else { continue };
             let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
@@ -538,7 +538,7 @@ impl EngineInner {
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
     pub(super) fn tick_tiredness(&mut self, assets: &LevelAssets) {
         let frame = self.frame_counter;
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             let idx = id.index();
             // Spread the work — only every 64 frames per entity
             if (frame & 63) != (idx & 31) {

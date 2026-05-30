@@ -2973,7 +2973,7 @@ impl EngineInner {
         }
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             let Some(npc) = entity.npc_data_mut() else {
                 continue;
             };
@@ -3111,7 +3111,7 @@ impl EngineInner {
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };

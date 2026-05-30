@@ -79,13 +79,10 @@ impl EngineInner {
         }
         let mut impacts: Vec<NestImpact> = Vec::new();
 
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
-            if !entity.element_data().active {
+        for (id, proj) in self.entities.projectiles_mut() {
+            if !proj.element.active {
                 continue;
             }
-            let Entity::Projectile(proj) = entity else {
-                continue;
-            };
             let object_type = proj.object.object_type;
             if !matches!(
                 object_type,
@@ -96,6 +93,7 @@ impl EngineInner {
             if !proj.projectile.flying {
                 continue;
             }
+            let id = EntityId::from(id);
 
             let exhausted = proj.advance_trajectory_one_frame();
             if exhausted {

@@ -1456,17 +1456,16 @@ impl EngineInner {
                         },
                     },
                 });
-                // `add_entity` routes FX-base entities at elevation 0
-                // to `bg_animation_ids`.  Proto-level background
-                // animations always load at layer 0 / Z 0, so no
-                // additional bookkeeping is needed here.
+                // Proto-level background animations always load at
+                // layer 0 / Z 0, so the background animation accessor
+                // derives them directly from the entity store.
                 let _ = self.add_entity(entity);
             }
 
             tracing::info!(
                 "Spawned {} proto-level animations ({} with sprites)",
                 loaded.proto.animations.len(),
-                self.bg_animation_ids.len(),
+                self.bg_animation_ids().len(),
             );
         }
 
@@ -3174,7 +3173,11 @@ impl EngineInner {
         // returns a posture-appropriate idle order.  This is invoked
         // whenever an actor has no current order — in practice at the
         // first Execute tick after spawn.
-        let actor_ids_snapshot = self.actor_ids.clone();
+        let actor_ids_snapshot: Vec<_> = self
+            .entities
+            .actors()
+            .map(|(id, _)| EntityId::from(id))
+            .collect();
         for actor_id in actor_ids_snapshot {
             self.ensure_wait_element(actor_id);
         }

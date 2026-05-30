@@ -502,11 +502,13 @@ impl EngineInner {
 
             // ── PC invulnerability ───────────────────────────────
             // `Highlander` makes every Royalist fighter invulnerable;
-            // `Highlander2` does the same for Lacklandists.  Both walk
-            // `fighter_ids[camp]` (populated in `add_entity`).
+            // `Highlander2` does the same for Lacklandists. Civilians
+            // are intentionally excluded.
             Highlander => {
-                let ids =
-                    self.fighter_ids[crate::element::Camp::Royalists.index().unwrap()].clone();
+                let ids: Vec<_> = self
+                    .entities
+                    .fighter_ids_for_camp(crate::element::Camp::Royalists)
+                    .collect();
                 for id in ids {
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(h) = entity.human_data_mut()
@@ -517,8 +519,10 @@ impl EngineInner {
                 ConsoleResponse::Ok("Friends invulnerable".to_string())
             }
             Highlander2 => {
-                let ids =
-                    self.fighter_ids[crate::element::Camp::Lacklandists.index().unwrap()].clone();
+                let ids: Vec<_> = self
+                    .entities
+                    .fighter_ids_for_camp(crate::element::Camp::Lacklandists)
+                    .collect();
                 for id in ids {
                     if let Some(entity) = self.get_entity_mut(id)
                         && let Some(h) = entity.human_data_mut()
@@ -533,12 +537,11 @@ impl EngineInner {
             Nuke => {
                 // Prints "Nuking ..." before walking every soldier,
                 // launches a damage(1000, 1000) sequence per victim,
-                // then prints "Nuked N soldiers".  Uses the precomputed
-                // `soldier_ids[camp]`.
+                // then prints "Nuked N soldiers".
                 let victims: Vec<_> = self
-                    .soldier_ids
-                    .iter()
-                    .flat_map(|v| v.iter().copied())
+                    .entities
+                    .soldiers()
+                    .map(|(id, _)| EntityId::from(id))
                     .collect();
                 let count = victims.len();
                 for id in victims {
@@ -578,7 +581,10 @@ impl EngineInner {
                 // sequence element.  Concussion application reads the
                 // target's own invulnerable / tied / carried state via
                 // `concussion_ctx_for`.
-                let ids = self.soldier_ids[Camp::Lacklandists.index().unwrap()].clone();
+                let ids: Vec<_> = self
+                    .entities
+                    .soldier_ids_for_camp(Camp::Lacklandists)
+                    .collect();
                 for id in ids {
                     // Route through `apply_concussion` so a swordfighting
                     // victim is dropped from opponents' lists and gets
@@ -765,8 +771,9 @@ impl EngineInner {
                 // Sets attentive mode on every soldier — silent cheat,
                 // emits no console output.
                 let soldier_ids: Vec<EntityId> = self
-                    .entities_iter_with_id()
-                    .filter_map(|(id, entity)| entity.is_soldier().then_some(id))
+                    .entities
+                    .soldiers()
+                    .map(|(id, _)| EntityId::from(id))
                     .collect();
                 for id in soldier_ids {
                     self.set_soldier_attentive_mode(id, true, false);
@@ -1327,10 +1334,8 @@ mod tests {
                 ..NpcData::default()
             },
             soldier: SoldierData {
-                // Real enemy soldiers always have a defined camp;
-                // explicitly setting it here means `add_entity` files
-                // them under `fighter_ids[Lacklandists]` so cheats
-                // like HIGHLANDER2 can iterate them.
+                // Real enemy soldiers always have a defined camp, so
+                // derived fighter/soldier iterators include them.
                 cached_camp: crate::element::Camp::Lacklandists,
                 ..SoldierData::default()
             },

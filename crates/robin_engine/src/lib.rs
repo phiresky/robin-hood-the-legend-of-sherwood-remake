@@ -27,6 +27,7 @@ pub mod element;
 pub mod element_kinds;
 pub mod element_priority;
 pub mod engine_manager;
+pub mod entities;
 pub mod entity_id;
 pub mod event;
 pub mod fast_find_grid;

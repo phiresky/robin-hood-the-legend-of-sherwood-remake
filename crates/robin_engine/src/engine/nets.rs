@@ -431,11 +431,11 @@ impl EngineInner {
         let mut applies: Vec<EntityId> = Vec::new();
         let mut just_landed: Vec<EntityId> = Vec::new();
 
-        for (net_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
-            let net = match entity {
-                Entity::Net(n) if n.element.active => n,
-                _ => continue,
-            };
+        for (net_id, net) in self.entities.nets_mut() {
+            if !net.element.active {
+                continue;
+            }
+            let net_id = EntityId::from(net_id);
 
             if net.projectile.flying {
                 advance_net_trajectory(net);

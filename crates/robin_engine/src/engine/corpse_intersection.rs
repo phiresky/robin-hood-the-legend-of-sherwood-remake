@@ -57,7 +57,7 @@ impl EngineInner {
     pub(crate) fn process_corpse_intersection_updates(&mut self) {
         let mut transitions: Vec<(EntityId, bool)> = Vec::new();
 
-        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (entity_id, entity) in self.entities.occupied_mut() {
             if !entity.is_human() {
                 continue;
             }
