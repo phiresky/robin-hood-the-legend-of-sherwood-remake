@@ -21,7 +21,7 @@ use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{GroundPoint, MapPoint};
+use robin_engine::coordinates::{GroundPoint, MapPoint, ScreenPoint};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Ambiance, DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
@@ -551,8 +551,8 @@ pub(crate) fn render_view_cone_overlay(
 }
 
 struct ViewConeRenderSlice {
-    polys: Vec<Vec<crate::geo2d::GeoPoint2D>>,
-    viewer: crate::geo2d::GeoPoint2D,
+    polys: Vec<Vec<GroundPoint>>,
+    viewer: GroundPoint,
     radius: f32,
     projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
 }
@@ -595,13 +595,13 @@ fn view_cone_polys_for_render(
         let mut slice_params = params.clone();
         slice_params.radius = radius;
         let ground_polys = crate::shadow_polygon::compute_visibility_polygon(
-            viewer.to_geo(),
+            viewer,
             &slice_params,
             &all_obstacles,
         );
         slices.push(ViewConeRenderSlice {
             polys: ground_polys,
-            viewer: viewer.to_geo(),
+            viewer,
             radius,
             projection_plane: None,
         });
@@ -649,12 +649,8 @@ fn view_cone_polys_for_render(
                 })
                 .collect();
         let (polys, viewer) = crate::shadow_polygon::project_and_clip_to_projection_area(
-            &crate::shadow_polygon::compute_visibility_polygon(
-                viewer.to_geo(),
-                &slice_params,
-                &obstacles,
-            ),
-            viewer.to_geo(),
+            &crate::shadow_polygon::compute_visibility_polygon(viewer, &slice_params, &obstacles),
+            viewer,
             projection_plane,
             projection_area,
             &occluding_projection_areas,
@@ -790,8 +786,8 @@ fn render_all_view_cones(
             let r = params.radius;
             let z = params.viewer_z.max(0.0);
             let cone_bbox = BBox::new(
-                geo2d::pt(viewer.x - r, viewer.y - z - r),
-                geo2d::pt(viewer.x + r, viewer.y + r),
+                ScreenPoint::new(viewer.x - r, viewer.y - z - r),
+                ScreenPoint::new(viewer.x + r, viewer.y + r),
             );
             view_rect.is_intersecting(&cone_bbox)
         })
@@ -819,7 +815,10 @@ fn render_all_view_cones(
                         .into_iter()
                         .filter(|p| p.len() >= 3)
                         .filter(move |p| {
-                            let mut bbox = BBox::new(p[0], p[0]);
+                            let mut bbox = BBox::new(
+                                ScreenPoint::new(p[0].x, p[0].y),
+                                ScreenPoint::new(p[0].x, p[0].y),
+                            );
                             for &point in &p[1..] {
                                 bbox.min.x = bbox.min.x.min(point.x);
                                 bbox.min.y = bbox.min.y.min(point.y);

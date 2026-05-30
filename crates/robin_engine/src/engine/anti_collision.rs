@@ -372,7 +372,7 @@ pub fn gather_disturbing(
     mover: &ActorSnapshot,
     neighbours: &[Option<ActorSnapshot>],
     box_future: &MapBBox,
-    increment: geo2d::Vec2D,
+    increment: MapVec,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
     let mut lines = Vec::new();
@@ -540,7 +540,7 @@ pub fn apply_anti_collision_step(
         MapPoint::new(future.x + half, future.y + half),
     );
 
-    let increment = geo2d::pt(nx, ny);
+    let increment = MapVec::new(nx, ny);
     let (mut points, mut lines) = gather_disturbing(mover, neighbours, &box_future, increment);
     points.extend(gather_static_repulsive_points(
         mover,

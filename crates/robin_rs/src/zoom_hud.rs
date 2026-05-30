@@ -35,7 +35,7 @@ fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
         (rect.x() + rect.width() as i32) as f32,
         (rect.y() + rect.height() as i32) as f32,
     );
-    engine_sprite::BBox::new(bbox.top_left().to_geo(), bbox.bottom_right().to_geo())
+    engine_sprite::BBox::new(bbox.top_left(), bbox.bottom_right())
 }
 
 /// Logical zoom button id.

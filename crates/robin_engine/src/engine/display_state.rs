@@ -1,7 +1,7 @@
 //! Rendering: draw, view cone overlay, background, selection box.
 
 use super::*;
-use crate::coordinates::{GroundPoint, MapPoint, ScreenPoint};
+use crate::coordinates::{GroundPoint, MapPoint, MapVec, ScreenPoint};
 use crate::element::EntityId;
 use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
@@ -176,17 +176,17 @@ impl EngineInner {
                 // `cutscene_camera.pending_zoom_mouse_screen` at
                 // ZoomingUp/Down dispatch time; we consume-and-clear here.
                 let mouse_bias = if self.cutscene_camera.mechanized_zoom {
-                    geo2d::pt(0.0, 0.0)
+                    MapVec::ZERO
                 } else {
                     let mouse_screen = self.cutscene_camera.pending_zoom_mouse_screen.take();
                     mouse_screen
                         .map(|m| {
-                            geo2d::pt(
+                            MapVec::new(
                                 (screen_vec.x * 0.5 - m.x) / zoom_from,
                                 (screen_vec.y * 0.5 - m.y) / zoom_from,
                             )
                         })
-                        .unwrap_or_else(|| geo2d::pt(0.0, 0.0))
+                        .unwrap_or(MapVec::ZERO)
                 };
 
                 if display.background_transform.zoom_to_up {
@@ -205,7 +205,7 @@ impl EngineInner {
                     );
 
                     display.background_transform.center_zoom = mouse_bias;
-                    display.background_transform.clipped_zoom = geo2d::pt(0.0, 0.0);
+                    display.background_transform.clipped_zoom = MapVec::ZERO;
                     display.background_transform.zoom_from = zoom_from;
                     display.background_transform.zoom_to = new_factor;
                     display.background_transform.view_from = view_from;
@@ -229,7 +229,7 @@ impl EngineInner {
                     );
 
                     display.background_transform.center_zoom = mouse_bias;
-                    display.background_transform.clipped_zoom = geo2d::pt(0.0, 0.0);
+                    display.background_transform.clipped_zoom = MapVec::ZERO;
 
                     // Clamp target view within level bounds at the NEW zoom.
                     if target.x < 0.0 {

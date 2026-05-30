@@ -3,9 +3,8 @@
 use super::movement::mercenary_formation_destinations;
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
-use crate::coordinates::{MapPoint, MapSize, SpriteFrameOffset};
+use crate::coordinates::{MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
-use crate::geo2d;
 
 #[test]
 fn engine_creation() {
@@ -351,7 +350,7 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     engine.cutscene_camera.old_zoom_factor = 0.5;
     engine.cutscene_camera.zoom_init_done = true;
     engine.cutscene_camera.mechanized_zoom = true;
-    engine.cutscene_camera.displacement = geo2d::pt(3.0, 4.0);
+    engine.cutscene_camera.displacement = MapVec::new(3.0, 4.0);
     engine.cutscene_camera.displacement_counter = 7;
     engine.cutscene_camera.pending_zoom_mouse_screen =
         Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
@@ -370,7 +369,7 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     changed.cutscene_camera.old_zoom_factor = 2.0;
     changed.cutscene_camera.zoom_init_done = false;
     changed.cutscene_camera.mechanized_zoom = false;
-    changed.cutscene_camera.displacement = geo2d::pt(-30.0, -40.0);
+    changed.cutscene_camera.displacement = MapVec::new(-30.0, -40.0);
     changed.cutscene_camera.displacement_counter = 0;
     changed.cutscene_camera.pending_zoom_mouse_screen = None;
     assert_eq!(baseline_hash, crate::replay::state_hash(&changed));
@@ -383,7 +382,7 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     assert_eq!(restored.cutscene_camera.old_zoom_factor, 1.0);
     assert!(!restored.cutscene_camera.zoom_init_done);
     assert!(!restored.cutscene_camera.mechanized_zoom);
-    assert_eq!(restored.cutscene_camera.displacement, geo2d::pt(0.0, 0.0));
+    assert_eq!(restored.cutscene_camera.displacement, MapVec::ZERO);
     assert_eq!(restored.cutscene_camera.displacement_counter, 0);
     assert_eq!(restored.cutscene_camera.pending_zoom_mouse_screen, None);
 }
@@ -398,7 +397,7 @@ fn host_display_scroll_does_not_mutate_script_camera() {
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
     display.display_op = DisplayOpCode::Scroll;
-    display.background_transform.scrolling_vector = geo2d::pt(25.0, 0.0);
+    display.background_transform.scrolling_vector = MapVec::new(25.0, 0.0);
 
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -422,7 +421,7 @@ fn camera_display_scroll_mutates_script_camera() {
         .cutscene_camera
         .display
         .background_transform
-        .scrolling_vector = geo2d::pt(25.0, 0.0);
+        .scrolling_vector = MapVec::new(25.0, 0.0);
 
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -1156,7 +1155,7 @@ fn perform_check_scroll_clamps_right() {
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(1500.0, 0.0);
-    display.background_transform.scrolling_vector = geo2d::pt(400.0, 0.0);
+    display.background_transform.scrolling_vector = MapVec::new(400.0, 0.0);
 
     let valid = engine.perform_check_scroll(&mut display);
     assert!(!valid);
@@ -1171,7 +1170,7 @@ fn perform_check_scroll_clamps_left() {
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(10.0, 0.0);
-    display.background_transform.scrolling_vector = geo2d::pt(-50.0, 0.0);
+    display.background_transform.scrolling_vector = MapVec::new(-50.0, 0.0);
 
     let valid = engine.perform_check_scroll(&mut display);
     assert!(!valid);
@@ -1184,7 +1183,7 @@ fn perform_check_scroll_valid() {
     let mut engine = EngineInner::new();
     engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 500.0);
-    display.background_transform.scrolling_vector = geo2d::pt(10.0, 10.0);
+    display.background_transform.scrolling_vector = MapVec::new(10.0, 10.0);
 
     let valid = engine.perform_check_scroll(&mut display);
     assert!(valid);

@@ -22,11 +22,10 @@
 //! The rendering uses a scanline rasteriser that walks the visible polygon
 //! edges and darkens every pixel that falls outside all visible regions.
 //!
-//! Coordinate note: private `GeoPoint2D` values in this module are ground-space
+//! Coordinate note: private `GroundPoint` values in this module are ground-space
 //! computational geometry points. Public entry points use `GroundPoint`; the
 //! `geo` crate boundary is kept internal for polygon clipping/boolean ops.
 
-use crate::geo2d::GeoPoint2D;
 use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
@@ -44,9 +43,9 @@ pub use robin_engine::shadow_polygon::{
 
 /// A visibility polygon paired with tint/fade metadata (for per-NPC alert coloring).
 pub type TintedCone = (
-    Vec<GeoPoint2D>,
+    Vec<GroundPoint>,
     (u8, u8, u8),
-    GeoPoint2D,
+    GroundPoint,
     f32,
     u8,
     Option<engine_position_interface::PlaneZCoeffs>,
@@ -68,13 +67,10 @@ const ALPHA_END: u8 = 4;
 /// Returns a list of points forming a fan-shaped polygon in **world
 /// coordinates**: viewer → left edge → arc → right edge.
 pub fn compute_view_cone(viewer: GroundPoint, params: &ViewParameters) -> Vec<GroundPoint> {
-    compute_view_cone_geo(viewer.to_geo(), params)
-        .into_iter()
-        .map(GroundPoint::from_geo)
-        .collect()
+    compute_view_cone_geo(viewer, params)
 }
 
-fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<GeoPoint2D> {
+fn compute_view_cone_geo(viewer: GroundPoint, params: &ViewParameters) -> Vec<GroundPoint> {
     let dir = normalise(params.direction);
     let radius = params.radius;
     let aperture = 2.0 * params.half_aperture;
@@ -98,7 +94,7 @@ fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<Geo
 
     // Left edge (with isometric Y squash)
     let left_iso = iso(left_dir);
-    poly.push(GeoPoint2D {
+    poly.push(GroundPoint {
         x: viewer.x + left_iso[0] * radius,
         y: viewer.y + left_iso[1] * radius,
     });
@@ -108,7 +104,7 @@ fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<Geo
         let angle = actual_step * i as f32;
         let v = rotate(left_dir, angle);
         let v_iso = iso(v);
-        poly.push(GeoPoint2D {
+        poly.push(GroundPoint {
             x: viewer.x + v_iso[0] * radius,
             y: viewer.y + v_iso[1] * radius,
         });
@@ -116,7 +112,7 @@ fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<Geo
 
     // Right edge
     let right_iso = iso(right_dir);
-    poly.push(GeoPoint2D {
+    poly.push(GroundPoint {
         x: viewer.x + right_iso[0] * radius,
         y: viewer.y + right_iso[1] * radius,
     });
@@ -142,10 +138,10 @@ fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<Geo
 /// the even-odd scanline rasteriser in `render_darken_inside` /
 /// `render_tinted_cones` treats every ring uniformly.
 pub fn compute_visibility_polygon(
-    viewer: GeoPoint2D,
+    viewer: GroundPoint,
     params: &ViewParameters,
     obstacles: &[&SightObstacle],
-) -> Vec<Vec<GeoPoint2D>> {
+) -> Vec<Vec<GroundPoint>> {
     let view_cone = compute_view_cone_geo(viewer, params);
 
     if obstacles.is_empty() {
@@ -230,7 +226,7 @@ pub fn compute_visibility_polygon(
     // applies the even-odd rule across all rings, so outer boundaries
     // and holes both "toggle" inside/outside — matching what we want
     // when a shadow creates a concavity or a hole in the visibility.
-    let mut rings: Vec<Vec<GeoPoint2D>> = Vec::new();
+    let mut rings: Vec<Vec<GroundPoint>> = Vec::new();
     for poly in current.0.iter() {
         if poly.unsigned_area() < 0.1 {
             continue;
@@ -243,10 +239,10 @@ pub fn compute_visibility_polygon(
     rings
 }
 
-/// Convert a closed geo::LineString to a `Vec<GeoPoint2D>` (dropping the
+/// Convert a closed geo::LineString to a `Vec<GroundPoint>` (dropping the
 /// trailing closing coordinate — the rasteriser treats the edge list
 /// as implicitly closed).
-fn linestring_to_points(ls: &geo::LineString<f32>) -> Vec<GeoPoint2D> {
+fn linestring_to_points(ls: &geo::LineString<f32>) -> Vec<GroundPoint> {
     let coords: Vec<_> = ls.coords().collect();
     let n = coords.len();
     // A closed ring has the last == first; drop the duplicate.
@@ -257,11 +253,11 @@ fn linestring_to_points(ls: &geo::LineString<f32>) -> Vec<GeoPoint2D> {
     };
     coords[..end]
         .iter()
-        .map(|c| GeoPoint2D { x: c.x, y: c.y })
+        .map(|c| GroundPoint { x: c.x, y: c.y })
         .collect()
 }
 
-fn points_to_polygon(points: &[GeoPoint2D]) -> Option<geo::Polygon<f32>> {
+fn points_to_polygon(points: &[GroundPoint]) -> Option<geo::Polygon<f32>> {
     if points.len() < 3 {
         return None;
     }
@@ -287,13 +283,13 @@ fn points_to_polygon(points: &[GeoPoint2D]) -> Option<geo::Polygon<f32>> {
 /// clipping to `polygon_projection` gives the same surface outline to the GPU
 /// polygon path.
 pub fn project_and_clip_to_projection_area(
-    visible_polygons: &[Vec<GeoPoint2D>],
-    viewer: GeoPoint2D,
+    visible_polygons: &[Vec<GroundPoint>],
+    viewer: GroundPoint,
     projection_plane: engine_position_interface::PlaneZCoeffs,
     projection_area: &SightObstacle,
     occluding_projection_areas: &[&SightObstacle],
-) -> (Vec<Vec<GeoPoint2D>>, GeoPoint2D) {
-    let project = |p: GeoPoint2D| GeoPoint2D {
+) -> (Vec<Vec<GroundPoint>>, GroundPoint) {
+    let project = |p: GroundPoint| GroundPoint {
         x: p.x,
         y: p.y - projection_plane.compute_z(p.x, p.y),
     };
@@ -314,7 +310,7 @@ pub fn project_and_clip_to_projection_area(
         .collect();
     let blocker_union = (!blockers.is_empty()).then(|| unary_union(&blockers));
     for poly in visible_polygons {
-        let projected: Vec<GeoPoint2D> = poly.iter().copied().map(project).collect();
+        let projected: Vec<GroundPoint> = poly.iter().copied().map(project).collect();
         let Some(projected_poly) = points_to_polygon(&projected) else {
             continue;
         };
@@ -350,7 +346,7 @@ pub fn project_and_clip_to_projection_area(
 /// `left_side` / `right_side` are the iso-squashed flanking-ray
 /// directions (not scaled by radius).
 fn is_box_inside_field(
-    viewer: GeoPoint2D,
+    viewer: GroundPoint,
     box_ground: &GroundBBox,
     left_side: [f32; 2],
     right_side: [f32; 2],
@@ -461,7 +457,7 @@ fn is_obstacle_useful(obs: &SightObstacle, viewer_z: f32) -> bool {
 /// The altitude-aware projection reproduces the top-plane fall-off
 /// behaviour without reintroducing the scan-line machinery.
 fn compute_shadow_polygon(
-    viewer: GeoPoint2D,
+    viewer: GroundPoint,
     viewer_z: f32,
     obs: &SightObstacle,
     far_dist: f32,
@@ -472,7 +468,7 @@ fn compute_shadow_polygon(
         return None;
     }
     // Viewer inside obstacle → no meaningful silhouette. Skip.
-    if obs.contains_point(GroundPoint::from_geo(viewer)) {
+    if obs.contains_point(viewer) {
         return None;
     }
 
@@ -520,8 +516,8 @@ fn compute_shadow_polygon(
         _ => return None, // all edges same facing → no shadow
     };
 
-    let s1 = pts[fb_idx].ground_point().to_geo(); // first silhouette (enter back-facing run)
-    let s2 = pts[bf_idx].ground_point().to_geo(); // second silhouette (exit back-facing run)
+    let s1 = pts[fb_idx].ground_point(); // first silhouette (enter back-facing run)
+    let s2 = pts[bf_idx].ground_point(); // second silhouette (exit back-facing run)
     let s1_z_top = pts[fb_idx].z_top;
     let s2_z_top = pts[bf_idx].z_top;
 
@@ -533,7 +529,7 @@ fn compute_shadow_polygon(
     // When `viewer_z ≤ z_top` the ray runs parallel to or above the
     // ground, so we fall back to the 2D `far_dist` extension to keep
     // the wedge a finite polygon that still covers the full view cone.
-    let project_far = |s: GeoPoint2D, s_z_top: f32| -> Option<GeoPoint2D> {
+    let project_far = |s: GroundPoint, s_z_top: f32| -> Option<GroundPoint> {
         let dx = s.x - viewer.x;
         let dy = s.y - viewer.y;
         let len = (dx * dx + dy * dy).sqrt();
@@ -554,7 +550,7 @@ fn compute_shadow_polygon(
         } else {
             far_dist / len
         };
-        Some(GeoPoint2D {
+        Some(GroundPoint {
             x: viewer.x + dx * scale,
             y: viewer.y + dy * scale,
         })
@@ -609,10 +605,10 @@ pub fn render_darken_inside(
     renderer: &mut Renderer,
     view_rect: &BBox,
     zoom: f32,
-    visible_polygons: &[Vec<GeoPoint2D>],
+    visible_polygons: &[Vec<GroundPoint>],
     tint: (u8, u8, u8),
     alpha: u8,
-    viewer: GeoPoint2D,
+    viewer: GroundPoint,
     radius: f32,
     projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
     masks: &[&engine_mask::RuntimeMask],
@@ -647,10 +643,10 @@ fn render_darken_inside_gpu_spans(
     renderer: &mut Renderer,
     view_rect: &BBox,
     zoom: f32,
-    visible_polygons: &[Vec<GeoPoint2D>],
+    visible_polygons: &[Vec<GroundPoint>],
     tint: (u8, u8, u8),
     alpha: u8,
-    viewer: GeoPoint2D,
+    viewer: GroundPoint,
     radius: f32,
     projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
     masks: &[&engine_mask::RuntimeMask],
@@ -659,7 +655,7 @@ fn render_darken_inside_gpu_spans(
     let h = renderer.screen_height() as i32;
     let inv_zoom = if zoom > 0.0 { 1.0 / zoom } else { 1.0 };
 
-    let project = |p: GeoPoint2D| {
+    let project = |p: GroundPoint| {
         let z = projection_plane
             .map(|plane| plane.compute_z(p.x, p.y))
             .unwrap_or(0.0);
@@ -999,7 +995,7 @@ mod tests {
             projection_plane: None,
             projection_obstacle: None,
         };
-        let cone = compute_view_cone_geo(GeoPoint2D { x: 100.0, y: 100.0 }, &params);
+        let cone = compute_view_cone_geo(GroundPoint { x: 100.0, y: 100.0 }, &params);
 
         // First point is the viewer
         assert_eq!(cone[0].x, 100.0);
@@ -1035,7 +1031,7 @@ mod tests {
             ..params_right.clone()
         };
 
-        let origin = GeoPoint2D { x: 500.0, y: 500.0 };
+        let origin = GroundPoint { x: 500.0, y: 500.0 };
         let cone_right = compute_view_cone_geo(origin, &params_right);
         let cone_left = compute_view_cone_geo(origin, &params_left);
 
@@ -1052,7 +1048,7 @@ mod tests {
     #[test]
     fn visibility_no_obstacles_equals_cone() {
         let params = ViewParameters::default();
-        let viewer = GeoPoint2D { x: 500.0, y: 500.0 };
+        let viewer = GroundPoint { x: 500.0, y: 500.0 };
 
         let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[]);
@@ -1070,7 +1066,7 @@ mod tests {
     fn visibility_clips_against_obstacle() {
         use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
 
-        let viewer = GeoPoint2D { x: 0.0, y: 0.0 };
+        let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
             half_aperture: std::f32::consts::FRAC_PI_2, // 90° half → 180° total
@@ -1190,7 +1186,7 @@ mod tests {
             projection_plane: None,
             projection_obstacle: None,
         };
-        let viewer = GeoPoint2D { x: 0.0, y: 5.0 };
+        let viewer = GroundPoint { x: 0.0, y: 5.0 };
         let result = compute_visibility_polygon(viewer, &params, &[&obs]);
         // Expect a single non-convex polygon with a wedge bite. It
         // must not degenerate to a sliver (< 4 vertices total across
@@ -1220,7 +1216,7 @@ mod tests {
             projection_plane: None,
             projection_obstacle: None,
         };
-        let viewer = GeoPoint2D { x: 0.0, y: 5.0 };
+        let viewer = GroundPoint { x: 0.0, y: 5.0 };
         let result = compute_visibility_polygon(viewer, &params, &[&obs]);
         let total: usize = result.iter().map(Vec::len).sum();
         assert!(
@@ -1248,7 +1244,7 @@ mod tests {
             projection_plane: None,
             projection_obstacle: None,
         };
-        let viewer = GeoPoint2D { x: 0.0, y: 5.0 };
+        let viewer = GroundPoint { x: 0.0, y: 5.0 };
         let ccw_result = compute_visibility_polygon(viewer, &params, &[&ccw]);
         let cw_result = compute_visibility_polygon(viewer, &params, &[&cw]);
         let ccw_total: usize = ccw_result.iter().map(Vec::len).sum();
@@ -1267,7 +1263,7 @@ mod tests {
         // Cone looks right (+x) with ±30° half-aperture. An obstacle
         // far to the left rear should be rejected by the flanking-ray
         // test before any shadow computation.
-        let viewer = GeoPoint2D { x: 0.0, y: 0.0 };
+        let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
             half_aperture: 30.0_f32.to_radians(),
@@ -1316,7 +1312,7 @@ mod tests {
 
     #[test]
     fn box_inside_field_accepts_obstacle_inside_cone() {
-        let viewer = GeoPoint2D { x: 0.0, y: 0.0 };
+        let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
             half_aperture: 30.0_f32.to_radians(),
@@ -1463,7 +1459,7 @@ mod tests {
         // Regression test: a high elevated obstacle shouldn't clip
         // the eye-level visibility polygon.
         use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
-        let viewer = GeoPoint2D { x: 0.0, y: 0.0 };
+        let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
             half_aperture: 45.0_f32.to_radians(),
@@ -1520,7 +1516,7 @@ mod tests {
         // ground shadow should end well before the 2D far-cap (radius*8)
         // at roughly `horizontal_dist * viewer_z / (viewer_z - z_top)`.
         use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
-        let viewer = GeoPoint2D { x: 0.0, y: 0.0 };
+        let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let viewer_z = 200.0;
         let z_top = 20.0;
 
@@ -1592,7 +1588,7 @@ mod tests {
         // obstacle to the side of the view cone shouldn't contribute
         // a shadow wedge.
         use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
-        let viewer = GeoPoint2D { x: 0.0, y: 0.0 };
+        let viewer = GroundPoint { x: 0.0, y: 0.0 };
         let params = ViewParameters {
             direction: [1.0, 0.0],
             // Narrow 10° half-aperture so only a thin strip in +x is visible.

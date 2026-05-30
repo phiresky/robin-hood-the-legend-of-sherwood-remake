@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 // order on every client.
 use std::collections::BTreeMap;
 
-use crate::coordinates::{MapPoint, MapSize, ScreenPoint};
-use crate::geo2d::{self, Vec2D};
+use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint};
 use crate::natives::GameHost;
 use crate::script_manager::{ScriptInstance, ScriptManager};
 
@@ -261,11 +260,11 @@ pub struct BackgroundTransform {
     pub zoom_values: [f32; ZOOM_LEVEL_COUNT],
 
     /// Center of the current zoom operation.
-    pub center_zoom: Vec2D,
+    pub center_zoom: MapVec,
     /// Clipped zoom offset.
-    pub clipped_zoom: Vec2D,
+    pub clipped_zoom: MapVec,
     /// Current scrolling vector for this frame.
-    pub scrolling_vector: Vec2D,
+    pub scrolling_vector: MapVec,
 
     /// Source zoom factor at the start of the active zoom transition.
     /// Valid only while `zoom_to_up` or `zoom_to_down` is set.
@@ -295,9 +294,9 @@ impl Default for BackgroundTransform {
             y_scrolling_values: [0.0; SCROLLING_TABLE_SIZE],
             current_zoom_level: 1, // Start at 1x zoom
             zoom_values: [0.5, 1.0, 2.0],
-            center_zoom: geo2d::pt(0.0, 0.0),
-            clipped_zoom: geo2d::pt(0.0, 0.0),
-            scrolling_vector: geo2d::pt(0.0, 0.0),
+            center_zoom: MapVec::ZERO,
+            clipped_zoom: MapVec::ZERO,
+            scrolling_vector: MapVec::ZERO,
             zoom_from: 1.0,
             zoom_to: 1.0,
             view_from: MapPoint::ZERO,
@@ -382,7 +381,7 @@ pub struct CameraState {
     // pipeline is split from local presentation, but it is not part of
     // deterministic save/replay state.
     #[serde(skip)]
-    pub displacement: Vec2D,
+    pub displacement: MapVec,
     #[serde(skip)]
     pub displacement_counter: u16,
 
@@ -435,7 +434,7 @@ impl Default for CameraState {
             zoom_init_done: false,
             mechanized_zoom: false,
             level_size: MapSize::ZERO,
-            displacement: geo2d::pt(0.0, 0.0),
+            displacement: MapVec::ZERO,
             displacement_counter: 0,
             position_saved: ScreenPoint::ZERO,
             sequence_element: None,

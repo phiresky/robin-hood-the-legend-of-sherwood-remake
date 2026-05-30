@@ -35,10 +35,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
+use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBoxHalfDiagonal};
 use crate::element::EntityId;
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self, BBox2D, Vec2D, pt};
+use crate::geo2d::{self, BBox2D, pt};
 use robin_util::static_arc::StaticArc;
 
 // ─── Geometry helpers ────────────────────────────────────────────
@@ -230,9 +230,9 @@ pub struct PathGraphNode {
     pub position: MapPoint,
 
     /// Vector from the obstacle point *before* this node to this node.
-    pub vector_to_node: Vec2D,
+    pub vector_to_node: MapVec,
     /// Vector from this node to the obstacle point *after* this node.
-    pub vector_from_node: Vec2D,
+    pub vector_from_node: MapVec,
 
     /// Bitmask: which obstacle state is required for this node to be active.
     pub required_state: u32,
@@ -637,8 +637,8 @@ impl PathGraph {
 
                         self.nodes.push(PathGraphNode {
                             position: MapPoint::new(px, py),
-                            vector_to_node: pt(tx, ty),
-                            vector_from_node: pt(fx, fy),
+                            vector_to_node: MapVec::new(tx, ty),
+                            vector_from_node: MapVec::new(fx, fy),
                             required_state,
                             configurations: configs,
                             link_indices,
@@ -1848,7 +1848,8 @@ impl PathFinderRuntime {
                 point.x + offset.x - n.position.x,
                 point.y + offset.y - n.position.y,
             );
-            if geo2d::cross(n.vector_to_node, v) > 0.0 || geo2d::cross(n.vector_from_node, v) > 0.0
+            if geo2d::cross(n.vector_to_node.to_geo(), v) > 0.0
+                || geo2d::cross(n.vector_from_node.to_geo(), v) > 0.0
             {
                 return true;
             }
@@ -2235,8 +2236,8 @@ mod tests {
         let mut runtime = PathFinderRuntime::new();
         runtime.graph.nodes.push(PathGraphNode {
             position: MapPoint::new(100.0, 100.0),
-            vector_to_node: pt(0.0, 0.0),
-            vector_from_node: pt(0.0, 0.0),
+            vector_to_node: MapVec::ZERO,
+            vector_from_node: MapVec::ZERO,
             required_state: 0,
             configurations: vec![15], // All four places
             link_indices: Vec::new(),
@@ -2454,8 +2455,8 @@ mod tests {
         // Set up a minimal graph with one layer, one area, one obstacle, two nodes
         runtime.graph.nodes.push(PathGraphNode {
             position: MapPoint::new(10.0, 10.0),
-            vector_to_node: pt(0.0, 0.0),
-            vector_from_node: pt(0.0, 0.0),
+            vector_to_node: MapVec::ZERO,
+            vector_from_node: MapVec::ZERO,
             required_state: 0, // Always active (matches any state)
             configurations: vec![15],
             link_indices: Vec::new(),
@@ -2470,8 +2471,8 @@ mod tests {
         });
         runtime.graph.nodes.push(PathGraphNode {
             position: MapPoint::new(50.0, 50.0),
-            vector_to_node: pt(0.0, 0.0),
-            vector_from_node: pt(0.0, 0.0),
+            vector_to_node: MapVec::ZERO,
+            vector_from_node: MapVec::ZERO,
             required_state: 1, // Only active when bit 0 is set
             configurations: vec![15],
             link_indices: Vec::new(),

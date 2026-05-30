@@ -1017,14 +1017,8 @@ impl EngineInner {
         let p1 = input.multi_selection_pt1;
         let p2 = input.multi_selection_pt2;
         let box_multi_selection = crate::sprite::BBox::new(
-            crate::geo2d::GeoPoint2D {
-                x: p1.x.min(p2.x),
-                y: p1.y.min(p2.y),
-            },
-            crate::geo2d::GeoPoint2D {
-                x: p1.x.max(p2.x),
-                y: p1.y.max(p2.y),
-            },
+            crate::coordinates::ScreenPoint::new(p1.x.min(p2.x), p1.y.min(p2.y)),
+            crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         );
 
         if !shift_held {
@@ -1042,8 +1036,10 @@ impl EngineInner {
                 // hit-test already used by `perform_multi_unselection`
                 // below.
                 let map_pos = entity.element_data().position_map();
-                let map_pt = crate::geo2d::pt(map_pos.x, map_pos.y);
-                let sprite_box = entity.sprite().bounding_box_at(map_pt);
+                let map_pt = crate::coordinates::ScreenPoint::new(map_pos.x, map_pos.y);
+                let sprite_box = entity
+                    .sprite()
+                    .bounding_box_at(entity.cxx_position_sprite());
                 if (box_multi_selection.is_intersecting(&sprite_box)
                     || box_multi_selection.contains_point(map_pt))
                     && !self.seats[seat].selection.contains(&pc_id)
@@ -1079,14 +1075,8 @@ impl EngineInner {
         let p1 = input.multi_selection_pt1;
         let p2 = input.multi_selection_pt2;
         let box_multi_selection = crate::sprite::BBox::new(
-            crate::geo2d::GeoPoint2D {
-                x: p1.x.min(p2.x),
-                y: p1.y.min(p2.y),
-            },
-            crate::geo2d::GeoPoint2D {
-                x: p1.x.max(p2.x),
-                y: p1.y.max(p2.y),
-            },
+            crate::coordinates::ScreenPoint::new(p1.x.min(p2.x), p1.y.min(p2.y)),
+            crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         );
 
         let pc_ids: Vec<EntityId> = self.pc_ids.clone();
@@ -1104,8 +1094,10 @@ impl EngineInner {
             }
             // Bbox-vs-bbox overlap, not point-in-rect.
             let map_pos = entity.element_data().position_map();
-            let map_pt = crate::geo2d::pt(map_pos.x, map_pos.y);
-            let sprite_box = entity.sprite().bounding_box_at(map_pt);
+            let map_pt = crate::coordinates::ScreenPoint::new(map_pos.x, map_pos.y);
+            let sprite_box = entity
+                .sprite()
+                .bounding_box_at(entity.cxx_position_sprite());
             if (box_multi_selection.is_intersecting(&sprite_box)
                 || box_multi_selection.contains_point(map_pt))
                 && let Some(idx) = self.seats[seat].selection.iter().position(|&x| x == pc_id)

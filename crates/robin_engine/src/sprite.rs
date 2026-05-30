@@ -9,9 +9,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint};
+use crate::coordinates::{
+    MapPoint, ScreenPoint, SpriteAnchor, SpriteFrameOffset, SpriteLocalPoint, SpriteTopLeft,
+};
 use crate::element::EntityId;
-use crate::geo2d::{GeoPoint2D, Vec2D};
 use crate::order::OrderType;
 use crate::position_interface::PositionInterface;
 use crate::sprite_script::{
@@ -198,18 +199,21 @@ pub enum FlightStyle {
 // BoundingBox2D — simple AABB for sprite bounds
 // ---------------------------------------------------------------------------
 
-/// Axis-aligned bounding box (top-left, bottom-right).
+/// Axis-aligned pixel bounding box (top-left, bottom-right).
 #[derive(
     Debug, Clone, Copy, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct BBox {
-    pub min: GeoPoint2D,
-    pub max: GeoPoint2D,
+    pub min: ScreenPoint,
+    pub max: ScreenPoint,
 }
 
 impl BBox {
-    pub fn new(min: GeoPoint2D, max: GeoPoint2D) -> Self {
-        Self { min, max }
+    pub fn new(min: impl Into<ScreenPoint>, max: impl Into<ScreenPoint>) -> Self {
+        Self {
+            min: min.into(),
+            max: max.into(),
+        }
     }
 
     pub fn width(&self) -> f32 {
@@ -227,7 +231,8 @@ impl BBox {
             && self.max.y >= other.min.y
     }
 
-    pub fn contains_point(&self, p: GeoPoint2D) -> bool {
+    pub fn contains_point(&self, p: impl Into<ScreenPoint>) -> bool {
+        let p = p.into();
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
 }
@@ -785,10 +790,10 @@ impl Sprite {
             ));
         };
         let map = self.position_iface.map_position();
-        let sprite_pos = GeoPoint2D {
-            x: (map.x - self.center.x).floor(),
-            y: (map.y - self.center.y).floor(),
-        };
+        let sprite_pos = SpriteTopLeft::new(
+            (map.x - self.center.x).floor(),
+            (map.y - self.center.y).floor(),
+        );
         let dx = point.x + sprite_pos.x - map.x;
         let dy = point.y + sprite_pos.y - map.y;
         Ok((dx * dx + dy * dy).sqrt())
@@ -1653,20 +1658,16 @@ impl Sprite {
     // -- Bounding box --
 
     /// Compute the current sprite AABB from position and active frame size.
-    pub fn bounding_box_at(&self, sprite_pos: GeoPoint2D) -> BBox {
+    pub fn bounding_box_at(&self, sprite_pos: SpriteTopLeft) -> BBox {
         let offset = self.current_offset();
-        let size = Vec2D {
-            x: self.current_width as f32,
-            y: self.current_height as f32,
-        };
         BBox::new(
-            GeoPoint2D {
+            ScreenPoint {
                 x: sprite_pos.x + offset.x,
                 y: sprite_pos.y + offset.y,
             },
-            GeoPoint2D {
-                x: sprite_pos.x + offset.x + size.x,
-                y: sprite_pos.y + offset.y + size.y,
+            ScreenPoint {
+                x: sprite_pos.x + offset.x + self.current_width as f32,
+                y: sprite_pos.y + offset.y + self.current_height as f32,
             },
         )
     }
@@ -2105,23 +2106,14 @@ mod tests {
 
     #[test]
     fn test_bbox_operations() {
-        let b1 = BBox::new(
-            GeoPoint2D { x: 0.0, y: 0.0 },
-            GeoPoint2D { x: 10.0, y: 10.0 },
-        );
-        let b2 = BBox::new(
-            GeoPoint2D { x: 5.0, y: 5.0 },
-            GeoPoint2D { x: 15.0, y: 15.0 },
-        );
-        let b3 = BBox::new(
-            GeoPoint2D { x: 20.0, y: 20.0 },
-            GeoPoint2D { x: 30.0, y: 30.0 },
-        );
+        let b1 = BBox::new(ScreenPoint::new(0.0, 0.0), ScreenPoint::new(10.0, 10.0));
+        let b2 = BBox::new(ScreenPoint::new(5.0, 5.0), ScreenPoint::new(15.0, 15.0));
+        let b3 = BBox::new(ScreenPoint::new(20.0, 20.0), ScreenPoint::new(30.0, 30.0));
 
         assert!(b1.is_intersecting(&b2));
         assert!(!b1.is_intersecting(&b3));
-        assert!(b1.contains_point(GeoPoint2D { x: 5.0, y: 5.0 }));
-        assert!(!b1.contains_point(GeoPoint2D { x: 15.0, y: 15.0 }));
+        assert!(b1.contains_point(ScreenPoint::new(5.0, 5.0)));
+        assert!(!b1.contains_point(ScreenPoint::new(15.0, 15.0)));
         assert_eq!(b1.width(), 10.0);
         assert_eq!(b1.height(), 10.0);
     }
@@ -2132,7 +2124,7 @@ mod tests {
         s.current_row = 0;
         s.current_frame = 0;
 
-        let bounding_box = s.bounding_box_at(GeoPoint2D { x: 100.0, y: 200.0 });
+        let bounding_box = s.bounding_box_at(SpriteTopLeft::new(100.0, 200.0));
 
         // offset is (-16, -32), size is (32, 64)
         assert_eq!(bounding_box.min.x, 84.0);

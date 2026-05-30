@@ -5339,7 +5339,7 @@ impl EngineInner {
         entity_id: EntityId,
         line_idx: crate::fast_find_grid::LineIndex,
         new_pos: MapPoint,
-        increment_map: crate::geo2d::Vec2D,
+        increment_map: MapVec,
     ) {
         let line = match self.fast_grid.level.lines.get(usize::from(line_idx)) {
             Some(l) if l.is_elevation => l,
@@ -5521,9 +5521,9 @@ impl EngineInner {
             let dy = new_pos.y - old_pos.y;
             let len = (dx * dx + dy * dy).sqrt();
             if len > 1e-6 {
-                crate::geo2d::pt(dx / len, dy / len)
+                MapVec::new(dx / len, dy / len)
             } else {
-                crate::geo2d::pt(0.0, 0.0)
+                MapVec::ZERO
             }
         };
 

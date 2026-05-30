@@ -1,7 +1,7 @@
 //! Camera control: director work, zoom, scrolling, resize, coordinate conversion.
 
 use super::*;
-use crate::coordinates::{MapPoint, MapSize, ScreenSize};
+use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenSize};
 use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 
@@ -91,7 +91,7 @@ impl EngineInner {
 
             if self.cutscene_camera.displacement_counter == 0 {
                 // `displacement = (pos - view) * zoom - saved`
-                let mut displacement = geo2d::pt(
+                let mut displacement = MapVec::new(
                     (pos_map.x - view.x) * zoom - saved.x,
                     (pos_map.y - view.y) * zoom - saved.y,
                 );
@@ -252,7 +252,7 @@ impl EngineInner {
                 // components this matters: `scroll = (-0.8, 0)` must
                 // stay `(0, 0)`, not round to `(-1, 0)`.
                 display.background_transform.scrolling_vector =
-                    geo2d::pt(scroll.x.trunc(), scroll.y.trunc());
+                    MapVec::new(scroll.x.trunc(), scroll.y.trunc());
 
                 let valid = self.perform_check_scroll(display);
 
@@ -261,7 +261,7 @@ impl EngineInner {
                     self.cutscene_camera.stop_slide();
                     self.speed = 1.0;
                     self.pending_side_effects.invalidate_background = true;
-                    display.background_transform.scrolling_vector = geo2d::pt(0.0, 0.0);
+                    display.background_transform.scrolling_vector = MapVec::ZERO;
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
                     if let Some(r) = self.cutscene_camera.sequence_element.take() {
@@ -289,7 +289,7 @@ impl EngineInner {
                 self.cutscene_camera.stop_slide();
                 self.speed = 1.0;
                 self.pending_side_effects.invalidate_background = true;
-                display.background_transform.scrolling_vector = geo2d::pt(0.0, 0.0);
+                display.background_transform.scrolling_vector = MapVec::ZERO;
                 // Slide reached target, release the latched
                 // CameraGoto element.
                 if let Some(r) = self.cutscene_camera.sequence_element.take() {
