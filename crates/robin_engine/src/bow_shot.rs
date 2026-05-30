@@ -3842,6 +3842,23 @@ mod tests {
     use crate::geo2d::Vec2D;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
+    trait TestEntityIndexAccess {
+        fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)>;
+        fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)>;
+    }
+
+    impl TestEntityIndexAccess for Entities {
+        fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)> {
+            let id = self.id_at_index(index)?;
+            Some((id, self.get(id)?))
+        }
+
+        fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)> {
+            let id = self.id_at_index(index)?;
+            Some((id, self.get_mut(id)?))
+        }
+    }
+
     fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
         let mut entities = Entities::new();
         for slot in slots {

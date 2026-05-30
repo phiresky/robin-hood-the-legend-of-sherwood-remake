@@ -45,17 +45,6 @@ impl Entities {
         Some(EntityId::new(index, entity.entity_id_kind()))
     }
 
-    pub fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)> {
-        let entity = self.0.get(index as usize)?.as_ref()?;
-        Some((EntityId::new(index, entity.entity_id_kind()), entity))
-    }
-
-    pub fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)> {
-        let entity = self.0.get_mut(index as usize)?.as_mut()?;
-        let id = EntityId::new(index, entity.entity_id_kind());
-        Some((id, entity))
-    }
-
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
         self.0.get(id.index() as usize)?.as_ref()
     }
