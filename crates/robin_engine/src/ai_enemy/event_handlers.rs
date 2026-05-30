@@ -856,7 +856,7 @@ impl EnemyAi {
                     // can't touch other entities from here.
                     self.base
                         .pending_delete_beggar_for_all_npc
-                        .push(crate::element::EntityId::Pc(beggar));
+                        .push(crate::element::EntityId::Pc(crate::entity_id::PcId(beggar)));
                 }
             }
 

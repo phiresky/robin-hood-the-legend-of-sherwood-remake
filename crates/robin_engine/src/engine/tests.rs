@@ -1883,7 +1883,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
     engine.dispatch_scroll_hourglasses(&assets);
-    let entity = engine.get_entity(crate::element::EntityId::Pc(0));
+    let entity = engine.get_entity(crate::element::EntityId::Pc(crate::entity_id::PcId(0)));
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,
         _ => unreachable!("scroll entity missing"),
@@ -3179,7 +3179,7 @@ fn npc_sit_down_anim_completion_flips_posture_to_sitting() {
         OrderType::TransitionWaitingUprightSitting,
         MotionState::Terminated,
         None,
-        EntityId::Pc(0),
+        EntityId::Pc(crate::entity_id::PcId(0)),
         &mut outcomes,
     );
 
@@ -3263,7 +3263,7 @@ fn npc_enter_leisure_anim_completion_flips_posture_to_leisure() {
         OrderType::TransitionWaitingUprightSpecial,
         MotionState::Done,
         None,
-        EntityId::Pc(0),
+        EntityId::Pc(crate::entity_id::PcId(0)),
         &mut outcomes,
     );
 
@@ -3284,7 +3284,7 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(42);
+    let pc = EntityId::Pc(crate::entity_id::PcId(42));
     let slot: u8 = 1;
 
     // Empty slot → early-returns on the sentinel id.
@@ -3392,7 +3392,7 @@ fn has_quick_action_reads_macro_store() {
     use crate::element::EntityId;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(10);
+    let pc = EntityId::Pc(crate::entity_id::PcId(10));
 
     assert!(!engine.has_quick_action(pc, 0));
 
@@ -3410,7 +3410,7 @@ fn abort_quick_action_clears_slot_and_titbit() {
     use crate::element::EntityId;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(20);
+    let pc = EntityId::Pc(crate::entity_id::PcId(20));
 
     // Empty slot → false.
     assert!(!engine.abort_quick_action(pc, 0));
@@ -3438,8 +3438,8 @@ fn delete_macro_command_matches_original_single_vs_all() {
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId::Pc(30);
-    let pc_b = EntityId::Pc(31);
+    let pc_a = EntityId::Pc(crate::entity_id::PcId(30));
+    let pc_b = EntityId::Pc(crate::entity_id::PcId(31));
     engine.pc_ids.push(pc_a);
     engine.pc_ids.push(pc_b);
 
@@ -3493,8 +3493,8 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId::Pc(40);
-    let pc_b = EntityId::Pc(41);
+    let pc_a = EntityId::Pc(crate::entity_id::PcId(40));
+    let pc_b = EntityId::Pc(crate::entity_id::PcId(41));
     engine.pc_ids.push(pc_a);
     engine.pc_ids.push(pc_b);
 
@@ -3539,7 +3539,7 @@ fn start_macro_empty_slot_is_noop() {
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId::Pc(50);
+    let pc = EntityId::Pc(crate::entity_id::PcId(50));
     engine.pc_ids.push(pc);
 
     // pc has a macro only in slot 2 — starting slot 0 should NOT tetris,

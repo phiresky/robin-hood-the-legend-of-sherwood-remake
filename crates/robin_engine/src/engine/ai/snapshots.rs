@@ -568,7 +568,7 @@ impl EngineInner {
                 && ai.current_substate.is_any_swordfight()
             {
                 *primary_target_multiplicity
-                    .entry(EntityId::Pc(ai.primary_target))
+                    .entry(EntityId::Pc(crate::entity_id::PcId(ai.primary_target)))
                     .or_insert(0) += 1;
             }
         }
@@ -594,7 +594,7 @@ impl EngineInner {
                     &self.fast_grid,
                     &assets.profile_manager,
                     npc_id,
-                    EntityId::Pc(ai.base.primary_target),
+                    EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target)),
                 );
                 npc_jump_lines.insert(npc_id, jl);
             }

@@ -1490,7 +1490,7 @@ impl EngineInner {
             let layer = s.element.layer();
             let dir = s.element.direction();
             let boredom = s.human.sword_strike_boredom.clone();
-            let principal = EntityId::Pc(ai.base.primary_target);
+            let principal = EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target));
             (
                 ai.hth_weapon_id,
                 fa,

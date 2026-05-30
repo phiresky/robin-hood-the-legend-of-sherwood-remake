@@ -548,8 +548,8 @@ mod tests {
     #[test]
     fn store_isolates_pcs() {
         let mut store = MacroStore::new();
-        let a = EntityId::Pc(1);
-        let b = EntityId::Pc(2);
+        let a = EntityId::Pc(crate::entity_id::PcId(1));
+        let b = EntityId::Pc(crate::entity_id::PcId(2));
         store.get_or_insert(a).begin_recording(0);
         store.append(a, step(Action::Bow, 1.0, 1.0));
         assert!(store.get(a).unwrap().has_macro(0));

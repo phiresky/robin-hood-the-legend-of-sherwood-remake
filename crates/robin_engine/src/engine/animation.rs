@@ -110,7 +110,7 @@ mod tests {
             &entity,
             OrderType::BeingHitSword,
             MotionState::Done,
-            EntityId::Pc(7),
+            EntityId::Pc(crate::entity_id::PcId(7)),
             &mut terminated,
         );
         assert!(terminated.is_empty());
@@ -119,10 +119,10 @@ mod tests {
             &entity,
             OrderType::BeingHitSword,
             MotionState::Terminated,
-            EntityId::Pc(7),
+            EntityId::Pc(crate::entity_id::PcId(7)),
             &mut terminated,
         );
-        assert_eq!(terminated, vec![EntityId::Pc(7)]);
+        assert_eq!(terminated, vec![EntityId::Pc(crate::entity_id::PcId(7))]);
     }
 
     #[test]
@@ -135,7 +135,7 @@ mod tests {
             OrderType::BeingStunnedSword,
             MotionState::Start,
             None,
-            EntityId::Pc(7),
+            EntityId::Pc(crate::entity_id::PcId(7)),
             &mut ExecuteSideOutcomes::default(),
             &crate::profiles::ProfileManager::default(),
         );
@@ -507,8 +507,8 @@ mod tests {
             &mut entity,
             OrderType::StrikingDownSword,
             MotionState::Start,
-            Some(EntityId::Pc(9)),
-            EntityId::Pc(7),
+            Some(EntityId::Pc(crate::entity_id::PcId(9))),
+            EntityId::Pc(crate::entity_id::PcId(7)),
             &mut outcomes,
         );
 
@@ -523,14 +523,17 @@ mod tests {
             &mut entity,
             OrderType::StrikingDownSword,
             MotionState::Done,
-            Some(EntityId::Pc(9)),
-            EntityId::Pc(7),
+            Some(EntityId::Pc(crate::entity_id::PcId(9))),
+            EntityId::Pc(crate::entity_id::PcId(7)),
             &mut outcomes,
         );
 
         assert_eq!(
             outcomes.killed_at_bottom,
-            vec![(EntityId::Pc(9), EntityId::Pc(7))]
+            vec![(
+                EntityId::Pc(crate::entity_id::PcId(9)),
+                EntityId::Pc(crate::entity_id::PcId(7))
+            )]
         );
     }
 
@@ -540,7 +543,7 @@ mod tests {
         let mut next_order_id = 1;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId::Pc(7),
+            entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
             is_npc: true,
             is_unconscious: false,
             seq_id: crate::sequence::SequenceId(1),
@@ -568,7 +571,7 @@ mod tests {
         let mut next_order_id = 1;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId::Pc(7),
+            entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
             is_npc: true,
             is_unconscious: true,
             seq_id: crate::sequence::SequenceId(1),
@@ -597,7 +600,7 @@ mod tests {
             OrderType::BeingUnconsciousSword,
             MotionState::Start,
             None,
-            EntityId::Pc(7),
+            EntityId::Pc(crate::entity_id::PcId(7)),
             &mut ExecuteSideOutcomes::default(),
             &crate::profiles::ProfileManager::default(),
         );
@@ -617,8 +620,11 @@ mod tests {
     ) {
         let mut sequence_manager = crate::sequence::SequenceManager::new();
         let mut sequence = crate::sequence::Sequence::new();
-        let mut elem =
-            crate::sequence::SequenceElement::new_generic(1, Command::Wait, Some(EntityId::Pc(7)));
+        let mut elem = crate::sequence::SequenceElement::new_generic(
+            1,
+            Command::Wait,
+            Some(EntityId::Pc(crate::entity_id::PcId(7))),
+        );
         elem.push_order(crate::order::Order::test_new(order_type, 0.0, 0.0));
         sequence.append_element(elem);
         let seq_id = sequence_manager.launch_sequence(sequence);
@@ -712,7 +718,7 @@ mod tests {
         let mut next_order_id = 9;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId::Pc(7),
+            entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
             is_npc: true,
             is_unconscious: false,
             seq_id,
@@ -748,7 +754,7 @@ mod tests {
         let mut next_order_id = 9;
         let mut side_outcomes = ExecuteSideOutcomes::default();
         let mut ctx = ArmCtx {
-            entity_id: EntityId::Pc(7),
+            entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
             is_npc: true,
             is_unconscious: false,
             seq_id,
@@ -774,7 +780,10 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, ExecuteOutcome::Consumed));
         assert_eq!(order.order_type, OrderType::WriggleUnderNet);
-        assert_eq!(side_outcomes.cry_for_help_under_net, vec![EntityId::Pc(7)]);
+        assert_eq!(
+            side_outcomes.cry_for_help_under_net,
+            vec![EntityId::Pc(crate::entity_id::PcId(7))]
+        );
     }
 }
 

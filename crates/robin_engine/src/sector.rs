@@ -945,20 +945,26 @@ mod tests {
     fn script_sector_enter_leave() {
         use crate::entity_id::EntityId;
         let mut script = ScriptSectorData::new();
-        script.enter(EntityId::Pc(10));
-        script.enter(EntityId::Pc(20));
+        script.enter(EntityId::Pc(crate::entity_id::PcId(10)));
+        script.enter(EntityId::Pc(crate::entity_id::PcId(20)));
 
-        assert!(script.is_inside(EntityId::Pc(10)));
-        assert!(script.is_inside(EntityId::Pc(20)));
-        assert!(!script.is_inside(EntityId::Pc(30)));
+        assert!(script.is_inside(EntityId::Pc(crate::entity_id::PcId(10))));
+        assert!(script.is_inside(EntityId::Pc(crate::entity_id::PcId(20))));
+        assert!(!script.is_inside(EntityId::Pc(crate::entity_id::PcId(30))));
         assert_eq!(script.num_occupants(), 2);
 
         // Insert at front
-        assert_eq!(script.get_occupant(0), EntityId::Pc(20));
-        assert_eq!(script.get_occupant(1), EntityId::Pc(10));
+        assert_eq!(
+            script.get_occupant(0),
+            EntityId::Pc(crate::entity_id::PcId(20))
+        );
+        assert_eq!(
+            script.get_occupant(1),
+            EntityId::Pc(crate::entity_id::PcId(10))
+        );
 
-        script.leave(EntityId::Pc(10));
-        assert!(!script.is_inside(EntityId::Pc(10)));
+        script.leave(EntityId::Pc(crate::entity_id::PcId(10)));
+        assert!(!script.is_inside(EntityId::Pc(crate::entity_id::PcId(10))));
         assert_eq!(script.num_occupants(), 1);
     }
 

@@ -850,7 +850,7 @@ mod tests {
 
     fn mk_snapshot(id: u32, x: f32, y: f32) -> ActorSnapshot {
         ActorSnapshot {
-            id: EntityId::Pc(id),
+            id: EntityId::Pc(crate::entity_id::PcId(id)),
             active: true,
             is_actor: true,
             is_human: true,
@@ -955,7 +955,7 @@ mod tests {
     fn target_element_is_skipped() {
         // Mover's seek_target == B's id → B contributes no push.
         let mut a = mk_snapshot(0, 0.0, 0.0);
-        a.target_element = Some(EntityId::Pc(1));
+        a.target_element = Some(EntityId::Pc(crate::entity_id::PcId(1)));
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
         let (dx, dy) =
@@ -998,7 +998,9 @@ mod tests {
         element.set_position_map(MapPoint::new(10.0, 20.0));
 
         let mut human = crate::element::HumanData::default();
-        human.opponents.push(EntityId::Pc(2));
+        human
+            .opponents
+            .push(EntityId::Pc(crate::entity_id::PcId(2)));
         let entity = Entity::Pc(crate::element::ActorPc {
             element,
             actor: crate::element::ActorData::default(),

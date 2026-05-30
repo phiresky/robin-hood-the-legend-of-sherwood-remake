@@ -26,8 +26,7 @@ use crate::order::AiOrderIntent;
 pub type NpcHandle = u32;
 /// Opaque handle to a human actor (NPC or PC).
 pub type HumanHandle = u32;
-/// Opaque handle to a generic actor.
-pub type ActorHandle = u32;
+
 /// Opaque handle to a generic element.
 pub type ElementHandle = u32;
 /// Opaque handle to an object element.
@@ -4257,7 +4256,7 @@ pub struct AiController {
     pub detected_body: HumanHandle,
     pub interesting_object: ObjectHandle,
     pub antagonist: NpcHandle,
-    pub last_stimulus_actor: ActorHandle,
+    pub last_stimulus_actor: Option<HumanHandle>,
 
     // -- Timers --
     pub timer_is_running: bool,
@@ -4594,7 +4593,7 @@ pub struct AiController {
     /// `pending_focus` / `pending_unfocus` / `pending_focus_point` fires,
     /// so subsequent ticks see `primary_target == last_synced` and leave
     /// the explicit focus state alone.
-    pub last_synced_focus_target: HumanHandle,
+    pub last_synced_focus_target: Option<HumanHandle>,
 
     /// AI requests that the engine call `focus_point(point)` on this
     /// NPC — engages `EYES_STARE` with the narrow `STARE_HALF_ANGLE_RANGE`
@@ -4760,7 +4759,7 @@ pub struct AiController {
 
     // -- Stare target --
     /// If set, the NPC should face toward this actor for `stare_remaining` frames.
-    pub stare_target_actor: NpcHandle,
+    pub stare_target_actor: Option<HumanHandle>,
     /// If set, the NPC should face toward this position for `stare_remaining` frames.
     pub stare_target_position: Option<Position>,
     /// Frames remaining for the stare behaviour. 0 = inactive.
@@ -4828,7 +4827,7 @@ impl Default for AiController {
             detected_body: 0,
             interesting_object: 0,
             antagonist: 0,
-            last_stimulus_actor: 0,
+            last_stimulus_actor: None,
             timer_is_running: false,
             when_does_timer_ring: 0,
             macro_timer_is_running: false,
@@ -4930,7 +4929,7 @@ impl Default for AiController {
             pending_set_reported_to_officer: Vec::new(),
             pending_unfocus: false,
             pending_focus_point: None,
-            last_synced_focus_target: 0,
+            last_synced_focus_target: None,
             pending_state_change_notifications: Vec::new(),
             pending_slowly_open_eyes: false,
             pending_inform_resurrection: false,
@@ -4949,7 +4948,7 @@ impl Default for AiController {
             pending_panic_seek_fallback: false,
             pending_script_seek_area: None,
             pending_waypoint_script_reach_point: None,
-            stare_target_actor: 0,
+            stare_target_actor: None,
             stare_target_position: None,
             stare_remaining: 0,
             initial_position: Position::default(),
@@ -5624,7 +5623,7 @@ impl AiController {
         self.checkpoint_charly = target;
         if target != 0 {
             self.pending_add_detectables.push((
-                crate::element::EntityId::Soldier(target),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
                 DetectableType::MissedFriend,
             ));
         } else {
@@ -5663,8 +5662,10 @@ impl AiController {
                 }
                 // Unconditional `DeleteDetectable(body, BODY)` —
                 // fires whether or not UPDATE_BODIES is set.
-                self.pending_delete_detectable_entity
-                    .push((EntityId::Soldier(body), DetectableType::Body));
+                self.pending_delete_detectable_entity.push((
+                    EntityId::Soldier(crate::entity_id::SoldierId(body)),
+                    DetectableType::Body,
+                ));
             }
         }
 
@@ -5675,7 +5676,7 @@ impl AiController {
         {
             self.my_reconnaissance_report.charly = other.charly;
             self.pending_add_detectables.push((
-                EntityId::Soldier(other.charly),
+                EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
                 DetectableType::MissedFriend,
             ));
         }
@@ -9185,8 +9186,8 @@ mod tests {
             sector_index: 42,
             ..House::default()
         };
-        let a = EntityId::Pc(1);
-        let b = EntityId::Pc(2);
+        let a = EntityId::Pc(crate::entity_id::PcId(1));
+        let b = EntityId::Pc(crate::entity_id::PcId(2));
 
         // Enter A, then B
         if !h.occupant_ids.contains(&a) {
@@ -9218,11 +9219,11 @@ mod tests {
         use crate::element::EntityId;
         let mut h = House::default();
         assert_eq!(h.occupant_count(), 0);
-        h.occupant_ids.push(EntityId::Pc(1));
-        h.occupant_ids.push(EntityId::Pc(2));
+        h.occupant_ids.push(EntityId::Pc(crate::entity_id::PcId(1)));
+        h.occupant_ids.push(EntityId::Pc(crate::entity_id::PcId(2)));
         assert_eq!(h.occupant_count(), 2);
-        assert!(h.contains_occupant(EntityId::Pc(1)));
-        assert!(!h.contains_occupant(EntityId::Pc(99)));
+        assert!(h.contains_occupant(EntityId::Pc(crate::entity_id::PcId(1))));
+        assert!(!h.contains_occupant(EntityId::Pc(crate::entity_id::PcId(99))));
     }
 
     #[test]
