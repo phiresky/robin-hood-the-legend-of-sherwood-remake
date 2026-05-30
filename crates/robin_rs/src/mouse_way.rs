@@ -6,12 +6,12 @@
 //! into one of nine sword-strike patterns, an unrecognized "attempt",
 //! or "none" (no stroke).
 
-use robin_engine::coordinates::ScreenPoint;
+use robin_engine::coordinates::{ScreenPoint, ScreenVec};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 
-use crate::geo2d::{self, Segment2D, Vec2D, segments_intersect};
+use crate::geo2d::{self, Segment2D, segments_intersect};
 
 /// Maximum number of points kept in the mouse-way polyline.
 pub const MOUSEWAY_POINT_LIMIT: usize = 350;
@@ -104,7 +104,7 @@ impl MouseWay {
     ///   reference point used by the directional checks).
     /// * `direction` — the swordfighter's facing direction in screen
     ///   space (the sector vector with isometric Y squish applied).
-    pub fn evaluate(&self, pc_screen: ScreenPoint, direction: Vec2D) -> MouseWayPattern {
+    pub fn evaluate(&self, pc_screen: ScreenPoint, direction: ScreenVec) -> MouseWayPattern {
         let n = self.points.len();
         if n <= 1 {
             return MouseWayPattern::None;
@@ -126,7 +126,7 @@ impl MouseWay {
             // Also accumulate the maximum left/right deviation of the
             // polyline from the W→Z chord (used by the half-circle F/G
             // test).
-            let lateral_chord = geo2d::pt(pt_z.x - pt_w.x, pt_z.y - pt_w.y);
+            let lateral_chord = ScreenVec::new(pt_z.x - pt_w.x, pt_z.y - pt_w.y);
             let lateral_normal = normalize_or_zero(perp_ccw(lateral_chord));
 
             let mut a_min = f32::INFINITY;
@@ -260,8 +260,8 @@ fn check_thrust_hi(
     ul_c: usize,
     ul_d: usize,
 ) -> Option<MouseWayPattern> {
-    let v_wp = geo2d::pt(pt_q.x - pt_w.x, pt_q.y - pt_w.y);
-    let v_zp = geo2d::pt(pt_q.x - pt_z.x, pt_q.y - pt_z.y);
+    let v_wp = ScreenVec::new(pt_q.x - pt_w.x, pt_q.y - pt_w.y);
+    let v_zp = ScreenVec::new(pt_q.x - pt_z.x, pt_q.y - pt_z.y);
     let angle = vector_angle(v_wp, v_zp);
 
     if angle.abs() < (PI / 2.0) {
@@ -317,12 +317,12 @@ fn check_thrust_fg(
 /// Detect a sideways slash (`THRUST_D` right, `THRUST_E` left).
 fn check_thrust_de(
     _pt_p: ScreenPoint,
-    direction: Vec2D,
+    direction: ScreenVec,
     pt_w: ScreenPoint,
     pt_z: ScreenPoint,
 ) -> Option<MouseWayPattern> {
-    let v_zw = geo2d::pt(pt_z.x - pt_w.x, pt_z.y - pt_w.y);
-    let v_revert = geo2d::pt(-direction.x, -direction.y);
+    let v_zw = ScreenVec::new(pt_z.x - pt_w.x, pt_z.y - pt_w.y);
+    let v_revert = ScreenVec::new(-direction.x, -direction.y);
     let angle = vector_angle(v_revert, v_zw);
 
     if angle > (PI / 4.0) && angle < (3.0 * PI / 4.0) {
@@ -337,12 +337,12 @@ fn check_thrust_de(
 /// Detect a forward / backward thrust (`THRUST_A` weak, `THRUST_B` strong).
 fn check_thrust_ab(
     _pt_p: ScreenPoint,
-    direction: Vec2D,
+    direction: ScreenVec,
     pt_w: ScreenPoint,
     pt_z: ScreenPoint,
 ) -> Option<MouseWayPattern> {
-    let v_zw = geo2d::pt(pt_w.x - pt_z.x, pt_w.y - pt_z.y);
-    let v_revert = geo2d::pt(-direction.x, -direction.y);
+    let v_zw = ScreenVec::new(pt_w.x - pt_z.x, pt_w.y - pt_z.y);
+    let v_revert = ScreenVec::new(-direction.x, -direction.y);
     let angle = vector_angle(v_revert, v_zw);
 
     if angle.abs() < (PI / 4.0) {
@@ -397,24 +397,24 @@ fn check_thrust_c(ul_a: usize, ul_b: usize, ul_c: usize, ul_d: usize) -> Option<
 // ─── Geometry helpers ────────────────────────────────────────────────────
 
 /// Counter-clockwise perpendicular of `v`.
-fn perp_ccw(v: Vec2D) -> Vec2D {
-    geo2d::pt(-v.y, v.x)
+fn perp_ccw(v: ScreenVec) -> ScreenVec {
+    ScreenVec::new(-v.y, v.x)
 }
 
 /// Normalize a vector; returns the zero vector when the input length
 /// is below `geo2d::PRECISION`.
-fn normalize_or_zero(v: Vec2D) -> Vec2D {
+fn normalize_or_zero(v: ScreenVec) -> ScreenVec {
     let len = (v.x * v.x + v.y * v.y).sqrt();
     if len < geo2d::PRECISION {
-        geo2d::pt(0.0, 0.0)
+        ScreenVec::ZERO
     } else {
-        geo2d::pt(v.x / len, v.y / len)
+        ScreenVec::new(v.x / len, v.y / len)
     }
 }
 
 /// Signed angle between two vectors in `(-PI, PI]`.  Uses `atan2` of the
 /// cross and dot products.
-fn vector_angle(a: Vec2D, b: Vec2D) -> f32 {
+fn vector_angle(a: ScreenVec, b: ScreenVec) -> f32 {
     let cross = a.x * b.y - a.y * b.x;
     let dot = a.x * b.x + a.y * b.y;
     cross.atan2(dot)
@@ -448,7 +448,6 @@ pub fn is_self_intersecting(points: &VecDeque<ScreenPoint>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::pt;
 
     fn make_way(points: &[(f32, f32)]) -> MouseWay {
         let mut w = MouseWay::new();
@@ -462,8 +461,8 @@ mod tests {
     fn ref_point() -> ScreenPoint {
         ScreenPoint::new(320.0, 320.0)
     }
-    fn ref_direction() -> Vec2D {
-        pt(0.0, -10.0)
+    fn ref_direction() -> ScreenVec {
+        ScreenVec::new(0.0, -10.0)
     }
 
     #[test]

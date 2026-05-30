@@ -161,15 +161,9 @@ impl DrawManager {
             return None;
         }
 
-        let mut result = BBox::new(
-            GeoPoint2D {
-                x: min_x - self.view_rect.min.x,
-                y: min_y - self.view_rect.min.y,
-            },
-            GeoPoint2D {
-                x: max_x - self.view_rect.min.x,
-                y: max_y - self.view_rect.min.y,
-            },
+        let mut result = screen_bbox(
+            ScreenPoint::new(min_x - self.view_rect.min.x, min_y - self.view_rect.min.y),
+            ScreenPoint::new(max_x - self.view_rect.min.x, max_y - self.view_rect.min.y),
         );
 
         if self.zoom_factor != 1.0 {
@@ -276,7 +270,7 @@ impl DrawManager {
         // cos(55°), the game's isometric projection angle.
         const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573576436351046096108031912826158;
 
-        let center = self.map_to_screen(position).to_geo();
+        let center = self.map_to_screen(position);
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
             (radius as f32 * self.zoom_factor) as u16 as i32
@@ -296,7 +290,7 @@ impl DrawManager {
         radius: u16,
         color: u16,
     ) {
-        let center = self.map_to_screen(position).to_geo();
+        let center = self.map_to_screen(position);
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
             (radius as f32 * self.zoom_factor) as u16 as i32
@@ -337,7 +331,7 @@ impl DrawManager {
         let screen_pts: Vec<[f32; 2]> = points
             .iter()
             .map(|p| {
-                let s = self.map_to_screen(*p).to_geo();
+                let s = self.map_to_screen(*p);
                 [s.x, s.y]
             })
             .collect();
@@ -349,19 +343,16 @@ impl DrawManager {
         }
 
         if renderer.is_gpu_phase() {
-            draw_alpha_polygon_gpu(
-                renderer,
-                &edges,
-                color,
-                alpha,
-                self.view_rect.min,
-                self.zoom_factor,
-            );
+            draw_alpha_polygon_gpu(renderer, &edges, color, alpha, self.zoom_factor);
             return;
         }
 
         panic!("draw_alpha_polygon called before flush_base_layer/GPU phase");
     }
+}
+
+fn screen_bbox(min: ScreenPoint, max: ScreenPoint) -> BBox {
+    BBox::new(min.to_geo(), max.to_geo())
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +436,6 @@ fn draw_alpha_polygon_gpu(
     edges: &[PolyEdge],
     color: u32,
     alpha: u32,
-    _view_min: GeoPoint2D,
     _zoom: f32,
 ) {
     let y_min = edges.iter().map(|e| e.y_min as i32).min().unwrap().max(0);

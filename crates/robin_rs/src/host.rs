@@ -10,7 +10,9 @@ use robin_assets::frame_holder::FrameHolder;
 use robin_assets::keyconfig::KeyConfig;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_assets::shipping_datadir::ShippingDatadir;
-use robin_engine::coordinates::{MapPoint, MapSize, ScreenPoint, ScreenSize, WorldPoint3D};
+use robin_engine::coordinates::{
+    MapPoint, MapSize, ScreenPoint, ScreenSize, ScreenVec, WorldPoint3D,
+};
 use robin_engine::element::{EntityId, TrajectoryPoint};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{
@@ -18,7 +20,6 @@ use robin_engine::engine::{
     SoundCommand,
 };
 use robin_engine::game_operation::GameCode;
-use robin_engine::geo2d::Vec2D;
 use robin_engine::markers as engine_markers;
 use robin_engine::markers::GroundMark;
 use robin_engine::player_command as engine_player_command;
@@ -118,7 +119,7 @@ impl ViewportState {
         )
     }
 
-    pub fn scroll_by(&mut self, delta: Vec2D) {
+    pub fn scroll_by(&mut self, delta: ScreenVec) {
         self.old_view_position = self.view_position;
         self.view_position.x += delta.x / self.zoom_factor;
         self.view_position.y += delta.y / self.zoom_factor;

@@ -2,8 +2,8 @@
 //! engine (single-player) or the multiplayer transport.
 
 use crate::Host;
-use crate::geo2d;
 use crate::player_command::{FrameCommands, PlayerCommand};
+use robin_engine::coordinates::ScreenVec;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 
@@ -74,10 +74,10 @@ pub(crate) fn dispatch_local_command(
 pub(super) fn apply_local_viewport_scroll(host: &mut Host, dir: engine_api::ScrollDirection) {
     const STEP: f32 = 24.0;
     let delta = match dir {
-        engine_api::ScrollDirection::Up => geo2d::pt(0.0, -STEP),
-        engine_api::ScrollDirection::Down => geo2d::pt(0.0, STEP),
-        engine_api::ScrollDirection::Left => geo2d::pt(-STEP, 0.0),
-        engine_api::ScrollDirection::Right => geo2d::pt(STEP, 0.0),
+        engine_api::ScrollDirection::Up => ScreenVec::new(0.0, -STEP),
+        engine_api::ScrollDirection::Down => ScreenVec::new(0.0, STEP),
+        engine_api::ScrollDirection::Left => ScreenVec::new(-STEP, 0.0),
+        engine_api::ScrollDirection::Right => ScreenVec::new(STEP, 0.0),
     };
     host.viewport.scroll_by(delta);
     host.input.cancel_multi_selection();

@@ -1354,10 +1354,10 @@ impl Layout {
         };
         // Convert the physical bbox corners to logical coordinates.
         if let Some(rect) = bbox.0 {
-            let min = rect.min();
-            let max = rect.max();
-            let mut tl = LayoutPoint::from_physical(&layout, ScreenPoint::from_geo(min));
-            let mut br = LayoutPoint::from_physical(&layout, ScreenPoint::from_geo(max));
+            let min = ScreenPoint::new(rect.min().x, rect.min().y);
+            let max = ScreenPoint::new(rect.max().x, rect.max().y);
+            let mut tl = LayoutPoint::from_physical(&layout, min);
+            let mut br = LayoutPoint::from_physical(&layout, max);
             // Ensure start ≤ end.
             if tl.x > br.x {
                 std::mem::swap(&mut tl.x, &mut br.x);

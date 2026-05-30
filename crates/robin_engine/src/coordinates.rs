@@ -130,6 +130,11 @@ coord2!(
     screen_pt
 );
 coord2!(
+    /// Screen-space vector/delta after viewport transform.
+    ScreenVec,
+    screen_vec
+);
+coord2!(
     /// Screen/UI dimensions.
     ScreenSize,
     screen_size

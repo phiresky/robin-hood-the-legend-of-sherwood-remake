@@ -3780,9 +3780,11 @@ impl EngineInner {
                         let det = v1.0 * v2.1 - v1.1 * v2.0;
                         if det < 0.0 {
                             // `GetNormal(false)` → (y, -x).
-                            let limit_left = crate::geo2d::pt(v1.1, -v1.0);
-                            let limit_right = crate::geo2d::pt(v2.1, -v2.0);
-                            let is_concave = crate::geo2d::cross(limit_left, limit_right) < 0.0;
+                            let limit_left = crate::coordinates::MapVec::new(v1.1, -v1.0);
+                            let limit_right = crate::coordinates::MapVec::new(v2.1, -v2.0);
+                            let is_concave =
+                                crate::geo2d::cross(limit_left.to_geo(), limit_right.to_geo())
+                                    < 0.0;
                             self.fast_grid.level_mut().level_repulsive_points.push(
                                 crate::fast_find_grid::LevelRepulsivePoint {
                                     position: MapPoint::new(bx as f32, by as f32),
@@ -3850,9 +3852,11 @@ impl EngineInner {
                             let v2 = (cx as f32 - ox as f32, cy as f32 - oy as f32);
                             let det = v1.0 * v2.1 - v1.1 * v2.0;
                             if det > 0.0 {
-                                let limit_left = crate::geo2d::pt(v1.1, -v1.0);
-                                let limit_right = crate::geo2d::pt(v2.1, -v2.0);
-                                let is_concave = crate::geo2d::cross(limit_left, limit_right) < 0.0;
+                                let limit_left = crate::coordinates::MapVec::new(v1.1, -v1.0);
+                                let limit_right = crate::coordinates::MapVec::new(v2.1, -v2.0);
+                                let is_concave =
+                                    crate::geo2d::cross(limit_left.to_geo(), limit_right.to_geo())
+                                        < 0.0;
                                 self.fast_grid.level_mut().level_repulsive_points.push(
                                     crate::fast_find_grid::LevelRepulsivePoint {
                                         position: MapPoint::new(ox as f32, oy as f32),

@@ -9,7 +9,6 @@
 
 use crate::Host;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Focus, ListenPhase, Posture};
-use crate::geo2d;
 use crate::mouse_way::MouseWayPattern;
 use crate::player_command::{PlayerCommand, PlayerId};
 use crate::profiles::Action;
@@ -1380,7 +1379,8 @@ pub fn resolve_swordfight(
             let pos = elem.position_map();
             let dir_sector = elem.direction();
             let dir_arr = crate::shadow_polygon::sector_to_direction(dir_sector);
-            let facing = geo2d::pt(dir_arr[0], dir_arr[1] * ASPECT_RATIO);
+            let facing =
+                robin_engine::coordinates::ScreenVec::new(dir_arr[0], dir_arr[1] * ASPECT_RATIO);
             Some((is_sword, pos, facing))
         }) else {
             continue;

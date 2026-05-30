@@ -101,7 +101,7 @@ impl FrameWnd {
         let frame_origin = self
             .bbox
             .0
-            .map(|r| ScreenPoint::from_geo(r.min()))
+            .map(|r| ScreenPoint::new(r.min().x, r.min().y))
             .unwrap_or(ScreenPoint::ZERO);
         if let Some(widget_rect) = widget.base().bbox.0 {
             let adjusted = ScreenBBox::from_coords(
@@ -210,7 +210,7 @@ impl FrameWnd {
     pub fn origin(&self) -> ScreenPoint {
         self.bbox
             .0
-            .map(|r| ScreenPoint::from_geo(r.min()))
+            .map(|r| ScreenPoint::new(r.min().x, r.min().y))
             .unwrap_or(ScreenPoint::ZERO)
     }
 

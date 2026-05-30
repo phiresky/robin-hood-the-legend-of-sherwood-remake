@@ -136,9 +136,9 @@ pub struct LevelRepulsivePoint {
     pub position: MapPoint,
     pub layer: u16,
     /// Outward normal of the incoming-edge vector.
-    pub limit_left: Vec2D,
+    pub limit_left: MapVec,
     /// Outward normal of the outgoing-edge vector.
-    pub limit_right: Vec2D,
+    pub limit_right: MapVec,
     pub is_concave: bool,
 }
 
@@ -272,7 +272,7 @@ pub struct GridLine {
     /// (or falls back to the obstacle / default material).
     pub is_sound: bool,
     /// Outward normal (for repulsive lines, used in `FindAutorizedPosition`).
-    pub normal: Vec2D,
+    pub normal: MapVec,
     /// Map-space bounding box of the segment (pre-computed for fast rejection).
     pub bbox: MapBBox,
 }
@@ -288,9 +288,9 @@ impl GridLine {
         let dy = b.y - a.y;
         let len = (dx * dx + dy * dy).sqrt();
         let normal = if len > 1e-9 {
-            pt(-dy / len, dx / len)
+            MapVec::new(-dy / len, dx / len)
         } else {
-            pt(0.0, 0.0)
+            MapVec::ZERO
         };
         Self {
             a,
@@ -339,12 +339,12 @@ impl GridLine {
         let len = (dx * dx + dy * dy).sqrt();
         self.normal = if len > 1e-9 {
             if is_area {
-                pt(-dy / len, dx / len)
+                MapVec::new(-dy / len, dx / len)
             } else {
-                pt(dy / len, -dx / len)
+                MapVec::new(dy / len, -dx / len)
             }
         } else {
-            pt(0.0, 0.0)
+            MapVec::ZERO
         };
     }
 
@@ -2611,10 +2611,10 @@ impl FastFindGrid {
         bbox.expand_point(seg2.end);
 
         // Compute corridor edge vectors for point-in-corridor test
-        let vec1 = pt(seg1.end.x - seg1.start.x, seg1.end.y - seg1.start.y);
-        let vec2 = pt(seg2.end.x - seg2.start.x, seg2.end.y - seg2.start.y);
-        let vec3 = pt(seg2.start.x - seg1.end.x, seg2.start.y - seg1.end.y);
-        let vec4 = pt(seg1.start.x - seg2.end.x, seg1.start.y - seg2.end.y);
+        let vec1 = MapVec::new(seg1.end.x - seg1.start.x, seg1.end.y - seg1.start.y);
+        let vec2 = MapVec::new(seg2.end.x - seg2.start.x, seg2.end.y - seg2.start.y);
+        let vec3 = MapVec::new(seg2.start.x - seg1.end.x, seg2.start.y - seg1.end.y);
+        let vec4 = MapVec::new(seg1.start.x - seg2.end.x, seg1.start.y - seg2.end.y);
 
         Some(ThickMoveCorridor {
             seg1,
@@ -3042,7 +3042,7 @@ impl FastFindGrid {
                 // from an earlier line can flip this gate.
                 let center = bbox.center();
                 let to_center = pt(center.x - line.a.x, center.y - line.a.y);
-                if geo2d::dot(line.normal, to_center) <= 0.0 {
+                if geo2d::dot(line.normal.to_geo(), to_center) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3107,7 +3107,7 @@ impl FastFindGrid {
                 let line = &self.level.lines[usize::from(idx)];
                 // Push toward the click side of the line
                 let to_click = pt(click.x - line.a.x, click.y - line.a.y);
-                if geo2d::dot(line.normal, to_click) <= 0.0 {
+                if geo2d::dot(line.normal.to_geo(), to_click) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3158,7 +3158,7 @@ impl FastFindGrid {
             for &idx in &intersecting {
                 let line = &self.level.lines[usize::from(idx)];
                 let to_start = pt(start.x - line.a.x, start.y - line.a.y);
-                if geo2d::dot(line.normal, to_start) <= 0.0 {
+                if geo2d::dot(line.normal.to_geo(), to_start) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3180,7 +3180,7 @@ impl FastFindGrid {
             for &idx in &intersecting {
                 let line = &self.level.lines[usize::from(idx)];
                 let to_start = pt(start.x - line.a.x, start.y - line.a.y);
-                if geo2d::dot(line.normal, to_start) <= 0.0 {
+                if geo2d::dot(line.normal.to_geo(), to_start) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3256,7 +3256,7 @@ fn push_corners_away_from_line(bbox: &mut MapBBox, line: &GridLine) {
     // Corner-read order: top-left, bottom-right, (xmax, ymin), (xmin, ymax).
     let push_if_close = |bbox: &mut MapBBox, corner: MapPoint| {
         let to_corner = pt(line.a.x - corner.x, line.a.y - corner.y);
-        let dist = geo2d::dot(line.normal, to_corner);
+        let dist = geo2d::dot(line.normal.to_geo(), to_corner);
         if dist > -0.1 {
             let push = MapVec::new((dist + 1.0) * line.normal.x, (dist + 1.0) * line.normal.y);
             bbox.translate(push);
@@ -3291,13 +3291,13 @@ pub struct ThickMoveCorridor {
     /// Bounding box enclosing the entire corridor.
     pub bbox: MapBBox,
     /// Direction vector of seg1.
-    pub vec1: Vec2D,
+    pub vec1: MapVec,
     /// Direction vector of seg2.
-    pub vec2: Vec2D,
+    pub vec2: MapVec,
     /// Closing edge vector at the destination end.
-    pub vec3: Vec2D,
+    pub vec3: MapVec,
     /// Closing edge vector at the source end.
-    pub vec4: Vec2D,
+    pub vec4: MapVec,
 }
 
 impl ThickMoveCorridor {
@@ -3307,15 +3307,21 @@ impl ThickMoveCorridor {
     #[inline]
     pub fn point_inside(&self, p: MapPoint) -> bool {
         let d1 = geo2d::cross(
-            self.vec1,
+            self.vec1.to_geo(),
             pt(p.x - self.seg1.start.x, p.y - self.seg1.start.y),
         );
         let d2 = geo2d::cross(
-            self.vec2,
+            self.vec2.to_geo(),
             pt(p.x - self.seg2.start.x, p.y - self.seg2.start.y),
         );
-        let d3 = geo2d::cross(self.vec3, pt(p.x - self.seg1.end.x, p.y - self.seg1.end.y));
-        let d4 = geo2d::cross(self.vec4, pt(p.x - self.seg2.end.x, p.y - self.seg2.end.y));
+        let d3 = geo2d::cross(
+            self.vec3.to_geo(),
+            pt(p.x - self.seg1.end.x, p.y - self.seg1.end.y),
+        );
+        let d4 = geo2d::cross(
+            self.vec4.to_geo(),
+            pt(p.x - self.seg2.end.x, p.y - self.seg2.end.y),
+        );
         d1 > 0.0 && d2 > 0.0 && d3 > 0.0 && d4 > 0.0
     }
 }
@@ -3380,12 +3386,12 @@ mod tests {
     fn test_motion_normal_matches_original_area_flag() {
         let mut area_line = GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         area_line.initialize_motion_normal(true);
-        assert_eq!(area_line.normal, pt(0.0, 1.0));
+        assert_eq!(area_line.normal, MapVec::new(0.0, 1.0));
 
         let mut obstacle_line =
             GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         obstacle_line.initialize_motion_normal(false);
-        assert_eq!(obstacle_line.normal, pt(0.0, -1.0));
+        assert_eq!(obstacle_line.normal, MapVec::new(0.0, -1.0));
     }
 
     #[test]

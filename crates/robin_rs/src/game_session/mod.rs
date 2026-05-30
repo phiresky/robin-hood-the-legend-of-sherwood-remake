@@ -66,7 +66,6 @@ use crate::corner_hud::{
 use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::resources::{
@@ -2013,7 +2012,10 @@ pub(crate) async fn run_mission(
             for event in &events {
                 if let GameEvent::ViewportPan { xrel, yrel } = *event {
                     host.viewport
-                        .scroll_by(geo2d::pt(-(xrel as f32), -(yrel as f32)));
+                        .scroll_by(robin_engine::coordinates::ScreenVec::new(
+                            -(xrel as f32),
+                            -(yrel as f32),
+                        ));
                     host.input.cancel_multi_selection();
                 }
             }
