@@ -6,6 +6,7 @@
 
 use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
+use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::{PendingCondolation, SequenceElement, SequenceId};
@@ -972,7 +973,7 @@ impl EngineInner {
                 self.build_gate_movement_sequence(
                     pc_id,
                     path,
-                    crate::engine::movement::GoalShape::Point(crate::geo2d::pt(goal.x, goal.y)),
+                    crate::engine::movement::GoalShape::Point(MapPoint::new(goal.x, goal.y)),
                     goal.level,
                     crate::order::OrderType::RunningUpright,
                     true,

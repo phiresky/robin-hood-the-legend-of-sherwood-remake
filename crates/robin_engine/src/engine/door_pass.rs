@@ -4,6 +4,7 @@
 //! executes the layer/sector swap when the actor crosses the door.
 
 use super::*;
+use crate::coordinates::MapPoint;
 use crate::element::{ActiveDoorPass, DoorPassStep, EntityId, Posture};
 use crate::gate::DoorType;
 use crate::geo2d::Point2D;
@@ -13,7 +14,7 @@ use std::collections::VecDeque;
 
 // ─── Step construction helpers ──────────────────────────────────────
 
-fn walk(dest: Point2D, action: OrderType) -> DoorPassStep {
+fn walk(dest: MapPoint, action: OrderType) -> DoorPassStep {
     DoorPassStep::Walk {
         destination: dest,
         action,
@@ -23,7 +24,7 @@ fn walk(dest: Point2D, action: OrderType) -> DoorPassStep {
     }
 }
 
-fn walk_tol(dest: Point2D, action: OrderType, tolerance: f32) -> DoorPassStep {
+fn walk_tol(dest: MapPoint, action: OrderType, tolerance: f32) -> DoorPassStep {
     DoorPassStep::Walk {
         destination: dest,
         action,
@@ -33,7 +34,7 @@ fn walk_tol(dest: Point2D, action: OrderType, tolerance: f32) -> DoorPassStep {
     }
 }
 
-fn walk_rev_tol(dest: Point2D, action: OrderType, tolerance: f32) -> DoorPassStep {
+fn walk_rev_tol(dest: MapPoint, action: OrderType, tolerance: f32) -> DoorPassStep {
     DoorPassStep::Walk {
         destination: dest,
         action,
@@ -43,7 +44,7 @@ fn walk_rev_tol(dest: Point2D, action: OrderType, tolerance: f32) -> DoorPassSte
     }
 }
 
-fn walk_nodir(dest: Point2D, action: OrderType) -> DoorPassStep {
+fn walk_nodir(dest: MapPoint, action: OrderType) -> DoorPassStep {
     DoorPassStep::Walk {
         destination: dest,
         action,
@@ -53,7 +54,7 @@ fn walk_nodir(dest: Point2D, action: OrderType) -> DoorPassStep {
     }
 }
 
-fn walk_nodir_tol(dest: Point2D, action: OrderType, tolerance: f32) -> DoorPassStep {
+fn walk_nodir_tol(dest: MapPoint, action: OrderType, tolerance: f32) -> DoorPassStep {
     DoorPassStep::Walk {
         destination: dest,
         action,
@@ -63,7 +64,7 @@ fn walk_nodir_tol(dest: Point2D, action: OrderType, tolerance: f32) -> DoorPassS
     }
 }
 
-fn walk_rev_nodir(dest: Point2D, action: OrderType) -> DoorPassStep {
+fn walk_rev_nodir(dest: MapPoint, action: OrderType) -> DoorPassStep {
     DoorPassStep::Walk {
         destination: dest,
         action,
@@ -97,9 +98,9 @@ const fn passing_door() -> DoorPassStep {
 /// Extracted from the door, sector, and actor data before step construction.
 struct DoorPassContext {
     door_type: DoorType,
-    point_mid: Point2D,
-    point_in: Point2D,
-    point_out: Point2D,
+    point_mid: MapPoint,
+    point_in: MapPoint,
+    point_out: MapPoint,
     direct: bool,
     is_pc: bool,
     is_soldier_attentive: bool,
@@ -137,7 +138,7 @@ fn translate_building(ctx: &DoorPassContext) -> VecDeque<DoorPassStep> {
 
     // PCs get a `Select` step between the walk-to-mid step and PASSING_DOOR;
     // the hulk fade speed comes from the remaining-leg distance * 0.03.
-    let select_speed = |from: Point2D, to: Point2D| -> f32 {
+    let select_speed = |from: MapPoint, to: MapPoint| -> f32 {
         let dx = to.x - from.x;
         let dy = to.y - from.y;
         (dx * dx + dy * dy).sqrt() * 0.03
@@ -574,9 +575,9 @@ impl EngineInner {
             let door = game_host.doors.get(usize::from(door_index))?;
             (
                 door.door_type,
-                geo2d::pt(door.point_mid.0, door.point_mid.1),
-                geo2d::pt(door.point_in.0, door.point_in.1),
-                geo2d::pt(door.point_out.0, door.point_out.1),
+                MapPoint::new(door.point_mid.0, door.point_mid.1),
+                MapPoint::new(door.point_in.0, door.point_in.1),
+                MapPoint::new(door.point_out.0, door.point_out.1),
                 door.sector_in,
                 door.sector_out,
             )

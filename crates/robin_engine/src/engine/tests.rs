@@ -842,8 +842,8 @@ fn post_load_fixups_aborts_midzoom() {
 
 #[test]
 fn mercenary_formation_single_pc_lands_on_click() {
-    let click = geo2d::pt(200.0, 300.0);
-    let dests = mercenary_formation_destinations(&[geo2d::pt(50.0, 50.0)], click);
+    let click = crate::coordinates::map_pt(200.0, 300.0);
+    let dests = mercenary_formation_destinations(&[crate::coordinates::map_pt(50.0, 50.0)], click);
     assert_eq!(dests.len(), 1);
     assert_eq!(dests[0].x, click.x);
     assert_eq!(dests[0].y, click.y);
@@ -856,21 +856,21 @@ fn mercenary_formation_preserves_relative_offsets() {
     // Per-PC dests should preserve the (-50, 0), (0, 0), (+50, 0) offsets
     // relative to the click point.
     let pcs = [
-        geo2d::pt(0.0, 0.0),
-        geo2d::pt(50.0, 0.0),
-        geo2d::pt(100.0, 0.0),
+        crate::coordinates::map_pt(0.0, 0.0),
+        crate::coordinates::map_pt(50.0, 0.0),
+        crate::coordinates::map_pt(100.0, 0.0),
     ];
-    let click = geo2d::pt(200.0, 300.0);
+    let click = crate::coordinates::map_pt(200.0, 300.0);
     let dests = mercenary_formation_destinations(&pcs, click);
     assert_eq!(dests.len(), 3);
-    assert_eq!(dests[0], geo2d::pt(150.0, 300.0));
-    assert_eq!(dests[1], geo2d::pt(200.0, 300.0));
-    assert_eq!(dests[2], geo2d::pt(250.0, 300.0));
+    assert_eq!(dests[0], crate::coordinates::map_pt(150.0, 300.0));
+    assert_eq!(dests[1], crate::coordinates::map_pt(200.0, 300.0));
+    assert_eq!(dests[2], crate::coordinates::map_pt(250.0, 300.0));
 }
 
 #[test]
 fn mercenary_formation_empty_input() {
-    let dests = mercenary_formation_destinations(&[], geo2d::pt(0.0, 0.0));
+    let dests = mercenary_formation_destinations(&[], crate::coordinates::map_pt(0.0, 0.0));
     assert!(dests.is_empty());
 }
 

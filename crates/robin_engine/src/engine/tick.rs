@@ -5,7 +5,7 @@ use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
 use crate::element::{Command, Entity, EntityId};
 use crate::game_operation::GameCode;
-use crate::geo2d::{self, Point2D};
+use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
@@ -1155,7 +1155,7 @@ impl EngineInner {
             EntityId,
             crate::sequence::SequenceId,
             usize,
-            Point2D,
+            crate::coordinates::MapPoint,
             u16,
             crate::order::OrderType,
         )> = Vec::new();
@@ -1349,10 +1349,7 @@ impl EngineInner {
                                     ..
                                 } = &mut elem_mut.data
                             {
-                                *destination = crate::coordinates::MapPoint {
-                                    x: resolved.destination.x,
-                                    y: resolved.destination.y,
-                                };
+                                *destination = resolved.destination;
                                 *tolerance = resolved.tolerance;
                                 *speed_factor = resolved.speed_factor;
                             }
@@ -1377,17 +1374,14 @@ impl EngineInner {
                                 && let Some(actor) = entity.actor_data_mut()
                             {
                                 actor.seek_target = None;
-                                actor.last_seek_target_position = crate::coordinates::MapPoint {
-                                    x: stored_destination.x,
-                                    y: stored_destination.y,
-                                };
+                                actor.last_seek_target_position = stored_destination;
                                 actor.seek_refresh_wait = 25;
                             }
-                            crate::geo2d::pt(stored_destination.x, stored_destination.y)
+                            stored_destination
                         }
                     }
                 } else {
-                    crate::geo2d::pt(stored_destination.x, stored_destination.y)
+                    stored_destination
                 };
                 // Move (or Seek that fell through to Move) inside a
                 // building sector skips the pathfinder entirely:
@@ -1411,10 +1405,7 @@ impl EngineInner {
                     .unwrap_or(false);
                 if owner_in_building && (!is_seek || !is_last_of_seq) {
                     if let Some(entity) = self.get_entity_mut(*owner) {
-                        let dest_pt_elem = crate::coordinates::MapPoint {
-                            x: dest_pt.x,
-                            y: dest_pt.y,
-                        };
+                        let dest_pt_elem = dest_pt;
                         entity.position_iface_mut().set_map_position(dest_pt_elem);
                         entity.element_data_mut().set_position_map(dest_pt_elem);
                         entity.element_data_mut().update_grid_cell();

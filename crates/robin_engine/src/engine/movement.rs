@@ -1,6 +1,7 @@
 //! Movement ticking, pathfinding dispatch, and order processing.
 
 use super::*;
+use crate::coordinates::{MapPoint, MapVec};
 use crate::element::EntityId;
 use crate::geo2d::{self, Point2D};
 use crate::movement::ActiveMovement;
@@ -175,7 +176,7 @@ pub(super) enum DoorPassAdvance {
     /// order onto the actor's current sequence element to install the
     /// destination.  Movement tick resumes once the order is queued.
     Continue {
-        destination: Point2D,
+        destination: MapPoint,
         action: OrderType,
         reverse: bool,
         compute_direction: bool,
@@ -212,9 +213,9 @@ pub(super) enum DoorPassAdvance {
 /// being the destination for the PC at the matching index.  Returns an
 /// empty vector if `pc_positions` is empty.
 pub(crate) fn mercenary_formation_destinations(
-    pc_positions: &[Point2D],
-    click_point: Point2D,
-) -> Vec<Point2D> {
+    pc_positions: &[MapPoint],
+    click_point: MapPoint,
+) -> Vec<MapPoint> {
     if pc_positions.is_empty() {
         return Vec::new();
     }
@@ -225,7 +226,7 @@ pub(crate) fn mercenary_formation_destinations(
 
     pc_positions
         .iter()
-        .map(|p| geo2d::pt(p.x - cx + click_point.x, p.y - cy + click_point.y))
+        .map(|p| MapPoint::new(p.x - cx + click_point.x, p.y - cy + click_point.y))
         .collect()
 }
 
@@ -236,13 +237,13 @@ pub(crate) fn mercenary_formation_destinations(
 /// trailing-step shape.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum GoalShape {
-    /// Point-goal.  The actor walks to `Point2D` after the last gate.
-    Point(Point2D),
+    /// Point-goal. The actor walks to this map point after the last gate.
+    Point(MapPoint),
     /// Entity-target seek goal.  The trailing MOVE keeps the target
     /// element, SEEK flag, and tolerance so arrival uses the same
     /// live target-distance predicate as a plain `Command::Seek`.
     Seek {
-        point: Point2D,
+        point: MapPoint,
         target: EntityId,
         tolerance: f32,
     },
@@ -254,7 +255,7 @@ pub(crate) enum GoalShape {
         /// Index of the goal door in `game_host.doors`.
         door_index: crate::gate::DoorIndex,
         /// The approach point (near side of the goal door).
-        far_side_point: Point2D,
+        far_side_point: MapPoint,
         /// Far-side layer.
         far_side_layer: u16,
         /// True iff the goal-sector (far side) is a building.  When
@@ -270,7 +271,7 @@ pub(crate) enum GoalShape {
         line_index: crate::jump_line::JumpLineIndex,
         /// Midpoint of the line.  Used as the path target point during
         /// gate routing.
-        midpoint: Point2D,
+        midpoint: MapPoint,
         /// Arrival tolerance passed to the final line move.
         tolerance: f32,
     },
@@ -319,7 +320,7 @@ pub(crate) enum MovePathOutcome {
 
 impl GoalShape {
     /// The point used for pathfinding / the final MOVE's destination.
-    pub(crate) fn goal_point(&self) -> Point2D {
+    pub(crate) fn goal_point(&self) -> MapPoint {
         match *self {
             GoalShape::Point(p) => p,
             GoalShape::Seek { point, .. } => point,
@@ -341,7 +342,7 @@ pub(crate) fn adapt_source_to_current_door(
     doors: &[crate::gate::Door],
     door_handle: crate::position_interface::DoorHandle,
     door_direction: bool,
-) -> Option<(Point2D, u16, u16)> {
+) -> Option<(MapPoint, u16, u16)> {
     if door_handle.is_null() {
         return None;
     }
@@ -350,13 +351,13 @@ pub(crate) fn adapt_source_to_current_door(
     // source; false → use the "out" side.
     if door_direction {
         Some((
-            geo2d::pt(door.point_in.0, door.point_in.1),
+            MapPoint::new(door.point_in.0, door.point_in.1),
             u16::from(door.sector_in),
             door.layer_in,
         ))
     } else {
         Some((
-            geo2d::pt(door.point_out.0, door.point_out.1),
+            MapPoint::new(door.point_out.0, door.point_out.1),
             u16::from(door.sector_out),
             door.layer_out,
         ))
@@ -390,9 +391,9 @@ fn force_sword_movement_for_sequence(seq: &mut crate::sequence::Sequence) {
 /// (the "worst placed" heuristic). The loop repeats until all characters
 /// are assigned.
 pub(crate) fn circular_dispatch_destinations(
-    pc_positions: &[Point2D],
-    click_point: Point2D,
-) -> Vec<Point2D> {
+    pc_positions: &[MapPoint],
+    click_point: MapPoint,
+) -> Vec<MapPoint> {
     let n = pc_positions.len();
     if n == 0 {
         return Vec::new();
@@ -404,10 +405,10 @@ pub(crate) fn circular_dispatch_destinations(
     // Generate candidate positions in a circle around click_point.
     // Each candidate is `(0, -CIRCULAR_DISPATCH_RADIUS)` rotated by
     // `(i * TWO_PI / n)`.
-    let candidates: Vec<Point2D> = (0..n)
+    let candidates: Vec<MapPoint> = (0..n)
         .map(|i| {
             let angle = i as f32 * std::f32::consts::TAU / n as f32;
-            geo2d::pt(
+            MapPoint::new(
                 click_point.x + angle.sin() * CIRCULAR_DISPATCH_RADIUS,
                 click_point.y - angle.cos() * CIRCULAR_DISPATCH_RADIUS,
             )
@@ -500,7 +501,7 @@ pub(crate) fn build_line_jump_click_sequence(
     source_line_idx: crate::jump_line::JumpLineIndex,
     source_line: &crate::jump_line::JumpLine,
     destination_line_idx: crate::jump_line::JumpLineIndex,
-    click_point: Point2D,
+    click_point: MapPoint,
     click_layer: u16,
     speed_factor: f32,
 ) -> crate::sequence::Sequence {
@@ -510,11 +511,10 @@ pub(crate) fn build_line_jump_click_sequence(
     };
 
     let mut seq = Sequence::new();
-    let to_pt = crate::coordinates::MapPoint::from;
 
     let mut move_to_line = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
     move_to_line.data = SequenceElementData::Movement {
-        destination: to_pt(source_line.get_middle_point()),
+        destination: source_line.get_middle_point(),
         layer: source_line.layer,
         sector: None,
         gate_id: None,
@@ -539,7 +539,7 @@ pub(crate) fn build_line_jump_click_sequence(
 
     let mut final_move = SequenceElement::new_movement(3, Command::Move, Some(owner), action);
     final_move.data = SequenceElementData::Movement {
-        destination: to_pt(click_point.into()),
+        destination: click_point,
         layer: click_layer,
         sector: None,
         gate_id: None,
@@ -581,7 +581,7 @@ impl EngineInner {
         owner: EntityId,
         posture_after: crate::element::Posture,
         action: OrderType,
-        destination: Point2D,
+        destination: MapPoint,
     ) -> OrderType {
         use crate::element::Posture;
 
@@ -775,11 +775,11 @@ impl EngineInner {
     /// door sector itself isn't a motion area (e.g. a raised drawbridge).
     pub fn snap_click_to_walkable(
         &self,
-        candidate: Point2D,
-        reference: Point2D,
+        candidate: MapPoint,
+        reference: MapPoint,
         layer: u16,
         half_diagonal_idx: usize,
-    ) -> Option<Point2D> {
+    ) -> Option<MapPoint> {
         let hd = self
             .fast_grid
             .level
@@ -792,9 +792,9 @@ impl EngineInner {
         );
         if self
             .fast_grid
-            .find_authorized_position_toward(&mut bbox, reference, layer)
+            .find_authorized_position_toward(&mut bbox, reference.to_geo(), layer)
         {
-            Some(bbox.center())
+            Some(MapPoint::from_geo(bbox.center()))
         } else {
             None
         }
@@ -820,7 +820,7 @@ impl EngineInner {
         &mut self,
         assets: &LevelAssets,
         pc_ids: &[EntityId],
-        click_point: Point2D,
+        click_point: MapPoint,
         run: bool,
         show_marker: bool,
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
@@ -844,14 +844,14 @@ impl EngineInner {
         // direct-pathfinder rather than a proper Move element.
 
         // Collect each PC's current map position, layer, and sector.
-        let positions: Vec<(EntityId, Point2D, u16, u16)> = pc_ids
+        let positions: Vec<(EntityId, MapPoint, u16, u16)> = pc_ids
             .iter()
             .filter_map(|&pc_id| {
                 self.get_entity(pc_id).map(|e| {
                     let elem = e.element_data();
                     (
                         pc_id,
-                        geo2d::pt(elem.position_map().x, elem.position_map().y),
+                        elem.position_map(),
                         elem.layer(),
                         elem.sector().map(u16::from).unwrap_or(0),
                     )
@@ -902,10 +902,7 @@ impl EngineInner {
                 None,
             )
         } else {
-            let hit = self.fast_grid.get_sector_screen(
-                crate::coordinates::MapPoint::from_geo(click_point),
-                crate::coordinates::MapPoint::from_geo(reference),
-            );
+            let hit = self.fast_grid.get_sector_screen(click_point, reference);
             let is_valid = hit.is_valid_for_move(&self.fast_grid);
 
             // ── Door/Drawbridge click shortcut ──
@@ -936,7 +933,7 @@ impl EngineInner {
                 .mission_script
                 .as_ref()
                 .and_then(|s| s.game_host())
-                .and_then(|h| door_click_polygon_at(h, click_point));
+                .and_then(|h| door_click_polygon_at(h, click_point.to_geo()));
             let clicked_door_index = clicked_sector_door_index.or(clicked_polygon_door_index);
             let is_door_click = is_door_click_sector || clicked_door_index.is_some();
 
@@ -962,7 +959,7 @@ impl EngineInner {
         // If the group is compact enough, use mercenary formation
         // (preserve relative positions).  Otherwise use circular
         // dispatch (arrange in a circle around click).
-        let pc_positions: Vec<Point2D> = positions.iter().map(|(_, p, _, _)| *p).collect();
+        let pc_positions: Vec<MapPoint> = positions.iter().map(|(_, p, _, _)| *p).collect();
         let dests = {
             let n = pc_positions.len() as f32;
             let cx = pc_positions.iter().map(|p| p.x).sum::<f32>() / n;
@@ -1007,8 +1004,12 @@ impl EngineInner {
                     .find(|(id, _, _, _)| *id == *pc_id)
                     .map(|(_, p, _, _)| *p)
                     .unwrap_or(*dest);
-                let source_line_idx =
-                    self.get_nearest_jumpable_jump_line(*pc_id, pc_pos, effective_click, false);
+                let source_line_idx = self.get_nearest_jumpable_jump_line(
+                    *pc_id,
+                    pc_pos.to_geo(),
+                    effective_click.to_geo(),
+                    false,
+                );
                 let Some(source_line_idx) =
                     source_line_idx.and_then(crate::jump_line::JumpLineIndex::new)
                 else {
@@ -1201,10 +1202,7 @@ impl EngineInner {
                     ..
                 } = &mut move_elem.data
                 {
-                    *destination = crate::coordinates::MapPoint {
-                        x: snapped.x,
-                        y: snapped.y,
-                    };
+                    *destination = snapped;
                     *layer = effective_layer;
                     if is_swordfighting {
                         *flags |= crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT;
@@ -1353,7 +1351,7 @@ impl EngineInner {
                     {
                         GoalShape::Door {
                             door_index: crate::gate::DoorIndex(door_idx),
-                            far_side_point: geo2d::pt(pt.0, pt.1),
+                            far_side_point: MapPoint::new(pt.0, pt.1),
                             far_side_layer: layer,
                             far_side_is_building: door_far_side_is_building.unwrap_or(false),
                         }
@@ -1442,17 +1440,17 @@ impl EngineInner {
     fn snap_to_nearest_walkable(
         &self,
         assets: &LevelAssets,
-        click: Point2D,
+        click: MapPoint,
         layer: u16,
-    ) -> Option<Point2D> {
+    ) -> Option<MapPoint> {
         for radius_step in 1..=20u32 {
             let r = radius_step as f32 * 10.0;
             for dir in 0..16u32 {
                 let angle = dir as f32 * std::f32::consts::FRAC_PI_8;
-                let candidate = geo2d::pt(click.x + angle.sin() * r, click.y - angle.cos() * r);
+                let candidate = MapPoint::new(click.x + angle.sin() * r, click.y - angle.cos() * r);
                 if assets
                     .pathfinder_graph
-                    .find_area_at_point(layer as usize, candidate)
+                    .find_area_at_point(layer as usize, candidate.to_geo())
                     .is_some()
                 {
                     return Some(candidate);
@@ -1553,8 +1551,6 @@ impl EngineInner {
             }
         };
 
-        let to_pt = crate::coordinates::MapPoint::from;
-
         // Snapshot all the gate data we need while we briefly hold
         // the GameHost borrow, so the main loop can call grid /
         // sequence helpers on `self` without fighting the borrow
@@ -1564,8 +1560,8 @@ impl EngineInner {
             door_index: crate::gate::DoorIndex,
             direct: bool,
             // Geometry used by the emitted sub-elements.
-            entry: Point2D,
-            exit: Point2D,
+            entry: MapPoint,
+            exit: MapPoint,
             entry_layer: u16,
             exit_layer: u16,
             // Where the actor ends up *after* crossing.
@@ -1609,16 +1605,16 @@ impl EngineInner {
                     let door = game_host.doors.get(usize::from(step.door_index))?;
                     let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
                         (
-                            geo2d::pt(door.point_out.0, door.point_out.1),
-                            geo2d::pt(door.point_in.0, door.point_in.1),
+                            MapPoint::new(door.point_out.0, door.point_out.1),
+                            MapPoint::new(door.point_in.0, door.point_in.1),
                             door.layer_out,
                             door.layer_in,
                             u16::from(door.sector_in),
                         )
                     } else {
                         (
-                            geo2d::pt(door.point_in.0, door.point_in.1),
-                            geo2d::pt(door.point_out.0, door.point_out.1),
+                            MapPoint::new(door.point_in.0, door.point_in.1),
+                            MapPoint::new(door.point_out.0, door.point_out.1),
                             door.layer_in,
                             door.layer_out,
                             u16::from(door.sector_out),
@@ -1817,7 +1813,7 @@ impl EngineInner {
                     entry_action,
                 );
                 cp.data = SequenceElementData::Movement {
-                    destination: to_pt(shot.entry),
+                    destination: shot.entry,
                     layer: shot.entry_layer,
                     // Assert actor is still in the building sector
                     // before teleporting.  Building teleport is an
@@ -1846,7 +1842,7 @@ impl EngineInner {
                     entry_action,
                 );
                 m.data = SequenceElementData::Movement {
-                    destination: to_pt(shot.entry),
+                    destination: shot.entry,
                     layer: 0,
                     sector: None,
                     // Original gate-approach MOVE uses the plain
@@ -1878,7 +1874,7 @@ impl EngineInner {
                     entry_action,
                 );
                 ap.data = SequenceElementData::Movement {
-                    destination: to_pt(shot.entry),
+                    destination: shot.entry,
                     layer: 0,
                     sector: None,
                     gate_id: None,
@@ -1994,7 +1990,7 @@ impl EngineInner {
                 door_action,
             );
             pass.data = SequenceElementData::Movement {
-                destination: to_pt(shot.exit),
+                destination: shot.exit,
                 layer: shot.exit_layer,
                 sector: None,
                 gate_id: Some(shot.door_index),
@@ -2020,7 +2016,7 @@ impl EngineInner {
                 door_action,
             );
             ap.data = SequenceElementData::Movement {
-                destination: to_pt(shot.exit),
+                destination: shot.exit,
                 layer: 0,
                 sector: None,
                 gate_id: None,
@@ -2073,7 +2069,7 @@ impl EngineInner {
                             base_action,
                         );
                         final_move.data = SequenceElementData::Movement {
-                            destination: to_pt(goal_point),
+                            destination: goal_point,
                             layer: goal_layer,
                             sector: None,
                             gate_id: None,
@@ -2106,7 +2102,7 @@ impl EngineInner {
                         let point_in = {
                             let host = self.mission_script.as_ref().and_then(|s| s.game_host());
                             host.and_then(|h| h.doors.get(usize::from(last_shot.door_index)))
-                                .map(|d| geo2d::pt(d.point_in.0, d.point_in.1))
+                                .map(|d| MapPoint::new(d.point_in.0, d.point_in.1))
                                 .unwrap_or(last_shot.exit)
                         };
                         let mut seek_move = SequenceElement::new_movement(
@@ -2116,7 +2112,7 @@ impl EngineInner {
                             base_action,
                         );
                         seek_move.data = SequenceElementData::Movement {
-                            destination: to_pt(point_in),
+                            destination: point_in,
                             layer: goal_layer,
                             sector: None,
                             gate_id: None,
@@ -2149,7 +2145,7 @@ impl EngineInner {
                             base_action,
                         );
                         final_move.data = SequenceElementData::Movement {
-                            destination: to_pt(goal_point),
+                            destination: goal_point,
                             layer: goal_layer,
                             sector: None,
                             gate_id: None,
@@ -2223,7 +2219,7 @@ impl EngineInner {
                             base_action,
                         );
                         cp.data = SequenceElementData::Movement {
-                            destination: to_pt(far_side_point),
+                            destination: far_side_point,
                             layer: far_side_layer,
                             sector: prev_sector
                                 .and_then(crate::position_interface::SectorHandle::new),
@@ -2254,7 +2250,7 @@ impl EngineInner {
                             base_action,
                         );
                         final_move.data = SequenceElementData::Movement {
-                            destination: to_pt(far_side_point),
+                            destination: far_side_point,
                             layer: far_side_layer,
                             sector: None,
                             // Original AppendMoveToDoorToSequence's
@@ -2305,9 +2301,9 @@ impl EngineInner {
                             let cam = d
                                 .map(|d| {
                                     if direct {
-                                        geo2d::pt(d.point_in.0, d.point_in.1)
+                                        MapPoint::new(d.point_in.0, d.point_in.1)
                                     } else {
-                                        geo2d::pt(d.point_out.0, d.point_out.1)
+                                        MapPoint::new(d.point_out.0, d.point_out.1)
                                     }
                                 })
                                 .unwrap_or(far_side_point);
@@ -2738,7 +2734,7 @@ impl EngineInner {
     /// `post_process_path`.  Used by PC right-click gate-fallback
     /// (movement.rs:788) when cross-sector routing has failed and we
     /// want a simple same-sector walk.
-    pub(crate) fn issue_move_order(&mut self, entity_id: EntityId, dest: Point2D, run: bool) {
+    pub(crate) fn issue_move_order(&mut self, entity_id: EntityId, dest: MapPoint, run: bool) {
         self.issue_move_order_ex(entity_id, dest, run, 0);
     }
 
@@ -2751,7 +2747,7 @@ impl EngineInner {
     pub(crate) fn issue_move_order_ex(
         &mut self,
         entity_id: EntityId,
-        dest: Point2D,
+        dest: MapPoint,
         run: bool,
         move_flags: u16,
     ) {
@@ -2931,21 +2927,21 @@ impl EngineInner {
             /// Target's current `position_map`, sampled for this tick.
             /// The live seek target is checked every frame; the path
             /// waypoint can be stale after target movement or seek refresh.
-            target_pos: Option<crate::geo2d::Point2D>,
+            target_pos: Option<MapPoint>,
             /// Target's current-row hotspot offset for `USE_POINT` seeks.
             /// `None` when the flag is clear or the target's sprite has no
             /// per-row hotspot stored (falls back to plain position).
-            use_point_offset: Option<crate::geo2d::Point2D>,
+            use_point_offset: Option<MapVec>,
             /// Shield seeks compare actor position to the movement
             /// element's computed shield destination, not to the
             /// protected PC's live position.
-            shield_destination: Option<crate::geo2d::Point2D>,
+            shield_destination: Option<MapPoint>,
             /// Snapshot of `ActorData::last_seek_target_position` —
             /// the target position stamped at seek launch / refresh.
             /// Used by the transition-animation refresh check to
             /// detect mid-walk target drift before the transition arm
             /// runs.
-            last_seek_target_position: crate::geo2d::Point2D,
+            last_seek_target_position: MapPoint,
             /// Whether the actor has a `post_seek_sequence` attached.
             /// Lifts the `is_final_waypoint` gate on tolerance arrival
             /// for mid-path arrivals: the seek's same-sector +
@@ -3012,10 +3008,7 @@ impl EngineInner {
                             match target_elem.and_then(|id| self.get_entity(id)) {
                                 Some(t) => {
                                     let target_elem_data = t.element_data();
-                                    let target_pos = geo2d::pt(
-                                        target_elem_data.position_map().x,
-                                        target_elem_data.position_map().y,
-                                    );
+                                    let target_pos = target_elem_data.position_map();
                                     // Fall back to plain position when
                                     // the hotspot is zero (no per-row
                                     // point information).
@@ -3024,6 +3017,7 @@ impl EngineInner {
                                             .sprite
                                             .current_hotspot()
                                             .filter(|p| p.x != 0.0 || p.y != 0.0)
+                                            .map(|p| MapVec::new(p.x, p.y))
                                     } else {
                                         None
                                     };
@@ -3063,12 +3057,8 @@ impl EngineInner {
                                 target_is_actor,
                                 target_pos,
                                 use_point_offset,
-                                shield_destination: seek_shield
-                                    .then_some(crate::geo2d::pt(destination.x, destination.y)),
-                                last_seek_target_position: crate::geo2d::pt(
-                                    actor.last_seek_target_position.x,
-                                    actor.last_seek_target_position.y,
-                                ),
+                                shield_destination: seek_shield.then_some(*destination),
+                                last_seek_target_position: actor.last_seek_target_position,
                                 has_post_seek: actor.post_seek_sequence.is_some(),
                             };
                         }
@@ -4419,7 +4409,7 @@ impl EngineInner {
                     crate::sequence::SequenceId,
                     usize,
                     OrderType,
-                    crate::geo2d::Point2D,
+                    MapPoint,
                     f32,
                 )> = if !is_final_waypoint
                     && !tolerance_arrival
@@ -4461,13 +4451,7 @@ impl EngineInner {
                             let raw = trans_dist + ft.tol;
                             let threshold = raw * 1.05;
                             if sq > threshold * threshold {
-                                Some((
-                                    seq_id,
-                                    elem_idx,
-                                    next_anim,
-                                    crate::geo2d::pt(target_now.x, target_now.y),
-                                    sq.sqrt(),
-                                ))
+                                Some((seq_id, elem_idx, next_anim, target_now, sq.sqrt()))
                             } else {
                                 None
                             }
@@ -5139,7 +5123,7 @@ impl EngineInner {
                     // (tick_entity_movement's post-loop door-pass
                     // dispatch) does the order push.
                     return DoorPassAdvance::Continue {
-                        destination,
+                        destination: destination.into(),
                         action,
                         reverse,
                         compute_direction,
@@ -5888,7 +5872,7 @@ impl EngineInner {
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
-        dest: Point2D,
+        dest: MapPoint,
         mut move_action: OrderType,
     ) -> MovePathOutcome {
         use crate::engine::tick::apply_drunken_path_deviation;
@@ -6105,6 +6089,7 @@ impl EngineInner {
             }
             _ => {}
         }
+        let dest_geo = dest.to_geo();
         move_action =
             self.determine_lift_movement_animation(owner, posture_after, move_action, dest);
         // Write the rewritten action back onto the movement sequence
@@ -6230,12 +6215,9 @@ impl EngineInner {
             || is_pass_door
             || actor_passing_door
             || source_is_lift_rail
-            || self.fast_grid.is_reachable_thick(
-                source.into(),
-                dest.into(),
-                entity_layer,
-                half_diagonal,
-            );
+            || self
+                .fast_grid
+                .is_reachable_thick(source.into(), dest, entity_layer, half_diagonal);
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position.  This mirrors legacy implementation
@@ -6309,7 +6291,7 @@ impl EngineInner {
         // build a two-point "path" that the downstream emission loop
         // turns into a single walking order to `dest`.
         let mut waypoints = if straight_ok {
-            vec![source, dest]
+            vec![source, dest_geo]
         } else {
             let path = self.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
@@ -6318,7 +6300,7 @@ impl EngineInner {
                 entity_sector,
                 pf_idx,
                 source,
-                dest,
+                dest_geo,
                 use_first_point,
             );
             match path {
@@ -6659,7 +6641,7 @@ mod line_jump_tests {
             source_idx,
             &source_line,
             dest_idx,
-            crate::geo2d::pt(90.0, 120.0),
+            crate::coordinates::map_pt(90.0, 120.0),
             5,
             1.0,
         );
@@ -6729,7 +6711,7 @@ mod line_jump_tests {
             source_idx,
             &source_line,
             dest_idx,
-            crate::geo2d::pt(90.0, 120.0),
+            crate::coordinates::map_pt(90.0, 120.0),
             5,
             1.0,
         );

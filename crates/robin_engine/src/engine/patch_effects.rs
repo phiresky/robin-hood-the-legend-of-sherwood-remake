@@ -383,10 +383,9 @@ impl EngineInner {
                             let pt = if elem.command == crate::element::Command::Seek {
                                 let tgt = (*seek_target)?;
                                 let te = self.get_entity(tgt)?;
-                                let p = te.element_data().position_map();
-                                crate::geo2d::pt(p.x, p.y)
+                                te.element_data().position_map()
                             } else {
-                                crate::geo2d::pt(destination.x, destination.y)
+                                *destination
                             };
                             (pt, *action)
                         }

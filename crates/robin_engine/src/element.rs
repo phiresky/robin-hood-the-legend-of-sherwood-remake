@@ -527,7 +527,7 @@ pub struct ActiveRiderCharge {
 pub enum DoorPassStep {
     /// Walk to destination with the given animation.
     Walk {
-        destination: GeoPoint2D,
+        destination: MapPoint,
         action: crate::order::OrderType,
         reverse: bool,
         compute_direction: bool,

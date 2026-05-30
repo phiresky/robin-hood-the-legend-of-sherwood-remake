@@ -35,7 +35,7 @@ use crate::sequence::{
 };
 
 pub(crate) struct ResolvedEntitySeek {
-    pub(crate) destination: crate::geo2d::Point2D,
+    pub(crate) destination: MapPoint,
     pub(crate) tolerance: f32,
     pub(crate) speed_factor: f32,
     pub(crate) stop_npc: bool,
@@ -75,7 +75,7 @@ impl crate::engine::EngineInner {
                 target_layer,
             ) {
                 return Some(ResolvedEntitySeek {
-                    destination: target_box.center(),
+                    destination: target_box.center().into(),
                     tolerance: seek_distance,
                     speed_factor: 1.0,
                     stop_npc: false,
@@ -163,7 +163,7 @@ impl crate::engine::EngineInner {
             .find_authorized_position_toward(&mut target_box, target_geo, target_layer)
         {
             Some(ResolvedEntitySeek {
-                destination: target_box.center(),
+                destination: target_box.center().into(),
                 tolerance,
                 speed_factor,
                 stop_npc,
@@ -364,10 +364,7 @@ impl crate::engine::EngineInner {
             *element = Some(target);
             *t = resolved.tolerance;
             *speed_factor = resolved.speed_factor;
-            *destination = crate::coordinates::MapPoint {
-                x: resolved.destination.x,
-                y: resolved.destination.y,
-            };
+            *destination = resolved.destination;
         }
 
         // Stamp the new last-seek-position so the next tick's
@@ -525,7 +522,7 @@ impl crate::engine::EngineInner {
             });
             match adapted {
                 Some((adj, sector, _layer)) => (adj, sector),
-                None => (owner_pos, u16::from(owner_sector)),
+                None => (owner_pos.into(), u16::from(owner_sector)),
             }
         };
 

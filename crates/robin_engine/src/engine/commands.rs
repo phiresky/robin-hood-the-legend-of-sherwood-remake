@@ -5,6 +5,7 @@
 //! state immutably; this module executes them.
 
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
+use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Command, EntityId, Human as _};
 use crate::player_command::{PlayerCommand, PlayerInput};
 use crate::profiles::Action;
@@ -167,7 +168,7 @@ impl EngineInner {
                 self.perform_group_move(
                     assets,
                     actors,
-                    destination.to_geo(),
+                    *destination,
                     *running,
                     *show_marker,
                     *goal_override,
@@ -2481,7 +2482,7 @@ impl EngineInner {
                 });
                 match adapted {
                     Some((adj, sector, _layer)) => (adj, sector),
-                    None => (crate::geo2d::pt(pc_pos.x, pc_pos.y), u16::from(pcs)),
+                    None => (MapPoint::new(pc_pos.x, pc_pos.y), u16::from(pcs)),
                 }
             };
             // PC authorisation for the gate A*.  Seek/melee routing
@@ -2532,14 +2533,14 @@ impl EngineInner {
                     (
                         crate::engine::movement::GoalShape::Line {
                             line_index: aggr_idx,
-                            midpoint: mid.to_geo(),
+                            midpoint: mid,
                             tolerance: seek_tolerance,
                         },
                         jl.layer,
                     )
                 } else {
                     (
-                        crate::engine::movement::GoalShape::Point(crate::geo2d::pt(
+                        crate::engine::movement::GoalShape::Point(MapPoint::new(
                             target_pos.x,
                             target_pos.y,
                         )),
