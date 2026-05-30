@@ -519,10 +519,10 @@ pub fn leaning_out_xy_offset(direction_x: f32, direction_y: f32) -> (f32, f32) {
 ///
 /// `direction` is the actor's 16-sector facing.
 pub fn detection_point_xy(
-    ground: crate::geo2d::Point2D,
+    ground: crate::geo2d::GeoPoint2D,
     posture: Posture,
     direction: i16,
-) -> crate::geo2d::Point2D {
+) -> crate::geo2d::GeoPoint2D {
     if posture != Posture::LeaningOut {
         return ground;
     }
@@ -534,11 +534,11 @@ pub fn detection_point_xy(
 /// Apply the posture-dependent eye-point XY shift to a ground-plane
 /// position. This is the XY half of C++ `ComputeEyesPoint`.
 pub fn eye_point_xy(
-    ground: crate::geo2d::Point2D,
+    ground: crate::geo2d::GeoPoint2D,
     posture: Posture,
     direction: i16,
     emergency_lying: bool,
-) -> crate::geo2d::Point2D {
+) -> crate::geo2d::GeoPoint2D {
     match posture {
         Posture::LeaningOut => detection_point_xy(ground, posture, direction),
         Posture::Lying

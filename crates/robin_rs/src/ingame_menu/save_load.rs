@@ -190,7 +190,7 @@ pub async fn show_save_load(
     input_widget.set_max_length(MAX_NAME_LEN);
     // Give the widget a bbox so the state machine's bookkeeping stays
     // sane — not used for hit-testing because we never leave edit mode.
-    input_widget.base.bbox = crate::geo2d::BBox2D::from_coords(
+    input_widget.base.bbox = robin_engine::coordinates::ScreenBBox::from_coords(
         INPUT_RECT.x as f32,
         INPUT_RECT.y as f32,
         (INPUT_RECT.x + INPUT_RECT.w) as f32,
@@ -216,7 +216,7 @@ pub async fn show_save_load(
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_sdl(event_pump, transform);
 
-    // Stub keyboard fed into the input-field widget so its scancode
+    // Stub keyboard fed into the input-field widget so its special-key
     // branches (Backspace / Delete / Left / Right / Home / End / Tab /
     // Up / Down / Enter / Escape) stay silent. The modal handles those
     // at the `GameEvent::KeyDown` level and drives the widget via the
@@ -867,12 +867,14 @@ fn draw_preview(
         && cache.slot == slot
     {
         let mut widget = thumb_widget.clone();
-        widget.base.set_position(crate::geo2d::BBox2D::from_coords(
-            (THUMB_RECT.x + 4) as f32,
-            (THUMB_RECT.y + 4) as f32,
-            (THUMB_RECT.x + THUMB_RECT.w - 4) as f32,
-            (THUMB_RECT.y + THUMB_RECT.h - 4) as f32,
-        ));
+        widget
+            .base
+            .set_position(robin_engine::coordinates::ScreenBBox::from_coords(
+                (THUMB_RECT.x + 4) as f32,
+                (THUMB_RECT.y + 4) as f32,
+                (THUMB_RECT.x + THUMB_RECT.w - 4) as f32,
+                (THUMB_RECT.y + THUMB_RECT.h - 4) as f32,
+            ));
         widget_bridge::draw_picture_alternate_surface(
             renderer,
             transform,

@@ -1,7 +1,7 @@
 //! 2D geometry adapter layer.
 //!
 //! Wraps the `geo` crate's types with the primitives the engine needs:
-//! `Point2D`, `Vec2D`, `BBox2D` (axis-aligned bounding box with a
+//! `GeoPoint2D`, `Vec2D`, `BBox2D` (axis-aligned bounding box with a
 //! "hyperspace"/unset state represented by `None`), `Segment2D`,
 //! `Line2D` (infinite line), `HalfLine2D` (ray), and `Polygon2D`. All
 //! coordinates are `f32`, with a precision tolerance of [`PRECISION`]
@@ -24,15 +24,15 @@ pub use geo::Polygon as Polygon2D;
 // ─── Point / Vector ──────────────────────────────────────────────
 
 /// A 2D point.
-pub type Point2D = Coord<f32>;
+pub type GeoPoint2D = Coord<f32>;
 
-/// A 2D vector. Same underlying type as [`Point2D`] since `geo::Coord`
+/// A 2D vector. Same underlying type as [`GeoPoint2D`] since `geo::Coord`
 /// supports arithmetic.
 pub type Vec2D = Coord<f32>;
 
 /// Construct a point.
 #[inline]
-pub fn pt(x: f32, y: f32) -> Point2D {
+pub fn pt(x: f32, y: f32) -> GeoPoint2D {
     Coord { x, y }
 }
 
@@ -66,7 +66,7 @@ pub fn normalize(v: Vec2D) -> Vec2D {
 }
 
 /// Rotate a point around a center by `angle` radians.
-pub fn rotate_around(p: Point2D, center: Point2D, angle: f32) -> Point2D {
+pub fn rotate_around(p: GeoPoint2D, center: GeoPoint2D, angle: f32) -> GeoPoint2D {
     let dx = p.x - center.x;
     let dy = p.y - center.y;
     let cos_a = angle.cos();
@@ -82,7 +82,7 @@ pub fn rotate_around(p: Point2D, center: Point2D, angle: f32) -> Point2D {
 /// Uses `|dx| < ε && |dy| < ε` — an open axis-aligned square of side `2ε`
 /// (Chebyshev / L∞ ball with strict comparator), not an L2 disc.
 #[inline]
-pub fn points_near(a: Point2D, b: Point2D, epsilon: f32) -> bool {
+pub fn points_near(a: GeoPoint2D, b: GeoPoint2D, epsilon: f32) -> bool {
     (a.x - b.x).abs() < epsilon && (a.y - b.y).abs() < epsilon
 }
 
@@ -107,7 +107,7 @@ impl BBox2D {
     }
 
     /// Box from min/max corners.
-    pub fn from_corners(min: Point2D, max: Point2D) -> Self {
+    pub fn from_corners(min: GeoPoint2D, max: GeoPoint2D) -> Self {
         BBox2D(Some(Rect::new(min, max)))
     }
 
@@ -117,7 +117,7 @@ impl BBox2D {
     }
 
     /// Box around a single point.
-    pub fn from_point(p: Point2D) -> Self {
+    pub fn from_point(p: GeoPoint2D) -> Self {
         BBox2D(Some(Rect::new(p, p)))
     }
 
@@ -127,7 +127,7 @@ impl BBox2D {
     }
 
     /// Box from a point + width/height.
-    pub fn from_point_size(origin: Point2D, width: f32, height: f32) -> Self {
+    pub fn from_point_size(origin: GeoPoint2D, width: f32, height: f32) -> Self {
         let x0 = origin.x.min(origin.x + width);
         let y0 = origin.y.min(origin.y + height);
         let x1 = origin.x.max(origin.x + width);
@@ -190,16 +190,16 @@ impl BBox2D {
         r.max().y - r.min().y
     }
     #[inline]
-    pub fn center(&self) -> Point2D {
+    pub fn center(&self) -> GeoPoint2D {
         let r = self.0.unwrap();
         pt((r.min().x + r.max().x) * 0.5, (r.min().y + r.max().y) * 0.5)
     }
     #[inline]
-    pub fn top_left(&self) -> Point2D {
+    pub fn top_left(&self) -> GeoPoint2D {
         self.0.unwrap().min()
     }
     #[inline]
-    pub fn bottom_right(&self) -> Point2D {
+    pub fn bottom_right(&self) -> GeoPoint2D {
         self.0.unwrap().max()
     }
 
@@ -207,7 +207,7 @@ impl BBox2D {
 
     /// Expand to include a point. If the box is in hyperspace, it drops
     /// down to that point.
-    pub fn expand_point(&mut self, p: Point2D) {
+    pub fn expand_point(&mut self, p: GeoPoint2D) {
         match &mut self.0 {
             None => {
                 self.0 = Some(Rect::new(p, p));
@@ -248,7 +248,7 @@ impl BBox2D {
     // ── Tests ──
 
     /// Test if a point is inside the box (boundary included).
-    pub fn contains_point(&self, p: Point2D) -> bool {
+    pub fn contains_point(&self, p: GeoPoint2D) -> bool {
         match self.0 {
             None => false,
             Some(r) => p.x >= r.min().x && p.x <= r.max().x && p.y >= r.min().y && p.y <= r.max().y,
@@ -260,7 +260,7 @@ impl BBox2D {
     /// for widget mouse hit-tests so adjacent widgets never both claim
     /// the shared right/bottom pixel column. [`Self::contains_point`] is
     /// the closed variant.
-    pub fn is_boxed_point(&self, p: Point2D) -> bool {
+    pub fn is_boxed_point(&self, p: GeoPoint2D) -> bool {
         match self.0 {
             None => false,
             Some(r) => p.x >= r.min().x && p.x < r.max().x && p.y >= r.min().y && p.y < r.max().y,
@@ -273,7 +273,7 @@ impl BBox2D {
     /// `[y_min, y_max]`), or `y == y_min` or `y == y_max` (with the
     /// other axis in `[x_min, x_max]`). Returns `false` on a hyperspace
     /// box.
-    pub fn is_on_boundary(&self, p: Point2D) -> bool {
+    pub fn is_on_boundary(&self, p: GeoPoint2D) -> bool {
         let r = match self.0 {
             None => return false,
             Some(r) => r,
@@ -342,7 +342,7 @@ impl BBox2D {
     }
 
     /// Test if a point intersects (same as contains_point).
-    pub fn intersects_point(&self, p: Point2D) -> bool {
+    pub fn intersects_point(&self, p: GeoPoint2D) -> bool {
         self.contains_point(p)
     }
 
@@ -425,13 +425,13 @@ impl From<&LineString<f32>> for BBox2D {
 
 /// Construct a segment from two points.
 #[inline]
-pub fn segment(a: Point2D, b: Point2D) -> Line<f32> {
+pub fn segment(a: GeoPoint2D, b: GeoPoint2D) -> Line<f32> {
     Line::new(a, b)
 }
 
 /// Euclidean distance between two points.
 #[inline]
-pub fn distance(a: Point2D, b: Point2D) -> f32 {
+pub fn distance(a: GeoPoint2D, b: GeoPoint2D) -> f32 {
     let dx = a.x - b.x;
     let dy = a.y - b.y;
     (dx * dx + dy * dy).sqrt()
@@ -466,8 +466,11 @@ impl BBox2D {
     }
 }
 
-/// Serialize a Point2D. Format: 2 x f32 (x, y).
-pub fn serialize_point2d(file: &mut crate::sbfile::SbFile, p: &mut Point2D) -> Result<(), i32> {
+/// Serialize a GeoPoint2D. Format: 2 x f32 (x, y).
+pub fn serialize_geo_point(
+    file: &mut crate::sbfile::SbFile,
+    p: &mut GeoPoint2D,
+) -> Result<(), i32> {
     file.serialize_f32(&mut p.x)?;
     file.serialize_f32(&mut p.y)?;
     Ok(())
@@ -624,7 +627,7 @@ fn segment_intersects_linestring(seg: Line<f32>, ls: &LineString<f32>) -> bool {
 }
 
 /// Compute the minimum distance from a point to a segment.
-pub fn point_to_segment_distance(p: Point2D, seg: Line<f32>) -> f32 {
+pub fn point_to_segment_distance(p: GeoPoint2D, seg: Line<f32>) -> f32 {
     // Point-to-segment distance: project p onto the line, clamp to segment.
     let ab = geo::Coord {
         x: seg.end.x - seg.start.x,
@@ -647,7 +650,7 @@ pub fn point_to_segment_distance(p: Point2D, seg: Line<f32>) -> f32 {
 }
 
 /// Compute the nearest point on a segment to a given point.
-pub fn nearest_point_on_segment(p: Point2D, seg: Line<f32>) -> Point2D {
+pub fn nearest_point_on_segment(p: GeoPoint2D, seg: Line<f32>) -> GeoPoint2D {
     use geo::Closest;
     match seg.closest_point(&geo::Point::from(p)) {
         Closest::SinglePoint(pt) | Closest::Intersection(pt) => pt.0,
@@ -656,7 +659,7 @@ pub fn nearest_point_on_segment(p: Point2D, seg: Line<f32>) -> Point2D {
 }
 
 /// Test if a point lies on a segment (within precision).
-pub fn point_on_segment(p: Point2D, seg: Line<f32>) -> bool {
+pub fn point_on_segment(p: GeoPoint2D, seg: Line<f32>) -> bool {
     point_to_segment_distance(p, seg) < PRECISION
 }
 
@@ -665,7 +668,7 @@ pub fn point_on_segment(p: Point2D, seg: Line<f32>) -> bool {
 /// distance. Computes `vSeg = B - A`, returns `(p - A) · vSeg >= 0` AND
 /// `(p - B) · vSeg <= 0` (equivalently, the two dot products have
 /// opposite signs).
-pub fn point_in_segment_slab(p: Point2D, seg: Line<f32>) -> bool {
+pub fn point_in_segment_slab(p: GeoPoint2D, seg: Line<f32>) -> bool {
     let vx = seg.end.x - seg.start.x;
     let vy = seg.end.y - seg.start.y;
     let da = (p.x - seg.start.x) * vx + (p.y - seg.start.y) * vy;
@@ -693,12 +696,12 @@ pub fn segment_length(seg: Line<f32>) -> f32 {
 /// An infinite line through two points.
 #[derive(Debug, Clone, Copy)]
 pub struct Line2D {
-    pub a: Point2D,
-    pub b: Point2D,
+    pub a: GeoPoint2D,
+    pub b: GeoPoint2D,
 }
 
 impl Line2D {
-    pub fn new(a: Point2D, b: Point2D) -> Self {
+    pub fn new(a: GeoPoint2D, b: GeoPoint2D) -> Self {
         Self { a, b }
     }
 
@@ -822,8 +825,8 @@ impl PartialEq for Line2D {
 /// A ray starting at A, passing through B.
 #[derive(Debug, Clone, Copy)]
 pub struct HalfLine2D {
-    pub a: Point2D,
-    pub b: Point2D,
+    pub a: GeoPoint2D,
+    pub b: GeoPoint2D,
 }
 
 /// Geometric equality of half-lines: same origin AND parallel direction,
@@ -837,7 +840,7 @@ impl PartialEq for HalfLine2D {
 }
 
 impl HalfLine2D {
-    pub fn new(a: Point2D, b: Point2D) -> Self {
+    pub fn new(a: GeoPoint2D, b: GeoPoint2D) -> Self {
         Self { a, b }
     }
 
@@ -912,7 +915,7 @@ impl HalfLine2D {
 
 /// Test if a point is inside a polygon (boundary counts as inside).
 #[inline]
-pub fn polygon_contains_point(poly: &Polygon<f32>, p: Point2D) -> bool {
+pub fn polygon_contains_point(poly: &Polygon<f32>, p: GeoPoint2D) -> bool {
     poly.contains(&geo::Point::from(p)) || poly.exterior().intersects(&geo::Point::from(p))
 }
 
@@ -927,7 +930,7 @@ pub fn polygon_contains_point(poly: &Polygon<f32>, p: Point2D) -> bool {
 /// move-box of an actor is actually overlapped by a freshly-active
 /// motion obstacle after the cheap bbox-vs-bbox pre-filter has already
 /// passed.
-pub fn polygon_vertices_intersect_bbox(vertices: &[Point2D], bbox: &BBox2D) -> bool {
+pub fn polygon_vertices_intersect_bbox(vertices: &[GeoPoint2D], bbox: &BBox2D) -> bool {
     let rect = match bbox.0 {
         Some(r) => r,
         None => return false,
@@ -1202,7 +1205,7 @@ pub enum Intersection2D {
     /// No intersection.
     None,
     /// Intersection at a single point.
-    Point(Point2D),
+    Point(GeoPoint2D),
     /// Overlap along a segment.
     Segment(Line<f32>),
 }
@@ -1229,7 +1232,7 @@ impl Intersection2D {
         matches!(self, Intersection2D::None)
     }
 
-    pub fn point(&self) -> Option<Point2D> {
+    pub fn point(&self) -> Option<GeoPoint2D> {
         match self {
             Intersection2D::Point(p) => Some(*p),
             _ => Option::None,

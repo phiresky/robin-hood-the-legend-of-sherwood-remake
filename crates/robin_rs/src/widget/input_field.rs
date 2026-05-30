@@ -21,6 +21,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
 use crate::ui::{
     KeyState, MouseButtons, ProbeCode, TypeWriter, UiEvent, UiMsg, UiProbe, UiState,
@@ -31,19 +32,6 @@ use crate::ui::{
 };
 
 use super::{WidgetBase, WidgetInput};
-
-// SDL scancodes needed for text editing.
-const SC_LEFT: u16 = 80;
-const SC_RIGHT: u16 = 79;
-const SC_HOME: u16 = 74;
-const SC_END: u16 = 77;
-const SC_BACKSPACE: u16 = 42;
-const SC_DELETE: u16 = 76;
-const SC_RETURN: u16 = 40;
-const SC_ESCAPE: u16 = 41;
-const SC_TAB: u16 = 43;
-const SC_UP: u16 = 82;
-const SC_DOWN: u16 = 81;
 
 /// Text input field widget.
 ///
@@ -220,7 +208,7 @@ impl WidgetInputField {
             }
         }
         // Escape cancels.
-        if input.keyboard.get_state_of_key(SC_ESCAPE) == KeyState::KeyPressed {
+        if input.keyboard.get_state_of_key(KeyCode::Escape) == KeyState::KeyPressed {
             self.base.state = UiState::Default;
             return vec![self.base.make_event(UiMsg::WidgetUnfocused)];
         }
@@ -246,8 +234,8 @@ impl WidgetInputField {
 
     /// SELECTED_EDITABLE state: full keyboard input handling.
     ///
-    /// Character input comes from `input.text_input` (populated from SDL's
-    /// `SDL_EVENT_TEXT_INPUT`), not from raw scancodes — that path lets
+    /// Character input comes from `input.text_input`, not from physical
+    /// key codes — that path lets
     /// the platform IME handle dead keys, layouts, and composition.
     fn process_input_editable(&mut self, input: &WidgetInput) -> Vec<UiEvent> {
         // Toggle caret blink.
@@ -278,11 +266,21 @@ impl WidgetInputField {
 
         let kb = input.keyboard;
 
-        // Scan all keys for input.
-        for scancode in 0..crate::input::MAX_SCANCODES {
-            let sc = scancode as u16;
-            let key_state = kb.get_state_of_key(sc);
-            let tw = kb.get_typewriter_state(sc);
+        for key in [
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Enter,
+            KeyCode::Escape,
+            KeyCode::Tab,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+        ] {
+            let key_state = kb.get_state_of_key(key);
+            let tw = kb.get_typewriter_state(key);
 
             // Only process on key-pressed, key-double, or typewriter repeat.
             let should_process = matches!(key_state, KeyState::KeyPressed | KeyState::KeyDouble)
@@ -292,32 +290,32 @@ impl WidgetInputField {
                 continue;
             }
 
-            match sc {
-                SC_LEFT => {
+            match key {
+                KeyCode::ArrowLeft => {
                     if self.caret_offset > 0 {
                         self.caret_offset -= 1;
                     }
                     self.caret_visible = true;
                     return Vec::new();
                 }
-                SC_RIGHT => {
+                KeyCode::ArrowRight => {
                     if self.caret_offset < self.edit_text.chars().count() {
                         self.caret_offset += 1;
                     }
                     self.caret_visible = true;
                     return Vec::new();
                 }
-                SC_HOME => {
+                KeyCode::Home => {
                     self.caret_offset = 0;
                     self.caret_visible = true;
                     return Vec::new();
                 }
-                SC_END => {
+                KeyCode::End => {
                     self.caret_offset = self.edit_text.chars().count();
                     self.caret_visible = true;
                     return Vec::new();
                 }
-                SC_BACKSPACE => {
+                KeyCode::Backspace => {
                     if self.caret_offset > 0 {
                         self.caret_offset -= 1;
                         let byte_pos =
@@ -327,7 +325,7 @@ impl WidgetInputField {
                     }
                     return Vec::new();
                 }
-                SC_DELETE => {
+                KeyCode::Delete => {
                     if self.caret_offset < self.edit_text.chars().count() {
                         let byte_pos =
                             byte_offset_for_char_index(&self.edit_text, self.caret_offset);
@@ -336,27 +334,27 @@ impl WidgetInputField {
                     }
                     return Vec::new();
                 }
-                SC_RETURN => {
+                KeyCode::Enter => {
                     return self.validate_and_exit();
                 }
-                SC_ESCAPE => {
+                KeyCode::Escape => {
                     return self.cancel_and_exit();
                 }
-                SC_TAB => {
+                KeyCode::Tab => {
                     // Validate current field and move to linked field.
                     let mut events = self.validate_and_exit();
                     // The frame window / menu will handle focusing the linked field.
                     events.push(self.base.make_event(UiMsg::WidgetActivated));
                     return events;
                 }
-                SC_UP | SC_DOWN => {
+                KeyCode::ArrowUp | KeyCode::ArrowDown => {
                     // Up/Down exit edit mode (for navigation to other fields).
                     return self.validate_and_exit();
                 }
                 _ => {
-                    // Printable characters arrive via `input.text_input`
-                    // (SDL `SDL_EVENT_TEXT_INPUT`), handled above. Raw
-                    // scancodes here are just the special-key cases.
+                    // Printable characters arrive via `input.text_input`,
+                    // handled above. Physical keys here are just the
+                    // special-key cases.
                 }
             }
         }
@@ -442,8 +440,8 @@ impl WidgetInputField {
     // Save picker, for example) still want Backspace / Delete / caret
     // movement to route through the widget so its edit buffer remains
     // the single source of truth. These wrap the same body the
-    // `process_input_editable` scancode arms do, exposed as direct
-    // calls for callers holding an SDL key event.
+    // `process_input_editable` special-key arms do, exposed as direct
+    // calls for callers holding a key event.
 
     /// Remove the character before the caret (Backspace).
     pub fn backspace(&mut self) -> Option<UiEvent> {
@@ -698,16 +696,16 @@ fn byte_offset_for_char_index(s: &str, char_index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::BBox2D;
     use crate::ui::{MouseButtons, UiKeyboard};
+    use robin_engine::coordinates::ScreenBBox;
 
     fn make_editable_field() -> WidgetInputField {
         let mut f = WidgetInputField::new(1);
         f.base
-            .create("", BBox2D::from_coords(0.0, 0.0, 100.0, 20.0), 0);
+            .create("", ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0), 0);
         f.base.renderer = crate::widget::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
             base: crate::ui::RendererBase {
-                bbox: BBox2D::from_coords(0.0, 0.0, 100.0, 20.0),
+                bbox: ScreenBBox::from_coords(0.0, 0.0, 100.0, 20.0),
                 ..Default::default()
             },
         });
@@ -717,7 +715,7 @@ mod tests {
 
     fn make_input<'a>(kb: &'a UiKeyboard, text: &'a str) -> WidgetInput<'a> {
         WidgetInput {
-            mouse_position: crate::geo2d::pt(-1.0, -1.0),
+            mouse_position: robin_engine::coordinates::ScreenPoint::new(-1.0, -1.0),
             mouse_z: 0,
             mouse_button: MouseButtons::empty(),
             keyboard: kb,

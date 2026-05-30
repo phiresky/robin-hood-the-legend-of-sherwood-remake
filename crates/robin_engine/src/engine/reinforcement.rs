@@ -249,7 +249,7 @@ impl EngineInner {
             .map(|e| e.position_iface())
             .map(|pi| pi.get_half_diagonal())
             .unwrap_or_else(|| crate::geo2d::pt(12.0, 8.0));
-        let mut jitter: Option<crate::geo2d::Point2D> = None;
+        let mut jitter: Option<crate::geo2d::GeoPoint2D> = None;
         for _ in 0..10 {
             let dx = crate::sim_rng::i32(-50..=50) as f32;
             let dy = crate::sim_rng::i32(-50..=50) as f32;

@@ -145,7 +145,7 @@ pub const MT_STR_SHORT_BRIEFING_TITLE_SHERWOOD: usize = 271;
 
 pub const MT_STR_SHORTCUT_00: usize = 151;
 
-// Keyboard scancode → menu-text ids.  Used by the shortcuts rebind
+// Physical key → menu-text ids.  Used by the shortcuts rebind
 // list to render localized key names (e.g. "Espacio" in ES rather than
 // "Space").
 pub const MT_STR_KEY_UP: usize = 179;

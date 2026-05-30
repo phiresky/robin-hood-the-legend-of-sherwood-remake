@@ -329,9 +329,9 @@ impl EngineInner {
                 .get_entity(victim_id)
                 .map(|e| {
                     let p = e.element_data().position_map();
-                    crate::geo2d::pt(p.x, p.y)
+                    p
                 })
-                .unwrap_or_else(|| crate::geo2d::pt(0.0, 0.0));
+                .unwrap_or(crate::coordinates::MapPoint::ZERO);
 
             // Real weapon/armor materials from character/soldier profiles
             let atk_weapon_mat = attacker_id

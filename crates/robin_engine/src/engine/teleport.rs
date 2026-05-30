@@ -30,7 +30,7 @@ impl EngineInner {
     /// `Command::Teleport` branch in `engine::tick`.
     pub(crate) fn manage_input_process_teleport(
         &mut self,
-        dest: geo2d::Point2D,
+        dest: geo2d::GeoPoint2D,
         layer: u16,
         sector: Option<crate::position_interface::SectorHandle>,
     ) {

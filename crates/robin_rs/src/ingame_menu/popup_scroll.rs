@@ -19,12 +19,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::gfx_types::Keycode;
 
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
+use robin_engine::coordinates::ScreenBBox;
 use robin_engine::player_command::DialogResult;
 use robin_engine::sound_cache::SampleLoader;
 
@@ -354,7 +354,7 @@ impl PopupScrollModalState {
         self.drop_cap_h = if pic_h > 0 { pic_h + PIC_TEXT_PAD_Y } else { 0 };
         self.picture_widget = self.picture.map(|pic| {
             let mut widget = crate::widget::WidgetPicture::new(u32::MAX);
-            let bbox = crate::geo2d::BBox2D::from_coords(
+            let bbox = ScreenBBox::from_coords(
                 (self.virt_x + pic_virt_x) as f32,
                 (self.virt_y + pic_virt_y) as f32,
                 (self.virt_x + pic_virt_x + pic_w) as f32,
@@ -446,7 +446,10 @@ impl PopupScrollModalState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
-        let mouse_pt = geo2d::pt(self.input_state.virt_x, self.input_state.virt_y);
+        let mouse_pt = robin_engine::coordinates::ScreenPoint::new(
+            self.input_state.virt_x,
+            self.input_state.virt_y,
+        );
         self.tooltip.update(&self.frame, mouse_pt);
         if let Some(font) = resources.popup_font() {
             self.tooltip

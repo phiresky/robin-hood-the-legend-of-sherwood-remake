@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use crate::geo2d::{self, Point2D};
+use crate::geo2d::{self, GeoPoint2D};
 use crate::position_interface::{ASPECT_RATIO, vector_norm_iso};
 use crate::sound_geometry::{SoundSourceAltitude, SoundSourceInfo};
 
@@ -71,7 +71,7 @@ pub struct SoundSource {
     /// Volume at outer distance \[0–255\].
     pub outer_volume: u16,
     /// Shape points defining the source geometry (polyline).
-    pub shape: Vec<Point2D>,
+    pub shape: Vec<GeoPoint2D>,
     /// Altitude classification affecting volume with zoom.
     pub altitude: SoundSourceAltitude,
     /// Minimum delay ticks (for [`SoundSourceKind::Delayed`]).
@@ -135,14 +135,18 @@ impl SoundSource {
     // ── Geometry helpers ──────────────────────────────────────────────
 
     /// Distance between two points with isometric Y scaling.
-    fn distance_for_point(origin: Point2D, position: Point2D) -> f32 {
+    fn distance_for_point(origin: GeoPoint2D, position: GeoPoint2D) -> f32 {
         vector_norm_iso(position.x - origin.x, position.y - origin.y)
     }
 
     /// Perpendicular distance from `position` to segment `[seg_a, seg_b]`,
     /// using the isometric-corrected normal. Returns `None` if the
     /// perpendicular projection doesn't fall within the segment bounds.
-    fn distance_to_segment(seg_a: Point2D, seg_b: Point2D, position: Point2D) -> Option<f32> {
+    fn distance_to_segment(
+        seg_a: GeoPoint2D,
+        seg_b: GeoPoint2D,
+        position: GeoPoint2D,
+    ) -> Option<f32> {
         // Segment direction
         let dir = geo2d::pt(seg_b.x - seg_a.x, seg_b.y - seg_a.y);
 

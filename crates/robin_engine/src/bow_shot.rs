@@ -359,14 +359,14 @@ pub(crate) fn bow_sprite_hand_point(
     entity: &Entity,
     mode: ShootMode,
     direction: i16,
-) -> Option<crate::geo2d::Point2D> {
+) -> Option<crate::geo2d::GeoPoint2D> {
     let dir = u16::try_from(direction).ok()?;
     let sprite_pos = entity.cxx_position_sprite();
     let offset = entity
         .element_data()
         .sprite
         .get_point(bow_point_order_type_for_mode(mode), dir)?;
-    Some(crate::geo2d::Point2D {
+    Some(crate::geo2d::GeoPoint2D {
         x: sprite_pos.x + offset.x,
         y: sprite_pos.y + offset.y,
     })
@@ -691,7 +691,7 @@ fn classify_impact(
     let top_z = obs.compute_top_z(impact.x, impact.y);
     const TOP_EPS: f32 = 0.5;
     let is_top = (impact.z - top_z).abs() <= TOP_EPS
-        && obs.box_ground.contains_point(crate::geo2d::Point2D {
+        && obs.box_ground.contains_point(crate::geo2d::GeoPoint2D {
             x: impact.x,
             y: impact.y,
         });
@@ -1136,7 +1136,7 @@ pub fn compute_bow_point(
     position: WorldPoint3D,
     shoot_mode: ShootMode,
     direction: i16,
-    sprite_hand_point: crate::geo2d::Point2D,
+    sprite_hand_point: crate::geo2d::GeoPoint2D,
 ) -> WorldPoint3D {
     let elevation = position.z;
 
@@ -1689,7 +1689,7 @@ pub struct ShotTickResult {
     /// Shooter's facing direction (0–15) for bow-point computation.
     pub shooter_direction: i16,
     /// Sprite hand anchor point (sprite position + hotspot).
-    pub sprite_hand_point: crate::geo2d::Point2D,
+    pub sprite_hand_point: crate::geo2d::GeoPoint2D,
     /// Target's forecasted movement vector for leading shots.
     pub target_forecasted_movement: WorldVec3D,
 }
@@ -1702,7 +1702,7 @@ struct PendingShotTickResult {
     shooter_position: WorldPoint3D,
     shoot_mode: ShootMode,
     shooter_direction: i16,
-    sprite_hand_point: crate::geo2d::Point2D,
+    sprite_hand_point: crate::geo2d::GeoPoint2D,
 }
 
 #[derive(Default)]
@@ -3866,7 +3866,7 @@ mod tests {
         ActorData, ElementKind, ElementTarget, FxData, HumanData, TargetData, TargetFilter,
     };
     use crate::element::{ActorPc, ActorSoldier, NpcData, PcData, SoldierData};
-    use crate::geo2d::{Point2D as GeoPoint2D, Vec2D};
+    use crate::geo2d::{GeoPoint2D, Vec2D};
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     fn make_pc(x: f32, y: f32) -> Entity {

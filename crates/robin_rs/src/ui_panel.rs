@@ -17,11 +17,15 @@ use crate::Host;
 use std::collections::HashMap;
 
 use crate::element::Entity;
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
+use crate::gfx_types::Rect;
+use crate::profiles::Action;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::{ResourceId, ResourceManager};
+use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
+use robin_engine::coordinates::ScreenPoint;
 use robin_engine::engine::Engine;
 use robin_engine::player_command::PlayerId;
 use robin_engine::sprite::BBox;
@@ -987,11 +991,11 @@ fn slot_left_x(screen_width: u16, slot_index: u16) -> u16 {
 
 fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
     BBox::new(
-        Point2D {
+        GeoPoint2D {
             x: x1 as f32,
             y: y1 as f32,
         },
-        Point2D {
+        GeoPoint2D {
             x: x2 as f32,
             y: y2 as f32,
         },
@@ -1007,8 +1011,8 @@ fn blit_to_screen_widget(
 ) {
     let src_box = src.copied().unwrap_or_else(|| {
         BBox::new(
-            Point2D { x: 0.0, y: 0.0 },
-            Point2D {
+            GeoPoint2D { x: 0.0, y: 0.0 },
+            GeoPoint2D {
                 x: renderer.surface_width(surface_id) as f32,
                 y: renderer.surface_height(surface_id) as f32,
             },
@@ -1630,7 +1634,7 @@ pub fn draw_panel(
                             renderer,
                             crate::titbit::SpriteRow::QuickActionTitbits,
                             frame,
-                            crate::gfx_types::Rect::new(
+                            Rect::new(
                                 icon_x as i32 + shift_px,
                                 qa_strip_y as i32,
                                 iw as u32,
@@ -1847,9 +1851,10 @@ fn requirements_bar_start_x(screen_width: u16, slot_count: usize) -> Option<i32>
 pub fn hit_test_requirements_bar(
     screen_width: u16,
     state: &crate::widget::requirements::RequirementsState,
-    mouse_x: i32,
-    mouse_y: i32,
+    mouse: ScreenPoint,
 ) -> Option<usize> {
+    let mouse_x = mouse.x as i32;
+    let mouse_y = mouse.y as i32;
     let start_x = requirements_bar_start_x(screen_width, state.slots.len())?;
     let step = (REQ_BAR_ICON_MARGIN + REQ_BAR_ICON_W) as i32;
     let y0 = REQ_BAR_Y as i32;
@@ -1890,7 +1895,7 @@ pub fn draw_requirements_bar(
             icon_y + REQ_BAR_ICON_H as i32,
         );
         let (icon_sid, status, selected) = match slot {
-            crate::widget::requirements::RequirementSlot::RequiredCharacter {
+            RequirementSlot::RequiredCharacter {
                 character_profile_idx,
                 status,
                 selected,
@@ -1906,7 +1911,7 @@ pub fn draw_requirements_bar(
                     *selected,
                 )
             }
-            crate::widget::requirements::RequirementSlot::RequiredAction {
+            RequirementSlot::RequiredAction {
                 action,
                 status,
                 selected,
@@ -1918,7 +1923,7 @@ pub fn draw_requirements_bar(
                     *selected,
                 )
             }
-            crate::widget::requirements::RequirementSlot::OptionalCharacter {
+            RequirementSlot::OptionalCharacter {
                 character_profile_idx,
             } => {
                 let slot_kind = character_profile_idx
@@ -1940,8 +1945,8 @@ pub fn draw_requirements_bar(
         // Its size comes from the `RHID_YES_NO` resource's native dimensions.
         if let Some(st) = status {
             let overlay = match st {
-                crate::widget::requirements::RequirementStatus::Fulfilled => portraits.req_yes,
-                crate::widget::requirements::RequirementStatus::Missing => portraits.req_no,
+                RequirementStatus::Fulfilled => portraits.req_yes,
+                RequirementStatus::Missing => portraits.req_no,
             };
             if let Some(sid) = overlay {
                 let w = renderer.surface_width(sid) as i32;
@@ -1986,15 +1991,9 @@ pub fn requirements_slot_tooltip_mt_id(
         MT_INFOBULLE_QG_NEEDED_ACTION, MT_INFOBULLE_QG_NEEDED_PC, MT_INFOBULLE_QG_OTHER_PC,
     };
     match slot {
-        crate::widget::requirements::RequirementSlot::RequiredCharacter { .. } => {
-            MT_INFOBULLE_QG_NEEDED_PC
-        }
-        crate::widget::requirements::RequirementSlot::RequiredAction { .. } => {
-            MT_INFOBULLE_QG_NEEDED_ACTION
-        }
-        crate::widget::requirements::RequirementSlot::OptionalCharacter { .. } => {
-            MT_INFOBULLE_QG_OTHER_PC
-        }
+        RequirementSlot::RequiredCharacter { .. } => MT_INFOBULLE_QG_NEEDED_PC,
+        RequirementSlot::RequiredAction { .. } => MT_INFOBULLE_QG_NEEDED_ACTION,
+        RequirementSlot::OptionalCharacter { .. } => MT_INFOBULLE_QG_OTHER_PC,
     }
 }
 
@@ -2247,7 +2246,7 @@ pub fn draw_pc_info_overlay(
     profiles: &robin_engine::profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    mouse: Point2D,
+    mouse: ScreenPoint,
 ) {
     use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
 
@@ -2274,7 +2273,7 @@ pub fn draw_pc_info_overlay(
     let _ = campaign;
     let is_archer = profiles
         .get_character(pc.pc.profile_index)
-        .map(|p| p.actions.contains(&crate::profiles::Action::Bow))
+        .map(|p| p.actions.contains(&Action::Bow))
         .unwrap_or(false);
 
     let sw = renderer.screen_width() as i32;
@@ -2337,12 +2336,14 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
     // Snapshot the PC positions first — the draw call borrows engine.host
     // mutably for the draw_manager and its phase store, so we can't
     // still be iterating `engine.pc_ids()` while calling it.
-    let mut per_pc: Vec<(crate::element::EntityId, Point2D)> =
-        Vec::with_capacity(engine.pc_ids().len());
+    let mut per_pc: Vec<(
+        crate::element::EntityId,
+        robin_engine::coordinates::MapPoint,
+    )> = Vec::with_capacity(engine.pc_ids().len());
     for &pc_id in engine.pc_ids() {
         if let Some(ent) = engine.get_entity(pc_id) {
             let pos = ent.element_data().position_map();
-            per_pc.push((pc_id, Point2D { x: pos.x, y: pos.y }));
+            per_pc.push((pc_id, pos));
         }
     }
 
@@ -2371,8 +2372,8 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
                 let to = step.position;
                 host.draw_manager.draw_dotted_line(
                     renderer,
-                    from,
-                    to,
+                    from.to_geo(),
+                    to.to_geo(),
                     &mut phase,
                     DISTANCE_DOT,
                     1.0,
@@ -2789,18 +2790,24 @@ mod tests {
         let slot1_cx = slot0_cx + step;
         assert_eq!(start_x, 355);
         assert_eq!(
-            hit_test_requirements_bar(800, &state, slot0_cx, y_in),
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot0_cx as f32, y_in as f32)),
             Some(0)
         );
         assert_eq!(
-            hit_test_requirements_bar(800, &state, slot1_cx, y_in),
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot1_cx as f32, y_in as f32)),
             Some(1)
         );
         // In the margin between slot 0 and slot 1.
         let gap_x = start_x + REQ_BAR_ICON_W as i32 + 1;
-        assert_eq!(hit_test_requirements_bar(800, &state, gap_x, y_in), None);
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(gap_x as f32, y_in as f32)),
+            None
+        );
         // Below the bar.
-        assert_eq!(hit_test_requirements_bar(800, &state, slot0_cx, 200), None);
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot0_cx as f32, 200.0)),
+            None
+        );
     }
 
     #[test]

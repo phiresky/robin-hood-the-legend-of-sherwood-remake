@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::coordinates::{MapPoint, ScreenPoint};
-use crate::geo2d::{self, Point2D, Vec2D};
+use crate::geo2d::{self, Vec2D};
 use crate::natives::GameHost;
 use crate::script_manager::{ScriptInstance, ScriptManager};
 
@@ -273,9 +273,9 @@ pub struct BackgroundTransform {
     /// Target zoom factor for the active zoom transition.
     pub zoom_to: f32,
     /// Source view position at the start of the active zoom transition.
-    pub view_from: Vec2D,
+    pub view_from: MapPoint,
     /// Target view position for the active zoom transition.
-    pub view_to: Vec2D,
+    pub view_to: MapPoint,
 }
 
 impl Default for BackgroundTransform {
@@ -300,8 +300,8 @@ impl Default for BackgroundTransform {
             scrolling_vector: geo2d::pt(0.0, 0.0),
             zoom_from: 1.0,
             zoom_to: 1.0,
-            view_from: geo2d::pt(0.0, 0.0),
-            view_to: geo2d::pt(0.0, 0.0),
+            view_from: MapPoint::ZERO,
+            view_to: MapPoint::ZERO,
         };
         bg.generate_scrolling_table();
         bg
@@ -344,16 +344,16 @@ fn default_zoom_factor() -> f32 {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct CameraState {
     /// Top-left corner of the view in map coordinates.
-    pub view_position: Point2D,
+    pub view_position: MapPoint,
     /// Previous frame's view position. Display interpolation scratch:
     /// kept on the legacy camera object for now, but excluded from
     /// deterministic snapshots and rollback hashes.
     #[serde(skip)]
-    pub old_view_position: Point2D,
+    pub old_view_position: MapPoint,
     /// Target position for camera slide animations.
-    pub camera_slide: Point2D,
+    pub camera_slide: MapPoint,
     /// Desired camera slide destination.
-    pub camera_wanted: Point2D,
+    pub camera_wanted: MapPoint,
     /// Speed of fixed camera movements (0 = not active).
     pub fixed_camera_speed: u16,
 
@@ -392,7 +392,7 @@ pub struct CameraState {
     /// frame.  Populated by `select_follow_element`. Not strictly
     /// serialization state, but while it lives on `EngineInner` it
     /// participates in serde/hash.
-    pub position_saved: Point2D,
+    pub position_saved: ScreenPoint,
 
     /// Currently-executing camera sequence element (zoom / scroll-to /
     /// lock-on). The dispatcher for `Command::CameraGoto`,
@@ -418,16 +418,16 @@ pub struct CameraState {
     /// recentering). Host-input transient state; excluded from sim
     /// snapshots.
     #[serde(skip)]
-    pub pending_zoom_mouse_screen: Option<Point2D>,
+    pub pending_zoom_mouse_screen: Option<ScreenPoint>,
 }
 
 impl Default for CameraState {
     fn default() -> Self {
         Self {
-            view_position: geo2d::pt(0.0, 0.0),
-            old_view_position: geo2d::pt(0.0, 0.0),
-            camera_slide: geo2d::pt(-1.0, -1.0), // -1 = inactive
-            camera_wanted: geo2d::pt(0.0, 0.0),
+            view_position: MapPoint::ZERO,
+            old_view_position: MapPoint::ZERO,
+            camera_slide: MapPoint::new(-1.0, -1.0), // -1 = inactive
+            camera_wanted: MapPoint::ZERO,
             fixed_camera_speed: 0,
             zoom_factor: 1.0,
             old_zoom_factor: 1.0,
@@ -437,7 +437,7 @@ impl Default for CameraState {
             level_size: geo2d::pt(0.0, 0.0),
             displacement: geo2d::pt(0.0, 0.0),
             displacement_counter: 0,
-            position_saved: geo2d::pt(0.0, 0.0),
+            position_saved: ScreenPoint::ZERO,
             sequence_element: None,
             display: super::CameraDisplayState::default(),
             pending_zoom_mouse_screen: None,
@@ -453,7 +453,7 @@ impl CameraState {
 
     /// Deactivate the camera slide.
     pub(crate) fn stop_slide(&mut self) {
-        self.camera_slide = geo2d::pt(-1.0, -1.0);
+        self.camera_slide = MapPoint::new(-1.0, -1.0);
     }
 
     /// Clamp the view position so the camera stays within the level bounds.
@@ -481,7 +481,7 @@ impl CameraState {
                 // Level narrower than viewport at current zoom: fall back
                 // to 1× zoom and park at the origin.
                 self.zoom_factor = 1.0;
-                self.view_position = geo2d::pt(0.0, 0.0);
+                self.view_position = MapPoint::ZERO;
                 return true;
             } else {
                 self.view_position.x = self.level_size.x - view_w;
@@ -494,7 +494,7 @@ impl CameraState {
             if clipped_v {
                 // Level shorter than viewport at current zoom.
                 self.zoom_factor = 1.0;
-                self.view_position = geo2d::pt(0.0, 0.0);
+                self.view_position = MapPoint::ZERO;
                 return true;
             } else {
                 self.view_position.y = self.level_size.y - view_h;
@@ -1705,7 +1705,7 @@ pub struct InputState {
     pub right_mouse_down: bool,
 
     /// Alt modifier is currently held.  Persisted on `InputState`
-    /// rather than read ad-hoc from the SDL scancode state each
+    /// rather than read ad-hoc from the physical key state each
     /// frame.  Updated from the key-state snapshot at the top of the
     /// event loop; consumed by mouse-way append gating, view-cone
     /// overlay, and any other subsystem that doesn't otherwise have
@@ -1973,13 +1973,13 @@ pub enum SoundCommand {
         exclamation_id: u16,
         /// `-1` = random variant.
         variant: i32,
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::MapPoint,
         actor_id: Option<crate::element::EntityId>,
     },
     /// Positional FX (footsteps, impacts, etc.).
     Fx {
         fx_id: u32,
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::MapPoint,
         material: Option<crate::sound_cache::Material>,
     },
     /// Sword-vs-sword clang.
@@ -1987,18 +1987,18 @@ pub enum SoundCommand {
         strike_kind: crate::sound::StrikeKind,
         weapon1: crate::profiles::WeaponMaterial,
         weapon2: crate::profiles::WeaponMaterial,
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::MapPoint,
     },
     /// Weapon-vs-armor impact.
     ImpactFx {
         impact_kind: crate::sound::ImpactKind,
         weapon: crate::profiles::WeaponMaterial,
         armor: crate::profiles::ArmorMaterial,
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::MapPoint,
     },
     /// Camera-relative resume of all sound sources (level enter / wake).
     ResumeAllSources {
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::MapPoint,
         zoom: f32,
     },
     /// Activate a previously-idle sound source by index.
@@ -2022,7 +2022,7 @@ pub enum SoundCommand {
     ForceMusicMode(crate::sound::MusicMode),
     /// Update the sound-system's listen-point (camera tracking).
     SetListenPoint {
-        position: crate::geo2d::Point2D,
+        position: crate::coordinates::MapPoint,
         zoom: f32,
     },
 }
@@ -2147,7 +2147,7 @@ pub struct SideEffects {
     /// drains this by writing the top-left into the active
     /// `PlayerProfile`'s `minimap_x` / `minimap_y` and persisting the
     /// profile.
-    pub pending_minimap_position: Option<crate::geo2d::Point2D>,
+    pub pending_minimap_position: Option<crate::coordinates::ScreenPoint>,
     /// Script/sequence-driven minimap show/hide requests produced this
     /// tick. The minimap itself is host-owned, so the game loop applies
     /// these to `HostDisplayState`.

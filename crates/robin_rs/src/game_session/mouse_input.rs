@@ -11,14 +11,15 @@ use super::{
 };
 use crate::Host;
 use crate::campaign::Campaign;
+use crate::element::{Command, Posture};
 use crate::game::{Game, GameCallbacks};
 use crate::game_operation::GameCode;
-use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu, PauseMenuOutcome};
 use crate::main_entry::{RustCallbacks, current_mission_id};
 use crate::player_command::{FrameCommands, PlayerCommand};
+use crate::profiles::Action;
 use crate::sdl_audio::SdlMixerBackend;
 use crate::ui_screens::MissionChoice;
 use robin_engine::engine::Engine;
@@ -119,7 +120,8 @@ pub(super) fn handle_mouse_input(
                     // start of every left-drag.
                     host.mouse_way.clear();
 
-                    let click_pt = geo2d::pt(mx as f32, my as f32);
+                    let click_pt =
+                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
 
                     if on_minimap {
@@ -131,9 +133,7 @@ pub(super) fn handle_mouse_input(
                         // Don't start multi-selection when clicking minimap
                     } else if !host.input.ignore_next_drag
                         && host.input.has_focus
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(click_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(click_pt)
                     {
                         // Left-drag dispatch:
                         //   - `ignore_next_drag` → entire body skipped.
@@ -150,36 +150,33 @@ pub(super) fn handle_mouse_input(
                         let selected_action = engine.selected_action_for_seat(local_seat);
                         let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
                         match selected_action {
-                            crate::profiles::Action::HelpToClimb => {
+                            Action::HelpToClimb => {
                                 let posture_ok = engine
                                     .seat_selection(local_seat)
                                     .first()
                                     .and_then(|&id| engine.get_entity(id))
                                     .map(|e| e.element_data().posture)
-                                    == Some(crate::element::Posture::HelpingToClimb);
+                                    == Some(Posture::HelpingToClimb);
                                 if posture_ok && !is_swordfighting {
                                     host.input.start_multi_selection(map_pt);
                                 }
                             }
-                            crate::profiles::Action::NoAction
+                            Action::NoAction
                                 if !host.input.is_alt
                                     && !engine.locker_active()
                                     && !is_swordfighting =>
                             {
                                 host.input.start_multi_selection(map_pt);
                             }
-                            crate::profiles::Action::Apple
-                            | crate::profiles::Action::Stone
-                            | crate::profiles::Action::Hit
-                            | crate::profiles::Action::HitHard
-                            | crate::profiles::Action::Heal
-                            | crate::profiles::Action::Lever
-                            | crate::profiles::Action::Strangle => {
+                            Action::Apple
+                            | Action::Stone
+                            | Action::Hit
+                            | Action::HitHard
+                            | Action::Heal
+                            | Action::Lever
+                            | Action::Strangle => {
                                 let cmds = crate::game_input::resolve_action_drag(
-                                    host,
-                                    engine,
-                                    assets,
-                                    map_pt.to_geo(),
+                                    host, engine, assets, map_pt,
                                 );
                                 for cmd in &cmds {
                                     frame_cmds.push(cmd.clone());
@@ -227,7 +224,7 @@ pub(super) fn handle_mouse_input(
 
                 // Mouse move: update minimap drag or multi-select box
                 GameEvent::MouseMove { x, y, .. } => {
-                    let mouse_pt = geo2d::pt(x as f32, y as f32);
+                    let mouse_pt = robin_engine::coordinates::ScreenPoint::new(x as f32, y as f32);
 
                     // While a left drag is in progress and the player
                     // has a swordfighting PC selected (and isn't
@@ -238,11 +235,10 @@ pub(super) fn handle_mouse_input(
                     // double-click stops the append path.
                     if host.input.is_dragging
                         && !host.input.is_alt
-                        && engine.selected_action_for_seat(local_seat)
-                            == crate::profiles::Action::NoAction
+                        && engine.selected_action_for_seat(local_seat) == Action::NoAction
                         && engine.is_seat_selection_swordfighting(local_seat)
                     {
-                        host.mouse_way.add_point(mouse_pt);
+                        host.mouse_way.add_point(mouse_pt.to_geo());
                     }
 
                     // ── Minimap hover / drag update ──
@@ -263,17 +259,13 @@ pub(super) fn handle_mouse_input(
                         && !host.engine_display.minimap().drag_start()
                         && host.input.multi_selection_active
                         && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
                     {
                         host.input.update_multi_selection(map_pt);
                     }
                     if host.input.right_mouse_down
                         && host.input.multi_unselection_active
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
                     {
                         host.input.update_multi_selection(map_pt);
                     }
@@ -292,9 +284,7 @@ pub(super) fn handle_mouse_input(
                     if host.input.left_mouse_down
                         && !host.engine_display.minimap().drag_start()
                         && !host.input.ignore_next_drag
-                        && let Some(map_pt) = host.viewport.screen_to_map(
-                            robin_engine::coordinates::ScreenPoint::from_geo(mouse_pt),
-                        )
+                        && let Some(map_pt) = host.viewport.screen_to_map(mouse_pt)
                     {
                         let selected_action = engine.selected_action_for_seat(local_seat);
                         if matches!(
@@ -308,10 +298,7 @@ pub(super) fn handle_mouse_input(
                                 | crate::profiles::Action::Strangle
                         ) {
                             let cmds = crate::game_input::resolve_action_drag(
-                                host,
-                                engine,
-                                assets,
-                                map_pt.to_geo(),
+                                host, engine, assets, map_pt,
                             );
                             for cmd in &cmds {
                                 frame_cmds.push(cmd.clone());
@@ -341,7 +328,8 @@ pub(super) fn handle_mouse_input(
                     // to open or center-on-click.  Also handles drag
                     // release outside the minimap (cleans up drag
                     // state so it doesn't linger).
-                    let click_pt = geo2d::pt(mx as f32, my as f32);
+                    let click_pt =
+                        robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32);
                     let on_minimap = host.engine_display.minimap().is_over_widget(click_pt);
                     let minimap_handled = on_minimap || host.engine_display.minimap().drag_start();
                     if minimap_handled {
@@ -464,7 +452,7 @@ pub(super) fn handle_mouse_input(
                             if !hit.is_burned && !is_double && !macro_stop_handled {
                                 let selected_action = engine.selected_action_for_seat(local_seat);
                                 portrait_action_handled = match selected_action {
-                                    crate::profiles::Action::Heal => {
+                                    Action::Heal => {
                                         // Target must be alive and injured (life < 100).
                                         let can_heal = engine
                                             .get_entity(pc_id)
@@ -479,7 +467,7 @@ pub(super) fn handle_mouse_input(
                                                 let cmd = PlayerCommand::LaunchInteraction {
                                                     actor: healer_id,
                                                     target: pc_id,
-                                                    command: crate::element::Command::HealCmd,
+                                                    command: Command::HealCmd,
                                                     running: false,
                                                 };
                                                 dispatch_local_command(
@@ -504,8 +492,7 @@ pub(super) fn handle_mouse_input(
                                             false
                                         }
                                     }
-                                    crate::profiles::Action::Shield
-                                    | crate::profiles::Action::BigShield => {
+                                    Action::Shield | Action::BigShield => {
                                         // While the engine is mid-prompt
                                         // for the shield's protected
                                         // target, the same-click commit
@@ -528,7 +515,7 @@ pub(super) fn handle_mouse_input(
                                                 let cmd = PlayerCommand::LaunchInteraction {
                                                     actor: shielder_id,
                                                     target: pc_id,
-                                                    command: crate::element::Command::RaiseShield,
+                                                    command: Command::RaiseShield,
                                                     running: false,
                                                 };
                                                 dispatch_local_command(
@@ -579,7 +566,7 @@ pub(super) fn handle_mouse_input(
                                             tracing::info!(
                                                 "Portrait guard click: centering on guard"
                                             );
-                                            host.viewport.center_on_point(guard_pos.into());
+                                            host.viewport.center_on_point(guard_pos);
                                         }
                                     }
                                     PortraitHitArea::Trumpet => {
@@ -649,7 +636,7 @@ pub(super) fn handle_mouse_input(
                                         // 1, Several (shift) = 5.
                                         if host.input.portrait_drop_ammo_armed
                                             && engine.selected_action_for_seat(local_seat)
-                                                == crate::profiles::Action::NoAction
+                                                == Action::NoAction
                                         {
                                             // Look up the action for this button index
                                             let btn_action = engine
@@ -663,8 +650,8 @@ pub(super) fn handle_mouse_input(
                                                             p.actions.get(btn_idx as usize).copied()
                                                         })
                                                 })
-                                                .unwrap_or(crate::profiles::Action::NoAction);
-                                            if btn_action != crate::profiles::Action::NoAction {
+                                                .unwrap_or(Action::NoAction);
+                                            if btn_action != Action::NoAction {
                                                 let amount: u32 = if shift_held { 5 } else { 1 };
                                                 let cmd = PlayerCommand::DropAmmo {
                                                     pc_id,
@@ -836,20 +823,11 @@ pub(super) fn handle_mouse_input(
                             {
                                 // Resolve swordfight first, then regular click
                                 let mut cmds = crate::game_input::resolve_swordfight(
-                                    host,
-                                    engine,
-                                    assets,
-                                    map_pt.to_geo(),
-                                    true,
+                                    host, engine, assets, map_pt, true,
                                 );
                                 if cmds.is_empty() {
                                     cmds = crate::game_input::resolve_left_click(
-                                        host,
-                                        engine,
-                                        assets,
-                                        map_pt.to_geo(),
-                                        shift_held,
-                                        ctrl_held,
+                                        host, engine, assets, map_pt, shift_held, ctrl_held,
                                         is_double,
                                     );
                                 }
@@ -930,10 +908,9 @@ pub(super) fn handle_mouse_input(
 
                         // Right-click on minimap closes it.
                         if host.engine_display.minimap().is_displayed()
-                            && host
-                                .engine_display
-                                .minimap()
-                                .is_over_widget(geo2d::pt(mx as f32, my as f32))
+                            && host.engine_display.minimap().is_over_widget(
+                                robin_engine::coordinates::ScreenPoint::new(mx as f32, my as f32),
+                            )
                         {
                             let cmd = PlayerCommand::MinimapRightClick;
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -1208,7 +1185,7 @@ pub(super) async fn handle_pause_menu_events(
                         input_translator.install_hud_dead_zones();
                         if host.minimap_corner_size.x > 0.0 {
                             let cmd = PlayerCommand::MinimapResize {
-                                base: geo2d::pt(w - 83.0, 38.0),
+                                base: robin_engine::coordinates::ScreenPoint::new(w - 83.0, 38.0),
                                 corner_size: host.minimap_corner_size,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);

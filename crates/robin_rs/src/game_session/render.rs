@@ -5,6 +5,7 @@
 use super::selected_pc_profile_indices;
 use super::tick::drain_pending_console_output;
 use crate::Host;
+use crate::element::Posture;
 use crate::game::Game;
 use crate::game_render::{
     apply_ambiance_overlay, render_bg_animations_gpu, render_combat_status_bars,
@@ -18,6 +19,10 @@ use crate::game_render::{
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
+use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
+use crate::sound::MusicMode;
+use crate::ui_panel::{PortraitHitArea, hit_test_portrait_detailed};
+use crate::widget::requirements::{RequirementSlot, build_requirements_state};
 use robin_engine::engine::Engine;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 
@@ -93,7 +98,7 @@ pub(super) fn capture_save_thumbnail(
     assets: &robin_engine::engine::LevelAssets,
     dev: &robin_engine::engine::DevState,
     ctx: &mut RenderContext<'_>,
-) -> Option<crate::save_file::Thumbnail> {
+) -> Option<Thumbnail> {
     let saved_zoom = ctx.zoom_tooltip.clone();
     let saved_corner = ctx.corner_tooltip.clone();
     let saved_requirements = ctx.requirements_tooltip.clone();
@@ -105,17 +110,13 @@ pub(super) fn capture_save_thumbnail(
     render_frame(engine, display, host, assets, dev, ctx);
 
     let thumb = match ctx.renderer.capture_frame_rgba() {
-        Some((w, h, rgba)) => crate::save_file::Thumbnail::from_rgba_downscaled(
-            w,
-            h,
-            &rgba,
-            crate::save_file::THUMB_WIDTH,
-            crate::save_file::THUMB_HEIGHT,
-        )
-        .map_err(|err| {
-            tracing::warn!("Save thumbnail capture failed: {err:#}");
-        })
-        .ok(),
+        Some((w, h, rgba)) => {
+            Thumbnail::from_rgba_downscaled(w, h, &rgba, THUMB_WIDTH, THUMB_HEIGHT)
+                .map_err(|err| {
+                    tracing::warn!("Save thumbnail capture failed: {err:#}");
+                })
+                .ok()
+        }
         None => {
             tracing::warn!("Save thumbnail capture failed: renderer returned no framebuffer");
             None
@@ -396,9 +397,9 @@ fn render_display_info_overlay(
         0x03ef
     } else {
         match host.sound.music_mode() {
-            crate::sound::MusicMode::Quiet => 0x07ef,
-            crate::sound::MusicMode::Alert => 0xfbe0,
-            crate::sound::MusicMode::Fight => 0xf80f,
+            MusicMode::Quiet => 0x07ef,
+            MusicMode::Alert => 0xfbe0,
+            MusicMode::Fight => 0xf80f,
         }
     };
     text(
@@ -460,11 +461,11 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
         return;
     }
     let rect = robin_engine::sprite::BBox::new(
-        robin_engine::geo2d::Point2D {
+        robin_engine::geo2d::GeoPoint2D {
             x: x as f32,
             y: y as f32,
         },
-        robin_engine::geo2d::Point2D {
+        robin_engine::geo2d::GeoPoint2D {
             x: (x + w) as f32,
             y: (y + h) as f32,
         },
@@ -496,12 +497,7 @@ pub(super) fn update_mouse_and_cursor(
     last_cursor_id: &mut i32,
 ) {
     let mouse_screen = threaded_input.position();
-    let Some(mouse_map) =
-        host.viewport
-            .screen_to_map(robin_engine::coordinates::ScreenPoint::from_geo(
-                mouse_screen,
-            ))
-    else {
+    let Some(mouse_map) = host.viewport.screen_to_map(mouse_screen) else {
         return;
     };
     // `is_alt_effective()` so the permanent-alt toggle affects
@@ -512,7 +508,7 @@ pub(super) fn update_mouse_and_cursor(
         host,
         assets,
         dev,
-        mouse_map.to_geo(),
+        mouse_map,
         alt_for_cursor,
         shift_held,
     );
@@ -531,7 +527,7 @@ pub(super) fn update_mouse_and_cursor(
         robin_engine::profiles::Action::Heal
             | robin_engine::profiles::Action::Shield
             | robin_engine::profiles::Action::BigShield
-    ) && let Some(hit) = crate::ui_panel::hit_test_portrait_detailed(
+    ) && let Some(hit) = hit_test_portrait_detailed(
         &manager.engine,
         local_seat,
         portrait_cache,
@@ -763,7 +759,7 @@ pub(super) fn render_frame(
             continue;
         }
         let elem = entity.element_data();
-        if elem.posture == crate::element::Posture::Flying {
+        if elem.posture == Posture::Flying {
             continue;
         }
         let map_pos =
@@ -786,7 +782,7 @@ pub(super) fn render_frame(
         let pos = &elem.position_map();
         let mut map_pt = *pos;
         // Offset +(0, -50) when the PC is on shoulders.
-        if elem.posture == crate::element::Posture::OnShoulders {
+        if elem.posture == Posture::OnShoulders {
             map_pt.y -= 50.0;
         }
         let Some(screen_pt) = host.viewport.map_to_screen(map_pt) else {
@@ -844,18 +840,15 @@ pub(super) fn render_frame(
         {
             let mission_team = campaign.mission_team_profile_indices();
             let selected = selected_pc_profile_indices(engine, local_seat);
-            if let Some(req) = crate::widget::requirements::build_requirements_state(
+            if let Some(req) = build_requirements_state(
                 campaign,
                 &assets.profile_manager,
                 next_idx,
                 &mission_team,
                 &selected,
-            ) && let Some(slot_idx) =
-                crate::ui_panel::hit_test_requirements_bar(sw, &req, mp.x as i32, mp.y as i32)
-                && let Some(crate::widget::requirements::RequirementSlot::RequiredAction {
-                    action,
-                    ..
-                }) = req.slots.get(slot_idx)
+            ) && let Some(slot_idx) = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp)
+                && let Some(RequirementSlot::RequiredAction { action, .. }) =
+                    req.slots.get(slot_idx)
             {
                 engine.collect_pcs_with_action(assets, *action, &mut host.input.marked_pc_ids);
             }
@@ -864,16 +857,10 @@ pub(super) fn render_frame(
         // Portrait guard-swap hover: when hovering the guard
         // indicator on a burned PC's portrait, flash the PC's
         // guard NPC.
-        if let Some(hit) = crate::ui_panel::hit_test_portrait_detailed(
-            engine,
-            local_seat,
-            portrait_cache,
-            sw,
-            sh,
-            mp.x,
-            mp.y,
-        ) && hit.is_burned
-            && hit.area == crate::ui_panel::PortraitHitArea::Guard
+        if let Some(hit) =
+            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y)
+            && hit.is_burned
+            && hit.area == PortraitHitArea::Guard
             && let Some(robin_engine::element::Entity::Pc(pc)) = engine.get_entity(hit.pc_id)
             && let Some(guard_id) = pc.pc.guard
         {
@@ -1048,7 +1035,7 @@ pub(super) fn render_frame(
         let mission_team = campaign.mission_team_profile_indices();
         let selected = selected_pc_profile_indices(engine, local_seat);
         if let Some(next_idx) = campaign.next_mission_idx
-            && let Some(req) = crate::widget::requirements::build_requirements_state(
+            && let Some(req) = build_requirements_state(
                 campaign,
                 &assets.profile_manager,
                 next_idx,
@@ -1070,8 +1057,7 @@ pub(super) fn render_frame(
             // crosses the idle threshold.
             let mp = threaded_input.position();
             let sw = renderer.screen_width();
-            let hovered_slot =
-                crate::ui_panel::hit_test_requirements_bar(sw, &req, mp.x as i32, mp.y as i32);
+            let hovered_slot = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp);
             requirements_tooltip.update(hovered_slot);
             if let Some(slot_idx) = requirements_tooltip.ready_slot()
                 && let Some(slot) = req.slots.get(slot_idx)
@@ -1308,19 +1294,12 @@ pub(super) fn render_frame(
         let mp = threaded_input.position();
         let sw = renderer.screen_width();
         let sh = renderer.screen_height();
-        let hovered_action_btn = crate::ui_panel::hit_test_portrait_detailed(
-            engine,
-            local_seat,
-            portrait_cache,
-            sw,
-            sh,
-            mp.x,
-            mp.y,
-        )
-        .and_then(|hit| match hit.area {
-            crate::ui_panel::PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
-            _ => None,
-        });
+        let hovered_action_btn =
+            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y)
+                .and_then(|hit| match hit.area {
+                    PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
+                    _ => None,
+                });
         pc_action_tooltip.update(hovered_action_btn);
         if let Some((slot, btn)) = pc_action_tooltip.ready_button()
             && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)

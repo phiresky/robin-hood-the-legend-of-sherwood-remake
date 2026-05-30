@@ -8,7 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D, Vec2D, pt};
+use crate::coordinates::{MapPoint, ScreenBBox, ScreenPoint};
+use crate::geo2d::{Vec2D, pt};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constants
@@ -267,7 +268,7 @@ pub struct MinimapState {
     pub(crate) restore: bool,
 
     /// Saved map box to restore after highlight-driven centering.
-    pub(crate) memory_box: BBox2D,
+    pub(crate) memory_box: ScreenBBox,
 
     /// Queue of elements with delayed highlight reveal.
     pub(crate) highlighted_elements: Vec<HighlightedElement>,
@@ -286,19 +287,19 @@ pub struct MinimapState {
     pub(crate) capture: bool,
 
     /// Mouse position at drag start.
-    pub(crate) dragging_point: Point2D,
+    pub(crate) dragging_point: ScreenPoint,
 
     /// Map box position before a drag started.
-    pub(crate) position_before_dragging: Point2D,
+    pub(crate) position_before_dragging: ScreenPoint,
 
     /// Size of the map bitmap in pixels.
     pub(crate) map_size: Vec2D,
 
     /// Current bounding box of the deployed map.
-    pub(crate) map_box: BBox2D,
+    pub(crate) map_box: ScreenBBox,
 
     /// Bounding box of the minimap button (collapsed state).
-    pub(crate) button_box: BBox2D,
+    pub(crate) button_box: ScreenBBox,
 
     /// Current UI interaction state.
     pub(crate) ui_state: UIState,
@@ -325,17 +326,17 @@ impl Default for MinimapState {
             highlight_refresh: 0,
             close_after_highlight: false,
             restore: false,
-            memory_box: BBox2D::new(),
+            memory_box: ScreenBBox::new(),
             highlighted_elements: Vec::new(),
             drag_start: false,
             dragged: false,
             entered_nicely: false,
             capture: false,
-            dragging_point: pt(0.0, 0.0),
-            position_before_dragging: pt(0.0, 0.0),
+            dragging_point: ScreenPoint::ZERO,
+            position_before_dragging: ScreenPoint::ZERO,
             map_size: pt(0.0, 0.0),
-            map_box: BBox2D::new(),
-            button_box: BBox2D::new(),
+            map_box: ScreenBBox::new(),
+            button_box: ScreenBBox::new(),
             ui_state: UIState::Default,
             map_hit_mask: None,
             button_hit_mask: None,
@@ -357,12 +358,12 @@ impl MinimapState {
 
     /// Current bounding box of the deployed map (`is_somewhere() == false`
     /// until the map has been positioned).
-    pub fn map_box(&self) -> &BBox2D {
+    pub fn map_box(&self) -> &ScreenBBox {
         &self.map_box
     }
 
     /// Bounding box of the collapsed minimap button.
-    pub fn button_box(&self) -> &BBox2D {
+    pub fn button_box(&self) -> &ScreenBBox {
         &self.button_box
     }
 
@@ -399,7 +400,7 @@ impl MinimapState {
     ///
     /// First checks the active bounding box (map when deployed, button when
     /// collapsed), then pixel-tests against the corresponding [`HitMask`].
-    pub fn is_over_widget(&self, screen_pos: Point2D) -> bool {
+    pub fn is_over_widget(&self, screen_pos: ScreenPoint) -> bool {
         let (active_box, mask) = if self.map_displayed {
             (&self.map_box, &self.map_hit_mask)
         } else {
@@ -536,7 +537,7 @@ impl MinimapState {
             let map_h = self.map_box.height();
             let new_x = (screen_width - map_w) * 0.5;
             let new_y = (screen_height - map_h) * 0.5;
-            self.map_box = BBox2D::from_corners(pt(new_x, new_y), pt(new_x + map_w, new_y + map_h));
+            self.map_box = ScreenBBox::from_coords(new_x, new_y, new_x + map_w, new_y + map_h);
         }
 
         self.display_map(true, false);
@@ -583,17 +584,17 @@ impl MinimapState {
     /// Convert a world (engine) position to a minimap pixel position.
     ///
     /// `level_size` is the total level dimensions in world units.
-    pub fn real_to_map(&self, engine_pos: Point2D, level_size: Vec2D) -> Option<Point2D> {
+    pub fn real_to_map(&self, engine_pos: MapPoint, level_size: Vec2D) -> Option<ScreenPoint> {
         if !self.map_box.is_somewhere() {
             return None;
         }
 
-        let usable = BBox2D::from_corners(
-            pt(
+        let usable = ScreenBBox::from_corners(
+            ScreenPoint::new(
                 self.map_box.top_left().x + NON_MAP_AREA.x,
                 self.map_box.top_left().y + NON_MAP_AREA.y,
             ),
-            pt(
+            ScreenPoint::new(
                 self.map_box.bottom_right().x - NON_MAP_AREA.x,
                 self.map_box.bottom_right().y - NON_MAP_AREA.y,
             ),
@@ -606,7 +607,7 @@ impl MinimapState {
         let fx = engine_pos.x / level_size.x;
         let fy = engine_pos.y / level_size.y;
 
-        Some(pt(
+        Some(ScreenPoint::new(
             (usable.top_left().x + usable.width() * fx).floor(),
             (usable.top_left().y + usable.height() * fy).floor(),
         ))
@@ -615,17 +616,17 @@ impl MinimapState {
     /// Convert a minimap pixel position back to a world (engine) position.
     ///
     /// `level_size` is the total level dimensions in world units.
-    pub fn map_to_real(&self, map_pos: Point2D, level_size: Vec2D) -> Option<Point2D> {
+    pub fn map_to_real(&self, map_pos: ScreenPoint, level_size: Vec2D) -> Option<MapPoint> {
         if !self.map_box.is_somewhere() {
             return None;
         }
 
-        let usable = BBox2D::from_corners(
-            pt(
+        let usable = ScreenBBox::from_corners(
+            ScreenPoint::new(
                 self.map_box.top_left().x + NON_MAP_AREA.x,
                 self.map_box.top_left().y + NON_MAP_AREA.y,
             ),
-            pt(
+            ScreenPoint::new(
                 self.map_box.bottom_right().x - NON_MAP_AREA.x,
                 self.map_box.bottom_right().y - NON_MAP_AREA.y,
             ),
@@ -644,7 +645,7 @@ impl MinimapState {
         let fx = local.x / w;
         let fy = local.y / h;
 
-        Some(pt(level_size.x * fx, level_size.y * fy))
+        Some(MapPoint::new(level_size.x * fx, level_size.y * fy))
     }
 
     /// Set the widget base position and re-derive button and map boxes.
@@ -654,14 +655,18 @@ impl MinimapState {
     /// RHMAP_CORNER resource.
     pub(crate) fn set_widget_position(
         &mut self,
-        base: Point2D,
+        base: ScreenPoint,
         corner_size: Vec2D,
         screen_width: f32,
         screen_height: f32,
     ) {
         // button_box = base position sized to corner sprite
-        self.button_box =
-            BBox2D::from_corners(base, pt(base.x + corner_size.x, base.y + corner_size.y));
+        self.button_box = ScreenBBox::from_coords(
+            base.x,
+            base.y,
+            base.x + corner_size.x,
+            base.y + corner_size.y,
+        );
 
         // Re-validate map position (derives default from button if off-screen).
         // We always call `set_minimap_position` here even if the bitmap is
@@ -673,7 +678,7 @@ impl MinimapState {
         } else {
             // Pre-init re-entry: feed the sentinel so the function takes
             // the default-fallback path once `map_size` has been set.
-            pt(65536.0, 65536.0)
+            ScreenPoint::new(65536.0, 65536.0)
         };
         self.set_minimap_position(map_tl, screen_width, screen_height);
     }
@@ -683,7 +688,7 @@ impl MinimapState {
     /// Returns `true` if the position was valid and accepted.
     pub(crate) fn set_minimap_position(
         &mut self,
-        position: Point2D,
+        position: ScreenPoint,
         screen_width: f32,
         screen_height: f32,
     ) -> bool {
@@ -696,23 +701,27 @@ impl MinimapState {
             return false;
         }
 
-        let screen_box = BBox2D::from_corners(pt(0.0, 0.0), pt(screen_width, screen_height));
+        let screen_box = ScreenBBox::from_coords(0.0, 0.0, screen_width, screen_height);
 
         let map_w = self.map_size.x;
         let map_h = self.map_size.y;
 
         // Test box inset by the non-map dead zone.
-        let test_box = BBox2D::from_corners(
-            pt(position.x + NON_MAP_AREA.x, position.y + NON_MAP_AREA.y),
-            pt(
+        let test_box = ScreenBBox::from_corners(
+            ScreenPoint::new(position.x + NON_MAP_AREA.x, position.y + NON_MAP_AREA.y),
+            ScreenPoint::new(
                 position.x + map_w - NON_MAP_AREA.x,
                 position.y + map_h - NON_MAP_AREA.y,
             ),
         );
 
         if screen_box.intersects_bbox(&test_box) {
-            self.map_box =
-                BBox2D::from_corners(position, pt(position.x + map_w, position.y + map_h));
+            self.map_box = ScreenBBox::from_coords(
+                position.x,
+                position.y,
+                position.x + map_w,
+                position.y + map_h,
+            );
             // The new top-left should be written back to the active player
             // profile.  The engine doesn't carry a profile reference; flag
             // dirty and let the host drain via
@@ -722,9 +731,13 @@ impl MinimapState {
         }
 
         // Initial or completely off-screen: snap to default position.
-        let sentinel = pt(65536.0, 65536.0);
-        let full_map_box =
-            BBox2D::from_corners(position, pt(position.x + map_w, position.y + map_h));
+        let sentinel = ScreenPoint::new(65536.0, 65536.0);
+        let full_map_box = ScreenBBox::from_coords(
+            position.x,
+            position.y,
+            position.x + map_w,
+            position.y + map_h,
+        );
         let is_sentinel =
             (position.x - sentinel.x).abs() < 1.0 && (position.y - sentinel.y).abs() < 1.0;
         if (is_sentinel || !screen_box.intersects_bbox(&full_map_box))
@@ -732,10 +745,8 @@ impl MinimapState {
         {
             let default_x = self.button_box.x_min() - map_w;
             let default_y = self.button_box.y_max();
-            self.map_box = BBox2D::from_corners(
-                pt(default_x, default_y),
-                pt(default_x + map_w, default_y + map_h),
-            );
+            self.map_box =
+                ScreenBBox::from_coords(default_x, default_y, default_x + map_w, default_y + map_h);
         }
 
         false
@@ -745,7 +756,7 @@ impl MinimapState {
     /// when it was set.  Used by the engine's command-apply path to
     /// propagate drag-induced position changes into
     /// [`SideEffects::pending_minimap_position`].
-    pub(crate) fn take_pending_position(&mut self) -> Option<Point2D> {
+    pub(crate) fn take_pending_position(&mut self) -> Option<ScreenPoint> {
         if self.position_dirty && self.map_box.is_somewhere() {
             self.position_dirty = false;
             Some(self.map_box.top_left())
@@ -782,7 +793,7 @@ impl MinimapState {
     /// displacement exceeds 15 px.
     pub(crate) fn manage_dragging(
         &mut self,
-        mouse_pos: Point2D,
+        mouse_pos: ScreenPoint,
         screen_width: f32,
         screen_height: f32,
     ) {
@@ -805,7 +816,7 @@ impl MinimapState {
             let dy = mouse_pos.y - self.dragging_point.y;
             let dist_sq = dx * dx + dy * dy;
             if dist_sq > 15.0 * 15.0 {
-                let new_pos = pt(
+                let new_pos = ScreenPoint::new(
                     self.position_before_dragging.x + dx,
                     self.position_before_dragging.y + dy,
                 );
@@ -843,16 +854,16 @@ impl MinimapState {
 ///
 /// Click hit-testing insets [`NON_MAP_AREA`] from the full map bounding
 /// box; this helper produces that inset rectangle.
-pub fn usable_area(map_box: &BBox2D) -> BBox2D {
+pub fn usable_area(map_box: &ScreenBBox) -> ScreenBBox {
     if !map_box.is_somewhere() {
-        return BBox2D::new();
+        return ScreenBBox::new();
     }
-    BBox2D::from_corners(
-        pt(
+    ScreenBBox::from_corners(
+        ScreenPoint::new(
             map_box.top_left().x + NON_MAP_AREA.x,
             map_box.top_left().y + NON_MAP_AREA.y,
         ),
-        pt(
+        ScreenPoint::new(
             map_box.bottom_right().x - NON_MAP_AREA.x,
             map_box.bottom_right().y - NON_MAP_AREA.y,
         ),
@@ -1338,19 +1349,21 @@ mod tests {
     #[test]
     fn real_to_map_conversion() {
         let mut mm = MinimapState::new();
-        mm.map_box = BBox2D::from_corners(pt(100.0, 100.0), pt(300.0, 300.0));
+        mm.map_box = ScreenBBox::from_coords(100.0, 100.0, 300.0, 300.0);
 
         let level_size = pt(1000.0, 1000.0);
 
         // Top-left corner of the world → near top-left of usable area.
-        let result = mm.real_to_map(pt(0.0, 0.0), level_size).unwrap();
+        let result = mm.real_to_map(MapPoint::new(0.0, 0.0), level_size).unwrap();
         let usable_tl_x = 100.0 + NON_MAP_AREA.x;
         let usable_tl_y = 100.0 + NON_MAP_AREA.y;
         assert!((result.x - usable_tl_x).abs() < 1.0);
         assert!((result.y - usable_tl_y).abs() < 1.0);
 
         // Center of the world → center of usable area.
-        let result = mm.real_to_map(pt(500.0, 500.0), level_size).unwrap();
+        let result = mm
+            .real_to_map(MapPoint::new(500.0, 500.0), level_size)
+            .unwrap();
         let usable_cx = usable_tl_x + (300.0 - 100.0 - 2.0 * NON_MAP_AREA.x) * 0.5;
         let usable_cy = usable_tl_y + (300.0 - 100.0 - 2.0 * NON_MAP_AREA.y) * 0.5;
         assert!((result.x - usable_cx).abs() < 1.0);

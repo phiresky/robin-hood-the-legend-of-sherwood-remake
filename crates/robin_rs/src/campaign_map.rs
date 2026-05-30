@@ -17,6 +17,7 @@ use crate::resource_manager::ResourceManager;
 use crate::ui_screens::MissionDescriptionScreen;
 use crate::widget::FrameWnd;
 use robin_assets::res_descr::{self, LevelDescriptors};
+use robin_engine::coordinates::ScreenBBox;
 
 const MAP_W: i32 = 640;
 const MAP_H: i32 = 480;
@@ -404,7 +405,7 @@ fn build_campaign_frame(
 ) -> FrameWnd {
     let mut frame = FrameWnd::new(
         "Campaign Map",
-        crate::geo2d::BBox2D::from_coords(0.0, 0.0, 629.0, 480.0),
+        ScreenBBox::from_coords(0.0, 0.0, 629.0, 480.0),
         0,
     );
     frame.set_frame_id(resource_ids::RHID_CAMPAIGN_MAP as u32);
@@ -692,12 +693,7 @@ impl ShortMissionDescriptionWindow {
 
         let mut frame = FrameWnd::new(
             "Short mission description",
-            crate::geo2d::BBox2D::from_coords(
-                x as f32,
-                y as f32,
-                (x + 220) as f32,
-                (y + 100) as f32,
-            ),
+            ScreenBBox::from_coords(x as f32, y as f32, (x + 220) as f32, (y + 100) as f32),
             0,
         );
         frame.add_widget_absolute(widget_bridge::make_picture_with_resource(

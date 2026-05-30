@@ -28,12 +28,12 @@ pub use toggle::WidgetToggleButton;
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D};
 use crate::ui::{
     MouseButtons, ProbeCode, RendererAlphaConstant, RendererBase, RendererBitmap, RendererListbox,
     RendererShadow, RendererText, ResourceId, UiEvent, UiEventData, UiMsg, UiProbe, UiState,
     resource_widget_id,
 };
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
 // ─── Widget ID ──────────────────────────────────────────────────────
 
@@ -92,7 +92,7 @@ impl CaptureSlot {
 /// see [`CaptureSlot`]. Callers that don't care about capture pass
 /// `None`.
 pub struct WidgetInput<'a> {
-    pub mouse_position: Point2D,
+    pub mouse_position: ScreenPoint,
     pub mouse_z: i16,
     pub mouse_button: MouseButtons,
     pub keyboard: &'a crate::ui::UiKeyboard,
@@ -150,7 +150,7 @@ impl WidgetRenderer {
     /// transparency test against the widget's surface (honouring an
     /// attached `AlphaMask` if the wiring layer baked one from the
     /// bound sprite — see `widget_bridge::attach_alpha_masks`).
-    pub fn is_real_point(&self, point: Point2D) -> bool {
+    pub fn is_real_point(&self, point: ScreenPoint) -> bool {
         match self {
             Self::Alpha(r) => r.is_real_point(point),
             _ => self.base().is_some_and(|b| b.is_real_point(point)),
@@ -158,7 +158,7 @@ impl WidgetRenderer {
     }
 
     /// Set the bounding box on the underlying renderer.
-    pub fn set_position(&mut self, bbox: BBox2D) {
+    pub fn set_position(&mut self, bbox: ScreenBBox) {
         if let Some(b) = self.base_mut() {
             b.set_position_bbox(bbox);
         }
@@ -225,8 +225,8 @@ pub struct WidgetBase {
     pub with_default: bool,
     /// Whether `create()` has been called.
     pub created: bool,
-    /// Accelerator key scancode (0 = none).
-    pub fast_key: u16,
+    /// Accelerator physical key.
+    pub fast_key: Option<winit::keyboard::KeyCode>,
     /// Creation flags.
     pub flags: u32,
     /// Widget text (button label, input text, etc.).
@@ -234,7 +234,7 @@ pub struct WidgetBase {
     /// Tooltip text (empty = no tooltip).
     pub tooltip_text: String,
     /// Position and size in screen coordinates.
-    pub bbox: BBox2D,
+    pub bbox: ScreenBBox,
     /// Current interaction state.
     pub state: UiState,
     /// Renderer for visual output.
@@ -251,11 +251,11 @@ impl Default for WidgetBase {
             with_focus: true,
             with_default: true,
             created: false,
-            fast_key: 0,
+            fast_key: None,
             flags: 0,
             text: String::new(),
             tooltip_text: String::new(),
-            bbox: BBox2D::new(),
+            bbox: ScreenBBox::new(),
             state: UiState::Default,
             renderer: WidgetRenderer::None,
             rendering_surface: u32::MAX,
@@ -265,7 +265,7 @@ impl Default for WidgetBase {
 
 impl WidgetBase {
     /// Initialize the widget.
-    pub fn create(&mut self, text: &str, bbox: BBox2D, flags: u32) {
+    pub fn create(&mut self, text: &str, bbox: ScreenBBox, flags: u32) {
         self.text = text.to_string();
         self.bbox = bbox;
         self.flags = flags;
@@ -280,7 +280,7 @@ impl WidgetBase {
     pub fn create_with_resource(
         &mut self,
         text: &str,
-        bbox: BBox2D,
+        bbox: ScreenBBox,
         flags: u32,
         resource_id: ResourceId,
     ) {
@@ -303,23 +303,23 @@ impl WidgetBase {
         !self.tooltip_text.is_empty()
     }
 
-    pub fn set_accelerator(&mut self, key: u16) {
+    pub fn set_accelerator(&mut self, key: Option<winit::keyboard::KeyCode>) {
         self.fast_key = key;
     }
 
-    pub fn set_position(&mut self, bbox: BBox2D) {
+    pub fn set_position(&mut self, bbox: ScreenBBox) {
         self.bbox = bbox;
         self.renderer.set_position(bbox);
     }
 
-    pub fn set_position_point(&mut self, point: Point2D) {
+    pub fn set_position_point(&mut self, point: ScreenPoint) {
         // Translate the existing bounding box so its top-left sits at
         // `point`, preserving width/height. If the widget has no bbox
         // yet (hyperspace), fall back to a 1×1 at `point` so we stay
         // compatible with callers that set the position before sizing.
         self.bbox = match self.bbox.0 {
-            Some(_) => BBox2D::from_point_size(point, self.bbox.width(), self.bbox.height()),
-            None => BBox2D::from_point(point),
+            Some(_) => ScreenBBox::from_point_size(point, self.bbox.width(), self.bbox.height()),
+            None => ScreenBBox::from_point(point),
         };
         self.renderer.set_position(self.bbox);
     }
@@ -342,7 +342,7 @@ impl WidgetBase {
     /// pixel-perfect hit testing (e.g. transparency check). Uses the
     /// half-open `is_boxed_point` so adjacent widgets never both claim
     /// a shared right/bottom edge column.
-    pub fn is_inside(&self, point: Point2D) -> bool {
+    pub fn is_inside(&self, point: ScreenPoint) -> bool {
         self.bbox.is_boxed_point(point) && self.renderer.is_real_point(point)
     }
 

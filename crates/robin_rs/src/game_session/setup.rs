@@ -5,13 +5,30 @@
 
 use crate::Host;
 use crate::campaign::Campaign;
+use crate::cursor::CursorRenderer;
 use crate::game::Game;
-use crate::geo2d;
+use crate::geo2d::{self, BBox2D};
+use crate::hud_text::HudFonts;
+use crate::input::ThreadedInput;
+use crate::input_translator::{GameKey, InputTranslator};
+use crate::key_config_store::KeyConfigStore;
 use crate::main_entry::{current_mission_id, picture_to_surface};
+use crate::markers::SelectionMarkRenderer;
+use crate::minimap::HitMask;
+use crate::mouse_trail::MouseTrailRenderer;
 use crate::player_command::PlayerCommand;
+use crate::player_profile::PlayerProfileManager;
 use crate::profiles::MissionLocation;
+use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
 use crate::resource_ids;
+use crate::resource_manager::ResourceManager;
+use crate::sbfile::SbFile;
 use crate::sdl_audio::SdlMixerBackend;
+use crate::sound::{NUM_CHANNELS, SoundMode};
+use crate::sound_config::SoundConfig;
+use crate::titbit::SpriteRow;
+use crate::titbit_renderer::TitbitRenderer;
+use crate::ui_panel::{PortraitCache, load_localized_character_names};
 use robin_engine::coordinates::SpriteLocalPoint;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::geo2d::Vec2D;
@@ -222,7 +239,7 @@ pub(super) fn setup_mission_audio(
     // Load FX bank.
     {
         let fx_bank_path = "Data/Sounds/robin hood.fxg";
-        match crate::sbfile::SbFile::read_all(fx_bank_path) {
+        match SbFile::read_all(fx_bank_path) {
             Ok(data) => match crate::sound_cache::parse_fx_bank(&data) {
                 Ok(elements) => {
                     host.sound.sound_cache.initialize_fx_cache(&elements);
@@ -237,7 +254,7 @@ pub(super) fn setup_mission_audio(
     // Load menu sound bank.
     {
         let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
-        match crate::sbfile::SbFile::read_all(menu_bank_path) {
+        match SbFile::read_all(menu_bank_path) {
             Ok(data) => match crate::sound_cache::parse_menu_bank(&data) {
                 Ok(entries) => {
                     host.sound.sound_cache.initialize_menu_cache(&entries);
@@ -257,7 +274,7 @@ pub(super) fn setup_mission_audio(
     // → WAV-filename resolution, then parse each profile's .dat file
     // and register speech entries.
     {
-        let mut excl_res = crate::resource_manager::ResourceManager::new();
+        let mut excl_res = ResourceManager::new();
         let shipping = host.shipping.as_deref();
         let res_loaded = excl_res
             .attach_or_from_shipping("Data/Sounds/Exclamations/actors.res", shipping)
@@ -306,7 +323,7 @@ pub(super) fn setup_mission_audio(
             for (&excl_id, dat_filename) in &files_needed {
                 let dat_path = format!("Data/Sounds/Exclamations/{dat_filename}");
 
-                let data = match crate::sbfile::SbFile::read_all(&dat_path) {
+                let data = match SbFile::read_all(&dat_path) {
                     Ok(d) => d,
                     Err(e) => {
                         tracing::warn!(
@@ -410,8 +427,7 @@ pub(super) fn setup_mission_audio(
         // Switch from menu music to mission music after the loading
         // screen closes.  SetMode(Mission) halts the menu stream and
         // re-raises load_music so mission music starts from the pool.
-        host.sound
-            .set_mode(crate::sound::SoundMode::Mission, backend);
+        host.sound.set_mode(SoundMode::Mission, backend);
     }
 }
 
@@ -530,7 +546,7 @@ pub(super) fn pre_decode_maps_and_resources(
     Option<robin_engine::engine::level_loading::PreDecodedBackground>,
     Option<robin_engine::engine::level_loading::PreDecodedMinimap>,
     Option<robin_assets::res_descr::LevelDescriptors>,
-    Option<crate::hud_text::HudFonts>,
+    Option<HudFonts>,
 ) {
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -576,7 +592,7 @@ pub(super) fn pre_decode_maps_and_resources(
     if let Some(ls) = loading_screen.as_mut() {
         ls.set_status("Loading HUD fonts...", 0.77);
     }
-    let hud_fonts = crate::hud_text::HudFonts::load();
+    let hud_fonts = HudFonts::load();
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     // Background + minimap bitmaps are pre-decoded inside
@@ -612,11 +628,11 @@ pub(super) fn tick_progress(
 /// Bundle of host-side renderers + caches populated from DEFAULT.RES
 /// during mission setup.  Returned by [`load_mission_sprites`].
 pub(super) struct MissionSprites {
-    pub(super) cursor_renderer: crate::cursor::CursorRenderer,
-    pub(super) selection_mark_renderer: crate::markers::SelectionMarkRenderer,
-    pub(super) mouse_trail_renderer: Option<crate::mouse_trail::MouseTrailRenderer>,
-    pub(super) titbit_renderer: crate::titbit_renderer::TitbitRenderer,
-    pub(super) portrait_cache: crate::ui_panel::PortraitCache,
+    pub(super) cursor_renderer: CursorRenderer,
+    pub(super) selection_mark_renderer: SelectionMarkRenderer,
+    pub(super) mouse_trail_renderer: Option<MouseTrailRenderer>,
+    pub(super) titbit_renderer: TitbitRenderer,
+    pub(super) portrait_cache: PortraitCache,
 }
 
 /// Load the cursor, minimap button/dots, ground-focus marker, selection
@@ -633,14 +649,14 @@ pub(super) fn load_mission_sprites(
     engine: &mut Engine,
     host: &mut Host,
     assets: &robin_engine::engine::LevelAssets,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    text_res: &mut ResourceManager,
 ) -> MissionSprites {
     // ── Cursor setup ──
     // `cursor_res` (DEFAULT.RES) was pre-attached above while the
     // loading screen was still visible.
-    let mut cursor_renderer = crate::cursor::CursorRenderer::new();
+    let mut cursor_renderer = CursorRenderer::new();
     cursor_renderer.init(renderer);
 
     // Load the default game cursor.
@@ -764,7 +780,7 @@ pub(super) fn load_mission_sprites(
     // ── Selection mark renderer ──
     // Loads RHID_GROUND_SELECT (green idle) and RHID_GROUND_SELECT_SWORD
     // (red combat) sprites from DEFAULT.RES.
-    let mut selection_mark_renderer = crate::markers::SelectionMarkRenderer::new();
+    let mut selection_mark_renderer = SelectionMarkRenderer::new();
     selection_mark_renderer.load(cursor_res, renderer, engine.weather().night_color);
 
     // ── Swordfight mouse-trail renderer ──
@@ -774,7 +790,7 @@ pub(super) fn load_mission_sprites(
     // swordfight.
     let mouse_trail_renderer = match cursor_res.get_picture(resource_ids::RHID_MOUSE_TRAIL, 0) {
         Ok(pic) => {
-            let r = crate::mouse_trail::MouseTrailRenderer::from_picture(pic, renderer);
+            let r = MouseTrailRenderer::from_picture(pic, renderer);
             if r.is_none() {
                 tracing::warn!(
                     "RHID_MOUSE_TRAIL picture was not in an RGB16 format or was empty — swordfight trail disabled"
@@ -794,7 +810,7 @@ pub(super) fn load_mission_sprites(
     // Loads the GPU textures for every titbit sprite row from the
     // `titbit_texture_creator` we created up front (before the
     // renderer's canvas borrow).
-    let mut titbit_renderer = crate::titbit_renderer::TitbitRenderer::new();
+    let mut titbit_renderer = TitbitRenderer::new();
     titbit_renderer.load(
         cursor_res,
         renderer.gpu(),
@@ -806,7 +822,7 @@ pub(super) fn load_mission_sprites(
 
     // ── Portrait pictures (character faces in the bottom panel) ──
     // Portraits live in the same DEFAULT.RES file as cursors.
-    let mut portrait_cache = crate::ui_panel::PortraitCache::new();
+    let mut portrait_cache = PortraitCache::new();
     portrait_cache.load(cursor_res, renderer);
 
     // ── Localized character names ──
@@ -819,8 +835,7 @@ pub(super) fn load_mission_sprites(
     // in the host-side `PortraitCache.localized_names` map; the engine
     // never stores them on entities (HUD code resolves on demand from
     // the profile tables + this map).
-    portrait_cache
-        .install_localized_names(crate::ui_panel::load_localized_character_names(text_res));
+    portrait_cache.install_localized_names(load_localized_character_names(text_res));
     portrait_cache.generate_peasant_names(
         text_res,
         engine,
@@ -844,7 +859,7 @@ pub(super) fn load_mission_sprites(
 /// pixel-level `IsRealPoint` test).  Returns `None` when the resource
 /// is missing or has no pictures.
 pub(super) fn extract_minimap_widget_setup(
-    cursor_res: &mut crate::resource_manager::ResourceManager,
+    cursor_res: &mut ResourceManager,
 ) -> Option<robin_engine::engine::MinimapWidgetSetup> {
     let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
     let corner_size = geo2d::pt(btn_w as f32, btn_h as f32);
@@ -857,11 +872,11 @@ pub(super) fn extract_minimap_widget_setup(
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
-        button_hit_mask = Some(crate::minimap::HitMask::from_pixels_u16(
+        button_hit_mask = Some(HitMask::from_pixels_u16(
             pic.width,
             pic.height,
             &pixels,
-            crate::renderer::TRANSPARENT_COLOR_KEY_16,
+            TRANSPARENT_COLOR_KEY_16,
         ));
     }
     Some(robin_engine::engine::MinimapWidgetSetup {
@@ -878,7 +893,7 @@ pub(super) fn extract_minimap_widget_setup(
 /// caller passes that through to [`EngineArgs::ground_mark_sprite`]
 /// and the engine leaves the marker disabled.
 pub(super) fn extract_ground_mark_sprite_data(
-    cursor_res: &mut crate::resource_manager::ResourceManager,
+    cursor_res: &mut ResourceManager,
 ) -> Option<robin_engine::engine::GroundMarkSpriteData> {
     let pics = cursor_res
         .get_pictures(resource_ids::RHID_GROUND_FOCUS)
@@ -924,11 +939,9 @@ pub(super) fn extract_ground_mark_sprite_data(
 /// Indexed by `SpriteRow` discriminant.  Counts sub-pictures without
 /// decoding them — enough for `TitbitManager::num_frames_for_row` to
 /// drive animation.
-pub(super) fn extract_titbit_row_frame_counts(
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-) -> Vec<u16> {
+pub(super) fn extract_titbit_row_frame_counts(cursor_res: &mut ResourceManager) -> Vec<u16> {
     use crate::titbit_renderer::titbit_sprite_row_resources;
-    let num_rows = crate::titbit::SpriteRow::NumberOfRows as usize;
+    let num_rows = SpriteRow::NumberOfRows as usize;
     let mut counts = vec![0u16; num_rows];
     for &(row, res_id) in titbit_sprite_row_resources() {
         let n = cursor_res
@@ -951,9 +964,7 @@ pub(super) fn extract_titbit_row_frame_counts(
 /// `Level.res` — the civilian display-name branch.  Sub-IDs 100-121
 /// hold firstnames, 122-143 surnames, under one of three menu text
 /// tables (full / demo / demo2).
-fn load_peasant_name_pool(
-    text_res: &mut crate::resource_manager::ResourceManager,
-) -> (Vec<String>, Vec<String>) {
+fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<String>) {
     use crate::ui_panel::{MENU_TEXT_TABLE_ID, MENU_TEXT_TABLE_ID_DEMO, MENU_TEXT_TABLE_ID_DEMO2};
     const FIRSTNAME_BASE: usize = 100;
     const SURNAME_BASE: usize = 122;
@@ -963,15 +974,14 @@ fn load_peasant_name_pool(
         MENU_TEXT_TABLE_ID_DEMO,
         MENU_TEXT_TABLE_ID_DEMO2,
     ];
-    let fetch =
-        |res: &mut crate::resource_manager::ResourceManager, sub_id: usize| -> Option<String> {
-            for &tid in &table_ids {
-                if let Ok(s) = res.get_string(tid, sub_id) {
-                    return Some(s.to_string());
-                }
+    let fetch = |res: &mut ResourceManager, sub_id: usize| -> Option<String> {
+        for &tid in &table_ids {
+            if let Ok(s) = res.get_string(tid, sub_id) {
+                return Some(s.to_string());
             }
-            None
-        };
+        }
+        None
+    };
     let firstnames: Vec<String> = (0..NAME_COUNT)
         .filter_map(|i| fetch(text_res, FIRSTNAME_BASE + i))
         .collect();
@@ -1012,7 +1022,7 @@ pub(super) fn load_level_and_sprite_bank(
     game: &mut Game,
     campaign_ref: &mut Campaign,
     profiles: &robin_engine::profiles::ProfileManager,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    text_res: &mut ResourceManager,
     args: &crate::main_entry::CliArgs,
     _screen_width: f32,
     _screen_height: f32,
@@ -1235,7 +1245,7 @@ pub(super) fn load_level_and_sprite_bank(
     let goldeneye_initial = args.goldeneye || args.global_options.golden_eye;
     if let Some(mm) = minimap_widget {
         host.engine_display.setup_minimap_widget(
-            geo2d::pt(_screen_width - 83.0, 38.0),
+            robin_engine::coordinates::ScreenPoint::new(_screen_width - 83.0, 38.0),
             mm.corner_size,
             mm.button_hit_mask,
             _screen_width,
@@ -1313,27 +1323,23 @@ pub(super) fn setup_input_and_camera(
     window_width: u32,
     window_height: u32,
     mission_idx: usize,
-) -> (
-    crate::input::ThreadedInput,
-    crate::input_translator::InputTranslator,
-) {
-    let mut threaded_input = crate::input::ThreadedInput::new();
-    threaded_input.set_clipping(crate::geo2d::BBox2D::from_coords(
+) -> (ThreadedInput, InputTranslator) {
+    let mut threaded_input = ThreadedInput::new();
+    threaded_input.set_clipping(BBox2D::from_coords(
         0.0,
         0.0,
         window_width as f32,
         window_height as f32,
     ));
-    let mut input_translator =
-        crate::input_translator::InputTranslator::new(window_width as f32, window_height as f32);
+    let mut input_translator = InputTranslator::new(window_width as f32, window_height as f32);
 
     // Load key bindings from the active player profile.  Source of
     // truth is the global KeyConfigStore; mirror into host's session
     // cache so the in-game options menu can edit it directly without a
     // store roundtrip every keystroke.
     {
-        let ppm = crate::player_profile::PlayerProfileManager::global();
-        let store = crate::key_config_store::KeyConfigStore::global();
+        let ppm = PlayerProfileManager::global();
+        let store = KeyConfigStore::global();
         if let Some(ref mgr) = *ppm
             && let Some(profile) = mgr.get_active()
             && let Some(ref s) = *store
@@ -1352,8 +1358,7 @@ pub(super) fn setup_input_and_camera(
     // `host.minimap_fast_key` — the game loop reads it out to emit a
     // minimap-toggle command on key release.  Rebind via the pause
     // menu updates the same host field.
-    host.minimap_fast_key =
-        input_translator.get_binding(crate::input_translator::GameKey::DisplayMap);
+    host.minimap_fast_key = input_translator.get_binding(GameKey::DisplayMap);
 
     // Install the four HUD-adjacent edge-scroll dead-zone strips so
     // edge-scroll ignores the cursor while it's parked on or beside
@@ -1439,16 +1444,14 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<SdlMixe
         tracing::info!("sound disabled via `-NOSOUND`; skipping audio backend init");
         return None;
     }
-    let mut audio_backend = match SdlMixerBackend::new(
-        &game.global_options.sound_directory,
-        crate::sound::NUM_CHANNELS,
-    ) {
-        Ok(backend) => Some(backend),
-        Err(e) => {
-            tracing::warn!("Failed to initialize audio: {}. Sound disabled.", e);
-            None
-        }
-    };
+    let mut audio_backend =
+        match SdlMixerBackend::new(&game.global_options.sound_directory, NUM_CHANNELS) {
+            Ok(backend) => Some(backend),
+            Err(e) => {
+                tracing::warn!("Failed to initialize audio: {}. Sound disabled.", e);
+                None
+            }
+        };
     if let Some(backend) = audio_backend.as_mut() {
         host.sound
             .set_music_directory(&game.global_options.music_directory);
@@ -1457,7 +1460,7 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<SdlMixe
         // only when `can_3d_sound()` is true; the kira backend never
         // is, so this lands in 2D with a non-fatal warning.
         let want_3d = {
-            let guard = crate::player_profile::PlayerProfileManager::global();
+            let guard = PlayerProfileManager::global();
             guard
                 .as_ref()
                 .and_then(|m| m.get_active())
@@ -1468,9 +1471,8 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<SdlMixe
             tracing::warn!("Sound manager init failed: {}", e);
         }
         // Apply volumes before set_mode(Menu) so menu music isn't silent.
-        host.sound
-            .apply_volumes(&crate::sound_config::SoundConfig::default());
-        host.sound.set_mode(crate::sound::SoundMode::Menu, backend);
+        host.sound.apply_volumes(&SoundConfig::default());
+        host.sound.set_mode(SoundMode::Menu, backend);
     }
     audio_backend
 }

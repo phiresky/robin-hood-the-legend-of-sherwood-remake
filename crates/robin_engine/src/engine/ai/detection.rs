@@ -8,8 +8,8 @@ use super::snapshots::{Detection, HumanTarget, ObjectTarget, PcSnapshot, Soldier
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
+use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture};
-use crate::geo2d::{self};
 
 /// Royalist-detection scratch type: snapshot of one Lacklandist NPC as a
 /// detection target for the per-royalist visibility pass (P3b).  Built
@@ -19,7 +19,7 @@ use crate::geo2d::{self};
 #[derive(Clone)]
 struct NpcTarget {
     id: EntityId,
-    position: geo2d::Point2D,
+    position: MapPoint,
     layer: u16,
     posture: crate::element::Posture,
     action_state: crate::element::ActionState,
@@ -36,22 +36,22 @@ struct NpcTarget {
     obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
-fn human_eye_point_for_visibility(entity: &Entity) -> (geo2d::Point2D, f32) {
+fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
     let Some(eye) = entity.compute_eyes_point(None) else {
         let position = entity.element_data().position();
         let position_map = entity.element_data().position_map();
-        return (crate::geo2d::pt(position_map.x, position_map.y), position.z);
+        return (position_map, position.z);
     };
     let ground_z = entity.element_data().position().z;
     // `compute_eyes_point` returns the engine's render-space 3D point,
     // where `y = map_y + elevation`. C++ `ComputeVisibility` compares
     // map-space XY and keeps Z separate, so remove only the feet
     // elevation here. Posture XY offsets such as LeaningOut remain.
-    (crate::geo2d::pt(eye.x, eye.y - ground_z), eye.z)
+    (MapPoint::new(eye.x, eye.y - ground_z), eye.z)
 }
 
 struct SoldierSightContext {
-    eye: geo2d::Point2D,
+    eye: MapPoint,
     eye_z: f32,
     dir: i16,
     layer: u16,
@@ -67,7 +67,7 @@ struct SoldierSightContext {
     sector: Option<crate::position_interface::SectorHandle>,
     alert_status: crate::ai::AlertLevel,
     blipped: bool,
-    position_map: geo2d::Point2D,
+    position_map: MapPoint,
     camp: Camp,
     is_rider: bool,
     ignore_bodies: bool,
@@ -119,7 +119,7 @@ impl SoldierSightContext {
                 .map(|a| a.current_music_alert_status)
                 .unwrap_or(crate::ai::AlertLevel::Green),
             blipped: soldier.element.blipped,
-            position_map: crate::geo2d::pt(position_map.x, position_map.y),
+            position_map,
             camp: soldier.soldier.cached_camp,
             is_rider: soldier.soldier.rider,
             ignore_bodies,
@@ -184,7 +184,7 @@ impl EngineInner {
         // will flip it back to `Waiting`.
         #[derive(Clone, Copy)]
         struct FiringListener {
-            position: geo2d::Point2D,
+            position: MapPoint,
             layer: u16,
             position_z: f32,
             pc_id: EntityId,
@@ -217,7 +217,7 @@ impl EngineInner {
             // exit transition next.
             let fl = FiringListener {
                 pc_id,
-                position: pc.element.position_map().to_geo(),
+                position: pc.element.position_map(),
                 layer: pc.element.layer(),
                 position_z: pc.element.position().z,
             };
@@ -253,7 +253,7 @@ impl EngineInner {
             // Independent of the blip state — targets are always
             // eligible for Heard() regardless of `blipped`.
             if entity.kind().is_fx_target() && !firing_listeners.is_empty() {
-                let target_pos = elem.position_map().to_geo();
+                let target_pos = elem.position_map();
                 let target_layer = elem.layer();
                 let target_z = elem.position().z;
                 for pc in &firing_listeners {
@@ -313,7 +313,7 @@ impl EngineInner {
                 continue;
             }
 
-            let blip_pos = elem.position_map().to_geo();
+            let blip_pos = elem.position_map();
             let blip_layer = elem.layer();
             let (blip_eye_xy, blip_eye_z) = if entity.is_human() {
                 human_eye_point_for_visibility(entity)
@@ -584,7 +584,7 @@ impl EngineInner {
                 };
                 (
                     entity.element_data().layer(),
-                    entity.element_data().position_map().to_geo(),
+                    entity.element_data().position_map(),
                     entity.element_data().position().z,
                     npc.ai_state(),
                     entity.is_active(),
@@ -872,7 +872,7 @@ impl EngineInner {
         // get a per-target re-call below, so the night/fog modulation
         // accounts for the target's elevation.
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye,
+            eye.to_geo(),
             eye_z,
             view_radius,
             view_forward,
@@ -912,7 +912,7 @@ impl EngineInner {
         // are disjoint fields on `self`, so the split borrow is
         // valid.  We scope the mut access so we can push to
         // `transitions` afterwards without conflict.
-        let mut commit: Option<(EntityId, geo2d::Point2D, bool)> = None;
+        let mut commit: Option<(EntityId, MapPoint, bool)> = None;
         {
             // Build the obstacle view from individual disjoint
             // fields so the borrow checker can split it from the
@@ -999,7 +999,7 @@ impl EngineInner {
             // replaces it.
             let mut sum_sharpness_new: u32 = 0;
             let mut any_seen_now = false;
-            let mut best_target: Option<(EntityId, geo2d::Point2D, u32)> = None;
+            let mut best_target: Option<(EntityId, MapPoint, u32)> = None;
             let mut max_visibility_raw: f32 = 0.0;
 
             for det in detectables.iter_mut() {
@@ -1066,7 +1066,7 @@ impl EngineInner {
                         .and_then(|h| sight_obstacles.get(usize::from(h)))
                         .map(|obs| {
                             ai_vision::compute_view_radius(
-                                eye,
+                                eye.to_geo(),
                                 eye_z,
                                 view_radius,
                                 view_forward,
@@ -1079,7 +1079,7 @@ impl EngineInner {
                         })
                         .unwrap_or(effective_view_radius_ground);
                     let q = ai_vision::VisibilityQuery {
-                        viewer: eye,
+                        viewer: eye.to_geo(),
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -1102,7 +1102,7 @@ impl EngineInner {
                         // "not in a building".
                         target_is_active_and_outside_building: pc.building_sector.is_none(),
                         target: crate::stealth::detection_point_xy(
-                            pc.position,
+                            pc.position.to_geo(),
                             pc.posture,
                             pc.direction as i16,
                         ),
@@ -1460,8 +1460,8 @@ impl EngineInner {
                         continue;
                     }
                     if !ai_vision::los_clear_spatial(
-                        eye,
-                        pc.position,
+                        eye.to_geo(),
+                        pc.position.to_geo(),
                         layer,
                         sight_obstacles,
                         &self.fast_grid,
@@ -1683,12 +1683,12 @@ impl EngineInner {
                             false
                         } else {
                             crate::ai_vision::is_detecting_target(
-                                ss.position,
+                                ss.position.to_geo(),
                                 ss.direction as i16,
                                 (ss.view_direction[0], ss.view_direction[1]),
                                 ss.real_half_aperture,
                                 ss.view_radius,
-                                me_pos_map,
+                                me_pos_map.to_geo(),
                                 layer,
                                 sight_obstacles,
                                 &self.fast_grid,
@@ -2418,7 +2418,7 @@ impl EngineInner {
                 }
                 let ok = s.element.active && s.npc.life_points > 0 && !s.human.unconscious;
                 (
-                    s.element.position_map().to_geo(),
+                    s.element.position_map(),
                     s.element.layer(),
                     s.element.posture,
                     s.actor.action_state,
@@ -2458,7 +2458,7 @@ impl EngineInner {
         }
 
         let mut to_reveal: Vec<EntityId> = Vec::new();
-        let mut royalist_alert_calls: Vec<(EntityId, geo2d::Point2D)> = Vec::new();
+        let mut royalist_alert_calls: Vec<(EntityId, MapPoint)> = Vec::new();
         let royalist_ids = self.npc_ids.clone();
 
         for npc_id in royalist_ids {
@@ -2507,7 +2507,7 @@ impl EngineInner {
         golden_eye: bool,
         is_forest_level: bool,
         to_reveal: &mut Vec<EntityId>,
-        royalist_alert_calls: &mut Vec<(EntityId, geo2d::Point2D)>,
+        royalist_alert_calls: &mut Vec<(EntityId, MapPoint)>,
     ) {
         // -- Read royalist soldier viewer state --
         let viewer = {
@@ -2545,7 +2545,7 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye,
+            eye.to_geo(),
             eye_z,
             view_radius,
             view_forward,
@@ -2566,7 +2566,7 @@ impl EngineInner {
                     let h = t.obstacle_idx?;
                     let obs = obstacles.get(usize::from(h))?;
                     let r = ai_vision::compute_view_radius(
-                        eye,
+                        eye.to_geo(),
                         eye_z,
                         view_radius,
                         view_forward,
@@ -2604,7 +2604,7 @@ impl EngineInner {
         let _ = current_state; // (state no longer gates Royalist detection)
 
         // -- Mutating pass: detectable list + suspects --
-        let mut commit_target: Option<(EntityId, geo2d::Point2D)> = None;
+        let mut commit_target: Option<(EntityId, MapPoint)> = None;
         {
             // Build the obstacle view from individual fields
             // so the borrow checker can disjoint-split it
@@ -2644,7 +2644,7 @@ impl EngineInner {
 
             let mut sum_sharpness_new: u32 = 0;
             let mut any_seen_now = false;
-            let mut best_target: Option<(EntityId, geo2d::Point2D)> = None;
+            let mut best_target: Option<(EntityId, MapPoint)> = None;
 
             for det in detectables.iter_mut() {
                 let Some(target_id) = det.element else {
@@ -2670,7 +2670,7 @@ impl EngineInner {
                         .copied()
                         .unwrap_or(effective_view_radius_ground);
                     let q = ai_vision::VisibilityQuery {
-                        viewer: eye,
+                        viewer: eye.to_geo(),
                         viewer_direction: dir,
                         view_forward,
                         view_radius,
@@ -2689,7 +2689,7 @@ impl EngineInner {
                         // so this reduces to "not in a building".
                         target_is_active_and_outside_building: target.building_sector.is_none(),
                         target: crate::stealth::detection_point_xy(
-                            target.position,
+                            target.position.to_geo(),
                             target.posture,
                             target.direction,
                         ),
@@ -2962,7 +2962,7 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
-            eye,
+            eye.to_geo(),
             eye_z,
             view_radius,
             view_forward,
@@ -2986,7 +2986,7 @@ impl EngineInner {
                     let h = t.obstacle_idx?;
                     let obs = obstacles.get(usize::from(h))?;
                     let r = ai_vision::compute_view_radius(
-                        eye,
+                        eye.to_geo(),
                         eye_z,
                         view_radius,
                         view_forward,
@@ -3350,7 +3350,7 @@ impl EngineInner {
                     .copied()
                     .unwrap_or(ctx.effective_view_radius_ground);
                 let q = ai_vision::VisibilityQuery {
-                    viewer: ctx.eye,
+                    viewer: ctx.eye.to_geo(),
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3364,7 +3364,7 @@ impl EngineInner {
                     target_is_active_and_outside_building: target.active
                         && target.building_sector.is_none(),
                     target: crate::stealth::detection_point_xy(
-                        target.position,
+                        target.position.to_geo(),
                         target.posture,
                         target.direction,
                     ),
@@ -3568,7 +3568,7 @@ impl EngineInner {
                 0.0
             } else if gate_open {
                 let q = ai_vision::ObjectVisibilityQuery {
-                    viewer: ctx.eye,
+                    viewer: ctx.eye.to_geo(),
                     viewer_direction: ctx.dir,
                     view_forward: ctx.view_forward,
                     view_radius: ctx.view_radius,
@@ -3576,7 +3576,7 @@ impl EngineInner {
                     real_half_aperture: ctx.real_half_aperture,
                     viewer_in_building: ctx.viewer_in_building,
                     object_belongs_to_beggar: object.belongs_to_beggar,
-                    target: object.position,
+                    target: object.position.to_geo(),
                     sight_obstacles: *ctx.sight_obstacles,
                     fast_grid: ctx.fast_grid,
                     layer: ctx.layer,
@@ -3663,7 +3663,7 @@ impl EngineInner {
 /// from the soldier's npc/element state at the start of the per-NPC
 /// pass; nothing here mutates.
 struct ViewContext<'a> {
-    eye: geo2d::Point2D,
+    eye: MapPoint,
     eye_z: f32,
     dir: i16,
     layer: u16,

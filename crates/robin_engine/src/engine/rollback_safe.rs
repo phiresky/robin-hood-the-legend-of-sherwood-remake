@@ -458,12 +458,6 @@ impl Engine {
             .run_cheat_string(assets, dev, selected_view_element, input)
     }
 
-    /// `MapPoint -> geo2d::Point2D` — static, re-exposed so
-    /// host code doesn't need to know the inner type's name.
-    pub fn elem_to_geo(p: crate::coordinates::MapPoint) -> geo2d::Point2D {
-        EngineInner::elem_to_geo(p)
-    }
-
     pub fn restore_rng_from_seed(&mut self, seed: u64) {
         self.inner.restore_rng_from_seed(seed);
     }
@@ -498,7 +492,7 @@ impl Engine {
 
     /// Current cutscene camera view position in world coordinates.
     /// Read-only accessor for HTTP state introspection.
-    pub fn cutscene_camera_view_position(&self) -> geo2d::Point2D {
+    pub fn cutscene_camera_view_position(&self) -> crate::coordinates::MapPoint {
         self.inner.cutscene_camera().view_position
     }
 

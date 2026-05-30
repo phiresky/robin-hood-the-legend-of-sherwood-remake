@@ -611,8 +611,8 @@ pub fn get_nearest_jumpable_jump_line(
     doors: &[crate::gate::Door],
     pc_sector_grid_idx: u32,
     pc_auth: &crate::gate::ActorAuthInfo,
-    pt_start: crate::geo2d::Point2D,
-    pt_goal: crate::geo2d::Point2D,
+    pt_start: crate::geo2d::GeoPoint2D,
+    pt_goal: crate::geo2d::GeoPoint2D,
     test_posture: bool,
 ) -> Option<u32> {
     let sector = fast_grid.level.sectors.get(pc_sector_grid_idx as usize)?;
@@ -702,8 +702,8 @@ impl EngineInner {
     pub fn get_nearest_jumpable_jump_line(
         &self,
         pc_entity: EntityId,
-        pt_start: crate::geo2d::Point2D,
-        pt_goal: crate::geo2d::Point2D,
+        pt_start: crate::geo2d::GeoPoint2D,
+        pt_goal: crate::geo2d::GeoPoint2D,
         test_posture: bool,
     ) -> Option<u32> {
         let entity = self.entities.get(pc_entity.0 as usize)?.as_ref()?;

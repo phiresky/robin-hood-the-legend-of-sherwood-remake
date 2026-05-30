@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::bow_shot::{self};
+use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
@@ -1677,7 +1678,7 @@ impl EngineInner {
     pub fn try_get_drop_position(
         &self,
         entity_id: crate::element::EntityId,
-    ) -> Option<crate::geo2d::Point2D> {
+    ) -> Option<crate::geo2d::GeoPoint2D> {
         let entity = self.get_entity(entity_id)?;
         let hand = entity.compute_hand_point(None)?;
         let move_box = *entity.position_iface().get_move_box();
@@ -1915,7 +1916,7 @@ impl EngineInner {
                         .sounds
                         .push(super::SoundCommand::Fx {
                             fx_id,
-                            position: crate::geo2d::pt(p.x, p.y),
+                            position: p,
                             material: None,
                         });
                 }
@@ -1968,7 +1969,7 @@ impl EngineInner {
                         .sounds
                         .push(super::SoundCommand::Fx {
                             fx_id,
-                            position: crate::geo2d::pt(result.impact_pos.x, result.impact_pos.y),
+                            position: MapPoint::new(result.impact_pos.x, result.impact_pos.y),
                             material: None,
                         });
                 }
@@ -2147,7 +2148,7 @@ impl EngineInner {
                     .sounds
                     .push(super::SoundCommand::Fx {
                         fx_id,
-                        position: crate::geo2d::pt(result.impact_pos.x, result.impact_pos.y),
+                        position: MapPoint::new(result.impact_pos.x, result.impact_pos.y),
                         material: None,
                     });
             }
@@ -2592,7 +2593,7 @@ impl EngineInner {
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: 470,
-                position: position_map.to_geo(),
+                position: position_map,
                 material: None,
             });
 
@@ -2628,7 +2629,7 @@ impl EngineInner {
     fn find_landing_water_obstacle<'a>(
         &'a self,
         assets: &'a LevelAssets,
-        landing: crate::geo2d::Point2D,
+        landing: crate::geo2d::GeoPoint2D,
     ) -> Option<&'a crate::sight_obstacle::SightObstacle> {
         use crate::geo2d::polygon_contains_point;
         const WATER_MATERIAL_CODE: u8 = 5;
@@ -3018,7 +3019,7 @@ impl EngineInner {
                         // variant — the upright move-box was set when
                         // the PC was last upright and isn't overwritten
                         // while OnShoulders.
-                        let climber_pos_geo = crate::geo2d::Point2D {
+                        let climber_pos_geo = crate::geo2d::GeoPoint2D {
                             x: helper_pos.x,
                             y: helper_pos.y,
                         };

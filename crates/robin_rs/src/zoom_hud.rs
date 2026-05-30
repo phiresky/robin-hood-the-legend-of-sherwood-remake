@@ -13,7 +13,7 @@
 //! fall back to the normal frame when a specific state frame is
 //! missing in the resource pack.
 
-use crate::gfx_types::Rect as SdlRect;
+use crate::gfx_types::{Point, Rect as SdlRect};
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -129,7 +129,7 @@ impl ZoomHudLayout {
     /// Hit-test a screen-space click.  Returns the first matching
     /// button that is currently enabled, or `None`.
     pub fn hit_test(&self, x: i32, y: i32, enable: ZoomButtonEnable) -> Option<ZoomButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if enable.zoom_up && self.zoom_up.contains_point(pt) {
             return Some(ZoomButton::ZoomUp);
         }
@@ -144,7 +144,7 @@ impl ZoomHudLayout {
     /// disabled (widgets own their tooltip independently of their
     /// enable state).
     pub fn hit_test_geometric(&self, x: i32, y: i32) -> Option<ZoomButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if self.zoom_up.contains_point(pt) {
             return Some(ZoomButton::ZoomUp);
         }
@@ -277,11 +277,11 @@ pub fn draw_with_sprites(
 
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
             let dst = robin_engine::sprite::BBox::new(
-                crate::geo2d::Point2D {
+                crate::geo2d::GeoPoint2D {
                     x: rect.x() as f32,
                     y: rect.y() as f32,
                 },
-                crate::geo2d::Point2D {
+                crate::geo2d::GeoPoint2D {
                     x: (rect.x() + rect.width() as i32) as f32,
                     y: (rect.y() + rect.height() as i32) as f32,
                 },

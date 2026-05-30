@@ -355,8 +355,8 @@ pub fn apply_minimap(
         guard
             .as_ref()
             .and_then(|m| m.get_active())
-            .map(|p| geo2d::pt(p.minimap_x, p.minimap_y))
-            .unwrap_or_else(|| geo2d::pt(65536.0, 65536.0))
+            .map(|p| robin_engine::coordinates::ScreenPoint::new(p.minimap_x, p.minimap_y))
+            .unwrap_or_else(|| robin_engine::coordinates::ScreenPoint::new(65536.0, 65536.0))
     };
 
     tracing::info!(
@@ -394,19 +394,19 @@ impl EngineLevelLoadExt for Engine {
         let zoom = host.viewport.zoom_factor;
 
         let src = BBox::new(
-            geo2d::Point2D {
+            geo2d::GeoPoint2D {
                 x: view.x,
                 y: view.y,
             },
-            geo2d::Point2D {
+            geo2d::GeoPoint2D {
                 x: view.x + (screen.x / zoom),
                 y: view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
             },
         );
 
         let dst = BBox::new(
-            geo2d::Point2D { x: 0.0, y: 0.0 },
-            geo2d::Point2D {
+            geo2d::GeoPoint2D { x: 0.0, y: 0.0 },
+            geo2d::GeoPoint2D {
                 x: screen.x,
                 y: screen.y - PANNEL_HEIGHT,
             },

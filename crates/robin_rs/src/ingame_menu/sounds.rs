@@ -17,6 +17,7 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
 use crate::ui::{UiEvent, UiMsg};
 use crate::widget::{Widget, WidgetSlider};
+use robin_engine::coordinates::ScreenBBox;
 use robin_engine::sound_cache::SampleLoader;
 
 use super::layout::{
@@ -224,7 +225,7 @@ pub async fn show_sounds(
     ];
     for (i, rect) in slider_rects.iter().enumerate() {
         let mut slider = WidgetSlider::new(ID_SLIDER_BASE + i as u32);
-        slider.base.bbox = crate::geo2d::BBox2D::from_coords(
+        slider.base.bbox = ScreenBBox::from_coords(
             rect.x as f32,
             rect.y as f32,
             (rect.x + rect.w) as f32,

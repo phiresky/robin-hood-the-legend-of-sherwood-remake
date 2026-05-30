@@ -8,7 +8,7 @@
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{self, BBox2D, Point2D};
+use crate::geo2d::{self, BBox2D, GeoPoint2D};
 use crate::sbfile::SbFile;
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -597,7 +597,7 @@ pub struct CharacterProfile {
     pub contextual_actions: [Action; NUMBER_OF_PC_CONTEXTUAL_ACTIONS],
     pub pathfinder_index: u8,
     pub box_move: BBox2D,
-    pub center: Point2D,
+    pub center: GeoPoint2D,
     pub priority: u16,
     pub wake_up: u16,
     pub detection_speed_in_city: u16,
@@ -658,7 +658,7 @@ pub struct SoldierProfile {
     pub strangle: bool,
     pub pathfinder_index: u8,
     pub box_move: BBox2D,
-    pub center: Point2D,
+    pub center: GeoPoint2D,
     pub wake_up: u16,
     pub weapon_material: WeaponMaterial,
     pub armor_material: ArmorMaterial,
@@ -1214,7 +1214,7 @@ impl CharacterProfile {
 
         file.serialize_u8(&mut self.pathfinder_index)?;
         self.box_move.binary_rw(file)?;
-        geo2d::serialize_point2d(file, &mut self.center)?;
+        geo2d::serialize_geo_point(file, &mut self.center)?;
         file.serialize_u16(&mut self.wake_up)?;
 
         let mut wm = self.weapon_material as u32;
@@ -1308,7 +1308,7 @@ impl SoldierProfile {
         file.serialize_u32(&mut self.shooting_weapon_id)?;
         file.serialize_u8(&mut self.pathfinder_index)?;
         self.box_move.binary_rw(file)?;
-        geo2d::serialize_point2d(file, &mut self.center)?;
+        geo2d::serialize_geo_point(file, &mut self.center)?;
         file.serialize_u16(&mut self.wake_up)?;
 
         let mut wm = self.weapon_material as u32;

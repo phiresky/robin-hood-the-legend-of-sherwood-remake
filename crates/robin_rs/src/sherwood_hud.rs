@@ -21,7 +21,7 @@
 //!   Sherwood once the player has picked a mission (so they can
 //!   back out).
 
-use crate::gfx_types::Rect as SdlRect;
+use crate::gfx_types::{Point, Rect as SdlRect};
 
 use crate::ingame_menu::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, button_sprite_state,
@@ -248,7 +248,7 @@ impl SherwoodHudLayout {
     /// layout where `DisplayCampaignMap` and `GoToExit` overlap —
     /// whichever is enabled wins.
     pub fn hit_test(&self, x: i32, y: i32, enable: SherwoodButtonEnable) -> Option<SherwoodButton> {
-        let pt = crate::gfx_types::Point::new(x, y);
+        let pt = Point::new(x, y);
         if enable.display_campaign_map && self.display_campaign_map.contains_point(pt) {
             return Some(SherwoodButton::DisplayCampaignMap);
         }
@@ -438,11 +438,11 @@ pub fn draw_with_sprites(
             // blit into the logical rect anyway so the visuals track
             // our layout.
             let dst = robin_engine::sprite::BBox::new(
-                crate::geo2d::Point2D {
+                crate::geo2d::GeoPoint2D {
                     x: rect.x() as f32,
                     y: rect.y() as f32,
                 },
-                crate::geo2d::Point2D {
+                crate::geo2d::GeoPoint2D {
                     x: (rect.x() + rect.width() as i32) as f32,
                     y: (rect.y() + rect.height() as i32) as f32,
                 },

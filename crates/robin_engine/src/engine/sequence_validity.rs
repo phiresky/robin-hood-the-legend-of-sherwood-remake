@@ -1445,7 +1445,7 @@ fn max_norm_distance(a: &Entity, b: &Entity) -> f32 {
 /// Read a 3D-or-2D target point from a generic sequence element's
 /// property map and project it to 2D for the projectile range check.
 /// The thrown-projectile target fields are normally stored as
-/// `Point3D`; the Rust port may also see them as `Point2D` in older
+/// `Point3D`; the Rust port may also see them as `GeoPoint2D` in older
 /// saves.  The Z is dropped: `is_in_range_for_projectile` re-derives
 /// Z from the projection-area obstacles.
 fn read_target_point_2d(
@@ -1456,14 +1456,14 @@ fn read_target_point_2d(
         crate::sequence::FieldValue::Point3D { x, y, .. } => {
             Some(crate::coordinates::MapPoint { x: *x, y: *y })
         }
-        crate::sequence::FieldValue::Point2D { x, y } => {
+        crate::sequence::FieldValue::GeoPoint2D { x, y } => {
             Some(crate::coordinates::MapPoint { x: *x, y: *y })
         }
         _ => None,
     }
 }
 
-/// Read a target point preserving Z.  `Point2D`-shaped fields are
+/// Read a target point preserving Z.  `GeoPoint2D`-shaped fields are
 /// lifted with `z = 0.0` (matches the spawn-side behaviour at
 /// engine/combat.rs ThrowPurseDone, which lifts the stored target the
 /// same way).
@@ -1479,11 +1479,13 @@ fn read_target_point_3d(
                 z: *z,
             })
         }
-        crate::sequence::FieldValue::Point2D { x, y } => Some(crate::coordinates::WorldPoint3D {
-            x: *x,
-            y: *y,
-            z: 0.0,
-        }),
+        crate::sequence::FieldValue::GeoPoint2D { x, y } => {
+            Some(crate::coordinates::WorldPoint3D {
+                x: *x,
+                y: *y,
+                z: 0.0,
+            })
+        }
         _ => None,
     }
 }

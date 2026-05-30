@@ -41,7 +41,6 @@ pub struct GlobalOptions {
     pub ignore_default_loose: bool,
     pub set_reg: bool,
     pub bypass_fog_sprites_crash: bool,
-    pub record_default_key_config: bool,
 }
 
 impl Default for GlobalOptions {
@@ -77,7 +76,6 @@ impl Default for GlobalOptions {
             ignore_default_loose: false,
             set_reg: false,
             bypass_fog_sprites_crash: false,
-            record_default_key_config: false,
         }
     }
 }
@@ -101,15 +99,5 @@ impl GlobalOptions {
     /// `set_global` has not been called yet (tests, headless tooling).
     pub fn global() -> std::sync::MutexGuard<'static, Option<GlobalOptions>> {
         GLOBAL_OPTIONS.lock().unwrap()
-    }
-
-    /// Read `record_default_key_config` through the singleton.  Returns
-    /// `false` when no global has been installed — safe default for the
-    /// production path.
-    pub fn record_default_key_config_global() -> bool {
-        Self::global()
-            .as_ref()
-            .map(|o| o.record_default_key_config)
-            .unwrap_or(false)
     }
 }

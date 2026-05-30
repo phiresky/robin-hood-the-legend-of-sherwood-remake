@@ -1124,7 +1124,7 @@ fn is_on_wall_or_ladder(
 pub(crate) fn nearest_jump_line_from_sector(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     home_sector_number: i16,
-    from_position: crate::geo2d::Point2D,
+    from_position: crate::geo2d::GeoPoint2D,
     max_distance: f32,
     linked_sector_number: i16,
 ) -> Option<u32> {
@@ -1188,7 +1188,7 @@ pub(crate) fn table_swordfight_jump_line(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     attacker_sector_number: i16,
     victim_sector_number: i16,
-    victim_position: crate::geo2d::Point2D,
+    victim_position: crate::geo2d::GeoPoint2D,
     max_range: f32,
 ) -> Option<u32> {
     // Same sector → no table swordfight needed.
@@ -1298,12 +1298,12 @@ pub(crate) fn number_of_table_swordfight_opponents(
 /// has no free slot within [0, 1] (caller should interrupt the sequence).
 pub(crate) fn find_position_for_table_swordfight(
     entities: &[Option<Entity>],
-    self_position: crate::geo2d::Point2D,
+    self_position: crate::geo2d::GeoPoint2D,
     self_sector: i16,
     self_id: EntityId,
     opponent_id: EntityId,
     jump_line: &crate::jump_line::JumpLine,
-) -> Option<crate::geo2d::Point2D> {
+) -> Option<crate::geo2d::GeoPoint2D> {
     // The opponent must already be swordfighting at least one fighter
     // (us) when this runs.
     let opponent = entities.get(opponent_id.0 as usize)?.as_ref()?;

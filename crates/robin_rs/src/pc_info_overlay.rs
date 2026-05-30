@@ -15,9 +15,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::element::EntityId;
-use crate::geo2d::Point2D;
-#[cfg(test)]
-use crate::geo2d::pt;
+use robin_engine::coordinates::ScreenPoint;
 
 /// Offset from the mouse cursor to the top-left of the popup.
 pub const POSITION_OFFSET: (f32, f32) = (25.0, 10.0);
@@ -94,7 +92,7 @@ impl PcInfoOverlay {
     pub fn show(
         &mut self,
         pc_id: EntityId,
-        mouse: Point2D,
+        mouse: ScreenPoint,
         screen: (i32, i32),
         is_archer: bool,
         sword_capacity: u32,
@@ -151,8 +149,8 @@ impl PcInfoOverlay {
 mod tests {
     use super::*;
 
-    fn p(x: f32, y: f32) -> Point2D {
-        pt(x, y)
+    fn p(x: f32, y: f32) -> ScreenPoint {
+        ScreenPoint::new(x, y)
     }
 
     #[test]

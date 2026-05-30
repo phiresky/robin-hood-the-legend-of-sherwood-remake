@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D, pt};
+use crate::geo2d::{BBox2D, GeoPoint2D, pt};
 use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, MASK_VIEW, RawMask};
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ pub struct RuntimeMask {
     /// Polyline describing the character-masking silhouette (world coords).
     /// Sorted by increasing X.  Used by `is_applied_to_point_character` to
     /// decide whether an actor at a given position is behind the mask.
-    pub character_polyline: Vec<Point2D>,
+    pub character_polyline: Vec<GeoPoint2D>,
 
     /// Highest y (lower on screen) seen along the character polyline — used
     /// by `is_applied_to_box` for the wide-box shortcut.
@@ -94,7 +94,7 @@ pub struct RuntimeMask {
     /// Polyline for projectile masking (world coords).  Used by
     /// `is_applied_to_point_projectile` / `is_applied_to_point_3d` to
     /// mask flying entities (projectiles, flying humans).
-    pub projectile_polyline: Vec<Point2D>,
+    pub projectile_polyline: Vec<GeoPoint2D>,
 
     /// Indices into the engine's sight-obstacle list — populated only when
     /// `mask_type & MASK_OBSTACLE`.  Used by the 3D altitude check in
@@ -140,7 +140,7 @@ impl RuntimeMask {
 
         // Character polyline: sort-of-present only when MASK_CHARACTER is set.
         // When absent we cannot apply to actors, so skip.
-        let character_polyline: Vec<Point2D> = raw
+        let character_polyline: Vec<GeoPoint2D> = raw
             .character_polyline
             .as_ref()
             .map(|pts| pts.iter().map(|&(x, y)| pt(x as f32, y as f32)).collect())
@@ -151,7 +151,7 @@ impl RuntimeMask {
             return None;
         }
 
-        let projectile_polyline: Vec<Point2D> = raw
+        let projectile_polyline: Vec<GeoPoint2D> = raw
             .projectile_polyline
             .as_ref()
             .map(|pts| pts.iter().map(|&(x, y)| pt(x as f32, y as f32)).collect())
@@ -218,13 +218,13 @@ impl RuntimeMask {
     /// `y` value strictly greater than `pt.y` — that is, the test point is
     /// "above" the polyline and therefore behind the building in screen
     /// coordinates (y grows downward, so "greater y" means "lower on screen").
-    pub fn is_applied_to_point_character(&self, point: Point2D) -> bool {
+    pub fn is_applied_to_point_character(&self, point: GeoPoint2D) -> bool {
         polyline_above_point(&self.character_polyline, point)
     }
 
     /// Same shape as `is_applied_to_point_character` but consults the
     /// projectile-masking polyline instead of the character one.
-    pub fn is_applied_to_point_projectile(&self, point: Point2D) -> bool {
+    pub fn is_applied_to_point_projectile(&self, point: GeoPoint2D) -> bool {
         polyline_above_point(&self.projectile_polyline, point)
     }
 
@@ -244,8 +244,8 @@ impl RuntimeMask {
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> bool {
-        let point2d = pt(point.x, point.y);
-        if self.is_applied_to_point_projectile(point2d) {
+        let point_geo = pt(point.x, point.y);
+        if self.is_applied_to_point_projectile(point_geo) {
             return true;
         }
         if (self.mask_type & MASK_OBSTACLE) == 0 {
@@ -255,10 +255,10 @@ impl RuntimeMask {
             let Some(obs) = obstacles.get(usize::from(obs_idx)) else {
                 continue;
             };
-            if !obs.box_ground.contains_point(point2d) {
+            if !obs.box_ground.contains_point(point_geo) {
                 continue;
             }
-            if !obs.contains_point(point2d) {
+            if !obs.contains_point(point_geo) {
                 continue;
             }
             let plane_z = if is_human {
@@ -277,7 +277,7 @@ impl RuntimeMask {
 /// Shared "polyline-above-point" test used by both character and projectile
 /// applications.  Returns true when the polyline's interpolated Y at
 /// `point.x` is strictly greater than `point.y` (screen-space "above").
-fn polyline_above_point(poly: &[Point2D], point: Point2D) -> bool {
+fn polyline_above_point(poly: &[GeoPoint2D], point: GeoPoint2D) -> bool {
     if poly.len() < 2 {
         return false;
     }

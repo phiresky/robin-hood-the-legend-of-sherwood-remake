@@ -18,11 +18,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::BBox2D;
 use crate::ui::{
     MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{BUTTON_DEFAULT, BUTTON_DISABLED, BUTTON_FOCUSED, BUTTON_SELECTED},
 };
+use robin_engine::coordinates::ScreenBBox;
 
 use super::{WidgetBase, WidgetInput, WidgetRadioButton};
 
@@ -119,7 +119,7 @@ impl WidgetSlider {
                 let x0 = left + (i as f32 / count_f) * total_w;
                 let x1 = left + ((i + 1) as f32 / count_f) * total_w;
                 let mut btn = WidgetRadioButton::new(i);
-                btn.base.bbox = BBox2D::from_coords(x0, top, x1, bottom);
+                btn.base.bbox = ScreenBBox::from_coords(x0, top, x1, bottom);
                 btn
             })
             .collect()
@@ -340,13 +340,13 @@ impl WidgetSlider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geo2d::{BBox2D, pt};
     use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
     use crate::widget::WidgetRenderer;
+    use robin_engine::coordinates::ScreenPoint;
 
     fn make_slider(step_count: u32) -> WidgetSlider {
         let mut slider = WidgetSlider::new(7);
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 10.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 10.0);
         slider.base.bbox = bbox;
         slider.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
             base: RendererBase {
@@ -361,7 +361,7 @@ mod tests {
 
     fn input_at(x: f32, buttons: MouseButtons, keyboard: &UiKeyboard) -> WidgetInput<'_> {
         WidgetInput {
-            mouse_position: pt(x, 5.0),
+            mouse_position: ScreenPoint::new(x, 5.0),
             mouse_z: 0,
             mouse_button: buttons,
             keyboard,

@@ -18,8 +18,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, Point2D};
 use crate::ui::{MouseButtons, UiEvent, UiEventData, UiMsg};
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
 use super::{WidgetBase, WidgetInput};
 
@@ -175,11 +175,11 @@ pub struct WidgetListbox<T: Clone = ()> {
 
     // ── Scrollbar geometry (set by layout/renderer) ──
     /// Bounding box of the item area (excluding scrollbar).
-    pub items_bbox: BBox2D,
+    pub items_bbox: ScreenBBox,
     /// Bounding box of the scrollbar track.
-    pub scrollbar_bbox: BBox2D,
+    pub scrollbar_bbox: ScreenBBox,
     /// Bounding box of the scrollbar knob (thumb).
-    pub knob_bbox: BBox2D,
+    pub knob_bbox: ScreenBBox,
     /// Height of one item in pixels.
     pub item_height: f32,
 
@@ -209,9 +209,9 @@ impl<T: Clone> Default for WidgetListbox<T> {
             first_visible: 0,
             visible_count: 0,
             state: ListboxState::Default,
-            items_bbox: BBox2D::new(),
-            scrollbar_bbox: BBox2D::new(),
-            knob_bbox: BBox2D::new(),
+            items_bbox: ScreenBBox::new(),
+            scrollbar_bbox: ScreenBBox::new(),
+            knob_bbox: ScreenBBox::new(),
             item_height: 16.0,
             drag_start_y: 0.0,
             drag_start_first: 0,
@@ -382,7 +382,7 @@ impl<T: Clone> WidgetListbox<T> {
     // ── Hit testing ──────────────────────────────────���─────────────
 
     /// Get the item index at a screen point, or None if not over an item.
-    fn item_at_point(&self, point: Point2D) -> Option<usize> {
+    fn item_at_point(&self, point: ScreenPoint) -> Option<usize> {
         if !self.items_bbox.is_boxed_point(point) {
             return None;
         }
@@ -404,12 +404,12 @@ impl<T: Clone> WidgetListbox<T> {
     }
 
     /// Check if a point is over the scrollbar area.
-    fn is_over_scrollbar(&self, point: Point2D) -> bool {
+    fn is_over_scrollbar(&self, point: ScreenPoint) -> bool {
         self.scrollbar_bbox.is_boxed_point(point)
     }
 
     /// Check if a point is over the scrollbar knob.
-    fn is_over_knob(&self, point: Point2D) -> bool {
+    fn is_over_knob(&self, point: ScreenPoint) -> bool {
         self.knob_bbox.is_boxed_point(point)
     }
 
@@ -442,7 +442,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     fn process_default(
         &mut self,
-        mouse: Point2D,
+        mouse: ScreenPoint,
         _buttons: MouseButtons,
         _mouse_z: i16,
     ) -> Vec<UiEvent> {
@@ -462,7 +462,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     fn process_items_focused(
         &mut self,
-        mouse: Point2D,
+        mouse: ScreenPoint,
         buttons: MouseButtons,
         mouse_z: i16,
     ) -> Vec<UiEvent> {
@@ -530,7 +530,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     fn process_items_pushed(
         &mut self,
-        mouse: Point2D,
+        mouse: ScreenPoint,
         buttons: MouseButtons,
         mouse_z: i16,
     ) -> Vec<UiEvent> {
@@ -589,7 +589,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     fn process_items_selected(
         &mut self,
-        mouse: Point2D,
+        mouse: ScreenPoint,
         buttons: MouseButtons,
         mouse_z: i16,
     ) -> Vec<UiEvent> {
@@ -628,7 +628,7 @@ impl<T: Clone> WidgetListbox<T> {
 
     fn process_scroll_focused(
         &mut self,
-        mouse: Point2D,
+        mouse: ScreenPoint,
         buttons: MouseButtons,
         mouse_z: i16,
     ) -> Vec<UiEvent> {
@@ -705,7 +705,7 @@ impl<T: Clone> WidgetListbox<T> {
         events
     }
 
-    fn process_scroll_pushed(&mut self, mouse: Point2D, buttons: MouseButtons) -> Vec<UiEvent> {
+    fn process_scroll_pushed(&mut self, mouse: ScreenPoint, buttons: MouseButtons) -> Vec<UiEvent> {
         let mut events = Vec::new();
 
         if buttons.contains(MouseButtons::LEFT_DOWN) {

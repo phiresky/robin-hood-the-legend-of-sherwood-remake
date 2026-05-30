@@ -3170,7 +3170,7 @@ impl AmbushPoint {
     /// `(AMBUSH_BOX_HALF_SIZE, AMBUSH_BOX_HALF_SIZE * ASPECT_RATIO)`.
     pub fn is_near(
         &self,
-        point: crate::geo2d::Point2D,
+        point: crate::geo2d::GeoPoint2D,
         level: u16,
         sector: Option<crate::position_interface::SectorHandle>,
     ) -> bool {
@@ -3564,7 +3564,11 @@ impl AiContext {
         self.sight_obstacles.list()
     }
 
-    pub fn los_clear(&self, viewer: crate::geo2d::Point2D, target: crate::geo2d::Point2D) -> bool {
+    pub fn los_clear(
+        &self,
+        viewer: crate::geo2d::GeoPoint2D,
+        target: crate::geo2d::GeoPoint2D,
+    ) -> bool {
         crate::ai_vision::los_clear_spatial(
             viewer,
             target,

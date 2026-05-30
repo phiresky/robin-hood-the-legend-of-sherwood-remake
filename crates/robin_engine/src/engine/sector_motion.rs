@@ -8,7 +8,7 @@
 //! projection area matches.
 
 use super::{EngineInner, LevelAssets};
-use crate::geo2d::Point2D;
+use crate::geo2d::GeoPoint2D;
 
 impl EngineInner {
     /// Look up the projection-area obstacle containing `point` for the
@@ -31,7 +31,7 @@ impl EngineInner {
         assets: &LevelAssets,
         sector: u16,
         layer: u16,
-        point: Point2D,
+        point: GeoPoint2D,
     ) -> Option<u16> {
         let mut best: Option<(u16, f32)> = None;
         for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {

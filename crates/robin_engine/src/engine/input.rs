@@ -1,8 +1,8 @@
 //! Mouse cursor, focus detection, and input processing.
 
 use super::*;
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{Entity, EntityId};
-use crate::geo2d::Point2D;
 
 // ─── Mouse cursor constants ─────────────────────────────────────
 
@@ -115,7 +115,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         entity: &Entity,
-        point_map: Point2D,
+        point_map: MapPoint,
         blue_pixels_are_in: bool,
     ) -> bool {
         let elem = entity.element_data();
@@ -181,7 +181,7 @@ impl EngineInner {
     /// Objects (bonus / scroll / projectile / net) use this instead of
     /// the per-pixel `is_point_on_sprite` hit test that actor entities
     /// use.
-    pub fn is_point_over_object(&self, entity: &Entity, point_map: Point2D) -> bool {
+    pub fn is_point_over_object(&self, entity: &Entity, point_map: MapPoint) -> bool {
         let pos = entity.element_data().position_map();
         point_map.x >= pos.x - 10.0
             && point_map.x <= pos.x + 10.0
@@ -196,7 +196,7 @@ impl EngineInner {
         &self,
         entity: &Entity,
         entity_id: EntityId,
-        mouse_map: Point2D,
+        mouse_map: MapPoint,
         focus: crate::element::Focus,
         selected_pc_id: Option<EntityId>,
     ) -> bool {
@@ -354,7 +354,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
         entity: &Entity,
-        mouse_map: Point2D,
+        mouse_map: MapPoint,
         focus: crate::element::Focus,
         selected_pc_id: Option<EntityId>,
     ) -> bool {
@@ -991,7 +991,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         draw_order: &[EntityId],
-        mouse_map: Point2D,
+        mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
         if self.seats[0].selection.is_empty() && !matches!(focus, crate::element::Focus::Select) {
@@ -1012,7 +1012,7 @@ impl EngineInner {
     pub fn find_focusable_npc(
         &self,
         assets: &LevelAssets,
-        mouse_map: Point2D,
+        mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
         let selected_pc = self.seats[0].selection.first().copied();
@@ -1030,7 +1030,7 @@ impl EngineInner {
     pub fn find_focusable_pc(
         &self,
         assets: &LevelAssets,
-        mouse_map: Point2D,
+        mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
         let selected_pc = self.seats[0].selection.first().copied();
@@ -1046,11 +1046,6 @@ impl EngineInner {
 
     // ─── Sector helpers for cursor selection ─────────────────────
 
-    /// Convert a projected map point to geo2d::Point2D (Coord<f32>).
-    pub fn elem_to_geo(p: crate::coordinates::MapPoint) -> Point2D {
-        p.to_geo()
-    }
-
     /// Check whether the selected PC is in a building or on a
     /// wall/ladder lift. Many projectile/bow actions are blocked in
     /// these sectors.
@@ -1065,10 +1060,8 @@ impl EngineInner {
         };
         let elem = entity.element_data();
         let layer = elem.layer();
-        let pos = Self::elem_to_geo(elem.position_map());
-
         // Look up PC's current sector in the grid.
-        let pos = crate::coordinates::MapPoint::from_geo(pos);
+        let pos = elem.position_map();
         let hit = self.fast_grid.get_sector(pos, pos, layer);
         match hit {
             crate::fast_find_grid::SectorHit::Found { sector_idx, .. } => {
@@ -1092,16 +1085,12 @@ impl EngineInner {
     /// Check whether the mouse-targeted sector is valid for ground-targeted
     /// projectile actions (purse, net, ale).  Returns false if the sector
     /// is a door or a wall/ladder lift.
-    pub fn is_mouse_sector_valid_for_ground_target(
-        &self,
-        mouse_map: crate::coordinates::MapPoint,
-    ) -> bool {
+    pub fn is_mouse_sector_valid_for_ground_target(&self, mouse_map: MapPoint) -> bool {
         let reference = self.seats[0]
             .selection
             .first()
             .and_then(|&id| self.get_entity(id))
-            .map(|e| Self::elem_to_geo(e.element_data().position_map()))
-            .map(crate::coordinates::MapPoint::from_geo)
+            .map(|e| e.element_data().position_map())
             .unwrap_or(mouse_map);
         let hit = self.fast_grid.get_sector_screen(mouse_map, reference);
         match hit.sector_idx {
@@ -1821,7 +1810,7 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         pc_id: crate::element::EntityId,
-        mouse_map: crate::coordinates::MapPoint,
+        mouse_map: MapPoint,
     ) -> TrajectoryPreview {
         let target_3d = self.fast_grid.convert_2d_to_3d(
             mouse_map,
@@ -2539,8 +2528,6 @@ impl EngineInner {
         }
 
         let selected_action = self.get_selected_action();
-        let mouse_map_geo = mouse_map.to_geo();
-
         // Use the current draw order for topmost-hit focus
         // resolution. The host doesn't pass its cached draw order
         // into command handlers (it's render-cache, not sim state),
@@ -2562,7 +2549,7 @@ impl EngineInner {
                 let focused = self.find_focusable_entity(
                     assets,
                     &draw_order.as_ref().unwrap().ids,
-                    mouse_map_geo,
+                    mouse_map,
                     crate::element::Focus::Bow,
                 );
                 // If the focused target is a human, aim at its belt
@@ -2586,7 +2573,7 @@ impl EngineInner {
                     None => self
                         .fast_grid
                         .convert_2d_to_3d(
-                            crate::coordinates::MapPoint::from_geo(mouse_map_geo),
+                            mouse_map,
                             SIGHTOBSTACLE_MOUSE,
                             self.sight_obstacles(assets),
                         )
@@ -2602,7 +2589,7 @@ impl EngineInner {
                 let focused = self.find_focusable_entity(
                     assets,
                     &draw_order.as_ref().unwrap().ids,
-                    mouse_map_geo,
+                    mouse_map,
                     focus,
                 );
                 let target_3d = focused
@@ -2610,13 +2597,13 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         self.fast_grid
                             .convert_2d_to_3d(
-                                crate::coordinates::MapPoint::from_geo(mouse_map_geo),
+                                mouse_map,
                                 SIGHTOBSTACLE_PROJECTION_AREA,
                                 self.sight_obstacles(assets),
                             )
                             .into()
                     });
-                let ground_pt = Point2D {
+                let ground_pt = GroundPoint {
                     x: target_3d.x,
                     y: target_3d.y,
                 };
@@ -2657,7 +2644,7 @@ impl EngineInner {
         use crate::position_interface::vector_to_sector_0_to_15_iso;
         use crate::weapons::ShootMode;
 
-        let ground_pt = Point2D {
+        let ground_pt = GroundPoint {
             x: target_3d.x,
             y: bow_ground_y(target_3d),
         };
@@ -2754,7 +2741,7 @@ impl EngineInner {
 
     /// Throw-projectile branch (apple/stone/net/wasp-nest/purse):
     /// turn selected PCs not already playing a throw animation.
-    fn turn_selected_pcs_throw(&mut self, ground_pt: Point2D) {
+    fn turn_selected_pcs_throw(&mut self, ground_pt: GroundPoint) {
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15_iso;
 
@@ -2799,7 +2786,7 @@ impl EngineInner {
     }
 
     /// HelpClimb branch: carrier flips 180°, climber faces the goal.
-    fn turn_selected_pcs_help_climb(&mut self, mouse_map: crate::coordinates::MapPoint) {
+    fn turn_selected_pcs_help_climb(&mut self, mouse_map: MapPoint) {
         use crate::element::{ActionState, Posture};
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15;
@@ -2849,7 +2836,7 @@ impl EngineInner {
     }
 
     /// Beggar branch: upright + idle PCs face the mouse.
-    fn turn_selected_pcs_beggar(&mut self, mouse_map: crate::coordinates::MapPoint) {
+    fn turn_selected_pcs_beggar(&mut self, mouse_map: MapPoint) {
         use crate::element::{ActionState, Posture};
         use crate::position_interface::vector_to_sector_0_to_15;
 

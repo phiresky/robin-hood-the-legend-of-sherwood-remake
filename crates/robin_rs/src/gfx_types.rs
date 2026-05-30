@@ -245,8 +245,7 @@ pub enum Keycode {
     /// A printable character key that isn't otherwise enumerated.
     /// Holds the lowercased ASCII character if available.
     Char(u8),
-    /// Anything we don't have a named variant for. Use `scancode` to
-    /// disambiguate if you really need to.
+    /// Anything we don't have a named variant for.
     Unknown,
 }
 
@@ -261,13 +260,11 @@ pub enum GameEvent {
     Quit,
     KeyDown {
         keycode: Keycode,
-        /// Platform scancode (currently the winit `KeyCode` discriminant
-        /// cast to u16, used by code that indexes a keyboard-state array).
-        scancode: u16,
+        physical_key: Option<winit::keyboard::KeyCode>,
     },
     KeyUp {
         keycode: Keycode,
-        scancode: u16,
+        physical_key: Option<winit::keyboard::KeyCode>,
     },
     MouseMove {
         x: i32,

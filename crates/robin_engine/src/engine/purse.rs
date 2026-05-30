@@ -295,7 +295,7 @@ impl EngineInner {
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: coin_fx_for_material(material),
-                position: crate::geo2d::pt(impact_pos.x, impact_pos.y),
+                position: MapPoint::new(impact_pos.x, impact_pos.y),
                 material: None,
             });
 
@@ -304,7 +304,7 @@ impl EngineInner {
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: FX_PURSE_IMPACT,
-                position: crate::geo2d::pt(source_pos.x, source_pos.y),
+                position: MapPoint::new(source_pos.x, source_pos.y),
                 material: None,
             });
 

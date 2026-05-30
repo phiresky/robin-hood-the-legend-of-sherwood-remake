@@ -20,7 +20,7 @@
 
 use super::{EngineInner, LevelAssets};
 use crate::bow_shot::{self, NUMBER_OF_WASPS};
-use crate::coordinates::{WorldPoint3D, WorldVec3D};
+use crate::coordinates::{MapPoint, WorldPoint3D, WorldVec3D};
 use crate::element::{Animation, Camp, Entity, EntityId, ObjectType};
 
 /// Buzz FX id played at the nest position each frame while wasps are
@@ -150,7 +150,7 @@ impl EngineInner {
                 .sounds
                 .push(super::SoundCommand::Fx {
                     fx_id: FX_WASP_BUZZ,
-                    position: crate::geo2d::pt(pos.x, pos.y),
+                    position: MapPoint::new(pos.x, pos.y),
                     material: None,
                 });
         }

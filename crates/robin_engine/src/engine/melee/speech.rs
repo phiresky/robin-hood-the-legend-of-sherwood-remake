@@ -59,7 +59,7 @@ impl EngineInner {
                     (
                         ExclamationGroup::Pc,
                         profile.exclamation_id,
-                        crate::geo2d::pt(pos.x, pos.y),
+                        pos,
                         dead,
                         unc,
                         vip,
@@ -79,7 +79,7 @@ impl EngineInner {
                     (
                         ExclamationGroup::Soldier,
                         profile.exclamation_id,
-                        crate::geo2d::pt(pos.x, pos.y),
+                        pos,
                         dead,
                         unc,
                         vip,
@@ -99,7 +99,7 @@ impl EngineInner {
                     (
                         ExclamationGroup::Civilian,
                         profile.exclamation_id,
-                        crate::geo2d::pt(pos.x, pos.y),
+                        pos,
                         dead,
                         unc,
                         profile.civilian_type == crate::profiles::CivilianType::Vip,
@@ -233,7 +233,7 @@ impl EngineInner {
             .unwrap_or((0, 0));
         self.broadcast_noise(
             crate::ai::NoiseType::Aaargh,
-            position,
+            position.to_geo(),
             layer,
             crate::parameters_ai::NOISE_VOLUME_AAARGH as u16,
             elevation,
@@ -338,11 +338,7 @@ impl EngineInner {
                         .forbidden_expressions
                         .iter()
                         .any(|(e, _)| *e == expression);
-                    (
-                        profile.exclamation_id,
-                        crate::geo2d::pt(pos.x, pos.y),
-                        forbidden,
-                    )
+                    (profile.exclamation_id, pos, forbidden)
                 }
                 _ => return,
             }
