@@ -482,8 +482,8 @@ pub fn render_screen_remarks(engine: &Engine, renderer: &mut Renderer, fonts: &H
     }
 }
 
-/// Dev overlay: draw each live entity's zero-based `EntityId` just below
-/// its feet.  Toggled by `/screenshot?entity_ids` over the HTTP RPC.
+/// Dev overlay: draw each live entity's typed `EntityId` just below its feet.
+/// Toggled by `/screenshot?entity_ids` over the HTTP RPC.
 ///
 /// Shares the `render_hud_text` text-surface pattern: allocate a
 /// transparent RGB565 surface, draw outlined text for every entity,
@@ -513,7 +513,7 @@ pub fn render_entity_id_overlay(
             continue;
         };
 
-        let text = id.index().to_string();
+        let text = id.to_string();
         let tw = font.text_width(&text);
         let text_x = screen_pt.x as i32 - tw / 2;
         // +6 px offset clears the feet / selection ring without
