@@ -1042,7 +1042,7 @@ impl EngineInner {
         entity_id: EntityId,
         normal: [f32; 3],
         check_increment: bool,
-    ) -> Option<crate::geo2d::GeoPoint2D> {
+    ) -> Option<crate::coordinates::MapPoint> {
         // Use the lying-posture move-box, not the actor's *current*
         // move-box: at call time (post-fall or mid-roll) the posture
         // is typically not yet Lying, so the live box has the wrong
@@ -1108,10 +1108,7 @@ impl EngineInner {
             return None;
         }
         let center = dest_box.center();
-        Some(crate::geo2d::GeoPoint2D {
-            x: center.x,
-            y: center.y,
-        })
+        Some(crate::coordinates::MapPoint::new(center.x, center.y))
     }
 
     /// Queue a rolling animation after a fall if the entity is on a steep slope.

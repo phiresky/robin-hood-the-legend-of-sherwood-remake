@@ -680,7 +680,7 @@ pub struct ActorData {
     /// Destination point for rolling after a death/knockout fall on a slope.
     /// When `combat_anim` finishes and this is set, a Rolling animation is
     /// queued toward this point.
-    pub pending_roll: Option<GeoPoint2D>,
+    pub pending_roll: Option<MapPoint>,
 
     /// World position the shield should face toward during movement.
     /// Set by `dispatch_raise_shield` from the danger point; cleared on
