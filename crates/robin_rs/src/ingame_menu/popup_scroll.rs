@@ -24,6 +24,7 @@ use crate::renderer::Renderer;
 use crate::resource_ids;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::sound_config::SoundConfig;
+use crate::widget::{FrameWnd, WidgetPicture};
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::player_command::DialogResult;
 use robin_engine::sound_cache::SampleLoader;
@@ -172,10 +173,10 @@ pub struct PopupScrollModalState {
     transform: MenuTransform,
     virt_x: i32,
     virt_y: i32,
-    frame: crate::widget::FrameWnd,
+    frame: FrameWnd,
     input_state: ModalInputState,
     tooltip: TooltipState,
-    picture_widget: Option<crate::widget::WidgetPicture>,
+    picture_widget: Option<WidgetPicture>,
     body_y: i32,
     body_h: i32,
     pic_w: i32,
@@ -210,7 +211,7 @@ impl PopupScrollModalState {
         let bx = virt_x + (WIN_W - btn_w) / 2;
         let by = virt_y + BTN_Y;
 
-        let mut frame = crate::widget::FrameWnd::default();
+        let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
         frame.add_widget_absolute(widget_bridge::make_button_with_resource(
@@ -353,7 +354,7 @@ impl PopupScrollModalState {
         self.drop_cap_w = if pic_w > 0 { pic_w + PIC_TEXT_PAD_X } else { 0 };
         self.drop_cap_h = if pic_h > 0 { pic_h + PIC_TEXT_PAD_Y } else { 0 };
         self.picture_widget = self.picture.map(|pic| {
-            let mut widget = crate::widget::WidgetPicture::new(u32::MAX);
+            let mut widget = WidgetPicture::new(u32::MAX);
             let bbox = ScreenBBox::from_coords(
                 (self.virt_x + pic_virt_x) as f32,
                 (self.virt_y + pic_virt_y) as f32,

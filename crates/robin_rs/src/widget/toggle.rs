@@ -537,7 +537,8 @@ impl WidgetGroupable for WidgetToggleButton {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::UiKeyboard;
+    use crate::ui::{RendererBase, RendererBitmap, UiKeyboard};
+    use crate::widget::WidgetRenderer;
     use robin_engine::coordinates::ScreenBBox;
 
     fn test_widget() -> WidgetToggleButton {
@@ -546,8 +547,8 @@ mod tests {
         // No renderer attached → `is_real_point` would return false and
         // `is_inside` would fail. Give it a bitmap renderer with the
         // same bbox so hit-testing succeeds.
-        w.base.renderer = crate::widget::WidgetRenderer::Bitmap(crate::ui::RendererBitmap {
-            base: crate::ui::RendererBase {
+        w.base.renderer = WidgetRenderer::Bitmap(RendererBitmap {
+            base: RendererBase {
                 bbox: w.base.bbox,
                 ..Default::default()
             },
