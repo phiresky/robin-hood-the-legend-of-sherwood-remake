@@ -574,9 +574,9 @@ impl EngineInner {
             let door = game_host.doors.get(usize::from(door_index))?;
             (
                 door.door_type,
-                MapPoint::new(door.point_mid.0, door.point_mid.1),
-                MapPoint::new(door.point_in.0, door.point_in.1),
-                MapPoint::new(door.point_out.0, door.point_out.1),
+                door.point_mid,
+                door.point_in,
+                door.point_out,
                 door.sector_in,
                 door.sector_out,
             )
@@ -793,7 +793,7 @@ impl EngineInner {
                 door.door_type,
                 DoorType::LiftHigh | DoorType::LiftHighCrenel
             );
-            let pout = MapPoint::new(door.point_out.0, door.point_out.1);
+            let pout = door.point_out;
             (tl, ts, door.door_type, is_high, pout)
         };
 

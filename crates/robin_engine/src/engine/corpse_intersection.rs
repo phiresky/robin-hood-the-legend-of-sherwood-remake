@@ -241,16 +241,14 @@ impl EngineInner {
                 if !door.is_door() {
                     continue;
                 }
-                let (px, py) = door.point_in;
                 let sq_in = {
-                    let dx = px - pos.x;
-                    let dy = py - pos.y;
+                    let dx = door.point_in.x - pos.x;
+                    let dy = door.point_in.y - pos.y;
                     dx * dx + dy * dy
                 };
-                let (px, py) = door.point_out;
                 let sq_out = {
-                    let dx = px - pos.x;
-                    let dy = py - pos.y;
+                    let dx = door.point_out.x - pos.x;
+                    let dy = door.point_out.y - pos.y;
                     dx * dx + dy * dy
                 };
                 if door.body_would_block(

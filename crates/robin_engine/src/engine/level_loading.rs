@@ -3246,12 +3246,14 @@ impl EngineInner {
                         continue;
                     }
 
-                    let inside = (raw.x as f32, raw.y as f32);
+                    let inside = MapPoint::new(raw.x as f32, raw.y as f32);
                     let (border, outside) = crate::natives::compute_border_point_bbox(
                         map_bbox,
-                        inside,
+                        (inside.x, inside.y),
                         raw.direction as i16,
                     );
+                    let border = MapPoint::new(border.0, border.1);
+                    let outside = MapPoint::new(outside.0, outside.1);
 
                     // Reinforcement doors get 4× WalkingUpright actions
                     // by default.
@@ -3421,8 +3423,8 @@ impl EngineInner {
                             door_type: door.door_type,
                             point_out: door.point_out,
                             position_in: crate::ai::Position {
-                                x: door.point_in.0,
-                                y: door.point_in.1,
+                                x: door.point_in.x,
+                                y: door.point_in.y,
                                 sector: crate::position_interface::SectorHandle::new(u16::from(
                                     door.sector_in,
                                 )),
@@ -3456,8 +3458,8 @@ impl EngineInner {
                     .filter(|(_, d)| d.door_type == crate::gate::DoorType::Reinforcement)
                     .map(|(idx, d)| crate::ai::ReinforcementDoorInfo {
                         position_in: crate::ai::Position {
-                            x: d.point_in.0,
-                            y: d.point_in.1,
+                            x: d.point_in.x,
+                            y: d.point_in.y,
                             sector: crate::position_interface::SectorHandle::new(u16::from(
                                 d.sector_in,
                             )),
@@ -4492,8 +4494,8 @@ impl EngineInner {
                 pending
                     .jump_gate_specs
                     .push(crate::engine::types::PendingJumpGate {
-                        point_out: (jl2_mid.x, jl2_mid.y),
-                        point_in: (jl1_mid.x, jl1_mid.y),
+                        point_out: jl2_mid,
+                        point_in: jl1_mid,
                         layer_out: jl2_layer,
                         layer_in: jl1_layer,
                         sector_out: num_out,
@@ -4610,9 +4612,9 @@ impl EngineInner {
                 door_type: crate::gate::DoorType::Default,
                 point_out: spec.point_out,
                 point_in: spec.point_in,
-                point_mid: (
-                    (spec.point_in.0 + spec.point_out.0) * 0.5,
-                    (spec.point_in.1 + spec.point_out.1) * 0.5,
+                point_mid: MapPoint::new(
+                    (spec.point_in.x + spec.point_out.x) * 0.5,
+                    (spec.point_in.y + spec.point_out.y) * 0.5,
                 ),
                 layer_out: spec.layer_out,
                 layer_in: spec.layer_in,
@@ -4834,9 +4836,9 @@ impl EngineInner {
                     special_authorisation_pc: false,
                     authorised_pc_direct: 0,
                     authorised_pc_indirect: 0,
-                    point_out: (raw.point_out.0 as f32, raw.point_out.1 as f32),
-                    point_in: (raw.point_in.0 as f32, raw.point_in.1 as f32),
-                    point_mid: (raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                    point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                    point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                    point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                     layer_out: raw.layer_out,
                     layer_in: raw.layer_in,
                     sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
@@ -4916,9 +4918,9 @@ impl EngineInner {
                     locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
                     locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
                     unlockable_after_patch: raw.unlockable_after_patch,
-                    point_out: (raw.point_out.0 as f32, raw.point_out.1 as f32),
-                    point_in: (raw.point_in.0 as f32, raw.point_in.1 as f32),
-                    point_mid: (raw.point_mid.0 as f32, raw.point_mid.1 as f32),
+                    point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                    point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                    point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                     layer_out: raw.layer_out,
                     layer_in: raw.layer_in,
                     sector_out: crate::sector::SectorNumber::new(raw.sector_out as i16),
@@ -5055,18 +5057,18 @@ impl EngineInner {
                 let lowest = gs
                     .lowest_door_index
                     .and_then(|prev| game_host.doors.get(prev as usize))
-                    .map(|prev| prev.point_in.1)
-                    .is_none_or(|prev_y| door.point_in.1 > prev_y);
+                    .map(|prev| prev.point_in.y)
+                    .is_none_or(|prev_y| door.point_in.y > prev_y);
                 if lowest {
-                    gs.low_exit_point = Some(MapPoint::new(door.point_in.0, door.point_in.1));
+                    gs.low_exit_point = Some(door.point_in);
                     gs.lowest_door_index = Some(door_idx);
                 }
                 let highest = gs
                     .high_exit_point
                     .map(|prev| prev.y)
-                    .is_none_or(|prev_y| door.point_in.1 < prev_y);
+                    .is_none_or(|prev_y| door.point_in.y < prev_y);
                 if highest {
-                    gs.high_exit_point = Some(MapPoint::new(door.point_in.0, door.point_in.1));
+                    gs.high_exit_point = Some(door.point_in);
                 }
             }
         }

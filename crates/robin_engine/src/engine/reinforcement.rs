@@ -64,8 +64,8 @@ impl EngineInner {
                 return;
             };
             DoorSnapshot {
-                point_out: MapPoint::new(door.point_out.0, door.point_out.1),
-                point_in: MapPoint::new(door.point_in.0, door.point_in.1),
+                point_out: door.point_out,
+                point_in: door.point_in,
                 layer_out: door.layer_out,
                 layer_in: door.layer_in,
                 sector_out: u16::from(door.sector_out),

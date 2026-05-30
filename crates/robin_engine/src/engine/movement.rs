@@ -349,17 +349,9 @@ pub(crate) fn adapt_source_to_current_door(
     // door_direction true → use the "in" side of the door as the
     // source; false → use the "out" side.
     if door_direction {
-        Some((
-            MapPoint::new(door.point_in.0, door.point_in.1),
-            u16::from(door.sector_in),
-            door.layer_in,
-        ))
+        Some((door.point_in, u16::from(door.sector_in), door.layer_in))
     } else {
-        Some((
-            MapPoint::new(door.point_out.0, door.point_out.1),
-            u16::from(door.sector_out),
-            door.layer_out,
-        ))
+        Some((door.point_out, u16::from(door.sector_out), door.layer_out))
     }
 }
 
@@ -1600,16 +1592,16 @@ impl EngineInner {
                     let door = game_host.doors.get(usize::from(step.door_index))?;
                     let (entry, exit, entry_layer, exit_layer, new_sector) = if step.direct {
                         (
-                            MapPoint::new(door.point_out.0, door.point_out.1),
-                            MapPoint::new(door.point_in.0, door.point_in.1),
+                            door.point_out,
+                            door.point_in,
                             door.layer_out,
                             door.layer_in,
                             u16::from(door.sector_in),
                         )
                     } else {
                         (
-                            MapPoint::new(door.point_in.0, door.point_in.1),
-                            MapPoint::new(door.point_out.0, door.point_out.1),
+                            door.point_in,
+                            door.point_out,
                             door.layer_in,
                             door.layer_out,
                             u16::from(door.sector_out),
@@ -2097,7 +2089,7 @@ impl EngineInner {
                         let point_in = {
                             let host = self.mission_script.as_ref().and_then(|s| s.game_host());
                             host.and_then(|h| h.doors.get(usize::from(last_shot.door_index)))
-                                .map(|d| MapPoint::new(d.point_in.0, d.point_in.1))
+                                .map(|d| d.point_in)
                                 .unwrap_or(last_shot.exit)
                         };
                         let mut seek_move = SequenceElement::new_movement(
@@ -2201,7 +2193,7 @@ impl EngineInner {
                             let d = host.and_then(|h| h.doors.get(usize::from(door_index)));
                             match d {
                                 Some(d) => {
-                                    (d.point_out.0 - d.point_in.0, d.point_out.1 - d.point_in.1)
+                                    (d.point_out.x - d.point_in.x, d.point_out.y - d.point_in.y)
                                 }
                                 None => (0.0, 0.0),
                             }
@@ -2288,19 +2280,13 @@ impl EngineInner {
                             // by comparing endpoints.
                             let direct = d
                                 .map(|d| {
-                                    let dx = far_side_point.x - d.point_out.0;
-                                    let dy = far_side_point.y - d.point_out.1;
+                                    let dx = far_side_point.x - d.point_out.x;
+                                    let dy = far_side_point.y - d.point_out.y;
                                     (dx * dx + dy * dy) < 1e-4
                                 })
                                 .unwrap_or(true);
                             let cam = d
-                                .map(|d| {
-                                    if direct {
-                                        MapPoint::new(d.point_in.0, d.point_in.1)
-                                    } else {
-                                        MapPoint::new(d.point_out.0, d.point_out.1)
-                                    }
-                                })
+                                .map(|d| if direct { d.point_in } else { d.point_out })
                                 .unwrap_or(far_side_point);
                             (cam, direct)
                         };

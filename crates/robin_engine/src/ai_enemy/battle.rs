@@ -1157,8 +1157,8 @@ impl EnemyAi {
                             if !has_reserve {
                                 continue;
                             }
-                            let dx = (door.point_out.0 - ctx.position.x).abs();
-                            let dy = (door.point_out.1 - ctx.position.y).abs();
+                            let dx = (door.point_out.x - ctx.position.x).abs();
+                            let dy = (door.point_out.y - ctx.position.y).abs();
                             let mut distance = dx.max(dy) as u32;
                             if Some(door.sector_out) != my_sector_num {
                                 distance = distance.saturating_add(500);

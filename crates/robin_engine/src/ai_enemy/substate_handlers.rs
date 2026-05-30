@@ -3357,8 +3357,8 @@ impl EnemyAi {
                                     .find(|d| d.door_index.0 == door_idx)
                                 {
                                     let point_out_pos = Position {
-                                        x: door.point_out.0,
-                                        y: door.point_out.1,
+                                        x: door.point_out.x,
+                                        y: door.point_out.y,
                                         ..dest
                                     };
                                     self.base.run_to_map_exit(point_out_pos);

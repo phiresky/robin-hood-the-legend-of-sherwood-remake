@@ -664,8 +664,8 @@ impl EnemyAi {
                 continue;
             }
 
-            let dx = door_info.point_out.0 - seek_center.x;
-            let dy = door_info.point_out.1 - seek_center.y;
+            let dx = door_info.point_out.x - seek_center.x;
+            let dy = door_info.point_out.y - seek_center.y;
 
             // Check direction: door must be roughly in the seek direction
             let door_dir = vec_to_sector(dx, dy);

@@ -142,24 +142,10 @@ impl DrawManager {
     /// the segment is entirely outside the view.
     pub fn clip_segment(&self, a: MapPoint, b: MapPoint) -> Option<(ScreenPoint, ScreenPoint)> {
         // Cohen-Sutherland-style clip against view_rect
-        let clipped = clip_line_to_box(a.to_geo(), b.to_geo(), &self.view_rect)?;
+        let (clipped_a, clipped_b) = clip_map_line_to_box(a, b, &self.view_rect)?;
 
-        let mut pa = ScreenPoint {
-            x: clipped.0.x - self.view_rect.min.x,
-            y: clipped.0.y - self.view_rect.min.y,
-        };
-        let mut pb = ScreenPoint {
-            x: clipped.1.x - self.view_rect.min.x,
-            y: clipped.1.y - self.view_rect.min.y,
-        };
-
-        if self.zoom_factor != 1.0 {
-            pa.x *= self.zoom_factor;
-            pa.y *= self.zoom_factor;
-            pb.x *= self.zoom_factor;
-            pb.y *= self.zoom_factor;
-        }
-
+        let pa = self.map_to_screen(clipped_a);
+        let pb = self.map_to_screen(clipped_b);
         Some((pa, pb))
     }
 
@@ -238,7 +224,7 @@ impl DrawManager {
         let inc_x = dx * inv_dist * spacing;
         let inc_y = dy * inv_dist * spacing;
 
-        let mut point = GeoPoint2D {
+        let mut point = MapPoint {
             x: a.x + *start * dx * inv_dist,
             y: a.y + *start * dy * inv_dist,
         };
@@ -521,7 +507,7 @@ const RIGHT: u8 = 2;
 const BOTTOM: u8 = 4;
 const TOP: u8 = 8;
 
-fn compute_outcode(p: GeoPoint2D, bbox: &BBox) -> u8 {
+fn compute_map_outcode(p: MapPoint, bbox: &BBox) -> u8 {
     let mut code = INSIDE;
     if p.x < bbox.min.x {
         code |= LEFT;
@@ -538,13 +524,13 @@ fn compute_outcode(p: GeoPoint2D, bbox: &BBox) -> u8 {
 
 /// Clip a line segment to a bounding box using Cohen-Sutherland.
 /// Returns `None` if the line is entirely outside.
-fn clip_line_to_box(
-    mut a: GeoPoint2D,
-    mut b: GeoPoint2D,
+fn clip_map_line_to_box(
+    mut a: MapPoint,
+    mut b: MapPoint,
     bbox: &BBox,
-) -> Option<(GeoPoint2D, GeoPoint2D)> {
-    let mut code_a = compute_outcode(a, bbox);
-    let mut code_b = compute_outcode(b, bbox);
+) -> Option<(MapPoint, MapPoint)> {
+    let mut code_a = compute_map_outcode(a, bbox);
+    let mut code_b = compute_map_outcode(b, bbox);
 
     loop {
         if (code_a | code_b) == 0 {
@@ -577,11 +563,11 @@ fn clip_line_to_box(
         }
 
         if code_out == code_a {
-            a = GeoPoint2D { x, y };
-            code_a = compute_outcode(a, bbox);
+            a = MapPoint::new(x, y);
+            code_a = compute_map_outcode(a, bbox);
         } else {
-            b = GeoPoint2D { x, y };
-            code_b = compute_outcode(b, bbox);
+            b = MapPoint::new(x, y);
+            code_b = compute_map_outcode(b, bbox);
         }
     }
 }
@@ -764,9 +750,9 @@ mod tests {
         );
 
         // Line crossing through the box
-        let result = clip_line_to_box(
-            GeoPoint2D { x: -50.0, y: 50.0 },
-            GeoPoint2D { x: 150.0, y: 50.0 },
+        let result = clip_map_line_to_box(
+            MapPoint::new(-50.0, 50.0),
+            MapPoint::new(150.0, 50.0),
             &bbox,
         );
         assert!(result.is_some());
@@ -775,17 +761,14 @@ mod tests {
         assert!((b.x - 100.0).abs() < 0.01);
 
         // Line entirely inside
-        let result = clip_line_to_box(
-            GeoPoint2D { x: 10.0, y: 10.0 },
-            GeoPoint2D { x: 90.0, y: 90.0 },
-            &bbox,
-        );
+        let result =
+            clip_map_line_to_box(MapPoint::new(10.0, 10.0), MapPoint::new(90.0, 90.0), &bbox);
         assert!(result.is_some());
 
         // Line entirely outside
-        let result = clip_line_to_box(
-            GeoPoint2D { x: -50.0, y: -50.0 },
-            GeoPoint2D { x: -10.0, y: -10.0 },
+        let result = clip_map_line_to_box(
+            MapPoint::new(-50.0, -50.0),
+            MapPoint::new(-10.0, -10.0),
             &bbox,
         );
         assert!(result.is_none());

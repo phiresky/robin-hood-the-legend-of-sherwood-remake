@@ -3826,20 +3826,10 @@ impl EngineInner {
                             self.sequence_manager.element_terminated(seq_id, elem_idx);
                         }
                         Command::ThrowNet => {
-                            let target_pos = match &elem.data {
-                                crate::sequence::SequenceElementData::Generic { properties } => {
-                                    match properties.get(&crate::sequence::Field::NetTarget) {
-                                        Some(crate::sequence::FieldValue::GeoPoint2D { x, y }) => {
-                                            Some(crate::coordinates::MapPoint { x: *x, y: *y })
-                                        }
-                                        Some(crate::sequence::FieldValue::Point3D {
-                                            x, y, ..
-                                        }) => Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                                        _ => None,
-                                    }
-                                }
-                                _ => None,
-                            };
+                            let target_pos = read_sequence_map_point_property(
+                                elem,
+                                crate::sequence::Field::NetTarget,
+                            );
                             match target_pos {
                                 Some(pos) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::Net) {
@@ -3871,20 +3861,10 @@ impl EngineInner {
                             }
                         }
                         Command::ThrowPurse => {
-                            let target_pos = match &elem.data {
-                                crate::sequence::SequenceElementData::Generic { properties } => {
-                                    match properties.get(&crate::sequence::Field::PurseTarget) {
-                                        Some(crate::sequence::FieldValue::GeoPoint2D { x, y }) => {
-                                            Some(crate::coordinates::MapPoint { x: *x, y: *y })
-                                        }
-                                        Some(crate::sequence::FieldValue::Point3D {
-                                            x, y, ..
-                                        }) => Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                                        _ => None,
-                                    }
-                                }
-                                _ => None,
-                            };
+                            let target_pos = read_sequence_map_point_property(
+                                elem,
+                                crate::sequence::Field::PurseTarget,
+                            );
                             match target_pos {
                                 Some(pos) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::Purse) {
@@ -3916,20 +3896,10 @@ impl EngineInner {
                             }
                         }
                         Command::ThrowWaspNest => {
-                            let target_pos = match &elem.data {
-                                crate::sequence::SequenceElementData::Generic { properties } => {
-                                    match properties.get(&crate::sequence::Field::WaspNestTarget) {
-                                        Some(crate::sequence::FieldValue::GeoPoint2D { x, y }) => {
-                                            Some(crate::coordinates::MapPoint { x: *x, y: *y })
-                                        }
-                                        Some(crate::sequence::FieldValue::Point3D {
-                                            x, y, ..
-                                        }) => Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                                        _ => None,
-                                    }
-                                }
-                                _ => None,
-                            };
+                            let target_pos = read_sequence_map_point_property(
+                                elem,
+                                crate::sequence::Field::WaspNestTarget,
+                            );
                             match target_pos {
                                 Some(pos) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::WaspNest) {
@@ -4043,13 +4013,13 @@ impl EngineInner {
                         Command::Turn | Command::TurnFast => {
                             let elem_props = self.sequence_manager.get_element(seq_id, elem_idx);
                             let camera_point = elem_props
-                                .and_then(|e| e.get_property(crate::sequence::Field::CameraPoint))
-                                .and_then(|v| match v {
-                                    crate::sequence::FieldValue::GeoPoint2D { x, y } => {
-                                        Some((*x, *y))
-                                    }
-                                    _ => None,
-                                });
+                                .and_then(|e| {
+                                    read_sequence_map_point_property(
+                                        e,
+                                        crate::sequence::Field::CameraPoint,
+                                    )
+                                })
+                                .map(|p| (p.x, p.y));
                             let explicit_direction = elem_props
                                 .and_then(|e| e.get_property(crate::sequence::Field::Direction))
                                 .and_then(|v| match v {
@@ -6108,16 +6078,16 @@ impl EngineInner {
                         door.sector_in,
                         door.sector_out,
                         MapPoint {
-                            x: door.point_in.0,
-                            y: door.point_in.1,
+                            x: door.point_in.x,
+                            y: door.point_in.y,
                         },
                         MapPoint {
-                            x: door.point_mid.0,
-                            y: door.point_mid.1,
+                            x: door.point_mid.x,
+                            y: door.point_mid.y,
                         },
                         MapPoint {
-                            x: door.point_out.0,
-                            y: door.point_out.1,
+                            x: door.point_out.x,
+                            y: door.point_out.y,
                         },
                     )
                 })
@@ -6328,8 +6298,8 @@ impl EngineInner {
             let door = game_host.doors.get(usize::from(door_index))?;
             let snap = match action {
                 OT::TransitionWaitingUprightClimbingWallUp => Some(MapPoint {
-                    x: door.point_mid.0,
-                    y: door.point_mid.1,
+                    x: door.point_mid.x,
+                    y: door.point_mid.y,
                 }),
                 OT::TransitionClimbingWallDownWaitingUpright
                 | OT::TransitionClimbingLadderDownWaitingUpright
@@ -7673,12 +7643,8 @@ impl EngineInner {
                 let point = self
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
-                    .and_then(|e| e.get_property(crate::sequence::Field::CameraPoint))
-                    .and_then(|v| match v {
-                        crate::sequence::FieldValue::GeoPoint2D { x, y } => {
-                            Some(crate::coordinates::MapPoint::new(*x, *y))
-                        }
-                        _ => None,
+                    .and_then(|e| {
+                        read_sequence_map_point_property(e, crate::sequence::Field::CameraPoint)
                     });
                 if let Some(pos) = point {
                     // Direct assignment via
@@ -7700,14 +7666,9 @@ impl EngineInner {
                 self.seats[0].locker_active = false;
                 let (point, speed) = {
                     let e = self.sequence_manager.get_element(seq_id, elem_idx);
-                    let p = e
-                        .and_then(|e| e.get_property(crate::sequence::Field::CameraPoint))
-                        .and_then(|v| match v {
-                            crate::sequence::FieldValue::GeoPoint2D { x, y } => {
-                                Some(crate::coordinates::MapPoint::new(*x, *y))
-                            }
-                            _ => None,
-                        });
+                    let p = e.and_then(|e| {
+                        read_sequence_map_point_property(e, crate::sequence::Field::CameraPoint)
+                    });
                     let s = e
                         .and_then(|e| e.get_property(crate::sequence::Field::CameraSpeed))
                         .and_then(|v| match v {
@@ -8144,6 +8105,19 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 
     fn random_u32(&self) -> u32 {
         crate::sim_rng::u32(..)
+    }
+}
+
+fn read_sequence_map_point_property(
+    element: &crate::sequence::SequenceElement,
+    field: crate::sequence::Field,
+) -> Option<crate::coordinates::MapPoint> {
+    match element.get_property(field)? {
+        crate::sequence::FieldValue::GeoPoint2D { x, y }
+        | crate::sequence::FieldValue::Point3D { x, y, .. } => {
+            Some(crate::coordinates::MapPoint::new(*x, *y))
+        }
+        _ => None,
     }
 }
 

@@ -694,7 +694,7 @@ pub fn forecast_destination_for_ia(
                 (
                     input.sector,
                     input.layer,
-                    (input.position_map_x, input.position_map_y),
+                    MapPoint::new(input.position_map_x, input.position_map_y),
                     input.forecasted_movement_z > 0.0,
                     None,
                 )
@@ -704,7 +704,7 @@ pub fn forecast_destination_for_ia(
             (
                 input.sector,
                 input.layer,
-                (input.position_map_x, input.position_map_y),
+                MapPoint::new(input.position_map_x, input.position_map_y),
                 input.forecasted_movement_z > 0.0,
                 None,
             )
@@ -748,8 +748,8 @@ pub fn forecast_destination_for_ia(
 
     ForecastedDestination {
         position: Position {
-            x: point.0,
-            y: point.1,
+            x: point.x,
+            y: point.y,
             sector: SectorHandle::new(sector),
             level: layer,
         },
@@ -804,14 +804,14 @@ fn pick_building_exit_gate(
 /// For lifts: `(GetPointOut() - GetPointMid()).GetSector0to15(ASPECT_RATIO)`.
 /// For building gates: `(GetPointOut() - GetPointIn()).GetSector0to15(ASPECT_RATIO)`.
 fn door_exit_direction_from_mid(door: &crate::gate::Door) -> u16 {
-    let dx = door.point_out.0 - door.point_mid.0;
-    let dy = door.point_out.1 - door.point_mid.1;
+    let dx = door.point_out.x - door.point_mid.x;
+    let dy = door.point_out.y - door.point_mid.y;
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as u16
 }
 
 fn door_exit_direction_from_in(door: &crate::gate::Door) -> u16 {
-    let dx = door.point_out.0 - door.point_in.0;
-    let dy = door.point_out.1 - door.point_in.1;
+    let dx = door.point_out.x - door.point_in.x;
+    let dy = door.point_out.y - door.point_in.y;
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as u16
 }
 
@@ -3198,7 +3198,7 @@ pub struct DoorSeekInfo {
     /// onto the NPC.
     pub door_index: crate::gate::DoorIndex,
     pub door_type: crate::gate::DoorType,
-    pub point_out: (f32, f32),
+    pub point_out: MapPoint,
     pub position_in: Position,
     pub sector_out: u16,
     /// Sector on the inside of the door (the building).
@@ -3702,9 +3702,9 @@ pub struct PhalanxMemberThemList {
 #[derive(Debug, Clone, Copy)]
 pub struct MyExitDoorInfo {
     /// Outside-edge anchor point.
-    pub point_out: (f32, f32),
+    pub point_out: MapPoint,
     /// Door midpoint.
-    pub point_mid: (f32, f32),
+    pub point_mid: MapPoint,
     /// Outside-layer index.
     pub layer_out: u16,
     /// Outside-sector handle. Wrapped in `Option` because
@@ -3805,11 +3805,11 @@ pub struct ReinforcementDoorInfo {
     /// Index into the game host's door array.
     pub door_index: crate::gate::DoorIndex,
     /// Outer point of the door (where the NPC exits the map).
-    pub point_out: (f32, f32),
+    pub point_out: MapPoint,
     /// Mid-point of the door interior. Used by `AlertSoldiers` to
     /// compute the door-out vector for the indoor officer formation
     /// sweep.
-    pub point_mid: (f32, f32),
+    pub point_mid: MapPoint,
     /// Layer index of the outer (outside) end of the door. Used by
     /// indoor formation paths to place gather slots on the outside
     /// layer.
@@ -3819,7 +3819,7 @@ pub struct ReinforcementDoorInfo {
     /// Inner door point as raw coordinates. `position_in` already
     /// carries this with layer/sector tagging, but the raw f32 pair is
     /// convenient for the door-vector math.
-    pub point_in: (f32, f32),
+    pub point_in: MapPoint,
 }
 
 // ---------------------------------------------------------------------------
@@ -4127,8 +4127,8 @@ impl AiGlobalState {
         for sp in &mut self.seek_points {
             for door_info in &self.door_seek_infos {
                 if door_info.door_type == crate::gate::DoorType::Building {
-                    let dx = sp.position.x - door_info.point_out.0;
-                    let dy = sp.position.y - door_info.point_out.1;
+                    let dx = sp.position.x - door_info.point_out.x;
+                    let dy = sp.position.y - door_info.point_out.y;
                     let max_norm = dx.abs().max(dy.abs());
                     if max_norm <= 5.0 {
                         sp.position = door_info.position_in;

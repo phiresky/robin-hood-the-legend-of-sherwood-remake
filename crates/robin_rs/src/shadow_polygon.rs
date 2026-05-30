@@ -21,6 +21,10 @@
 //!
 //! The rendering uses a scanline rasteriser that walks the visible polygon
 //! edges and darkens every pixel that falls outside all visible regions.
+//!
+//! Coordinate note: private `GeoPoint2D` values in this module are ground-space
+//! computational geometry points. Public entry points use `GroundPoint`; the
+//! `geo` crate boundary is kept internal for polygon clipping/boolean ops.
 
 use crate::geo2d::GeoPoint2D;
 use crate::gfx_types::Rect;

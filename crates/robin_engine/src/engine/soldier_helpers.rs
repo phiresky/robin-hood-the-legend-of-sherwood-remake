@@ -685,8 +685,9 @@ impl EngineInner {
                 if door.is_locked_pc() || door.is_locked_npc_villain() {
                     continue;
                 }
-                let (px, py) = door.point_in;
-                let dist = (px - first_pos.x).abs().max((py - first_pos.y).abs());
+                let dist = (door.point_in.x - first_pos.x)
+                    .abs()
+                    .max((door.point_in.y - first_pos.y).abs());
                 if best.map(|(_, d)| dist < d).unwrap_or(true) {
                     best = Some((di, dist));
                 }
@@ -698,9 +699,9 @@ impl EngineInner {
                 return;
             };
             (
-                MapPoint::new(door.point_in.0, door.point_in.1),
-                MapPoint::new(door.point_out.0, door.point_out.1),
-                MapPoint::new(door.point_mid.0, door.point_mid.1),
+                door.point_in,
+                door.point_out,
+                door.point_mid,
                 door.layer_out,
             )
         };

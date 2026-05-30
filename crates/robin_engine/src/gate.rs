@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::coordinates::MapPoint;
 use crate::element::ElementKind;
 use crate::order::OrderType;
 use crate::sector::{LiftType, SectorNumber};
@@ -269,11 +270,11 @@ pub struct Door {
 
     // -- Geometry loaded from proto --
     /// Entry point on the outside of the door.
-    pub point_out: (f32, f32),
+    pub point_out: MapPoint,
     /// Entry point on the inside of the door.
-    pub point_in: (f32, f32),
+    pub point_in: MapPoint,
     /// Mid-point of the door (used for animation offsets).
-    pub point_mid: (f32, f32),
+    pub point_mid: MapPoint,
 
     /// Layer indices for outside / inside.
     pub layer_out: u16,
@@ -373,9 +374,9 @@ impl Default for Door {
             special_authorisation_pc: false,
             authorised_pc_direct: 0,
             authorised_pc_indirect: 0,
-            point_out: (0.0, 0.0),
-            point_in: (0.0, 0.0),
-            point_mid: (0.0, 0.0),
+            point_out: MapPoint::ZERO,
+            point_in: MapPoint::ZERO,
+            point_mid: MapPoint::ZERO,
             layer_out: 0,
             layer_in: 0,
             sector_out: crate::sector::SectorNumber::new(0),
@@ -584,28 +585,28 @@ impl Door {
 
     // -- Geometry helpers --
 
-    pub fn point_out(&self) -> (f32, f32) {
+    pub fn point_out(&self) -> MapPoint {
         self.point_out
     }
 
-    pub fn point_in(&self) -> (f32, f32) {
+    pub fn point_in(&self) -> MapPoint {
         self.point_in
     }
 
-    pub fn point_mid(&self) -> (f32, f32) {
+    pub fn point_mid(&self) -> MapPoint {
         self.point_mid
     }
 
     pub fn set_point_out(&mut self, x: f32, y: f32) {
-        self.point_out = (x, y);
+        self.point_out = MapPoint::new(x, y);
     }
 
     pub fn set_point_in(&mut self, x: f32, y: f32) {
-        self.point_in = (x, y);
+        self.point_in = MapPoint::new(x, y);
     }
 
     pub fn set_point_mid(&mut self, x: f32, y: f32) {
-        self.point_mid = (x, y);
+        self.point_mid = MapPoint::new(x, y);
     }
 
     /// Shift `point_in` so it lies a fixed distance from `point_mid`
@@ -633,14 +634,14 @@ impl Door {
             DoorType::LiftHighCrenel if lift_wall => 65.0,
             _ => return,
         };
-        let dx = self.point_in.0 - self.point_mid.0;
-        let dy = self.point_in.1 - self.point_mid.1;
+        let dx = self.point_in.x - self.point_mid.x;
+        let dy = self.point_in.y - self.point_mid.y;
         let len = (dx * dx + dy * dy).sqrt();
         if len <= f32::EPSILON {
             return;
         }
         let inv = offset / len;
-        self.point_in = (self.point_mid.0 + dx * inv, self.point_mid.1 + dy * inv);
+        self.point_in = MapPoint::new(self.point_mid.x + dx * inv, self.point_mid.y + dy * inv);
     }
 
     /// Compute the A* gate-graph traversal penalty for this door.
@@ -652,8 +653,8 @@ impl Door {
     /// adjusted `point_in`, because `|point_in - point_out|` must
     /// see the final (shifted) `point_in` value.
     pub fn compute_door_penalty(&mut self) {
-        let dx = self.point_in.0 - self.point_out.0;
-        let dy = self.point_in.1 - self.point_out.1;
+        let dx = self.point_in.x - self.point_out.x;
+        let dy = self.point_in.y - self.point_out.y;
         let base = (dx * dx + dy * dy).sqrt();
         let extra = match self.door_type {
             DoorType::Building | DoorType::BuildingTrap => PENALTY_BUILDING,
@@ -1008,13 +1009,13 @@ where
 struct DoorEndpoints {
     sector_out: crate::sector::SectorNumber,
     sector_in: crate::sector::SectorNumber,
-    point_out: (f32, f32),
-    point_in: (f32, f32),
+    point_out: MapPoint,
+    point_in: MapPoint,
 }
 
 pub fn build_gate_links(doors: &mut [Door]) {
     /// `(door_index, endpoint_xy)` — what lives on each shared sector.
-    type SectorEntry = (u32, (f32, f32));
+    type SectorEntry = (u32, MapPoint);
 
     let mut by_sector: std::collections::HashMap<crate::sector::SectorNumber, Vec<SectorEntry>> =
         std::collections::HashMap::new();
@@ -1053,8 +1054,8 @@ pub fn build_gate_links(doors: &mut [Door]) {
                     if other_idx as usize == door_idx {
                         continue;
                     }
-                    let dx = other_point.0 - my_point.0;
-                    let dy = other_point.1 - my_point.1;
+                    let dx = other_point.x - my_point.x;
+                    let dy = other_point.y - my_point.y;
                     let dist = (dx * dx + dy * dy).sqrt();
                     doors[door_idx].gate_links.push(GateLink {
                         other_door: DoorIndex(other_idx),
@@ -1094,9 +1095,9 @@ impl Default for GateSearchState {
 }
 
 #[inline]
-fn dist((ax, ay): (f32, f32), (bx, by): (f32, f32)) -> f32 {
-    let dx = ax - bx;
-    let dy = ay - by;
+fn dist(a: MapPoint, b: MapPoint) -> f32 {
+    let dx = a.x - b.x;
+    let dy = a.y - b.y;
     (dx * dx + dy * dy).sqrt()
 }
 
@@ -1123,6 +1124,8 @@ pub fn find_path_gates(
     allow_leave_map: bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
+    let source = MapPoint::new(source.0, source.1);
+    let goal = MapPoint::new(goal.0, goal.1);
     if source_sector == goal_sector {
         return Some(Vec::new());
     }
@@ -1345,10 +1348,11 @@ pub fn find_path_into_door(
     allow_leave_map: bool,
     sector_lift_type: &impl Fn(SectorNumber) -> Option<LiftType>,
 ) -> Option<Vec<GatePathStep>> {
+    let source = MapPoint::new(source.0, source.1);
     let goal_door = doors.get(usize::from(goal_door_index))?;
-    let goal_mid = (
-        0.5 * (goal_door.point_in.0 + goal_door.point_out.0),
-        0.5 * (goal_door.point_in.1 + goal_door.point_out.1),
+    let goal_mid = MapPoint::new(
+        0.5 * (goal_door.point_in.x + goal_door.point_out.x),
+        0.5 * (goal_door.point_in.y + goal_door.point_out.y),
     );
 
     // Source sector is the goal door's own sector — the gate is
@@ -1607,7 +1611,7 @@ pub fn find_path_to_door(
     let mut path = full;
     path.pop();
 
-    Some((path, pt, sector, layer))
+    Some((path, (pt.x, pt.y), sector, layer))
 }
 
 // ---------------------------------------------------------------------------
@@ -1684,24 +1688,14 @@ pub fn compute_avenger_wait_position(
         }
         // Blocking gate found.  Wait position is the me-side endpoint
         // along the avenger's forward direction.
-        let (x, y, sector, layer) = if step.direct {
-            (
-                door.point_in.0,
-                door.point_in.1,
-                u16::from(door.sector_in),
-                door.layer_in,
-            )
+        let (pt, sector, layer) = if step.direct {
+            (door.point_in, u16::from(door.sector_in), door.layer_in)
         } else {
-            (
-                door.point_out.0,
-                door.point_out.1,
-                u16::from(door.sector_out),
-                door.layer_out,
-            )
+            (door.point_out, u16::from(door.sector_out), door.layer_out)
         };
         return Some(GateWaitPosition {
-            x,
-            y,
+            x: pt.x,
+            y: pt.y,
             sector,
             layer,
         });
@@ -1883,9 +1877,9 @@ mod tests {
         door.set_point_in(30.0, 40.0);
         door.set_point_mid(20.0, 30.0);
 
-        assert_eq!(door.point_out(), (10.0, 20.0));
-        assert_eq!(door.point_in(), (30.0, 40.0));
-        assert_eq!(door.point_mid(), (20.0, 30.0));
+        assert_eq!(door.point_out(), MapPoint::new(10.0, 20.0));
+        assert_eq!(door.point_in(), MapPoint::new(30.0, 40.0));
+        assert_eq!(door.point_mid(), MapPoint::new(20.0, 30.0));
     }
 
     #[test]
@@ -1917,7 +1911,7 @@ mod tests {
         assert_eq!(door.active, door2.active);
 
         // Skipped fields should be at defaults after deserialization.
-        assert_eq!(door2.point_out, (0.0, 0.0));
+        assert_eq!(door2.point_out, MapPoint::ZERO);
         assert_eq!(door2.penalty, 0.0);
     }
 
@@ -2350,27 +2344,27 @@ mod tests {
         // point_in is 100 units east of point_mid.
         let mut door = Door {
             door_type: DoorType::BuildingTrap,
-            point_in: (100.0, 0.0),
-            point_mid: (0.0, 0.0),
+            point_in: MapPoint::new(100.0, 0.0),
+            point_mid: MapPoint::ZERO,
             ..Default::default()
         };
         door.adapt_points(false);
         // Shifted to 60 units east of mid.
-        assert!((door.point_in.0 - 60.0).abs() < 1e-4);
-        assert!(door.point_in.1.abs() < 1e-4);
+        assert!((door.point_in.x - 60.0).abs() < 1e-4);
+        assert!(door.point_in.y.abs() < 1e-4);
     }
 
     #[test]
     fn adapt_points_lift_high_crenel_wall_uses_65() {
         let mut door = Door {
             door_type: DoorType::LiftHighCrenel,
-            point_in: (0.0, 100.0),
-            point_mid: (0.0, 0.0),
+            point_in: MapPoint::new(0.0, 100.0),
+            point_mid: MapPoint::ZERO,
             ..Default::default()
         };
         door.adapt_points(true);
-        assert!(door.point_in.0.abs() < 1e-4);
-        assert!((door.point_in.1 - 65.0).abs() < 1e-4);
+        assert!(door.point_in.x.abs() < 1e-4);
+        assert!((door.point_in.y - 65.0).abs() < 1e-4);
     }
 
     #[test]
@@ -2378,24 +2372,24 @@ mod tests {
         // LiftHigh only shifts when lift_wall = true.
         let mut door = Door {
             door_type: DoorType::LiftHigh,
-            point_in: (100.0, 0.0),
-            point_mid: (0.0, 0.0),
+            point_in: MapPoint::new(100.0, 0.0),
+            point_mid: MapPoint::ZERO,
             ..Default::default()
         };
         door.adapt_points(false);
-        assert_eq!(door.point_in, (100.0, 0.0));
+        assert_eq!(door.point_in, MapPoint::new(100.0, 0.0));
     }
 
     #[test]
     fn adapt_points_default_door_is_noop() {
         let mut door = Door {
             door_type: DoorType::Default,
-            point_in: (100.0, 100.0),
-            point_mid: (50.0, 50.0),
+            point_in: MapPoint::new(100.0, 100.0),
+            point_mid: MapPoint::new(50.0, 50.0),
             ..Default::default()
         };
         door.adapt_points(true);
-        assert_eq!(door.point_in, (100.0, 100.0));
+        assert_eq!(door.point_in, MapPoint::new(100.0, 100.0));
     }
 
     #[test]
@@ -2403,20 +2397,20 @@ mod tests {
         // point_in == point_mid → normalize would divide by zero.
         let mut door = Door {
             door_type: DoorType::BuildingTrap,
-            point_in: (42.0, 13.0),
-            point_mid: (42.0, 13.0),
+            point_in: MapPoint::new(42.0, 13.0),
+            point_mid: MapPoint::new(42.0, 13.0),
             ..Default::default()
         };
         door.adapt_points(false);
-        assert_eq!(door.point_in, (42.0, 13.0));
+        assert_eq!(door.point_in, MapPoint::new(42.0, 13.0));
     }
 
     #[test]
     fn compute_door_penalty_default_adds_50() {
         let mut door = Door {
             door_type: DoorType::Default,
-            point_in: (100.0, 0.0),
-            point_out: (0.0, 0.0),
+            point_in: MapPoint::new(100.0, 0.0),
+            point_out: MapPoint::ZERO,
             ..Default::default()
         };
         door.compute_door_penalty();
@@ -2428,8 +2422,8 @@ mod tests {
         for ty in [DoorType::Building, DoorType::BuildingTrap] {
             let mut door = Door {
                 door_type: ty,
-                point_in: (0.0, 100.0),
-                point_out: (0.0, 0.0),
+                point_in: MapPoint::new(0.0, 100.0),
+                point_out: MapPoint::ZERO,
                 ..Default::default()
             };
             door.compute_door_penalty();
@@ -2466,8 +2460,8 @@ mod tests {
         let mut door = Door {
             sector_out: crate::sector::SectorNumber::new(1), // me's sector
             sector_in: crate::sector::SectorNumber::new(2),  // avenger's sector
-            point_out: (100.0, 100.0),
-            point_in: (100.0, 200.0),
+            point_out: MapPoint::new(100.0, 100.0),
+            point_in: MapPoint::new(100.0, 200.0),
             layer_out: 0,
             layer_in: 0,
             ..Door::default()
@@ -2506,8 +2500,8 @@ mod tests {
         let mut door = Door {
             sector_out: crate::sector::SectorNumber::new(2), // avenger's sector
             sector_in: crate::sector::SectorNumber::new(1),  // me's sector
-            point_out: (100.0, 200.0),
-            point_in: (100.0, 100.0),
+            point_out: MapPoint::new(100.0, 200.0),
+            point_in: MapPoint::new(100.0, 100.0),
             layer_out: 0,
             layer_in: 0,
             ..Door::default()
@@ -2542,8 +2536,8 @@ mod tests {
         let door = Door {
             sector_out: crate::sector::SectorNumber::new(1),
             sector_in: crate::sector::SectorNumber::new(2),
-            point_out: (100.0, 100.0),
-            point_in: (100.0, 200.0),
+            point_out: MapPoint::new(100.0, 100.0),
+            point_in: MapPoint::new(100.0, 200.0),
             ..Door::default()
         };
         let doors = vec![door];

@@ -1424,8 +1424,8 @@ fn transition_crenel_climb_up_mask_position(
     }
     let game_host = engine.mission_script().and_then(|m| m.game_host())?;
     let door = game_host.doors.get(usize::from(door_pass.door_index))?;
-    let point_mid = crate::geo2d::pt(door.point_mid.0, door.point_mid.1);
-    let point_out = crate::geo2d::pt(door.point_out.0, door.point_out.1);
+    let point_mid = door.point_mid;
+    let point_out = door.point_out;
 
     // C++ applies the high-crenel transition projection at action-done:
     // SetPositionMap(point_mid), SetObstacleAndMaterial(point_out projection
@@ -1439,7 +1439,7 @@ fn transition_crenel_climb_up_mask_position(
         if !obs.is_projection_area()
             || obs.layer != door.layer_out
             || obs.sector != u16::from(door.sector_out)
-            || !obs.contains_point_projection(engine_coordinates::MapPoint::from_geo(point_out))
+            || !obs.contains_point_projection(point_out)
         {
             continue;
         }
@@ -2478,9 +2478,9 @@ pub(crate) fn render_debug_doors(
     let (mid_r, mid_g, mid_b) = rgb565_to_rgb8(0xFFFF);
     let (in_r, in_g, in_b) = rgb565_to_rgb8(0xFA00);
 
-    let world_to_screen = |p: (f32, f32)| -> (i32, i32) {
-        let sx = ((p.0 - view.x) * zoom).round() as i32;
-        let sy = ((p.1 - view.y) * zoom).round() as i32;
+    let world_to_screen = |p: engine_coordinates::MapPoint| -> (i32, i32) {
+        let sx = ((p.x - view.x) * zoom).round() as i32;
+        let sy = ((p.y - view.y) * zoom).round() as i32;
         (sx, sy)
     };
     let box_at = |renderer: &mut Renderer, (x, y): (i32, i32), (r, g, b): (u8, u8, u8)| {

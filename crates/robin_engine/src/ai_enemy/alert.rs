@@ -33,7 +33,7 @@ impl EnemyAi {
         ctx: &AiContext,
         global: &AiGlobalState,
         tick: &AiPerTickData,
-        pt_officer: (f32, f32),
+        pt_officer: MapPoint,
         direction: u16,
         num_soldiers: u16,
         grid: &crate::fast_find_grid::FastFindGrid,
@@ -71,8 +71,8 @@ impl EnemyAi {
                 (ctx.position.level, ctx.position.sector)
             };
 
-        let centre = (pt_officer.0 + forward_50.0, pt_officer.1 + forward_50.1);
-        let officer_pt = MapPoint::new(pt_officer.0, pt_officer.1);
+        let centre = (pt_officer.x + forward_50.0, pt_officer.y + forward_50.1);
+        let officer_pt = pt_officer;
 
         let mut positions = Vec::with_capacity(num_soldiers as usize);
         for i in 0..num_soldiers {
@@ -201,7 +201,7 @@ impl EnemyAi {
                         ctx,
                         global,
                         tick,
-                        (my_pos.x, my_pos.y),
+                        MapPoint::new(my_pos.x, my_pos.y),
                         try_dir,
                         alerted_count,
                         grid,
@@ -494,8 +494,8 @@ impl EnemyAi {
         let (avg_dir_start, indoor_door_geom) = if officer_in_building {
             let door = tick.my_exit_door.expect("checked above");
             // door_vector = point_out - point_mid.
-            let vdx = door.point_out.0 - door.point_mid.0;
-            let vdy = door.point_out.1 - door.point_mid.1;
+            let vdx = door.point_out.x - door.point_mid.x;
+            let vdy = door.point_out.y - door.point_mid.y;
             // Normalise with ASPECT_RATIO, then scale by 30.
             // We follow the same convention so the step distance matches
             // The magnitude only matters for the door-step march.
@@ -522,7 +522,7 @@ impl EnemyAi {
         // until `CanPutSoldiersInThisDirection` succeeds.
         let mut chosen_slots: Option<Vec<Position>> = None;
         let mut chosen_direction: u16 = avg_dir_start;
-        let mut chosen_officer_pt: (f32, f32) = (my_pos.x, my_pos.y);
+        let mut chosen_officer_pt: MapPoint = MapPoint::new(my_pos.x, my_pos.y);
         let mut chosen_officer_position: Position = my_pos;
 
         if let Some(grid) = grid {
@@ -535,8 +535,8 @@ impl EnemyAi {
                 'outer: for k in 0..10u16 {
                     if k > 0
                         && !grid.is_straight_movement_authorized(
-                            MapPoint::new(door_pt_out.0, door_pt_out.1),
-                            MapPoint::new(try_pt.0, try_pt.1),
+                            door_pt_out,
+                            try_pt,
                             outside_layer,
                             &ctx.move_box,
                         )
@@ -562,16 +562,16 @@ impl EnemyAi {
                             // position = doorPositionOut overlaid with
                             // try-point x/y.
                             chosen_officer_position = Position {
-                                x: try_pt.0,
-                                y: try_pt.1,
+                                x: try_pt.x,
+                                y: try_pt.y,
                                 sector: door.sector_out,
                                 level: door.layer_out,
                             };
                             break 'outer;
                         }
                     }
-                    try_pt.0 += step.0;
-                    try_pt.1 += step.1;
+                    try_pt.x += step.0;
+                    try_pt.y += step.1;
                 }
             } else {
                 // Outdoor: sweep 16 directions starting at the
@@ -582,7 +582,7 @@ impl EnemyAi {
                         ctx,
                         global,
                         tick,
-                        (my_pos.x, my_pos.y),
+                        MapPoint::new(my_pos.x, my_pos.y),
                         try_dir,
                         alerted_count,
                         grid,
@@ -1417,8 +1417,8 @@ impl EnemyAi {
             }
 
             // (door.point_out - me).MaxNorm().
-            let dx = (door.point_out.0 - my_pos.x).abs();
-            let dy = (door.point_out.1 - my_pos.y).abs();
+            let dx = (door.point_out.x - my_pos.x).abs();
+            let dy = (door.point_out.y - my_pos.y).abs();
             let mut weighted = dx.max(dy);
 
             // +1000 malus when the door is on a different layer.

@@ -953,8 +953,8 @@ impl GameHost {
         struct GateShot {
             door_index: crate::gate::DoorIndex,
             direct: bool,
-            entry: (f32, f32),
-            exit: (f32, f32),
+            entry: crate::coordinates::MapPoint,
+            exit: crate::coordinates::MapPoint,
             entry_layer: u16,
             exit_layer: u16,
             new_sector: u16,
@@ -1089,8 +1089,8 @@ impl GameHost {
                 emit_count += 1;
 
                 // CHANGE_POSITION teleport.
-                let dx = shot.exit.0 - shot.entry.0;
-                let dy = shot.exit.1 - shot.entry.1;
+                let dx = shot.exit.x - shot.entry.x;
+                let dy = shot.exit.y - shot.entry.y;
                 let dir = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
                 let mut cp =
                     SequenceElement::new_movement(0, Command::ChangePosition, owner, entry_action);
@@ -1104,7 +1104,7 @@ impl GameHost {
                     ..
                 } = &mut cp.data
                 {
-                    *destination = to_pt(shot.entry);
+                    *destination = shot.entry;
                     *layer = shot.entry_layer;
                     *sector = SectorHandle::new(prev_sector);
                     *flags = gate_flags;
@@ -1125,7 +1125,7 @@ impl GameHost {
                     ..
                 } = &mut m.data
                 {
-                    *destination = to_pt(shot.entry);
+                    *destination = shot.entry;
                     *element = victim;
                     *tol = 0.0;
                     *flags = gate_flags;
@@ -1144,7 +1144,7 @@ impl GameHost {
                     ..
                 } = &mut ap.data
                 {
-                    *destination = to_pt(shot.entry);
+                    *destination = shot.entry;
                     *element = owner;
                     *tol = 10.0;
                     *sf = speed_factor;
@@ -1184,8 +1184,8 @@ impl GameHost {
                 turn.set_property(
                     Field::CameraPoint,
                     FieldValue::GeoPoint2D {
-                        x: cam_pt.0,
-                        y: cam_pt.1,
+                        x: cam_pt.x,
+                        y: cam_pt.y,
                     },
                 );
                 self.record_seq_step(turn, emit_count == 0);
@@ -1231,7 +1231,7 @@ impl GameHost {
                 ..
             } = &mut pass.data
             {
-                *destination = to_pt(shot.exit);
+                *destination = shot.exit;
                 *layer = shot.exit_layer;
                 *gate_id = Some(shot.door_index);
                 // Original PASS_DOOR constructor uses default flags
@@ -1253,7 +1253,7 @@ impl GameHost {
                 ..
             } = &mut ap.data
             {
-                *destination = to_pt(shot.exit);
+                *destination = shot.exit;
                 *element = owner;
                 *tol = 10.0;
                 *sf = speed_factor;
@@ -1317,7 +1317,7 @@ impl GameHost {
                     ..
                 } = &mut m.data
                 {
-                    *destination = to_pt(point_in);
+                    *destination = point_in;
                     *element = victim;
                     *tol = tolerance;
                     *flags = initial_flags;
@@ -4012,13 +4012,17 @@ impl HostFunctions for GameHost {
                     let max_sq_dist = 300.0_f32 * 300.0;
                     let mut best: Option<(f32, f32, f32, u16, u16)> = None;
                     for door in &self.doors {
-                        let (mx, my) = door.point_mid;
-                        let ddx = mx - lx;
-                        let ddy = my - ly;
+                        let ddx = door.point_mid.x - lx;
+                        let ddy = door.point_mid.y - ly;
                         let sq = ddx * ddx + ddy * ddy;
                         if sq < max_sq_dist && (best.is_none() || sq < best.unwrap().0) {
-                            let (ix, iy) = door.point_in;
-                            best = Some((sq, ix, iy, door.layer_in, door.sector_in.0 as u16));
+                            best = Some((
+                                sq,
+                                door.point_in.x,
+                                door.point_in.y,
+                                door.layer_in,
+                                door.sector_in.0 as u16,
+                            ));
                         }
                     }
                     let Some((_, ix, iy, door_layer, door_sector)) = best else {

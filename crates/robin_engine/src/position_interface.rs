@@ -860,19 +860,14 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn get_increment_map(&self) -> Vec2D {
+    pub fn get_increment_map(&self) -> MapVec {
         assert!(self.is_increment_map_computed());
-        self.increment_map.to_geo()
+        self.increment_map
     }
 
     #[inline]
     pub fn set_reversed_movement(&mut self, v: bool) {
         self.reversed_movement = v;
-    }
-
-    #[inline]
-    pub fn set_increment_map(&mut self, v: Vec2D) {
-        self.set_map_increment(MapVec::from_geo(v));
     }
 
     #[inline]
@@ -2017,7 +2012,7 @@ mod tests {
     fn test_average_speed() {
         let mut pi = PositionInterface::new();
         pi.set_map_position(MapPoint::new(100.0, 200.0));
-        pi.set_increment_map(geo2d::pt(1.0, 0.0));
+        pi.set_map_increment(MapVec::new(1.0, 0.0));
         pi.set_average_speed_needed(true);
         pi.initialize_average_speed_map(MapPoint::new(90.0, 200.0));
 

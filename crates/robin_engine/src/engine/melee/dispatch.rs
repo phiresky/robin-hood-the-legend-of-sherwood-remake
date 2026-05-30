@@ -546,25 +546,8 @@ impl EngineInner {
                 }
                 crate::sequence::SequenceElementData::Generic { properties } => {
                     use crate::sequence::{Field, FieldValue};
-                    let (pt2d, pt3d) = match properties.get(&Field::ShieldDangerPoint) {
-                        Some(FieldValue::Point3D { x, y, z }) => (
-                            Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                            Some(crate::coordinates::WorldPoint3D {
-                                x: *x,
-                                y: *y,
-                                z: *z,
-                            }),
-                        ),
-                        Some(FieldValue::GeoPoint2D { x, y }) => (
-                            Some(crate::coordinates::MapPoint { x: *x, y: *y }),
-                            Some(crate::coordinates::WorldPoint3D {
-                                x: *x,
-                                y: *y,
-                                z: 0.0,
-                            }),
-                        ),
-                        _ => (None, None),
-                    };
+
+                    let (pt2d, pt3d) = read_shield_danger_point(properties);
                     // Picked layer travels with the danger point.  The
                     // C++ original (RHelementactorpc.cpp:3022) reads
                     // RHFIELD_SHIELD_DANGER_POINT_LAYER and feeds it to
@@ -984,5 +967,34 @@ impl EngineInner {
             return;
         }
         self.sequence_manager.element_terminated(seq_id, elem_idx);
+    }
+}
+
+fn read_shield_danger_point(
+    properties: &std::collections::HashMap<crate::sequence::Field, crate::sequence::FieldValue>,
+) -> (
+    Option<crate::coordinates::MapPoint>,
+    Option<crate::coordinates::WorldPoint3D>,
+) {
+    use crate::sequence::{Field, FieldValue};
+
+    match properties.get(&Field::ShieldDangerPoint) {
+        Some(FieldValue::Point3D { x, y, z }) => (
+            Some(crate::coordinates::MapPoint::new(*x, *y)),
+            Some(crate::coordinates::WorldPoint3D {
+                x: *x,
+                y: *y,
+                z: *z,
+            }),
+        ),
+        Some(FieldValue::GeoPoint2D { x, y }) => (
+            Some(crate::coordinates::MapPoint::new(*x, *y)),
+            Some(crate::coordinates::WorldPoint3D {
+                x: *x,
+                y: *y,
+                z: 0.0,
+            }),
+        ),
+        _ => (None, None),
     }
 }

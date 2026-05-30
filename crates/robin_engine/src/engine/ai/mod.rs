@@ -631,8 +631,8 @@ pub(super) fn build_my_exit_door_info(
     let door = doors.get(idx as usize)?;
     let sector_out = crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
     let position_out = crate::ai::Position {
-        x: door.point_out.0,
-        y: door.point_out.1,
+        x: door.point_out.x,
+        y: door.point_out.y,
         sector: sector_out,
         level: door.layer_out,
     };
@@ -724,13 +724,13 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
             && let Some(dp) = actor.active_door_pass.as_ref()
             && let Some(door) = doors_ref.get(dp.door_index.0 as usize)
         {
-            let (rx, ry) = if dp.direct {
+            let rail_point = if dp.direct {
                 door.point_in
             } else {
                 door.point_out
             };
-            view.position.x = rx;
-            view.position.y = ry;
+            view.position.x = rail_point.x;
+            view.position.y = rail_point.y;
         }
 
         // PC riding on someone's shoulders reports the carrier's
@@ -1704,8 +1704,8 @@ impl EngineInner {
                             continue;
                         }
                         // Chebyshev distance <= 5.
-                        let dx = (wp.x as f32 - door.point_out.0).abs();
-                        let dy = (wp.y as f32 - door.point_out.1).abs();
+                        let dx = (wp.x as f32 - door.point_out.x).abs();
+                        let dy = (wp.y as f32 - door.point_out.y).abs();
                         if dx.max(dy) <= 5.0 {
                             wp.x = door.position_in.x as i16;
                             wp.y = door.position_in.y as i16;
@@ -2327,8 +2327,8 @@ impl EngineInner {
                 // (the sectorised "outside" position).
                 rally_points.push(DoorRallyPoint {
                     position: Position {
-                        x: door.point_out.0,
-                        y: door.point_out.1,
+                        x: door.point_out.x,
+                        y: door.point_out.y,
                         sector: crate::position_interface::SectorHandle::new(u16::from(
                             door.sector_out,
                         )),
@@ -5708,8 +5708,8 @@ impl EngineInner {
                 if my_building == crate::position_interface::SectorHandle::new(door.sector_in) {
                     continue;
                 }
-                let dx_door = door.point_out.0 - ctx.position.x;
-                let dy_door = door.point_out.1 - ctx.position.y;
+                let dx_door = door.point_out.x - ctx.position.x;
+                let dy_door = door.point_out.y - ctx.position.y;
                 if directed && let Some(center) = request.center {
                     let dx_flee = center.x - ctx.position.x;
                     let dy_flee = center.y - ctx.position.y;

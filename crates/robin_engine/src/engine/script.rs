@@ -3255,10 +3255,7 @@ impl EngineInner {
             elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
                 sector_num,
             )));
-            elem.set_position_map(crate::coordinates::MapPoint {
-                x: point_in.0,
-                y: point_in.1,
-            });
+            elem.set_position_map(point_in);
             elem.update_grid_cell();
             // After `SetPositionMap` on the gate's point-in, re-derive
             // the sprite-space and 3D positions from the new map
@@ -3267,10 +3264,7 @@ impl EngineInner {
             // of mis-framing.
             if entity.actor_data().is_some() {
                 let pi = entity.position_iface_mut();
-                pi.set_map_position(crate::coordinates::MapPoint {
-                    x: point_in.0,
-                    y: point_in.1,
-                });
+                pi.set_map_position(point_in);
             }
             is_pc = entity.pc_data().is_some();
             carried_handle = entity
@@ -3317,17 +3311,11 @@ impl EngineInner {
                     elem.set_sector(crate::position_interface::SectorHandle::new(u16::from(
                         sector_num,
                     )));
-                    elem.set_position_map(crate::coordinates::MapPoint {
-                        x: point_in.0,
-                        y: point_in.1,
-                    });
+                    elem.set_position_map(point_in);
                     elem.update_grid_cell();
                     if carried_entity.actor_data().is_some() {
                         let pi = carried_entity.position_iface_mut();
-                        pi.set_map_position(crate::coordinates::MapPoint {
-                            x: point_in.0,
-                            y: point_in.1,
-                        });
+                        pi.set_map_position(point_in);
                     }
                 }
                 // Push the carried into the occupants list.
@@ -3375,8 +3363,8 @@ impl EngineInner {
         tracing::debug!(
             "PutActorInBuilding: actor={actor} building={building} \
              → layer={special_layer}, sector={sector_num}, pos=({:.1},{:.1})",
-            point_in.0,
-            point_in.1,
+            point_in.x,
+            point_in.y,
         );
     }
 }

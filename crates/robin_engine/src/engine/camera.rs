@@ -79,7 +79,7 @@ impl EngineInner {
                 let pos = entity.element_data().position_map();
                 let (inc, inc_ok) = match pi_opt {
                     Some(pi) if pi.is_increment_map_computed() => (pi.get_increment_map(), true),
-                    _ => (geo2d::pt(0.0, 0.0), false),
+                    _ => (crate::coordinates::MapVec::ZERO, false),
                 };
                 let avg = entity.sprite().current_average_speed();
                 (pos, inc, inc_ok, avg)

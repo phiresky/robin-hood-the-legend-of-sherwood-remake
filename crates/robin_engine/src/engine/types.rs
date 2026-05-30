@@ -886,8 +886,8 @@ pub struct PendingLevelData {
 /// Deferred jump-gate `Door` spec — see `PendingLevelData::jump_gate_specs`.
 #[derive(Clone, Debug)]
 pub struct PendingJumpGate {
-    pub point_out: (f32, f32),
-    pub point_in: (f32, f32),
+    pub point_out: crate::coordinates::MapPoint,
+    pub point_in: crate::coordinates::MapPoint,
     pub layer_out: u16,
     pub layer_in: u16,
     pub sector_out: crate::sector::SectorNumber,
