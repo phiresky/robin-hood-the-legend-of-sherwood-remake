@@ -50,23 +50,31 @@ use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{
     CornerButton, CornerButtonEnable, CornerButtonSprites, CornerHudLayout, CornerTooltipTracker,
 };
+use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
 use crate::geo2d::{self, BBox2D};
 use crate::gfx_types::GameEvent;
 use crate::host::PrintScreenRequest;
+use crate::ingame_menu::resources::{
+    MT_MSG_LEAVE_MISSION_NOW, MT_MSG_REALLY_LOAD_QUICKSAVE, MT_MSG_STRATEGICAL_MISSION_LOST,
+};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     DebriefingOutcome, IngameMenuResources, MissionStatePopupState, PauseMenu, SaveLoadMode,
-    SaveLoadOutcome,
+    SaveLoadOutcome, show_yesno,
 };
+use crate::input_translator::GameKey;
 use crate::input_translator::{GameAction, InputTranslator, TranslationFlags};
 use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
+use crate::lua_session::LuaSession;
 use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, detect_demo_mode,
     flush_pending_callbacks, perform_pending_save_load, resolve_loading_pak,
 };
+use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::menu::CampaignMapState;
+use crate::multiplayer::lobby::current_epoch_ms;
 use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
 use crate::player_profile::PlayerProfileManager;
 use crate::profiles::MissionLocation;
@@ -619,7 +627,7 @@ async fn confirm_quickload_cross_mission(
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
 ) {
     let use_backup = match callbacks.pending {
@@ -658,12 +666,9 @@ async fn confirm_quickload_cross_mission(
         );
         return;
     };
-    let msg = resources
-        .menu_text
-        .get(crate::ingame_menu::resources::MT_MSG_REALLY_LOAD_QUICKSAVE);
+    let msg = resources.menu_text.get(MT_MSG_REALLY_LOAD_QUICKSAVE);
     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-    let confirmed =
-        crate::ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
+    let confirmed = show_yesno(event_pump, renderer, resources, cursor, &msg).await;
     if confirmed {
         // Route through the regular `Load` arm so its existing
         // `PendingLevelLoad` cross-mission plumbing handles the mission
@@ -749,7 +754,7 @@ pub(crate) async fn run_mission(
     // player just loses the custom Lua hooks. We surface the
     // reason loudly so it shows up in the loading-screen log.
     if let Some(pending) = args.pending_lua_mission.as_ref() {
-        let launch = crate::main_menu::custom_missions::CustomMissionLaunch {
+        let launch = CustomMissionLaunch {
             slug: pending.slug.clone(),
             mod_title: pending.slug.clone(),
             version_zip: pending.version_zip.clone(),
@@ -761,7 +766,7 @@ pub(crate) async fn run_mission(
             map_filename: String::new(),
             requires_spellforge: true,
         };
-        match crate::lua_session::LuaSession::start(&launch, &pending.mods_root) {
+        match LuaSession::start(&launch, &pending.mods_root) {
             Ok(Some(session)) => {
                 tracing::info!(
                     "LuaSession installed for mission '{}'",
@@ -1126,11 +1131,8 @@ pub(crate) async fn run_mission(
         });
 
         if let Some(resources) = menu_resources.as_ref() {
-            let text = per_mission_text.unwrap_or_else(|| {
-                resources
-                    .menu_text
-                    .get(crate::ingame_menu::resources::MT_MSG_STRATEGICAL_MISSION_LOST)
-            });
+            let text = per_mission_text
+                .unwrap_or_else(|| resources.menu_text.get(MT_MSG_STRATEGICAL_MISSION_LOST));
             // Single-button Lost panel — no restart, no load, no
             // stat follow-up.
             let cursor = Some(default_modal_cursor(
@@ -1358,7 +1360,7 @@ pub(crate) async fn run_mission(
         let mut frame_cmds = FrameCommands::new();
         let mut modal_rendered_this_frame = false;
         if let Some(start_at) = mp_start_gate {
-            if crate::multiplayer::lobby::current_epoch_ms() >= start_at {
+            if current_epoch_ms() >= start_at {
                 mp_start_gate = None;
                 if !start_paused {
                     manual_pause = false;
@@ -3422,9 +3424,7 @@ pub(crate) async fn run_mission(
                         kind: robin_engine::player_command::MissionStateModalKind::LeaveMissionNow,
                     };
                     let replay_result = pop_matching_dismissal(&mut replay_modal_dismissals, &kind);
-                    let message = resources
-                        .menu_text
-                        .get(crate::ingame_menu::resources::MT_MSG_LEAVE_MISSION_NOW);
+                    let message = resources.menu_text.get(MT_MSG_LEAVE_MISSION_NOW);
                     let message_str = if message.is_empty() {
                         "You may leave the mission now.".to_string()
                     } else {
@@ -3647,8 +3647,7 @@ pub(crate) async fn run_mission(
                 // Pull the configured `QuickLoad1` key out of
                 // the input translator so the modal can fire on that
                 // key.
-                let quick_load_key =
-                    input_translator.get_binding(crate::input_translator::GameKey::QuickLoad1);
+                let quick_load_key = input_translator.get_binding(GameKey::QuickLoad1);
                 // Restart only fires when a restart snapshot exists.
                 // When missing, the body window closes and the stat
                 // panel still shows.  Probe the save manager up

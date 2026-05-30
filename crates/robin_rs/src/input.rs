@@ -396,13 +396,13 @@ mod tests {
     fn feed_sdl_key_updates_persistent_state() {
         let mut ti = ThreadedInput::new();
         ti.feed_sdl_events(&[GameEvent::KeyDown {
-            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            keycode: Keycode::Char(b'a'),
             physical_key: Some(KeyCode::KeyA),
         }]);
         assert!(ti.keyboard_state().is_pressed(KeyCode::KeyA));
 
         ti.feed_sdl_events(&[GameEvent::KeyUp {
-            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            keycode: Keycode::Char(b'a'),
             physical_key: Some(KeyCode::KeyA),
         }]);
         assert!(!ti.keyboard_state().is_pressed(KeyCode::KeyA));
@@ -452,7 +452,7 @@ mod tests {
 
         // After Quit, subsequent events are ignored.
         ti.feed_sdl_events(&[GameEvent::KeyDown {
-            keycode: crate::gfx_types::Keycode::Char(b'a'),
+            keycode: Keycode::Char(b'a'),
             physical_key: Some(KeyCode::KeyA),
         }]);
         assert!(!ti.keyboard_state().is_pressed(KeyCode::KeyA));
