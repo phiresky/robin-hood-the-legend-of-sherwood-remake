@@ -2279,7 +2279,11 @@ impl SequenceManager {
     /// `Wait` overlaps a real command, the real command is the actor's
     /// current element; otherwise old idle waits could starve combat
     /// elements that should be the actor's current sequence element.
-    pub fn current_element_for_actor(&self, actor: EntityId) -> Option<(SequenceId, usize)> {
+    pub fn current_element_for_actor<I: Into<EntityId>>(
+        &self,
+        actor: I,
+    ) -> Option<(SequenceId, usize)> {
+        let actor = actor.into();
         let set = self.actor_in_progress.get(&actor)?;
         let mut refs = set.iter();
         let first = *refs.next()?;
@@ -2306,9 +2310,10 @@ impl SequenceManager {
     /// without scanning every sequence in the manager.
     pub fn in_progress_element_for_actor_matching(
         &self,
-        actor: EntityId,
+        actor: impl Into<EntityId>,
         mut predicate: impl FnMut(&SequenceElement) -> bool,
     ) -> Option<(SequenceId, usize)> {
+        let actor = actor.into();
         let set = self.actor_in_progress.get(&actor)?;
         for elem_ref in set {
             let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
@@ -2326,7 +2331,7 @@ impl SequenceManager {
     /// whose command matches `predicate`.
     pub fn has_live_element_for_actor_matching(
         &self,
-        actor: EntityId,
+        actor: impl Into<EntityId>,
         mut predicate: impl FnMut(Command) -> bool,
     ) -> bool {
         self.live_element_for_actor_matching(actor, |elem| predicate(elem.command))
@@ -2335,9 +2340,10 @@ impl SequenceManager {
 
     pub fn live_element_for_actor_matching(
         &self,
-        actor: EntityId,
+        actor: impl Into<EntityId>,
         mut predicate: impl FnMut(&SequenceElement) -> bool,
     ) -> Option<(SequenceId, usize)> {
+        let actor = actor.into();
         let set = self.actor_live.get(&actor)?;
         for elem_ref in set {
             let Some(elem) = self.get_element(elem_ref.sequence_id, elem_ref.element_index) else {
@@ -2359,9 +2365,10 @@ impl SequenceManager {
     /// smalltalk element must not suppress fresh smalltalk forever.
     pub fn has_unpostponed_element_for_actor_matching(
         &self,
-        actor: EntityId,
+        actor: impl Into<EntityId>,
         mut predicate: impl FnMut(Command) -> bool,
     ) -> bool {
+        let actor = actor.into();
         let Some(set) = self.actor_live.get(&actor) else {
             return false;
         };
@@ -2379,7 +2386,7 @@ impl SequenceManager {
     /// whose full element data matches `predicate`.
     pub fn has_unpostponed_element_for_actor_matching_element(
         &self,
-        actor: EntityId,
+        actor: impl Into<EntityId>,
         mut predicate: impl FnMut(&SequenceElement) -> bool,
     ) -> bool {
         self.live_element_for_actor_matching(actor, |elem| {
@@ -2390,7 +2397,10 @@ impl SequenceManager {
 
     /// Peek the actor's current in-progress order — the `Order` at the
     /// front of the owning `SequenceElement`'s `orders` queue.
-    pub fn current_order_for_actor(&self, actor: EntityId) -> Option<(SequenceId, usize, &Order)> {
+    pub fn current_order_for_actor<I: Into<EntityId>>(
+        &self,
+        actor: I,
+    ) -> Option<(SequenceId, usize, &Order)> {
         let (seq_id, elem_idx) = self.current_element_for_actor(actor)?;
         let order = self.get_element(seq_id, elem_idx)?.current_order()?;
         Some((seq_id, elem_idx, order))

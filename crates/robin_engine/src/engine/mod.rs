@@ -1192,7 +1192,7 @@ impl EngineInner {
     }
 
     /// Get a reference to an entity by ID.
-    pub fn get_entity(&self, id: EntityId) -> Option<&Entity> {
+    pub fn get_entity<I: Into<EntityId>>(&self, id: I) -> Option<&Entity> {
         self.entities.get(id)
     }
 
@@ -3227,12 +3227,13 @@ impl EngineInner {
     }
 
     /// Get a mutable reference to an entity by ID.
-    pub(crate) fn get_entity_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
+    pub(crate) fn get_entity_mut<I: Into<EntityId>>(&mut self, id: I) -> Option<&mut Entity> {
         self.entities.get_mut(id)
     }
 
     /// Remove an entity. Leaves a None hole (IDs are stable).
-    pub(crate) fn remove_entity(&mut self, id: EntityId) {
+    pub(crate) fn remove_entity<I: Into<EntityId>>(&mut self, id: I) {
+        let id = id.into();
         self.entities.remove(id);
         // Remove from index lists
         self.pc_ids.retain(|&i| i != id);
