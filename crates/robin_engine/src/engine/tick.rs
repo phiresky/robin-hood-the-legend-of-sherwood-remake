@@ -7444,9 +7444,7 @@ impl EngineInner {
                         if let (Some(_sector_idx), Some(sector_number), Some(move_box)) =
                             (probe.sector_idx, probe.sector, move_box)
                         {
-                            let mut box_at = crate::coordinates::MapBBox::from_geo(
-                                move_box.translated(dest.to_geo()),
-                            );
+                            let mut box_at = move_box.translated(dest.to_geo());
                             if self.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
                                 dest,
@@ -8048,7 +8046,7 @@ pub(super) fn apply_drunken_path_deviation(
     blood_alcohol: u8,
     is_running: bool,
     layer: u16,
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
     half_diagonal: crate::geo2d::Vec2D,
     grid: &crate::fast_find_grid::FastFindGrid,
     rng: &mut fastrand::Rng,
@@ -8464,7 +8462,6 @@ mod drop_ammo_merge_tests {
     use super::*;
     use crate::campaign::{Campaign, PcDescription};
     use crate::element::{ActorPc, ElementData, ElementKind, EntityId, Posture};
-    use crate::geo2d::BBox2D;
     use crate::profiles::{Action, CharacterProfileIdx};
     use crate::sequence::{Field, FieldValue, SequenceElement};
 
@@ -8520,9 +8517,9 @@ mod drop_ammo_merge_tests {
         element
             .sprite
             .position_iface
-            .set_move_box(BBox2D::from_corners(
-                crate::geo2d::pt(-5.0, -5.0),
-                crate::geo2d::pt(5.0, 5.0),
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-5.0, -5.0),
+                crate::coordinates::MapVec::new(5.0, 5.0),
             ));
 
         let pc_id = engine.add_entity(crate::element::Entity::Pc(ActorPc {

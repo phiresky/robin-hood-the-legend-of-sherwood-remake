@@ -1751,8 +1751,7 @@ impl EngineInner {
         }
         let tgt_pos = target_entity.position_iface().map_position();
         let tgt_layer = target_entity.element_data().layer();
-        let mut box_at_target =
-            crate::coordinates::MapBBox::from_geo(move_box.translated(tgt_pos.to_geo()));
+        let mut box_at_target = move_box.translated(tgt_pos.to_geo());
         self.fast_grid
             .find_authorized_position(&mut box_at_target, tgt_layer)
     }
@@ -2866,8 +2865,7 @@ impl EngineInner {
 
         let mut destination_pos = target_pos;
         if move_box.is_somewhere() {
-            let mut box_at_target =
-                crate::coordinates::MapBBox::from_geo(move_box.translated(target_pos.to_geo()));
+            let mut box_at_target = move_box.translated(target_pos.to_geo());
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_at_target, layer)

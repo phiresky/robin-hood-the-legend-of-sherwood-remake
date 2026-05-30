@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapBBox, MapPoint};
+use crate::coordinates::{MapBBox, MapPoint, MoveBox};
 use crate::geo2d::{self, BBox2D, GeoPoint2D, Vec2D, pt};
 
 // ---------------------------------------------------------------------------
@@ -273,16 +273,16 @@ pub struct GridLine {
     pub is_sound: bool,
     /// Outward normal (for repulsive lines, used in `FindAutorizedPosition`).
     pub normal: Vec2D,
-    /// Bounding box of the segment (pre-computed for fast rejection).
-    pub bbox: BBox2D,
+    /// Map-space bounding box of the segment (pre-computed for fast rejection).
+    pub bbox: MapBBox,
 }
 
 impl GridLine {
     /// Create a new grid line from two endpoints.
     pub fn new(a: MapPoint, b: MapPoint, is_motion: bool) -> Self {
-        let mut bbox = BBox2D::new();
-        bbox.expand_point(a.to_geo());
-        bbox.expand_point(b.to_geo());
+        let mut bbox = MapBBox::new();
+        bbox.expand_point(a);
+        bbox.expand_point(b);
         // Compute outward normal (perpendicular to segment, normalized).
         let dx = b.x - a.x;
         let dy = b.y - a.y;
@@ -2930,10 +2930,10 @@ impl FastFindGrid {
         p1: MapPoint,
         p2: MapPoint,
         layer: u16,
-        move_box: &BBox2D,
+        move_box: &MoveBox,
     ) -> bool {
         // Check destination position is authorized
-        let dest_box = MapBBox::from_geo(move_box.translated(pt(p2.x, p2.y)));
+        let dest_box = move_box.translated(pt(p2.x, p2.y));
         if !self.is_position_authorized(&dest_box, layer) {
             return false;
         }
@@ -3496,7 +3496,7 @@ mod tests {
     fn test_is_straight_movement_authorized() {
         let grid = make_grid_with_line();
         // 0-centered move box (half-size 5x5)
-        let move_box = BBox2D::from_coords(-5.0, -5.0, 5.0, 5.0);
+        let move_box = MoveBox::from_coords(-5.0, -5.0, 5.0, 5.0);
 
         // Movement entirely above the line — authorized
         assert!(grid.is_straight_movement_authorized(

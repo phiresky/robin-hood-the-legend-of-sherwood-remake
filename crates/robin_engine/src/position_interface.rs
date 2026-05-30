@@ -22,9 +22,9 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapBBox, MapPoint, MapVec, WorldPoint3D, WorldVec3D};
+use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBox, WorldPoint3D, WorldVec3D};
 use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE};
-use crate::geo2d::{self, BBox2D, Vec2D};
+use crate::geo2d::{self, Vec2D};
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 
 // ---------------------------------------------------------------------------
@@ -584,8 +584,8 @@ pub struct PositionInterface {
     pathfinder_index_alternate: u16,
 
     // -- Move boxes --
-    move_box: BBox2D,
-    move_box_alternate: BBox2D,
+    move_box: MoveBox,
+    move_box_alternate: MoveBox,
 
     use_emergency_lying_box: bool,
 
@@ -663,8 +663,8 @@ impl PositionInterface {
             pathfinder_index: u16::MAX,
             pathfinder_index_alternate: u16::MAX,
 
-            move_box: BBox2D::new(),
-            move_box_alternate: BBox2D::new(),
+            move_box: MoveBox::new(),
+            move_box_alternate: MoveBox::new(),
             use_emergency_lying_box: false,
             move_box_map: MapBBox::new(),
 
@@ -1050,7 +1050,7 @@ impl PositionInterface {
 
     /// Current move box (centered on origin).
     #[inline]
-    pub fn get_move_box(&self) -> &BBox2D {
+    pub fn get_move_box(&self) -> &MoveBox {
         &self.move_box
     }
 
@@ -1060,7 +1060,7 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn set_move_box(&mut self, b: BBox2D) {
+    pub fn set_move_box(&mut self, b: MoveBox) {
         self.move_box = b;
     }
     /// In-place equivalent of [`for_actor`] — applies the actor-specific
@@ -1076,9 +1076,9 @@ impl PositionInterface {
         use crate::geo2d;
         let hd = half_diagonal.unwrap_or(geo2d::pt(1.0, 1.0));
         self.set_pathfinder_index(pathfinder_idx as u16);
-        self.set_move_box(BBox2D::from_corners(
-            geo2d::pt(-hd.x, -hd.y),
-            geo2d::pt(hd.x, hd.y),
+        self.set_move_box(MoveBox::from_corners(
+            MapVec::new(-hd.x, -hd.y),
+            MapVec::new(hd.x, hd.y),
         ));
         self.set_map_position(position_map);
     }
@@ -1086,7 +1086,7 @@ impl PositionInterface {
     /// Half diagonal of the current move box (bottom-right corner).
     #[must_use = "method returns Vec2D by value; `pi.get_half_diagonal().x = v` silently modifies a temporary."]
     pub fn get_half_diagonal(&self) -> Vec2D {
-        self.move_box.bottom_right()
+        self.move_box.bottom_right().to_geo()
     }
 
     #[inline]
@@ -1599,10 +1599,7 @@ impl PositionInterface {
     /// Offset the move box to a map position.
     fn get_move_box_offset(&self, pt: MapPoint) -> MapBBox {
         if self.move_box.is_somewhere() {
-            MapBBox::from_corners(
-                MapPoint::new(self.move_box.x_min() + pt.x, self.move_box.y_min() + pt.y),
-                MapPoint::new(self.move_box.x_max() + pt.x, self.move_box.y_max() + pt.y),
-            )
+            self.move_box.translated(pt)
         } else {
             MapBBox::new()
         }
@@ -1775,9 +1772,9 @@ mod tests {
     #[test]
     fn test_set_position_3d_eagerly_syncs_map_and_move_box() {
         let mut pi = PositionInterface::new();
-        pi.set_move_box(BBox2D::from_corners(
-            geo2d::pt(0.0, 0.0),
-            geo2d::pt(1.0, 1.0),
+        pi.set_move_box(MoveBox::from_corners(
+            MapVec::new(0.0, 0.0),
+            MapVec::new(1.0, 1.0),
         ));
         pi.set_position(p3(100.0, 200.0, 0.0));
 

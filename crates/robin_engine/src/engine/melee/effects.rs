@@ -586,9 +586,9 @@ impl EngineInner {
                 .map(|e| e.position_iface())
                 .map(|p| *p.get_move_box())
                 .unwrap_or_else(|| {
-                    crate::geo2d::BBox2D::from_corners(
-                        crate::geo2d::pt(-5.0, -5.0),
-                        crate::geo2d::pt(5.0, 5.0),
+                    crate::coordinates::MoveBox::from_corners(
+                        crate::coordinates::MapVec::new(-5.0, -5.0),
+                        crate::coordinates::MapVec::new(5.0, 5.0),
                     )
                 });
             (apos, adir, vpos, vz, vlayer, vsector, vis_rider, vmbox)

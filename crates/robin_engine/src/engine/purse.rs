@@ -211,7 +211,7 @@ impl EngineInner {
             .and_then(|sid| self.get_entity(sid))
             .map(|e| e.position_iface())
             .map(|pi| *pi.get_move_box())
-            .unwrap_or_else(|| crate::geo2d::BBox2D::from_coords(-1.0, -1.0, 1.0, 1.0));
+            .unwrap_or_else(|| crate::coordinates::MoveBox::from_coords(-1.0, -1.0, 1.0, 1.0));
 
         // ── Position correction ────────────────────────────────────
         //
@@ -223,9 +223,8 @@ impl EngineInner {
             x: impact_pos.x,
             y: impact_pos.y,
         };
-        let mut box_at_pos = crate::coordinates::MapBBox::from_geo(
-            shooter_move_box.translated(crate::geo2d::pt(impact_pos.x, impact_pos.y)),
-        );
+        let mut box_at_pos =
+            shooter_move_box.translated(crate::geo2d::pt(impact_pos.x, impact_pos.y));
         if self
             .fast_grid
             .find_authorized_position(&mut box_at_pos, layer)

@@ -66,7 +66,7 @@ use crate::corner_hud::{
 use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
-use crate::geo2d::{self, BBox2D};
+use crate::geo2d;
 use crate::gfx_types::GameEvent;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::resources::{
@@ -1656,7 +1656,9 @@ pub(crate) async fn run_mission(
                 window.set_logical_size(new_w, new_h);
                 host.viewport.set_screen_size(w, h);
                 renderer.resize(new_w as u16, new_h as u16);
-                threaded_input.set_clipping(BBox2D::from_coords(0.0, 0.0, w, h));
+                threaded_input.set_clipping(robin_engine::coordinates::ScreenBBox::from_coords(
+                    0.0, 0.0, w, h,
+                ));
                 input_translator = InputTranslator::new(w, h);
                 // Reflect the active key profile into the freshly-
                 // built translator.  Without this the resized

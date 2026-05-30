@@ -697,7 +697,7 @@ pub(super) fn enemy_is_below_me(
 /// straight-line movement, or `None` if no valid retreat was found.
 pub fn propose_good_step_back_goal(
     pos_me: Position,
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
     pos_enemy: Position,
     good_distance: u16,
     min_distance: u16,
@@ -822,7 +822,7 @@ pub(super) fn check_straight_movement(
     grid: Option<&crate::fast_find_grid::FastFindGrid>,
     from: &Position,
     to: &Position,
-    move_box: &crate::geo2d::BBox2D,
+    move_box: &crate::coordinates::MoveBox,
 ) -> bool {
     match grid {
         Some(g) => g.is_straight_movement_authorized(

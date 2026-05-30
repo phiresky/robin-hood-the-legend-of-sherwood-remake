@@ -466,7 +466,7 @@ pub struct AntiCollisionState<'a> {
     /// Zero-centred move box for the mover.  Supplies the extents
     /// needed by `is_straight_movement_authorized` / the
     /// `find_authorized_position` fallback.
-    pub move_box: BBox2D,
+    pub move_box: crate::coordinates::MoveBox,
     /// Half-diagonal used by `is_reachable_thick`.
     pub half_diagonal: geo2d::Vec2D,
     /// Current movement goal (for the break-through barge).
@@ -775,7 +775,7 @@ pub fn apply_anti_collision_step(
         // Widen the box a touch and hand it to the grid's
         // nearest-authorised-position search.  Success teleports the
         // actor to the found cell's centre.
-        let mut widened = offset(&state.move_box, barge_future);
+        let mut widened = offset(&state.move_box.to_geo(), barge_future);
         if let Some(r) = widened.0 {
             widened = BBox2D(Some(geo::Rect::new(
                 geo2d::pt(r.min().x - 0.2, r.min().y - 0.2),

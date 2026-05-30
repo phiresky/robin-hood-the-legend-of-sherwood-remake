@@ -300,7 +300,7 @@ pub struct Door {
 
     /// Axis-aligned bounding box of `click_polygon`. Pre-computed for
     /// fast rejection in hit-tests.
-    pub click_bbox: crate::geo2d::BBox2D,
+    pub click_bbox: crate::coordinates::MapBBox,
 
     /// Pathfinding penalty for crossing this door.
     pub penalty: f32,
@@ -382,7 +382,7 @@ impl Default for Door {
             sector_in: crate::sector::SectorNumber::new(0),
             gate_links: Vec::new(),
             click_polygon: Vec::new(),
-            click_bbox: crate::geo2d::BBox2D::new(),
+            click_bbox: crate::coordinates::MapBBox::new(),
             penalty: 0.0,
             patch_index: None,
             gate_state: GateState::default(),
@@ -410,7 +410,7 @@ impl Door {
             return false;
         }
         // Fast bbox reject.
-        let pt = crate::geo2d::pt(x, y);
+        let pt = crate::coordinates::MapPoint::new(x, y);
         if !self.click_bbox.contains_point(pt) {
             return false;
         }
@@ -434,9 +434,9 @@ impl Door {
 
     /// Recompute `click_bbox` from `click_polygon`.
     pub fn rebuild_click_bbox(&mut self) {
-        let mut bbox = crate::geo2d::BBox2D::new();
+        let mut bbox = crate::coordinates::MapBBox::new();
         for &(x, y) in &self.click_polygon {
-            bbox.expand_point(crate::geo2d::pt(x, y));
+            bbox.expand_point(crate::coordinates::MapPoint::new(x, y));
         }
         self.click_bbox = bbox;
     }

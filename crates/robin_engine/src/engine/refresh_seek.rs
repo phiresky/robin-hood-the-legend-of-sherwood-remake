@@ -27,7 +27,7 @@
 //! seek variants.
 
 use super::movement::GoalShape;
-use crate::coordinates::{MapBBox, MapPoint};
+use crate::coordinates::MapPoint;
 use crate::element::{ActionState, EntityId};
 use crate::engine::LevelAssets;
 use crate::order::OrderType;
@@ -69,7 +69,7 @@ impl crate::engine::EngineInner {
                 .filter(|p| p.x != 0.0 || p.y != 0.0)
                 .map(|p| crate::geo2d::pt(target_pos.x + p.x, target_pos.y + p.y))
                 .unwrap_or(target_geo);
-            let mut target_box = MapBBox::from_geo(owner_move_box.translated(current_point));
+            let mut target_box = owner_move_box.translated(current_point);
             if self.fast_grid.find_authorized_position_toward(
                 &mut target_box,
                 target_pos,
@@ -158,7 +158,7 @@ impl crate::engine::EngineInner {
             }
         }
 
-        let mut target_box = MapBBox::from_geo(owner_move_box.translated(destination));
+        let mut target_box = owner_move_box.translated(destination);
         if self
             .fast_grid
             .find_authorized_position_toward(&mut target_box, target_pos, target_layer)

@@ -17,7 +17,6 @@ use crate::cursor::CursorRenderer;
 use crate::element::{Command, Posture};
 use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
-use crate::geo2d::BBox2D;
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
@@ -1197,7 +1196,9 @@ pub(super) async fn handle_pause_menu_events(
                         event_pump.set_logical_size(w_u16 as u32, h_u16 as u32);
                         host.viewport.set_screen_size(w, h);
                         renderer.resize(w_u16, h_u16);
-                        threaded_input.set_clipping(BBox2D::from_coords(0.0, 0.0, w, h));
+                        threaded_input.set_clipping(
+                            robin_engine::coordinates::ScreenBBox::from_coords(0.0, 0.0, w, h),
+                        );
                         *input_translator = InputTranslator::new(w, h);
                         // Re-install HUD-adjacent dead zones at the
                         // new resolution.

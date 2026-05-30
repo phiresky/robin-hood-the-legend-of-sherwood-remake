@@ -63,7 +63,14 @@ const ALPHA_END: u8 = 4;
 ///
 /// Returns a list of points forming a fan-shaped polygon in **world
 /// coordinates**: viewer → left edge → arc → right edge.
-pub fn compute_view_cone(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<GeoPoint2D> {
+pub fn compute_view_cone(viewer: GroundPoint, params: &ViewParameters) -> Vec<GroundPoint> {
+    compute_view_cone_geo(viewer.to_geo(), params)
+        .into_iter()
+        .map(GroundPoint::from_geo)
+        .collect()
+}
+
+fn compute_view_cone_geo(viewer: GeoPoint2D, params: &ViewParameters) -> Vec<GeoPoint2D> {
     let dir = normalise(params.direction);
     let radius = params.radius;
     let aperture = 2.0 * params.half_aperture;
@@ -135,7 +142,7 @@ pub fn compute_visibility_polygon(
     params: &ViewParameters,
     obstacles: &[&SightObstacle],
 ) -> Vec<Vec<GeoPoint2D>> {
-    let view_cone = compute_view_cone(viewer, params);
+    let view_cone = compute_view_cone_geo(viewer, params);
 
     if obstacles.is_empty() {
         return vec![view_cone];
@@ -988,7 +995,7 @@ mod tests {
             projection_plane: None,
             projection_obstacle: None,
         };
-        let cone = compute_view_cone(GeoPoint2D { x: 100.0, y: 100.0 }, &params);
+        let cone = compute_view_cone_geo(GeoPoint2D { x: 100.0, y: 100.0 }, &params);
 
         // First point is the viewer
         assert_eq!(cone[0].x, 100.0);
@@ -1025,8 +1032,8 @@ mod tests {
         };
 
         let origin = GeoPoint2D { x: 500.0, y: 500.0 };
-        let cone_right = compute_view_cone(origin, &params_right);
-        let cone_left = compute_view_cone(origin, &params_left);
+        let cone_right = compute_view_cone_geo(origin, &params_right);
+        let cone_left = compute_view_cone_geo(origin, &params_left);
 
         // Average X of arc points should be > viewer for right, < for left
         let avg_x_right: f32 =
@@ -1043,7 +1050,7 @@ mod tests {
         let params = ViewParameters::default();
         let viewer = GeoPoint2D { x: 500.0, y: 500.0 };
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[]);
 
         assert_eq!(vis.len(), 1, "no obstacles → single visibility polygon");
@@ -1101,7 +1108,7 @@ mod tests {
         ];
         obs.rebuild_geometry();
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&obs]);
 
         // The clipped result should carve a concavity behind the obstacle.
@@ -1493,7 +1500,7 @@ mod tests {
         ];
         sky_slab.rebuild_geometry();
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&sky_slab]);
         // Without height filtering the slab would still cast a shadow
         // wedge because it sits inside the cone's ground bbox. The
@@ -1624,7 +1631,7 @@ mod tests {
         ];
         behind.rebuild_geometry();
 
-        let cone = compute_view_cone(viewer, &params);
+        let cone = compute_view_cone_geo(viewer, &params);
         let vis = compute_visibility_polygon(viewer, &params, &[&behind]);
         assert_eq!(vis.len(), 1);
         assert_eq!(cone.len(), vis[0].len());

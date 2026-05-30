@@ -7,7 +7,7 @@ use crate::Host;
 use crate::campaign::Campaign;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
-use crate::geo2d::{self, BBox2D};
+use crate::geo2d;
 use crate::hud_text::HudFonts;
 use crate::input::ThreadedInput;
 use crate::input_translator::{GameKey, InputTranslator};
@@ -1332,7 +1332,7 @@ pub(super) fn setup_input_and_camera(
     mission_idx: usize,
 ) -> (ThreadedInput, InputTranslator) {
     let mut threaded_input = ThreadedInput::new();
-    threaded_input.set_clipping(BBox2D::from_coords(
+    threaded_input.set_clipping(robin_engine::coordinates::ScreenBBox::from_coords(
         0.0,
         0.0,
         window_width as f32,

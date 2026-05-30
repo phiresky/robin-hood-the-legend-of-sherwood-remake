@@ -450,7 +450,7 @@ impl PatrolPath {
         &mut self,
         patrol_size: usize,
         fast_grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        chief_move_box: &crate::geo2d::BBox2D,
+        chief_move_box: &crate::coordinates::MoveBox,
     ) -> Vec<(Position, u16)> {
         if self.history.is_empty() {
             return Vec::new();
@@ -3249,7 +3249,7 @@ pub struct AiContext {
     /// NPCs.
     pub is_forest_level: bool,
     /// The evaluating entity's zero-centred collision bounding box.
-    pub move_box: crate::geo2d::BBox2D,
+    pub move_box: crate::coordinates::MoveBox,
     /// NPC's remaining arrow count (`GetAmmoAmount(RHACTION_BOW)`). Used
     /// by archer decision logic.
     pub remaining_arrows: u16,

@@ -12,7 +12,7 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
-use crate::geo2d::{BBox2D, pt};
+use crate::geo2d::pt;
 use crate::input::KeyboardState;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
@@ -1340,7 +1340,7 @@ pub struct Layout {
 impl Layout {
     /// Create a layout from a physical bounding box and origin.
     pub fn new(
-        bbox: &BBox2D,
+        bbox: &ScreenBBox,
         origin: ScreenPoint,
         h_orientation: HorizontalOrientation,
         v_orientation: VerticalOrientation,
@@ -1415,15 +1415,15 @@ impl Layout {
         self.bbox_end.y = self.bbox_start.y + h as f32;
     }
 
-    /// Convert the logical bounding box to a physical `BBox2D`.
-    pub fn to_physical_bbox(&self) -> BBox2D {
+    /// Convert the logical bounding box to a physical screen-space box.
+    pub fn to_physical_bbox(&self) -> ScreenBBox {
         let start = self.bbox_start.to_physical(self);
         let end = self.bbox_end.to_physical(self);
         let x0 = start.x.min(end.x);
         let y0 = start.y.min(end.y);
         let x1 = start.x.max(end.x);
         let y1 = start.y.max(end.y);
-        BBox2D::from_coords(x0, y0, x1, y1)
+        ScreenBBox::from_coords(x0, y0, x1, y1)
     }
 }
 
@@ -1468,7 +1468,7 @@ impl LayoutPoint {
     /// Test if this point falls inside a layout's bounding box.
     pub fn is_inside_layout(&self, layout: &Layout) -> bool {
         let phys = self.to_physical(layout);
-        layout.to_physical_bbox().contains_point(phys.to_geo())
+        layout.to_physical_bbox().contains_point(phys)
     }
 }
 
@@ -1491,15 +1491,15 @@ impl LayoutBox {
         Self { start, end }
     }
 
-    /// Convert to physical `BBox2D`.
-    pub fn to_physical_bbox(&self, layout: &Layout) -> BBox2D {
+    /// Convert to physical screen-space box.
+    pub fn to_physical_bbox(&self, layout: &Layout) -> ScreenBBox {
         let start = self.start.to_physical(layout);
         let end = self.end.to_physical(layout);
         let x0 = start.x.min(end.x);
         let y0 = start.y.min(end.y);
         let x1 = start.x.max(end.x);
         let y1 = start.y.max(end.y);
-        BBox2D::from_coords(x0, y0, x1, y1)
+        ScreenBBox::from_coords(x0, y0, x1, y1)
     }
 
     pub fn width(&self) -> u32 {
@@ -1688,7 +1688,7 @@ mod tests {
 
     #[test]
     fn layout_left_to_right_top_down() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
             ScreenPoint::new(10.0, 20.0),
@@ -1709,7 +1709,7 @@ mod tests {
 
     #[test]
     fn layout_right_to_left() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
             ScreenPoint::new(100.0, 0.0),
@@ -1725,7 +1725,7 @@ mod tests {
 
     #[test]
     fn layout_bottom_up() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
             ScreenPoint::new(0.0, 100.0),
@@ -1741,7 +1741,7 @@ mod tests {
 
     #[test]
     fn layout_point_roundtrip() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 200.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0);
         let layout = Layout::new(
             &bbox,
             ScreenPoint::new(50.0, 50.0),
@@ -1758,7 +1758,7 @@ mod tests {
 
     #[test]
     fn layout_point_roundtrip_rtl_bu() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 200.0, 200.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 200.0, 200.0);
         let layout = Layout::new(
             &bbox,
             ScreenPoint::new(200.0, 200.0),
@@ -2070,7 +2070,7 @@ mod tests {
 
     #[test]
     fn serde_layout_roundtrip() {
-        let bbox = BBox2D::from_coords(0.0, 0.0, 100.0, 100.0);
+        let bbox = ScreenBBox::from_coords(0.0, 0.0, 100.0, 100.0);
         let layout = Layout::new(
             &bbox,
             ScreenPoint::new(10.0, 20.0),

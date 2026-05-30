@@ -21,7 +21,7 @@ use crate::player_profile::PlayerProfileManager;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
 use crate::titbit_renderer::TitbitRenderer;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::MapPoint;
+use robin_engine::coordinates::{GroundPoint, MapPoint};
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Ambiance, DevState, Engine, LevelAssets, MULTI_SELECTION_THRESHOLD};
@@ -465,7 +465,7 @@ pub(crate) fn render_view_cone_overlay(
                     z: 0.0,
                 });
         (
-            pos.to_map().to_geo(),
+            GroundPoint::new(pos.x, pos.y),
             dev.cheat_free_shadow_polygon_params.clone(),
             None,
         )
@@ -559,7 +559,7 @@ struct ViewConeRenderSlice {
 }
 
 fn view_cone_polys_for_render(
-    viewer: crate::geo2d::GeoPoint2D,
+    viewer: GroundPoint,
     params: &crate::shadow_polygon::ViewParameters,
     obstacles_view: &engine_sight_obstacle::ObstacleList<'_>,
 ) -> Option<Vec<ViewConeRenderSlice>> {
@@ -596,13 +596,13 @@ fn view_cone_polys_for_render(
         let mut slice_params = params.clone();
         slice_params.radius = radius;
         let ground_polys = crate::shadow_polygon::compute_visibility_polygon(
-            viewer,
+            viewer.to_geo(),
             &slice_params,
             &all_obstacles,
         );
         slices.push(ViewConeRenderSlice {
             polys: ground_polys,
-            viewer,
+            viewer: viewer.to_geo(),
             radius,
             projection_plane: None,
         });
@@ -612,7 +612,7 @@ fn view_cone_polys_for_render(
         let cone = crate::shadow_polygon::compute_view_cone(viewer, params);
         let mut bbox = BBox2D::new();
         for p in cone {
-            bbox.expand_point(p);
+            bbox.expand_point(p.to_geo());
         }
         bbox
     };
@@ -650,8 +650,12 @@ fn view_cone_polys_for_render(
                 })
                 .collect();
         let (polys, viewer) = crate::shadow_polygon::project_and_clip_to_projection_area(
-            &crate::shadow_polygon::compute_visibility_polygon(viewer, &slice_params, &obstacles),
-            viewer,
+            &crate::shadow_polygon::compute_visibility_polygon(
+                viewer.to_geo(),
+                &slice_params,
+                &obstacles,
+            ),
+            viewer.to_geo(),
             projection_plane,
             projection_area,
             &occluding_projection_areas,
@@ -680,7 +684,7 @@ fn view_cone_polys_for_render(
 fn shadow_polygon_slice_radius(
     params: &crate::shadow_polygon::ViewParameters,
     projection_plane: Option<engine_position_interface::PlaneZCoeffs>,
-    viewer: crate::geo2d::GeoPoint2D,
+    viewer: GroundPoint,
 ) -> Option<f32> {
     const FACTOR_ELLIPSE: f32 = 0.35;
     const INV_SQUARE_FACTOR_ELLIPSE: f32 = 8.163_265;

@@ -166,6 +166,92 @@ impl Default for GroundBBox {
     }
 }
 
+/// Actor-local movement bounding box.
+///
+/// C++ `RHPositionInterface::GetMoveBox` returns this zero-centered box in
+/// character-position coordinates. Translate it by a [`MapPoint`] to get the
+/// absolute map-space [`MapBBox`] stored as `mboxMoveMap`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct MoveBox(pub Option<Rect<f32>>);
+
+impl Default for MoveBox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MoveBox {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(None)
+    }
+
+    #[inline]
+    pub fn from_geo(bbox: geo2d::BBox2D) -> Self {
+        Self(bbox.0)
+    }
+
+    #[inline]
+    pub fn to_geo(self) -> geo2d::BBox2D {
+        geo2d::BBox2D(self.0)
+    }
+
+    #[inline]
+    pub fn from_corners(min: MapVec, max: MapVec) -> Self {
+        Self(Some(Rect::new(min.to_geo(), max.to_geo())))
+    }
+
+    #[inline]
+    pub fn from_coords(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Self {
+        Self::from_geo(geo2d::BBox2D::from_coords(x_min, y_min, x_max, y_max))
+    }
+
+    #[inline]
+    pub fn is_somewhere(&self) -> bool {
+        self.0.is_some()
+    }
+
+    #[inline]
+    pub fn x_min(&self) -> f32 {
+        self.0.unwrap().min().x
+    }
+
+    #[inline]
+    pub fn y_min(&self) -> f32 {
+        self.0.unwrap().min().y
+    }
+
+    #[inline]
+    pub fn x_max(&self) -> f32 {
+        self.0.unwrap().max().x
+    }
+
+    #[inline]
+    pub fn y_max(&self) -> f32 {
+        self.0.unwrap().max().y
+    }
+
+    #[inline]
+    pub fn bottom_right(&self) -> MapVec {
+        MapVec::from_geo(self.to_geo().bottom_right())
+    }
+
+    #[inline]
+    pub fn translated(&self, point: impl Into<MapPoint>) -> MapBBox {
+        let point = point.into();
+        MapBBox::from_geo(self.to_geo().translated(point.to_geo()))
+    }
+
+    pub fn binary_rw(&mut self, file: &mut crate::sbfile::SbFile) -> Result<(), i32> {
+        let mut bbox = self.to_geo();
+        bbox.binary_rw(file)?;
+        *self = Self::from_geo(bbox);
+        Ok(())
+    }
+}
+
 impl GroundBBox {
     #[inline]
     pub const fn new() -> Self {

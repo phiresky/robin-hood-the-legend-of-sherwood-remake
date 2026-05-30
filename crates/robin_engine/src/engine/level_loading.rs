@@ -3252,7 +3252,7 @@ impl EngineInner {
 
                     let inside = (raw.x as f32, raw.y as f32);
                     let (border, outside) = crate::natives::compute_border_point_bbox(
-                        map_bbox.to_geo(),
+                        map_bbox,
                         inside,
                         raw.direction as i16,
                     );
@@ -4848,7 +4848,7 @@ impl EngineInner {
                         .iter()
                         .map(|&(x, y)| (x as f32, y as f32))
                         .collect(),
-                    click_bbox: crate::geo2d::BBox2D::new(),
+                    click_bbox: crate::coordinates::MapBBox::new(),
                     penalty: 0.0,
                     patch_index: None,
                     gate_state: crate::gate::GateState::default(),
@@ -4929,7 +4929,7 @@ impl EngineInner {
                         .iter()
                         .map(|&(x, y)| (x as f32, y as f32))
                         .collect(),
-                    click_bbox: crate::geo2d::BBox2D::new(),
+                    click_bbox: crate::coordinates::MapBBox::new(),
                     action_direct_1: act_d1,
                     action_direct_2: act_d2,
                     action_indirect_1: act_i1,
@@ -4995,7 +4995,7 @@ impl EngineInner {
                 let door_active = door.active;
                 let idx = self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector { points: pts,
-                    bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+                    bounding_box: bbox,
                     sector_type: SectorType::DOOR | SectorType::MOUSE,
                     layer,
                     sector_number: crate::sector::SectorNumber::new(-1), /* Doors don't have motion sector numbers */
