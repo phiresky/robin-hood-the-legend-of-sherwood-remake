@@ -3833,9 +3833,6 @@ pub fn apply_projectile_hit(
         npc.inform_my_friends = shooter_is_pc;
     }
 
-    if died {
-        victim.set_posture(Posture::Dead);
-    }
     died
 }
 
@@ -5622,8 +5619,11 @@ mod tests {
         }
         let died = apply_arrow_hit(&mut entities, EntityId(1), EntityId(0), 30, 0);
         assert!(died);
-        let posture = entities[1].as_ref().unwrap().element_data().posture;
-        assert_eq!(posture, Posture::Dead);
+        let life = match entities[1].as_ref().unwrap() {
+            Entity::Soldier(s) => s.npc.life_points,
+            _ => unreachable!(),
+        };
+        assert_eq!(life, 0);
     }
 
     #[test]

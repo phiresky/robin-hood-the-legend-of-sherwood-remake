@@ -1545,6 +1545,42 @@ impl EngineInner {
         self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
     }
 
+    /// Finish a projectile death after the projectile helper already
+    /// subtracted HP.
+    ///
+    /// Projectile collision is resolved outside the sequence manager,
+    /// but lethal hits still need the normal death machinery so old
+    /// wait/move sequences are interrupted and the dying/corpse orders
+    /// become the victim's current animation.  Use zero damage here:
+    /// the actual HP/concussion change has already happened.
+    pub(crate) fn handle_projectile_death(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        shooter_id: EntityId,
+        command: crate::element::Command,
+    ) {
+        debug_assert!(matches!(
+            command,
+            crate::element::Command::ReceiveArrowDamage
+                | crate::element::Command::ReceiveStoneDamage
+        ));
+        let elem = crate::sequence::SequenceElement::new_damage(
+            1,
+            command,
+            Some(victim_id),
+            Some(shooter_id),
+            0,
+            0,
+        );
+        let seq_id = self.launch_element(elem);
+        let elem_idx = 0;
+        if !self.arbitrate_instruct(seq_id, elem_idx) {
+            return;
+        }
+        self.dispatch_receive_damage(assets, victim_id, seq_id, elem_idx);
+    }
+
     /// Internal entry point for `handle_death` that accepts the active
     /// receive-damage element so the dying animation chains via
     /// `do_next_order` instead of `combat_anim`.  The death path
@@ -1890,16 +1926,30 @@ impl EngineInner {
         }
 
         // Campaign score bump for Lacklandist soldier deaths during
-        // a sword/generic-damage interaction.  Arrow kills route
-        // through `bow_shot::apply_arrow_hit` and never reach
-        // `handle_death_with_damage_element`, so they don't get this
-        // bump — matching the wounded-only scoping.
+        // a sword/generic-damage interaction.  Projectile kills are
+        // finalized through this same death path for visuals, but keep
+        // the old score scoping and only award bow XP at the projectile
+        // call site.
         const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
+        let projectile_death = self
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .map(|e| {
+                matches!(
+                    e.command,
+                    crate::element::Command::ReceiveArrowDamage
+                        | crate::element::Command::ReceiveStoneDamage
+                )
+            })
+            .unwrap_or(false);
         let bump_lacklandist_score = self
             .get_entity(victim_id)
             .map(|e| e.is_soldier() && e.camp() == Camp::Lacklandists)
             .unwrap_or(false);
-        if bump_lacklandist_score && let Some(campaign) = self.campaign.as_mut() {
+        if bump_lacklandist_score
+            && !projectile_death
+            && let Some(campaign) = self.campaign.as_mut()
+        {
             campaign.add_value(
                 crate::campaign::CampaignValue::Score,
                 SCORE_SOLDIER_KILLED_DURING_FIGHT,

@@ -2131,6 +2131,12 @@ impl EngineInner {
                         }
 
                         if died {
+                            self.handle_projectile_death(
+                                assets,
+                                victim,
+                                shooter,
+                                Command::ReceiveArrowDamage,
+                            );
                             self.award_bow_kill_xp(shooter);
                         }
                         self.add_damage_number(victim, damage);
@@ -2295,6 +2301,7 @@ impl EngineInner {
             );
             self.add_damage_number(victim, STONE_DAMAGE);
             if died {
+                self.handle_projectile_death(assets, victim, _shooter, Command::ReceiveStoneDamage);
                 self.award_bow_kill_xp(_shooter);
             }
         } else if is_npc {
