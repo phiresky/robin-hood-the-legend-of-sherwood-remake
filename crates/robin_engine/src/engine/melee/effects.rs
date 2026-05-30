@@ -723,7 +723,7 @@ impl EngineInner {
                             .copied()
                     })
                     .and_then(|idx| self.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.contains_point(pt))
+                    .map(|gs| gs.contains_point(crate::coordinates::MapPoint::from_geo(pt)))
                     // Without a known sector, trust the
                     // `is_straight_movement_authorized` result.
                     .unwrap_or(true);
@@ -1100,7 +1100,7 @@ impl EngineInner {
             crate::geo2d::pt(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
             crate::geo2d::pt(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
         );
-        let pt_start = crate::geo2d::pt(pos.x, pos.y);
+        let pt_start = pos;
         if !self
             .fast_grid
             .find_authorized_position_straight(&mut dest_box, pt_start, layer)

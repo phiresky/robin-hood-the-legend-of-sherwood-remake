@@ -701,8 +701,6 @@ impl EnemyAi {
                     decision = Decision::Fight;
                 }
             } else {
-                ////////// defensive decisions //////////////
-
                 // `only_enemy_soldiers` is initialized true, cleared if
                 // any PC is in list_them. Used to gate LookForHelp /
                 // RunAndAlertSoldiers — you don't call for help if your

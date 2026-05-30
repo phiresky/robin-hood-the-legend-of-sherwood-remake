@@ -402,13 +402,6 @@ impl ModalInputState {
         }
     }
 
-    /// Read-only access to the refreshed [`UiKeyboard`]. Useful for
-    /// modal code that wants to peek at typewriter-repeat state between
-    /// `process_input` calls.
-    pub fn keyboard(&self) -> &UiKeyboard {
-        &self.keyboard
-    }
-
     /// Widget currently requesting mouse capture (if any). Set via
     /// [`CaptureSlot::set`] inside a widget's `process_input`.
     pub fn capture(&self) -> Option<WidgetId> {

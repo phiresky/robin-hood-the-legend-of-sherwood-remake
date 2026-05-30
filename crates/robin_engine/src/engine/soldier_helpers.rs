@@ -375,9 +375,7 @@ impl EngineInner {
             .unwrap_or(false);
         if map_flag_terminated && let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
             let pos = entity.element_data().position_map();
-            let inside_map = self
-                .fast_grid
-                .is_inside_grid_point(crate::geo2d::pt(pos.x, pos.y));
+            let inside_map = self.fast_grid.is_inside_grid_point(pos);
             // Re-borrow mutably (the read above released the borrow).
             if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
                 let ed = entity.element_data_mut();

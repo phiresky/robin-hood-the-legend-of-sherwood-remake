@@ -70,7 +70,7 @@ pub(crate) fn render_door_overlays(
         return;
     };
 
-    let draw_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
+    let draw_geo_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
         if pts.len() < 3 {
             return;
         }
@@ -78,12 +78,24 @@ pub(crate) fn render_door_overlays(
             .draw_alpha_polygon(renderer, pts, color, alpha);
     };
 
+    let draw_map_polygon = |renderer: &mut Renderer,
+                            pts: &[robin_engine::coordinates::MapPoint],
+                            color: u32,
+                            alpha: u32| {
+        if pts.len() < 3 {
+            return;
+        }
+        let pts: Vec<GeoPoint2D> = pts.iter().map(|p| p.to_geo()).collect();
+        host.draw_manager
+            .draw_alpha_polygon(renderer, &pts, color, alpha);
+    };
+
     let draw_door = |renderer: &mut Renderer, door: &crate::gate::Door| {
         if door.click_polygon.len() < 3 {
             return;
         }
         let pts: Vec<GeoPoint2D> = door.click_polygon.iter().map(|&(x, y)| pt(x, y)).collect();
-        draw_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
+        draw_geo_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
     };
 
     // Walk a motion-area / building sector's gate list and paint each door.
@@ -167,7 +179,7 @@ pub(crate) fn render_door_overlays(
             if !sector.sector_type.contains(SectorType::JUMP) {
                 continue;
             }
-            draw_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
+            draw_map_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
         }
         return;
     }
@@ -262,7 +274,7 @@ pub(crate) fn render_door_overlays(
                 _ => {
                     if owning_patch.is_none() && !sector.points.is_empty() && selected_sector_active
                     {
-                        draw_polygon(renderer, &sector.points, COLOR_DOOR, ALPHA_DOOR);
+                        draw_map_polygon(renderer, &sector.points, COLOR_DOOR, ALPHA_DOOR);
                     }
                 }
             }
@@ -307,7 +319,7 @@ pub(crate) fn render_door_overlays(
                 break;
             }
             if paint {
-                draw_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
+                draw_map_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
             }
         }
     }
@@ -332,7 +344,7 @@ pub(crate) fn render_door_overlays(
                     continue;
                 };
                 if s.sector_type.is_patch() && engine.fast_grid().is_sector_active(grid_idx) {
-                    draw_polygon(renderer, &s.points, COLOR_DOOR, ALPHA_DOOR);
+                    draw_map_polygon(renderer, &s.points, COLOR_DOOR, ALPHA_DOOR);
                     break;
                 }
             }
@@ -948,7 +960,7 @@ fn render_ground_mark_set(
             renderer,
             mark.layer,
             &mark_world_bbox,
-            mark_position,
+            robin_engine::coordinates::MapPoint::from_geo(mark_position),
             mark_rect,
             view_pos.to_geo(),
             zoom,
@@ -962,7 +974,7 @@ fn render_character_masks_clipped(
     renderer: &mut Renderer,
     layer: u16,
     world_bbox: &crate::geo2d::BBox2D,
-    position: crate::geo2d::GeoPoint2D,
+    position: robin_engine::coordinates::MapPoint,
     clip_rect: Rect,
     view: crate::geo2d::GeoPoint2D,
     zoom: f32,
@@ -1256,7 +1268,7 @@ pub(crate) fn render_entities_gpu(
                 sprite_y + sh as f32,
             );
             let actor_layer = elem.layer();
-            let actor_position = crate::geo2d::pt(world_x, world_y);
+            let actor_position = robin_engine::coordinates::MapPoint::new(world_x, world_y);
             // The mask lookup switches between
             // `get_masks_applied_to_character` and
             // `get_masks_applied_to_projectile` based on the masking
@@ -1435,7 +1447,7 @@ fn render_sprite_mask_debug_overlay(
     engine: &Engine,
     renderer: &mut Renderer,
     sprite_world_bbox: &crate::geo2d::BBox2D,
-    actor_position: crate::geo2d::GeoPoint2D,
+    actor_position: robin_engine::coordinates::MapPoint,
     position_3d: robin_engine::coordinates::WorldPoint3D,
     use_projectile_path: bool,
     mask_indices: &[robin_engine::mask::MaskIndex],
@@ -1456,10 +1468,10 @@ fn render_sprite_mask_debug_overlay(
         draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
     }
 
-    draw_world_cross(host, renderer, actor_position, 0x07e0);
+    draw_world_cross(host, renderer, actor_position.to_geo(), 0x07e0);
     if use_projectile_path {
         let projectile_test_point = crate::geo2d::pt(position_3d.x, position_3d.y);
-        let actor_screen = world_to_screen(host, actor_position);
+        let actor_screen = world_to_screen(host, actor_position.to_geo());
         let projectile_screen = world_to_screen(host, projectile_test_point);
         renderer.draw_line_screen(
             actor_screen.0,

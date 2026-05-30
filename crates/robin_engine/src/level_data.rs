@@ -641,18 +641,6 @@ impl ChunkReader {
         }
     }
 
-    /// Skip any remaining bytes in the current chunk (for partial reads).
-    pub fn skip_to_chunk_end(&mut self) -> Result<(), LevelError> {
-        if let Some(info) = self.chunk_stack.last() {
-            let current_pos = self.file.tell();
-            let end_pos = info.position_after_header + (info.expected_size as u64) - 4;
-            if current_pos < end_pos {
-                self.file.skip((end_pos - current_pos) as i64, 1);
-            }
-        }
-        Ok(())
-    }
-
     // ── Typed binary readers ───────────────────────────────────
 
     pub fn read_u8(&mut self) -> Result<u8, LevelError> {

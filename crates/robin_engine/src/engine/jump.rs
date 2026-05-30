@@ -1530,7 +1530,12 @@ mod tests {
         // matter for is_jumpable; what matters is `jump_line_indices`
         // and the grid-flat sector index.
         let make_sector = |sn: i16| GridSector {
-            points: vec![pt(0.0, 0.0), pt(64.0, 0.0), pt(64.0, 64.0), pt(0.0, 64.0)],
+            points: vec![
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(64.0, 0.0),
+                MapPoint::new(64.0, 64.0),
+                MapPoint::new(0.0, 64.0),
+            ],
             bounding_box: {
                 let mut b = BBox2D::new();
                 b.expand_point(pt(0.0, 0.0));

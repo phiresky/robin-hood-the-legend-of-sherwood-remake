@@ -772,11 +772,6 @@ impl PortraitCache {
         self.localized_names = names;
     }
 
-    /// Generate random localized names for peasant characters.
-    ///
-    /// Picks a random firstname (string IDs 100-121) and surname
-    /// (string IDs 122-143), concatenates them, and registers the
-    /// result in the campaign to avoid duplicates.
     //
     // Determinism: the resulting names are persisted to
     // `campaign.peasant_names` via `RegisterPeasantName`, which is
@@ -1799,13 +1794,6 @@ pub fn draw_blazon_bar(
     }
 }
 
-/// Draw the requirements-bar icon strip.
-///
-/// Per-slot icon at the row's x offset with the character/action-specific
-/// sub-picture, plus overlay status (yes/no) and selected marker on top.
-///
-/// `campaign` is used to resolve `character_profile_idx` → profile name
-/// for the per-slot required-PC / optional-PC sub-picture lookups.
 //
 // Layout constants:
 //   ICON_WIDTH              40

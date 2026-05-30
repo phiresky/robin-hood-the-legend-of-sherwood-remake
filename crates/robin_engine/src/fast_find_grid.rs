@@ -133,7 +133,7 @@ pub const TACTICAL_HORSE_PARKING: u8 = 7;
     Debug, Clone, Copy, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub struct LevelRepulsivePoint {
-    pub position: GeoPoint2D,
+    pub position: MapPoint,
     pub layer: u16,
     /// Outward normal of the incoming-edge vector.
     pub limit_left: Vec2D,
@@ -229,8 +229,8 @@ impl std::fmt::Display for LineIndex {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GridLine {
     /// Segment endpoints.
-    pub a: GeoPoint2D,
-    pub b: GeoPoint2D,
+    pub a: MapPoint,
+    pub b: MapPoint,
     /// Whether this is a motion-blocking line (`LINE_MOTION`).
     pub is_motion: bool,
     /// Whether this is a repulsive line (`LINE_REPULSIVE`) — motion-area
@@ -279,10 +279,10 @@ pub struct GridLine {
 
 impl GridLine {
     /// Create a new grid line from two endpoints.
-    pub fn new(a: GeoPoint2D, b: GeoPoint2D, is_motion: bool) -> Self {
+    pub fn new(a: MapPoint, b: MapPoint, is_motion: bool) -> Self {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(a);
-        bbox.expand_point(b);
+        bbox.expand_point(a.to_geo());
+        bbox.expand_point(b.to_geo());
         // Compute outward normal (perpendicular to segment, normalized).
         let dx = b.x - a.x;
         let dy = b.y - a.y;
@@ -317,7 +317,7 @@ impl GridLine {
     /// `check_for_patch_line_crossing` can route into `Patch::enter` /
     /// `apply` without a reverse lookup.  Not motion-blocking — LINE_PATCH
     /// is purely a trigger surface.
-    pub fn new_patch(a: GeoPoint2D, b: GeoPoint2D, patch_index: crate::patch::PatchIndex) -> Self {
+    pub fn new_patch(a: MapPoint, b: MapPoint, patch_index: crate::patch::PatchIndex) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_patch = true;
         line.patch_index = Some(patch_index);
@@ -356,7 +356,7 @@ impl GridLine {
     /// to a script zone, `None` means the post-ctor state before any
     /// association call. Not motion-blocking; a script line is purely
     /// a trigger surface.
-    pub fn new_script(a: GeoPoint2D, b: GeoPoint2D, script_zone_index: u16) -> Self {
+    pub fn new_script(a: MapPoint, b: MapPoint, script_zone_index: u16) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_script = true;
         line.script_zone_index = Some(script_zone_index);
@@ -372,7 +372,7 @@ impl GridLine {
     /// `MaterialSectors::material_at(actor_pos)` which combines the
     /// polygon containment test with the obstacle/default fallback in
     /// one call.
-    pub fn new_sound(a: GeoPoint2D, b: GeoPoint2D) -> Self {
+    pub fn new_sound(a: MapPoint, b: MapPoint) -> Self {
         let mut line = Self::new(a, b, false);
         line.is_sound = true;
         line
@@ -385,8 +385,8 @@ impl GridLine {
     /// indices into `EngineInner::sight_obstacles` for the obstacles on the
     /// left/right of the oriented segment.
     pub fn new_elevation(
-        a: GeoPoint2D,
-        b: GeoPoint2D,
+        a: MapPoint,
+        b: MapPoint,
         left_obstacle_index: Option<u16>,
         right_obstacle_index: Option<u16>,
     ) -> Self {
@@ -400,7 +400,7 @@ impl GridLine {
     /// The line as a geo segment.
     #[inline]
     pub fn segment(&self) -> geo::Line<f32> {
-        geo2d::segment(self.a, self.b)
+        geo2d::segment(self.a.to_geo(), self.b.to_geo())
     }
 
     /// Test if this line's segment intersects another segment.
@@ -433,7 +433,7 @@ impl GridLine {
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GridSector {
     /// Polygon vertices defining this sector's boundary.
-    pub points: Vec<GeoPoint2D>,
+    pub points: Vec<MapPoint>,
     /// Axis-aligned bounding box (pre-computed for fast rejection).
     pub bounding_box: BBox2D,
     /// Bitflag combination of sector type properties (AREA, MOTION, DOOR, LIFT, etc.).
@@ -462,9 +462,9 @@ pub struct GridSector {
 
     // ── Lift endpoints (lifts only, populated at level load) ──
     /// Bottom lift-side exit point, mirroring legacy implementation `RHSectorLift::GetLowExitPoint`.
-    pub low_exit_point: Option<GeoPoint2D>,
+    pub low_exit_point: Option<MapPoint>,
     /// Top lift-side exit point, mirroring legacy implementation `RHSectorLift::GetHighExitPoint`.
-    pub high_exit_point: Option<GeoPoint2D>,
+    pub high_exit_point: Option<MapPoint>,
 
     // Door indices are ancillary references for code that still needs the
     // original door record (for example falling out of a lift to the outside
@@ -498,11 +498,12 @@ pub struct GridSector {
 
 impl GridSector {
     /// Point-in-polygon test using ray casting.
-    pub fn contains_point(&self, pt: GeoPoint2D) -> bool {
+    pub fn contains_point(&self, pt: MapPoint) -> bool {
         if self.points.len() < 3 {
             return false;
         }
-        if !self.bounding_box.contains_point(pt) {
+        let pt_geo = pt.to_geo();
+        if !self.bounding_box.contains_point(pt_geo) {
             return false;
         }
         let mut inside = false;
@@ -534,7 +535,7 @@ impl GridSector {
             return false;
         }
         if n == 1 {
-            return bbox.contains_point(self.points[0]);
+            return bbox.contains_point(self.points[0].to_geo());
         }
 
         let rect = match bbox.0 {
@@ -544,7 +545,7 @@ impl GridSector {
 
         // Any polygon point inside the box?
         for p in &self.points {
-            if bbox.contains_point(*p) {
+            if bbox.contains_point(p.to_geo()) {
                 return true;
             }
         }
@@ -553,7 +554,7 @@ impl GridSector {
         use geo::Intersects;
         let mut j = n - 1;
         for i in 0..n {
-            let seg = geo::Line::new(self.points[j], self.points[i]);
+            let seg = geo::Line::new(self.points[j].to_geo(), self.points[i].to_geo());
             if rect.intersects(&seg) {
                 return true;
             }
@@ -561,7 +562,7 @@ impl GridSector {
         }
 
         // Box fully contained in polygon — test top-left corner.
-        self.contains_point(pt(rect.min().x, rect.min().y))
+        self.contains_point(MapPoint::new(rect.min().x, rect.min().y))
     }
 }
 
@@ -1040,9 +1041,14 @@ impl FastFindGrid {
 
     // ── Grid indexing ──
 
-    /// Test if a world-space point is inside the grid.
+    /// Test if a projected map point is inside the grid.
     #[inline]
-    pub fn is_inside_grid_point(&self, point: GeoPoint2D) -> bool {
+    pub fn is_inside_grid_point(&self, point: MapPoint) -> bool {
+        self.is_inside_grid_point_geo(point.to_geo())
+    }
+
+    #[inline]
+    fn is_inside_grid_point_geo(&self, point: GeoPoint2D) -> bool {
         let x = point.x as i32;
         let y = point.y as i32;
         x >= 0
@@ -1051,33 +1057,14 @@ impl FastFindGrid {
             && y < (self.level.grid_height as i32) * GRID_CELL_SIZE
     }
 
-    /// Test if grid-cell coordinates are inside the grid.
-    #[inline]
-    pub fn is_inside_grid(&self, x: i16, y: i16) -> bool {
-        x >= 0
-            && (x as u16) < self.level.grid_width
-            && y >= 0
-            && (y as u16) < self.level.grid_height
-    }
-
-    /// Clamp grid-cell coordinates to be inside the grid.
-    #[inline]
-    pub fn clamp_to_grid(&self, x: &mut i16, y: &mut i16) {
-        if *x < 0 {
-            *x = 0;
-        } else if *x >= self.level.grid_width as i16 {
-            *x = self.level.grid_width as i16 - 1;
-        }
-        if *y < 0 {
-            *y = 0;
-        } else if *y >= self.level.grid_height as i16 {
-            *y = self.level.grid_height as i16 - 1;
-        }
-    }
-
     /// Compute the flat block index for a world-space point on a given layer.
     #[inline]
-    pub fn get_block_index(&self, point: GeoPoint2D, layer: u16) -> usize {
+    pub fn get_block_index(&self, point: MapPoint, layer: u16) -> usize {
+        self.get_block_index_geo(point.to_geo(), layer)
+    }
+
+    #[inline]
+    fn get_block_index_geo(&self, point: GeoPoint2D, layer: u16) -> usize {
         let bx = (point.x as i32) >> 6; // divide by 64
         let by = (point.y as i32) >> 6;
         (bx as usize)
@@ -1094,14 +1081,6 @@ impl FastFindGrid {
     // ── Getters ──
 
     #[inline]
-    pub fn width(&self) -> u16 {
-        self.level.grid_width
-    }
-    #[inline]
-    pub fn height(&self) -> u16 {
-        self.level.grid_height
-    }
-    #[inline]
     pub fn lift_layer(&self) -> u16 {
         self.level.special_layer - 1
     }
@@ -1110,10 +1089,6 @@ impl FastFindGrid {
 
     pub fn add_move_box_half_diagonal(&mut self, hd: Vec2D) {
         self.level_mut().move_box_half_diagonals.push(hd);
-    }
-
-    pub fn get_move_box_half_diagonal(&self, index: usize) -> Vec2D {
-        self.level.move_box_half_diagonals[index]
     }
 
     /// Safe lookup: returns `None` when the half-diagonal table hasn't
@@ -1225,16 +1200,6 @@ impl FastFindGrid {
             .get(usize::from(mask_idx))
             .copied()
             .unwrap_or(false)
-    }
-
-    /// Per-lift runtime state. Returns the default (zero / not occupied)
-    /// when no entry exists yet — most sectors are not lifts.
-    #[inline]
-    pub fn lift_state(&self, sector_idx: u32) -> LiftRuntimeState {
-        self.lift_state
-            .get(&sector_idx)
-            .copied()
-            .unwrap_or_default()
     }
 
     /// Mutable accessor to the lift runtime state. Inserts a default
@@ -1526,7 +1491,7 @@ impl FastFindGrid {
         &self,
         layer: u16,
         bbox: &BBox2D,
-        position: GeoPoint2D,
+        position: MapPoint,
     ) -> Vec<crate::mask::MaskIndex> {
         let rect = match bbox.0 {
             Some(r) => r,
@@ -1710,7 +1675,7 @@ impl FastFindGrid {
     /// polygon. Used by the per-element refresh paths to suppress
     /// fog/night variant tinting when the actor stands in a shadow
     /// (=light-at-night) sector.
-    pub fn is_in_shadow_sector(&self, point: GeoPoint2D, layer: u16) -> bool {
+    pub fn is_in_shadow_sector(&self, point: MapPoint, layer: u16) -> bool {
         use crate::sector::SectorType;
         let block_idx = self.get_block_index(point, layer);
         self.get_sectors_at_block(block_idx, SectorType::SHADOW)
@@ -1730,7 +1695,7 @@ impl FastFindGrid {
     /// know the landing footprint.
     pub fn resolve_projectile_landing(
         &self,
-        landing_screen: GeoPoint2D,
+        landing_screen: MapPoint,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
         self.resolve_projectile_landing_with_obstacle(landing_screen, None, sight_obstacles)
@@ -1743,7 +1708,7 @@ impl FastFindGrid {
     /// still fall back to the screen polygon lookup.
     pub fn resolve_projectile_landing_with_obstacle(
         &self,
-        landing_screen: GeoPoint2D,
+        landing_screen: MapPoint,
         exact_obstacle_index: Option<crate::position_interface::ObstacleHandle>,
         sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> ProjectileLandingResolution {
@@ -1770,7 +1735,7 @@ impl FastFindGrid {
         for (idx, obstacle) in projection_iter.by_ref() {
             if !sight_obstacles.is_active(idx as usize)
                 || !obstacle.is_projection_area()
-                || !obstacle.contains_point_screen(landing_screen)
+                || !obstacle.contains_point_screen(landing_screen.to_geo())
             {
                 continue;
             }
@@ -1832,9 +1797,6 @@ impl FastFindGrid {
     /// `reference` is used for jump-sector tie-breaking (closest to reference wins).
     pub fn get_sector(&self, pt: MapPoint, reference: MapPoint, layer: u16) -> SectorHit {
         use crate::sector::SectorType;
-
-        let pt = pt.to_geo();
-        let reference = reference.to_geo();
 
         if !self.is_inside_grid_point(pt) {
             return SectorHit::None;
@@ -2162,7 +2124,7 @@ impl FastFindGrid {
         self.level
             .level_repulsive_points
             .iter()
-            .filter(|p| p.layer == layer && bbox.contains_point(p.position))
+            .filter(|p| p.layer == layer && bbox.contains_point(p.position.to_geo()))
             .collect()
     }
 
@@ -2294,8 +2256,10 @@ impl FastFindGrid {
             let Some(line) = self.level.lines.get(usize::from(idx)) else {
                 return false;
             };
-            let line_vec = line.b - line.a;
-            let test_vec = old_pos - line.a;
+            let line_a = line.a.to_geo();
+            let line_b = line.b.to_geo();
+            let line_vec = line_b - line_a;
+            let test_vec = old_pos - line_a;
             line_vec.x * test_vec.y - line_vec.y * test_vec.x != 0.0
         });
     }
@@ -2413,7 +2377,7 @@ impl FastFindGrid {
         let mut indices = Vec::with_capacity(points.len());
         let mut last = points[points.len() - 1];
         for &current in points {
-            let line = GridLine::new_sound(last, current);
+            let line = GridLine::new_sound(MapPoint::from_geo(last), MapPoint::from_geo(current));
             let idx = self.add_line(line, layer);
             self.set_line_active(idx, sector_active);
             indices.push(idx);
@@ -2748,7 +2712,7 @@ impl FastFindGrid {
         // Check if any line endpoint lies inside the corridor
         for &idx in &line_indices {
             let p = self.level.lines[usize::from(idx)].a;
-            if corridor.point_inside(p) {
+            if corridor.point_inside(p.to_geo()) {
                 return false;
             }
         }
@@ -2757,7 +2721,11 @@ impl FastFindGrid {
     }
 
     /// Check thin (zero-width) reachability between two points.
-    pub fn is_reachable_thin(&self, p1: GeoPoint2D, p2: GeoPoint2D, layer: u16) -> bool {
+    pub fn is_reachable_thin(&self, p1: MapPoint, p2: MapPoint, layer: u16) -> bool {
+        self.is_reachable_thin_geo(p1.to_geo(), p2.to_geo(), layer)
+    }
+
+    fn is_reachable_thin_geo(&self, p1: GeoPoint2D, p2: GeoPoint2D, layer: u16) -> bool {
         let seg = geo2d::segment(p1, p2);
         let mut bbox = BBox2D::new();
         bbox.expand_point(p1);
@@ -2906,18 +2874,6 @@ impl FastFindGrid {
             .is_none()
     }
 
-    /// 2D-only variant: preserved for callers that only have map-plane
-    /// coordinates (pathfinder grid walk).  Walls on the ray's layer
-    /// block it; sight-obstacle top/bottom planes are not consulted.
-    pub fn is_reachable_impact(
-        &self,
-        origin: GeoPoint2D,
-        destination: GeoPoint2D,
-        layer: u16,
-    ) -> bool {
-        self.is_reachable_thin(origin, destination, layer)
-    }
-
     /// Find the earliest intersection ratio along a trajectory segment
     /// against blocking motion lines.
     ///
@@ -3037,7 +2993,7 @@ impl FastFindGrid {
             if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
                 return false;
             }
-            if corridor.point_inside(line.a) {
+            if corridor.point_inside(line.a.to_geo()) {
                 return false;
             }
         }
@@ -3118,6 +3074,15 @@ impl FastFindGrid {
     pub fn find_authorized_position_toward(
         &self,
         bbox: &mut BBox2D,
+        click: MapPoint,
+        layer: u16,
+    ) -> bool {
+        self.find_authorized_position_toward_geo(bbox, click.to_geo(), layer)
+    }
+
+    fn find_authorized_position_toward_geo(
+        &self,
+        bbox: &mut BBox2D,
         click: GeoPoint2D,
         layer: u16,
     ) -> bool {
@@ -3171,6 +3136,15 @@ impl FastFindGrid {
     /// Find an authorized position along the segment from `start` to the box
     /// center, then refine by pushing away from the box itself.
     pub fn find_authorized_position_straight(
+        &self,
+        bbox: &mut BBox2D,
+        start: MapPoint,
+        layer: u16,
+    ) -> bool {
+        self.find_authorized_position_straight_geo(bbox, start.to_geo(), layer)
+    }
+
+    fn find_authorized_position_straight_geo(
         &self,
         bbox: &mut BBox2D,
         start: GeoPoint2D,
@@ -3262,7 +3236,7 @@ impl FastFindGrid {
                 let vy = -angle.cos();
                 *bbox = initial;
                 bbox.translate(pt(vx * radius_try, vy * radius_try));
-                if self.find_authorized_position_toward(bbox, center_initial, layer) {
+                if self.find_authorized_position_toward_geo(bbox, center_initial, layer) {
                     return true;
                 }
             }
@@ -3358,7 +3332,7 @@ mod tests {
         grid.allocate_layers(1); // 1 conventional layer
 
         // Add a horizontal motion line across the middle
-        let line = GridLine::new(pt(0.0, 128.0), pt(256.0, 128.0), true);
+        let line = GridLine::new(MapPoint::new(0.0, 128.0), MapPoint::new(256.0, 128.0), true);
         grid.add_line(line, 0);
         grid
     }
@@ -3379,11 +3353,11 @@ mod tests {
         grid.allocate_layers(1);
 
         // Point (65, 65) should be in cell (1, 1) on layer 0
-        let idx = grid.get_block_index(pt(65.0, 65.0), 0);
+        let idx = grid.get_block_index(MapPoint::new(65.0, 65.0), 0);
         assert_eq!(idx, 1 + 4); // x=1, y=1, width=4
 
         // Same point on layer 1
-        let idx_l1 = grid.get_block_index(pt(65.0, 65.0), 1);
+        let idx_l1 = grid.get_block_index(MapPoint::new(65.0, 65.0), 1);
         assert_eq!(idx_l1, 1 + 4 * (1 + 8)); // height is 4+4=8
     }
 
@@ -3404,11 +3378,12 @@ mod tests {
 
     #[test]
     fn test_motion_normal_matches_original_area_flag() {
-        let mut area_line = GridLine::new(pt(0.0, 0.0), pt(10.0, 0.0), true);
+        let mut area_line = GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         area_line.initialize_motion_normal(true);
         assert_eq!(area_line.normal, pt(0.0, 1.0));
 
-        let mut obstacle_line = GridLine::new(pt(0.0, 0.0), pt(10.0, 0.0), true);
+        let mut obstacle_line =
+            GridLine::new(MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0), true);
         obstacle_line.initialize_motion_normal(false);
         assert_eq!(obstacle_line.normal, pt(0.0, -1.0));
     }
@@ -3546,7 +3521,11 @@ mod tests {
 
         // Mobile repulsive line added: a vertical line at x=150 that
         // the corridor from (50,50)→(200,50) must cross.
-        let mobile = GridLine::new(pt(150.0, 30.0), pt(150.0, 70.0), false);
+        let mobile = GridLine::new(
+            MapPoint::new(150.0, 30.0),
+            MapPoint::new(150.0, 70.0),
+            false,
+        );
         assert!(!grid.is_reachable_thick_mobile(
             MapPoint::new(50.0, 50.0),
             MapPoint::new(200.0, 50.0),
@@ -3563,7 +3542,7 @@ mod tests {
         // Box straddling the line, push toward a click point below (on the
         // normal side — the line's normal points +Y for a left-to-right line)
         let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
-        let found = grid.find_authorized_position_toward(&mut bbox, pt(130.0, 200.0), 0);
+        let found = grid.find_authorized_position_toward(&mut bbox, MapPoint::new(130.0, 200.0), 0);
         assert!(found, "should find position toward click");
         assert!(grid.is_position_authorized(&bbox, 0));
         // Box should have been pushed below the line
@@ -3576,7 +3555,8 @@ mod tests {
 
         // Box straddling the line, push along segment from a start point below
         let mut bbox = BBox2D::from_coords(120.0, 125.0, 140.0, 135.0);
-        let found = grid.find_authorized_position_straight(&mut bbox, pt(130.0, 200.0), 0);
+        let found =
+            grid.find_authorized_position_straight(&mut bbox, MapPoint::new(130.0, 200.0), 0);
         assert!(found, "should find straight authorized position");
         assert!(grid.is_position_authorized(&bbox, 0));
     }
@@ -3619,7 +3599,7 @@ mod tests {
             bbox.expand_point(p);
         }
         GridSector {
-            points: pts,
+            points: pts.iter().copied().map(MapPoint::from_geo).collect(),
             bounding_box: bbox,
             sector_type,
             layer,
@@ -3704,7 +3684,7 @@ mod tests {
         )];
 
         let resolution = grid.resolve_projectile_landing(
-            pt(64.0, 54.0),
+            MapPoint::new(64.0, 54.0),
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
 
@@ -3736,7 +3716,7 @@ mod tests {
         ];
 
         let resolution = grid.resolve_projectile_landing_with_obstacle(
-            pt(64.0, 54.0),
+            MapPoint::new(64.0, 54.0),
             ObstacleHandle::new(1),
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
@@ -3767,7 +3747,7 @@ mod tests {
         );
 
         let resolution = grid.resolve_projectile_landing(
-            pt(64.0, 64.0),
+            MapPoint::new(64.0, 64.0),
             crate::sight_obstacle::ObstacleList::empty(),
         );
 

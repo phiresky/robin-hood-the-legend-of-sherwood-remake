@@ -140,11 +140,9 @@ impl EngineInner {
         let bbox_at_new = move_box.translated(geo2d::pt(new_pos.x, new_pos.y));
 
         let authorized = self.fast_grid.is_position_authorized(&bbox_at_new, layer)
-            && self.fast_grid.is_reachable_thin(
-                geo2d::pt(current_pos.x, current_pos.y),
-                geo2d::pt(new_pos.x, new_pos.y),
-                layer,
-            );
+            && self
+                .fast_grid
+                .is_reachable_thin(current_pos, new_pos, layer);
 
         let Some(entity) = self.get_entity_mut(eid) else {
             return;

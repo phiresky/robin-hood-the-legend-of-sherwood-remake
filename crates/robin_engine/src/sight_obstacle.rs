@@ -374,11 +374,6 @@ impl SightObstacle {
     // ---- Type flag queries ----
 
     #[inline]
-    pub fn is_of_type(&self, flag: u32) -> bool {
-        (self.obstacle_type & flag) == flag
-    }
-
-    #[inline]
     pub fn is_solid(&self) -> bool {
         self.obstacle_type & SIGHTOBSTACLE_SOLID != 0
     }
@@ -517,28 +512,6 @@ impl SightObstacle {
         for p in &mut self.bottom_plane_points {
             p[0] += dx;
             p[1] += dy;
-        }
-        self.rebuild_geometry();
-    }
-
-    /// Translate all points by a 3D vector.
-    pub fn translate_3d(&mut self, dx: f32, dy: f32, dz: f32) {
-        for op in &mut self.obstacle_points {
-            op.x += dx;
-            op.y += dy;
-            op.z_top += dz;
-            op.z_bottom += dz;
-        }
-        // Shift planes in all three axes.
-        for p in &mut self.top_plane_points {
-            p[0] += dx;
-            p[1] += dy;
-            p[2] += dz;
-        }
-        for p in &mut self.bottom_plane_points {
-            p[0] += dx;
-            p[1] += dy;
-            p[2] += dz;
         }
         self.rebuild_geometry();
     }
@@ -963,32 +936,6 @@ impl RayZEquation {
 // ═══════════════════════════════════════════════════════════════════
 //  3D reachability check
 // ═══════════════════════════════════════════════════════════════════
-
-/// Find the earliest intersection ratio along a 3D ray blocked by a sight obstacle.
-///
-/// Returns `t` in `0.0..=1.0` representing how far along the segment the
-/// first blocking intersection occurs.  Returns `None` if no blocking.
-///
-/// Uses the 2D intersection point on obstacle edges to compute the
-/// parametric `t` along the original 3D ray.
-pub fn impact_ratio_3d(
-    obstacles: ObstacleList<'_>,
-    origin: [f32; 3],
-    destination: [f32; 3],
-) -> Option<f32> {
-    let mut min_t: Option<f32> = None;
-
-    for (__idx, obs) in obstacles.iter_indexed() {
-        if !obstacles.is_active(__idx as usize) || !(obs.is_solid() || obs.is_opaque()) {
-            continue;
-        }
-        if let Some(t) = obs.blocking_ray_3d_ratio(origin, destination) {
-            min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
-        }
-    }
-
-    min_t
-}
 
 /// Check if a 3D ray between two points is clear of SOLID|OPAQUE sight obstacles.
 ///

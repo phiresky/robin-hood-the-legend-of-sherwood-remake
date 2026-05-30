@@ -57,11 +57,6 @@ pub struct Profiler {
 /// without linking SDL from this crate.
 static GET_TICKS: Mutex<Option<extern "C" fn() -> u32>> = Mutex::new(None);
 
-/// Register the tick source. Called once at startup.
-pub fn set_get_ticks(f: extern "C" fn() -> u32) {
-    *GET_TICKS.lock().unwrap() = Some(f);
-}
-
 /// Read current tick count via the registered callback, or return 0.
 fn get_ticks() -> u32 {
     GET_TICKS.lock().unwrap().map(|f| f()).unwrap_or(0)

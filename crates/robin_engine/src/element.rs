@@ -272,22 +272,6 @@ impl ElementData {
     /// once per frame, so caching would be a micro-optimisation.  This
     /// method has no active users yet; it exists so reviving the
     /// overlay is a one-line change.
-    #[must_use]
-    pub fn get_distance_to_boundary_of_material_sector(
-        &self,
-        materials: &crate::material_sectors::MaterialSectors,
-    ) -> f32 {
-        let p = self.position_map();
-        let point = crate::geo2d::pt(p.x, p.y);
-        match materials.containing_sector(point) {
-            None => 0.0,
-            Some(sector) => sector.approximate_distance_to_boundary(
-                point,
-                crate::position_interface::INVERSE_ASPECT_RATIO,
-            ),
-        }
-    }
-
     /// Change the posture, respecting the corpse-transition guard: a
     /// `Dead` / `DeadBack` corpse can only transition to `Carried`
     /// (pickup); any other posture write on a dead sprite is silently
@@ -933,27 +917,6 @@ impl Default for HumanData {
 pub const HULK_LENGTH: u32 = 20;
 
 impl HumanData {
-    /// Tick the hulk glow animation.
-    pub fn refresh_hulk(&mut self) {
-        if self.running_hulk == 0 {
-            return;
-        }
-        self.running_hulk -= 1;
-        if self.running_hulk > 0 {
-            let ratio = self.running_hulk as f32 / self.time_hulk as f32;
-            self.hulk_level = if self.hulk_direction {
-                // Fade-out: level decreases as running_hulk → 0
-                40 + (60.0 * ratio) as u16
-            } else {
-                // Fade-in: level increases as running_hulk → 0
-                40 + (60.0 * (1.0 - ratio)) as u16
-            };
-        } else {
-            // Animation finished — reset to fade-out for next time
-            self.hulk_direction = true;
-        }
-    }
-
     /// Start the hulk outline glow animation.
     pub fn start_hulk(&mut self, fade_out: bool, speed: f32) {
         self.hulk_direction = fade_out;
@@ -2322,13 +2285,6 @@ impl Entity {
         }
     }
 
-    pub fn soldier_data_mut(&mut self) -> Option<&mut SoldierData> {
-        match self {
-            Self::Soldier(e) => Some(&mut e.soldier),
-            _ => None,
-        }
-    }
-
     pub fn pc_data(&self) -> Option<&PcData> {
         match self {
             Self::Pc(e) => Some(&e.pc),
@@ -2602,14 +2558,6 @@ impl Entity {
     pub fn enemy_ai_mut(&mut self) -> Option<&mut EnemyAi> {
         match self {
             Self::Soldier(e) => e.npc.ai_brain.enemy_mut(),
-            _ => None,
-        }
-    }
-
-    /// Get the friendly AI subclass, if this is a civilian with AI.
-    pub fn friendly_ai(&self) -> Option<&FriendlyAi> {
-        match self {
-            Self::Civilian(e) => e.npc.ai_brain.friendly(),
             _ => None,
         }
     }
@@ -3565,26 +3513,7 @@ impl Human for ActorCivilian {
 //  Concrete-type convenience methods
 // ═══════════════════════════════════════════════════════════════════
 
-impl ActorPc {
-    pub fn current_action(&self) -> Action {
-        self.pc.current_action
-    }
-    pub fn is_head_seen(&self) -> bool {
-        self.pc.head_seen
-    }
-    pub fn is_belt_seen(&self) -> bool {
-        self.pc.belt_seen
-    }
-    pub fn is_feet_seen(&self) -> bool {
-        self.pc.feet_seen
-    }
-    pub fn work_icon(&self) -> WorkIcon {
-        self.pc.work_icon
-    }
-    pub fn is_carrying(&self) -> bool {
-        self.pc.carried.is_some()
-    }
-}
+impl ActorPc {}
 
 impl ActorSoldier {
     pub fn is_smelling_apple(&self) -> bool {
@@ -3621,11 +3550,6 @@ impl ElementBonus {
     /// Whether this bonus item can be picked up by a PC.
     pub fn is_takable(&self) -> bool {
         !self.object.taken && self.element.active && !self.is_relic()
-    }
-
-    /// The action type associated with this bonus item.
-    pub fn associated_action(&self) -> Action {
-        self.object.associated_action
     }
 }
 
@@ -3687,13 +3611,6 @@ impl ObjectTypeExt for ObjectType {
 }
 
 impl ElementProjectile {
-    pub fn is_flying(&self) -> bool {
-        self.projectile.flying
-    }
-    pub fn shooter(&self) -> Option<EntityId> {
-        self.projectile.shooter
-    }
-
     /// Advance the projectile by one trajectory frame: pop the next
     /// waypoint when the current segment timer expires, then apply the
     /// per-frame velocity increment to the position / map / direction.
@@ -3759,13 +3676,6 @@ pub fn advance_trajectory_one_frame(
 }
 
 impl ElementNet {
-    pub fn is_crumpled(&self) -> bool {
-        self.net.crumpled
-    }
-    pub fn has_victim(&self, id: EntityId) -> bool {
-        self.net.victims.contains(&id)
-    }
-
     /// Step the net's ballistic trajectory one frame.  Shares the same
     /// logic as [`ElementProjectile::advance_trajectory_one_frame`].
     pub fn advance_trajectory_one_frame(&mut self) -> bool {

@@ -1043,15 +1043,6 @@ pub(super) fn handle_mouse_input(
     }
 }
 
-/// Handle pause-menu event dispatch.  The menu state machine owns
-/// all keyboard/mouse input while the game is paused.  We feed it
-/// the same events the game loop sees and react to its outcome
-/// (Continue/Options/Load/Save/Restart/Quit).
-///
-/// Returns `HandlerAction::Exit(code)` for Restart/Quit exits, else
-/// `Proceed`.  `pause_menu` may be cleared (on Continue) or left
-/// alive (after a side-menu sub-modal) — the caller observes via
-/// its `&mut Option<PauseMenu>`.
 // Holds `PlayerProfileManager::global()` mutex across the
 // options-modal `await` — safe under the single-threaded runtime.
 #[allow(clippy::too_many_arguments, clippy::await_holding_lock)]

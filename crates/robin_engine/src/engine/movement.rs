@@ -3,7 +3,7 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::EntityId;
-use crate::geo2d::{self, GeoPoint2D};
+use crate::geo2d;
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
@@ -561,7 +561,7 @@ impl EngineInner {
     pub(super) fn lift_endpoint_points(
         &self,
         sector_number: crate::sector::SectorNumber,
-    ) -> (GeoPoint2D, GeoPoint2D) {
+    ) -> (MapPoint, MapPoint) {
         let sector = self
             .grid_sector_by_number(sector_number)
             .expect("DetermineMovementAnimation: missing lift sector");
@@ -792,7 +792,7 @@ impl EngineInner {
         );
         if self
             .fast_grid
-            .find_authorized_position_toward(&mut bbox, reference.to_geo(), layer)
+            .find_authorized_position_toward(&mut bbox, reference, layer)
         {
             Some(MapPoint::from_geo(bbox.center()))
         } else {
@@ -5709,7 +5709,7 @@ impl EngineInner {
             else {
                 continue;
             };
-            let inside_apply = apply_sector.contains_point(new_pos.to_geo());
+            let inside_apply = apply_sector.contains_point(new_pos);
 
             let effects = {
                 let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())

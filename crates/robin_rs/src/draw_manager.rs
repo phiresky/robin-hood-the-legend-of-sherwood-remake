@@ -282,25 +282,6 @@ impl DrawManager {
         }
     }
 
-    /// Draw a polyline without clipping (assumes points are already in view).
-    ///
-    /// Currently dead code (no callers). Applies `map_to_screen` so it
-    /// matches the rest of the `DrawManager` API if ever resurrected.
-    pub fn draw_polyline_no_clip(
-        &self,
-        renderer: &mut Renderer,
-        points: &[GeoPoint2D],
-        color: u16,
-    ) {
-        for i in 0..points.len().saturating_sub(1) {
-            let a = self.map_to_screen(MapPoint::from_geo(points[i])).to_geo();
-            let b = self
-                .map_to_screen(MapPoint::from_geo(points[i + 1]))
-                .to_geo();
-            renderer.draw_line_screen(a.x as i32, a.y as i32, b.x as i32, b.y as i32, color);
-        }
-    }
-
     /// Draw an ellipse (isometric projection of a circle).
     ///
     /// The minor axis is scaled by `cos(55°)` to match the game's isometric angle.
@@ -343,41 +324,6 @@ impl DrawManager {
         };
 
         draw_ellipse_gpu(renderer, center.x, center.y, r, r, color);
-    }
-
-    /// Display a gauge bar (used for health/stamina).
-    pub fn display_gauge(
-        &self,
-        renderer: &mut Renderer,
-        top_left: GeoPoint2D,
-        fraction: f32,
-        back_color: u16,
-        fore_color: u16,
-    ) {
-        // Background
-        let bg_box = BBox::new(
-            top_left,
-            GeoPoint2D {
-                x: top_left.x + GAUGE_WIDTH,
-                y: top_left.y + GAUGE_HEIGHT,
-            },
-        );
-        self.fill_box(renderer, &bg_box, back_color);
-
-        // Foreground (filled portion)
-        let fg_box = BBox::new(
-            top_left,
-            GeoPoint2D {
-                x: top_left.x + fraction * GAUGE_WIDTH,
-                y: top_left.y + GAUGE_HEIGHT,
-            },
-        );
-        self.fill_box(renderer, &fg_box, fore_color);
-
-        // Note: a percentage-text overlay was wired up for the
-        // `energyDisplay` console cheat but never actually invoked — no
-        // render path reads the cheat flag, and there's no stamina metric
-        // to hook into. Skipped here for the same reason.
     }
 
     /// Draw a filled, semi-transparent polygon.

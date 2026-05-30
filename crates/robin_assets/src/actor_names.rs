@@ -104,10 +104,6 @@ pub struct ActorNames {
 }
 
 impl ActorNames {
-    pub fn actor(&self, position: i32) -> Option<&str> {
-        lookup(&self.actors, position)
-    }
-
     /// Return `(global_name, identifier)` for `GetActorScript(position)` —
     /// e.g. `("Anim", "Nottingham_eau01")` or `("Actors", "PrinceJohn")`.
     /// `None` if the slot is unnamed.

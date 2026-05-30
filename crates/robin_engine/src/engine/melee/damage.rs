@@ -28,7 +28,7 @@ impl EngineInner {
         // the box stays pulled toward the actor's original spot; the
         // plain variant only gathers lines intersecting the moving
         // box and can drift further.
-        let click = crate::geo2d::pt(start.x, start.y);
+        let click = crate::coordinates::MapPoint::new(start.x, start.y);
         if self
             .fast_grid
             .find_authorized_position_toward(&mut bbox, click, layer)

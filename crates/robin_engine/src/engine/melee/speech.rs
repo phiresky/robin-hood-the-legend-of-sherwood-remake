@@ -575,39 +575,4 @@ impl EngineInner {
     }
 
     // ─── Tie-up (public, called from natives/UI) ────────────────────
-
-    /// Tie up an unconscious enemy.
-    ///
-    /// The tying entity must be adjacent to the victim. The victim
-    /// must be unconscious and not already tied.
-    //
-    // Sequence dispatch for `Command::TieCmd` now routes through
-    // `abilities::begin_tie`; this wrapper remains for native/UI call
-    // sites that need to apply the final tied posture directly.
-    #[allow(dead_code)]
-    pub(crate) fn tie_up_entity(&mut self, victim_id: EntityId) -> bool {
-        let victim = match self
-            .entities
-            .get_mut(victim_id.0 as usize)
-            .and_then(|s| s.as_mut())
-        {
-            Some(e) => e,
-            None => return false,
-        };
-
-        let is_unconscious = victim.human_data().map(|h| h.unconscious).unwrap_or(false);
-        if !is_unconscious {
-            return false;
-        }
-        if victim.element_data().posture == Posture::Tied {
-            return false; // Already tied
-        }
-
-        if victim.tie_up_unconscious_human() {
-            tracing::info!(entity = ?victim_id, "Entity tied up");
-            true
-        } else {
-            false
-        }
-    }
 }

@@ -471,20 +471,6 @@ impl TitbitManager {
         self.dotted_start
     }
 
-    /// Mutable access to the global dot-pattern phase.  Advanced by 1
-    /// per frame and passed to the dotted-line draw routine.
-    pub fn dotted_start_mut(&mut self) -> &mut f32 {
-        &mut self.dotted_start
-    }
-
-    pub fn current_index(&self) -> u16 {
-        self.current_index
-    }
-
-    pub fn set_current_index(&mut self, idx: u16) {
-        self.current_index = idx;
-    }
-
     // ── Add / Remove ──
 
     /// Add a titbit.  Returns its ID, or [`INVALID_ID`] if filtered out.
@@ -694,11 +680,6 @@ impl TitbitManager {
         for t in &mut self.titbits {
             t.blinking = false;
         }
-    }
-
-    /// Whether the blink timer says "on" right now.
-    pub fn is_blink_on(&self) -> bool {
-        self.blink_counter >= TIME_BLINK_OFF
     }
 
     // ── Per-frame logic ──

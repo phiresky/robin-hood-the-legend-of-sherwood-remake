@@ -142,48 +142,11 @@ impl EngineInner {
         );
     }
 
-    /// Add a `GunImpact` titbit at `pos` and queue the paired impact
-    /// sound cue. The `add_titbit` path always plays sound id 1476
-    /// (impact FX) at `(pos.x, pos.y - pos.z)` — the y-z subtraction
-    /// projects the world Z back onto the screen y-axis so the FX is
-    /// heard at the visible impact location, not at ground level
-    /// beneath it.
-    ///
-    /// No producer exists in Rust today; this helper documents the
-    /// titbit/FX pairing so a future gun or cannon-impact path has the
-    /// correct entry point.
     // No producer as of 2026-04-29 — workspace grep
     // `rg -t rust '\badd_gun_impact_titbit\b' crates/` returns only the
     // definition. Kept as documentation of the titbit/impact-FX pairing
     // for any future gun/cannon-impact path; promote to a real callsite when
     // such a path is wired.
-    #[allow(dead_code)]
-    pub(super) fn add_gun_impact_titbit(&mut self, pos: WorldPoint3D, layer: u16) {
-        let id = self.titbit_manager.add_titbit(
-            pos,
-            layer,
-            TitbitKind::GunImpact,
-            ElementHandle::INVALID,
-            0,
-            ElementHandle::INVALID,
-            false,
-            INVALID_ID,
-            true,
-            None,
-            None,
-        );
-        if id == INVALID_ID {
-            return;
-        }
-        self.pending_side_effects
-            .sounds
-            .push(super::SoundCommand::Fx {
-                fx_id: 1476, // impact FX
-                position: MapPoint::from_world_xyz(pos.x, pos.y, pos.z),
-                material: None,
-            });
-    }
-
     /// Add a WeakStunned titbit for the given entity.
     /// Called from `tick_melee_combat` when a BeingWeakSword or
     /// BeingStunnedSword animation begins, and from `sync_apple_sauce_titbits`

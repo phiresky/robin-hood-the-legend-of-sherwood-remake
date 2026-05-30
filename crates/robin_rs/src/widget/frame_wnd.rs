@@ -163,11 +163,6 @@ impl FrameWnd {
         self.widgets.get(index)
     }
 
-    /// Get a mutable reference to a widget by index.
-    pub fn widget_at_mut(&mut self, index: usize) -> Option<&mut Widget> {
-        self.widgets.get_mut(index)
-    }
-
     /// Number of widgets in this frame.
     pub fn widget_count(&self) -> usize {
         self.widgets.len()
@@ -200,11 +195,6 @@ impl FrameWnd {
         }
         self.excluded.push(id);
         true
-    }
-
-    /// Re-include a previously excluded widget.
-    pub fn include_widget(&mut self, id: WidgetId) {
-        self.excluded.retain(|&eid| eid != id);
     }
 
     /// Check if a widget is excluded.
@@ -243,24 +233,10 @@ impl FrameWnd {
         self.bbox = new_bbox;
     }
 
-    /// Move the frame to a new origin point, keeping size the same.
-    pub fn set_position_point(&mut self, point: ScreenPoint) {
-        if let Some(rect) = self.bbox.0 {
-            let w = rect.max().x - rect.min().x;
-            let h = rect.max().y - rect.min().y;
-            let new_bbox = ScreenBBox::from_coords(point.x, point.y, point.x + w, point.y + h);
-            self.set_position(new_bbox);
-        }
-    }
-
     // ── Enable / disable ───────────────────────────────────────────
 
     pub fn set_enable(&mut self, enabled: bool) {
         self.enabled = enabled;
-    }
-
-    pub fn enable_input(&mut self, enabled: bool) {
-        self.input_enabled = enabled;
     }
 
     pub fn set_tooltip_text(&mut self, text: &str) {

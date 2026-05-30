@@ -119,15 +119,6 @@ impl Vec2 {
             }
         }
     }
-
-    /// In-place perpendicular (aspect ratio = 1).
-    ///
-    /// Thin wrapper around [`Vec2::get_normal`] for call sites that
-    /// prefer a mutate-self pattern.
-    #[inline]
-    pub fn normal_inplace(&mut self, direct: bool) {
-        *self = self.get_normal(direct);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,13 +132,7 @@ impl From<crate::geo2d::GeoPoint2D> for Vec2 {
     }
 }
 
-impl Vec2 {
-    /// Convert to the canonical [`crate::geo2d::GeoPoint2D`] type.
-    #[inline]
-    pub fn to_geo_point(self) -> crate::geo2d::GeoPoint2D {
-        crate::geo2d::pt(self.x, self.y)
-    }
-}
+impl Vec2 {}
 
 // ---------------------------------------------------------------------------
 // Repulsive force helpers (shared by line and point)

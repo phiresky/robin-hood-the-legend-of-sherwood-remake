@@ -519,10 +519,6 @@ impl InputTranslator {
         self.user_locked = locked;
     }
 
-    pub fn is_user_locked(&self) -> bool {
-        self.user_locked
-    }
-
     // --- State reset ---
 
     /// Reset stored keyboard state.  Called when re-entering gameplay.

@@ -17,8 +17,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d::{BBox2D, GeoPoint2D, pt};
-use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, MASK_VIEW, RawMask};
+use crate::coordinates::MapPoint;
+use crate::geo2d::{BBox2D, pt};
+use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, RawMask};
 
 // ---------------------------------------------------------------------------
 // MaskIndex — nominal newtype
@@ -82,19 +83,19 @@ pub struct RuntimeMask {
     /// Mask bounding box in world (map) coordinates.
     pub bbox: BBox2D,
 
-    /// Polyline describing the character-masking silhouette (world coords).
+    /// Polyline describing the character-masking silhouette (map coords).
     /// Sorted by increasing X.  Used by `is_applied_to_point_character` to
     /// decide whether an actor at a given position is behind the mask.
-    pub character_polyline: Vec<GeoPoint2D>,
+    pub character_polyline: Vec<MapPoint>,
 
     /// Highest y (lower on screen) seen along the character polyline — used
     /// by `is_applied_to_box` for the wide-box shortcut.
     pub lower_y_for_mask: f32,
 
-    /// Polyline for projectile masking (world coords).  Used by
+    /// Polyline for projectile masking (map/projected coords).  Used by
     /// `is_applied_to_point_projectile` / `is_applied_to_point_3d` to
     /// mask flying entities (projectiles, flying humans).
-    pub projectile_polyline: Vec<GeoPoint2D>,
+    pub projectile_polyline: Vec<MapPoint>,
 
     /// Indices into the engine's sight-obstacle list — populated only when
     /// `mask_type & MASK_OBSTACLE`.  Used by the 3D altitude check in
@@ -140,10 +141,14 @@ impl RuntimeMask {
 
         // Character polyline: sort-of-present only when MASK_CHARACTER is set.
         // When absent we cannot apply to actors, so skip.
-        let character_polyline: Vec<GeoPoint2D> = raw
+        let character_polyline: Vec<MapPoint> = raw
             .character_polyline
             .as_ref()
-            .map(|pts| pts.iter().map(|&(x, y)| pt(x as f32, y as f32)).collect())
+            .map(|pts| {
+                pts.iter()
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+                    .collect()
+            })
             .unwrap_or_default();
         if character_polyline.is_empty() && (raw.mask_type & MASK_CHARACTER) != 0 {
             // Declared character mask but no polyline — skip, since the
@@ -151,10 +156,14 @@ impl RuntimeMask {
             return None;
         }
 
-        let projectile_polyline: Vec<GeoPoint2D> = raw
+        let projectile_polyline: Vec<MapPoint> = raw
             .projectile_polyline
             .as_ref()
-            .map(|pts| pts.iter().map(|&(x, y)| pt(x as f32, y as f32)).collect())
+            .map(|pts| {
+                pts.iter()
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+                    .collect()
+            })
             .unwrap_or_default();
 
         // Last-write-wins semantics for `lower_y_for_mask`: both the
@@ -202,29 +211,17 @@ impl RuntimeMask {
         (self.mask_type & MASK_PROJECTILE) != 0
     }
 
-    /// Whether this mask carries view-blocking data.
-    #[inline]
-    pub fn is_view(&self) -> bool {
-        (self.mask_type & MASK_VIEW) != 0
-    }
-
-    /// Whether this mask is associated with 3D obstacles.
-    #[inline]
-    pub fn is_obstacle(&self) -> bool {
-        (self.mask_type & MASK_OBSTACLE) != 0
-    }
-
     /// Returns `true` when the mask's character polyline at `x = pt.x` has a
     /// `y` value strictly greater than `pt.y` — that is, the test point is
     /// "above" the polyline and therefore behind the building in screen
     /// coordinates (y grows downward, so "greater y" means "lower on screen").
-    pub fn is_applied_to_point_character(&self, point: GeoPoint2D) -> bool {
+    pub fn is_applied_to_point_character(&self, point: MapPoint) -> bool {
         polyline_above_point(&self.character_polyline, point)
     }
 
     /// Same shape as `is_applied_to_point_character` but consults the
     /// projectile-masking polyline instead of the character one.
-    pub fn is_applied_to_point_projectile(&self, point: GeoPoint2D) -> bool {
+    pub fn is_applied_to_point_projectile(&self, point: MapPoint) -> bool {
         polyline_above_point(&self.projectile_polyline, point)
     }
 
@@ -244,8 +241,8 @@ impl RuntimeMask {
         is_human: bool,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> bool {
-        let point_geo = pt(point.x, point.y);
-        if self.is_applied_to_point_projectile(point_geo) {
+        let point_map = MapPoint::new(point.x, point.y);
+        if self.is_applied_to_point_projectile(point_map) {
             return true;
         }
         if (self.mask_type & MASK_OBSTACLE) == 0 {
@@ -255,10 +252,11 @@ impl RuntimeMask {
             let Some(obs) = obstacles.get(usize::from(obs_idx)) else {
                 continue;
             };
-            if !obs.box_ground.contains_point(point_geo) {
+            let point_ground = pt(point.x, point.y);
+            if !obs.box_ground.contains_point(point_ground) {
                 continue;
             }
-            if !obs.contains_point(point_geo) {
+            if !obs.contains_point(point_ground) {
                 continue;
             }
             let plane_z = if is_human {
@@ -277,7 +275,7 @@ impl RuntimeMask {
 /// Shared "polyline-above-point" test used by both character and projectile
 /// applications.  Returns true when the polyline's interpolated Y at
 /// `point.x` is strictly greater than `point.y` (screen-space "above").
-fn polyline_above_point(poly: &[GeoPoint2D], point: GeoPoint2D) -> bool {
+fn polyline_above_point(poly: &[MapPoint], point: MapPoint) -> bool {
     if poly.len() < 2 {
         return false;
     }
@@ -455,12 +453,12 @@ mod tests {
         };
         let mask = RuntimeMask::from_raw(&raw).unwrap();
         // Above polyline → masked.
-        assert!(mask.is_applied_to_point_character(pt(5.0, 5.0)));
+        assert!(mask.is_applied_to_point_character(MapPoint::new(5.0, 5.0)));
         // Below polyline → not masked.
-        assert!(!mask.is_applied_to_point_character(pt(5.0, 15.0)));
+        assert!(!mask.is_applied_to_point_character(MapPoint::new(5.0, 15.0)));
         // Out of x-range → not masked.
-        assert!(!mask.is_applied_to_point_character(pt(-1.0, 0.0)));
-        assert!(!mask.is_applied_to_point_character(pt(20.0, 0.0)));
+        assert!(!mask.is_applied_to_point_character(MapPoint::new(-1.0, 0.0)));
+        assert!(!mask.is_applied_to_point_character(MapPoint::new(20.0, 0.0)));
     }
 
     /// Build a flat-roof obstacle at z_top=10 / z_bottom=0 covering the
@@ -510,7 +508,7 @@ mod tests {
             bbox: BBox2D::from_coords(0.0, 0.0, 16.0, 16.0),
             character_polyline: vec![],
             lower_y_for_mask: f32::NEG_INFINITY,
-            projectile_polyline: vec![pt(0.0, 10.0), pt(10.0, 10.0)],
+            projectile_polyline: vec![MapPoint::new(0.0, 10.0), MapPoint::new(10.0, 10.0)],
             obstacle_indices: vec![],
             width: 16,
             height: 16,

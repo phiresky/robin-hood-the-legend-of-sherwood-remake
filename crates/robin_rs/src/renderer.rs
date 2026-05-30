@@ -1134,10 +1134,6 @@ impl Renderer {
         self.height
     }
 
-    pub fn bit_depth(&self) -> u16 {
-        self.bit_depth
-    }
-
     pub fn transparent_color(&self) -> u16 {
         if self.bit_depth == 15 {
             TRANSPARENT_COLOR_KEY_15
@@ -1177,14 +1173,6 @@ impl Renderer {
 
     pub fn create_color_15(r: u8, g: u8, b: u8) -> u16 {
         ((r as u16 & 0xF8) << 7) | ((g as u16 & 0xF8) << 2) | ((b as u16) >> 3)
-    }
-
-    pub fn create_color(&self, r: u8, g: u8, b: u8) -> u16 {
-        if self.bit_depth == 15 {
-            Self::create_color_15(r, g, b)
-        } else {
-            Self::create_color_16(r, g, b)
-        }
     }
 
     /// Create a managed RGB565 surface from decoded asset pixels.
@@ -2665,10 +2653,6 @@ impl Renderer {
         });
     }
 
-    pub fn invalidate_dim_cache(&mut self) {
-        self.cached_dim_texture = None;
-    }
-
     /// Decompress sprite frame `(bank_id, variant)` into the GPU cache,
     /// converting RGB565 → RGBA8 with the shadow key baked into alpha.
     /// Returns `Some((width, height))` of the cached frame on success.
@@ -2798,10 +2782,6 @@ impl Renderer {
         Some((outline_w as u16, h))
     }
 
-    pub fn clear_sprite_cache(&mut self) {
-        self.sprite_cache.entries.clear();
-    }
-
     /// Upload the static binary alpha for a sprite-occlusion mask. Built
     /// once after the background loads and reused for the life of the
     /// level — replaces the old `upload_mask_texture` which baked
@@ -2889,39 +2869,6 @@ impl Renderer {
                 bg_uv_tint,
             },
         );
-        true
-    }
-
-    /// Queue an occlusion mask as a blended overlay quad — drawn after
-    /// sprites so the building pixels cover the parts of the actor
-    /// that should be behind it. The fragment shader samples the live
-    /// background texture, so a `BlitToMap` under the building (damage decals,
-    /// dropped items) shows through correctly without any CPU recompose.
-    pub fn render_cached_mask(&mut self, mask_index: u32, dst_rect: Rect) -> bool {
-        let (mask_view, bg_uv_tint) = match self.mask_alpha_cache.get(&mask_index) {
-            Some(e) => (e.view.clone(), e.bg_uv_tint),
-            None => return false,
-        };
-        let bg_view = match self.background_texture.as_ref() {
-            Some(bg) => bg.view.clone(),
-            None => return false,
-        };
-        let bind_group = make_mask_overlay_bg(
-            &self.gpu.device,
-            &self.bgl_mask_overlay,
-            &mask_view,
-            &bg_view,
-            &self.sampler,
-        );
-        let tex_idx = self.queue_cached_bg(bind_group);
-        self.queued.push(QueuedDraw {
-            dst: dst_rect,
-            corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
-            tint: bg_uv_tint,
-            tex: TextureRef::MaskOverlayFrame(tex_idx),
-            blend: BlendMode::Blend,
-        });
         true
     }
 
@@ -3283,37 +3230,6 @@ impl Renderer {
         true
     }
 
-    pub fn background_texture_size(&self) -> Option<(u32, u32)> {
-        self.background_texture
-            .as_ref()
-            .map(|bg| (bg.width, bg.height))
-    }
-
-    pub fn render_background_alpha_rect(
-        &mut self,
-        dst_rect: Rect,
-        bg_uv: [f32; 4],
-        color: u32,
-        alpha_256: u32,
-    ) -> bool {
-        if self.background_texture.is_none() || dst_rect.w <= 0 || dst_rect.h <= 0 {
-            return false;
-        }
-        let r = ((color >> 16) & 0xFF) as f32 / 255.0;
-        let g = ((color >> 8) & 0xFF) as f32 / 255.0;
-        let b = (color & 0xFF) as f32 / 255.0;
-        let a = alpha_256.min(256) as f32 / 256.0;
-        self.queued.push(QueuedDraw {
-            dst: dst_rect,
-            corners: None,
-            uv: bg_uv,
-            tint: [r, g, b, a],
-            tex: TextureRef::BackgroundAlpha,
-            blend: BlendMode::None,
-        });
-        true
-    }
-
     pub fn render_framebuffer_alpha_rect(
         &mut self,
         dst_rect: Rect,
@@ -3645,13 +3561,6 @@ impl Renderer {
     /// target stack — `capture_frame_rgba` already clears the queue
     /// and the next `present()` re-clears the render target.
     pub fn reset_render_target(&mut self) {}
-
-    /// Legacy hook that used to return a raw `SDL_Surface*` for the
-    /// FFI bridge. Always returns `()` now — callers either drop the
-    /// FFI use or switch to the all-Rust paths.
-    pub fn get_surface_ptr(&self, _id: u32) -> Option<()> {
-        None
-    }
 }
 
 // ---------------------------------------------------------------------

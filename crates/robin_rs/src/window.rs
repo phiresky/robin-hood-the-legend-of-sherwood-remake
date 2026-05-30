@@ -482,13 +482,6 @@ impl GameWindow {
         };
         (log_w / dst_w, log_h / dst_h)
     }
-
-    /// Ask the [`AppHandler`] to close the OS window and exit the
-    /// EventLoop.  Best-effort — the actual exit happens the next time
-    /// winit calls back into the handler.
-    pub fn request_exit(&self) {
-        let _ = self.cmd_tx.try_send(HostCmd::Exit);
-    }
 }
 
 // ---------------------------------------------------------------------

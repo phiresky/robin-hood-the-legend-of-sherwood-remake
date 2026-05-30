@@ -42,9 +42,10 @@ impl EngineInner {
             let pos = entity.element_data().position();
             crate::geo2d::pt(pos.x, pos.y - pos.z)
         };
-        let resolution = self
-            .fast_grid
-            .resolve_projectile_landing(landing_screen, self.sight_obstacles(assets));
+        let resolution = self.fast_grid.resolve_projectile_landing(
+            crate::coordinates::MapPoint::from_geo(landing_screen),
+            self.sight_obstacles(assets),
+        );
         if let Some(entity) = self
             .entities
             .get_mut(projectile_id.0 as usize)
@@ -1686,8 +1687,8 @@ impl EngineInner {
             return None;
         }
         let layer = entity.element_data().layer();
-        let hand_xy = crate::geo2d::pt(hand.x, hand.y);
-        let mut bbox = move_box.translated(hand_xy);
+        let hand_xy = crate::coordinates::MapPoint::new(hand.x, hand.y);
+        let mut bbox = move_box.translated(hand_xy.to_geo());
         if self
             .fast_grid
             .find_authorized_position_toward(&mut bbox, hand_xy, layer)
@@ -2873,7 +2874,7 @@ impl EngineInner {
                                 let mut bbox = b.translated(carrier_pos_geo);
                                 if self.fast_grid.find_authorized_position_toward(
                                     &mut bbox,
-                                    carrier_pos_geo,
+                                    carrier_pos,
                                     carrier_layer,
                                 ) {
                                     let c = bbox.center();

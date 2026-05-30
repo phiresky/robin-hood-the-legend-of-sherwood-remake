@@ -152,11 +152,6 @@ impl Plane3D {
 
     /// Install the U/V-frame directly, bypassing the A/B-point path used
     /// by `compute_vectors`.
-    pub fn set_frame(&mut self, o: Vec3, u: Vec3, v: Vec3) {
-        self.o = o;
-        self.u = u;
-        self.v = v;
-    }
 
     pub fn compute_normal(&mut self) {
         self.n.x = self.u.y * self.v.z - self.v.y * self.u.z;
@@ -206,18 +201,6 @@ impl Plane3D {
         self.d = -self.o.x * self.n.x - self.o.y * self.n.y - self.o.z * self.n.z;
         self.dz = -self.d / self.n.z;
     }
-
-    /// Translate the plane in X/Y only.
-    pub fn translate_2d(&mut self, tx: f32, ty: f32) {
-        self.o.x += tx;
-        self.o.y += ty;
-        self.a.x += tx;
-        self.a.y += ty;
-        self.b.x += tx;
-        self.b.y += ty;
-        self.d = -self.o.x * self.n.x - self.o.y * self.n.y - self.o.z * self.n.z;
-        self.dz = -self.d / self.n.z;
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -250,24 +233,7 @@ impl Default for BBox3D {
 }
 
 impl BBox3D {
-    /// Restore the empty-box sentinels.
-    pub fn reset(&mut self) {
-        *self = Self::default();
-    }
-
-    /// Install `point` as the min corner.
-    pub fn set_min(&mut self, p: Vec3) {
-        self.x_min = p.x;
-        self.y_min = p.y;
-        self.z_min = p.z;
-    }
-
     /// Install `point` as the max corner.
-    pub fn set_max(&mut self, p: Vec3) {
-        self.x_max = p.x;
-        self.y_max = p.y;
-        self.z_max = p.z;
-    }
 
     pub fn expand(&mut self, p: Vec3) {
         if self.x_min > p.x {

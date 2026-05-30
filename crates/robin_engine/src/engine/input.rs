@@ -1840,9 +1840,10 @@ impl EngineInner {
             && let Some(last) = points.last()
         {
             let impact_2d = crate::geo2d::pt(last.position.x, last.position.y - last.position.z);
-            let resolution = self
-                .fast_grid
-                .resolve_projectile_landing(impact_2d, self.sight_obstacles(assets));
+            let resolution = self.fast_grid.resolve_projectile_landing(
+                crate::coordinates::MapPoint::from_geo(impact_2d),
+                self.sight_obstacles(assets),
+            );
             if resolution.sector.is_none() || resolution.blocked_by_motion_obstacle {
                 return TrajectoryPreview::Invalid;
             }
@@ -2303,18 +2304,6 @@ impl EngineInner {
         }
     }
 
-    /// Find the patch that owns the given grid-sector index.
-    ///
-    /// `GridSector` carries only the sector type flags, so we recover
-    /// the link by scanning `GameHost::patches` for an entry whose
-    /// old/new sector indices contain `sector_idx`. This is
-    /// O(patches) but only runs once per cursor update when the
-    /// hovered sector is actually a patch overlay.
-    ///
-    /// Returns `None` when no mission script / game host is loaded;
-    /// the caller should skip the patch branch in that case. When a
-    /// host is loaded, every patch sector must resolve — an
-    /// unresolved index indicates a level-loader bug.
     // Safe: read-only — scans `mission_script.game_host.patches` and
     // returns the owning patch index; performs no engine mutation, so
     // stays `&self` even though called from the host cursor path.
@@ -2366,15 +2355,6 @@ impl EngineInner {
 
     // ─── ChooseMousePointerForDoor ─────────────────────────────
 
-    /// Choose the mouse cursor for a door sector or a patch overlay.
-    ///
-    /// Returns `DOOR_YES`/`DOOR_NO` or `LOCKPICK_YES`/`LOCKPICK_NO`
-    /// depending on lock state, unlockability, special authorisations,
-    /// and whether any selected PC has the lockpick action.
-    ///
-    /// When `door_idx` is `None`, this is a patch without an
-    /// associated door: the cursor is chosen from the patch's own
-    /// lock state, so `patch_idx` must be `Some`.
     // Safe: read-only — derives the cursor id from patch / door lock
     // state and selected PC auth flags. Performs no engine mutation,
     // so stays `&self` even though called from the host cursor path.

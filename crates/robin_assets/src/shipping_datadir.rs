@@ -109,15 +109,6 @@ impl ShippingDatadir {
         );
         Ok(dd)
     }
-
-    /// Serialize + zstd-max-compress to disk. Mirrors the converter's
-    /// output so the loader can round-trip.
-    pub fn write_to_file(&self, path: &Path) -> Result<()> {
-        let blob = bitcode::serialize(self).map_err(|e| anyhow!("bitcode encode: {e:?}"))?;
-        let compressed = zstd_max_compress(&blob)?;
-        std::fs::write(path, compressed).with_context(|| format!("write {}", path.display()))?;
-        Ok(())
-    }
 }
 
 /// zstd level 22 with a 31-bit long-range window. Matches the converter.

@@ -418,38 +418,6 @@ impl SoundSourceManager {
         max
     }
 
-    /// Initialize sound sources from the proto-level binary stream.
-    ///
-    /// Returns the set of sample IDs required by the loaded sources
-    /// (filtered by the given ambience mask).
-    ///
-    /// `new_levels` should be `true` for the full-game data format.
-    pub fn initialize_from_proto_stream(
-        &mut self,
-        data: &[u8],
-        pos: &mut usize,
-        ambience: u32,
-        new_levels: bool,
-    ) -> BTreeSet<u32> {
-        let mut required_ids = BTreeSet::new();
-
-        let num_sounds = read_u16_le(data, pos);
-
-        for _ in 0..num_sounds {
-            let source = SoundSource::from_proto_stream(data, pos, new_levels);
-
-            if source.exists_in_ambience(ambience) {
-                required_ids.insert(source.id);
-                self.sources.push(Some(source));
-            } else {
-                // Keep a None slot to preserve index alignment.
-                self.sources.push(None);
-            }
-        }
-
-        required_ids
-    }
-
     /// Get the loop flags for all active sources, for configuring cache entries.
     /// Returns `(sample_id, should_loop)` pairs.
     pub fn get_loop_flags(&self) -> Vec<(u32, bool)> {
@@ -466,14 +434,6 @@ impl SoundSourceManager {
             .iter()
             .enumerate()
             .filter_map(|(i, s)| s.as_ref().map(|src| (i, src)))
-    }
-
-    /// Iterate mutably over all active sources with their indices.
-    pub fn iter_active_mut(&mut self) -> impl Iterator<Item = (usize, &mut SoundSource)> {
-        self.sources
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, s)| s.as_mut().map(|src| (i, src)))
     }
 }
 

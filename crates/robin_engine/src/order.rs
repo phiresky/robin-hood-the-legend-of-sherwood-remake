@@ -582,11 +582,6 @@ impl Order {
         self
     }
 
-    pub fn with_tolerance(mut self, tolerance: f32) -> Self {
-        self.tolerance = tolerance;
-        self
-    }
-
     /// Attach a target entity (the order's antagonist).  Required for
     /// interaction animations (DrinkAle → ale bottle, Take → purse,
     /// GettingFreeFromWasp → wasp, etc.).
@@ -707,14 +702,6 @@ impl AiOrderIntent {
             find_accessible: false,
             ask_obstacle: false,
         }
-    }
-
-    pub fn move_to(x: f32, y: f32) -> Self {
-        Self::new(OrderType::WalkingUpright, x, y)
-    }
-
-    pub fn run_to(x: f32, y: f32) -> Self {
-        Self::new(OrderType::RunningUpright, x, y)
     }
 
     pub fn face_toward(x: f32, y: f32) -> Self {

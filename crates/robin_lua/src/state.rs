@@ -122,11 +122,6 @@ impl MissionLuaState {
         &self.lua
     }
 
-    /// Mission directory the state was initialised with.
-    pub fn mission_dir(&self) -> &Path {
-        &self.mission_dir
-    }
-
     /// Whether [`crate::register_natives`] has run against this state.
     pub fn natives_registered(&self) -> bool {
         self.natives_registered

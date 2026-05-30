@@ -171,17 +171,6 @@ impl RepulsiveLine {
         }
     }
 
-    /// Flip the `is_area` flag and recompute the normal accordingly.
-    pub fn set_area(&mut self, is_area: bool) {
-        self.is_area = is_area;
-        if is_area {
-            // `get_normal()` default = true → (-y, x)
-            self.normal = MapVec::new(-self.vector.y, self.vector.x);
-        } else {
-            self.normal = MapVec::new(self.vector.y, -self.vector.x);
-        }
-    }
-
     /// True when the `destination` lies between the segment endpoints
     /// along the segment's projection axis.  Delegates to
     /// [`geo2d::point_in_segment_slab`].

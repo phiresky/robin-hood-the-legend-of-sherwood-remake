@@ -358,20 +358,6 @@ impl Game {
         self.continue_requested = true;
     }
 
-    /// Process the in-game menu request if pending.
-    /// Returns `true` if a menu was shown.
-    pub fn process_menu_request(&mut self, callbacks: &mut dyn GameCallbacks) -> bool {
-        if self.continue_requested {
-            self.continue_requested = false;
-            self.restore_sound = true;
-            callbacks.set_sound_mode(SoundMode::Menu);
-            callbacks.display_ingame_menu();
-            true
-        } else {
-            false
-        }
-    }
-
     // ── Widget enable/disable ───────────────────────────────────────
 
     pub fn enable_start_mission(&mut self, enable: bool) {
@@ -390,14 +376,6 @@ impl Game {
         self.persistent.quit_mission_disabled_temp = disable;
     }
 
-    pub fn start_mission_enabled(&self) -> bool {
-        self.persistent.start_mission_enabled
-    }
-
-    pub fn quit_mission_enabled(&self) -> bool {
-        self.persistent.quit_mission_enabled
-    }
-
     pub fn start_mission_disabled_temp(&self) -> bool {
         self.persistent.start_mission_disabled_temp
     }
@@ -409,11 +387,6 @@ impl Game {
     /// Effective enabled state of the start mission widget.
     pub fn is_start_mission_effectively_enabled(&self) -> bool {
         self.persistent.start_mission_enabled && !self.persistent.start_mission_disabled_temp
-    }
-
-    /// Effective enabled state of the quit mission widget.
-    pub fn is_quit_mission_effectively_enabled(&self) -> bool {
-        self.persistent.quit_mission_enabled && !self.persistent.quit_mission_disabled_temp
     }
 
     // ── Resolution ──────────────────────────────────────────────────
