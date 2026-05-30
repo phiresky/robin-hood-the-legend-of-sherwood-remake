@@ -5222,11 +5222,8 @@ impl EngineInner {
         // Only check entities actively moving in sword state.
         {
             let ids_to_check: Vec<EntityId> = self
-                .entities
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, slot)| {
-                    let e = slot.as_ref()?;
+                .entities_iter_with_id()
+                .filter_map(|(entity_id, e)| {
                     let h = e.human_data()?;
                     if h.opponents.is_empty() {
                         return None;
@@ -5240,7 +5237,7 @@ impl EngineInner {
                     ) {
                         return None;
                     }
-                    Some(EntityId::from_raw(idx as u32))
+                    Some(entity_id)
                 })
                 .collect();
             for eid in ids_to_check {
@@ -5260,11 +5257,8 @@ impl EngineInner {
         // behaviour.
         {
             let pinch_aborts: Vec<(crate::sequence::SequenceId, usize)> = self
-                .entities
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, slot)| {
-                    let e = slot.as_ref()?;
+                .entities_iter_with_id()
+                .filter_map(|(eid, e)| {
                     if !e.is_pc() {
                         return None;
                     }
@@ -5281,7 +5275,6 @@ impl EngineInner {
                     if !e.position_iface().is_moving_map() {
                         return None;
                     }
-                    let eid = EntityId::from_raw(idx as u32);
                     if !crate::engine::melee::enemies_are_blocking_my_movement(&self.entities, eid)
                     {
                         return None;
@@ -8152,7 +8145,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         // Otherwise, check if the current animation is weak/stunned sword.
         // Orders live on the owning `SequenceElement.orders` now —
         // look up via the actor's current in-progress element.
-        let entity_id = EntityId::from_raw(element.0);
+        let entity_id = EntityId::new(element.0, entity.entity_id_kind());
         matches!(
             self.sequence_manager
                 .current_order_for_actor(entity_id)
@@ -8478,14 +8471,12 @@ mod drop_ammo_merge_tests {
 
     fn count_bonuses(engine: &EngineInner, action: Action) -> Vec<(EntityId, u16)> {
         engine
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| match slot {
-                Some(crate::element::Entity::Bonus(b))
+            .entities_iter_with_id()
+            .filter_map(|(entity_id, entity)| match entity {
+                crate::element::Entity::Bonus(b)
                     if b.element.active && b.object.associated_action == action =>
                 {
-                    Some((EntityId::from_raw(idx as u32), b.object.quantity))
+                    Some((entity_id, b.object.quantity))
                 }
                 _ => None,
             })

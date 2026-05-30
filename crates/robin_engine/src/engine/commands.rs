@@ -4470,7 +4470,7 @@ mod tests {
         // handling (Interact / Sword / Use-beggar).
         let (engine, assets, pc_id) = setup_pc_engine(&[]);
         assert_eq!(
-            object_pickup_command(&engine, &assets, EntityId::from_raw(u32::MAX), pc_id),
+            object_pickup_command(&engine, &assets, EntityId::Pc(u32::MAX), pc_id),
             None
         );
     }
@@ -4519,7 +4519,7 @@ mod tests {
                 nickname: "bob".into(),
             })],
         );
-        engine.seats[2].selection = vec![EntityId::from_raw(7), EntityId::from_raw(8)];
+        engine.seats[2].selection = vec![EntityId::Pc(7), EntityId::Pc(8)];
 
         engine.apply_commands(
             &mut display,
@@ -4533,7 +4533,7 @@ mod tests {
         assert!(!seat2.connected);
         assert_eq!(
             seat2.selection,
-            vec![EntityId::from_raw(7), EntityId::from_raw(8)],
+            vec![EntityId::Pc(7), EntityId::Pc(8)],
             "selection must survive disconnect"
         );
 
@@ -4549,10 +4549,7 @@ mod tests {
         let seat2 = engine.seat(PlayerId(2)).unwrap();
         assert!(seat2.connected);
         assert_eq!(seat2.nickname, "bob_v2");
-        assert_eq!(
-            seat2.selection,
-            vec![EntityId::from_raw(7), EntityId::from_raw(8)]
-        );
+        assert_eq!(seat2.selection, vec![EntityId::Pc(7), EntityId::Pc(8)]);
     }
 
     #[test]

@@ -4143,7 +4143,7 @@ mod tests {
         use crate::ai::AiState;
         use crate::ai_enemy::EnemyAi;
 
-        let entity_id = EntityId::from_raw(42);
+        let entity_id = EntityId::Pc(42);
         let mut enemy_ai = EnemyAi::new(7);
         enemy_ai.base.owner_entity_id = Some(entity_id);
         assert_eq!(enemy_ai.base.me, 7);

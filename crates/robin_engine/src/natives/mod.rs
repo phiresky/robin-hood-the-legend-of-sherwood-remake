@@ -696,7 +696,7 @@ impl GameHost {
     /// Convert a script actor handle to an `Option<EntityId>`.
     /// 0 (null handle) maps to `None`.
     fn actor_id(handle: i32) -> Option<EntityId> {
-        Self::actor_index(handle).map(|idx| EntityId::from_raw(idx as u32))
+        Self::actor_index(handle).map(|idx| EntityId::Soldier(idx as u32))
     }
 
     /// Add a sequence element to the current recording session.
@@ -7350,7 +7350,7 @@ impl HostFunctions for GameHost {
                     let fx_h = stack.pop_i32();
                     let target_h = stack.pop_i32();
                     let fx_id = match Self::actor_index(fx_h) {
-                        Some(idx) => crate::element::EntityId::from_raw(idx as u32),
+                        Some(idx) => crate::element::EntityId::Fx(idx as u32),
                         None => {
                             tracing::warn!(
                                 "Script error (LinkTargetToFX): null/invalid FX handle {fx_h}"

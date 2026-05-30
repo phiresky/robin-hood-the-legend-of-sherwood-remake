@@ -2025,11 +2025,13 @@ pub(crate) fn render_minimap(
         if !h.refresh {
             continue;
         }
-        let entity =
-            match engine.get_entity(robin_engine::element::EntityId::from_raw(h.element_index)) {
-                Some(e) => e,
-                None => continue,
-            };
+        let Some(entity_id) = engine.entity_id_for_index(h.element_index) else {
+            continue;
+        };
+        let entity = match engine.get_entity(entity_id) {
+            Some(e) => e,
+            None => continue,
+        };
         refresh_dot(
             host,
             mm,

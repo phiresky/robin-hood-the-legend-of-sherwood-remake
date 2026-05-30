@@ -357,7 +357,7 @@ mod tests {
         let mut m = Messenger::new();
 
         let msg1 = Message::new(MessageType::Simple(SimpleMessage::Pause));
-        let msg2 = Message::pc(PcMessage::SelectCharacter, Some(EntityId::from_raw(42)));
+        let msg2 = Message::pc(PcMessage::SelectCharacter, Some(EntityId::Pc(42)));
 
         m.send(msg1.clone());
         m.send(msg2.clone());
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let msg = Message {
-            msg_type: MessageType::Pc(PcMessage::StartMacro, Some(EntityId::from_raw(7))),
+            msg_type: MessageType::Pc(PcMessage::StartMacro, Some(EntityId::Pc(7))),
             value: 99,
             arg1: 1,
             arg2: 2,

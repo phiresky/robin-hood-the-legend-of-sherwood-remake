@@ -71,8 +71,8 @@ pub enum EnterSwordfightRequest {
 
 pub use crate::position_interface::SectorHandle;
 
-// NpcHandle is just a `u32` alias; `EntityId::from_raw` bridges legacy raw
-// handles when the concrete entity type has not been resolved yet.
+// NpcHandle is still a `u32` alias; convert it to an `EntityId` only at
+// call sites where the concrete entity type is known.
 
 // ---------------------------------------------------------------------------
 // AI lock flags
@@ -5622,7 +5622,7 @@ impl AiController {
         self.checkpoint_charly = target;
         if target != 0 {
             self.pending_add_detectables.push((
-                crate::element::EntityId::from_raw(target),
+                crate::element::EntityId::Soldier(target),
                 DetectableType::MissedFriend,
             ));
         } else {
@@ -5662,7 +5662,7 @@ impl AiController {
                 // Unconditional `DeleteDetectable(body, BODY)` —
                 // fires whether or not UPDATE_BODIES is set.
                 self.pending_delete_detectable_entity
-                    .push((EntityId::from_raw(body), DetectableType::Body));
+                    .push((EntityId::Soldier(body), DetectableType::Body));
             }
         }
 
@@ -5673,7 +5673,7 @@ impl AiController {
         {
             self.my_reconnaissance_report.charly = other.charly;
             self.pending_add_detectables.push((
-                EntityId::from_raw(other.charly),
+                EntityId::Soldier(other.charly),
                 DetectableType::MissedFriend,
             ));
         }
@@ -9187,8 +9187,8 @@ mod tests {
             sector_index: 42,
             ..House::default()
         };
-        let a = EntityId::from_raw(1);
-        let b = EntityId::from_raw(2);
+        let a = EntityId::Pc(1);
+        let b = EntityId::Pc(2);
 
         // Enter A, then B
         if !h.occupant_ids.contains(&a) {
@@ -9220,11 +9220,11 @@ mod tests {
         use crate::element::EntityId;
         let mut h = House::default();
         assert_eq!(h.occupant_count(), 0);
-        h.occupant_ids.push(EntityId::from_raw(1));
-        h.occupant_ids.push(EntityId::from_raw(2));
+        h.occupant_ids.push(EntityId::Pc(1));
+        h.occupant_ids.push(EntityId::Pc(2));
         assert_eq!(h.occupant_count(), 2);
-        assert!(h.contains_occupant(EntityId::from_raw(1)));
-        assert!(!h.contains_occupant(EntityId::from_raw(99)));
+        assert!(h.contains_occupant(EntityId::Pc(1)));
+        assert!(!h.contains_occupant(EntityId::Pc(99)));
     }
 
     #[test]

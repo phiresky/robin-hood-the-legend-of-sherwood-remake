@@ -5971,7 +5971,10 @@ impl EngineInner {
                 };
                 self.set_obstacle_and_material(
                     assets,
-                    crate::entity_id::EntityId::from_raw(entity_idx as u32),
+                    self.expect_entity_id_for_index(
+                        entity_idx as u32,
+                        "level loading occupant obstacle restore",
+                    ),
                     occupant_obstacle_opt,
                 );
                 if let Some(Some(crate::element::Entity::Pc(pc))) =

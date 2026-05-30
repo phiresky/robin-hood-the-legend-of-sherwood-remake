@@ -550,7 +550,7 @@ impl EngineInner {
                             crate::messenger::PcMessage::DisableCharacter
                         };
                         let pc_id = crate::natives::GameHost::actor_index(actor)
-                            .map(|idx| crate::element::EntityId::from_raw(idx as u32));
+                            .and_then(|idx| self.entity_id_for_index(idx as u32));
                         self.messenger.send(Message::pc(msg_type, pc_id));
                         tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
                     }
@@ -894,17 +894,14 @@ impl EngineInner {
         // Each actor with a script_class gets IActorScript::Initialize()
         // called during loading (before StartUp::Initialize).
         let per_actor_scripts: Vec<(i32, String)> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let entity = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(entity_id, entity)| {
                 let script_class = &entity.actor_data()?.script_class;
                 if script_class.is_empty() {
                     return None;
                 }
                 Some((
-                    crate::natives::GameHost::actor_handle_from_index(idx),
+                    crate::natives::GameHost::actor_handle(entity_id),
                     script_class.clone(),
                 ))
             })
@@ -915,17 +912,14 @@ impl EngineInner {
         // Each target carries its own VM and `Initialize()` runs
         // during `InitializeFromMissionStream`.
         let per_target_scripts: Vec<(i32, String)> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let entity = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(entity_id, entity)| {
                 if let crate::element::Entity::Target(t) = entity {
                     if t.target.script_class.is_empty() {
                         return None;
                     }
                     Some((
-                        crate::natives::GameHost::actor_handle_from_index(idx),
+                        crate::natives::GameHost::actor_handle(entity_id),
                         t.target.script_class.clone(),
                     ))
                 } else {
@@ -938,17 +932,14 @@ impl EngineInner {
         // `InitializeFromMissionStream` and walk the list calling
         // `IScrollScript::Initialize()`.
         let per_scroll_scripts: Vec<(i32, String)> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let entity = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(entity_id, entity)| {
                 if let crate::element::Entity::Scroll(s) = entity {
                     if s.script_class.is_empty() {
                         return None;
                     }
                     Some((
-                        crate::natives::GameHost::actor_handle_from_index(idx),
+                        crate::natives::GameHost::actor_handle(entity_id),
                         s.script_class.clone(),
                     ))
                 } else {
@@ -2189,7 +2180,7 @@ impl EngineInner {
 
         let source = match stimulus.info {
             crate::ai::StimulusInfo::Human(h) => {
-                crate::natives::GameHost::actor_handle(crate::element::EntityId::from_raw(h))
+                crate::natives::GameHost::actor_handle(crate::element::EntityId::Soldier(h))
             }
             _ => 0,
         };
@@ -2339,9 +2330,9 @@ impl EngineInner {
                 let source = match source_kind {
                     AiStateChangeSource::SelfActor => handle,
                     AiStateChangeSource::Null => 0,
-                    AiStateChangeSource::Human(h) => crate::natives::GameHost::actor_handle(
-                        crate::element::EntityId::from_raw(h),
-                    ),
+                    AiStateChangeSource::Human(h) => {
+                        crate::natives::GameHost::actor_handle(crate::element::EntityId::Soldier(h))
+                    }
                 };
                 notifications.push((handle, source, code));
             }
@@ -2573,7 +2564,10 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    let id = crate::element::EntityId::from_raw(actor_idx as u32);
+                    let id = self.expect_entity_id_for_index(
+                        actor_idx as u32,
+                        "CustomizeMinimapDisplay actor",
+                    );
                     let Some(entity) = self.get_entity_mut(id) else {
                         tracing::warn!(
                             "CustomizeMinimapDisplay: invalid actor handle {actor_handle}"
@@ -2952,7 +2946,7 @@ impl EngineInner {
                     let Some(idx) = crate::natives::GameHost::actor_index(scroll_handle) else {
                         continue;
                     };
-                    let eid = crate::element::EntityId::from_raw(idx as u32);
+                    let eid = self.expect_entity_id_for_index(idx as u32, "SetScrollStatus scroll");
                     let st = crate::engine::scroll_reveal::ScrollStatus::from_i32(status);
                     self.set_scroll_status(eid, st);
                     if matches!(st, crate::engine::scroll_reveal::ScrollStatus::Opened)
@@ -2975,7 +2969,8 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    let eid = crate::element::EntityId::from_raw(idx as u32);
+                    let eid =
+                        self.expect_entity_id_for_index(idx as u32, "ScriptMakePCCrouched actor");
                     if !matches!(self.get_entity(eid), Some(crate::element::Entity::Pc(_))) {
                         tracing::error!(
                             "Script Error: The Actor in MakePCCrouched is invalid (handle {actor_handle})"
@@ -2991,7 +2986,7 @@ impl EngineInner {
                     // outline pass, which flashes the outline for one
                     // frame.
                     if let Some(idx) = crate::natives::GameHost::actor_index(actor_handle) {
-                        let eid = crate::element::EntityId::from_raw(idx as u32);
+                        let eid = self.expect_entity_id_for_index(idx as u32, "MarkPc actor");
                         if matches!(self.get_entity(eid), Some(crate::element::Entity::Pc(_))) {
                             self.pending_side_effects.pending_mark_pc_ids.push(eid);
                         } else {

@@ -3919,22 +3919,18 @@ mod tests {
         let mut seq = Sequence::new();
 
         // Level 1: two elements (run in parallel)
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         seq.append_element(make_simple_element(
             1,
             Command::WaitTimer,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
         ));
 
         // Level 2: one element (waits for level 1)
         seq.append_element(make_simple_element(
             2,
             Command::PassDoor,
-            Some(EntityId::from_raw(0)),
+            Some(EntityId::Pc(0)),
         ));
 
         assert_eq!(seq.len(), 3);
@@ -3944,20 +3940,16 @@ mod tests {
     #[test]
     fn sequence_launch_and_advance() {
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         seq.append_element(make_simple_element(
             1,
             Command::WaitTimer,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
         ));
         seq.append_element(make_simple_element(
             2,
             Command::PassDoor,
-            Some(EntityId::from_raw(0)),
+            Some(EntityId::Pc(0)),
         ));
 
         assert!(seq.launch());
@@ -4015,11 +4007,7 @@ mod tests {
     #[test]
     fn sequence_is_to_be_deleted() {
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
 
         // Todo element → not deletable
         assert!(!seq.is_to_be_deleted());
@@ -4032,34 +4020,22 @@ mod tests {
     #[test]
     fn sequence_has_owner() {
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(5)),
-        ));
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(3)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(5))));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(3))));
 
-        assert!(seq.has_owner(EntityId::from_raw(5)));
-        assert!(seq.has_owner(EntityId::from_raw(3)));
-        assert!(!seq.has_owner(EntityId::from_raw(99)));
+        assert!(seq.has_owner(EntityId::Pc(5)));
+        assert!(seq.has_owner(EntityId::Pc(3)));
+        assert!(!seq.has_owner(EntityId::Pc(99)));
 
         // Terminated elements don't count
         seq.elements[0].state = SequenceState::Terminated;
-        assert!(!seq.has_owner(EntityId::from_raw(5)));
+        assert!(!seq.has_owner(EntityId::Pc(5)));
     }
 
     #[test]
     fn state_change_inprogress() {
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
 
         let effects = seq.set_element_state(0, SequenceState::InProgress, CascadeFlags::NEXT_LEVEL);
         assert!(effects.increment_in_progress);
@@ -4070,32 +4046,24 @@ mod tests {
     #[test]
     fn state_change_terminated_signals_ready() {
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         // Must first go to InProgress
         seq.set_element_state(0, SequenceState::InProgress, CascadeFlags::NEXT_LEVEL);
 
         let effects = seq.set_element_state(0, SequenceState::Terminated, CascadeFlags::NEXT_LEVEL);
         assert!(effects.signal_ready);
         assert!(effects.decrement_in_progress);
-        assert_eq!(effects.notify_owner, Some(EntityId::from_raw(0)));
+        assert_eq!(effects.notify_owner, Some(EntityId::Pc(0)));
     }
 
     #[test]
     fn state_change_interrupted_cascades() {
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         seq.append_element(make_simple_element(
             2,
             Command::PassDoor,
-            Some(EntityId::from_raw(0)),
+            Some(EntityId::Pc(0)),
         ));
 
         let effects =
@@ -4111,16 +4079,8 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
-        seq.append_element(make_simple_element(
-            2,
-            Command::Turn,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
+        seq.append_element(make_simple_element(2, Command::Turn, Some(EntityId::Pc(0))));
 
         let seq_id = mgr.launch_sequence(seq);
 
@@ -4133,7 +4093,7 @@ mod tests {
                 sequence_id,
                 element_index,
             } => {
-                assert_eq!(*owner, EntityId::from_raw(0));
+                assert_eq!(*owner, EntityId::Pc(0));
                 assert_eq!(*sequence_id, seq_id);
                 assert_eq!(*element_index, 0);
             }
@@ -4150,16 +4110,8 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
-        seq.append_element(make_simple_element(
-            2,
-            Command::Turn,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
+        seq.append_element(make_simple_element(2, Command::Turn, Some(EntityId::Pc(0))));
 
         let seq_id = mgr.launch_sequence(seq);
 
@@ -4183,7 +4135,7 @@ mod tests {
     fn split_and_insert_preserves_current_front_then_foreign_then_continuation() {
         let mut mgr = SequenceManager::new();
 
-        let mut current = make_simple_element(1, Command::Move, Some(EntityId::from_raw(0)));
+        let mut current = make_simple_element(1, Command::Move, Some(EntityId::Pc(0)));
         current.priority = SequencePriority::Normal;
         current
             .orders
@@ -4195,7 +4147,7 @@ mod tests {
         let current_seq = mgr.launch_element(current);
         mgr.element_in_progress(current_seq, 0);
 
-        let mut foreign = make_simple_element(1, Command::Turn, Some(EntityId::from_raw(0)));
+        let mut foreign = make_simple_element(1, Command::Turn, Some(EntityId::Pc(0)));
         foreign.priority = SequencePriority::Preference;
         let foreign_seq = mgr.launch_element(foreign);
 
@@ -4231,7 +4183,7 @@ mod tests {
     #[test]
     fn stop_pending_elements_matching_clears_cross_postponed_shoot_bow() {
         let mut mgr = SequenceManager::new();
-        let owner = EntityId::from_raw(0);
+        let owner = EntityId::Pc(0);
 
         let mut current = make_simple_element(1, Command::ShootBow, Some(owner));
         current.priority = SequencePriority::Preference;
@@ -4273,7 +4225,7 @@ mod tests {
     #[test]
     fn truncate_to_first_order_discards_current_tail() {
         let mut mgr = SequenceManager::new();
-        let mut elem = make_simple_element(1, Command::Move, Some(EntityId::from_raw(0)));
+        let mut elem = make_simple_element(1, Command::Move, Some(EntityId::Pc(0)));
         elem.orders
             .push_back(Order::test_new(OrderType::WalkingUpright, 10.0, 0.0));
         elem.orders
@@ -4294,11 +4246,7 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         let seq_id = mgr.launch_sequence(seq);
 
         assert_eq!(mgr.sequence_count(), 1);
@@ -4317,16 +4265,8 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
-        seq.append_element(make_simple_element(
-            2,
-            Command::Turn,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
+        seq.append_element(make_simple_element(2, Command::Turn, Some(EntityId::Pc(0))));
         let seq_id = mgr.launch_sequence(seq);
 
         assert!(mgr.terminate_sequence(seq_id));
@@ -4368,7 +4308,7 @@ mod tests {
         seq.append_element(make_simple_element(
             1,
             Command::Speak,
-            Some(EntityId::from_raw(7)),
+            Some(EntityId::Pc(7)),
         ));
         let seq_id = mgr.launch_sequence(seq);
 
@@ -4384,7 +4324,7 @@ mod tests {
                 sequence_id,
                 element_index,
             } => {
-                assert_eq!(*owner, EntityId::from_raw(7));
+                assert_eq!(*owner, EntityId::Pc(7));
                 assert_eq!(*sequence_id, seq_id);
                 assert_eq!(*element_index, 0);
             }
@@ -4409,14 +4349,14 @@ mod tests {
         seq.append_element(make_simple_element(
             1,
             Command::SendMessage,
-            Some(EntityId::from_raw(3)),
+            Some(EntityId::Pc(3)),
         ));
         let _seq_id = mgr.launch_sequence(seq);
         let actions = mgr.take_pending_immediate_actions();
         assert!(matches!(
             actions[0],
             SequenceAction::ExecuteImmediateOwner {
-                owner: EntityId::Unclassified(3),
+                owner: EntityId::Pc(3),
                 ..
             }
         ));
@@ -4435,11 +4375,7 @@ mod tests {
         // immediate queue; only on `elements_to_go` for the next
         // hourglass.
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         let _seq_id = mgr.launch_sequence(seq);
         assert!(!mgr.has_pending_immediate_actions());
         let actions = mgr.hourglass();
@@ -4464,11 +4400,7 @@ mod tests {
         // the non-immediate is registered first, but the immediate
         // should appear first in the action stream.
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         seq.append_element(make_simple_element(1, Command::CameraJumpTo, None));
         let _seq_id = mgr.launch_sequence(seq);
 
@@ -4483,7 +4415,7 @@ mod tests {
 
     #[test]
     fn element_orders() {
-        let mut elem = SequenceElement::new(1, Command::Move, Some(EntityId::from_raw(0)));
+        let mut elem = SequenceElement::new(1, Command::Move, Some(EntityId::Pc(0)));
 
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 200.0));
         elem.push_order(Order::test_new(OrderType::Turning, 150.0, 250.0));
@@ -4508,8 +4440,7 @@ mod tests {
 
     #[test]
     fn generic_element_properties() {
-        let mut elem =
-            SequenceElement::new_generic(1, Command::WaitTimer, Some(EntityId::from_raw(0)));
+        let mut elem = SequenceElement::new_generic(1, Command::WaitTimer, Some(EntityId::Pc(0)));
         elem.set_property(Field::Timer, FieldValue::Integer(50));
 
         match elem.get_property(Field::Timer) {
@@ -4523,7 +4454,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(0)),
+            Some(EntityId::Pc(0)),
             OrderType::WalkingUpright,
         );
         assert_eq!(elem.speed_factor(), 1.0);
@@ -4538,13 +4469,13 @@ mod tests {
         seq.append_element(SequenceElement::new(
             1,
             Command::Move,
-            Some(EntityId::from_raw(5)),
+            Some(EntityId::Pc(5)),
         ));
         seq.append_element(SequenceElement::new_generic(1, Command::WaitTimer, None));
         seq.append_element(SequenceElement::new_movement(
             2,
             Command::PassDoor,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WalkingUpright,
         ));
 
@@ -4553,7 +4484,7 @@ mod tests {
 
         assert_eq!(back.elements.len(), 3);
         assert_eq!(back.elements[0].command, Command::Move);
-        assert_eq!(back.elements[0].owner, Some(EntityId::from_raw(5)));
+        assert_eq!(back.elements[0].owner, Some(EntityId::Pc(5)));
         assert_eq!(back.elements[1].command, Command::WaitTimer);
         assert!(back.elements[1].data.is_generic());
         assert_eq!(back.elements[2].command, Command::PassDoor);
@@ -4565,21 +4496,9 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(1)),
-        ));
-        seq.append_element(make_simple_element(
-            2,
-            Command::Turn,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(1))));
+        seq.append_element(make_simple_element(2, Command::Turn, Some(EntityId::Pc(0))));
 
         let seq_id = mgr.launch_sequence(seq);
 
@@ -4608,17 +4527,13 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
         let _seq_id = mgr.launch_sequence(seq);
 
-        assert!(mgr.element_is_about_to_be_launched(EntityId::from_raw(0), Command::Move));
-        assert!(mgr.element_is_about_to_be_launched(EntityId::from_raw(0), Command::Null));
-        assert!(!mgr.element_is_about_to_be_launched(EntityId::from_raw(1), Command::Move));
-        assert!(!mgr.element_is_about_to_be_launched(EntityId::from_raw(0), Command::Turn));
+        assert!(mgr.element_is_about_to_be_launched(EntityId::Pc(0), Command::Move));
+        assert!(mgr.element_is_about_to_be_launched(EntityId::Pc(0), Command::Null));
+        assert!(!mgr.element_is_about_to_be_launched(EntityId::Pc(1), Command::Move));
+        assert!(!mgr.element_is_about_to_be_launched(EntityId::Pc(0), Command::Turn));
     }
 
     #[test]
@@ -4626,19 +4541,11 @@ mod tests {
         let mut mgr = SequenceManager::new();
 
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
-            1,
-            Command::Move,
-            Some(EntityId::from_raw(0)),
-        ));
-        seq.append_element(make_simple_element(
-            1,
-            Command::Turn,
-            Some(EntityId::from_raw(0)),
-        ));
+        seq.append_element(make_simple_element(1, Command::Move, Some(EntityId::Pc(0))));
+        seq.append_element(make_simple_element(1, Command::Turn, Some(EntityId::Pc(0))));
         let _seq_id = mgr.launch_sequence(seq);
 
-        mgr.cancel_pending_move_commands(EntityId::from_raw(0));
+        mgr.cancel_pending_move_commands(EntityId::Pc(0));
 
         // Only Turn should remain (Move was cancelled)
         let actions = mgr.hourglass();
@@ -4659,7 +4566,7 @@ mod tests {
 
     #[test]
     fn make_fast_rewrites_walking_orders_to_running() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::WalkingUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::WalkingUpright);
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
         elem.push_order(Order::test_new(
             OrderType::TransitionWaitingUprightWalkingUpright,
@@ -4686,7 +4593,7 @@ mod tests {
 
     #[test]
     fn make_fast_preserves_unrelated_orders() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::WalkingUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::WalkingUpright);
         elem.push_order(Order::test_new(OrderType::Turning, 0.0, 0.0));
         elem.push_order(Order::test_new(OrderType::WalkingWithSword, 0.0, 0.0));
 
@@ -4698,7 +4605,7 @@ mod tests {
 
     #[test]
     fn make_slow_is_symmetric_to_make_fast() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::RunningUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::RunningUpright);
         if let SequenceElementData::Movement { flags, .. } = &mut elem.data {
             *flags |= MoveFlags::FAST;
         }
@@ -4730,7 +4637,7 @@ mod tests {
 
     #[test]
     fn make_upright_rewrites_crouched_orders() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::WalkingCrouched);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::WalkingCrouched);
         elem.push_order(Order::test_new(OrderType::WalkingCrouched, 0.0, 0.0));
         elem.push_order(Order::test_new(
             OrderType::TransitionWaitingCrouchedWalkingCrouched,
@@ -4756,14 +4663,14 @@ mod tests {
 
     #[test]
     fn make_upright_cancels_pending_crouch_down() {
-        let mut elem = SequenceElement::new(1, Command::CrouchDown, Some(EntityId::from_raw(0)));
+        let mut elem = SequenceElement::new(1, Command::CrouchDown, Some(EntityId::Pc(0)));
         make_upright_element(&mut elem);
         assert_eq!(elem.command, Command::Null);
     }
 
     #[test]
     fn make_crouched_rewrites_upright_orders_and_clears_fast() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::RunningUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::RunningUpright);
         if let SequenceElementData::Movement { flags, .. } = &mut elem.data {
             *flags |= MoveFlags::FAST;
         }
@@ -4798,20 +4705,20 @@ mod tests {
         seq.append_element(SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::RunningUpright,
         ));
         seq.append_element(SequenceElement::new_movement(
             2,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::RunningUpright,
         ));
         // Different owner — should terminate the walk.
         seq.append_element(SequenceElement::new_movement(
             3,
             Command::Move,
-            Some(EntityId::from_raw(2)),
+            Some(EntityId::Pc(2)),
             OrderType::RunningUpright,
         ));
         let seq_id = mgr.launch_sequence(seq);
@@ -4839,7 +4746,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WalkingUpright,
         );
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
@@ -4854,7 +4761,7 @@ mod tests {
         let mut cancellations: Vec<EntityId> = Vec::new();
         let mut next_order_id = 1u32;
         let changed = mgr.stop_movement_for_owner(
-            EntityId::from_raw(1),
+            EntityId::Pc(1),
             crate::coordinates::MapPoint { x: 0.0, y: 0.0 },
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
@@ -4885,7 +4792,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(
             1,
             Command::MoveWaiting,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WalkingUpright,
         );
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
@@ -4897,7 +4804,7 @@ mod tests {
         let mut cancellations: Vec<EntityId> = Vec::new();
         let mut next_order_id = 1u32;
         mgr.stop_movement_for_owner(
-            EntityId::from_raw(1),
+            EntityId::Pc(1),
             crate::coordinates::MapPoint::default(),
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
@@ -4919,7 +4826,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(
             1,
             Command::MoveWaiting,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::Turning,
         );
         elem.push_order(Order::test_new(OrderType::Turning, 100.0, 0.0));
@@ -4931,14 +4838,14 @@ mod tests {
         let mut cancellations: Vec<EntityId> = Vec::new();
         let mut next_order_id = 1u32;
         mgr.stop_movement_for_owner(
-            EntityId::from_raw(1),
+            EntityId::Pc(1),
             crate::coordinates::MapPoint::default(),
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
             &mut next_order_id,
             &mut |id| cancellations.push(id),
         );
-        assert_eq!(cancellations, vec![EntityId::from_raw(1)]);
+        assert_eq!(cancellations, vec![EntityId::Pc(1)]);
         let s = mgr.get_sequence(seq_id).unwrap();
         assert_eq!(s.elements[0].command, Command::Move);
         assert_eq!(s.elements[0].state, SequenceState::Interrupted);
@@ -4951,7 +4858,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::Turning,
         );
         elem.push_order(Order::test_new(OrderType::Turning, 100.0, 0.0));
@@ -4963,7 +4870,7 @@ mod tests {
         let mut cancellations: Vec<EntityId> = Vec::new();
         let mut next_order_id = 1u32;
         mgr.stop_movement_for_owner(
-            EntityId::from_raw(1),
+            EntityId::Pc(1),
             crate::coordinates::MapPoint::default(),
             SequencePriority::NonInterruptable,
             &|_| SequencePriority::Normal,
@@ -4976,7 +4883,7 @@ mod tests {
 
     #[test]
     fn insert_transition_start_splits_long_walking_order() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::WalkingUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::WalkingUpright);
         // Single walking order 100 units along +x.
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
 
@@ -5000,7 +4907,7 @@ mod tests {
 
     #[test]
     fn insert_transition_end_appends_transition_before_last_order() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::WalkingUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::WalkingUpright);
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 0.0, 0.0));
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 100.0, 0.0));
 
@@ -5029,7 +4936,7 @@ mod tests {
 
     #[test]
     fn cleanup_duplicate_orders_removes_consecutive_matches() {
-        let mut elem = movement_elem(EntityId::from_raw(0), OrderType::WalkingUpright);
+        let mut elem = movement_elem(EntityId::Pc(0), OrderType::WalkingUpright);
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 10.0, 10.0));
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 10.0, 10.0));
         elem.push_order(Order::test_new(OrderType::WalkingUpright, 20.0, 20.0));
@@ -5049,19 +4956,19 @@ mod tests {
         seq.append_element(SequenceElement::new_movement(
             1,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WalkingUpright,
         ));
         seq.append_element(SequenceElement::new_movement(
             2,
             Command::Move,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
             OrderType::WalkingUpright,
         ));
         seq.append_element(SequenceElement::new(
             3,
             Command::Jump,
-            Some(EntityId::from_raw(1)),
+            Some(EntityId::Pc(1)),
         ));
         let seq_id = mgr.launch_sequence(seq);
 
