@@ -1,5 +1,6 @@
 //! Bow shots and arrow projectile ticking.
 
+use super::input::BowTarget;
 use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
@@ -318,8 +319,8 @@ impl EngineInner {
             {
                 let (belt_status, belt_mode) =
                     self.can_shoot_with_bow_at_point(assets, result.shooter, target_point, false);
-                let belt_failed = belt_status != crate::engine::input::BowTarget::Valid
-                    || belt_mode == crate::weapons::ShootMode::Long;
+                let belt_failed =
+                    belt_status != BowTarget::Valid || belt_mode == crate::weapons::ShootMode::Long;
                 if belt_failed
                     && let Some(eyes) = self
                         .get_entity(result.target)

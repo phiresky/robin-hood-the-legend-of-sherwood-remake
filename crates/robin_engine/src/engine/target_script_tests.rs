@@ -9,8 +9,7 @@ use crate::element::{
     Command, ElementData, ElementKind, ElementTarget, Entity, FxData, Posture, TargetData,
     TargetFilter,
 };
-use crate::engine::EngineInner;
-use crate::engine::types::MissionScript;
+use crate::engine::{DevState, EngineInner, HostDisplayState, LevelAssets, MissionScript};
 use crate::entity_id::EntityId;
 use crate::scb::{ClassEntry, Function, ScbFile};
 use crate::sequence::{SequenceElement, SequenceElementData};
@@ -261,9 +260,9 @@ fn activated_by_lever_fires_on_activation_command() {
     let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateLever);
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(
@@ -282,9 +281,9 @@ fn activated_by_search_fires_on_activation_command() {
     let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateSearch);
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_SEARCH), SENTINEL_SEARCH);
@@ -299,9 +298,9 @@ fn activated_by_apple_fires_on_activation_command() {
     let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateApple);
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_APPLE), SENTINEL_APPLE);
@@ -316,9 +315,9 @@ fn activated_by_arrow_fires_on_activation_command() {
     let pc = target_id;
     launch_activation(&mut engine, target_id, pc, Command::ActivateArrow);
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_ARROW), SENTINEL_ARROW);
@@ -342,9 +341,9 @@ fn activation_without_matching_method_is_no_op() {
         launch_activation(&mut engine, target_id, pc, cmd);
     }
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     // None of the missing methods should have populated any global.
@@ -377,9 +376,9 @@ fn hit_target_fires_activated_by_sword_when_defined() {
     };
     engine.launch_element(elem);
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     // No global gets set (method isn't defined on TestTarget).
@@ -400,9 +399,9 @@ fn handle_target_and_take_target_both_route_to_activated_by_hand() {
         engine.launch_element(elem);
     }
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     // TestTarget doesn't define ActivatedByHand — this test just
@@ -422,9 +421,9 @@ fn multiple_activations_in_one_tick_all_fire() {
     launch_activation(&mut engine, target_id, pc, Command::ActivateSearch);
     launch_activation(&mut engine, target_id, pc, Command::ActivateApple);
 
-    let assets = crate::engine::types::LevelAssets::new();
-    let mut dev = crate::engine::DevState::default();
-    let mut display = crate::engine::HostDisplayState::default();
+    let assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    let mut display = HostDisplayState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(host_global(&engine, GLOBAL_ID_LEVER), SENTINEL_LEVER);

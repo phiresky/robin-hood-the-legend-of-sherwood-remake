@@ -1,5 +1,6 @@
 //! Main per-frame update tick (`perform_hourglass`).
 
+use super::movement::MovePathOutcome;
 use super::*;
 use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
@@ -1440,11 +1441,11 @@ impl EngineInner {
             // pass.
 
             match self.try_dispatch_move_path(assets, owner, seq_id, elem_idx, dest, move_action) {
-                crate::engine::movement::MovePathOutcome::Success => {}
-                crate::engine::movement::MovePathOutcome::ActorGone => {
+                MovePathOutcome::Success => {}
+                MovePathOutcome::ActorGone => {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }
-                crate::engine::movement::MovePathOutcome::Failed => {
+                MovePathOutcome::Failed => {
                     // Stamp the failed request with the current frame
                     // counter and push it onto `failed_path_requests`.
                     // The element stays `InProgress` with an empty

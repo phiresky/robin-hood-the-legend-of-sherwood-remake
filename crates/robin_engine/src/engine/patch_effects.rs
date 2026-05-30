@@ -6,6 +6,7 @@
 //! pathfinder state, FX entity animations, background invalidation, and
 //! door rights.
 
+use super::movement::MovePathOutcome;
 use super::*;
 use crate::patch::{PatchAnimation, PatchEffect};
 
@@ -404,11 +405,11 @@ impl EngineInner {
                     actor.active_movement.clear();
                 }
                 match self.try_dispatch_move_path(assets, id, seq_id, elem_idx, dest, action) {
-                    crate::engine::movement::MovePathOutcome::Success => {}
-                    crate::engine::movement::MovePathOutcome::ActorGone => {
+                    MovePathOutcome::Success => {}
+                    MovePathOutcome::ActorGone => {
                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                     }
-                    crate::engine::movement::MovePathOutcome::Failed => {
+                    MovePathOutcome::Failed => {
                         // Re-translate failed — slide into MOVE_WAITING.
                         self.failed_path_requests.push(
                             crate::engine::movement::FailedPathRequest {

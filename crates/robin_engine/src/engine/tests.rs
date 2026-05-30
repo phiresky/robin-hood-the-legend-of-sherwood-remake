@@ -1895,7 +1895,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
 /// returns `false`.
 #[test]
 fn scroll_is_taken_without_script_returns_false_and_opens() {
-    use crate::engine::scroll_reveal::ScrollStatus;
+    use super::scroll_reveal::ScrollStatus;
 
     let mut engine = EngineInner::new();
     let scroll = Entity::Scroll(crate::element::ElementScroll {
@@ -2292,7 +2292,7 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = crate::engine::types::LevelAssets::default();
+    let assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -2333,7 +2333,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     engine.set_soldier_attentive_mode(soldier_id, true, false);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = crate::engine::types::LevelAssets::default();
+    let assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -2493,7 +2493,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = crate::engine::types::LevelAssets::default();
+    let assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
@@ -2587,7 +2587,7 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
 #[test]
 fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     let scb = scripted_waypoint_scb();
-    let mut script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mut script = MissionScript::from_scb(scb).expect("from_scb");
 
     assert!(script.bind_waypoint(crate::ai::PathId::new(2).unwrap(), 3, "TestWaypoint"));
     assert!(
@@ -2611,7 +2611,7 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
 #[test]
 fn call_waypoint_function_dispatches_and_falls_back() {
     let scb = scripted_waypoint_scb();
-    let mut script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mut script = MissionScript::from_scb(scb).expect("from_scb");
     assert!(script.bind_waypoint(crate::ai::PathId::new(0).unwrap(), 0, "TestWaypoint"));
 
     // Bound: call dispatches cleanly.
@@ -2672,7 +2672,7 @@ fn initialize_mission_script_binds_waypoint_classes() {
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     let scb = scripted_waypoint_scb();
-    let mission_script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mission_script = MissionScript::from_scb(scb).expect("from_scb");
 
     let mut engine = EngineInner::new();
     engine.mission_script = Some(mission_script);
@@ -2778,7 +2778,7 @@ fn waypoint_script_heap_round_trips_through_serde() {
         classes: vec![startup, waypoint_class],
     };
 
-    let mut script = crate::engine::types::MissionScript::from_scb(scb).expect("from_scb");
+    let mut script = MissionScript::from_scb(scb).expect("from_scb");
     assert!(script.bind_waypoint(crate::ai::PathId::new(3).unwrap(), 7, "HeapWaypoint"));
 
     // Poke distinct bytes into the heap so a zero reset is detectable.

@@ -4,6 +4,7 @@
 //! The input system resolves raw events into commands by reading engine
 //! state immutably; this module executes them.
 
+use super::movement::GoalShape;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::coordinates::MapPoint;
 use crate::element::{ActionState, Command, EntityId, Human as _};
@@ -2530,7 +2531,7 @@ impl EngineInner {
                 {
                     let mid = jl.get_middle_point();
                     (
-                        crate::engine::movement::GoalShape::Line {
+                        GoalShape::Line {
                             line_index: aggr_idx,
                             midpoint: mid,
                             tolerance: seek_tolerance,
@@ -2539,10 +2540,7 @@ impl EngineInner {
                     )
                 } else {
                     (
-                        crate::engine::movement::GoalShape::Point(MapPoint::new(
-                            target_pos.x,
-                            target_pos.y,
-                        )),
+                        GoalShape::Point(MapPoint::new(target_pos.x, target_pos.y)),
                         target_layer,
                     )
                 };
@@ -3292,7 +3290,7 @@ pub fn object_pickup_command(
         // Scrolls: no associated action; takable is vacuously true
         // once status is Visible / Opened.
         Entity::Scroll(_) => {
-            use crate::engine::scroll_reveal::ScrollStatus;
+            use super::scroll_reveal::ScrollStatus;
             matches!(
                 engine.scroll_status(target_id),
                 ScrollStatus::Visible | ScrollStatus::Opened
@@ -3579,6 +3577,7 @@ mod tests {
         ElementProjectile, ElementScroll, Entity, HumanData, NetData, NpcData, ObjectData,
         ObjectType, PcData, Posture, ProjectileData,
     };
+    use crate::engine::MissionScript;
     use crate::engine::ScrollStatus;
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::profiles::{Action, CharacterProfile, ProfileManager};
@@ -3867,7 +3866,7 @@ mod tests {
                 },
             ],
         };
-        crate::engine::types::MissionScript::from_scb(ScbFile {
+        MissionScript::from_scb(ScbFile {
             version: crate::scb::SCB_VERSION,
             classes: vec![startup],
         })

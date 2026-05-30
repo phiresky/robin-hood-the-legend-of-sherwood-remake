@@ -4,6 +4,7 @@
 //! the larger modules — attentive-mode transitions, drunken-step
 //! perturbation, etc.
 
+use super::movement::GoalShape;
 use super::{EngineInner, LevelAssets};
 use crate::ai::{DoorCombatInfo, Position, Stimulus, StimulusType};
 use crate::coordinates::MapPoint;
@@ -975,7 +976,7 @@ impl EngineInner {
                 self.build_gate_movement_sequence(
                     pc_id,
                     path,
-                    crate::engine::movement::GoalShape::Point(MapPoint::new(goal.x, goal.y)),
+                    GoalShape::Point(MapPoint::new(goal.x, goal.y)),
                     goal.level,
                     crate::order::OrderType::RunningUpright,
                     true,

@@ -224,7 +224,7 @@ impl EngineInner {
                 // Only Visible/Opened scrolls are focusable. Scroll
                 // status is stored on `GameHost::scroll_status` keyed
                 // by entity handle.
-                use crate::engine::scroll_reveal::ScrollStatus;
+                use super::scroll_reveal::ScrollStatus;
                 if !matches!(
                     self.scroll_status(entity_id),
                     ScrollStatus::Visible | ScrollStatus::Opened
