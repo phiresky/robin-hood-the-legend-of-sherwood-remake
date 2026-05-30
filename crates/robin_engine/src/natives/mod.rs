@@ -619,6 +619,23 @@ impl GameHost {
         self.entities.get_mut(idx)?.as_mut()
     }
 
+    fn occupied_entities(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
+        self.entities.iter().enumerate().filter_map(|(idx, slot)| {
+            slot.as_ref()
+                .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
+        })
+    }
+
+    fn occupied_entities_mut(&mut self) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
+        self.entities
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(idx, slot)| {
+                slot.as_mut()
+                    .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
+            })
+    }
+
     /// Check whether an actor handle refers to a valid entity.
     fn actor_exists(&self, handle: i32) -> bool {
         self.get_entity(handle).is_some()
@@ -1854,14 +1871,14 @@ impl GameHost {
             _ => return 0,
         };
 
-        // Scan all entities for a matching active bonus object
-        for (idx, slot) in self.entities.iter().enumerate() {
-            if let Some(Entity::Bonus(bonus)) = slot
-                && bonus.element.active
-                && bonus.object.object_type == object_type
-            {
-                return Self::actor_handle_from_index(idx);
-            }
+        if let Some((entity_id, _)) = self.occupied_entities().find(|(_, entity)| {
+            matches!(
+                entity,
+                Entity::Bonus(bonus)
+                    if bonus.element.active && bonus.object.object_type == object_type
+            )
+        }) {
+            return Self::actor_handle(entity_id);
         }
         0 // not found
     }
@@ -2401,7 +2418,8 @@ impl GameHost {
         tag | index
     }
 
-    pub fn actor_handle(id: EntityId) -> i32 {
+    pub fn actor_handle<I: Into<EntityId>>(id: I) -> i32 {
+        let id = id.into();
         Self::make_script_handle(SCRIPT_HANDLE_ACTOR_TAG, id.index() as usize)
     }
 
@@ -6096,15 +6114,12 @@ impl HostFunctions for GameHost {
                                 .push(Sequence::single_damage(target, 10000, 0));
                         }
                     } else if is_npc {
-                        let target_idx = Self::actor_handle_index(actor);
-                        for (idx, slot) in self.entities.iter_mut().enumerate() {
-                            let Some(entity) = slot else {
-                                continue;
-                            };
+                        let target_id = self.actor_id(actor);
+                        for (entity_id, entity) in self.occupied_entities_mut() {
                             let Some(ai) = entity.ai_controller_mut() else {
                                 continue;
                             };
-                            ai.debug_view_cone_enabled = Some(idx) == target_idx;
+                            ai.debug_view_cone_enabled = target_id == Some(entity_id);
                         }
                     }
                     0
