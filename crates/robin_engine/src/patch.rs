@@ -350,10 +350,6 @@ impl Patch {
         self.locked
     }
 
-    pub fn is_animated(&self) -> bool {
-        self.animated
-    }
-
     // -- Lock / unlock -------------------------------------------------------
 
     pub fn lock(&mut self) {

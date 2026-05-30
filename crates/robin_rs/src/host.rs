@@ -177,15 +177,6 @@ impl ViewportState {
         )
     }
 
-    pub fn visible_rect(&self) -> geo::Rect<f32> {
-        let w = self.screen_size.x / self.zoom_factor;
-        let h = (self.screen_size.y - PANNEL_HEIGHT) / self.zoom_factor;
-        geo::Rect::new(
-            self.view_position.to_geo(),
-            robin_engine::geo2d::pt(self.view_position.x + w, self.view_position.y + h),
-        )
-    }
-
     fn clip_view(&mut self) {
         if self.view_position.x < 0.0 {
             self.view_position.x = 0.0;

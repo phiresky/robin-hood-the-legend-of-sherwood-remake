@@ -181,11 +181,6 @@ impl GroundMark {
         }
     }
 
-    /// Per-frame sprite sizes — read-only access for the render path.
-    pub fn frame_sizes(&self) -> &[(u16, u16)] {
-        &self.frame_sizes
-    }
-
     /// Per-frame auto-crop offset (`x_min`, `y_min` of the opaque region)
     /// in world pixel units.  Read-only access for the render path's
     /// on-screen cull, which adds this offset to the sprite position

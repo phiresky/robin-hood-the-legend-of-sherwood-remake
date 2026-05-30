@@ -181,42 +181,6 @@ impl Posture {
             Self::Lying | Self::DeadBack | Self::Dead | Self::Tied | Self::StuckUnderNet
         )
     }
-
-    /// True for postures that make the character fully hidden from NPC
-    /// vision (`ComputeVisibility` returns 0).
-    pub fn is_hidden(self) -> bool {
-        matches!(self, Self::Spy | Self::Tree | Self::AnonymousArcher)
-    }
-
-    /// True for postures that are a disguise.
-    pub fn is_disguised(self) -> bool {
-        matches!(
-            self,
-            Self::SimulatingBeggar | Self::Spy | Self::AnonymousArcher
-        )
-    }
-
-    /// True for postures that use crouched-height animations.
-    pub fn is_crouched_height(self) -> bool {
-        matches!(self, Self::Crouched | Self::SimulatingBeggar | Self::Tree)
-    }
-
-    /// True for postures that trigger `EVENT_ENEMY_NEAR`.
-    pub fn triggers_enemy_near(self) -> bool {
-        matches!(
-            self,
-            Self::Upright
-                | Self::Crouched
-                | Self::CarryingCorpse
-                | Self::HelpingToClimb
-                | Self::CarryingOnShoulders
-        )
-    }
-
-    /// True when the character can be hit by arrows.
-    pub fn is_hurtable_by_arrow(self) -> bool {
-        !matches!(self, Self::Spy | Self::Tree)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -342,18 +306,6 @@ impl Direction {
     #[inline]
     pub fn opposite(self) -> Self {
         self.rotate(8)
-    }
-
-    /// Perpendicular left (-90°).
-    #[inline]
-    pub fn perpendicular_left(self) -> Self {
-        self.rotate(-4)
-    }
-
-    /// Perpendicular right (+90°).
-    #[inline]
-    pub fn perpendicular_right(self) -> Self {
-        self.rotate(4)
     }
 }
 
@@ -763,11 +715,6 @@ impl PositionInterface {
             .contains(IncrementComputed::INCREMENT)
     }
     #[inline]
-    pub fn is_direction_computed(&self) -> bool {
-        self.computed_increment
-            .contains(IncrementComputed::INCREMENT)
-    }
-    #[inline]
     pub fn is_increment_all_computed(&self) -> bool {
         self.computed_increment == IncrementComputed::ALL
     }
@@ -788,23 +735,6 @@ impl PositionInterface {
             self.computed_increment -= IncrementComputed::INCREMENT;
         }
     }
-    #[inline]
-    pub fn set_direction_computed(&mut self, v: bool) {
-        if v {
-            self.computed_increment |= IncrementComputed::DIRECTION;
-        } else {
-            self.computed_increment -= IncrementComputed::DIRECTION;
-        }
-    }
-    #[inline]
-    pub fn set_increment_all_computed(&mut self, v: bool) {
-        if v {
-            self.computed_increment = IncrementComputed::ALL;
-        } else {
-            self.computed_increment = IncrementComputed::NONE;
-        }
-    }
-
     #[inline]
     pub fn reset_increment_computed(&mut self) {
         self.computed_increment = IncrementComputed::NONE;
@@ -859,17 +789,7 @@ impl PositionInterface {
         self.move_box_map = self.get_move_box_offset(pt);
     }
 
-    #[inline]
-    pub fn set_elevation(&mut self, z: f32) {
-        self.position.z = z;
-        self.recompute_from_3d();
-    }
-
     // Old position
-    #[inline]
-    pub fn get_old_position(&self) -> WorldPoint3D {
-        self.old_position
-    }
     #[inline]
     pub fn old_map_position(&self) -> MapPoint {
         self.old_position_map
@@ -903,32 +823,14 @@ impl PositionInterface {
         self.computed_increment = IncrementComputed::NONE;
     }
     #[inline]
-    pub fn next_map_goal(&self) -> MapPoint {
-        self.goal_next_map
-    }
-    #[inline]
     pub fn set_next_map_goal(&mut self, pt: MapPoint) {
         self.goal_next_map = pt;
         self.goal_next_valid = true;
     }
     #[inline]
-    pub fn is_goal_next_valid(&self) -> bool {
-        self.goal_next_valid
-    }
-    #[inline]
     pub fn set_goal_next_valid(&mut self, v: bool) {
         self.goal_next_valid = v;
     }
-    #[inline]
-    pub fn get_position_goal(&self) -> WorldPoint3D {
-        self.goal
-    }
-    #[inline]
-    pub fn set_position_goal(&mut self, pt: WorldPoint3D) {
-        self.goal = pt;
-        self.computed_increment = IncrementComputed::NONE;
-    }
-
     // Layer / sector
     #[inline]
     #[must_use]
@@ -948,41 +850,9 @@ impl PositionInterface {
     pub fn set_sector(&mut self, s: Option<SectorHandle>) {
         self.sector = s;
     }
-    #[inline]
-    #[must_use]
-    pub fn get_layer_goal(&self) -> Layer {
-        self.layer_goal
-    }
-    #[inline]
-    pub fn set_layer_goal(&mut self, l: Layer) {
-        self.layer_goal = l;
-    }
-    #[inline]
-    #[must_use]
-    pub fn get_sector_goal(&self) -> Option<SectorHandle> {
-        self.sector_goal
-    }
-    #[inline]
-    pub fn set_sector_goal(&mut self, s: Option<SectorHandle>) {
-        self.sector_goal = s;
-    }
-
     // ====================================================================
     // Movement / increment
     // ====================================================================
-
-    #[inline]
-    pub fn get_movement(&self) -> WorldVec3D {
-        self.position - self.old_position
-    }
-
-    #[inline]
-    pub fn get_movement_map(&self) -> Vec2D {
-        let a = self.position_map;
-        let b = self.old_position_map;
-        geo2d::pt(a.x - b.x, a.y - b.y)
-    }
-
     #[inline]
     pub fn get_increment(&self) -> WorldVec3D {
         assert!(self.is_increment_3d_computed());
@@ -996,20 +866,8 @@ impl PositionInterface {
     }
 
     #[inline]
-    pub fn map_increment(&self) -> MapVec {
-        assert!(self.is_increment_map_computed());
-        self.increment_map
-    }
-
-    #[inline]
     pub fn set_reversed_movement(&mut self, v: bool) {
         self.reversed_movement = v;
-    }
-
-    #[inline]
-    pub fn set_increment(&mut self, v: WorldVec3D) {
-        self.computed_increment = IncrementComputed::INCREMENT;
-        self.increment = v;
     }
 
     #[inline]
@@ -1021,31 +879,6 @@ impl PositionInterface {
     pub fn set_map_increment(&mut self, v: MapVec) {
         self.computed_increment = IncrementComputed::MAP;
         self.increment_map = v;
-    }
-
-    /// Advance position by the 3D increment.
-    #[inline]
-    pub fn update_position(&mut self) {
-        assert!(self.is_increment_3d_computed());
-        self.position += self.increment;
-        self.recompute_from_3d();
-    }
-
-    /// Advance map position by the map increment.
-    #[inline]
-    pub fn update_position_map(&mut self) {
-        assert!(self.is_increment_map_computed());
-        let im = self.increment_map;
-        self.position_map.x += im.x;
-        self.position_map.y += im.y;
-        self.recompute_from_map();
-    }
-
-    /// Advance position by `increment * distance`.
-    pub fn update_position_scaled(&mut self, distance: f32) {
-        assert!(self.is_increment_3d_computed());
-        self.position += self.increment.scale(distance);
-        self.recompute_from_3d();
     }
 
     /// Advance map position by `increment_map * distance`.
@@ -1077,22 +910,9 @@ impl PositionInterface {
         self.direction_goal
     }
     #[inline]
-    pub fn set_current_direction(&mut self, d: Direction) {
-        self.direction = d;
-    }
-    #[inline]
     pub fn set_direction(&mut self, d: Direction) {
         self.direction_goal = d;
     }
-    #[inline]
-    pub fn flip_direction(&mut self) {
-        self.direction = self.direction.opposite();
-    }
-    #[inline]
-    pub fn flip_direction_goal(&mut self) {
-        self.direction_goal = self.direction_goal.opposite();
-    }
-
     /// Turn one step toward the goal direction.  Returns `true` if still turning.
     pub fn turn(&mut self) -> bool {
         if self.deviated {
@@ -1243,36 +1063,6 @@ impl PositionInterface {
     pub fn set_move_box(&mut self, b: BBox2D) {
         self.move_box = b;
     }
-    #[inline]
-    pub fn set_move_box_alternate(&mut self, b: BBox2D) {
-        self.move_box_alternate = b;
-    }
-
-    /// Build a PositionInterface pre-populated with the move-box +
-    /// pathfinder index + initial map position that actor spawn code
-    /// (PC, soldier, civilian) configures right after frame info is
-    /// loaded.
-    ///
-    /// `half_diagonal` comes from
-    /// `FastFindGrid::try_move_box_half_diagonal(pathfinder_idx)`;
-    /// when the table is empty (pre-level-load or missing data) we fall
-    /// back to a unit-sized box so anti-collision still sees a valid
-    /// rect and doesn't panic on `bbox.center()`.
-    ///
-    /// `position_map` seeds the actor's spawn position; the eager
-    /// `set_map_position` setter syncs 3D / sprite so downstream code
-    /// (anti-collision, AI noise walks, elevation queries) sees a
-    /// fully-initialized PI.
-    pub fn for_actor(
-        pathfinder_idx: u8,
-        half_diagonal: Option<crate::geo2d::Vec2D>,
-        position_map: MapPoint,
-    ) -> Self {
-        let mut pi = Self::new();
-        pi.configure_for_actor(pathfinder_idx, half_diagonal, position_map);
-        pi
-    }
-
     /// In-place equivalent of [`for_actor`] — applies the actor-specific
     /// pathfinder index, move box, and position to an existing PI.  Used
     /// when the PI is embedded (e.g. inside `Sprite`) and spawn code
@@ -1308,18 +1098,9 @@ impl PositionInterface {
         self.pathfinder_index = i;
     }
     #[inline]
-    pub fn set_pathfinder_index_alternate(&mut self, i: u16) {
-        self.pathfinder_index_alternate = i;
-    }
-    #[inline]
     pub fn is_using_emergency_lying_box(&self) -> bool {
         self.use_emergency_lying_box
     }
-    #[inline]
-    pub fn set_using_emergency_lying_box(&mut self, v: bool) {
-        self.use_emergency_lying_box = v;
-    }
-
     // Door
     #[inline]
     pub fn get_door(&self) -> DoorHandle {
@@ -1329,18 +1110,10 @@ impl PositionInterface {
     pub fn get_door_direction(&self) -> bool {
         self.door_direction
     }
-    pub fn set_door(&mut self, d: DoorHandle, dir: bool) {
-        self.door = d;
-        if !d.is_null() {
-            self.door_direction = dir;
-        }
-    }
 
     // Tolerance
     #[inline]
-    pub fn get_tolerance(&self) -> f32 {
-        self.tolerance
-    }
+
     pub fn set_tolerance(&mut self, t: f32, directional: bool) {
         self.tolerance = t;
         self.directional_tolerance = directional;
@@ -1350,10 +1123,6 @@ impl PositionInterface {
     #[inline]
     pub fn get_forecasted_movement(&self) -> WorldVec3D {
         self.forecasted_movement
-    }
-
-    pub fn update_forecasted_movement(&mut self, distance: f32, wait_time: u16) {
-        self.forecasted_movement = self.increment.scale(distance / wait_time as f32);
     }
 
     pub fn reset_forecasted_movement(&mut self) {
@@ -1368,17 +1137,6 @@ impl PositionInterface {
     pub fn new_move(&mut self) {
         self.old_position = self.position;
         self.old_position_map = self.position_map;
-    }
-
-    pub fn move_position(&mut self, v: WorldVec3D) {
-        self.position += v;
-        self.recompute_from_3d();
-    }
-
-    pub fn move_map(&mut self, v: Vec2D) {
-        self.position_map.x += v.x;
-        self.position_map.y += v.y;
-        self.recompute_from_map();
     }
 
     // ====================================================================
@@ -1437,34 +1195,6 @@ impl PositionInterface {
             self.increment_map = MapVec::from_geo(geo2d::normalize(v));
         }
         self.set_increment_map_computed(true);
-    }
-
-    /// Derive 3D increment from map increment + plane.
-    pub fn compute_increment(&mut self) {
-        if self.is_increment_3d_computed() {
-            return;
-        }
-        assert!(self.is_increment_map_computed());
-
-        let im = self.increment_map;
-        self.increment.x = im.x;
-        if let Some(p) = &self.plane {
-            self.increment.z = p.compute_z_increment(im.x, im.y);
-            self.increment.y =
-                crate::coordinates::GroundVec::from_map_and_z(im, self.increment.z).y;
-        } else {
-            self.increment.y = im.y;
-            self.increment.z = 0.0;
-        }
-
-        let dir = vector_to_direction(self.increment.x, self.increment.y);
-        if self.reversed_movement {
-            self.set_direction(dir.opposite());
-        } else {
-            self.set_direction(dir);
-        }
-
-        self.computed_increment = IncrementComputed::ALL;
     }
 
     /// Derive all increments + direction.
@@ -1583,10 +1313,6 @@ impl PositionInterface {
     // ====================================================================
 
     #[inline]
-    pub fn is_average_speed_needed(&self) -> bool {
-        self.accumulate_movement_map
-    }
-    #[inline]
     pub fn set_average_speed_needed(&mut self, v: bool) {
         self.accumulate_movement_map = v;
     }
@@ -1594,17 +1320,6 @@ impl PositionInterface {
     pub fn initialize_average_speed_map(&mut self, pt: MapPoint) {
         let map = self.map_position();
         self.accumulated_movement_map = MapVec::new(map.x - pt.x, map.y - pt.y);
-    }
-
-    pub fn update_average_speed_map_distance(&mut self, distance: f32) {
-        let im = self.increment_map;
-        self.accumulated_movement_map.x += distance * im.x;
-        self.accumulated_movement_map.y += distance * im.y;
-    }
-
-    pub fn update_average_speed_map_vector(&mut self, v: MapVec) {
-        self.accumulated_movement_map.x += v.x;
-        self.accumulated_movement_map.y += v.y;
     }
 
     pub fn get_average_speed_map(&mut self) -> MapVec {
@@ -1638,13 +1353,6 @@ impl PositionInterface {
         self.deviated
     }
     #[inline]
-    pub fn set_deviated(&mut self, v: bool) {
-        self.deviated = v;
-    }
-    #[inline]
-    pub fn get_blocked_count(&self) -> u16 {
-        self.blocked_count
-    }
 
     pub fn reset_box_blocked(&mut self) {
         self.box_blocked.reset();
@@ -1680,31 +1388,6 @@ impl PositionInterface {
     pub fn get_radius(&self) -> f32 {
         self.radius
     }
-    pub fn set_radius(&mut self, r: f32) {
-        self.radius_initial = r;
-        self.radius = r;
-    }
-
-    pub fn get_anticollision_data(&self) -> AnticollisionData {
-        AnticollisionData {
-            map: self.position_map,
-            increment_map: self.increment_map,
-            deviated: self.deviated,
-            box_blocked: self.box_blocked,
-            blocked_count: self.blocked_count,
-            radius: self.radius,
-        }
-    }
-
-    pub fn set_anticollision_data(&mut self, d: &AnticollisionData) {
-        self.position_map = d.map;
-        self.recompute_from_map();
-        self.increment_map = d.increment_map;
-        self.deviated = d.deviated;
-        self.box_blocked = d.box_blocked;
-        self.blocked_count = d.blocked_count;
-        self.radius = d.radius;
-    }
 
     // ====================================================================
     // Actor-vs-actor anti-collision
@@ -1723,238 +1406,6 @@ impl PositionInterface {
         lines: &mut Vec<(RepulsiveLine, f32)>,
     ) {
         sort_repulsive_objects(self.position_map, pt_future, self.radius, points, lines);
-    }
-
-    /// Apply actor-vs-actor anti-collision to the pending movement.
-    ///
-    /// Mobile elements don't exist in the shipped game — they're
-    /// inactive in every mission — so the mobile-blocking arms of
-    /// the algorithm are omitted rather than stubbed. Level-obstacle
-    /// repulsive lines and points are gathered before this call via
-    /// `FastFindGrid::get_active_repulsive_line_indices` and
-    /// `FastFindGrid::get_level_repulsive_points`, then merged into
-    /// `disturbing_points` / `disturbing_lines` alongside neighbour
-    /// actor repulsion.
-    ///
-    /// `disturbing_points` / `disturbing_lines` are the repulsive
-    /// objects contributed by neighbour actors (one `RepulsivePoint`
-    /// per posture-appropriate actor via `GetRepulsiveObjects`).  The
-    /// caller is responsible for gathering them — `PositionInterface`
-    /// has no back-reference to the engine.
-    ///
-    /// Returns `true` when the actor was deviated or fully blocked,
-    /// meaning the caller shouldn't just commit the naive future
-    /// position.
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_position_anti_collision(
-        &mut self,
-        fast_grid: &FastFindGrid,
-        distance: f32,
-        is_backwards: bool,
-        disturbing_points: Vec<RepulsivePoint>,
-        disturbing_lines: Vec<RepulsiveLine>,
-    ) -> bool {
-        let map = self.position_map;
-        let im = self.increment_map;
-        let pt_future_naive = map + im.scale(distance);
-        let mut pt_future = pt_future_naive;
-
-        // "Deviated or not" branching.  When the actor was already
-        // deviated and the disturbing-object lists are empty:
-        //   * If the original trajectory is now reachable, clear the
-        //     deviated flag and commit.
-        //   * If it isn't reachable, *fall through* (no return) so the
-        //     radius-shrink, blocked-count increment, and
-        //     break-through-toward-goal passes still run.  An earlier
-        //     version returned `true` here, which stranded actors at
-        //     the edge of unreachable regions because the safety valve
-        //     never fired.
-        // When the actor was *not* deviated and the lists are empty,
-        // commit the naive future and return.
-        let lists_empty = disturbing_points.is_empty() && disturbing_lines.is_empty();
-        if self.deviated {
-            if lists_empty {
-                let hd = self.get_half_diagonal();
-                if fast_grid.is_reachable_thick(
-                    pt_future_naive,
-                    self.goal_map,
-                    self.layer.get(),
-                    hd,
-                ) {
-                    self.deviated = false;
-                    self.set_map_position(pt_future_naive);
-                    self.reset_increment_computed();
-                    self.compute_increment_all(true);
-                    return false;
-                }
-                // !reachable: fall through to the authorized-commit
-                // path (no `return` here — deliberate).
-            }
-        } else if lists_empty {
-            self.set_map_position(pt_future_naive);
-            return false;
-        }
-
-        // Zero-movement early return — runs after the pre-loop
-        // branching but before the main deviation loop.  Only reached
-        // when the actor is stationary (`distance * increment_map == 0`)
-        // — either with neighbours pressing (lists non-empty) or in
-        // the deviated-but-unreachable fall-through above.
-        let movement = pt_future - map;
-        if movement.x == 0.0 && movement.y == 0.0 {
-            return true;
-        }
-
-        // Main deviation loop. With empty lists it is a no-op and
-        // `deviated_in_loop` stays false.
-        let deviated_in_loop = if lists_empty {
-            false
-        } else {
-            let (new_pt, dev) = compute_deviated_future(
-                map,
-                pt_future,
-                self.radius,
-                disturbing_points,
-                disturbing_lines,
-            );
-            pt_future = new_pt;
-            dev
-        };
-
-        // Post-loop "deviated == false" branch — same
-        // fall-through-on-unreachable-while-deviated rule as the
-        // pre-loop arm above.
-        if !deviated_in_loop {
-            if self.deviated {
-                let hd = self.get_half_diagonal();
-                if fast_grid.is_reachable_thick(pt_future, self.goal_map, self.layer.get(), hd) {
-                    self.deviated = false;
-                    self.set_map_position(pt_future);
-                    self.reset_increment_computed();
-                    self.compute_increment_all(true);
-                    return false;
-                }
-                // !reachable: fall through.
-            } else {
-                self.set_map_position(pt_future);
-                return false;
-            }
-        }
-
-        // Deviation happened — try to commit it through the fast-find
-        // grid's straight-movement authorization check.
-        let box_move = *self.get_move_box();
-        let half_diagonal_move = self.get_half_diagonal();
-
-        let can_commit = fast_grid.is_straight_movement_authorized(
-            map.to_geo().into(),
-            pt_future.to_geo().into(),
-            self.layer.get(),
-            &box_move,
-        ) && fast_grid.is_reachable_thick(
-            pt_future,
-            self.goal_map,
-            self.layer.get(),
-            half_diagonal_move,
-        );
-
-        if can_commit {
-            if self.update_box_blocked(pt_future) {
-                let new_movement = pt_future - map;
-                if new_movement.x != 0.0 || new_movement.y != 0.0 {
-                    let dir = vector_to_direction(new_movement.x, new_movement.y);
-                    if is_backwards {
-                        self.set_direction(dir.opposite());
-                    } else {
-                        self.set_direction(dir);
-                    }
-                    self.set_map_position(pt_future);
-                    self.reset_increment_computed();
-                    self.compute_increment_all(false);
-                }
-            }
-        } else {
-            // Bump blocked counter and shrink radius.
-            self.blocked_count = self.blocked_count.saturating_add(1);
-            if self.radius > 1.0 {
-                self.radius -= 0.2;
-            }
-        }
-
-        // Break-through path — when stuck too long, try to barge
-        // straight toward the goal.  Active when `blocked_count > 0`.
-        if self.blocked_count > 0 {
-            let to_goal = self.goal_map - self.position_map;
-            let n = geo2d::normalize(to_goal.to_geo());
-            let mut barge_movement = MapVec::new(n.x * distance, n.y * distance);
-            self.set_direction(vector_to_direction(barge_movement.x, barge_movement.y));
-            let mut barge_future = MapPoint::new(
-                self.position_map.x + barge_movement.x,
-                self.position_map.y + barge_movement.y,
-            );
-
-            // Shrink the move box slightly.
-            let box_move_inset = if let Some(r) = box_move.0 {
-                BBox2D(Some(geo::Rect::new(
-                    geo2d::pt(r.min().x + 1.0, r.min().y + 1.0),
-                    geo2d::pt(r.max().x - 1.0, r.max().y - 1.0),
-                )))
-            } else {
-                BBox2D::new()
-            };
-
-            if fast_grid.is_position_authorized(
-                &offset_bbox(&box_move_inset, barge_future),
-                self.layer.get(),
-            ) {
-                self.position_map = barge_future;
-                self.recompute_from_map();
-            } else {
-                // Try slowing down.
-                let mut slower = distance;
-                while slower > 0.1 {
-                    if fast_grid.is_position_authorized(
-                        &offset_bbox(&box_move_inset, barge_future),
-                        self.layer.get(),
-                    ) {
-                        self.position_map = barge_future;
-                        self.recompute_from_map();
-                        break;
-                    }
-                    slower *= 0.8;
-                    barge_movement = barge_movement.scale(0.8);
-                    barge_future = MapPoint::new(
-                        self.position_map.x + barge_movement.x,
-                        self.position_map.y + barge_movement.y,
-                    );
-                }
-                if slower <= 0.1 {
-                    // Widen the move box slightly and ask the grid to
-                    // find *any* nearby authorised position.  If the
-                    // grid can nudge the box into a clear cell,
-                    // teleport the actor to that cell's centre.
-                    let mut widened =
-                        offset_bbox(&self.get_move_box_offset(barge_future), MapPoint::ZERO);
-                    if let Some(r) = widened.0 {
-                        widened = BBox2D(Some(geo::Rect::new(
-                            geo2d::pt(r.min().x - 0.2, r.min().y - 0.2),
-                            geo2d::pt(r.max().x + 0.2, r.max().y + 0.2),
-                        )));
-                    }
-                    if fast_grid.find_authorized_position(&mut widened, self.layer.get()) {
-                        let c = widened.center();
-                        self.position_map = MapPoint::from_geo(c);
-                        self.recompute_from_map();
-                    }
-                    // If even the wide search fails we stay put —
-                    // intentionally left stuck; the blocked counter
-                    // keeps ticking so the AI eventually repaths out.
-                }
-            }
-        }
-
-        self.deviated = true;
-        true
     }
 }
 
@@ -2137,11 +1588,6 @@ impl PositionInterface {
     /// Test whether the current map position is inside the grid bounds.
     pub fn is_inside_grid(&self, grid: &FastFindGrid) -> bool {
         grid.is_inside_grid_point(self.position_map)
-    }
-
-    /// Get the flat block index for the current map position on the current layer.
-    pub fn grid_block_index(&self, grid: &FastFindGrid) -> usize {
-        grid.get_block_index(self.position_map, self.layer.get())
     }
 
     /// Check whether the current map position (with its move box) is free of

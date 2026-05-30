@@ -210,16 +210,6 @@ impl ScriptManager {
             .position(|c| c.class_name == name)
     }
 
-    /// Get class metadata by index.
-    pub fn class(&self, idx: usize) -> &ClassEntry {
-        &self.program.scb.classes[idx]
-    }
-
-    /// Get the decoded instruction stream for a class.
-    pub fn program(&self, class_idx: usize) -> &[Instruction] {
-        &self.program.programs[class_idx]
-    }
-
     /// Get the underlying ScbFile.
     pub fn scb(&self) -> &ScbFile {
         &self.program.scb
@@ -359,20 +349,6 @@ impl ScriptInstance {
         let entry_addr = func.address as u32;
 
         self.run_at_with_host(manager, entry_addr, fn_name, host)
-    }
-
-    /// Call a function by name with a custom step limit.
-    pub fn call_function_limited(
-        &mut self,
-        manager: &mut ScriptManager,
-        fn_name: &str,
-        max_steps: usize,
-    ) -> Result<i32, ScriptError> {
-        let func = self
-            .find_function(manager, fn_name)
-            .ok_or_else(|| ScriptError::FunctionNotFound(fn_name.to_owned()))?;
-        let entry_addr = func.address as u32;
-        self.run_at_limited(manager, entry_addr, max_steps, fn_name)
     }
 
     /// Call a function by name with a custom step limit and native host.
@@ -551,35 +527,5 @@ impl ScriptInstance {
         self.vm
             .outgoing_params
             .extend_from_slice(&value.to_le_bytes());
-    }
-
-    /// Push raw bytes as a parameter (for native-type handles).
-    pub fn push_param_bytes(&mut self, bytes: &[u8]) {
-        self.vm.outgoing_params.extend_from_slice(bytes);
-    }
-
-    /// Read the return value from the last call.
-    pub fn return_value(&self) -> i32 {
-        self.vm.return_value
-    }
-
-    /// Read an i32 member variable from the heap at the given byte offset.
-    pub fn read_heap_i32(&self, offset: usize) -> i32 {
-        let b = &self.vm.heap[offset..offset + 4];
-        i32::from_le_bytes([b[0], b[1], b[2], b[3]])
-    }
-
-    /// Write an i32 to the heap at the given byte offset.
-    pub fn write_heap_i32(&mut self, offset: usize, value: i32) {
-        self.vm.heap[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-    }
-
-    /// Find the heap offset of a member variable by name.
-    pub fn find_member_offset(&self, manager: &ScriptManager, name: &str) -> Option<usize> {
-        manager.program.scb.classes[self.class_idx]
-            .member_variables
-            .iter()
-            .find(|mv| mv.name == name)
-            .map(|mv| mv.address as usize)
     }
 }

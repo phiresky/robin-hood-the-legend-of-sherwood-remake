@@ -233,14 +233,6 @@ impl SoundGeometry {
         self.zoom_factor
     }
 
-    pub fn fx_outer_distance(&self) -> f32 {
-        self.fx_outer_distance
-    }
-
-    pub fn fx_inner_distance(&self) -> f32 {
-        self.fx_inner_distance
-    }
-
     pub fn set_exclamation_volume(&mut self, v: f32) {
         self.exclamation_volume = v;
     }

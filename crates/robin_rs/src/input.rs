@@ -147,10 +147,6 @@ impl ThreadedInput {
         self.enabled = enabled;
     }
 
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
-
     /// Snap the cursor to `target`, queuing one synthetic mouse-motion
     /// event for downstream consumers.  Rejects out-of-clip targets
     /// (returns `false`), otherwise teleports `position` to `target`,

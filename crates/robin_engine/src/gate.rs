@@ -531,10 +531,6 @@ impl Door {
         self.gate_type == GateType::Jump
     }
 
-    pub fn door_type(&self) -> DoorType {
-        self.door_type
-    }
-
     // -- Special PC authorisation --
 
     /// Returns `true` if the door is locked for PCs but has a special
@@ -610,10 +606,6 @@ impl Door {
 
     pub fn set_point_mid(&mut self, x: f32, y: f32) {
         self.point_mid = (x, y);
-    }
-
-    pub fn penalty(&self) -> f32 {
-        self.penalty
     }
 
     /// Shift `point_in` so it lies a fixed distance from `point_mid`

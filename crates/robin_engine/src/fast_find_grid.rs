@@ -1057,31 +1057,7 @@ impl FastFindGrid {
             && y < (self.level.grid_height as i32) * GRID_CELL_SIZE
     }
 
-    /// Test if grid-cell coordinates are inside the grid.
-    #[inline]
-    pub fn is_inside_grid(&self, x: i16, y: i16) -> bool {
-        x >= 0
-            && (x as u16) < self.level.grid_width
-            && y >= 0
-            && (y as u16) < self.level.grid_height
-    }
-
-    /// Clamp grid-cell coordinates to be inside the grid.
-    #[inline]
-    pub fn clamp_to_grid(&self, x: &mut i16, y: &mut i16) {
-        if *x < 0 {
-            *x = 0;
-        } else if *x >= self.level.grid_width as i16 {
-            *x = self.level.grid_width as i16 - 1;
-        }
-        if *y < 0 {
-            *y = 0;
-        } else if *y >= self.level.grid_height as i16 {
-            *y = self.level.grid_height as i16 - 1;
-        }
-    }
-
-    /// Compute the flat block index for a projected map point on a given layer.
+    /// Compute the flat block index for a world-space point on a given layer.
     #[inline]
     pub fn get_block_index(&self, point: MapPoint, layer: u16) -> usize {
         self.get_block_index_geo(point.to_geo(), layer)
@@ -1105,14 +1081,6 @@ impl FastFindGrid {
     // ── Getters ──
 
     #[inline]
-    pub fn width(&self) -> u16 {
-        self.level.grid_width
-    }
-    #[inline]
-    pub fn height(&self) -> u16 {
-        self.level.grid_height
-    }
-    #[inline]
     pub fn lift_layer(&self) -> u16 {
         self.level.special_layer - 1
     }
@@ -1121,10 +1089,6 @@ impl FastFindGrid {
 
     pub fn add_move_box_half_diagonal(&mut self, hd: Vec2D) {
         self.level_mut().move_box_half_diagonals.push(hd);
-    }
-
-    pub fn get_move_box_half_diagonal(&self, index: usize) -> Vec2D {
-        self.level.move_box_half_diagonals[index]
     }
 
     /// Safe lookup: returns `None` when the half-diagonal table hasn't
@@ -1236,16 +1200,6 @@ impl FastFindGrid {
             .get(usize::from(mask_idx))
             .copied()
             .unwrap_or(false)
-    }
-
-    /// Per-lift runtime state. Returns the default (zero / not occupied)
-    /// when no entry exists yet — most sectors are not lifts.
-    #[inline]
-    pub fn lift_state(&self, sector_idx: u32) -> LiftRuntimeState {
-        self.lift_state
-            .get(&sector_idx)
-            .copied()
-            .unwrap_or_default()
     }
 
     /// Mutable accessor to the lift runtime state. Inserts a default
@@ -2918,18 +2872,6 @@ impl FastFindGrid {
         let dest_2d = crate::geo2d::pt(destination.x, destination.y);
         self.impact_intersection_ratio(origin_2d, dest_2d, layer)
             .is_none()
-    }
-
-    /// 2D-only variant: preserved for callers that only have map-plane
-    /// coordinates (pathfinder grid walk).  Walls on the ray's layer
-    /// block it; sight-obstacle top/bottom planes are not consulted.
-    pub fn is_reachable_impact(
-        &self,
-        origin: GeoPoint2D,
-        destination: GeoPoint2D,
-        layer: u16,
-    ) -> bool {
-        self.is_reachable_thin_geo(origin, destination, layer)
     }
 
     /// Find the earliest intersection ratio along a trajectory segment

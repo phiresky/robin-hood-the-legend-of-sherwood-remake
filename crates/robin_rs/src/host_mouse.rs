@@ -60,14 +60,6 @@ fn door_click_polygon_at(engine: &Engine, mouse_map: MapPoint) -> Option<u32> {
         })
 }
 
-/// Dispatch the PC-popup information messages based on the hovered PC.
-///
-/// Called from the NoAction branch of `update_mouse` each frame.  When
-/// the mouse is over a selectable PC (and the player is not actively
-/// drag-selecting), forwards `MSG_SHOW_PC_INFORMATION` carrying the PC
-/// id; otherwise forwards `MSG_HIDE_PC_INFORMATION`.  The consumer (a
-/// future popup widget) reads these to render the HP / equipment
-/// overlay.
 //
 // The consumer lives in `engine/tick.rs` (the message handler
 // populates `host.pc_info_overlay`) and `ui_panel::draw_pc_info_overlay`

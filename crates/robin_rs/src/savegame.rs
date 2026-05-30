@@ -484,14 +484,6 @@ impl SaveGameManager {
         }
     }
 
-    /// Remove by display text.
-    pub fn remove_by_text(&mut self, text: &str) {
-        if let Some(idx) = self.find_by_name(text) {
-            self.remove_files(idx);
-            self.saves.remove(idx);
-        }
-    }
-
     /// Delete save + thumbnail files from disk for the given slot.
     fn remove_files(&self, index: usize) {
         let _ = std::fs::remove_file(self.save_path(index));

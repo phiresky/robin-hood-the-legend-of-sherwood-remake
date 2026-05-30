@@ -370,9 +370,6 @@ pub struct GameHost {
     /// `BLINK_TIMEOUT` (50) ticks.
     pub blink_expire_frame: u32,
 
-    /// Script location positions. Index = location index.
-    /// Populated by the engine when loading a level.
-
     /// Patch → animation FX entity handle. Index = patch index.
     /// Populated by the engine when loading a level.
     pub patch_animation_entities: Vec<Option<i32>>,
@@ -2413,10 +2410,6 @@ impl GameHost {
         Self::make_script_handle(SCRIPT_HANDLE_DOOR_TAG, index)
     }
 
-    pub fn patch_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_PATCH_TAG, index)
-    }
-
     pub fn location_handle_from_index(index: usize) -> i32 {
         Self::make_script_handle(SCRIPT_HANDLE_LOCATION_TAG, index)
     }
@@ -2427,10 +2420,6 @@ impl GameHost {
 
     pub fn building_handle_from_index(index: usize) -> i32 {
         Self::make_script_handle(SCRIPT_HANDLE_BUILDING_TAG, index)
-    }
-
-    pub fn way_handle_from_index(index: usize) -> i32 {
-        Self::make_script_handle(SCRIPT_HANDLE_WAY_TAG, index)
     }
 
     pub fn actor_index(handle: i32) -> Option<usize> {

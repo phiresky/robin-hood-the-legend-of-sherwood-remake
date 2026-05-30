@@ -204,21 +204,6 @@ pub enum Action {
 
 impl Action {
     /// True when this is one of the contextual (non-toolbar) actions.
-    pub fn is_contextual(self) -> bool {
-        matches!(
-            self,
-            Action::Climb
-                | Action::Jump
-                | Action::Search
-                | Action::Resuscitate
-                | Action::LittleJohnCarry
-                | Action::FarmerCarry
-                | Action::Tie
-                | Action::Lockpick
-                | Action::Execute
-                | Action::Test
-        )
-    }
 
     pub fn from_u32(v: u32) -> Self {
         Self::try_from(v).unwrap_or_else(|_| {
@@ -785,13 +770,6 @@ impl ProfileManager {
         self.characters.get(usize::from(id.into()))
     }
 
-    /// Find a character profile by exact `profile_name` match. Returns
-    /// `Option` rather than asserting on miss, per the project's
-    /// no-fake-data rule.
-    pub fn character_by_name(&self, name: &str) -> Option<&CharacterProfile> {
-        self.characters.iter().find(|cp| cp.profile_name == name)
-    }
-
     /// Index variant of [`character_by_name`] returning a typed
     /// [`CharacterProfileIdx`]. Same exact-match `profile_name` compare.
     pub fn character_idx_by_name(&self, name: &str) -> Option<CharacterProfileIdx> {
@@ -862,92 +840,7 @@ impl ProfileManager {
 
     // ── Index lookup (for serialization) ─────────────────────────
 
-    pub fn get_mission_index(&self, profile: &MissionProfile) -> Option<u32> {
-        let ptr = profile as *const MissionProfile;
-        for (i, p) in self.missions.iter().enumerate() {
-            if std::ptr::eq(p, ptr) {
-                return Some(i as u32);
-            }
-        }
-        // Fallback: match by ID
-        for (i, p) in self.missions.iter().enumerate() {
-            if p.id == profile.id {
-                return Some(i as u32);
-            }
-        }
-        None
-    }
-
-    pub fn get_character_index(&self, profile: &CharacterProfile) -> Option<u32> {
-        let ptr = profile as *const CharacterProfile;
-        for (i, p) in self.characters.iter().enumerate() {
-            if std::ptr::eq(p, ptr) {
-                return Some(i as u32);
-            }
-        }
-        for (i, p) in self.characters.iter().enumerate() {
-            if p.index == profile.index {
-                return Some(i as u32);
-            }
-        }
-        None
-    }
-
     // ── Profile pointer serialization ────────────────────────────
-
-    /// Serialize a mission profile pointer as a u32 index.
-    pub fn serialize_mission_ptr(
-        &self,
-        file: &mut SbFile,
-        profile: &mut Option<u32>, // index into self.missions
-    ) -> Result<(), i32> {
-        let mut idx = profile.unwrap_or(INVALID_PROFILE_ID);
-        file.serialize_u32(&mut idx)?;
-        if file.is_read_mode() {
-            *profile = if idx == INVALID_PROFILE_ID {
-                None
-            } else {
-                Some(idx)
-            };
-        }
-        Ok(())
-    }
-
-    /// Serialize a character profile pointer as a u32 index.
-    pub fn serialize_character_ptr(
-        &self,
-        file: &mut SbFile,
-        profile: &mut Option<u32>,
-    ) -> Result<(), i32> {
-        let mut idx = profile.unwrap_or(INVALID_PROFILE_ID);
-        file.serialize_u32(&mut idx)?;
-        if file.is_read_mode() {
-            *profile = if idx == INVALID_PROFILE_ID {
-                None
-            } else {
-                Some(idx)
-            };
-        }
-        Ok(())
-    }
-
-    /// Serialize an HtH weapon profile pointer as a u32 index.
-    pub fn serialize_hth_weapon_ptr(
-        &self,
-        file: &mut SbFile,
-        profile: &mut Option<u32>,
-    ) -> Result<(), i32> {
-        let mut idx = profile.unwrap_or(INVALID_PROFILE_ID);
-        file.serialize_u32(&mut idx)?;
-        if file.is_read_mode() {
-            *profile = if idx == INVALID_PROFILE_ID {
-                None
-            } else {
-                Some(idx)
-            };
-        }
-        Ok(())
-    }
 }
 
 // ─── Binary Serialization ────────────────────────────────────────

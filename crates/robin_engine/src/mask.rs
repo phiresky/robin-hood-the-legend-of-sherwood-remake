@@ -202,18 +202,6 @@ impl RuntimeMask {
         (self.mask_type & MASK_PROJECTILE) != 0
     }
 
-    /// Whether this mask carries view-blocking data.
-    #[inline]
-    pub fn is_view(&self) -> bool {
-        (self.mask_type & MASK_VIEW) != 0
-    }
-
-    /// Whether this mask is associated with 3D obstacles.
-    #[inline]
-    pub fn is_obstacle(&self) -> bool {
-        (self.mask_type & MASK_OBSTACLE) != 0
-    }
-
     /// Returns `true` when the mask's character polyline at `x = pt.x` has a
     /// `y` value strictly greater than `pt.y` — that is, the test point is
     /// "above" the polyline and therefore behind the building in screen

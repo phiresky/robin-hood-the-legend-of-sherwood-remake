@@ -183,11 +183,6 @@ impl WidgetMultiPicture {
         self.sub_picture = index;
     }
 
-    /// Get the current sub-picture index.
-    pub fn picture(&self) -> u32 {
-        self.sub_picture
-    }
-
     /// Map state to renderer sub-resource ID.
     ///
     /// Returns the sub-picture index directly as the resource ID.

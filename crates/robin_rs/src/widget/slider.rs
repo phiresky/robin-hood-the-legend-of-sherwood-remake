@@ -158,14 +158,6 @@ impl WidgetSlider {
         self.min + (self.tracking as f32 / (self.step_count() - 1) as f32) * span
     }
 
-    /// Normalised position (0.0–1.0).
-    pub fn normalized(&self) -> f32 {
-        if self.step_count() < 2 {
-            return 0.0;
-        }
-        self.tracking as f32 / (self.step_count() - 1) as f32
-    }
-
     /// Map state to renderer sub-resource ID.
     pub fn transform_state_into_id(&self) -> u8 {
         if !self.base.enabled {

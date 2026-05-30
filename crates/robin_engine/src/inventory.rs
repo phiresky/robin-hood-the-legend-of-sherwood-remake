@@ -245,18 +245,6 @@ impl ActionSlots {
         }
     }
 
-    /// Set the current action. If the action's slot is disabled, this is a no-op
-    /// and returns false.
-    pub fn set_current_action(&mut self, action: Action, profile: &CharacterProfile) -> bool {
-        if let Some(slot) = find_action_slot(profile, action)
-            && !self.is_slot_disabled(slot)
-        {
-            self.current_action = action;
-            return true;
-        }
-        false
-    }
-
     /// Save the current action and switch to a new one.
     pub fn save_and_switch(&mut self, new_action: Action) {
         self.saved_action = self.current_action;
@@ -287,17 +275,6 @@ impl ActionSlots {
                 }
             }
         }
-    }
-
-    /// Get the first non-disabled action, for auto-selection when current
-    /// action becomes disabled.
-    pub fn first_available_action(&self, profile: &CharacterProfile) -> Action {
-        for (slot, &action) in profile.actions.iter().enumerate() {
-            if action != Action::NoAction && !self.is_slot_disabled(slot) {
-                return action;
-            }
-        }
-        Action::NoAction
     }
 }
 

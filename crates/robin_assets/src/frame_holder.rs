@@ -220,42 +220,10 @@ impl FrameDictionary {
         self.shadow_color
     }
 
-    /// Look up 4 pixels for a given dictionary index, returned as a u64.
-    ///
-    /// Panics if `index >= num_entries`.
-    pub fn lookup(&self, index: u16) -> u64 {
-        let base = index as usize * 4;
-        assert!(
-            base + 4 <= self.values.len(),
-            "dictionary index {index} out of range (num_entries={})",
-            self.num_entries
-        );
-        let p0 = self.values[base] as u64;
-        let p1 = self.values[base + 1] as u64;
-        let p2 = self.values[base + 2] as u64;
-        let p3 = self.values[base + 3] as u64;
-        p0 | (p1 << 16) | (p2 << 32) | (p3 << 48)
-    }
-
     /// Get the raw u16 data for a given index (4 pixels).
     pub fn lookup_pixels(&self, index: u16) -> &[u16] {
         let base = index as usize * 4;
         &self.values[base..base + 4]
-    }
-
-    /// Raw slice of all u16 palette entries (`num_entries * 4` values).
-    ///
-    /// Used by the `CHROMA` console cheat which hue-shifts palette entries
-    /// in place.
-    pub fn raw_data(&self) -> &[u16] {
-        &self.values
-    }
-
-    /// Mutable slice of all u16 palette entries.  After mutation, callers
-    /// should invalidate the checksum (via [`set_checksum`]) if they care
-    /// about dedup re-detection, and clear any downstream sprite caches.
-    pub fn raw_data_mut(&mut self) -> &mut [u16] {
-        &mut self.values
     }
 
     /// Apply the "Arno law" shadow color replacement.
@@ -280,17 +248,6 @@ impl FrameDictionary {
         true
     }
 
-    /// Apply night darkening effect at the given intensity (0–100).
-    pub fn apply_night_effect(&mut self, level: u16) -> bool {
-        if self.night_applied {
-            return true;
-        }
-
-        apply_color_scale_16(&mut self.values, level, self.shadow_color);
-        self.night_applied = true;
-        true
-    }
-
     /// Apply fog blending effect at the given intensity and fog color.
     pub fn apply_fog_effect(&mut self, level: u16, fog_color: u16) -> bool {
         if self.fog_applied {
@@ -299,20 +256,6 @@ impl FrameDictionary {
 
         apply_fog_blend_16(&mut self.values, level, fog_color, self.shadow_color);
         self.fog_applied = true;
-        true
-    }
-
-    /// Convert from 16-bit RGB565 to 15-bit RGB555.
-    pub fn convert_to_15bit(&mut self) -> bool {
-        if self.converted_to_15bit {
-            return true;
-        }
-
-        for v in &mut self.values {
-            *v = ((*v & 0xFFC0) >> 1) | (*v & 0x1F);
-        }
-
-        self.converted_to_15bit = true;
         true
     }
 
@@ -386,9 +329,6 @@ impl FrameHolder {
 
     /// Mutable slice of the day dictionaries.  Used by the CHROMA cheat
     /// to hue-shift palette entries in place.
-    pub fn dictionaries_mut(&mut self) -> &mut [FrameDictionary] {
-        &mut self.dictionaries
-    }
 
     pub fn num_sprites(&self) -> usize {
         self.sprites.len()
@@ -404,16 +344,6 @@ impl FrameHolder {
 
     pub fn dictionary_index(&self, sprite_index: u32) -> u16 {
         self.sprites[sprite_index as usize].dictionary_index
-    }
-
-    /// Check if a sprite's packed data is loaded in memory.  Used by the
-    /// renderer to skip sprite entries whose bank payload was empty
-    /// (zero size in the `.dic` index) — those slots exist in the sprite
-    /// table but have no pixel data to decompress.
-    pub fn has_packed_data(&self, sprite_index: u32) -> bool {
-        self.sprites
-            .get(sprite_index as usize)
-            .is_some_and(|s| s.packed_data.is_some())
     }
 
     /// Packed pixel data for a sprite, or `None` for sentinel (zero-size)
@@ -532,19 +462,6 @@ impl FrameHolder {
     /// Get a reference to a dictionary by index.
     pub fn dictionary(&self, index: u16) -> Option<&FrameDictionary> {
         self.dictionaries.get(index as usize)
-    }
-
-    /// Get the day dictionary for a sprite, or `None` if the sprite is RLE.
-    ///
-    /// Returns from the day set unconditionally; night/fog dictionary
-    /// selection is done inline in [`Self::uncompress_frame`] from the
-    /// active [`SpriteVariant`].
-    pub fn dictionary_for_sprite(&self, sprite_index: u32) -> Option<&FrameDictionary> {
-        let dict_idx = self.dictionary_index(sprite_index);
-        if dict_idx == UNMAPPED_DICT {
-            return None;
-        }
-        self.dictionaries.get(dict_idx as usize)
     }
 
     /// Generate night variant dictionaries from the day set.

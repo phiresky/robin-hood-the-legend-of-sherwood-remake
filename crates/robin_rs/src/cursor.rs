@@ -380,12 +380,6 @@ impl CursorRenderer {
     pub fn current_cursor_id(&self) -> ResourceId {
         self.current_cursor_id
     }
-
-    /// Clean up all cursor textures.
-    pub fn destroy(&mut self, _renderer: &mut Renderer) {
-        self.clear_frames();
-        self.os_cursor_hidden = false;
-    }
 }
 
 /// Upload a `Picture` to persistent GPU images and return

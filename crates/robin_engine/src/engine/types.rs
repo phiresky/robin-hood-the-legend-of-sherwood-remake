@@ -1813,14 +1813,6 @@ pub struct InputState {
 }
 
 impl InputState {
-    /// Effective alt state: either the key is physically held
-    /// (`is_alt`) or the permanent alt-lock toggle is on
-    /// (`EngineInner::is_lock_alt`). Callers with access to the engine
-    /// should prefer [`EngineInner::is_alt_effective`].
-    pub fn is_alt_effective_raw(&self, is_lock_alt: bool) -> bool {
-        self.is_alt || is_lock_alt
-    }
-
     /// Start a drag-box multi-selection at the given map-space point.
     pub fn start_multi_selection(&mut self, map_pt: MapPoint) {
         self.multi_selection_active = true;
@@ -1852,12 +1844,6 @@ impl InputState {
     pub fn cancel_multi_unselection(&mut self) {
         self.multi_unselection_active = false;
         self.draw_multi_selection = false;
-    }
-
-    /// Whether a multi-selection or multi-unselection drag is currently
-    /// in progress.
-    pub fn is_multi_select_in_progress(&self) -> bool {
-        self.multi_selection_active || self.multi_unselection_active
     }
 
     /// Sets the three suppression flags the host reads at the next

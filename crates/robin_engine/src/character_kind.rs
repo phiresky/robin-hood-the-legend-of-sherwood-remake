@@ -153,24 +153,6 @@ impl CharacterKind {
         }
     }
 
-    /// All French profile-names this variant matches.  For Robin Hood
-    /// the forest and town subvariants each return a single name; this
-    /// matches `from_profile_name` for round-tripping.
-    pub fn profile_names(&self) -> &'static [&'static str] {
-        match self {
-            CharacterKind::RobinHood { is_town: false } => &["Robin des bois"],
-            CharacterKind::RobinHood { is_town: true } => &["Robin des villes"],
-            CharacterKind::LittleJohn => &["Petit Jean"],
-            CharacterKind::FriarTuck => &["Frere Tuck"],
-            CharacterKind::Stutely => &["Stutely"],
-            CharacterKind::WillScarlet => &["Will Ecarlate"],
-            CharacterKind::LadyMarianne => &["Lady Marianne"],
-            CharacterKind::MerryManA => &["Paysan A"],
-            CharacterKind::MerryManB => &["Paysan B"],
-            CharacterKind::MerryManC => &["Paysan C"],
-        }
-    }
-
     /// Dense cache index in `[0, COUNT)` for this variant.  Both Robin
     /// Hood forest and town have distinct indices so the localized-name
     /// cache can hold separate entries for them.

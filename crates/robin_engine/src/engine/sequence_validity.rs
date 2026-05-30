@@ -934,50 +934,6 @@ impl EngineInner {
         }
     }
 
-    /// Whole-sequence pre-flight validator: walk the sequence, and for
-    /// every element whose owner is human invoke
-    /// [`EngineInner::check_sequence_element_validity`]; short-circuit
-    /// to `false` on the first invalid element (all-or-nothing gate).
-    ///
-    /// The reference uses this from `StartQuickAction` (recursively, on
-    /// the post-seek sub-sequence of a `Seek` element) and from the
-    /// save-load replay path to reject stale saved sequences before
-    /// `LaunchSequence`.  The Rust port doesn't yet have a caller
-    /// today: the macro replay works on
-    /// [`crate::macro_store::QuickActionStep`] rather than a `Sequence`
-    /// (see the `StartQuickAction` verdict in
-    /// `parity-audit/RHelementactorpc-01.md` for the parallel
-    /// `QuickActionStep`-based pre-flight); save-load goes through
-    /// serde.  Post-seek sub-sequences are now populated by the seek
-    /// command builders and are validated by callers that pass those
-    /// sequence trees in.
-    pub fn check_sequence_validity(
-        &self,
-        assets: &LevelAssets,
-        sequence: &Sequence,
-        check_position: bool,
-    ) -> bool {
-        for element in &sequence.elements {
-            let Some(owner_id) = element.owner else {
-                continue;
-            };
-            let Some(owner) = self.get_entity(owner_id) else {
-                // Owner vanished — a dangling pointer would crash on
-                // `is_human()`; treat the whole sequence as invalid
-                // instead, matching the spirit of the stale-pointer
-                // rejection the save-load path wants.
-                return false;
-            };
-            if !owner.is_human() {
-                continue;
-            }
-            if !self.check_sequence_element_validity(assets, owner_id, element, check_position) {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Per-arm `check_sequence_element_validity` pre-tick gate for the
     /// PC `Execute` switch.
     ///

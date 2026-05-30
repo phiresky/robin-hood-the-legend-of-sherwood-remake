@@ -1126,7 +1126,6 @@ impl EngineInner {
 
     // ─── Script globals ──────────────────────────────────────────
 
-    /// Initialize a script global variable.
     //
     // Backs the `InitScriptGlobal` script native. Will become live once
     // that native is wired in `crates/robin_engine/src/natives/`;
@@ -1143,7 +1142,6 @@ impl EngineInner {
         self.script_globals[id] = value;
     }
 
-    /// Set a script global variable.
     //
     // Backs the `SetScriptGlobal` script native. Will become live once
     // that native is wired in `crates/robin_engine/src/natives/`;
@@ -2722,16 +2720,6 @@ impl EngineInner {
         &self.titbit_manager
     }
 
-    /// Mutable access to the titbit manager (for queueing new emoticons from
-    /// host-side input / widget code).
-    ///
-    /// The host will call this from mouse / widget / AI code once those
-    /// paths are ported.
-    #[allow(dead_code)] // port-in-progress: host mouse/widget/AI code mutates titbits via this once ported
-    pub(crate) fn titbit_manager_mut(&mut self) -> &mut crate::titbit::TitbitManager {
-        &mut self.titbit_manager
-    }
-
     /// Install the titbit renderer's per-row frame counts.  Called at
     /// level load and whenever the ambience shadow colour changes (the
     /// titbit atlas is rebuilt host-side and hands fresh counts back).
@@ -2949,12 +2937,6 @@ impl EngineInner {
         self.messenger.send(crate::messenger::Message::new(
             crate::messenger::MessageType::Simple(msg),
         ));
-    }
-
-    /// PCs currently recording a quick-action macro — every
-    /// currently-selected PC when the record widget was activated.
-    pub fn qa_recording_pcs(&self) -> &[EntityId] {
-        &self.qa_recording_for
     }
 
     /// Whether `pc` is part of the currently-armed recording set.
@@ -3673,20 +3655,6 @@ impl EngineInner {
     /// keeps the purse-action gating frame-accurate: any caller that
     /// queries Purse availability on the same frame as the
     /// subtraction sees the post-subtraction state.
-    pub fn subtract_campaign_value(
-        &mut self,
-        assets: &LevelAssets,
-        name: crate::campaign::CampaignValue,
-        amount: i32,
-    ) {
-        if self.campaign.is_none() {
-            return;
-        }
-        self.campaign.as_mut().unwrap().values[name] -= amount;
-        if name == crate::campaign::CampaignValue::Ransom {
-            self.tick_refresh_purse_disable(assets);
-        }
-    }
 
     fn apply_value_add_side_effects(
         mission_stat: &mut MissionStat,

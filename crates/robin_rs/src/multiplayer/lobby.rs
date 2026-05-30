@@ -237,7 +237,6 @@ pub fn run_lobby_server(addr: &str) -> Result<(), String> {
                 } => {
                     self.next_id = self.next_id.saturating_add(1);
                     let id = self.next_id.to_string();
-                    #[allow(clippy::disallowed_methods)]
                     // Lobby host tokens are network authentication nonces, not gameplay RNG.
                     let host_token = format!("{:016x}", fastrand::u64(..));
                     let connect_addr = advertised_connect_addr(&bind_addr, peer_addr);

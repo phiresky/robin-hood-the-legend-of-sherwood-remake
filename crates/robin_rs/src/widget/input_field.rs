@@ -90,11 +90,6 @@ impl WidgetInputField {
         }
     }
 
-    /// Set the linked input field for Tab navigation.
-    pub fn set_linked_field(&mut self, id: super::WidgetId) {
-        self.linked_field = id;
-    }
-
     /// Map state to renderer sub-resource ID.
     pub fn transform_state_into_id(&self) -> u8 {
         if !self.base.enabled {
@@ -590,26 +585,6 @@ impl WidgetInputField {
         }
 
         result
-    }
-
-    /// Apply the post-input focus-manager update: once the state
-    /// machine has run for the frame, if the field is no longer in
-    /// edit mode, re-enable the manager's shortcuts and navigation
-    /// (which entering edit mode had suppressed).
-    ///
-    /// Callers that own both the input field and a `FocusManager`
-    /// should invoke this immediately after `process_input`. Currently
-    /// no caller wires `WidgetInputField` through
-    /// `FocusManager::add_focusable`, so this is dormant — exposed so
-    /// a future caller doesn't have to re-derive it.
-    pub fn apply_focus_manager_post_input(
-        &self,
-        focus_manager: &mut crate::focus_manager::FocusManager,
-    ) {
-        if self.base.state != UiState::SelectedEditable {
-            focus_manager.set_shortcuts_enabled(true);
-            focus_manager.set_navigation_enabled(true);
-        }
     }
 
     /// Commit the edit and leave edit mode (as if Enter were pressed).

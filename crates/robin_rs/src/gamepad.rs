@@ -219,11 +219,6 @@ impl GamePadState {
         self.current.x
     }
 
-    /// Main stick Y axis (raw).
-    pub fn axis_y(&self) -> i32 {
-        self.current.y
-    }
-
     /// Main stick as `(x, y)` floats.
     pub fn main_stick(&self) -> (f32, f32) {
         (self.current.x as f32, self.current.y as f32)
@@ -233,16 +228,6 @@ impl GamePadState {
     pub fn is_running(&self) -> bool {
         let (x, y) = self.main_stick();
         (x * x + y * y).sqrt() > RUN_THRESHOLD
-    }
-
-    /// Rz axis value (rotation Z), used for mouse cursor X simulation.
-    pub fn axis_rz(&self) -> i32 {
-        self.current.rz
-    }
-
-    /// Slider 0 value, used for mouse cursor Y simulation.
-    pub fn slider0(&self) -> i32 {
-        self.current.sliders[0]
     }
 
     /// Simulated mouse delta from Rz and Slider\[0\], centered at
@@ -263,11 +248,6 @@ impl GamePadState {
     /// Current joystick state (read-only).
     pub fn current(&self) -> &JoystickState {
         &self.current
-    }
-
-    /// Previous joystick state (read-only).
-    pub fn previous(&self) -> &JoystickState {
-        &self.previous
     }
 
     // ── SDL3 event folding ─────────────────────────────────────
@@ -302,14 +282,6 @@ impl GamePadState {
         if idx < MAX_BUTTONS {
             self.pending.buttons[idx] = u8::from(pressed);
         }
-    }
-
-    /// Apply a POV (hat / D-pad) event. `direction` is the composite
-    /// state of the four D-pad buttons, expressed as the original
-    /// DirectInput angle in hundredths of degrees (`0` = N, `4500` = NE,
-    /// …, `31500` = NW; `0xFFFF_FFFF` = centered).
-    pub fn apply_pov_event(&mut self, direction: u32) {
-        self.pending.povs[0] = direction;
     }
 
     /// Set the POV based on the current D-pad button pressed state

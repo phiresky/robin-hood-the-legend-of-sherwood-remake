@@ -389,11 +389,6 @@ impl MacroStore {
     pub fn append(&mut self, pc: EntityId, step: QuickActionStep) {
         self.get_or_insert(pc).append_if_recording(step);
     }
-
-    /// Drop all macros for a PC — used on comabort/death.
-    pub fn remove(&mut self, pc: EntityId) {
-        self.entries.retain(|(id, _)| *id != pc);
-    }
 }
 
 /// Build the dotted-chain segments for one macro slot.

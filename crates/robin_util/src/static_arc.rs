@@ -26,16 +26,6 @@ impl<T> StaticArc<T> {
     }
 
     #[inline]
-    pub fn into_arc(self) -> Arc<T> {
-        self.0
-    }
-
-    #[inline]
-    pub fn as_arc(&self) -> &Arc<T> {
-        &self.0
-    }
-
-    #[inline]
     pub fn make_mut(this: &mut Self) -> &mut T
     where
         T: Clone,

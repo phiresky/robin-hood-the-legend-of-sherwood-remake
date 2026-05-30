@@ -161,12 +161,6 @@ impl EngineInner {
         }
     }
 
-    /// Mark a scroll as opened after a PC finishes the Taking
-    /// animation on it.
-    pub fn set_scroll_status_opened(&mut self, scroll: EntityId) {
-        self.set_scroll_status(scroll, ScrollStatus::Opened);
-    }
-
     /// PC finished the Taking animation on a scroll:
     ///
     /// 1. Flip the taken flag and set status to `Opened`.

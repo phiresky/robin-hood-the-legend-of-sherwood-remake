@@ -185,16 +185,6 @@ impl ScreenBBox {
     }
 
     #[inline]
-    pub fn y_min(&self) -> f32 {
-        self.0.unwrap().min().y
-    }
-
-    #[inline]
-    pub fn x_max(&self) -> f32 {
-        self.0.unwrap().max().x
-    }
-
-    #[inline]
     pub fn y_max(&self) -> f32 {
         self.0.unwrap().max().y
     }
@@ -249,11 +239,6 @@ impl ScreenBBox {
     #[inline]
     pub fn translated(&self, v: geo2d::Vec2D) -> Self {
         Self::from_geo(self.to_geo().translated(v))
-    }
-
-    #[inline]
-    pub fn translate(&mut self, v: geo2d::Vec2D) {
-        *self = self.translated(v);
     }
 }
 

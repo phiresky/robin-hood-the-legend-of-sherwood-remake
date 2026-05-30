@@ -452,10 +452,6 @@ impl SoundManager {
         self.music_directory = dir.into();
     }
 
-    pub fn set_sound_enabled(&mut self, enabled: bool) {
-        self.sound_enabled = enabled;
-    }
-
     // ── Initialization ───────────────────────────────────────────────
 
     /// Initialize the sound engine. Call once at startup.
@@ -900,142 +896,6 @@ impl SoundManager {
 
     // ── FX playback ──────────────────────────────────────────────────
 
-    /// Queue a sound effect for playback. Actual playback happens in [`hourglass`](Self::hourglass).
-    pub fn play_fx(
-        &mut self,
-        fx_id: u32,
-        position: MapPoint,
-        material: Option<Material>,
-        loader: &SampleLoader,
-        rng: &mut dyn FnMut(u32) -> u32,
-        sources: &SoundSourceManager,
-    ) -> bool {
-        if !self.active {
-            return true;
-        }
-
-        let settings = SoundSettings {
-            sound_type: SoundType::Fx,
-            position,
-            identifier: fx_id,
-            source: SoundSettingsSource::Position {
-                material: material.map_or(Material::NUM_MATERIALS as u8, |m| m as u8),
-            },
-        };
-
-        let length_ms = self.get_sample_length_ms(&settings, loader, rng, sources);
-        if length_ms == 0 {
-            return false;
-        }
-
-        if length_ms < SAMPLE_LENGTH_POSITIONING_THRESHOLD {
-            let is_material = self.sound_cache.is_material_fx(fx_id);
-            if let Some(params) = self
-                .geometry_engine
-                .get_logical_playing_params(&settings, is_material)
-            {
-                self.fx_to_play.push(FxToPlay { settings, params });
-            }
-        } else {
-            self.pending_sounds.push(PendingSoundInfo {
-                settings,
-                channel: CHANNEL_TO_PLAY,
-                start_time_ms: 0,
-                length_ms: 0,
-                actor_id: None,
-                source_index: None,
-                speech_variant: None,
-                resolved_entry: None,
-            });
-        }
-
-        true
-    }
-
-    /// Play a strike combat FX.
-    #[allow(clippy::too_many_arguments)]
-    pub fn play_strike_fx(
-        &mut self,
-        strike_kind: StrikeKind,
-        weapon1: WeaponMaterial,
-        weapon2: WeaponMaterial,
-        position: MapPoint,
-        backend: &mut dyn AudioBackend,
-        loader: &SampleLoader,
-        rng: &mut dyn FnMut(u32) -> u32,
-        sources: &SoundSourceManager,
-    ) -> bool {
-        if !self.active {
-            return true;
-        }
-
-        let variant = rng(2);
-        let combo = STRIKE_MATERIAL_TABLE[weapon1 as usize][weapon2 as usize];
-        let identifier = (strike_kind as u32 * MAX_STRIKE_FX + combo) * 2 + variant;
-
-        let settings = SoundSettings {
-            sound_type: SoundType::CombatFx,
-            position,
-            identifier,
-            source: SoundSettingsSource::Position { material: 0 },
-        };
-
-        if let Some(params) = self
-            .geometry_engine
-            .get_logical_playing_params(&settings, false)
-        {
-            self.play_sound_now(&settings, &params, backend, loader, rng, sources);
-            return true;
-        }
-        false
-    }
-
-    /// Play an impact combat FX.
-    #[allow(clippy::too_many_arguments)]
-    pub fn play_impact_fx(
-        &mut self,
-        impact_kind: ImpactKind,
-        weapon: WeaponMaterial,
-        armor: ArmorMaterial,
-        position: MapPoint,
-        backend: &mut dyn AudioBackend,
-        loader: &SampleLoader,
-        rng: &mut dyn FnMut(u32) -> u32,
-        sources: &SoundSourceManager,
-    ) -> bool {
-        if !self.active {
-            return true;
-        }
-
-        // Identifier formula: 3 * MAX_STRIKE_FX + impact_kind *
-        // MAX_IMPACT_FX + combo. The offset is `3 * 10 = 30`, NOT `3 *
-        // 10 * 2 = 60`, even though strike FX occupy cache slots 0..59
-        // (3 kinds × 10 combos × 2 variants) and `ila_*` starts at
-        // slot 60. With offset 30 the lookup lands inside the
-        // LIGHT_PARADE strike range — this is the original game's
-        // behaviour (what players hear as the "sword hit" sound), so
-        // we preserve it.
-        let identifier = 3 * MAX_STRIKE_FX
-            + impact_kind as u32 * MAX_IMPACT_FX
-            + IMPACT_MATERIAL_TABLE[weapon as usize][armor as usize];
-
-        let settings = SoundSettings {
-            sound_type: SoundType::CombatFx,
-            position,
-            identifier,
-            source: SoundSettingsSource::Position { material: 0 },
-        };
-
-        if let Some(params) = self
-            .geometry_engine
-            .get_logical_playing_params(&settings, false)
-        {
-            self.play_sound_now(&settings, &params, backend, loader, rng, sources);
-            return true;
-        }
-        false
-    }
-
     /// Queue a strike (parry) sound effect for deferred playback.
     ///
     /// Used when a sword strike is parried.
@@ -1369,20 +1229,6 @@ impl SoundManager {
         true
     }
 
-    pub fn pause_dialog(&self, backend: &mut dyn AudioBackend) -> bool {
-        if self.sound_system_ready {
-            backend.pause_music();
-        }
-        true
-    }
-
-    pub fn resume_dialog(&self, backend: &mut dyn AudioBackend) -> bool {
-        if self.sound_system_ready {
-            backend.resume_music();
-        }
-        true
-    }
-
     pub fn close_dialog(&mut self, backend: &mut dyn AudioBackend) -> bool {
         if self.sound_system_ready {
             backend.halt_music();
@@ -1461,37 +1307,6 @@ impl SoundManager {
                 self.stop_channel(channel, backend);
             }
             self.pending_sounds.remove(pos);
-        }
-    }
-
-    /// Create and register a new sound source (runtime, e.g. from scripts).
-    ///
-    /// Returns `Some(index)` when sound is active, `None` when inactive
-    /// — the registration is silently skipped when inactive.
-    pub fn create_sound_source(
-        &mut self,
-        sources: &mut SoundSourceManager,
-        source: SoundSource,
-    ) -> Option<usize> {
-        if self.active {
-            Some(sources.add(source))
-        } else {
-            None
-        }
-    }
-
-    /// Delete a sound source.
-    pub fn delete_sound_source(
-        &mut self,
-        sources: &mut SoundSourceManager,
-        index: usize,
-        backend: &mut dyn AudioBackend,
-    ) -> bool {
-        if self.active {
-            self.deactivate_sound_source(index, backend);
-            sources.delete(index).is_some()
-        } else {
-            true
         }
     }
 

@@ -1118,28 +1118,6 @@ impl EngineInner {
         input.draw_multi_selection = false;
     }
 
-    /// Whether a PC is currently in motion and not standing inside a
-    /// building.
-    ///
-    /// Used by the right-click-no-action handling: when true, a right-click
-    /// stops the PC; when false, the posture-specific cancel transition
-    /// fires (DropCorpse, ClimbDownFromShoulders, etc.).
-    pub fn is_pc_in_motion_outside_building(&self, pc_id: EntityId) -> bool {
-        let Some(entity) = self.get_entity(pc_id) else {
-            return false;
-        };
-        let elem = entity.element_data();
-        let pos_iface = &elem.sprite.position_iface;
-        // In-motion test:
-        //   (goal != pos && goal != (0,0)) || is_moving_map.
-        let pos_map = pos_iface.map_position().to_geo();
-        let goal_map = pos_iface.map_goal().to_geo();
-        let zero = crate::geo2d::pt(0.0, 0.0);
-        let in_motion = (goal_map != pos_map && goal_map != zero) || pos_iface.is_moving_map();
-        let sector = elem.sector();
-        in_motion && !self.sector_is_building(sector)
-    }
-
     /// Whether any selected PC on the host seat is currently swordfighting
     /// (any selected PC has a non-empty opponents list).
     pub fn is_selected_pc_swordfighting(&self) -> bool {

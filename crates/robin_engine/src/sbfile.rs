@@ -262,7 +262,6 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 // Walks every component case-insensitively. Shipping datadirs use mixed
 // casing across components (`DATA/` uppercase, `data/` lowercase), so
 // case-folding has to apply to every component, not just the leaf.
@@ -525,9 +524,6 @@ impl SbFile {
     pub fn get_version(&self) -> u32 {
         self.version
     }
-    pub fn set_version(&mut self, v: u32) {
-        self.version = v;
-    }
 
     // ── Binary readers ───────────────────────────────────────────
 
@@ -651,28 +647,6 @@ impl SbFile {
     /// EOF is reached. Returns `!self.is_eof()` — i.e. true if the file
     /// may still have more data, false if EOF was reached (whether
     /// mid-line or just past the terminating newline).
-    pub fn read_line(&mut self, line: &mut String) -> bool {
-        line.clear();
-        let mut current = 0u8;
-        while current != b'\n' && !self.is_eof() {
-            let mut byte = [0u8; 1];
-            match self.file.read(&mut byte) {
-                Ok(0) => break,
-                Ok(_) => {
-                    self.position += 1;
-                    current = byte[0];
-                    if current != 0x0A && current != 0x0D {
-                        line.push(current as char);
-                    }
-                }
-                Err(_) => {
-                    self.last_error = SBFILE_ERROR_READ;
-                    return false;
-                }
-            }
-        }
-        !self.is_eof()
-    }
 
     pub fn exists(path: &str) -> bool {
         let n = path.replace('\\', "/");

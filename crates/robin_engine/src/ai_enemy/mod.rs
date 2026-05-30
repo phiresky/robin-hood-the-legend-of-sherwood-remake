@@ -469,10 +469,6 @@ impl EnemyAi {
         self.is_archer_unit
     }
 
-    pub fn get_pride(&self) -> u16 {
-        self.soldier_profile_pride
-    }
-
     /// High-pride soldiers stand back when lower-pride allies are
     /// already engaging the same target.
     pub fn is_too_proud_to_attack(&mut self, ctx: &AiContext, tick: &AiPerTickData) -> bool {
@@ -567,10 +563,6 @@ impl EnemyAi {
             }
         }
         false
-    }
-
-    pub fn will_look_for_help_after_seeking(&self) -> bool {
-        self.seek_flags.contains(SeekFlags::LOOK_FOR_HELP_AFTER)
     }
 
     // -----------------------------------------------------------------------

@@ -1280,27 +1280,6 @@ impl IngameMenuResources {
             .or(self.fonts.default.as_ref())
     }
 
-    /// 6-state list font lookup (state × normal/alternate style):
-    /// alternate rows get a distinct style, and within each style the
-    /// row's focus/selection state picks the variant.
-    ///
-    /// The shipping `manager.cfg` only populates the three "normal"
-    /// fonts (`ListDefault` / `ListFocused` / `ListSelected`); no
-    /// alternate variants are loaded.  The alternate branches fall
-    /// through to the normal-style fonts when no alternate exists.
-    pub fn list_font_native_with_style(
-        &self,
-        focused: bool,
-        selected: bool,
-        alternate: bool,
-    ) -> Option<&NativeFont> {
-        // Alternate fonts aren't loaded today (see note above).  Once
-        // `manager.cfg` carries `ListDefaultAlternate` / etc., swap the
-        // alternate arm to pull those via `MenuFonts` directly.
-        let _ = alternate;
-        self.list_font_native(focused, selected)
-    }
-
     /// 6-state list font lookup that preserves the `Font` enum so
     /// callers can render via either the native bitmap or the TrueType
     /// path. Same alternate-fallback logic as

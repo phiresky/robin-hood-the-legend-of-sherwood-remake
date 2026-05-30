@@ -142,11 +142,6 @@ impl MenuScreenState {
             .unwrap_or(&[])
     }
 
-    /// Whether there are any window layers.
-    pub fn has_windows(&self) -> bool {
-        !self.window_layers.is_empty()
-    }
-
     /// Number of window layers (for detecting modal pop in RefreshLoop).
     pub fn layer_count(&self) -> usize {
         self.window_layers.len()
@@ -228,51 +223,6 @@ pub fn align_bottom_right(container: &Rect, widgets: &mut [Rect], spacing: f32) 
         widget.y = cur_y + (widget.width - max_width) / 2.0;
         cur_y += widget.height + spacing;
     }
-}
-
-/// Align a set of widget rects to the top-right corner of a container.
-pub fn align_top_right(container: &Rect, widgets: &mut [Rect], spacing: f32) {
-    if widgets.is_empty() {
-        return;
-    }
-
-    let max_width: f32 = widgets.iter().map(|w| w.width).fold(0.0f32, f32::max);
-    let (br_x, _) = container.bottom_right();
-    let (_, tl_y) = container.top_left();
-
-    let start_x = br_x - max_width;
-    let mut cur_y = tl_y;
-
-    for widget in widgets.iter_mut() {
-        widget.x = start_x;
-        // Same X/Y-swapped "center horizontally" quirk as
-        // `align_bottom_right`; replicated literally for parity.
-        widget.y = cur_y + (widget.width - max_width) / 2.0;
-        cur_y += widget.height + spacing;
-    }
-}
-
-/// Align widgets vertically starting from the first widget's position.
-/// Returns the total height consumed.
-pub fn align_on_first_widget(widgets: &mut [Rect], spacing: f32) -> f32 {
-    if widgets.is_empty() {
-        return 0.0;
-    }
-
-    let start_x = widgets[0].x;
-    let max_width = widgets[0].width;
-    let mut cur_y = widgets[0].y;
-
-    for widget in widgets.iter_mut() {
-        // Center horizontally relative to the first widget's width.
-        widget.x = start_x + (max_width - widget.width) / 2.0;
-        widget.y = cur_y;
-        cur_y += widget.height + spacing;
-    }
-
-    let total: f32 =
-        widgets.iter().map(|w| w.height).sum::<f32>() + (widgets.len() as f32 - 1.0) * spacing;
-    total
 }
 
 /// Center widgets horizontally within a container.
@@ -570,16 +520,6 @@ impl CampaignMapState {
         self.locations.get(idx).and_then(|loc| loc.mission_idx)
     }
 
-    /// Find which location corresponds to a given mission index.
-    pub fn find_location_for_mission(&self, mission_idx: usize) -> Option<MissionLocation> {
-        for (i, loc) in self.locations.iter().enumerate() {
-            if loc.mission_idx == Some(mission_idx) {
-                return mission_location_from_index(i);
-            }
-        }
-        None
-    }
-
     // ── Campaign interaction ───────────────────────────────────────
 
     /// Handle the player clicking on a map location.
@@ -590,62 +530,6 @@ impl CampaignMapState {
         let loc_idx = location as usize;
         let loc = self.locations.get(loc_idx)?;
         if loc.enabled { loc.mission_idx } else { None }
-    }
-
-    /// Confirm mission selection: update campaign state to select
-    /// this mission as the next one to play.
-    ///
-    /// Calls `Campaign::select_next_mission` which handles age
-    /// increases for non-selected missions and ARES state updates.
-    pub fn confirm_mission_selection(
-        &self,
-        mission_idx: usize,
-        campaign: &mut Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
-    ) {
-        campaign.select_next_mission(Some(mission_idx), profiles);
-    }
-
-    /// Get the blazon requirements and conversion options for a
-    /// mission at a given location.
-    ///
-    /// Returns `None` if no mission is assigned to the location.
-    pub fn get_blazon_status(
-        &self,
-        location: MissionLocation,
-        campaign: &Campaign,
-        profiles: &robin_engine::profiles::ProfileManager,
-    ) -> Option<BlazonStatus> {
-        let mission_idx = self.get_mission_at(location)?;
-        let mission = campaign.missions.get(mission_idx)?;
-        let profile = mission.profile(profiles);
-
-        let current_blazons = campaign.get_value(CampaignValue::Blazon) as u16;
-
-        Some(BlazonStatus {
-            required: profile.number_of_blazons_to_win,
-            collectable: profile.number_of_blazons_to_be_collected,
-            current: current_blazons,
-            can_convert_men: campaign.can_convert_merry_men_to_blazons(mission_idx, profiles),
-            can_convert_mission: campaign.can_convert_mission_to_blazons(mission_idx, profiles),
-            can_convert_money: campaign.can_convert_money_to_blazons(mission_idx, profiles),
-        })
-    }
-
-    /// Get the mission profile for the mission at a given location.
-    ///
-    /// Convenience method for the mission description dialog.
-    pub fn get_mission_profile_at<'a>(
-        &self,
-        location: MissionLocation,
-        campaign: &'a Campaign,
-        profiles: &'a robin_engine::profiles::ProfileManager,
-    ) -> Option<&'a MissionProfile> {
-        let mission_idx = self.get_mission_at(location)?;
-        campaign
-            .missions
-            .get(mission_idx)
-            .map(|m| m.profile(profiles))
     }
 }
 
