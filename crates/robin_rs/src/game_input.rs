@@ -1400,7 +1400,7 @@ pub fn resolve_swordfight(
         }
 
         let pc_screen = host.viewport.map_to_screen_unclamped(pos_map.into());
-        let pattern = host.mouse_way.evaluate(pc_screen.to_geo(), facing_dir);
+        let pattern = host.mouse_way.evaluate(pc_screen, facing_dir);
         tracing::trace!(
             "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} mw_pts={}",
             host.mouse_way.len(),

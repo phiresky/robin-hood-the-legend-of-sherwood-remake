@@ -436,7 +436,8 @@ impl PathGraph {
     ///
     /// Uses the standard ray-casting point-in-polygon test on each
     /// area's stored polygon.
-    pub fn find_area_at_point(&self, layer: usize, point: GeoPoint2D) -> Option<usize> {
+    pub fn find_area_at_point(&self, layer: usize, point: MapPoint) -> Option<usize> {
+        let point = point.to_geo();
         let areas = self.static_data.move_layers.get(layer)?;
         for (area_idx, area) in areas.iter().enumerate() {
             if point_in_polygon(point, &area.polygon) {
@@ -947,17 +948,15 @@ impl PathFinder {
         use_first_point: bool,
     ) -> Option<Vec<MapPoint>> {
         let mut runtime = self.runtime_from_graph(graph);
-        runtime
-            .find_path(
-                grid,
-                layer,
-                sector,
-                half_diagonal_idx,
-                source.to_geo(),
-                goal.to_geo(),
-                use_first_point,
-            )
-            .map(|path| path.into_iter().map(MapPoint::from_geo).collect())
+        runtime.find_path(
+            grid,
+            layer,
+            sector,
+            half_diagonal_idx,
+            source,
+            goal,
+            use_first_point,
+        )
     }
 
     pub fn draw_graph<F>(&self, graph: &PathGraph, view: BBox2D, half_diagonal_idx: u16, draw: F)
@@ -1033,10 +1032,12 @@ impl PathFinderRuntime {
         layer: u16,
         area: u16,
         half_diagonal_idx: u16,
-        source: GeoPoint2D,
-        goal: GeoPoint2D,
+        source: MapPoint,
+        goal: MapPoint,
         use_first_point: bool,
-    ) -> Option<Vec<GeoPoint2D>> {
+    ) -> Option<Vec<MapPoint>> {
+        let source_geo = source.to_geo();
+        let goal_geo = goal.to_geo();
         tracing::trace!(
             ?source,
             ?goal,
@@ -1059,7 +1060,7 @@ impl PathFinderRuntime {
         self.reset_graph();
 
         // Check if goal position is valid
-        if !self.object_position_authorized(grid, goal) {
+        if !self.object_position_authorized_geo(grid, goal_geo) {
             tracing::trace!(
                 ?source,
                 ?goal,
@@ -1078,8 +1079,8 @@ impl PathFinderRuntime {
         // authorized). With `use_first_point == false` we must fall
         // through to A* and return a node-routed path that starts at
         // `source`.
-        let fast_ok = self.is_reachable_fast(source, goal);
-        let grid_ok = fast_ok && self.is_reachable_grid(grid, source, goal);
+        let fast_ok = self.is_reachable_fast_geo(source_geo, goal_geo);
+        let grid_ok = fast_ok && self.is_reachable_grid_geo(grid, source_geo, goal_geo);
         if use_first_point && fast_ok && grid_ok {
             tracing::trace!(
                 ?source,
@@ -1093,10 +1094,10 @@ impl PathFinderRuntime {
         }
 
         // Link source to nearby graph nodes
-        self.link_source(grid, source, goal);
+        self.link_source(grid, source_geo, goal_geo);
 
         // Run A* to find node-based path
-        let end_node = self.find_path_nodes(grid, goal);
+        let end_node = self.find_path_nodes(grid, goal_geo);
 
         if end_node.is_none() {
             tracing::trace!(
@@ -1114,7 +1115,7 @@ impl PathFinderRuntime {
 
         if let Some(end_node_idx) = end_node {
             let mut path = Vec::new();
-            path.push(goal);
+            path.push(goal_geo);
 
             let mut current_node = end_node_idx;
             let mut leave_places = self.graph.nodes[current_node.0 as usize].leave_place;
@@ -1134,13 +1135,13 @@ impl PathFinderRuntime {
             let enter_places = self.graph.nodes[current_node.0 as usize].enter_place;
             self.pass_around_last_node(current_node, enter_places, leave_places, &mut path);
 
-            path.push(source);
+            path.push(source_geo);
             path.reverse();
 
             // Post-processing: remove redundant waypoints
             self.smooth_path(grid, &mut path);
 
-            Some(path)
+            Some(path.into_iter().map(MapPoint::from_geo).collect())
         } else {
             None
         }
@@ -1163,7 +1164,7 @@ impl PathFinderRuntime {
 
             // Check if the goal is directly reachable from this node
             let mut end_place: u8 = 0;
-            if self.is_reachable_fast(goal, current_pos) {
+            if self.is_reachable_fast_geo(goal, current_pos) {
                 let mut dp = TOP_LEFT;
                 while dp < 16 {
                     if (dp & node_config) != 0 {
@@ -1185,9 +1186,12 @@ impl PathFinderRuntime {
                         if is_good_direct || is_good_indirect {
                             // Skip if node has opposing-diagonal-only config (5 or 10)
                             if node_config != 5 && node_config != 10 {
-                                let dock_pt =
-                                    self.docking_point(current_idx, dp, self.current_half_diagonal);
-                                if self.is_reachable_grid(grid, goal, dock_pt) {
+                                let dock_pt = self.docking_point_geo(
+                                    current_idx,
+                                    dp,
+                                    self.current_half_diagonal,
+                                );
+                                if self.is_reachable_grid_geo(grid, goal, dock_pt) {
                                     end_place |= dp;
                                 }
                             }
@@ -1358,7 +1362,7 @@ impl PathFinderRuntime {
             // collision during the actual walk (handled in
             // `engine/movement.rs`) will clamp any detail that the
             // relaxed check glossed over.
-            if self.object_position_authorized(grid, source) {
+            if self.object_position_authorized_geo(grid, source) {
                 let relaxed_linked = self.try_link_nodes(grid, source, goal, &box_link, true);
                 tracing::trace!(
                     ?source,
@@ -1410,7 +1414,7 @@ impl PathFinderRuntime {
                 // Check if node is in range, useful, and reachable
                 if !box_link.contains_point(node.position)
                     || !self.is_useful_link(source, node_idx)
-                    || !self.is_reachable_fast(source, node.position)
+                    || !self.is_reachable_fast_geo(source, node.position)
                 {
                     continue;
                 }
@@ -1426,10 +1430,10 @@ impl PathFinderRuntime {
 
                         if good_direct || good_indirect {
                             let grid_ok = relax_grid
-                                || self.is_reachable_grid(
+                                || self.is_reachable_grid_geo(
                                     grid,
                                     source,
-                                    self.docking_point(node_idx, dp, hd),
+                                    self.docking_point_geo(node_idx, dp, hd),
                                 );
                             if grid_ok {
                                 start_config |= dp;
@@ -1480,7 +1484,12 @@ impl PathFinderRuntime {
 
     /// Compute the world position of a docking point.
     #[inline]
-    pub fn docking_point(&self, node: NodeIdx, place: u8, half_diagonal: Vec2D) -> GeoPoint2D {
+    pub fn docking_point(&self, node: NodeIdx, place: u8, half_diagonal: Vec2D) -> MapPoint {
+        MapPoint::from_geo(self.docking_point_geo(node, place, half_diagonal))
+    }
+
+    #[inline]
+    fn docking_point_geo(&self, node: NodeIdx, place: u8, half_diagonal: Vec2D) -> GeoPoint2D {
         let pos = self.graph.nodes[node.0 as usize].position;
         match place {
             TOP_LEFT => pt(pos.x - half_diagonal.x, pos.y - half_diagonal.y),
@@ -1500,7 +1509,7 @@ impl PathFinderRuntime {
         half_diagonal: Vec2D,
         direct: bool,
     ) -> bool {
-        let dock_pt = self.docking_point(node, docking_place, half_diagonal);
+        let dock_pt = self.docking_point_geo(node, docking_place, half_diagonal);
         let test_vec = pt(point.x - dock_pt.x, point.y - dock_pt.y);
 
         let (v1, v2) = if direct {
@@ -1551,7 +1560,7 @@ impl PathFinderRuntime {
 
         // Fast path: exactly one common docking place
         if common != 0 && number_of_places(common) == 1 {
-            path.push(self.docking_point(current_node, common, hd));
+            path.push(self.docking_point_geo(current_node, common, hd));
             return self.collect_start_places(link_config, common);
         }
 
@@ -1562,10 +1571,10 @@ impl PathFinderRuntime {
         // Emit waypoints along the route
         let mut current_place = best_leave;
         while current_place != best_enter {
-            path.push(self.docking_point(current_node, current_place, hd));
+            path.push(self.docking_point_geo(current_node, current_place, hd));
             current_place = next_docking_place(current_place, best_direct);
         }
-        path.push(self.docking_point(current_node, current_place, hd));
+        path.push(self.docking_point_geo(current_node, current_place, hd));
 
         self.collect_start_places(link_config, best_enter)
     }
@@ -1588,7 +1597,7 @@ impl PathFinderRuntime {
 
         // Fast path: exactly one common docking place
         if common != 0 && number_of_places(common) == 1 {
-            path.push(self.docking_point(node, common, hd));
+            path.push(self.docking_point_geo(node, common, hd));
             return;
         }
 
@@ -1599,10 +1608,10 @@ impl PathFinderRuntime {
         // Emit waypoints
         let mut current_place = best_leave;
         while current_place != best_enter {
-            path.push(self.docking_point(node, current_place, hd));
+            path.push(self.docking_point_geo(node, current_place, hd));
             current_place = next_docking_place(current_place, best_direct);
         }
-        path.push(self.docking_point(node, current_place, hd));
+        path.push(self.docking_point_geo(node, current_place, hd));
     }
 
     /// Find the best route around a node from `leave_places` to `target_places`.
@@ -1718,7 +1727,7 @@ impl PathFinderRuntime {
             let p1 = pt(first.x + small_vec.x, first.y + small_vec.y);
             let p2 = pt(last.x - small_vec.x, last.y - small_vec.y);
 
-            if self.is_reachable_grid(grid, p1, p2) {
+            if self.is_reachable_grid_geo(grid, p1, p2) {
                 path.remove(i + 1);
             } else {
                 i += 1;
@@ -1731,7 +1740,11 @@ impl PathFinderRuntime {
     /// Fast line-of-sight check using skeleton segments.
     /// Returns true if the segment from `p1` to `p2` does not cross any
     /// skeleton line.
-    pub fn is_reachable_fast(&self, p1: GeoPoint2D, p2: GeoPoint2D) -> bool {
+    pub fn is_reachable_fast(&self, p1: MapPoint, p2: MapPoint) -> bool {
+        self.is_reachable_fast_geo(p1.to_geo(), p2.to_geo())
+    }
+
+    fn is_reachable_fast_geo(&self, p1: GeoPoint2D, p2: GeoPoint2D) -> bool {
         let move_seg = geo2d::segment(p1, p2);
         let (layer, area) = self.current_motion_area;
         // Callers must call `set_current_motion_area` before any
@@ -1756,7 +1769,11 @@ impl PathFinderRuntime {
 
     /// Grid-based thick reachability check using motion lines.
     /// Builds a movement corridor and checks for intersecting motion lines.
-    pub fn is_reachable_grid(&self, grid: &FastFindGrid, p1: GeoPoint2D, p2: GeoPoint2D) -> bool {
+    pub fn is_reachable_grid(&self, grid: &FastFindGrid, p1: MapPoint, p2: MapPoint) -> bool {
+        self.is_reachable_grid_geo(grid, p1.to_geo(), p2.to_geo())
+    }
+
+    fn is_reachable_grid_geo(&self, grid: &FastFindGrid, p1: GeoPoint2D, p2: GeoPoint2D) -> bool {
         let hd = self.current_half_diagonal;
         let corridor = match FastFindGrid::build_thick_move_corridor(p1, p2, hd) {
             Some(c) => c,
@@ -1794,7 +1811,11 @@ impl PathFinderRuntime {
     }
 
     /// Check if a unit at `point` does not collide with any motion line.
-    pub fn object_position_authorized(&self, grid: &FastFindGrid, point: GeoPoint2D) -> bool {
+    pub fn object_position_authorized(&self, grid: &FastFindGrid, point: MapPoint) -> bool {
+        self.object_position_authorized_geo(grid, point.to_geo())
+    }
+
+    fn object_position_authorized_geo(&self, grid: &FastFindGrid, point: GeoPoint2D) -> bool {
         let hd = pt(
             self.current_half_diagonal.x - 1.0,
             self.current_half_diagonal.y - 1.0,
@@ -2083,9 +2104,13 @@ impl PathFinderRuntime {
                                 .iter()
                                 .zip(cfg.destination_config_list.iter())
                             {
-                                let p1 = self.docking_point(node_idx, start_place, half_diagonal);
-                                let p2 =
-                                    self.docking_point(link.next_node, dest_place, half_diagonal);
+                                let p1 =
+                                    self.docking_point_geo(node_idx, start_place, half_diagonal);
+                                let p2 = self.docking_point_geo(
+                                    link.next_node,
+                                    dest_place,
+                                    half_diagonal,
+                                );
                                 if !view_rect.intersects_segment(geo2d::segment(p1, p2)) {
                                     continue;
                                 }
@@ -2244,15 +2269,21 @@ mod tests {
         let node = NodeIdx(0);
         let hd = pt(10.0, 8.0);
 
-        assert_eq!(runtime.docking_point(node, TOP_LEFT, hd), pt(90.0, 92.0));
-        assert_eq!(runtime.docking_point(node, TOP_RIGHT, hd), pt(110.0, 92.0));
+        assert_eq!(
+            runtime.docking_point(node, TOP_LEFT, hd),
+            MapPoint::new(90.0, 92.0)
+        );
+        assert_eq!(
+            runtime.docking_point(node, TOP_RIGHT, hd),
+            MapPoint::new(110.0, 92.0)
+        );
         assert_eq!(
             runtime.docking_point(node, BOTTOM_LEFT, hd),
-            pt(90.0, 108.0)
+            MapPoint::new(90.0, 108.0)
         );
         assert_eq!(
             runtime.docking_point(node, BOTTOM_RIGHT, hd),
-            pt(110.0, 108.0)
+            MapPoint::new(110.0, 108.0)
         );
     }
 
@@ -2277,7 +2308,7 @@ mod tests {
             }]);
         runtime.current_motion_area = (0, 0);
 
-        assert!(runtime.is_reachable_fast(pt(0.0, 0.0), pt(100.0, 100.0)));
+        assert!(runtime.is_reachable_fast(MapPoint::new(0.0, 0.0), MapPoint::new(100.0, 100.0)));
     }
 
     #[test]
@@ -2296,10 +2327,10 @@ mod tests {
         runtime.current_motion_area = (0, 0);
 
         // Movement that crosses the skeleton
-        assert!(!runtime.is_reachable_fast(pt(50.0, 30.0), pt(50.0, 70.0)));
+        assert!(!runtime.is_reachable_fast(MapPoint::new(50.0, 30.0), MapPoint::new(50.0, 70.0)));
 
         // Movement that doesn't cross
-        assert!(runtime.is_reachable_fast(pt(50.0, 30.0), pt(100.0, 30.0)));
+        assert!(runtime.is_reachable_fast(MapPoint::new(50.0, 30.0), MapPoint::new(100.0, 30.0)));
     }
 
     #[test]
@@ -2516,7 +2547,15 @@ mod tests {
             .sector_conversion
             .push(SectorToArea { sector: 0, area: 0 });
 
-        let path = runtime.find_path(&grid, 0, 0, 0, pt(50.0, 50.0), pt(100.0, 50.0), true);
+        let path = runtime.find_path(
+            &grid,
+            0,
+            0,
+            0,
+            MapPoint::new(50.0, 50.0),
+            MapPoint::new(100.0, 50.0),
+            true,
+        );
         assert!(path.is_some());
         let path = path.unwrap();
         // Direct path: just source and goal

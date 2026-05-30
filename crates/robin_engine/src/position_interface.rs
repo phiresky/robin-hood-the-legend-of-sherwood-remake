@@ -1587,7 +1587,7 @@ impl PositionInterface {
 
     /// Test whether the current map position is inside the grid bounds.
     pub fn is_inside_grid(&self, grid: &FastFindGrid) -> bool {
-        grid.is_inside_grid_point(self.position_map.to_geo())
+        grid.is_inside_grid_point(self.position_map)
     }
 
     /// Check whether the current map position (with its move box) is free of

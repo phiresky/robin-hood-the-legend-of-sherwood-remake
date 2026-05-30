@@ -71,7 +71,7 @@ impl crate::engine::EngineInner {
             let mut target_box = owner_move_box.translated(current_point);
             if self.fast_grid.find_authorized_position_toward(
                 &mut target_box,
-                target_geo,
+                target_pos,
                 target_layer,
             ) {
                 return Some(ResolvedEntitySeek {
@@ -160,7 +160,7 @@ impl crate::engine::EngineInner {
         let mut target_box = owner_move_box.translated(destination);
         if self
             .fast_grid
-            .find_authorized_position_toward(&mut target_box, target_geo, target_layer)
+            .find_authorized_position_toward(&mut target_box, target_pos, target_layer)
         {
             Some(ResolvedEntitySeek {
                 destination: target_box.center().into(),

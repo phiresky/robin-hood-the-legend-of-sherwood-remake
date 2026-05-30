@@ -792,7 +792,7 @@ impl EngineInner {
         );
         if self
             .fast_grid
-            .find_authorized_position_toward(&mut bbox, reference.to_geo(), layer)
+            .find_authorized_position_toward(&mut bbox, reference, layer)
         {
             Some(MapPoint::from_geo(bbox.center()))
         } else {
@@ -1450,7 +1450,7 @@ impl EngineInner {
                 let candidate = MapPoint::new(click.x + angle.sin() * r, click.y - angle.cos() * r);
                 if assets
                     .pathfinder_graph
-                    .find_area_at_point(layer as usize, candidate.to_geo())
+                    .find_area_at_point(layer as usize, candidate)
                     .is_some()
                 {
                     return Some(candidate);

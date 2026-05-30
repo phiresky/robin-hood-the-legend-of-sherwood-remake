@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::f32::consts::PI;
 
-use crate::geo2d::{self, GeoPoint2D, Segment2D, Vec2D, segments_intersect};
+use robin_engine::coordinates::ScreenPoint;
+
+use crate::geo2d::{self, Segment2D, Vec2D, segments_intersect};
 
 /// Maximum number of points kept in the mouse-way polyline.
 pub const MOUSEWAY_POINT_LIMIT: usize = 350;
@@ -57,7 +59,7 @@ pub enum MouseWayPattern {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MouseWay {
     /// Screen-space points captured during the current drag.
-    pub points: VecDeque<GeoPoint2D>,
+    pub points: VecDeque<ScreenPoint>,
     /// Per-point alpha used by the trail renderer.
     pub alpha: VecDeque<f32>,
 }
@@ -78,7 +80,7 @@ impl MouseWay {
     /// Pushes the point and seeds the alpha at `INITIAL_ALPHA`, dropping
     /// the oldest sample if the polyline would exceed
     /// `MOUSEWAY_POINT_LIMIT`.
-    pub fn add_point(&mut self, p: GeoPoint2D) {
+    pub fn add_point(&mut self, p: ScreenPoint) {
         self.points.push_back(p);
         self.alpha.push_back(INITIAL_ALPHA);
         if self.points.len() > MOUSEWAY_POINT_LIMIT {
@@ -103,7 +105,7 @@ impl MouseWay {
     ///   reference point used by the directional checks).
     /// * `direction` — the swordfighter's facing direction in screen
     ///   space (the sector vector with isometric Y squish applied).
-    pub fn evaluate(&self, pc_screen: GeoPoint2D, direction: Vec2D) -> MouseWayPattern {
+    pub fn evaluate(&self, pc_screen: ScreenPoint, direction: Vec2D) -> MouseWayPattern {
         let n = self.points.len();
         if n <= 1 {
             return MouseWayPattern::None;
@@ -188,7 +190,7 @@ impl MouseWay {
                     y_hi = p.y;
                 }
             }
-            let pt_q = geo2d::pt((x_lo + x_hi) * 0.5, (y_lo + y_hi) * 0.5);
+            let pt_q = ScreenPoint::new((x_lo + x_hi) * 0.5, (y_lo + y_hi) * 0.5);
 
             if !self_intersecting {
                 // ── Non-self-intersecting branch. ──
@@ -250,10 +252,10 @@ impl MouseWay {
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::nonminimal_bool)]
 fn check_thrust_hi(
-    _pt_p: GeoPoint2D,
-    pt_w: GeoPoint2D,
-    pt_z: GeoPoint2D,
-    pt_q: GeoPoint2D,
+    _pt_p: ScreenPoint,
+    pt_w: ScreenPoint,
+    pt_z: ScreenPoint,
+    pt_q: ScreenPoint,
     ul_a: usize,
     ul_b: usize,
     ul_c: usize,
@@ -281,9 +283,9 @@ fn check_thrust_hi(
 
 /// Detect a one-sided half-circle (`THRUST_F` or `THRUST_G`).
 fn check_thrust_fg(
-    _pt_p: GeoPoint2D,
-    pt_w: GeoPoint2D,
-    pt_z: GeoPoint2D,
+    _pt_p: ScreenPoint,
+    pt_w: ScreenPoint,
+    pt_z: ScreenPoint,
     max_left_deviation: f32,
     max_right_deviation: f32,
 ) -> Option<MouseWayPattern> {
@@ -315,10 +317,10 @@ fn check_thrust_fg(
 
 /// Detect a sideways slash (`THRUST_D` right, `THRUST_E` left).
 fn check_thrust_de(
-    _pt_p: GeoPoint2D,
+    _pt_p: ScreenPoint,
     direction: Vec2D,
-    pt_w: GeoPoint2D,
-    pt_z: GeoPoint2D,
+    pt_w: ScreenPoint,
+    pt_z: ScreenPoint,
 ) -> Option<MouseWayPattern> {
     let v_zw = geo2d::pt(pt_z.x - pt_w.x, pt_z.y - pt_w.y);
     let v_revert = geo2d::pt(-direction.x, -direction.y);
@@ -335,10 +337,10 @@ fn check_thrust_de(
 
 /// Detect a forward / backward thrust (`THRUST_A` weak, `THRUST_B` strong).
 fn check_thrust_ab(
-    _pt_p: GeoPoint2D,
+    _pt_p: ScreenPoint,
     direction: Vec2D,
-    pt_w: GeoPoint2D,
-    pt_z: GeoPoint2D,
+    pt_w: ScreenPoint,
+    pt_z: ScreenPoint,
 ) -> Option<MouseWayPattern> {
     let v_zw = geo2d::pt(pt_w.x - pt_z.x, pt_w.y - pt_z.y);
     let v_revert = geo2d::pt(-direction.x, -direction.y);
@@ -424,16 +426,16 @@ fn vector_angle(a: Vec2D, b: Vec2D) -> f32 {
 /// Walks every pair of non-adjacent polyline segments and returns `true`
 /// on the first crossing.  Adjacent segments (sharing an endpoint) are
 /// skipped.
-pub fn is_self_intersecting(points: &VecDeque<GeoPoint2D>) -> bool {
+pub fn is_self_intersecting(points: &VecDeque<ScreenPoint>) -> bool {
     let n = points.len();
     if n < 4 {
         return false;
     }
     let n_segs = n - 1;
     for i in 0..n_segs {
-        let s1 = Segment2D::new(points[i], points[i + 1]);
+        let s1 = Segment2D::new(points[i].to_geo(), points[i + 1].to_geo());
         for j in (i + 2)..n_segs {
-            let s2 = Segment2D::new(points[j], points[j + 1]);
+            let s2 = Segment2D::new(points[j].to_geo(), points[j + 1].to_geo());
             if segments_intersect(s1, s2) {
                 return true;
             }
@@ -452,14 +454,14 @@ mod tests {
     fn make_way(points: &[(f32, f32)]) -> MouseWay {
         let mut w = MouseWay::new();
         for &(x, y) in points {
-            w.add_point(pt(x, y));
+            w.add_point(ScreenPoint::new(x, y));
         }
         w
     }
 
     /// Reference point and direction used by the recognition tests.
-    fn ref_point() -> GeoPoint2D {
-        pt(320.0, 320.0)
+    fn ref_point() -> ScreenPoint {
+        ScreenPoint::new(320.0, 320.0)
     }
     fn ref_direction() -> Vec2D {
         pt(0.0, -10.0)
@@ -707,7 +709,7 @@ mod tests {
     fn point_limit_drops_oldest() {
         let mut way = MouseWay::new();
         for i in 0..(MOUSEWAY_POINT_LIMIT + 50) {
-            way.add_point(pt(i as f32, 0.0));
+            way.add_point(ScreenPoint::new(i as f32, 0.0));
         }
         assert_eq!(way.len(), MOUSEWAY_POINT_LIMIT);
         // First point should be sample index 50, since the first 50 were

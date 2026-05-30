@@ -18,7 +18,6 @@ robin_lua = { path = "../robin_lua" }
 robin_util = { path = "../robin_util" }
 mlua = { version = "0.10", features = ["luau", "send"] }
 tempfile = "3"
-md5_crate = { package = "md-5", version = "0.11" }
 ab_glyph = "0.2"
 geo = { version = "0.33", features = ["serde"] }
 earcutr = "0.4"

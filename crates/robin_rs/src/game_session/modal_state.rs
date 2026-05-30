@@ -3,10 +3,25 @@
 //! `start_/tick_/drain_pending_*` helpers that drive them.
 
 use crate::Host;
+use crate::console_overlay::ConsoleOverlay;
+use crate::cursor::CursorRenderer;
 use crate::game::Game;
-use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
+use crate::ingame_menu::{
+    self, BatchDialogue, DebriefingModalState, DebriefingOutcome, DialogueModalState,
+    DialogueSentence, IngameMenuResources, MenuSurface, MissionStatePopupState, ModalNet,
+    PopupScrollModalState, layout::TextAlign,
+};
+use crate::player_profile::PlayerProfileManager;
+use crate::renderer::Renderer;
+use crate::replay::ReplayRecorder;
+use crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE;
+use crate::resource_manager::ResourceManager;
 use crate::sdl_audio::SdlMixerBackend;
+use crate::sherwood_stat::{ScoreInfo, SherwoodStat};
+use crate::sound_cache::SampleLoader;
+use crate::sound_config::SoundConfig;
+use crate::window::{GameWindow, start_text_input};
 use robin_engine::engine::Engine;
 use robin_engine::player_command::DebriefingTextId;
 use std::collections::VecDeque;
@@ -14,7 +29,7 @@ use std::collections::VecDeque;
 pub(super) struct ActiveDialogueItem {
     dialog_id: i32,
     kind: robin_engine::player_command::ModalKind,
-    sentences: Vec<crate::ingame_menu::DialogueSentence>,
+    sentences: Vec<DialogueSentence>,
     replay_result: Option<robin_engine::player_command::DialogResult>,
 }
 
@@ -23,7 +38,7 @@ pub(super) struct ActiveDialogueBatch {
     current: Option<(
         i32,
         robin_engine::player_command::ModalKind,
-        crate::ingame_menu::DialogueModalState,
+        DialogueModalState,
     )>,
 }
 
@@ -36,10 +51,10 @@ impl ActiveDialogueBatch {
 pub(super) struct ActivePopupScrollItem {
     kind: robin_engine::player_command::ModalKind,
     title: Option<String>,
-    picture: Option<crate::ingame_menu::MenuSurface>,
+    picture: Option<MenuSurface>,
     body: String,
     body_font_name: Option<String>,
-    align: crate::ingame_menu::layout::TextAlign,
+    align: TextAlign,
     universal_frame: u32,
     replay_result: Option<robin_engine::player_command::DialogResult>,
 }
@@ -48,7 +63,7 @@ pub(super) struct ActivePopupScrollBatch {
     pending: VecDeque<ActivePopupScrollItem>,
     current: Option<(
         robin_engine::player_command::ModalKind,
-        crate::ingame_menu::PopupScrollModalState,
+        PopupScrollModalState,
     )>,
 }
 
@@ -69,7 +84,7 @@ pub(super) struct ActiveDebriefingBatch {
     pending: VecDeque<ActiveDebriefingItem>,
     current: Option<(
         robin_engine::player_command::ModalKind,
-        crate::ingame_menu::DebriefingModalState,
+        DebriefingModalState,
     )>,
 }
 
@@ -85,7 +100,7 @@ pub(super) enum ActiveModal {
     Debriefing(Box<ActiveDebriefingBatch>),
     MissionState {
         kind: robin_engine::player_command::ModalKind,
-        state: crate::ingame_menu::MissionStatePopupState,
+        state: MissionStatePopupState,
         replay_result: Option<robin_engine::player_command::DialogResult>,
     },
 }
@@ -141,33 +156,26 @@ pub(super) fn pop_matching_dismissal(
 
 fn debriefing_replay_result(
     result: robin_engine::player_command::DialogResult,
-) -> crate::ingame_menu::DebriefingOutcome {
+) -> DebriefingOutcome {
     match result {
-        robin_engine::player_command::DialogResult::Completed => {
-            crate::ingame_menu::DebriefingOutcome::Ok {
-                text_remaining: String::new(),
-            }
-        }
-        robin_engine::player_command::DialogResult::Aborted => {
-            crate::ingame_menu::DebriefingOutcome::EmergencyEnd
-        }
+        robin_engine::player_command::DialogResult::Completed => DebriefingOutcome::Ok {
+            text_remaining: String::new(),
+        },
+        robin_engine::player_command::DialogResult::Aborted => DebriefingOutcome::EmergencyEnd,
         robin_engine::player_command::DialogResult::Restart
         | robin_engine::player_command::DialogResult::Load { .. } => {
             tracing::warn!(
                 ?result,
                 "queued debriefing replay result is only valid for final debriefing; treating as completed"
             );
-            crate::ingame_menu::DebriefingOutcome::Ok {
+            DebriefingOutcome::Ok {
                 text_remaining: String::new(),
             }
         }
     }
 }
 
-pub(super) fn drain_pending_console_display(
-    host: &mut Host,
-    console_overlay: &mut crate::console_overlay::ConsoleOverlay,
-) {
+pub(super) fn drain_pending_console_display(host: &mut Host, console_overlay: &mut ConsoleOverlay) {
     // ── Drain pending console-display request ──
     // Script native `DisplayConsole` (and the forthcoming cheat key)
     // sets `pending_show_console`.
@@ -176,7 +184,7 @@ pub(super) fn drain_pending_console_display(
         if !console_overlay.is_visible() {
             let now_visible = console_overlay.toggle();
             if now_visible {
-                crate::window::start_text_input();
+                start_text_input();
             }
         }
     }
@@ -195,7 +203,7 @@ pub(super) fn drain_pending_console_display(
 /// future replays of this file can reproduce the dismissal.
 pub(super) fn start_active_dialogue_batch(
     host: &mut Host,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    text_res: &mut ResourceManager,
     game: &Game,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
@@ -246,13 +254,13 @@ pub(super) fn start_active_dialogue_batch(
 fn tick_active_dialogue_batch(
     batch: &mut ActiveDialogueBatch,
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
 ) {
     let Some(resources) = menu_resources.as_mut() else {
         tracing::warn!("DisplayDialog: menu resources unavailable — dropping active dialogue");
@@ -272,12 +280,7 @@ fn tick_active_dialogue_batch(
                 });
             }
         } else {
-            let state = crate::ingame_menu::DialogueModalState::new(
-                event_pump,
-                renderer,
-                resources,
-                item.sentences,
-            );
+            let state = DialogueModalState::new(event_pump, renderer, resources, item.sentences);
             batch.current = Some((item.dialog_id, item.kind, state));
         }
     }
@@ -286,12 +289,12 @@ fn tick_active_dialogue_batch(
         return;
     };
 
-    let sound_cfg = crate::sound_config::SoundConfig::default();
+    let sound_cfg = SoundConfig::default();
     let sound_enabled = audio_backend.is_some();
     let modal_net = host
         .net
         .as_ref()
-        .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
+        .map(|net| ModalNet::new(net, kind.clone()));
     let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(result) = state.tick(
         event_pump,
@@ -321,16 +324,16 @@ fn tick_active_dialogue_batch(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_dialogues(
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    text_res: &mut ResourceManager,
     game: &Game,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
         robin_engine::player_command::PlayerCommand,
     >,
@@ -367,14 +370,14 @@ pub(super) async fn drain_pending_dialogues(
             return;
         }
         if let (Some(descriptors), Some(resources)) = (&level_descriptors, menu_resources) {
-            let sound_cfg = crate::sound_config::SoundConfig::default();
+            let sound_cfg = SoundConfig::default();
             let sound_enabled = audio_backend.is_some();
 
             // Pre-build every entry so we can hand a contiguous
             // slice to `show_dialogue_batch`.  `replay_result` pulls
             // from the per-frame replay queue so playback reproduces
             // the recorded dismissal exactly.
-            let mut sentences_per_id: Vec<(i32, Vec<crate::ingame_menu::DialogueSentence>)> =
+            let mut sentences_per_id: Vec<(i32, Vec<DialogueSentence>)> =
                 Vec::with_capacity(dialog_ids.len());
             for dialog_id in dialog_ids {
                 let sentences = build_dialogue_sentences(
@@ -388,7 +391,7 @@ pub(super) async fn drain_pending_dialogues(
                 }
                 sentences_per_id.push((dialog_id, sentences));
             }
-            let entries: Vec<crate::ingame_menu::BatchDialogue<'_>> = sentences_per_id
+            let entries: Vec<BatchDialogue<'_>> = sentences_per_id
                 .iter()
                 .map(|(dialog_id, sentences)| {
                     let kind = robin_engine::player_command::ModalKind::Dialog {
@@ -398,8 +401,8 @@ pub(super) async fn drain_pending_dialogues(
                     let modal_net = host
                         .net
                         .as_ref()
-                        .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
-                    crate::ingame_menu::BatchDialogue {
+                        .map(|net| ModalNet::new(net, kind.clone()));
+                    BatchDialogue {
                         sentences: sentences.as_slice(),
                         replay_result,
                         modal_net,
@@ -408,7 +411,7 @@ pub(super) async fn drain_pending_dialogues(
                 .collect();
 
             let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-            let results = crate::ingame_menu::show_dialogue_batch(
+            let results = ingame_menu::show_dialogue_batch(
                 event_pump,
                 renderer,
                 resources,
@@ -442,8 +445,8 @@ pub(super) async fn drain_pending_dialogues(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_active_popup_scroll_batch(
     host: &mut Host,
-    renderer: &mut crate::renderer::Renderer,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    renderer: &mut Renderer,
+    text_res: &mut ResourceManager,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
     menu_resources: &mut Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
@@ -479,13 +482,13 @@ pub(super) fn start_active_popup_scroll_batch(
                 .picture_ids
                 .get(text_id as usize)
                 .copied()
-                .unwrap_or(crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE);
+                .unwrap_or(RHID_DEFAULT_POPUP_SCROLL_PICTURE);
             (text, pid)
         } else {
             tracing::warn!("DisplayPopupText({text_id}): level descriptors unavailable");
             (
                 "No popup texts for the current level !".to_string(),
-                crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE,
+                RHID_DEFAULT_POPUP_SCROLL_PICTURE,
             )
         };
         let picture = resources.picture_from(renderer, text_res, picture_id);
@@ -497,7 +500,7 @@ pub(super) fn start_active_popup_scroll_batch(
             picture,
             body: text,
             body_font_name: None,
-            align: crate::ingame_menu::layout::TextAlign::Justified,
+            align: TextAlign::Justified,
             universal_frame,
             replay_result,
         });
@@ -528,19 +531,19 @@ pub(super) fn start_active_sherwood_report(
         return None;
     };
 
-    let sherwood = crate::sherwood_stat::SherwoodStat;
+    let sherwood = SherwoodStat;
     let score_info = {
-        let ppm = crate::player_profile::PlayerProfileManager::global();
+        let ppm = PlayerProfileManager::global();
         if let Some(mgr) = ppm.as_ref()
             && let Some(profile) = mgr.get_active()
         {
-            crate::sherwood_stat::ScoreInfo {
+            ScoreInfo {
                 score: profile.score as i32,
                 preserved_lives: profile.preserved_lives as i32,
                 play_time_seconds: profile.play_time,
             }
         } else {
-            crate::sherwood_stat::ScoreInfo::default()
+            ScoreInfo::default()
         }
     };
     let text = sherwood.get_text(
@@ -558,7 +561,7 @@ pub(super) fn start_active_sherwood_report(
         picture: None,
         body: text,
         body_font_name: Some("Debrief".to_string()),
-        align: crate::ingame_menu::layout::TextAlign::Left,
+        align: TextAlign::Left,
         universal_frame: engine.frame_counter(),
         replay_result,
     };
@@ -571,7 +574,7 @@ pub(super) fn start_active_sherwood_report(
 
 pub(super) fn start_active_debriefing_batch(
     host: &mut Host,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    text_res: &mut ResourceManager,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
     menu_resources: &Option<IngameMenuResources>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
@@ -644,14 +647,14 @@ pub(super) fn start_active_debriefing_batch(
 fn tick_active_popup_scroll_batch(
     batch: &mut ActivePopupScrollBatch,
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
-    sample_loader: &crate::sound_cache::SampleLoader,
+    sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
 ) {
     let Some(resources) = menu_resources.as_mut() else {
         tracing::warn!("DisplayPopupText: menu resources unavailable — dropping active popup");
@@ -671,7 +674,7 @@ fn tick_active_popup_scroll_batch(
                 });
             }
         } else {
-            let state = crate::ingame_menu::PopupScrollModalState::new(
+            let state = PopupScrollModalState::new(
                 event_pump,
                 renderer,
                 resources,
@@ -693,7 +696,7 @@ fn tick_active_popup_scroll_batch(
     let modal_net = host
         .net
         .as_ref()
-        .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
+        .map(|net| ModalNet::new(net, kind.clone()));
     let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(result) = state.tick(
         event_pump,
@@ -720,13 +723,13 @@ fn tick_active_popup_scroll_batch(
 #[allow(clippy::too_many_arguments)]
 fn tick_active_debriefing_batch(
     batch: &mut ActiveDebriefingBatch,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     _host: &Host,
     menu_resources: &Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
 ) {
     let Some(resources) = menu_resources.as_ref() else {
         tracing::warn!(
@@ -749,7 +752,7 @@ fn tick_active_debriefing_batch(
         } else {
             batch.current = Some((
                 item.kind,
-                crate::ingame_menu::DebriefingModalState::new(
+                DebriefingModalState::new(
                     resources, item.body, None, 0, item.won, false, None, false, false,
                 ),
             ));
@@ -760,7 +763,7 @@ fn tick_active_debriefing_batch(
     };
     let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
     if let Some(outcome) = state.tick(event_pump, renderer, resources, Some(cursor)) {
-        let result = if matches!(outcome, crate::ingame_menu::DebriefingOutcome::EmergencyEnd) {
+        let result = if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
             robin_engine::player_command::DialogResult::Aborted
         } else {
             robin_engine::player_command::DialogResult::Completed
@@ -771,7 +774,7 @@ fn tick_active_debriefing_batch(
                 result,
             });
         }
-        if matches!(outcome, crate::ingame_menu::DebriefingOutcome::EmergencyEnd) {
+        if matches!(outcome, DebriefingOutcome::EmergencyEnd) {
             // We flatten the queued phase ordering, so dropping the
             // remaining items is the conservative no-surprise
             // behavior on an external close.
@@ -785,14 +788,14 @@ fn tick_active_debriefing_batch(
 pub(super) fn tick_active_modal(
     active_modal: &mut Option<ActiveModal>,
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
-    sample_loader: &crate::sound_cache::SampleLoader,
+    sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
 ) -> ActiveModalOutcome {
     let Some(modal) = active_modal.as_mut() else {
         return ActiveModalOutcome::None;
@@ -916,16 +919,16 @@ pub(super) fn tick_active_modal(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_popup_scroll(
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     audio_backend: &mut Option<SdlMixerBackend>,
-    sample_loader: &crate::sound_cache::SampleLoader,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    sample_loader: &SampleLoader,
+    text_res: &mut ResourceManager,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
         robin_engine::player_command::PlayerCommand,
     >,
@@ -946,7 +949,7 @@ pub(super) async fn drain_pending_popup_scroll(
             );
             return;
         };
-        let sound_cfg = crate::sound_config::SoundConfig::default();
+        let sound_cfg = SoundConfig::default();
         let sound_enabled = audio_backend.is_some();
         for text_id in text_ids {
             // Always show a parchment body — when the level
@@ -982,13 +985,13 @@ pub(super) async fn drain_pending_popup_scroll(
                     .picture_ids
                     .get(text_id as usize)
                     .copied()
-                    .unwrap_or(crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE);
+                    .unwrap_or(RHID_DEFAULT_POPUP_SCROLL_PICTURE);
                 (text, pid)
             } else {
                 tracing::warn!("DisplayPopupText({text_id}): level descriptors unavailable");
                 (
                     "No popup texts for the current level !".to_string(),
-                    crate::resource_ids::RHID_DEFAULT_POPUP_SCROLL_PICTURE,
+                    RHID_DEFAULT_POPUP_SCROLL_PICTURE,
                 )
             };
             let picture = resources.picture_from(renderer, text_res, picture_id);
@@ -997,9 +1000,9 @@ pub(super) async fn drain_pending_popup_scroll(
             let modal_net = host
                 .net
                 .as_ref()
-                .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
+                .map(|net| ModalNet::new(net, kind.clone()));
             let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-            let result = crate::ingame_menu::show_popup_scroll(
+            let result = ingame_menu::show_popup_scroll(
                 event_pump,
                 renderer,
                 resources,
@@ -1015,7 +1018,7 @@ pub(super) async fn drain_pending_popup_scroll(
                 picture,
                 &text,
                 None,
-                crate::ingame_menu::layout::TextAlign::Justified,
+                TextAlign::Justified,
                 universal_frame,
                 replay_result,
                 modal_net,
@@ -1037,16 +1040,16 @@ pub(super) async fn drain_pending_popup_scroll(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_sherwood_stat(
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     engine: &Engine,
     profiles: &robin_engine::profiles::ProfileManager,
     audio_backend: &mut Option<SdlMixerBackend>,
-    sample_loader: &crate::sound_cache::SampleLoader,
+    sample_loader: &SampleLoader,
     menu_resources: &mut Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
         robin_engine::player_command::PlayerCommand,
     >,
@@ -1057,21 +1060,21 @@ pub(super) async fn drain_pending_sherwood_stat(
     if host.pending_sherwood_report {
         host.pending_sherwood_report = false;
         if let (Some(campaign), Some(resources)) = (engine.campaign(), menu_resources.as_mut()) {
-            let sherwood = crate::sherwood_stat::SherwoodStat;
+            let sherwood = SherwoodStat;
             // The Sherwood stat panel pulls score / preserved lives
             // / play time from the active player profile.
             let score_info = {
-                let ppm = crate::player_profile::PlayerProfileManager::global();
+                let ppm = PlayerProfileManager::global();
                 if let Some(mgr) = ppm.as_ref()
                     && let Some(profile) = mgr.get_active()
                 {
-                    crate::sherwood_stat::ScoreInfo {
+                    ScoreInfo {
                         score: profile.score as i32,
                         preserved_lives: profile.preserved_lives as i32,
                         play_time_seconds: profile.play_time,
                     }
                 } else {
-                    crate::sherwood_stat::ScoreInfo::default()
+                    ScoreInfo::default()
                 }
             };
             let text = sherwood.get_text(
@@ -1081,18 +1084,18 @@ pub(super) async fn drain_pending_sherwood_stat(
                 &score_info,
                 &resources.menu_text,
             );
-            let sound_cfg = crate::sound_config::SoundConfig::default();
+            let sound_cfg = SoundConfig::default();
             let sound_enabled = audio_backend.is_some();
             let kind = robin_engine::player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
             let modal_net = host
                 .net
                 .as_ref()
-                .map(|net| crate::ingame_menu::ModalNet::new(net, kind.clone()));
+                .map(|net| ModalNet::new(net, kind.clone()));
             // The Sherwood report uses the "Debrief" font and is
             // left-aligned (not the popup-scroll default).
             let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-            let result = crate::ingame_menu::show_popup_scroll(
+            let result = ingame_menu::show_popup_scroll(
                 event_pump,
                 renderer,
                 resources,
@@ -1108,7 +1111,7 @@ pub(super) async fn drain_pending_sherwood_stat(
                 None,
                 &text,
                 Some("Debrief"),
-                crate::ingame_menu::layout::TextAlign::Left,
+                TextAlign::Left,
                 engine.frame_counter(),
                 replay_result,
                 modal_net,
@@ -1135,14 +1138,14 @@ pub(super) async fn drain_pending_sherwood_stat(
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn drain_pending_debriefings(
     host: &mut Host,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
-    text_res: &mut crate::resource_manager::ResourceManager,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
+    text_res: &mut ResourceManager,
     level_descriptors: &Option<robin_assets::res_descr::LevelDescriptors>,
     menu_resources: &Option<IngameMenuResources>,
-    replay_recorder: &mut Option<crate::replay::ReplayRecorder>,
+    replay_recorder: &mut Option<ReplayRecorder>,
     replay_modal_dismissals: &mut std::collections::VecDeque<
         robin_engine::player_command::PlayerCommand,
     >,
@@ -1184,7 +1187,7 @@ pub(super) async fn drain_pending_debriefings(
                     // overload — stats don't appear in this flow, so
                     // pass `None`.
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    crate::ingame_menu::show_debriefing(
+                    ingame_menu::show_debriefing(
                         event_pump, renderer, resources, cursor, &text, None, 0, false, false,
                         // Cheat path passes `bRestartAllowed=false`, so
                         // the quick-load translator is never enabled.
@@ -1192,10 +1195,7 @@ pub(super) async fn drain_pending_debriefings(
                     )
                     .await
                 };
-                let result = if matches!(
-                    debrief_outcome,
-                    crate::ingame_menu::DebriefingOutcome::EmergencyEnd
-                ) {
+                let result = if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
                     robin_engine::player_command::DialogResult::Aborted
                 } else {
                     robin_engine::player_command::DialogResult::Completed
@@ -1209,10 +1209,7 @@ pub(super) async fn drain_pending_debriefings(
                 // The iteration breaks out when an emergency-end
                 // fires — but only for THIS phase, not the win phase
                 // below.
-                if matches!(
-                    debrief_outcome,
-                    crate::ingame_menu::DebriefingOutcome::EmergencyEnd
-                ) {
+                if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
                     break;
                 }
             }
@@ -1236,16 +1233,13 @@ pub(super) async fn drain_pending_debriefings(
                     debriefing_replay_result(result)
                 } else {
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    crate::ingame_menu::show_debriefing(
+                    ingame_menu::show_debriefing(
                         event_pump, renderer, resources, cursor, &text, None, 0, true, false, None,
                         false, false,
                     )
                     .await
                 };
-                let result = if matches!(
-                    debrief_outcome,
-                    crate::ingame_menu::DebriefingOutcome::EmergencyEnd
-                ) {
+                let result = if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
                     robin_engine::player_command::DialogResult::Aborted
                 } else {
                     robin_engine::player_command::DialogResult::Completed
@@ -1256,10 +1250,7 @@ pub(super) async fn drain_pending_debriefings(
                         result,
                     });
                 }
-                if matches!(
-                    debrief_outcome,
-                    crate::ingame_menu::DebriefingOutcome::EmergencyEnd
-                ) {
+                if matches!(debrief_outcome, DebriefingOutcome::EmergencyEnd) {
                     break;
                 }
             }
@@ -1281,9 +1272,9 @@ pub(super) async fn drain_pending_debriefings(
 fn build_dialogue_sentences(
     dialog_id: i32,
     descriptors: &robin_assets::res_descr::LevelDescriptors,
-    res: &mut crate::resource_manager::ResourceManager,
+    res: &mut ResourceManager,
     text_directory: &str,
-) -> Vec<crate::ingame_menu::DialogueSentence> {
+) -> Vec<DialogueSentence> {
     // Project convention: panic on missing data rather than fall
     // back to a hard-coded default.  An empty `text_directory` means
     // the global-options holder wasn't initialized.
@@ -1302,7 +1293,7 @@ fn build_dialogue_sentences(
             "StartDialog({dialog_id}): no descriptor (level has {} dialogues)",
             descriptors.dialogues.len()
         );
-        return vec![crate::ingame_menu::DialogueSentence {
+        return vec![DialogueSentence {
             portrait_index: usize::MAX,
             text: "Invalid dialogue ID...".to_string(),
             sound_path: String::new(),
@@ -1338,7 +1329,7 @@ fn build_dialogue_sentences(
 
         let portrait_index = desc.portrait_ids[i] as usize;
 
-        sentences.push(crate::ingame_menu::DialogueSentence {
+        sentences.push(DialogueSentence {
             portrait_index,
             text,
             sound_path,

@@ -2,8 +2,16 @@
 
 use super::{apply_local_viewport_scroll, dispatch_local_command};
 use crate::Host;
+use crate::console_overlay::ConsoleOverlay;
+use crate::gamepad::{self, GamePadState, QaEvent, ViewportCommand};
 use crate::gfx_types::GameEvent;
+use crate::input::ThreadedInput;
+use crate::input_translator::{GameAction, InputTranslator};
 use crate::player_command::{FrameCommands, PlayerCommand};
+use crate::replay::ReplayPlayer;
+use crate::rewind::RewindBuffer;
+use crate::rollback_checker::RollbackChecker;
+use crate::save_file::GameSaveFile;
 use robin_engine::engine::Engine;
 
 /// Translate the per-frame SDL3 controller events into joystick
@@ -15,7 +23,7 @@ pub(super) fn handle_gamepad_events(
     host: &mut Host,
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &robin_engine::engine::LevelAssets,
-    threaded_input: &mut crate::input::ThreadedInput,
+    threaded_input: &mut ThreadedInput,
     frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
     active_gamepad: &mut Option<u32>,
@@ -43,7 +51,7 @@ pub(super) fn handle_gamepad_events(
                     *active_gamepad = None;
                 }
                 // Reset the state so any held buttons release cleanly.
-                host.gamepad = crate::gamepad::GamePadState::default();
+                host.gamepad = GamePadState::default();
                 dpad = [false; 4];
             }
             GameEvent::GamepadAxis { axis, value, .. } => {
@@ -52,7 +60,7 @@ pub(super) fn handle_gamepad_events(
             GameEvent::GamepadButton {
                 button, pressed, ..
             } => {
-                if crate::gamepad::is_dpad_button(*button) {
+                if gamepad::is_dpad_button(*button) {
                     let idx = (*button - 11) as usize; // 11=Up, 12=Down, 13=Left, 14=Right
                     // Reorder to [up, right, down, left] for apply_dpad_state.
                     let slot = match idx {
@@ -65,7 +73,7 @@ pub(super) fn handle_gamepad_events(
                     dpad[slot] = *pressed;
                     host.gamepad
                         .apply_dpad_state(dpad[0], dpad[1], dpad[2], dpad[3]);
-                } else if let Some(idx) = crate::gamepad::sdl_button_to_gamepad_index(*button) {
+                } else if let Some(idx) = gamepad::sdl_button_to_gamepad_index(*button) {
                     host.gamepad.apply_button_event(idx, *pressed);
                 }
             }
@@ -80,15 +88,15 @@ pub(super) fn handle_gamepad_events(
         .process_gamepad_input(now_ms, &manager.engine, threaded_input);
     for cmd in &gamepad_frame.viewport {
         match cmd {
-            crate::gamepad::ViewportCommand::Scroll(dir) => apply_local_viewport_scroll(host, *dir),
-            crate::gamepad::ViewportCommand::ZoomIn => {
+            ViewportCommand::Scroll(dir) => apply_local_viewport_scroll(host, *dir),
+            ViewportCommand::ZoomIn => {
                 let mp = threaded_input.position();
                 host.viewport.zoom_by(
                     2.0,
                     Some(robin_engine::coordinates::ScreenPoint::new(mp.x, mp.y)),
                 );
             }
-            crate::gamepad::ViewportCommand::ZoomOut => {
+            ViewportCommand::ZoomOut => {
                 let mp = threaded_input.position();
                 host.viewport.zoom_by(
                     0.5,
@@ -102,7 +110,7 @@ pub(super) fn handle_gamepad_events(
     }
     if let Some(qa_event) = gamepad_frame.qa {
         let cmd = match qa_event {
-            crate::gamepad::QaEvent::ToggleRecording => {
+            QaEvent::ToggleRecording => {
                 if manager.engine.is_recording_macro() {
                     PlayerCommand::StopRecordingMacro
                 } else {
@@ -113,10 +121,8 @@ pub(super) fn handle_gamepad_events(
                     PlayerCommand::StartRecordingMacro { pc: None, slot }
                 }
             }
-            crate::gamepad::QaEvent::LaunchAllMacros => {
-                PlayerCommand::StartMacro { pc: None, slot: 0 }
-            }
-            crate::gamepad::QaEvent::LaunchMacroForSelected => {
+            QaEvent::LaunchAllMacros => PlayerCommand::StartMacro { pc: None, slot: 0 },
+            QaEvent::LaunchMacroForSelected => {
                 let Some(&pc) = manager.engine.seat_selection(host.local_seat).first() else {
                     return;
                 };
@@ -145,10 +151,10 @@ pub(super) fn handle_gamepad_events(
 pub(super) fn handle_hold_to_rewind(
     manager: &mut robin_engine::engine_manager::EngineManager,
     assets: &robin_engine::engine::LevelAssets,
-    threaded_input: &crate::input::ThreadedInput,
-    rewind_buffer: &mut crate::rewind::RewindBuffer,
-    rollback_checker: &mut Option<crate::rollback_checker::RollbackChecker>,
-    replay_player: &mut Option<crate::replay::ReplayPlayer>,
+    threaded_input: &ThreadedInput,
+    rewind_buffer: &mut RewindBuffer,
+    rollback_checker: &mut Option<RollbackChecker>,
+    replay_player: &mut Option<ReplayPlayer>,
 ) -> bool {
     let engine = &mut manager.engine;
     let sim_frame = &mut manager.sim_frame;
@@ -214,14 +220,14 @@ pub(super) fn handle_hold_to_rewind(
 /// up — the game keeps running underneath.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_console_overlay_events(
-    console_overlay: &mut crate::console_overlay::ConsoleOverlay,
+    console_overlay: &mut ConsoleOverlay,
     engine: &mut Engine,
     assets: &robin_engine::engine::LevelAssets,
     host: &mut Host,
     dev: &mut robin_engine::engine::DevState,
     events: &[GameEvent],
-    kb_actions: &[crate::input_translator::GameAction],
-    input_translator: &mut crate::input_translator::InputTranslator,
+    kb_actions: &[GameAction],
+    input_translator: &mut InputTranslator,
 ) {
     // ── In-game console overlay event handling ──
     // When visible, the console captures keyboard events so they
@@ -250,7 +256,7 @@ pub(super) fn handle_console_overlay_events(
     // (cheap — JSON), extract the campaign, and assign it onto the
     // engine.
     if let Some(path) = console_overlay.take_pending_load_campaign() {
-        match crate::save_file::GameSaveFile::read_from(&path) {
+        match GameSaveFile::read_from(&path) {
             Ok(loaded) => match loaded.engine.campaign().cloned() {
                 Some(campaign) => {
                     engine.install_campaign(campaign);
@@ -283,7 +289,7 @@ pub(super) fn handle_console_overlay_events(
     let console_visible_now = console_overlay.is_visible();
     let display_console_pressed = kb_actions
         .iter()
-        .any(|a| matches!(a, crate::input_translator::GameAction::DisplayConsole));
+        .any(|a| matches!(a, GameAction::DisplayConsole));
     let mut console_should_be_visible = console_visible_now;
     if display_console_pressed && !auto_closed {
         // The toggle key reached us via the action stream — flip.

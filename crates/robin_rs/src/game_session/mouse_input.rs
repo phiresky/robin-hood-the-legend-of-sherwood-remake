@@ -11,17 +11,40 @@ use super::{
 };
 use crate::Host;
 use crate::campaign::Campaign;
+use crate::campaign_map::{self, CampaignMapChoice};
+use crate::corner_hud::CornerButton;
+use crate::cursor::CursorRenderer;
 use crate::element::{Command, Posture};
-use crate::game::{Game, GameCallbacks};
+use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
+use crate::geo2d::BBox2D;
 use crate::gfx_types::GameEvent;
+use crate::graphic_config::GraphicConfig;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
-use crate::ingame_menu::{IngameMenuResources, PauseMenu, PauseMenuOutcome};
-use crate::main_entry::{RustCallbacks, current_mission_id};
+use crate::ingame_menu::{
+    self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
+    mission_description, resources,
+};
+use crate::input::ThreadedInput;
+use crate::input_translator::{GameKey, InputTranslator};
+use crate::key_config_store::KeyConfigStore;
+use crate::main_entry::{RustCallbacks, SaveLoadRequest, current_mission_id};
+use crate::menu::CampaignMapState;
 use crate::player_command::{FrameCommands, PlayerCommand};
+use crate::player_profile::PlayerProfileManager;
 use crate::profiles::Action;
+use crate::renderer::Renderer;
+use crate::resource_manager::ResourceManager;
 use crate::sdl_audio::SdlMixerBackend;
+use crate::sherwood_hud::{
+    SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
+};
+use crate::sound_cache::SampleLoader;
+use crate::sound_config::SoundConfig;
+use crate::ui_panel::{self, PortraitCache, PortraitHitArea};
 use crate::ui_screens::MissionChoice;
+use crate::window::GameWindow;
+use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_engine::engine::Engine;
 
 /// Per-frame mouse-input dispatch.
@@ -45,8 +68,8 @@ pub(super) fn handle_mouse_input(
     manager: &mut robin_engine::engine_manager::EngineManager,
     host: &mut Host,
     assets: &robin_engine::engine::LevelAssets,
-    renderer: &crate::renderer::Renderer,
-    portrait_cache: &crate::ui_panel::PortraitCache,
+    renderer: &Renderer,
+    portrait_cache: &PortraitCache,
     frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
     pause_menu: Option<&PauseMenu>,
@@ -238,7 +261,7 @@ pub(super) fn handle_mouse_input(
                         && engine.selected_action_for_seat(local_seat) == Action::NoAction
                         && engine.is_seat_selection_swordfighting(local_seat)
                     {
-                        host.mouse_way.add_point(mouse_pt.to_geo());
+                        host.mouse_way.add_point(mouse_pt);
                     }
 
                     // ── Minimap hover / drag update ──
@@ -377,7 +400,7 @@ pub(super) fn handle_mouse_input(
                         let portrait_hit = if swordfight_drag {
                             None
                         } else {
-                            crate::ui_panel::hit_test_portrait_detailed(
+                            ui_panel::hit_test_portrait_detailed(
                                 engine,
                                 local_seat,
                                 portrait_cache,
@@ -389,7 +412,6 @@ pub(super) fn handle_mouse_input(
                         };
 
                         if let Some(hit) = portrait_hit {
-                            use crate::ui_panel::PortraitHitArea;
                             let pc_id = hit.pc_id;
 
                             if let PortraitHitArea::QuickAction(slot) = hit.area {
@@ -914,7 +936,7 @@ pub(super) fn handle_mouse_input(
                         {
                             let cmd = PlayerCommand::MinimapRightClick;
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        } else if let Some(hit) = crate::ui_panel::hit_test_portrait_detailed(
+                        } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
                             engine,
                             local_seat,
                             portrait_cache,
@@ -923,7 +945,7 @@ pub(super) fn handle_mouse_input(
                             mx as f32,
                             my as f32,
                         ) {
-                            if let crate::ui_panel::PortraitHitArea::QuickAction(slot) = hit.area {
+                            if let PortraitHitArea::QuickAction(slot) = hit.area {
                                 let pc_id = hit.pc_id;
                                 let cmd = PlayerCommand::DeleteMacro {
                                     pc: Some(pc_id),
@@ -942,7 +964,7 @@ pub(super) fn handle_mouse_input(
                                     | crate::profiles::Action::BigShield
                             );
                             if !hit.is_burned
-                                && let crate::ui_panel::PortraitHitArea::ActionButton(_) = hit.area
+                                && let PortraitHitArea::ActionButton(_) = hit.area
                             {
                                 let cmd = PlayerCommand::CancelAction { pc_id };
                                 dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
@@ -973,9 +995,9 @@ pub(super) fn handle_mouse_input(
                                 && engine.seat_selection(local_seat).contains(&pc_id)
                                 && matches!(
                                     hit.area,
-                                    crate::ui_panel::PortraitHitArea::TopScroll
-                                        | crate::ui_panel::PortraitHitArea::BottomScroll
-                                        | crate::ui_panel::PortraitHitArea::Visage
+                                    PortraitHitArea::TopScroll
+                                        | PortraitHitArea::BottomScroll
+                                        | PortraitHitArea::Visage
                                 )
                             {
                                 // A right-click on lower/upper/visage of
@@ -1033,18 +1055,18 @@ pub(super) async fn handle_pause_menu_events(
     assets: &robin_engine::engine::LevelAssets,
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
     audio_backend: &mut Option<SdlMixerBackend>,
-    sample_loader: &crate::sound_cache::SampleLoader,
-    threaded_input: &mut crate::input::ThreadedInput,
-    input_translator: &mut crate::input_translator::InputTranslator,
-    sherwood_layout: &mut crate::sherwood_hud::SherwoodHudLayout,
-    zoom_layout: &mut crate::zoom_hud::ZoomHudLayout,
-    zoom_sprites: &crate::zoom_hud::ZoomButtonSprites,
+    sample_loader: &SampleLoader,
+    threaded_input: &mut ThreadedInput,
+    input_translator: &mut InputTranslator,
+    sherwood_layout: &mut SherwoodHudLayout,
+    zoom_layout: &mut ZoomHudLayout,
+    zoom_sprites: &ZoomButtonSprites,
     frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
 ) -> HandlerAction {
@@ -1086,7 +1108,7 @@ pub(super) async fn handle_pause_menu_events(
                 renderer.clear_frozen_scene();
                 threaded_input.reset_input_state();
                 input_translator.reset_state();
-                callbacks.set_sound_mode(crate::game::SoundMode::Mission);
+                callbacks.set_sound_mode(SoundMode::Mission);
                 // Forward a MSG_MOUSE_MOVED at the current cursor
                 // position so HUD hover state is re-evaluated on the
                 // first frame after the menu closes.
@@ -1097,13 +1119,13 @@ pub(super) async fn handle_pause_menu_events(
                 if let Some(resources) = menu_resources.as_ref() {
                     // Edit the active player profile's configs in
                     // place so changes persist across sessions.
-                    let mut guard = crate::player_profile::PlayerProfileManager::global();
+                    let mut guard = PlayerProfileManager::global();
                     let (options_outcome, new_resolution) = if let Some(profile) =
                         guard.as_mut().and_then(|mgr| mgr.get_active_mut())
                     {
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        let outcome = crate::ingame_menu::show_options(
+                        let outcome = ingame_menu::show_options(
                             event_pump,
                             renderer,
                             resources,
@@ -1127,13 +1149,13 @@ pub(super) async fn handle_pause_menu_events(
                     } else {
                         // No active profile — edit defaults so the UI is
                         // still exercisable in tooling / headless runs.
-                        let mut graphic = crate::graphic_config::GraphicConfig::default();
-                        let mut sound_cfg = crate::sound_config::SoundConfig::default();
+                        let mut graphic = GraphicConfig::default();
+                        let mut sound_cfg = SoundConfig::default();
                         let mut key_cfg = robin_assets::keyconfig::KeyConfig::default_preset();
                         let mut custom_key_cfg = key_cfg.clone();
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        let outcome = crate::ingame_menu::show_options(
+                        let outcome = ingame_menu::show_options(
                             event_pump,
                             renderer,
                             resources,
@@ -1168,9 +1190,8 @@ pub(super) async fn handle_pause_menu_events(
                         event_pump.set_logical_size(w_u16 as u32, h_u16 as u32);
                         host.viewport.set_screen_size(w, h);
                         renderer.resize(w_u16, h_u16);
-                        threaded_input
-                            .set_clipping(crate::geo2d::BBox2D::from_coords(0.0, 0.0, w, h));
-                        *input_translator = crate::input_translator::InputTranslator::new(w, h);
+                        threaded_input.set_clipping(BBox2D::from_coords(0.0, 0.0, w, h));
+                        *input_translator = InputTranslator::new(w, h);
                         // Re-install HUD-adjacent dead zones at the
                         // new resolution.
                         input_translator.install_hud_dead_zones();
@@ -1181,16 +1202,13 @@ pub(super) async fn handle_pause_menu_events(
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
-                        *sherwood_layout = crate::sherwood_hud::SherwoodHudLayout::for_resolution(
+                        *sherwood_layout = SherwoodHudLayout::for_resolution(
                             w_u16 as u32,
                             h_u16 as u32,
-                            &crate::sherwood_hud::SherwoodButtonSprites::default(),
+                            &SherwoodButtonSprites::default(),
                         );
-                        *zoom_layout = crate::zoom_hud::ZoomHudLayout::for_resolution(
-                            w_u16 as u32,
-                            h_u16 as u32,
-                            zoom_sprites,
-                        );
+                        *zoom_layout =
+                            ZoomHudLayout::for_resolution(w_u16 as u32, h_u16 as u32, zoom_sprites);
                         // Re-show the campaign map overlay if it was
                         // active.  No-op when it isn't; when it is
                         // (e.g. a save taken with `campaign_map_active
@@ -1227,7 +1245,7 @@ pub(super) async fn handle_pause_menu_events(
                         if let Some(profile_id) =
                             guard.as_ref().and_then(|m| m.get_active().map(|p| p.id))
                         {
-                            let mut store_guard = crate::key_config_store::KeyConfigStore::global();
+                            let mut store_guard = KeyConfigStore::global();
                             if let Some(store) = store_guard.as_mut() {
                                 let entry = store.entry_or_default(profile_id);
                                 entry.active = host.key_config.clone();
@@ -1240,8 +1258,7 @@ pub(super) async fn handle_pause_menu_events(
                             }
                         }
                         input_translator.load_bindings_from_keyconfig(&host.key_config);
-                        host.minimap_fast_key = input_translator
-                            .get_binding(crate::input_translator::GameKey::DisplayMap);
+                        host.minimap_fast_key = input_translator.get_binding(GameKey::DisplayMap);
                     }
                 }
                 if let Some(menu) = pause_menu.as_mut() {
@@ -1253,9 +1270,9 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
                 let mode = if outcome == PauseMenuOutcome::OpenLoad {
-                    crate::ingame_menu::SaveLoadMode::Load
+                    SaveLoadMode::Load
                 } else {
-                    crate::ingame_menu::SaveLoadMode::Save
+                    SaveLoadMode::Save
                 };
                 let mut close_pause_menu = false;
                 if let Some(resources) = menu_resources.as_ref() {
@@ -1264,7 +1281,7 @@ pub(super) async fn handle_pause_menu_events(
                         .map(|c| current_mission_id(c, &assets.profile_manager))
                         .unwrap_or(0);
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let picker_outcome = crate::ingame_menu::show_save_load(
+                    let picker_outcome = ingame_menu::show_save_load(
                         event_pump,
                         renderer,
                         resources,
@@ -1280,20 +1297,16 @@ pub(super) async fn handle_pause_menu_events(
                         Some(sample_loader),
                     )
                     .await;
-                    if let crate::ingame_menu::SaveLoadOutcome::Slot(slot) = picker_outcome {
+                    if let SaveLoadOutcome::Slot(slot) = picker_outcome {
                         callbacks.pending = Some(match mode {
-                            crate::ingame_menu::SaveLoadMode::Save => {
-                                crate::main_entry::SaveLoadRequest::Save {
-                                    slot: Some(slot),
-                                    mission_id,
-                                }
-                            }
-                            crate::ingame_menu::SaveLoadMode::Load => {
-                                crate::main_entry::SaveLoadRequest::Load {
-                                    slot: Some(slot),
-                                    mission_id,
-                                }
-                            }
+                            SaveLoadMode::Save => SaveLoadRequest::Save {
+                                slot: Some(slot),
+                                mission_id,
+                            },
+                            SaveLoadMode::Load => SaveLoadRequest::Load {
+                                slot: Some(slot),
+                                mission_id,
+                            },
                         });
                         // When the picker returns a slot, close the
                         // pause-menu modal so the outer game loop
@@ -1309,7 +1322,7 @@ pub(super) async fn handle_pause_menu_events(
                     renderer.clear_frozen_scene();
                     threaded_input.reset_input_state();
                     input_translator.reset_state();
-                    callbacks.set_sound_mode(crate::game::SoundMode::Mission);
+                    callbacks.set_sound_mode(SoundMode::Mission);
                 } else if let Some(menu) = pause_menu.as_mut() {
                     menu.reset_after_side_menu();
                     let sw = renderer.screen_width() as i32;
@@ -1319,24 +1332,21 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::Restart => {
                 // Reload the same mission.
-                callbacks.set_sound_mode(crate::game::SoundMode::Mission);
+                callbacks.set_sound_mode(SoundMode::Mission);
                 *campaign_ref = engine.take_campaign().unwrap_or_default();
                 return HandlerAction::Exit(GameCode::LevelRestart);
             }
             PauseMenuOutcome::Quit => {
                 // Show the "really quit?" Yes/No prompt.
                 let confirmed = if let Some(resources) = menu_resources.as_ref() {
-                    let msg = resources
-                        .menu_text
-                        .get(crate::ingame_menu::resources::MT_MSG_REALLY_QUIT);
+                    let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    crate::ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg)
-                        .await
+                    ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
                 } else {
                     true
                 };
                 if confirmed {
-                    callbacks.set_sound_mode(crate::game::SoundMode::Mission);
+                    callbacks.set_sound_mode(SoundMode::Mission);
                     *campaign_ref = engine.take_campaign().unwrap_or_default();
                     return HandlerAction::Exit(GameCode::Quit);
                 }
@@ -1369,7 +1379,6 @@ pub(super) fn dispatch_corner_button_left_click(
     assets: &robin_engine::engine::LevelAssets,
     frame_cmds: &mut FrameCommands,
 ) {
-    use crate::corner_hud::CornerButton;
     let local_seat = host.local_seat;
     match btn {
         CornerButton::Clock => {
@@ -1417,7 +1426,6 @@ pub(super) fn dispatch_corner_button_right_click(
     assets: &robin_engine::engine::LevelAssets,
     frame_cmds: &mut FrameCommands,
 ) {
-    use crate::corner_hud::CornerButton;
     match btn {
         CornerButton::Clock | CornerButton::QuickStart => {
             // `apply_delete_macro` calls `stop_recording_macro` first
@@ -1469,14 +1477,14 @@ pub(super) async fn handle_sherwood_hud_buttons(
     assets: &robin_engine::engine::LevelAssets,
     callbacks: &mut RustCallbacks,
     campaign_ref: &mut Campaign,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
     events: &[GameEvent],
-    sherwood_layout: &crate::sherwood_hud::SherwoodHudLayout,
-    sherwood_enable: &mut crate::sherwood_hud::SherwoodButtonEnable,
+    sherwood_layout: &SherwoodHudLayout,
+    sherwood_enable: &mut SherwoodButtonEnable,
     headless: bool,
 ) -> HandlerAction {
     let engine = &mut manager.engine;
@@ -1558,7 +1566,6 @@ pub(super) async fn handle_sherwood_hud_buttons(
             }
         }
         if let Some(btn) = sherwood_btn_hit {
-            use crate::sherwood_hud::SherwoodButton;
             match btn {
                 SherwoodButton::DisplayCampaignMap => {
                     // Raise the map again so the player can change
@@ -1578,13 +1585,10 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     } else if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources
                             .menu_text
-                            .get(crate::ingame_menu::resources::MT_MSG_REALLY_RETURN_TO_MAP);
+                            .get(resources::MT_MSG_REALLY_RETURN_TO_MAP);
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        crate::ingame_menu::show_yesno(
-                            event_pump, renderer, resources, cursor, &msg,
-                        )
-                        .await
+                        ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
                     } else {
                         true
                     };
@@ -1596,7 +1600,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                             assets,
                             &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
                         );
-                        *sherwood_enable = crate::sherwood_hud::SherwoodButtonEnable::pre_commit();
+                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
                         // See the `ShowCampaignMap` note elsewhere: only
                         // the active flag gets set here; the displayed
                         // flag flips when the overlay opens.
@@ -1610,9 +1614,9 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     // in men-to-blazon mode), then serializes Sherwood
                     // and exits to the picked mission.
                     let prompt_id = if game.is_men_to_blazon_conversion() {
-                        crate::ingame_menu::resources::MT_MSG_REALLY_CONVERT_PEASANTS
+                        resources::MT_MSG_REALLY_CONVERT_PEASANTS
                     } else {
-                        crate::ingame_menu::resources::MT_MSG_REALLY_START_MISSION
+                        resources::MT_MSG_REALLY_START_MISSION
                     };
                     let confirmed = if headless {
                         true
@@ -1620,10 +1624,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         let msg = resources.menu_text.get(prompt_id);
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        crate::ingame_menu::show_yesno(
-                            event_pump, renderer, resources, cursor, &msg,
-                        )
-                        .await
+                        ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
                     } else {
                         true
                     };
@@ -1668,7 +1669,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                             assets,
                             &PlayerCommand::SetMenToBlazonConversionMode { on: false },
                         );
-                        *sherwood_enable = crate::sherwood_hud::SherwoodButtonEnable::pre_commit();
+                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
                         return HandlerAction::Continue;
                     }
                     let mission_id = current_mission_id(
@@ -1686,8 +1687,7 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         assets,
                         &PlayerCommand::CampaignHarvestProductionSectorState,
                     );
-                    callbacks.pending =
-                        Some(crate::main_entry::SaveLoadRequest::Sherwood { mission_id });
+                    callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
                     *campaign_ref = engine.take_campaign().unwrap_or_default();
                     return HandlerAction::Exit(GameCode::LevelInterrupted);
                 }
@@ -1731,14 +1731,14 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     frame_cmds: &mut FrameCommands,
     assets: &robin_engine::engine::LevelAssets,
     campaign_ref: &mut Campaign,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
-    text_res: &mut crate::resource_manager::ResourceManager,
-    sherwood_campaign_map: &mut crate::menu::CampaignMapState,
+    event_pump: &mut GameWindow,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
+    cursor_renderer: &mut CursorRenderer,
+    text_res: &mut ResourceManager,
+    sherwood_campaign_map: &mut CampaignMapState,
     menu_resources: &mut Option<IngameMenuResources>,
-    sherwood_enable: &mut crate::sherwood_hud::SherwoodButtonEnable,
+    sherwood_enable: &mut SherwoodButtonEnable,
 ) -> Result<HandlerAction, String> {
     let engine = &mut manager.engine;
     // ── Sherwood campaign-map overlay ──
@@ -1775,7 +1775,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // load — rare dev-only case.  Default `MenuText` returns an
         // empty string for every id, so the status bar just shows
         // the raw numbers.
-        let default_menu_text = crate::ingame_menu::resources::MenuText::default();
+        let default_menu_text = resources::MenuText::default();
         let menu_text: &dyn robin_engine::sherwood_stat::MenuTextLookup =
             match menu_resources.as_ref() {
                 Some(r) => &r.menu_text,
@@ -1784,7 +1784,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
 
         let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-        let choice = crate::campaign_map::show_campaign_map(
+        let choice = campaign_map::show_campaign_map(
             event_pump,
             renderer,
             game,
@@ -1836,7 +1836,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // the non-Quit path; the Quit arm early-returns before we'd
         // reach that clear.
         match choice {
-            crate::campaign_map::CampaignMapChoice::PseudoDebriefTimer => {
+            CampaignMapChoice::PseudoDebriefTimer => {
                 let won = pseudo_status == robin_engine::mission::MissionStatus::Won;
                 if let Some(resources) = menu_resources.as_ref() {
                     // Try the per-mission win/lose text first, fall
@@ -1881,14 +1881,14 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                     });
                     let text = per_mission_text.unwrap_or_else(|| {
                         let id = if won {
-                            crate::ingame_menu::resources::MT_MSG_STRATEGICAL_MISSION_WON
+                            resources::MT_MSG_STRATEGICAL_MISSION_WON
                         } else {
-                            crate::ingame_menu::resources::MT_MSG_STRATEGICAL_MISSION_LOST
+                            resources::MT_MSG_STRATEGICAL_MISSION_LOST
                         };
                         resources.menu_text.get(id)
                     });
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let _outcome = crate::ingame_menu::show_debriefing(
+                    let _outcome = ingame_menu::show_debriefing(
                         event_pump, renderer, resources, cursor, &text, None, 0, won, false, None,
                         false, false,
                     )
@@ -1907,7 +1907,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 game.show_campaign_map();
                 return Ok(HandlerAction::Proceed);
             }
-            crate::campaign_map::CampaignMapChoice::SelectMission(idx) => {
+            CampaignMapChoice::SelectMission(idx) => {
                 // Open the pre-mission description dialog: clicking a
                 // location does *not* commit the mission on its own;
                 // it pops the mission-description modal first and only
@@ -1930,19 +1930,18 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                             })
                     };
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let (choice, men_to_blazon) =
-                        crate::ingame_menu::mission_description::show_mission_description(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor,
-                            idx,
-                            engine,
-                            &assets.profile_manager,
-                            mission_descriptors.as_ref(),
-                            text_res,
-                        )
-                        .await;
+                    let (choice, men_to_blazon) = mission_description::show_mission_description(
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor,
+                        idx,
+                        engine,
+                        &assets.profile_manager,
+                        mission_descriptors.as_ref(),
+                        text_res,
+                    )
+                    .await;
                     Some((choice, men_to_blazon))
                 } else {
                     tracing::warn!(
@@ -1966,7 +1965,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                                 mission_idx: Some(idx),
                             },
                         );
-                        *sherwood_enable = crate::sherwood_hud::SherwoodButtonEnable::post_commit();
+                        *sherwood_enable = SherwoodButtonEnable::post_commit();
                     }
                     Some((MissionChoice::StartMission, men_to_blazon)) => {
                         // Set the next mission + toggle the
@@ -1990,7 +1989,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                             assets,
                             &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
                         );
-                        *sherwood_enable = crate::sherwood_hud::SherwoodButtonEnable::post_commit();
+                        *sherwood_enable = SherwoodButtonEnable::post_commit();
                     }
                     Some((MissionChoice::ShowPendingMissions, _)) => {
                         // Swap pending missions into the accessible
@@ -2019,7 +2018,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                     }
                 }
             }
-            crate::campaign_map::CampaignMapChoice::Quit => {
+            CampaignMapChoice::Quit => {
                 // Escape / window close from the overlay with no
                 // mission committed: exit Sherwood to the main menu.
                 // We deliberately leave `campaign_map_displayed` set
@@ -2027,7 +2026,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 *campaign_ref = engine.take_campaign().unwrap_or_default();
                 return Ok(HandlerAction::Exit(GameCode::Quit));
             }
-            crate::campaign_map::CampaignMapChoice::Redisplay => {
+            CampaignMapChoice::Redisplay => {
                 // Reached only when a redisplay was requested but
                 // `game.operation` was no longer LevelInProgress (the
                 // LevelInProgress arm took the `return Ok(Proceed)`

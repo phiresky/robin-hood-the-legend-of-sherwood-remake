@@ -1100,7 +1100,7 @@ impl EngineInner {
             crate::geo2d::pt(dest_x - BOX_LYING_X, dest_y - BOX_LYING_Y),
             crate::geo2d::pt(dest_x + BOX_LYING_X, dest_y + BOX_LYING_Y),
         );
-        let pt_start = crate::geo2d::pt(pos.x, pos.y);
+        let pt_start = pos;
         if !self
             .fast_grid
             .find_authorized_position_straight(&mut dest_box, pt_start, layer)
