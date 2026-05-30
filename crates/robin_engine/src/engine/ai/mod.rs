@@ -2151,7 +2151,7 @@ impl EngineInner {
                     ai.theoretical_patrol.clear();
                     for &id in patrol_ids {
                         if let Some(&eid) = all_soldier_entity_ids.get(id as usize) {
-                            ai.theoretical_patrol.push(eid.index());
+                            ai.theoretical_patrol.push(eid);
                         } else {
                             tracing::warn!(
                                 "NPC {} patrol ID {} out of range (max {})",
@@ -6024,7 +6024,7 @@ impl EngineInner {
         // `set_instructed_patrol_direction(direction, &ctx)` call sees
         // the same `current_substate` (and therefore the same
         // `face_to`-on-WAITING side effect).
-        let mut pending_direction_broadcasts: Vec<(u32, u16)> = Vec::new(); // (minion, direction)
+        let mut pending_direction_broadcasts: Vec<(EntityId, u16)> = Vec::new(); // (minion, direction)
         for &npc_id in &npc_ids {
             let Some(entity) = self.entities.get_mut(npc_id) else {
                 continue;
@@ -6035,18 +6035,14 @@ impl EngineInner {
             let Some(direction) = ai.pending_patrol_direction_broadcast.take() else {
                 continue;
             };
-            for &member in &ai.patrol {
-                if member != 0 && member != npc_id.index() {
-                    pending_direction_broadcasts.push((member, direction));
+            for &member_id in &ai.patrol {
+                if member_id != npc_id {
+                    pending_direction_broadcasts.push((member_id, direction));
                 }
             }
         }
-        for (minion, direction) in pending_direction_broadcasts {
-            let Some(entity) = self
-                .entities
-                .get_mut_at_index(minion as usize as u32)
-                .map(|(_, entity)| entity)
-            else {
+        for (minion_id, direction) in pending_direction_broadcasts {
+            let Some(entity) = self.entities.get_mut(minion_id) else {
                 continue;
             };
             if !entity.is_active() || entity.is_dead() {
@@ -6085,7 +6081,8 @@ impl EngineInner {
             is_civilian: bool,
             is_able_to_fight: bool,
         }
-        let mut snaps: std::collections::HashMap<u32, NpcSnap> = std::collections::HashMap::new();
+        let mut snaps: std::collections::HashMap<EntityId, NpcSnap> =
+            std::collections::HashMap::new();
         for &npc_id in &npc_ids {
             let Some(entity) = self.entities.get(npc_id) else {
                 continue;
@@ -6118,7 +6115,7 @@ impl EngineInner {
             };
 
             snaps.insert(
-                npc_id.index(),
+                npc_id,
                 NpcSnap {
                     position: Position {
                         x: pos.x,
@@ -6140,12 +6137,12 @@ impl EngineInner {
 
         // ── Phase 3: Initialize patrols + compute formation positions ──
         struct PatrolCmd {
-            minion: u32,
+            minion: EntityId,
             target: Position,
             direction: u16,
         }
         let mut patrol_cmds: Vec<PatrolCmd> = Vec::new();
-        let mut chief_assigns: Vec<(u32, u32)> = Vec::new(); // (minion, chief)
+        let mut chief_assigns: Vec<(EntityId, EntityId)> = Vec::new(); // (minion, chief)
 
         for &npc_id in &npc_ids {
             // `refresh_patrol`: chiefs in {Flying, OnLadder, OnWall}
@@ -6190,7 +6187,7 @@ impl EngineInner {
                 ai.patrol.clear();
                 ai.missed_patrol_members.clear();
                 let theoretical = ai.theoretical_patrol.clone();
-                let chief_snap = snaps.get(&npc_id.index()).copied();
+                let chief_snap = snaps.get(&npc_id).copied();
                 let chief_pos = chief_snap.map(|s| s.position).unwrap_or_default();
                 let chief_view_radius = chief_snap.map(|s| s.view_radius as f32).unwrap_or(0.0);
                 let chief_view_radius_sq = chief_view_radius * chief_view_radius;
@@ -6198,7 +6195,7 @@ impl EngineInner {
                 let obstacles = obstacles_owned.list();
 
                 for &member in &theoretical {
-                    if member == 0 || member == npc_id.index() {
+                    if member == npc_id {
                         continue;
                     }
                     if let Some(snap) = snaps.get(&member) {
@@ -6242,7 +6239,7 @@ impl EngineInner {
                         }
                         if admit {
                             ai.patrol.push(member);
-                            chief_assigns.push((member, npc_id.index()));
+                            chief_assigns.push((member, npc_id));
                         } else if snap.is_alive {
                             ai.missed_patrol_members.push(member);
                         }
@@ -6309,7 +6306,7 @@ impl EngineInner {
             };
 
             // Record history entry every frame
-            if let Some(snap) = snaps.get(&npc_id.index()) {
+            if let Some(snap) = snaps.get(&npc_id) {
                 path.add_history_entry(snap.position, snap.direction as u8);
             }
 
@@ -6325,7 +6322,7 @@ impl EngineInner {
                 // before feeding it to
                 // `is_straight_movement_autorized` for the 3-step
                 // side-offset fallback.
-                let chief_box = match snaps.get(&npc_id.index()).map(|s| s.move_box) {
+                let chief_box = match snaps.get(&npc_id).map(|s| s.move_box) {
                     Some(b) if b.is_somewhere() => crate::coordinates::MoveBox::from_coords(
                         b.x_min() - 3.0,
                         b.y_min() - 3.0,
@@ -6362,7 +6359,7 @@ impl EngineInner {
             // `FastFindGrid::is_reachable(OPAQUE)` LOS gate — a
             // separated minion behind a wall must NOT re-join even
             // within view radius.
-            let chief_snap = snaps.get(&npc_id.index()).copied();
+            let chief_snap = snaps.get(&npc_id).copied();
             let missed = ai.missed_patrol_members.clone();
             let mut reacquired = Vec::new();
             let obstacles_owned = scratch.ai_sight_obstacles.clone();
@@ -6395,7 +6392,7 @@ impl EngineInner {
                     }
                     reacquired.push(i);
                     ai.patrol.push(member);
-                    chief_assigns.push((member, npc_id.index()));
+                    chief_assigns.push((member, npc_id));
                 }
             }
             for &i in reacquired.iter().rev() {
@@ -6405,13 +6402,10 @@ impl EngineInner {
 
         // ── Phase 4: Set patrol_chief on minions ──
         for (minion, chief) in chief_assigns {
-            if let Some(entity) = self
-                .entities
-                .get_mut_at_index(minion as usize as u32)
-                .map(|(_, entity)| entity)
+            if let Some(entity) = self.entities.get_mut(minion)
                 && let Some(ai) = entity.ai_controller_mut()
             {
-                ai.patrol_chief = chief;
+                ai.patrol_chief = Some(chief);
             }
         }
 
@@ -6419,7 +6413,7 @@ impl EngineInner {
         // Build a map of minion → (chief_position, chief_state) for use
         // in the coordinate dispatch below.
         let mut patrol_tick_map: std::collections::HashMap<
-            u32,
+            EntityId,
             (crate::ai::Position, crate::ai::AiState),
         > = std::collections::HashMap::new();
         for &npc_id in &npc_ids {
@@ -6429,25 +6423,19 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller() else {
                 continue;
             };
-            let chief_handle = ai.patrol_chief;
-            if chief_handle == 0 {
-                continue;
-            }
-            if let Some(cs) = snaps.get(&chief_handle) {
-                patrol_tick_map.insert(npc_id.index(), (cs.position, cs.ai_state));
+            if let Some(chief_id) = ai.patrol_chief
+                && let Some(cs) = snaps.get(&chief_id)
+            {
+                patrol_tick_map.insert(npc_id, (cs.position, cs.ai_state));
             }
         }
 
         // ── Phase 6: Dispatch CALL_PATROL_COORDINATE to minions ──
         let patrol_frame = self.frame_counter;
         for cmd in patrol_cmds {
-            let minion_id = EntityId::Soldier(crate::entity_id::SoldierId(cmd.minion));
+            let minion_id = cmd.minion;
             let ctx = {
-                let Some(entity) = self
-                    .entities
-                    .get_mut_at_index(cmd.minion as usize as u32)
-                    .map(|(_, entity)| entity)
-                else {
+                let Some(entity) = self.entities.get_mut(minion_id) else {
                     continue;
                 };
                 let ctx = build_ai_context_from_entity(
@@ -6476,7 +6464,7 @@ impl EngineInner {
             // and dispatched into battle decisions without losing
             // their primary target snapshot.
             let mut tick_data = self.build_npc_tick_data(minion_id, &scratch, assets);
-            if let Some(&(chief_pos, chief_state)) = patrol_tick_map.get(&(cmd.minion)) {
+            if let Some(&(chief_pos, chief_state)) = patrol_tick_map.get(&cmd.minion) {
                 tick_data.patrol_chief_position = chief_pos;
                 tick_data.patrol_chief_state = chief_state;
             }

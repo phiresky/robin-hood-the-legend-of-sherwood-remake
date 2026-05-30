@@ -5,6 +5,7 @@ use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::*;
+use crate::element::EntityId;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
 // ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ pub struct CampSoldierInfo {
     /// This soldier's patrol chief.
     /// Used by `CanCallThisSoldier` and the patrol-chief fallback in the
     /// AlertSoldiers eligibility predicate.
-    pub patrol_chief: NpcHandle,
+    pub patrol_chief: Option<EntityId>,
     /// This soldier's current antagonist.
     /// Used by `CanCallThisSoldier` to reject a soldier already in a
     /// conversation with someone other than the calling officer.

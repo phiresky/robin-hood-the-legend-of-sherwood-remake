@@ -7055,7 +7055,7 @@ impl HostFunctions for GameHost {
                     // Guard 3: subordinate has no existing chief.
                     let sub_has_chief = sub_entity
                         .ai_controller()
-                        .is_some_and(|ai| ai.patrol_chief != 0);
+                        .is_some_and(|ai| ai.patrol_chief.is_some());
                     if sub_has_chief {
                         tracing::error!(
                             "Script Error: AddAsSubordinate with subordinate ({subordinate}) who already is in a patrol"
@@ -7091,7 +7091,7 @@ impl HostFunctions for GameHost {
                     // Guard 7: chief has no chief of its own.
                     let chief_has_chief = chief_entity
                         .ai_controller()
-                        .is_some_and(|ai| ai.patrol_chief != 0);
+                        .is_some_and(|ai| ai.patrol_chief.is_some());
                     if chief_has_chief {
                         tracing::error!(
                             "Script Error: AddAsSubordinate with chief ({actor}) who is himself in a patrol"
@@ -7106,13 +7106,7 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
 
-                    // Convert the actor script handle to the NpcHandle
-                    // convention used by `theoretical_patrol`
-                    // (0-based EntityId, matching `tick_patrol_coordination`'s
-                    // `eid.0` push at engine/ai/mod.rs:5035).
-                    let Some(sub_handle) =
-                        Self::actor_handle_index(subordinate).map(|idx| idx as u32)
-                    else {
+                    let Some(sub_id) = self.actor_id(subordinate) else {
                         tracing::error!(
                             "Script Error: AddAsSubordinate with invalid subordinate handle {subordinate}"
                         );
@@ -7123,8 +7117,8 @@ impl HostFunctions for GameHost {
                     {
                         // Dedup before pushing — same as the
                         // upstream `add_patrol_member` helper.
-                        if !ai.theoretical_patrol.contains(&sub_handle) {
-                            ai.theoretical_patrol.push(sub_handle);
+                        if !ai.theoretical_patrol.contains(&sub_id) {
+                            ai.theoretical_patrol.push(sub_id);
                             // Force the chief's active patrol to be
                             // rebuilt on the next `tick_patrol_coordination`
                             // pass (engine/ai/mod.rs:5121).  The
@@ -7150,15 +7144,14 @@ impl HostFunctions for GameHost {
                     let actor = stack.pop_i32();
                     // Phase 1: snapshot the minion handles so we can free
                     // the chief's mutable borrow before iterating them.
-                    let minion_handles: Vec<crate::ai::NpcHandle> =
-                        if let Some(entity) = self.get_entity(actor) {
-                            entity
-                                .ai_controller()
-                                .map(|ai| ai.theoretical_patrol.clone())
-                                .unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        };
+                    let minion_ids: Vec<EntityId> = if let Some(entity) = self.get_entity(actor) {
+                        entity
+                            .ai_controller()
+                            .map(|ai| ai.theoretical_patrol.clone())
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
                     // Phase 2: clear each minion's `patrol_chief`,
                     // and for minions in the Default state, fire
                     // the EventReturnToDuty self-stimulus.  The
@@ -7166,12 +7159,12 @@ impl HostFunctions for GameHost {
                     // of the stimulus on the next think tick, which
                     // is the same end-state as the event-hook
                     // approach.
-                    for minion_handle in minion_handles {
-                        let minion_actor = Self::actor_handle_from_index(minion_handle as usize);
+                    for minion_id in minion_ids {
+                        let minion_actor = Self::actor_handle(minion_id);
                         if let Some(entity) = self.get_entity_mut(minion_actor)
                             && let Some(ai) = entity.ai_controller_mut()
                         {
-                            ai.patrol_chief = 0;
+                            ai.patrol_chief = None;
                             if ai.current_state == crate::ai::AiState::Default {
                                 ai.fire_self_stimulus(crate::ai::StimulusType::EventReturnToDuty);
                             }

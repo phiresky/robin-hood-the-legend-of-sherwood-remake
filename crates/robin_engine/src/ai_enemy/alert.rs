@@ -396,7 +396,9 @@ impl EnemyAi {
             let stays_on_post =
                 !cs_in_building && (cs.is_tower_guard || cs.duty_flag || cs.company_number == 100);
             let allowed_to_leave = !stays_on_post;
-            let patrol_chief_is_me = cs.patrol_chief != 0 && cs.patrol_chief == my_handle;
+            let patrol_chief_is_me = cs
+                .patrol_chief
+                .is_some_and(|chief_id| chief_id.index() == my_handle);
             if !(allowed_to_leave || patrol_chief_is_me) {
                 continue;
             }
@@ -1006,26 +1008,20 @@ impl EnemyAi {
         // of the list. `camp_soldiers` only carries soldiers, so
         // civilian patrol chiefs don't qualify (the gate is on
         // is_soldier before reading the rank).
-        let patrol_head: Option<NpcHandle> = self
-            .base
-            .patrol
-            .first()
-            .copied()
-            .filter(|&h| h != 0)
-            .and_then(|h| {
-                tick.camp_soldiers.iter().find_map(|cs| {
-                    if cs.handle != h {
-                        return None;
-                    }
-                    let allowed = match cs.rank {
-                        ProfileRank::Soldier => allow_soldier,
-                        ProfileRank::Officer => allow_officer,
-                        ProfileRank::Knight => allow_knight,
-                        ProfileRank::None => false,
-                    };
-                    allowed.then_some(h)
-                })
-            });
+        let patrol_head: Option<NpcHandle> = self.base.patrol.first().copied().and_then(|id| {
+            tick.camp_soldiers.iter().find_map(|cs| {
+                if cs.handle != id.index() {
+                    return None;
+                }
+                let allowed = match cs.rank {
+                    ProfileRank::Soldier => allow_soldier,
+                    ProfileRank::Officer => allow_officer,
+                    ProfileRank::Knight => allow_knight,
+                    ProfileRank::None => false,
+                };
+                allowed.then_some(id.index())
+            })
+        });
         if let Some(h) = patrol_head {
             self.base.pending_add_detectables.push((
                 crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
@@ -1120,15 +1116,10 @@ impl EnemyAi {
 
         // Prefer the patrol's #0 if they're a plain
         // soldier.  `camp_soldiers` lets us recover the rank.
-        let mut soldier: Option<(NpcHandle, Position)> = self
-            .base
-            .patrol
-            .first()
-            .copied()
-            .filter(|&h| h != 0)
-            .and_then(|h| {
+        let mut soldier: Option<(NpcHandle, Position)> =
+            self.base.patrol.first().copied().and_then(|id| {
                 tick.camp_soldiers.iter().find_map(|cs| {
-                    (cs.handle == h && cs.rank == ProfileRank::Soldier)
+                    (cs.handle == id.index() && cs.rank == ProfileRank::Soldier)
                         .then_some((cs.handle, cs.position))
                 })
             });

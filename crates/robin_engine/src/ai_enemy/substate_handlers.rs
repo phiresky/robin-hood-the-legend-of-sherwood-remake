@@ -144,7 +144,7 @@ impl EnemyAi {
 
             Substate::DefaultGotoChief => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    if self.base.patrol_chief != 0 {
+                    if self.base.patrol_chief.is_some() {
                         // Face toward the chief's position (cached by engine).
                         self.base.face_position(tick.patrol_chief_position);
                         self.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
@@ -742,9 +742,13 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     let do_not_investigate = match self.get_rank() {
                         ProfileRank::Officer => {
-                            let me = self.base.me;
-                            let has_patrol =
-                                tick.camp_soldiers.iter().any(|cs| cs.patrol_chief == me);
+                            let me = crate::element::EntityId::Soldier(
+                                crate::entity_id::SoldierId(self.base.me),
+                            );
+                            let has_patrol = tick
+                                .camp_soldiers
+                                .iter()
+                                .any(|cs| cs.patrol_chief == Some(me));
                             let dx = (ctx.position.x - self.base.seek_position.x).abs();
                             let dy = (ctx.position.y - self.base.seek_position.y).abs();
                             const OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE: f32 = 100.0;
@@ -3641,15 +3645,15 @@ impl EnemyAi {
                         }
                         // If my patrol chief is an officer whose 180°
                         // detects me, fire EVENT_SEES_BRAWL at them.
-                        if self.base.patrol_chief != 0
-                            && let Some(chief_view) = ctx.entity_view(self.base.patrol_chief)
+                        if let Some(chief_id) = self.base.patrol_chief
+                            && let Some(chief_view) = ctx.entity_view(chief_id.index())
                             && chief_view.is_soldier()
                             && chief_view.is_able_to_fight
                             && chief_view.rank == ProfileRank::Officer
                         {
                             self.base.pending_cross_npc_actions.push(
                                 CrossNpcAction::SendStimulus {
-                                    target: self.base.patrol_chief,
+                                    target: chief_id.index(),
                                     stimulus_type: StimulusType::EventSeesBrawl,
                                     info: crate::ai::StimulusInfo::Human(
                                         self.base.me as HumanHandle,

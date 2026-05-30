@@ -874,7 +874,10 @@ fn add_as_subordinate_requests_patrol_reinit() {
         .as_ref()
         .and_then(|entity| entity.ai_controller())
         .expect("chief has AI");
-    assert_eq!(chief_ai.theoretical_patrol, vec![1]);
+    assert_eq!(
+        chief_ai.theoretical_patrol,
+        vec![EntityId::Soldier(crate::entity_id::SoldierId(1))]
+    );
     assert!(chief_ai.patrol.is_empty());
     assert!(chief_ai.missed_patrol_members.is_empty());
     assert!(chief_ai.needs_patrol_reinit);
