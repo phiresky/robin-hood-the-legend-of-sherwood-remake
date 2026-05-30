@@ -2840,7 +2840,7 @@ impl EngineInner {
                 // Disjoint-borrow: `self.sequence_manager` is a field of
                 // `self` distinct from `self.entities`, so the compiler
                 // accepts holding `&self.sequence_manager` while iterating
-                // `self.entities.iter_mut()`.
+                // mutable occupied entity slots.
                 let order_snapshot = self.sequence_manager.current_order_for_actor(entity_id);
                 let (order_seq_elem, anim_type, order_id, antagonist, completion) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
@@ -3672,11 +3672,7 @@ impl EngineInner {
         // isn't interleaved with mutable entity iteration.
         let mut triggers: Vec<(u32, crate::coordinates::MapPoint, Option<Material>)> = Vec::new();
 
-        for slot in self.entities.iter_mut() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             if !entity.is_active() {
                 continue;
             }

@@ -783,7 +783,7 @@ impl EngineInner {
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
         let rng = &mut self.rng;
-        for entity in self.entities.iter_mut().flatten() {
+        for (_, entity) in occupied_entity_slots_mut(&mut self.entities) {
             if !matches!(entity, Entity::Scroll(_)) {
                 continue;
             }
@@ -2217,7 +2217,7 @@ impl EngineInner {
         // Reset every sprite's transient last_motion_state so the next
         // tick starts clean, regardless of whether the slot was an
         // actor or had an order to mark.
-        for entity in self.entities.iter_mut().flatten() {
+        for (_, entity) in occupied_entity_slots_mut(&mut self.entities) {
             entity.element_data_mut().sprite.last_motion_state = None;
         }
     }
@@ -3295,7 +3295,7 @@ impl EngineInner {
     /// Reveal all blipped entities — backs the console `UNBLIP`
     /// command, which iterates every NPC and reveals it.
     pub(crate) fn reveal_all_blips(&mut self) {
-        for entity in self.entities.iter_mut().flatten() {
+        for (_, entity) in occupied_entity_slots_mut(&mut self.entities) {
             if entity.element_data().blipped {
                 entity.reveal_blip();
             }

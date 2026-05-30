@@ -1042,11 +1042,7 @@ impl EngineInner {
         // Drain pending_jump_done — terminate sequence elements for
         // jumps that finished this tick.
         let mut to_terminate: Vec<(SequenceId, usize)> = Vec::new();
-        for slot in self.entities.iter_mut() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };
