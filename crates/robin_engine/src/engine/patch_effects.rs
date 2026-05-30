@@ -454,8 +454,8 @@ impl EngineInner {
         };
         if let Some(entity) = self
             .entities
-            .slot_mut(entity_idx)
-            .and_then(|slot| slot.as_mut())
+            .get_mut_at_index(entity_idx as u32)
+            .map(|(_, entity)| entity)
         {
             entity.element_data_mut().active = true;
             {
@@ -505,8 +505,8 @@ impl EngineInner {
         };
         if let Some(entity) = self
             .entities
-            .slot_mut(entity_idx)
-            .and_then(|slot| slot.as_mut())
+            .get_mut_at_index(entity_idx as u32)
+            .map(|(_, entity)| entity)
         {
             entity.element_data_mut().active = false;
         }

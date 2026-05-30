@@ -460,7 +460,11 @@ impl EngineInner {
         }
 
         for idx in to_reveal {
-            if let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut()) {
+            if let Some(entity) = self
+                .entities
+                .get_mut_at_index(idx as u32)
+                .map(|(_, entity)| entity)
+            {
                 tracing::debug!(
                     entity = idx,
                     "reveal_blip: shadow revealed by blip detection"
@@ -497,8 +501,10 @@ impl EngineInner {
         // swap).
         let mut listenable_calls: Vec<(i32, i32)> = Vec::new();
         for (idx, listening_pc) in to_hear {
-            if let Some(Entity::Target(t)) =
-                self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+            if let Some(Entity::Target(t)) = self
+                .entities
+                .get_mut_at_index(idx as u32)
+                .map(|(_, entity)| entity)
                 && t.target
                     .action_filter
                     .contains(crate::element::TargetFilter::LISTEN)

@@ -36,20 +36,24 @@ impl Entities {
         self.0.resize(new_len, value);
     }
 
-    pub fn slots(&self) -> &[Option<Entity>] {
-        &self.0
-    }
-
     pub fn swap_slots_with(&mut self, slots: &mut Vec<Option<Entity>>) {
         std::mem::swap(&mut self.0, slots);
     }
 
-    pub fn slot(&self, index: usize) -> Option<&Option<Entity>> {
-        self.0.get(index)
+    pub fn id_at_index(&self, index: u32) -> Option<EntityId> {
+        let entity = self.0.get(index as usize)?.as_ref()?;
+        Some(EntityId::new(index, entity.entity_id_kind()))
     }
 
-    pub fn slot_mut(&mut self, index: usize) -> Option<&mut Option<Entity>> {
-        self.0.get_mut(index)
+    pub fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)> {
+        let entity = self.0.get(index as usize)?.as_ref()?;
+        Some((EntityId::new(index, entity.entity_id_kind()), entity))
+    }
+
+    pub fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)> {
+        let entity = self.0.get_mut(index as usize)?.as_mut()?;
+        let id = EntityId::new(index, entity.entity_id_kind());
+        Some((id, entity))
     }
 
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
@@ -60,12 +64,8 @@ impl Entities {
         self.0.get_mut(id.index() as usize)?.as_mut()
     }
 
-    pub fn iter_slots(&self) -> impl Iterator<Item = &Option<Entity>> + '_ {
-        self.0.iter()
-    }
-
-    pub fn iter_slots_mut(&mut self) -> impl Iterator<Item = &mut Option<Entity>> + '_ {
-        self.0.iter_mut()
+    pub fn remove(&mut self, id: EntityId) -> Option<Entity> {
+        self.0.get_mut(id.index() as usize)?.take()
     }
 
     pub fn occupied(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {

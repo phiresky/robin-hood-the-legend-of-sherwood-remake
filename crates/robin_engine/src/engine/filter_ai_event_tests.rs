@@ -352,8 +352,8 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
         crate::natives::GameHost::actor_index(sensitive_handle).expect("valid test handle");
     let before_state = engine
         .entities
-        .slot(sensitive_idx)
-        .and_then(|slot| slot.as_ref())
+        .get_at_index(sensitive_idx as u32)
+        .map(|(_, entity)| entity)
         .and_then(|e| e.ai_controller())
         .map(|ai| (ai.current_state, ai.current_substate));
 
@@ -375,8 +375,8 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
     // State should be unchanged (think() never ran).
     let after_state = engine
         .entities
-        .slot(sensitive_idx)
-        .and_then(|slot| slot.as_ref())
+        .get_at_index(sensitive_idx as u32)
+        .map(|(_, entity)| entity)
         .and_then(|e| e.ai_controller())
         .map(|ai| (ai.current_state, ai.current_substate));
     assert_eq!(

@@ -257,7 +257,10 @@ impl EngineInner {
             // ── Entity active state → real entities ──
             for (&handle, &active) in &game_host.entity_active {
                 if let Some(idx) = crate::natives::GameHost::actor_index(handle)
-                    && let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                    && let Some(entity) = self
+                        .entities
+                        .get_mut_at_index(idx as u32)
+                        .map(|(_, entity)| entity)
                     && (entity.kind().is_fx() || entity.kind().is_fx_target())
                 {
                     entity.element_data_mut().active = active;
@@ -524,8 +527,10 @@ impl EngineInner {
                         // takes `is_still_unconscious` and short-circuits
                         // otherwise.  Read the live human-data flag now.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor)
-                            && let Some(entity) =
-                                self.entities.slot(idx).and_then(|slot| slot.as_ref())
+                            && let Some(entity) = self
+                                .entities
+                                .get_at_index(idx as u32)
+                                .map(|(_, entity)| entity)
                         {
                             let still_unconscious =
                                 entity.human_data().is_some_and(|h| h.unconscious);
@@ -577,8 +582,10 @@ impl EngineInner {
                                 .is_some_and(|elem| {
                                     elem.command == crate::element::Command::LockAi
                                 });
-                            if let Some(entity) =
-                                self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                            if let Some(entity) = self
+                                .entities
+                                .get_mut_at_index(idx as u32)
+                                .map(|(_, entity)| entity)
                                 && let Some(ai) = entity.ai_controller_mut()
                             {
                                 ai.script_lock(send_back, from_lockai_command);
@@ -595,8 +602,10 @@ impl EngineInner {
                     crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
                         // Rewind the actor's sprite to frame 0 of its current row.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor)
-                            && let Some(entity) =
-                                self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                            && let Some(entity) = self
+                                .entities
+                                .get_mut_at_index(idx as u32)
+                                .map(|(_, entity)| entity)
                         {
                             entity.sprite_mut().reset_sprite_frame(false);
                         }
@@ -670,8 +679,10 @@ impl EngineInner {
                             // tick observes the "lose consciousness" event
                             // before the detect-me broadcast lands on
                             // friends — ordering matters here.
-                            if let Some(entity) =
-                                self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                            if let Some(entity) = self
+                                .entities
+                                .get_mut_at_index(idx as u32)
+                                .map(|(_, entity)| entity)
                                 && let Some(ai) = entity.ai_controller_mut()
                             {
                                 ai.pending_stimuli.push(crate::ai::Stimulus::new(
@@ -681,8 +692,10 @@ impl EngineInner {
                             // Only NPCs broadcast their body — guard via
                             // `is_npc()` to avoid touching a PC or non-actor
                             // slot.
-                            if let Some(entity) =
-                                self.entities.slot(idx).and_then(|slot| slot.as_ref())
+                            if let Some(entity) = self
+                                .entities
+                                .get_at_index(idx as u32)
+                                .map(|(_, entity)| entity)
                                 && entity.is_npc()
                             {
                                 self.broadcast_body_detectable(id);
@@ -695,8 +708,10 @@ impl EngineInner {
                         // walks every other NPC and clears the resurrected
                         // NPC from their `DETECTABLE_BODY` list.
                         if let Some(idx) = crate::natives::GameHost::actor_index(actor)
-                            && let Some(entity) =
-                                self.entities.slot(idx).and_then(|slot| slot.as_ref())
+                            && let Some(entity) = self
+                                .entities
+                                .get_at_index(idx as u32)
+                                .map(|(_, entity)| entity)
                             && entity.is_npc()
                         {
                             let id = self.expect_entity_id_for_index(
@@ -720,7 +735,10 @@ impl EngineInner {
                         let Some(idx) = crate::natives::GameHost::actor_index(actor) else {
                             continue;
                         };
-                        let Some(entity) = self.entities.slot(idx).and_then(|slot| slot.as_ref())
+                        let Some(entity) = self
+                            .entities
+                            .get_at_index(idx as u32)
+                            .map(|(_, entity)| entity)
                         else {
                             continue;
                         };
@@ -1095,7 +1113,10 @@ impl EngineInner {
                 let Some(idx) = crate::natives::GameHost::actor_index(handle) else {
                     continue;
                 };
-                if let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                if let Some(entity) = self
+                    .entities
+                    .get_mut_at_index(idx as u32)
+                    .map(|(_, entity)| entity)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
                     ai.has_script_filter_override = true;
@@ -1185,7 +1206,10 @@ impl EngineInner {
         // above only reads self.entities to avoid conflicting with the
         // sequence_manager borrow).
         for &(idx, new_anim, _) in &changes {
-            if let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+            if let Some(entity) = self
+                .entities
+                .get_mut_at_index(idx as u32)
+                .map(|(_, entity)| entity)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.old_action = new_anim;
@@ -1919,8 +1943,8 @@ impl EngineInner {
 
         let Some(entity) = self
             .entities
-            .slot_mut(entity_idx)
-            .and_then(|slot| slot.as_mut())
+            .get_mut_at_index(entity_idx as u32)
+            .map(|(_, entity)| entity)
         else {
             return;
         };
@@ -2801,7 +2825,10 @@ impl EngineInner {
                         tracing::warn!("SetActorLocation: invalid actor handle {actor_handle}");
                         continue;
                     };
-                    let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                    let Some(entity) = self
+                        .entities
+                        .get_mut_at_index(idx as u32)
+                        .map(|(_, entity)| entity)
                     else {
                         tracing::warn!("SetActorLocation: actor {actor_handle} missing entity");
                         continue;
@@ -2850,7 +2877,10 @@ impl EngineInner {
                     // `display_order_ref` so a teleported actor that
                     // had been carried/attached doesn't keep its prior
                     // z-sort anchor.
-                    let Some(entity) = self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                    let Some(entity) = self
+                        .entities
+                        .get_mut_at_index(idx as u32)
+                        .map(|(_, entity)| entity)
                     else {
                         continue;
                     };
@@ -2884,8 +2914,10 @@ impl EngineInner {
                             new_obstacle_handle,
                             assets.static_sight_obstacles.as_slice(),
                         );
-                        if let Some(entity) =
-                            self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                        if let Some(entity) = self
+                            .entities
+                            .get_mut_at_index(idx as u32)
+                            .map(|(_, entity)| entity)
                         {
                             let ed = entity.element_data_mut();
                             ed.set_obstacle_index(new_obstacle_handle, plane);
@@ -2916,8 +2948,10 @@ impl EngineInner {
                         let elev = self
                             .position_to_point_3d(assets, handle, layer, probe_x, probe_y)
                             .z;
-                        if let Some(entity) =
-                            self.entities.slot_mut(idx).and_then(|slot| slot.as_mut())
+                        if let Some(entity) = self
+                            .entities
+                            .get_mut_at_index(idx as u32)
+                            .map(|(_, entity)| entity)
                         {
                             // `set_position` writes the 3D point and
                             // calls `recompute_from_3d`, which rederives
@@ -3214,8 +3248,8 @@ impl EngineInner {
         let carried_handle: Option<i32>;
         if let Some(entity) = self
             .entities
-            .slot_mut(actor_idx)
-            .and_then(|slot| slot.as_mut())
+            .get_mut_at_index(actor_idx as u32)
+            .map(|(_, entity)| entity)
         {
             let elem = entity.element_data_mut();
             elem.hidden_in_building = true;
@@ -3276,8 +3310,8 @@ impl EngineInner {
                 if let Some(carried_idx) = crate::natives::GameHost::actor_index(carried_h)
                     && let Some(carried_entity) = self
                         .entities
-                        .slot_mut(carried_idx)
-                        .and_then(|slot| slot.as_mut())
+                        .get_mut_at_index(carried_idx as u32)
+                        .map(|(_, entity)| entity)
                 {
                     let elem = carried_entity.element_data_mut();
                     elem.hidden_in_building = true;
@@ -3326,8 +3360,8 @@ impl EngineInner {
                 };
                 let Some(occ) = self
                     .entities
-                    .slot_mut(occ_idx)
-                    .and_then(|slot| slot.as_mut())
+                    .get_mut_at_index(occ_idx as u32)
+                    .map(|(_, entity)| entity)
                 else {
                     continue;
                 };
