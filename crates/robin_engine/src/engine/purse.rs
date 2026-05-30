@@ -218,8 +218,7 @@ impl EngineInner {
             x: impact_pos.x,
             y: impact_pos.y,
         };
-        let mut box_at_pos =
-            shooter_move_box.translated(crate::geo2d::pt(impact_pos.x, impact_pos.y));
+        let mut box_at_pos = shooter_move_box.translated(MapPoint::new(impact_pos.x, impact_pos.y));
         if self
             .fast_grid
             .find_authorized_position(&mut box_at_pos, layer)

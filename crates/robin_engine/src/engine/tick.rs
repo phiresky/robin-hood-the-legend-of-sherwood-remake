@@ -7398,7 +7398,7 @@ impl EngineInner {
                         if let (Some(_sector_idx), Some(sector_number), Some(move_box)) =
                             (probe.sector_idx, probe.sector, move_box)
                         {
-                            let mut box_at = move_box.translated(dest.to_geo());
+                            let mut box_at = move_box.translated(dest);
                             if self.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
                                 dest,

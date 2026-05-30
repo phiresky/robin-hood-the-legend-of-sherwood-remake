@@ -737,7 +737,7 @@ impl EngineInner {
                 layer,
                 sector,
             } => {
-                self.manage_input_process_teleport(dest.to_geo(), *layer, *sector);
+                self.manage_input_process_teleport(*dest, *layer, *sector);
             }
 
             // ── Minimap ─────────────────────────────────────────
@@ -1751,7 +1751,7 @@ impl EngineInner {
         }
         let tgt_pos = target_entity.position_iface().map_position();
         let tgt_layer = target_entity.element_data().layer();
-        let mut box_at_target = move_box.translated(tgt_pos.to_geo());
+        let mut box_at_target = move_box.translated(tgt_pos);
         self.fast_grid
             .find_authorized_position(&mut box_at_target, tgt_layer)
     }
@@ -2674,11 +2674,11 @@ impl EngineInner {
             return;
         };
 
-        let victim_pos_geo = match self.get_entity(target_id) {
-            Some(e) => e.element_data().position_map().to_geo(),
+        let victim_pos = match self.get_entity(target_id) {
+            Some(e) => e.element_data().position_map(),
             None => return,
         };
-        let t_victim = victim_line.compute_nearest_point_param(victim_pos_geo.into());
+        let t_victim = victim_line.compute_nearest_point_param(victim_pos.to_geo().into());
         let coeff = t_victim * victim_line.norm();
 
         let aggressor_vec = aggressor_line.vector();
@@ -2865,7 +2865,7 @@ impl EngineInner {
 
         let mut destination_pos = target_pos;
         if move_box.is_somewhere() {
-            let mut box_at_target = move_box.translated(target_pos.to_geo());
+            let mut box_at_target = move_box.translated(target_pos);
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_at_target, layer)

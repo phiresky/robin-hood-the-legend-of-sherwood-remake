@@ -15,7 +15,6 @@
 use super::EngineInner;
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
-use crate::geo2d;
 use crate::order::OrderType;
 use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
 
@@ -30,7 +29,7 @@ impl EngineInner {
     /// `Command::Teleport` branch in `engine::tick`.
     pub(crate) fn manage_input_process_teleport(
         &mut self,
-        dest: geo2d::GeoPoint2D,
+        dest: MapPoint,
         layer: u16,
         sector: Option<crate::position_interface::SectorHandle>,
     ) {
@@ -38,11 +37,6 @@ impl EngineInner {
         if selected.is_empty() {
             return;
         }
-
-        let dest = MapPoint {
-            x: dest.x,
-            y: dest.y,
-        };
 
         // Snapshot the first PC's current position to compute the
         // displacement that the rest of the group preserves.
@@ -137,7 +131,7 @@ impl EngineInner {
             x: current_pos.x + dx,
             y: current_pos.y + dy,
         };
-        let bbox_at_new = move_box.translated(geo2d::pt(new_pos.x, new_pos.y));
+        let bbox_at_new = move_box.translated(new_pos);
 
         let authorized = self.fast_grid.is_position_authorized(&bbox_at_new, layer)
             && self

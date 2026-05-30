@@ -344,8 +344,7 @@ impl EngineInner {
         // Force-movement fallback: try to slide the destination into
         // a reachable slot via `find_authorized_position_toward`.
         if force_movement && !is_reachable {
-            let mut box_at_dest =
-                my_move_box.translated(crate::geo2d::pt(destination.x, destination.y));
+            let mut box_at_dest = my_move_box.translated(destination);
             if self.fast_grid.find_authorized_position_toward(
                 &mut box_at_dest,
                 my_pos_map,
