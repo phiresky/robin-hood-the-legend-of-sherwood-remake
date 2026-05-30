@@ -695,6 +695,8 @@ impl SaveGameManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::Game;
+    use crate::save_file::special_slots;
     use robin_engine::campaign::Campaign;
 
     fn fresh_engine() -> (Engine, robin_engine::engine::LevelAssets) {
@@ -802,7 +804,7 @@ mod tests {
         // Build a live engine with some distinctive state.
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let game = crate::game::Game::default();
+        let game = Game::default();
         engine.test_set_frame_counter(42);
         engine.test_set_engine_scalars(0xAA55_AA55, 2.0, 0, false, false, Vec::new());
 
@@ -817,7 +819,7 @@ mod tests {
         mgr.write_continue_save(&mut host, &game, &engine, 17, None, None)
             .unwrap();
         let continue_idx = mgr
-            .find_by_filename(crate::save_file::special_slots::CONTINUE)
+            .find_by_filename(special_slots::CONTINUE)
             .expect("continue slot should exist");
         assert!(mgr.slot_file_exists(continue_idx));
 
@@ -829,7 +831,7 @@ mod tests {
         // Load into a fresh engine.
         let mut engine2 = fresh_engine().0;
         let mut host2 = Host::new(800.0, 600.0);
-        let mut game2 = crate::game::Game::default();
+        let mut game2 = Game::default();
         mgr.load_save_into_engine(idx, &mut engine2, &mut host2, &mut game2, &assets)
             .unwrap();
         assert_eq!(engine2.frame_counter(), 42);
@@ -845,7 +847,7 @@ mod tests {
 
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let game = crate::game::Game::default();
+        let game = Game::default();
 
         engine.test_set_frame_counter(1);
         mgr.write_quick_save(&mut host, &game, &engine, 3, None, None)
@@ -854,25 +856,21 @@ mod tests {
         mgr.write_quick_save(&mut host, &game, &engine, 3, None, None)
             .unwrap();
 
-        let quick_idx = mgr
-            .find_by_filename(crate::save_file::special_slots::QUICK)
-            .unwrap();
-        let ex_idx = mgr
-            .find_by_filename(crate::save_file::special_slots::EX_QUICK)
-            .unwrap();
+        let quick_idx = mgr.find_by_filename(special_slots::QUICK).unwrap();
+        let ex_idx = mgr.find_by_filename(special_slots::EX_QUICK).unwrap();
         assert!(mgr.slot_file_exists(quick_idx));
         assert!(mgr.slot_file_exists(ex_idx));
 
         let mut engine_q = fresh_engine().0;
         let mut host_q = Host::new(800.0, 600.0);
-        let mut game_q = crate::game::Game::default();
+        let mut game_q = Game::default();
         mgr.load_save_into_engine(quick_idx, &mut engine_q, &mut host_q, &mut game_q, &assets)
             .unwrap();
         assert_eq!(engine_q.frame_counter(), 2);
 
         let mut engine_e = fresh_engine().0;
         let mut host_e = Host::new(800.0, 600.0);
-        let mut game_e = crate::game::Game::default();
+        let mut game_e = Game::default();
         mgr.load_save_into_engine(ex_idx, &mut engine_e, &mut host_e, &mut game_e, &assets)
             .unwrap();
         assert_eq!(engine_e.frame_counter(), 1);
@@ -901,7 +899,7 @@ mod tests {
 
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::new(800.0, 600.0);
-        let game = crate::game::Game::default();
+        let game = Game::default();
 
         // Profile 0 saves frame=100 into QuickSave.
         engine.test_set_frame_counter(100);
@@ -929,14 +927,14 @@ mod tests {
         // Each profile loads its own snapshot back independently.
         let mut engine_a = fresh_engine().0;
         let mut host_a = Host::new(800.0, 600.0);
-        let mut game_a = crate::game::Game::default();
+        let mut game_a = Game::default();
         mgr0.load_save_into_engine(q0, &mut engine_a, &mut host_a, &mut game_a, &assets)
             .unwrap();
         assert_eq!(engine_a.frame_counter(), 100);
 
         let mut engine_b = fresh_engine().0;
         let mut host_b = Host::new(800.0, 600.0);
-        let mut game_b = crate::game::Game::default();
+        let mut game_b = Game::default();
         mgr1.load_save_into_engine(q1, &mut engine_b, &mut host_b, &mut game_b, &assets)
             .unwrap();
         assert_eq!(engine_b.frame_counter(), 200);
