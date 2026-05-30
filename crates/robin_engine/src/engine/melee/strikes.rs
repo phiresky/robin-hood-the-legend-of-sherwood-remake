@@ -95,9 +95,7 @@ impl EngineInner {
         let mut terminate_low_parry: Vec<(crate::sequence::SequenceId, usize, EntityId)> =
             Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else { continue };
-            let entity_id = EntityId::from_raw(idx as u32);
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let is_parrying = entity
                 .actor_data()
                 .map(|a| {
@@ -143,7 +141,10 @@ impl EngineInner {
                 {
                     terminate_low_parry.push((elem_ref.0, elem_ref.1, entity_id));
                 }
-                tracing::trace!("tick_parry_counters: entity={} timer already 0", idx,);
+                tracing::trace!(
+                    "tick_parry_counters: entity={} timer already 0",
+                    entity_id.index(),
+                );
                 continue;
             }
             let new_counter = counter - 1;
@@ -169,7 +170,7 @@ impl EngineInner {
                 }
                 tracing::trace!(
                     "tick_parry_counters: entity={} state={:?} parry timer expired",
-                    idx,
+                    entity_id.index(),
                     state,
                 );
             }
@@ -637,12 +638,7 @@ impl EngineInner {
         }
 
         // Phase 1: advance timers and collect hits
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
-
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
 
@@ -668,7 +664,7 @@ impl EngineInner {
                     if hold_true_sweep {
                         tracing::trace!(
                             "tick_melee_strikes: entity={} order_id={} strike={:?} holding true-circle sweep",
-                            idx,
+                            entity_id.index(),
                             order_id,
                             strike
                         );
@@ -685,7 +681,7 @@ impl EngineInner {
                         );
                         tracing::trace!(
                             "tick_melee_strikes: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
-                            idx,
+                            entity_id.index(),
                             order_id,
                             strike,
                             anim,
@@ -742,7 +738,7 @@ impl EngineInner {
 
             // Read melee state before mutating
             let melee = actor.active_melee;
-            let attacker_id = EntityId::from_raw(idx as u32);
+            let attacker_id = entity_id;
 
             // Advance frame timer.  When sprite_driving_hit, the natural
             // countdown is frozen — only the sprite handler above moves
@@ -1345,12 +1341,7 @@ impl EngineInner {
         // termination.
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
-
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -1364,12 +1355,7 @@ impl EngineInner {
             // skips frames where the sprite isn't actually moving.
             let is_moving = flight.increment_x != 0.0 || flight.increment_y != 0.0;
             if is_moving && let Some(hitter) = flight.antagonist {
-                domino_sweeps.push((
-                    EntityId::from_raw(idx as u32),
-                    hitter,
-                    flight.increment_x,
-                    flight.increment_y,
-                ));
+                domino_sweeps.push((entity_id, hitter, flight.increment_x, flight.increment_y));
             }
 
             // Z (elevation) is tracked explicitly only when the flight
@@ -1394,10 +1380,7 @@ impl EngineInner {
                         });
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
-                    landings.push((
-                        EntityId::from_raw(idx as u32),
-                        flight.obstacle.map(|h| h.get()),
-                    ));
+                    landings.push((entity_id, flight.obstacle.map(|h| h.get())));
                 } else {
                     entity
                         .element_data_mut()
@@ -1848,12 +1831,8 @@ impl EngineInner {
         let mut hits: Vec<ChargeHit> = Vec::new();
         let mut finished_charges: Vec<EntityId> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
-            let attacker_id = EntityId::from_raw(idx as u32);
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let attacker_id = entity_id;
             let (elem_pos, _elem_layer, attacker_profile_idx) = {
                 let elem = entity.element_data();
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -2610,11 +2589,7 @@ impl EngineInner {
         // `crate::order::alloc_order_id` while still holding
         // `self.entities.iter_mut()`.
         let next_order_id = &mut self.next_order_id;
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             if !entity.is_human() || entity.is_dead() {
                 continue;
             }
@@ -2681,7 +2656,7 @@ impl EngineInner {
                     crate::ai_vision::set_view_status(npc, EyeStatus::LookForward);
                 }
 
-                let npc_id = EntityId::from_raw(idx as u32);
+                let npc_id = entity_id;
                 if standing_anim.is_some() || still_stunned {
                     let mut elem = crate::sequence::SequenceElement::new(
                         1,

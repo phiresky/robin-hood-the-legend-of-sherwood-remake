@@ -202,10 +202,7 @@ impl crate::engine::EngineInner {
 
         let mut refreshes: Vec<Refresh> = Vec::new();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else {
-                continue;
-            };
+        for (owner_id, entity) in self.entities_iter_with_id() {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -242,8 +239,6 @@ impl crate::engine::EngineInner {
                 continue;
             };
             let target_pos = target_entity.element_data().position_map();
-
-            let owner_id = EntityId::from_raw(idx as u32);
 
             // Countdown gate — when still >0, just decrement and skip
             // (collected below via `decrement_only`).

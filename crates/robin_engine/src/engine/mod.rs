@@ -484,6 +484,26 @@ pub struct PendingBgBlitDecal {
     pub shadow_color: u16,
 }
 
+/// Iterate occupied entity table slots with their typed stable IDs.
+pub(crate) fn occupied_entity_slots(
+    entities: &[Option<Entity>],
+) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
+    entities.iter().enumerate().filter_map(|(idx, slot)| {
+        slot.as_ref()
+            .map(|e| (EntityId::new(idx as u32, e.entity_id_kind()), e))
+    })
+}
+
+/// Mutable variant of [`occupied_entity_slots`].
+pub(crate) fn occupied_entity_slots_mut(
+    entities: &mut [Option<Entity>],
+) -> impl Iterator<Item = (EntityId, &mut Entity)> + '_ {
+    entities.iter_mut().enumerate().filter_map(|(idx, slot)| {
+        slot.as_mut()
+            .map(|e| (EntityId::new(idx as u32, e.entity_id_kind()), e))
+    })
+}
+
 impl EngineInner {
     pub(crate) fn pc_description_index_for_pc_data(
         &self,
@@ -536,14 +556,12 @@ impl EngineInner {
             }
             script.game_host.profile_manager = assets.profile_manager.clone().into();
         }
-        for (idx, entity) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = entity.as_mut() else {
-                continue;
-            };
+        for (id, entity) in occupied_entity_slots_mut(&mut self.entities) {
             entity
                 .sprite_mut()
                 .attach_runtime_from_cache(&assets.sprite_scriptor)
                 .unwrap_or_else(|err| {
+                    let idx = id.index();
                     panic!("failed to attach sprite runtime for entity {idx}: {err}")
                 });
         }
@@ -1258,6 +1276,24 @@ impl EngineInner {
         self.entities
             .get(id.index() as usize)
             .and_then(|e| e.as_ref())
+    }
+
+    /// Resolve a legacy raw entity-table index to the typed ID variant for
+    /// the entity currently stored in that slot.
+    pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
+        self.entities
+            .get(index as usize)
+            .and_then(|slot| slot.as_ref())
+            .map(|entity| EntityId::new(index, entity.entity_id_kind()))
+    }
+
+    /// Resolve a legacy raw entity-table index and panic when the slot is not
+    /// present.  Use this for script/AI boundaries that are expected to carry
+    /// live entity handles; missing slots indicate corrupted sim state or an
+    /// incomplete port rather than an ordinary false condition.
+    pub(crate) fn expect_entity_id_for_index(&self, index: u32, context: &str) -> EntityId {
+        self.entity_id_for_index(index)
+            .unwrap_or_else(|| panic!("{context}: missing entity for raw entity index {index}"))
     }
 
     /// The command of the actor's currently-executing sequence element,
@@ -2573,10 +2609,7 @@ impl EngineInner {
     /// exposed so overlays / debug renderers can label entities
     /// without a reverse lookup.
     pub fn entities_iter_with_id(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.entities.iter().enumerate().filter_map(|(idx, slot)| {
-            slot.as_ref()
-                .map(|e| (EntityId::new(idx as u32, e.entity_id_kind()), e))
-        })
+        occupied_entity_slots(&self.entities)
     }
 
     /// All player characters (portrait order).

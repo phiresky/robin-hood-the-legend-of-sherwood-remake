@@ -1654,12 +1654,7 @@ fn collect_arc_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
-        let target_id = EntityId::from_raw(idx as u32);
+    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1709,12 +1704,7 @@ fn collect_circle_warn_victims(
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
-        let target_id = EntityId::from_raw(idx as u32);
+    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1801,12 +1791,7 @@ fn collect_push_victims(
     let sy = fx;
 
     let mut victims = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
-        let target_id = EntityId::from_raw(idx as u32);
+    for (target_id, entity) in crate::engine::occupied_entity_slots(entities) {
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,

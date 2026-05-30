@@ -2017,11 +2017,7 @@ pub fn tick_abilities(
 ) -> Vec<AbilityTickResult> {
     let mut results = Vec::new();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
+    for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -2054,7 +2050,7 @@ pub fn tick_abilities(
                     // Shouldn't happen with an active ability; be
                     // defensive and clear the stale ability state.
                     tracing::warn!(
-                        entity = idx,
+                        entity = entity_id.index(),
                         "tick_abilities: AbilityKind::Listen with ListenPhase::Inactive — clearing"
                     );
                     if let Some(actor) = entity.actor_data_mut() {
@@ -2086,7 +2082,6 @@ pub fn tick_abilities(
             }
 
             // Animation completed — advance the phase machine.
-            let entity_id = EntityId::from_raw(idx as u32);
             let actor = match entity.actor_data_mut() {
                 Some(a) => a,
                 None => continue,
@@ -2145,7 +2140,7 @@ pub fn tick_abilities(
                 }
                 ReceivePursePhase::Inactive => {
                     tracing::warn!(
-                        entity = idx,
+                        entity = entity_id.index(),
                         "tick_abilities: AbilityKind::ReceivePurse with \
                          ReceivePursePhase::Inactive — clearing"
                     );
@@ -2177,7 +2172,6 @@ pub fn tick_abilities(
                 continue;
             }
 
-            let entity_id = EntityId::from_raw(idx as u32);
             let actor = match entity.actor_data_mut() {
                 Some(a) => a,
                 None => continue,
@@ -2222,7 +2216,7 @@ pub fn tick_abilities(
         let order_id = ability.order_id;
         // Self-heal swaps Healing → Eating; all other abilities use
         // the canonical per-kind animation.
-        let entity_id_here = EntityId::from_raw(idx as u32);
+        let entity_id_here = entity_id;
         let order_type = if kind == AbilityKind::Heal && ability.target == Some(entity_id_here) {
             OrderType::Eating
         } else {
@@ -2261,7 +2255,6 @@ pub fn tick_abilities(
         }
 
         // Animation finished — collect the result and clear the ability.
-        let entity_id = EntityId::from_raw(idx as u32);
         let actor_pos = entity.element_data().position_map();
         let actor_direction = u16::try_from(entity.element_data().direction()).unwrap_or(0);
 
@@ -2525,17 +2518,11 @@ pub fn sync_carried_positions(
 ) {
     // Collect carrier snapshots first to avoid borrow conflicts.
     let mut snapshots: Vec<CarrierSnapshot> = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
+    for (carrier_id, entity) in crate::engine::occupied_entity_slots(entities) {
         let Some(pc) = entity.pc_data() else { continue };
         let Some(target_id) = pc.carried else {
             continue;
         };
-        let carrier_id = EntityId::from_raw(idx as u32);
-
         let elem = entity.element_data();
 
         // Check the carrier's profile for LittleJohnCarry or the

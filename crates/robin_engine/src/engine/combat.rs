@@ -3,7 +3,7 @@
 use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
-use crate::element::{Command, Entity, EntityId};
+use crate::element::{Command, Entity, EntityId, EntityIdKind};
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
 pub const APPLE_SMELL_DURATION: u32 = 1500;
@@ -1165,13 +1165,8 @@ impl EngineInner {
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
         let ransom_ok = ransom >= threshold;
         let pcs: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| match s {
-                Some(Entity::Pc(_)) => Some(EntityId::from_raw(i as u32)),
-                _ => None,
-            })
+            .entities_iter_with_id()
+            .filter_map(|(id, entity)| matches!(entity, Entity::Pc(_)).then_some(id))
             .collect();
         for pc_id in pcs {
             // Only PCs that have the Purse action in their profile
@@ -1421,7 +1416,7 @@ impl EngineInner {
                 if dx * dx + dy * dy <= PICKUP_RADIUS_SQ {
                     pickups.push(Pickup {
                         pc_id,
-                        bonus_id: EntityId::from_raw(idx as u32),
+                        bonus_id: EntityId::new(idx as u32, EntityIdKind::Projectile),
                         obj_type,
                         assoc_action,
                         quantity,
@@ -2363,7 +2358,9 @@ impl EngineInner {
                 Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };
-            let target_pos = match self.get_entity(EntityId::from_raw(target_handle)) {
+            let target_pos = match self.get_entity(
+                self.expect_entity_id_for_index(target_handle, "update_bow_defense target handle"),
+            ) {
                 Some(e) => e.ground_position().to_geo(),
                 None => continue,
             };

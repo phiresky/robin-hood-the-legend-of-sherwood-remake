@@ -99,13 +99,10 @@ impl EngineInner {
         // 3D position with a Y-stretched isometric square-norm is used
         // for the proximity test.
         let candidates: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| {
-                let e = slot.as_ref()?;
+            .entities_iter_with_id()
+            .filter_map(|(id, e)| {
                 if e.is_active() && e.is_human() {
-                    Some(EntityId::from_raw(idx as u32))
+                    Some(id)
                 } else {
                     None
                 }
@@ -434,16 +431,11 @@ impl EngineInner {
         let mut applies: Vec<EntityId> = Vec::new();
         let mut just_landed: Vec<EntityId> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (net_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let net = match entity {
                 Entity::Net(n) if n.element.active => n,
                 _ => continue,
             };
-            let net_id = EntityId::from_raw(idx as u32);
 
             if net.projectile.flying {
                 advance_net_trajectory(net);
@@ -517,9 +509,9 @@ impl EngineInner {
         // Done in a separate read pass so we can borrow victim
         // entities.
         let mut wriggle_updates: Vec<(EntityId, crate::element::Animation)> = Vec::new();
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let net = match slot {
-                Some(Entity::Net(n)) if n.element.active && !n.projectile.flying => n,
+        for (id, entity) in self.entities_iter_with_id() {
+            let net = match entity {
+                Entity::Net(n) if n.element.active && !n.projectile.flying => n,
                 _ => continue,
             };
             if !matches!(
@@ -535,7 +527,7 @@ impl EngineInner {
                 crate::element::Animation::ObjectLying
             };
             if desired != net.object.animation {
-                wriggle_updates.push((EntityId::from_raw(idx as u32), desired));
+                wriggle_updates.push((id, desired));
             }
         }
         for (id, anim) in wriggle_updates {

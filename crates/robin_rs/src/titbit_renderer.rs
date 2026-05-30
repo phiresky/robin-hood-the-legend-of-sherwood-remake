@@ -469,9 +469,8 @@ impl TitbitRenderer {
             // reactions through walls — active+alive guard stays.
             if titbit.kind == TitbitKind::Emoticon
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) = engine.get_entity(crate::element::EntityId::from_raw(
-                    titbit.element_supplier.0,
-                ))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
             {
                 let elem = entity.element_data();
                 if !elem.active {
@@ -486,9 +485,8 @@ impl TitbitRenderer {
             // inactive.
             if matches!(titbit.kind, TitbitKind::WeakStunned | TitbitKind::Speak)
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) = engine.get_entity(crate::element::EntityId::from_raw(
-                    titbit.element_supplier.0,
-                ))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
                 && !entity.is_active()
             {
                 continue;
@@ -499,9 +497,8 @@ impl TitbitRenderer {
             // the entity is neither blipped nor inside a building.
             if titbit.kind == TitbitKind::Speak
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) = engine.get_entity(crate::element::EntityId::from_raw(
-                    titbit.element_supplier.0,
-                ))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
             {
                 let elem = entity.element_data();
                 if elem.blipped || elem.hidden_in_building {
@@ -512,9 +509,8 @@ impl TitbitRenderer {
             // WorkIcon: skip if entity is inactive.
             if titbit.kind == TitbitKind::WorkIcon
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) = engine.get_entity(crate::element::EntityId::from_raw(
-                    titbit.element_supplier.0,
-                ))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
                 && !entity.is_active()
             {
                 continue;
@@ -534,9 +530,8 @@ impl TitbitRenderer {
             if titbit.kind == TitbitKind::WorkIcon
                 && titbit.sprite_row == SpriteRow::WorkIconBowTraining as u16
                 && titbit.element_supplier.is_valid()
-                && let Some(entity) = engine.get_entity(crate::element::EntityId::from_raw(
-                    titbit.element_supplier.0,
-                ))
+                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(entity) = engine.get_entity(entity_id)
             {
                 let has_bow = entity.pc_data().is_some_and(|pc| {
                     assets
@@ -565,9 +560,9 @@ impl TitbitRenderer {
             // animation the titbit exists but is not drawn.
             if titbit.kind == TitbitKind::UnconsciousStar
                 && titbit.element_supplier.is_valid()
-                && !engine.can_have_unconscious_stars(crate::element::EntityId::from_raw(
-                    titbit.element_supplier.0,
-                ))
+                && !engine
+                    .entity_id_for_index(titbit.element_supplier.0)
+                    .is_some_and(|id| engine.can_have_unconscious_stars(id))
             {
                 continue;
             }

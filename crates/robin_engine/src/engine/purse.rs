@@ -81,10 +81,7 @@ impl EngineInner {
         }
         let mut impacts: Vec<Impact> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else {
-                continue;
-            };
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             if !entity.element_data().active {
                 continue;
             }
@@ -104,7 +101,6 @@ impl EngineInner {
             // ran out — the projectile has landed.
             let exhausted = proj.advance_trajectory_one_frame();
             if exhausted {
-                let id = EntityId::from_raw(idx as u32);
                 let pos = proj.element.position();
                 let layer = proj.element.layer();
                 impacts.push(Impact {
@@ -149,17 +145,15 @@ impl EngineInner {
         // despawn paths are `take_purse` (clicking the purse) and level
         // unload.
         let purses_to_check: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| match slot {
-                Some(Entity::Projectile(p))
+            .entities_iter_with_id()
+            .filter_map(|(id, entity)| match entity {
+                Entity::Projectile(p)
                     if p.element.active
                         && p.object.object_type == ObjectType::Purse
                         && p.projectile.purse.burst
                         && !p.projectile.purse.child_coins.is_empty() =>
                 {
-                    Some(EntityId::from_raw(idx as u32))
+                    Some(id)
                 }
                 _ => None,
             })

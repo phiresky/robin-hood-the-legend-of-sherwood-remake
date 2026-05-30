@@ -2786,11 +2786,8 @@ impl EngineInner {
         // Processed after the entity loop to avoid borrowing conflicts.
         let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
 
-        for (entity_idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let entity_idx = entity_id.index() as usize;
 
             if !entity.is_active() {
                 continue;
@@ -2850,7 +2847,6 @@ impl EngineInner {
                 // `self` distinct from `self.entities`, so the compiler
                 // accepts holding `&self.sequence_manager` while iterating
                 // `self.entities.iter_mut()`.
-                let entity_id = EntityId::from_raw(entity_idx as u32);
                 let order_snapshot = self.sequence_manager.current_order_for_actor(entity_id);
                 let (order_seq_elem, anim_type, order_id, antagonist, completion) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
@@ -3273,7 +3269,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                             &assets.profile_manager,
                         );
@@ -3282,7 +3278,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         // Universal walk/run Start handler — applies
@@ -3301,14 +3297,14 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_waking_up_done_side_effect(
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_pc_taking_side_effect(
@@ -3316,7 +3312,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_pc_target_interaction_side_effect(
@@ -3324,7 +3320,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_sword_parry_side_effect(
@@ -3345,7 +3341,7 @@ impl EngineInner {
                             anim_type,
                             motion_state,
                             antagonist,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
@@ -3354,7 +3350,7 @@ impl EngineInner {
                             entity,
                             anim_type,
                             motion_state,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut completion_outcomes.execute_sides,
                         );
                         apply_standing_up_start_side_effect(entity, anim_type, motion_state);
@@ -3373,7 +3369,7 @@ impl EngineInner {
                             entity,
                             anim_type,
                             motion_state,
-                            EntityId::from_raw(entity_idx as u32),
+                            entity_id,
                             &mut combat_injury_terminated,
                         );
                         if matches!(motion_state, MotionState::Done)
@@ -3388,7 +3384,7 @@ impl EngineInner {
                             completion_outcomes
                                 .execute_sides
                                 .smalltalk_swipes
-                                .push(EntityId::from_raw(entity_idx as u32));
+                                .push(entity_id);
                         }
                         // Lift sequence-element priority to
                         // NonInterruptable on initialisation for the
@@ -3405,7 +3401,7 @@ impl EngineInner {
                             && cur_command == Some(Command::PlayAnimFreeze)
                         {
                             completion_outcomes.play_anim_frozen.push((
-                                EntityId::from_raw(entity_idx as u32),
+                                entity_id,
                                 cur_command_level.unwrap_or(1),
                                 anim_type,
                             ));
