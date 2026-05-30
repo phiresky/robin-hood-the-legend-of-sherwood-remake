@@ -30,7 +30,7 @@
 //! candidate obstacles from the FastFindGrid cells crossed by the ray,
 //! then checking opaque blockers on that smaller candidate list.
 
-use crate::coordinates::MapPoint;
+use crate::coordinates::{GroundPoint, MapPoint};
 use crate::element::{ActionState, EntityId, EyeStatus, NpcData, Posture};
 use crate::geo2d::{BBox2D, GeoPoint2D};
 use crate::order::OrderType;
@@ -903,7 +903,10 @@ pub fn los_clear_spatial(
         if obs.layer != u16::MAX && obs.layer != layer {
             continue;
         }
-        if obs.is_blocking_sight(viewer.to_geo(), target.to_geo()) {
+        if obs.is_blocking_sight(
+            GroundPoint::new(viewer.x, viewer.y),
+            GroundPoint::new(target.x, target.y),
+        ) {
             return false;
         }
     }
@@ -917,7 +920,10 @@ pub fn los_clear_spatial(
         if obs.layer != u16::MAX && obs.layer != layer {
             continue;
         }
-        if obs.is_blocking_sight(viewer.to_geo(), target.to_geo()) {
+        if obs.is_blocking_sight(
+            GroundPoint::new(viewer.x, viewer.y),
+            GroundPoint::new(target.x, target.y),
+        ) {
             return false;
         }
     }

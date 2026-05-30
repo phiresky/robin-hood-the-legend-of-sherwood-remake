@@ -27,6 +27,7 @@ use crate::gfx_types::Rect;
 use crate::renderer::Renderer;
 use crate::sight_obstacle::SightObstacle;
 use geo::{Area, BooleanOps, algorithm::unary_union};
+use robin_engine::coordinates::GroundPoint;
 use robin_engine::geo2d as engine_geo2d;
 use robin_engine::mask as engine_mask;
 use robin_engine::position_interface as engine_position_interface;
@@ -461,7 +462,7 @@ fn compute_shadow_polygon(
         return None;
     }
     // Viewer inside obstacle → no meaningful silhouette. Skip.
-    if obs.contains_point(viewer) {
+    if obs.contains_point(GroundPoint::from_geo(viewer)) {
         return None;
     }
 
@@ -509,8 +510,8 @@ fn compute_shadow_polygon(
         _ => return None, // all edges same facing → no shadow
     };
 
-    let s1 = pts[fb_idx].ground_point(); // first silhouette (enter back-facing run)
-    let s2 = pts[bf_idx].ground_point(); // second silhouette (exit back-facing run)
+    let s1 = pts[fb_idx].ground_point().to_geo(); // first silhouette (enter back-facing run)
+    let s2 = pts[bf_idx].ground_point().to_geo(); // second silhouette (exit back-facing run)
     let s1_z_top = pts[fb_idx].z_top;
     let s2_z_top = pts[bf_idx].z_top;
 

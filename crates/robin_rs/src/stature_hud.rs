@@ -19,6 +19,7 @@
 //! or posture changes.
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::coordinates::ScreenBBox;
 use robin_engine::sprite as engine_sprite;
 
 use robin_engine::engine::{PANNEL_HEIGHT, Stature};
@@ -31,6 +32,16 @@ use crate::native_font::NativeFont;
 use crate::player_command::PlayerCommand;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_manager::ResourceManager;
+
+fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+    let bbox = ScreenBBox::from_coords(
+        rect.x() as f32,
+        rect.y() as f32,
+        (rect.x() + rect.width() as i32) as f32,
+        (rect.y() + rect.height() as i32) as f32,
+    );
+    engine_sprite::BBox::new(bbox.top_left().to_geo(), bbox.bottom_right().to_geo())
+}
 
 /// Which stature arrow widget was hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,16 +360,7 @@ pub fn draw_with_sprites(
         let Some((sid, _, _)) = sprites.frame(btn, state) else {
             continue;
         };
-        let dst = engine_sprite::BBox::new(
-            crate::geo2d::GeoPoint2D {
-                x: rect.x() as f32,
-                y: rect.y() as f32,
-            },
-            crate::geo2d::GeoPoint2D {
-                x: (rect.x() + rect.width() as i32) as f32,
-                y: (rect.y() + rect.height() as i32) as f32,
-            },
-        );
+        let dst = screen_rect_to_sprite_bbox(*rect);
         // C++ stature arrows are SBWidgetToggleButton<SBUIRendererBitmap>,
         // so they use the regular transparent bitmap path.
         renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);

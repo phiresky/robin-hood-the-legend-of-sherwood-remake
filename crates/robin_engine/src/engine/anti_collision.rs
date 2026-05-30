@@ -476,18 +476,16 @@ pub struct AntiCollisionState<'a> {
 impl AntiCollisionState<'_> {
     fn update_box_blocked(&mut self, point: MapPoint) -> bool {
         let p = &mut *self.pi;
-        if p.box_blocked.is_somewhere() && p.box_blocked.contains_point(point.to_geo()) {
+        if p.box_blocked.is_somewhere() && p.box_blocked.contains_point(point) {
             p.blocked_count = p.blocked_count.saturating_add(1);
             if p.radius > 1.0 {
                 p.radius -= 0.2;
             }
             false
         } else {
-            let half = 0.49;
-            p.box_blocked
-                .expand_point(geo2d::pt(point.x + half, point.y + half));
-            p.box_blocked
-                .expand_point(geo2d::pt(point.x - half, point.y - half));
+            let half = crate::coordinates::MapVec::new(0.49, 0.49);
+            p.box_blocked.expand_point(point + half);
+            p.box_blocked.expand_point(point - half);
             p.blocked_count = 0;
             p.radius = p.radius_initial;
             true

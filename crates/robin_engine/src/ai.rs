@@ -3423,7 +3423,7 @@ impl AiContext {
                         || obstacle.sector != handle.get()
                         || obstacle.layer != position.level
                         || !obstacle.box_projection.contains_point(point_geo)
-                        || !obstacle.contains_point_projection(point_geo)
+                        || !obstacle.contains_point_projection(point)
                     {
                         continue;
                     }

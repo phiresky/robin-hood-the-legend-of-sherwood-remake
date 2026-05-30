@@ -235,8 +235,8 @@ pub struct ObstaclePoint {
 }
 
 impl ObstaclePoint {
-    pub fn ground_point(&self) -> GeoPoint2D {
-        pt(self.x, self.y)
+    pub fn ground_point(&self) -> GroundPoint {
+        GroundPoint::new(self.x, self.y)
     }
 }
 
@@ -417,15 +417,15 @@ impl SightObstacle {
     // ---- Geometry queries ----
 
     /// Test if a ground-plane point lies inside the obstacle's polygon.
-    pub fn contains_point(&self, p: GeoPoint2D) -> bool {
-        geo2d::polygon_contains_point(&self.polygon, p)
+    pub fn contains_point(&self, p: GroundPoint) -> bool {
+        geo2d::polygon_contains_point(&self.polygon, p.to_geo())
     }
 
     /// Test if a projected map point lies inside the obstacle's
     /// projected polygon (vertices `(x, y - z_top)`).  Used by the
     /// projection-area sector lookup.
-    pub fn contains_point_projection(&self, p: GeoPoint2D) -> bool {
-        geo2d::polygon_contains_point(&self.polygon_projection, p)
+    pub fn contains_point_projection(&self, p: MapPoint) -> bool {
+        geo2d::polygon_contains_point(&self.polygon_projection, p.to_geo())
     }
 
     /// Test if a sight line (segment from `from` to `to` on the ground plane)
@@ -434,8 +434,8 @@ impl SightObstacle {
     /// Returns `true` when the obstacle is active and the segment intersects
     /// the ground-plane polygon.  The caller is responsible for filtering by
     /// bounding-box first (typically done by the fast-find grid).
-    pub fn is_blocking_sight(&self, from: GeoPoint2D, to: GeoPoint2D) -> bool {
-        let seg = segment(from, to);
+    pub fn is_blocking_sight(&self, from: GroundPoint, to: GroundPoint) -> bool {
+        let seg = segment(from.to_geo(), to.to_geo());
         // Quick AABB rejection before the full polygon test.
         if self.box_ground.trivially_rejects_segment(seg) {
             return false;
@@ -1098,12 +1098,12 @@ pub fn is_reachable_impact_fall_3d(
         });
     }
 
-    let p2d = pt(origin.x, origin.y);
+    let p2d = GroundPoint::new(origin.x, origin.y);
 
     // Out-of-map guard: when origin is outside the playable rectangle,
     // force an impact at the ground plane with no obstacle.
     if let Some(bbox) = map_bbox
-        && !bbox.contains_point(p2d)
+        && !bbox.contains_point(p2d.to_geo())
     {
         return Some(ImpactResult3D {
             impact: WorldPoint3D {
@@ -1121,7 +1121,7 @@ pub fn is_reachable_impact_fall_3d(
         if !obstacles.is_active(idx) || obs.obstacle_type & type_filter == 0 {
             continue;
         }
-        if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
+        if !obs.box_ground.contains_point(p2d.to_geo()) || !obs.contains_point(p2d) {
             continue;
         }
         let top = obs.compute_top_z(origin.x, origin.y);
@@ -1183,12 +1183,12 @@ pub fn is_reachable_impact_up_3d(
         });
     }
 
-    let p2d = pt(origin.x, origin.y);
+    let p2d = GroundPoint::new(origin.x, origin.y);
 
     // Out-of-map guard: when origin is outside the playable rectangle,
     // force a ground-impact with no obstacle.
     if let Some(bbox) = map_bbox
-        && !bbox.contains_point(p2d)
+        && !bbox.contains_point(p2d.to_geo())
     {
         return Some(ImpactResult3D {
             impact: WorldPoint3D {
@@ -1206,7 +1206,7 @@ pub fn is_reachable_impact_up_3d(
         if !obstacles.is_active(idx) || obs.obstacle_type & type_filter == 0 {
             continue;
         }
-        if !obs.box_ground.contains_point(p2d) || !obs.contains_point(p2d) {
+        if !obs.box_ground.contains_point(p2d.to_geo()) || !obs.contains_point(p2d) {
             continue;
         }
         let bot = obs.compute_bottom_z(origin.x, origin.y);
@@ -1337,29 +1337,29 @@ mod tests {
     #[test]
     fn contains_point_inside() {
         let obs = make_square_obstacle();
-        assert!(obs.contains_point(pt(5.0, 5.0)));
-        assert!(obs.contains_point(pt(0.0, 0.0))); // boundary
+        assert!(obs.contains_point(GroundPoint::new(5.0, 5.0)));
+        assert!(obs.contains_point(GroundPoint::new(0.0, 0.0))); // boundary
     }
 
     #[test]
     fn contains_point_outside() {
         let obs = make_square_obstacle();
-        assert!(!obs.contains_point(pt(-1.0, 5.0)));
-        assert!(!obs.contains_point(pt(15.0, 5.0)));
+        assert!(!obs.contains_point(GroundPoint::new(-1.0, 5.0)));
+        assert!(!obs.contains_point(GroundPoint::new(15.0, 5.0)));
     }
 
     #[test]
     fn blocking_sight_through_obstacle() {
         let obs = make_square_obstacle();
         // Line from left of obstacle to right of obstacle — crosses polygon.
-        assert!(obs.is_blocking_sight(pt(-5.0, 5.0), pt(15.0, 5.0)));
+        assert!(obs.is_blocking_sight(GroundPoint::new(-5.0, 5.0), GroundPoint::new(15.0, 5.0)));
     }
 
     #[test]
     fn not_blocking_sight_around_obstacle() {
         let obs = make_square_obstacle();
         // Line that passes above the obstacle (in ground Y).
-        assert!(!obs.is_blocking_sight(pt(-5.0, 15.0), pt(15.0, 15.0)));
+        assert!(!obs.is_blocking_sight(GroundPoint::new(-5.0, 15.0), GroundPoint::new(15.0, 15.0)));
     }
 
     #[test]
@@ -1402,8 +1402,8 @@ mod tests {
     fn translate_2d_moves_polygon() {
         let mut obs = make_square_obstacle();
         obs.translate_2d(100.0, 100.0);
-        assert!(obs.contains_point(pt(105.0, 105.0)));
-        assert!(!obs.contains_point(pt(5.0, 5.0)));
+        assert!(obs.contains_point(GroundPoint::new(105.0, 105.0)));
+        assert!(!obs.contains_point(GroundPoint::new(5.0, 5.0)));
     }
 
     #[test]

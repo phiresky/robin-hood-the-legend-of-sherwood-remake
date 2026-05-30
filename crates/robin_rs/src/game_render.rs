@@ -1434,7 +1434,7 @@ fn transition_crenel_climb_up_mask_position(
         if !obs.is_projection_area()
             || obs.layer != door.layer_out
             || obs.sector != u16::from(door.sector_out)
-            || !obs.contains_point_projection(point_out)
+            || !obs.contains_point_projection(engine_coordinates::MapPoint::from_geo(point_out))
         {
             continue;
         }
@@ -1476,11 +1476,11 @@ fn render_sprite_mask_debug_overlay(
         draw_world_bbox_outline(host, renderer, &mask.bbox, 0xffe0);
     }
 
-    draw_world_cross(host, renderer, actor_position.to_geo(), 0x07e0);
+    draw_map_cross(host, renderer, actor_position, 0x07e0);
     if use_projectile_path {
-        let projectile_test_point = crate::geo2d::pt(position_3d.x, position_3d.y);
-        let actor_screen = world_to_screen(host, actor_position.to_geo());
-        let projectile_screen = world_to_screen(host, projectile_test_point);
+        let projectile_test_point = position_3d.to_map();
+        let actor_screen = map_to_screen(host, actor_position);
+        let projectile_screen = map_to_screen(host, projectile_test_point);
         renderer.draw_line_screen(
             actor_screen.0,
             actor_screen.1,
@@ -1488,7 +1488,7 @@ fn render_sprite_mask_debug_overlay(
             projectile_screen.1,
             0xfd20,
         );
-        draw_world_cross(host, renderer, projectile_test_point, 0xfd20);
+        draw_map_cross(host, renderer, projectile_test_point, 0xfd20);
     }
 }
 
@@ -1501,23 +1501,29 @@ fn draw_world_bbox_outline(
     if !bbox.is_somewhere() {
         return;
     }
-    let (x1, y1) = world_to_screen(host, crate::geo2d::pt(bbox.x_min(), bbox.y_min()));
-    let (x2, y2) = world_to_screen(host, crate::geo2d::pt(bbox.x_max(), bbox.y_max()));
+    let (x1, y1) = map_to_screen(
+        host,
+        engine_coordinates::MapPoint::new(bbox.x_min(), bbox.y_min()),
+    );
+    let (x2, y2) = map_to_screen(
+        host,
+        engine_coordinates::MapPoint::new(bbox.x_max(), bbox.y_max()),
+    );
     renderer.draw_rect_outline_screen(x1, y1, x2, y2, color);
 }
 
-fn draw_world_cross(
+fn draw_map_cross(
     host: &Host,
     renderer: &mut Renderer,
-    point: crate::geo2d::GeoPoint2D,
+    point: engine_coordinates::MapPoint,
     color: u16,
 ) {
-    let (x, y) = world_to_screen(host, point);
+    let (x, y) = map_to_screen(host, point);
     renderer.draw_line_screen(x - 4, y, x + 4, y, color);
     renderer.draw_line_screen(x, y - 4, x, y + 4, color);
 }
 
-fn world_to_screen(host: &Host, point: crate::geo2d::GeoPoint2D) -> (i32, i32) {
+fn map_to_screen(host: &Host, point: engine_coordinates::MapPoint) -> (i32, i32) {
     let view = host.viewport.view_position;
     let zoom = host.viewport.zoom_factor;
     (

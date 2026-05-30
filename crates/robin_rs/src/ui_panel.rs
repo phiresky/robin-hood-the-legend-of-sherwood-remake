@@ -17,10 +17,9 @@ use crate::Host;
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::ScreenPoint;
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
-use robin_engine::geo2d as engine_geo2d;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
@@ -28,7 +27,6 @@ use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
 use crate::element::Entity;
-use crate::geo2d::GeoPoint2D;
 use crate::gfx_types::Rect;
 use crate::ingame_menu::{layout, widget_bridge};
 use crate::minimap::HitMask;
@@ -992,16 +990,15 @@ fn slot_left_x(screen_width: u16, slot_index: u16) -> u16 {
 }
 
 fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
-    BBox::new(
-        GeoPoint2D {
-            x: x1 as f32,
-            y: y1 as f32,
-        },
-        GeoPoint2D {
-            x: x2 as f32,
-            y: y2 as f32,
-        },
-    )
+    screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
+        x1 as f32, y1 as f32, x2 as f32, y2 as f32,
+    ))
+}
+
+fn screen_bbox_to_sprite_bbox(bbox: ScreenBBox) -> BBox {
+    let min = bbox.top_left().to_geo();
+    let max = bbox.bottom_right().to_geo();
+    BBox::new(min, max)
 }
 
 fn blit_to_screen_widget(
@@ -1012,13 +1009,12 @@ fn blit_to_screen_widget(
     flags: u32,
 ) {
     let src_box = src.copied().unwrap_or_else(|| {
-        BBox::new(
-            GeoPoint2D { x: 0.0, y: 0.0 },
-            GeoPoint2D {
-                x: renderer.surface_width(surface_id) as f32,
-                y: renderer.surface_height(surface_id) as f32,
-            },
-        )
+        screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
+            0.0,
+            0.0,
+            renderer.surface_width(surface_id) as f32,
+            renderer.surface_height(surface_id) as f32,
+        ))
     });
     let dst_box = dst.copied().unwrap_or(src_box);
     widget_bridge::draw_picture_surface_rect(
@@ -1968,10 +1964,9 @@ pub fn draw_requirements_bar(
 /// that compute positions in signed space — e.g. the `-1` offset of the
 /// requirements-bar selected ring).
 fn bbox_i32(x0: i32, y0: i32, x1: i32, y1: i32) -> BBox {
-    BBox::new(
-        engine_geo2d::pt(x0 as f32, y0 as f32),
-        engine_geo2d::pt(x1 as f32, y1 as f32),
-    )
+    screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
+        x0 as f32, y0 as f32, x1 as f32, y1 as f32,
+    ))
 }
 
 /// Menu-text id for the static tooltip attached to a given requirements-bar

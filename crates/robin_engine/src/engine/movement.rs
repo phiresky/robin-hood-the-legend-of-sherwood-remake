@@ -5316,7 +5316,7 @@ impl EngineInner {
             if !obs.box_projection.contains_point(bbox_at.to_geo()) {
                 continue;
             }
-            if !obs.contains_point_projection(polygon_at.to_geo()) {
+            if !obs.contains_point_projection(polygon_at) {
                 continue;
             }
             return Some(oi as u16);
@@ -6115,9 +6115,10 @@ impl EngineInner {
         // on the unexpanded move box when pathfinding is needed.
         if !self
             .fast_grid
-            .is_position_authorized(&move_box_map, entity_layer)
+            .is_position_authorized(&move_box_map.to_geo(), entity_layer)
         {
-            let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
+            let mut box_element =
+                Self::expand_move_box_for_command_extraction(move_box_map.to_geo());
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)
@@ -6199,9 +6200,9 @@ impl EngineInner {
             && !skip_source_extraction
             && !self
                 .fast_grid
-                .is_position_authorized(&move_box_map, entity_layer)
+                .is_position_authorized(&move_box_map.to_geo(), entity_layer)
         {
-            let mut box_element = move_box_map;
+            let mut box_element = move_box_map.to_geo();
             if !self
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)

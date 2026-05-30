@@ -1725,7 +1725,7 @@ impl FastFindGrid {
         for (idx, obstacle) in projection_iter.by_ref() {
             if !sight_obstacles.is_active(idx as usize)
                 || !obstacle.is_projection_area()
-                || !obstacle.contains_point_projection(landing_map.to_geo())
+                || !obstacle.contains_point_projection(landing_map)
             {
                 continue;
             }

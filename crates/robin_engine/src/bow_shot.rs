@@ -3200,7 +3200,7 @@ fn tick_arrows_matching(
                     if !sight_obstacles.is_active(obs_idx as usize)
                         || !obstacle.is_projection_area()
                         || obstacle.layer == u16::MAX
-                        || !obstacle.contains_point_projection(landing_map.to_geo())
+                        || !obstacle.contains_point_projection(landing_map)
                     {
                         continue;
                     }

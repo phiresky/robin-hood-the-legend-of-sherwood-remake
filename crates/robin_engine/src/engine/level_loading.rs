@@ -4243,7 +4243,7 @@ impl EngineInner {
                         if !obs.box_ground.contains_point(bary) {
                             continue;
                         }
-                        if !obs.contains_point(bary) {
+                        if !obs.contains_point(crate::coordinates::GroundPoint::from_geo(bary)) {
                             continue;
                         }
                         found_top_plane = Some(obs.top_plane_points);

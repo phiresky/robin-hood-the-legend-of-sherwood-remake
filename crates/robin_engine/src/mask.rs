@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::MapPoint;
-use crate::geo2d::{BBox2D, pt};
+use crate::geo2d::BBox2D;
 use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, RawMask};
 
 // ---------------------------------------------------------------------------
@@ -252,8 +252,8 @@ impl RuntimeMask {
             let Some(obs) = obstacles.get(usize::from(obs_idx)) else {
                 continue;
             };
-            let point_ground = pt(point.x, point.y);
-            if !obs.box_ground.contains_point(point_ground) {
+            let point_ground = crate::coordinates::GroundPoint::new(point.x, point.y);
+            if !obs.box_ground.contains_point(point_ground.to_geo()) {
                 continue;
             }
             if !obs.contains_point(point_ground) {

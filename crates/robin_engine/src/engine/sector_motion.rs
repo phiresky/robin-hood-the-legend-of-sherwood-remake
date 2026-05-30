@@ -44,7 +44,7 @@ impl EngineInner {
             if !obs.box_projection.contains_point(point_geo) {
                 continue;
             }
-            if !obs.contains_point_projection(point_geo) {
+            if !obs.contains_point_projection(point) {
                 continue;
             }
             let z_max = obs.box_3d_max[2];

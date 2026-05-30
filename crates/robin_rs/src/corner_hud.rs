@@ -22,6 +22,7 @@
 //!     currently recording.
 
 use crate::gfx_types::{Point, Rect as SdlRect};
+use robin_engine::coordinates::ScreenBBox;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
 use robin_engine::sprite as engine_sprite;
@@ -32,6 +33,16 @@ use crate::ingame_menu::layout::{
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use crate::resource_ids::{RHID_CLOCK, RHID_QUICKSTART, RHID_SIGHT};
 use crate::resource_manager::ResourceManager;
+
+fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
+    let bbox = ScreenBBox::from_coords(
+        rect.x() as f32,
+        rect.y() as f32,
+        (rect.x() + rect.width() as i32) as f32,
+        (rect.y() + rect.height() as i32) as f32,
+    );
+    engine_sprite::BBox::new(bbox.top_left().to_geo(), bbox.bottom_right().to_geo())
+}
 
 /// Logical id for the three corner HUD buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -347,16 +358,7 @@ pub fn draw_with_sprites(
         // No placeholder-rect fallback — if the sprite is missing from
         // DEFAULT.RES we simply don't draw the button (matches `zoom_hud`).
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
-            let dst = engine_sprite::BBox::new(
-                crate::geo2d::GeoPoint2D {
-                    x: rect.x() as f32,
-                    y: rect.y() as f32,
-                },
-                crate::geo2d::GeoPoint2D {
-                    x: (rect.x() + rect.width() as i32) as f32,
-                    y: (rect.y() + rect.height() as i32) as f32,
-                },
-            );
+            let dst = screen_rect_to_sprite_bbox(*rect);
             tracing::trace!(
                 "corner_hud blit: {:?} state {state} dim={} surface {sid} at ({},{}) {}x{}",
                 btn,

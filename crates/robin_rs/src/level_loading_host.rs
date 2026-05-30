@@ -15,6 +15,7 @@ use robin_assets::frame_holder::ProgressUpdate;
 use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::coordinates as engine_coordinates;
+use robin_engine::coordinates::{MapPoint, ScreenBBox};
 use robin_engine::engine::level_loading::{
     MinimapBitmapSetup, PreDecodedBackground, PreDecodedMinimap,
 };
@@ -397,23 +398,17 @@ impl EngineLevelLoadExt for Engine {
         let screen = &host.viewport.screen_size;
         let zoom = host.viewport.zoom_factor;
 
-        let src = BBox::new(
-            geo2d::GeoPoint2D {
-                x: view.x,
-                y: view.y,
-            },
-            geo2d::GeoPoint2D {
-                x: view.x + (screen.x / zoom),
-                y: view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
-            },
+        let src_min = *view;
+        let src_max = MapPoint::new(
+            view.x + (screen.x / zoom),
+            view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
         );
+        let src = BBox::new(src_min.to_geo(), src_max.to_geo());
 
+        let dst_bbox = ScreenBBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
         let dst = BBox::new(
-            geo2d::GeoPoint2D { x: 0.0, y: 0.0 },
-            geo2d::GeoPoint2D {
-                x: screen.x,
-                y: screen.y - PANNEL_HEIGHT,
-            },
+            dst_bbox.top_left().to_geo(),
+            dst_bbox.bottom_right().to_geo(),
         );
 
         renderer.render_background_texture(Some(&src), Some(&dst));

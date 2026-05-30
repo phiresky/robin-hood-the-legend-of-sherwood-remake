@@ -329,13 +329,14 @@ impl EngineInner {
                 }
                 let pi = entity.position_iface();
                 let move_box_map = *pi.get_move_box_map();
+                let move_box_map_geo = move_box_map.to_geo();
                 let crushed = move_box_map.is_somewhere()
                     && appeared.iter().any(|obs| {
                         obs.bounding_box.is_somewhere()
-                            && obs.bounding_box.intersects_bbox(&move_box_map)
+                            && obs.bounding_box.intersects_bbox(&move_box_map_geo)
                             && crate::geo2d::polygon_vertices_intersect_bbox(
                                 &obs.polygon,
-                                &move_box_map,
+                                &move_box_map_geo,
                             )
                     });
                 Some((id, crushed))
