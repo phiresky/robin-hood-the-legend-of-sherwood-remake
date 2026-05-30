@@ -2765,7 +2765,7 @@ impl EngineInner {
             return;
         }
         let results = crate::abilities::tick_abilities(
-            self.entities.slots_mut(),
+            &mut self.entities,
             &self.sequence_manager,
             &mut self.next_order_id,
         );
