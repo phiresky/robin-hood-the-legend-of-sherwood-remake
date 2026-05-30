@@ -3310,7 +3310,7 @@ impl EngineInner {
             blipped: bool,
             sector: Option<crate::position_interface::SectorHandle>,
             in_door_transit: bool,
-            position: crate::geo2d::GeoPoint2D,
+            position: crate::coordinates::MapPoint,
             speech_id: u32,
             script_forbidden: bool,
             profile_name: String,
@@ -3334,7 +3334,7 @@ impl EngineInner {
                     s.element.blipped,
                     s.element.sector(),
                     s.element.is_in_door_transit(),
-                    s.element.position_map().to_geo(),
+                    s.element.position_map(),
                 ),
                 crate::element::Entity::Civilian(c) => (
                     &mut c.npc,
@@ -3348,7 +3348,7 @@ impl EngineInner {
                     c.element.blipped,
                     c.element.sector(),
                     c.element.is_in_door_transit(),
-                    c.element.position_map().to_geo(),
+                    c.element.position_map(),
                 ),
                 _ => continue,
             };
