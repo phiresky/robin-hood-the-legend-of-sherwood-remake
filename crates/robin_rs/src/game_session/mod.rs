@@ -46,21 +46,48 @@ use tick::{
 
 use crate::Host;
 use crate::campaign::Campaign;
-use crate::game::{Game, GameCallbacks};
+use crate::console_overlay::ConsoleOverlay;
+use crate::corner_hud::{
+    CornerButton, CornerButtonEnable, CornerButtonSprites, CornerHudLayout, CornerTooltipTracker,
+};
+use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
-use crate::geo2d;
+use crate::geo2d::{self, BBox2D};
 use crate::gfx_types::GameEvent;
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
-use crate::ingame_menu::{IngameMenuResources, PauseMenu};
-use crate::main_entry::{
-    RustCallbacks, current_mission_id, detect_demo_mode, flush_pending_callbacks,
-    perform_pending_save_load, resolve_loading_pak,
+use crate::ingame_menu::{
+    DebriefingOutcome, IngameMenuResources, MissionStatePopupState, PauseMenu, SaveLoadMode,
+    SaveLoadOutcome,
 };
+use crate::input_translator::{GameAction, GameKey, InputTranslator, TranslationFlags};
+use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
+use crate::main_entry::{
+    RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, detect_demo_mode,
+    flush_pending_callbacks, perform_pending_save_load, resolve_loading_pak,
+};
+use crate::menu::CampaignMapState;
 use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
+use crate::player_profile::PlayerProfileManager;
 use crate::profiles::MissionLocation;
+use crate::renderer::Renderer;
+use crate::resource_manager::ResourceManager;
+use crate::save_file::special_slots;
 use crate::sdl_audio::{self};
+use crate::sherwood_hud::{
+    SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout, SherwoodTooltipTracker,
+};
+use crate::sim_timeline::{RECENT_TIMELINE_HISTORY_FRAMES, RecentTimelineHistory, SimSnapshot};
+use crate::stature_hud::{
+    StatureButton, StatureEnable, StatureHudLayout, StatureSprites, StatureTooltipTracker,
+};
+use crate::ui_panel::{
+    BlazonTooltipTracker, PcActionTooltipTracker, PortraitHitArea, RequirementsTooltipTracker,
+};
 use crate::window::GameWindow;
+use crate::zoom_hud::{
+    ZoomButton, ZoomButtonEnable, ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker,
+};
 use robin_engine::engine::Engine;
 use robin_engine::graphic_config::TextureScaleMode;
 use std::sync::Arc;
@@ -68,7 +95,7 @@ use std::sync::Arc;
 /// Read the active player profile's texture scale mode, falling back to
 /// the default (`Linear`) if no profile is loaded yet.
 fn active_profile_scale_mode() -> TextureScaleMode {
-    let guard = crate::player_profile::PlayerProfileManager::global();
+    let guard = PlayerProfileManager::global();
     guard
         .as_ref()
         .and_then(|m| m.get_active())
@@ -77,7 +104,7 @@ fn active_profile_scale_mode() -> TextureScaleMode {
 }
 
 fn active_profile_shader_preset() -> String {
-    let guard = crate::player_profile::PlayerProfileManager::global();
+    let guard = PlayerProfileManager::global();
     guard
         .as_ref()
         .and_then(|m| m.get_active())
@@ -91,14 +118,12 @@ fn center_on_reselected_portrait_pc(
     local_seat: robin_engine::player_command::PlayerId,
     pc_id: robin_engine::element::EntityId,
     append: bool,
-    area: crate::ui_panel::PortraitHitArea,
+    area: PortraitHitArea,
 ) -> bool {
     if append
         || !matches!(
             area,
-            crate::ui_panel::PortraitHitArea::TopScroll
-                | crate::ui_panel::PortraitHitArea::BottomScroll
-                | crate::ui_panel::PortraitHitArea::Visage
+            PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
         )
         || !engine.seat_selection(local_seat).contains(&pc_id)
     {
@@ -171,14 +196,14 @@ pub(crate) async fn run_mission_headless(
     let mut game = Game::new(location);
     game.global_options = args.global_options.clone();
 
-    let mut text_res = crate::resource_manager::ResourceManager::new();
+    let mut text_res = ResourceManager::new();
     if let Err(e) =
         text_res.attach_or_from_shipping("Data/Text/Level.res", host.shipping.as_deref())
     {
         tracing::warn!("Failed to load text resource file: {e}");
     }
 
-    let mut cursor_res = crate::resource_manager::ResourceManager::new();
+    let mut cursor_res = ResourceManager::new();
     if let Err(e) =
         cursor_res.attach_or_from_shipping("Data/Interface/DEFAULT.RES", host.shipping.as_deref())
     {
@@ -403,7 +428,7 @@ pub(crate) async fn run_session(
     campaign: &mut Campaign,
     profiles: &robin_engine::profiles::ProfileManager,
     args: &crate::main_entry::CliArgs,
-    initial_load: Option<crate::main_entry::SaveLoadRequest>,
+    initial_load: Option<SaveLoadRequest>,
 ) -> Result<SessionResult, String> {
     let mut callbacks = RustCallbacks::new();
     callbacks.pending = initial_load;
@@ -506,7 +531,7 @@ pub(crate) async fn run_session(
                         campaign.next_mission_idx = Some(idx);
                         // Queue the Load again so the first frame of the
                         // new mission applies the save to its fresh engine.
-                        callbacks.pending = Some(crate::main_entry::SaveLoadRequest::Load {
+                        callbacks.pending = Some(SaveLoadRequest::Load {
                             slot: Some(req.slot),
                             mission_id: req.target_mission_id,
                         });
@@ -592,19 +617,19 @@ async fn confirm_quickload_cross_mission(
     profiles: &robin_engine::profiles::ProfileManager,
     _host: &Host,
     event_pump: &mut GameWindow,
-    renderer: &mut crate::renderer::Renderer,
-    cursor_res: &mut crate::resource_manager::ResourceManager,
+    renderer: &mut Renderer,
+    cursor_res: &mut ResourceManager,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
 ) {
     let use_backup = match callbacks.pending {
-        Some(crate::main_entry::SaveLoadRequest::QuickLoad { use_backup }) => use_backup,
+        Some(SaveLoadRequest::QuickLoad { use_backup }) => use_backup,
         _ => return,
     };
     let slot_name = if use_backup {
-        crate::save_file::special_slots::EX_QUICK
+        special_slots::EX_QUICK
     } else {
-        crate::save_file::special_slots::QUICK
+        special_slots::QUICK
     };
     let Some(idx) = callbacks.save_manager.find_by_filename(slot_name) else {
         return;
@@ -645,7 +670,7 @@ async fn confirm_quickload_cross_mission(
         // swap + Load re-queue on the fresh engine.  Pass the running
         // mission id so the arm's `header.mission_id != mission_id`
         // check fires.
-        callbacks.pending = Some(crate::main_entry::SaveLoadRequest::Load {
+        callbacks.pending = Some(SaveLoadRequest::Load {
             slot: Some(idx),
             mission_id: current,
         });
@@ -704,19 +729,11 @@ pub(crate) async fn run_mission(
     } else {
         loading_pak.and_then(|path| {
             let datadir_kind = match detect_demo_mode().map(|(_, _, _, location)| location) {
-                Some(MissionLocation::Leicester) => {
-                    crate::loading_screen::LoadingDatadirKind::DemoI
-                }
-                Some(MissionLocation::Lincoln) => crate::loading_screen::LoadingDatadirKind::DemoII,
-                _ => crate::loading_screen::LoadingDatadirKind::FullGame,
+                Some(MissionLocation::Leicester) => LoadingDatadirKind::DemoI,
+                Some(MissionLocation::Lincoln) => LoadingDatadirKind::DemoII,
+                _ => LoadingDatadirKind::FullGame,
             };
-            crate::loading_screen::LoadingScreenRenderer::new(
-                window,
-                &path,
-                datadir_kind,
-                LOADING_MAX_LEVEL,
-                scale_mode,
-            )
+            LoadingScreenRenderer::new(window, &path, datadir_kind, LOADING_MAX_LEVEL, scale_mode)
         })
     };
     if let Some(ref mut ls) = loading_screen {
@@ -804,7 +821,7 @@ pub(crate) async fn run_mission(
     // it; the remaining consumers (portrait cache, short briefings,
     // dialogue tables) pick it up via `pre_decode_maps_and_resources`
     // below.
-    let mut text_res = crate::resource_manager::ResourceManager::new();
+    let mut text_res = ResourceManager::new();
     if let Err(e) =
         text_res.attach_or_from_shipping("Data/Text/Level.res", host.shipping.as_deref())
     {
@@ -819,7 +836,7 @@ pub(crate) async fn run_mission(
     // metadata and titbit row-frame counts off its picture rows, and
     // `Engine::new` absorbs both so the sim has them on the first
     // tick (ground-mark `add_mark` / titbit animation both read them).
-    let mut cursor_res = crate::resource_manager::ResourceManager::new();
+    let mut cursor_res = ResourceManager::new();
     if let Err(e) =
         cursor_res.attach_or_from_shipping("Data/Interface/DEFAULT.RES", host.shipping.as_deref())
     {
@@ -952,7 +969,7 @@ pub(crate) async fn run_mission(
     let render_w = window.width as u16;
     let render_h = window.height as u16;
     window.set_logical_size(render_w as u32, render_h as u32);
-    let mut renderer = crate::renderer::Renderer::new(window, render_w, render_h, scale_mode);
+    let mut renderer = Renderer::new(window, render_w, render_h, scale_mode);
     renderer.set_shader_preset(shader_preset);
 
     // ── Apply pre-decoded background + minimap ──
@@ -1197,31 +1214,26 @@ pub(crate) async fn run_mission(
     // State for the Sherwood campaign-map overlay.  Built lazily the
     // first time the overlay is raised so the CampaignMapState reflects
     // the live campaign at that instant.
-    let mut sherwood_campaign_map = crate::menu::CampaignMapState::new();
+    let mut sherwood_campaign_map = CampaignMapState::new();
 
     // Sherwood HUD button state.  Tracks the widget enable mask for
     // DisplayCampaignMap / GoToExit / StartMission / QuitMission.
     // Starts in the pre-commit state (only DisplayCampaignMap live)
     // and flips to post-commit once the player picks a mission via
     // the overlay.
-    let mut sherwood_enable = crate::sherwood_hud::SherwoodButtonEnable::pre_commit();
+    let mut sherwood_enable = SherwoodButtonEnable::pre_commit();
     // Button sprites from DEFAULT.RES.  Loaded once per mission;
     // missing sprites just don't render.
-    let sherwood_sprites =
-        crate::sherwood_hud::SherwoodButtonSprites::load(&mut cursor_res, &mut renderer);
-    let mut sherwood_layout = crate::sherwood_hud::SherwoodHudLayout::for_resolution(
-        window.width,
-        window.height,
-        &sherwood_sprites,
-    );
+    let sherwood_sprites = SherwoodButtonSprites::load(&mut cursor_res, &mut renderer);
+    let mut sherwood_layout =
+        SherwoodHudLayout::for_resolution(window.width, window.height, &sherwood_sprites);
 
     // Zoom HUD buttons (ZoomUp / ZoomDown).  Layout tracks window
     // size just like the Sherwood HUD; enable state is re-derived
     // from engine queries each frame.
-    let zoom_sprites = crate::zoom_hud::ZoomButtonSprites::load(&mut cursor_res, &mut renderer);
-    let mut zoom_layout =
-        crate::zoom_hud::ZoomHudLayout::for_resolution(window.width, window.height, &zoom_sprites);
-    let mut zoom_tooltip = crate::zoom_hud::ZoomTooltipTracker::new();
+    let zoom_sprites = ZoomButtonSprites::load(&mut cursor_res, &mut renderer);
+    let mut zoom_layout = ZoomHudLayout::for_resolution(window.width, window.height, &zoom_sprites);
+    let mut zoom_tooltip = ZoomTooltipTracker::new();
 
     // Top-of-panel HUD buttons (Clock / Sight / QuickStart).
     // Non-Sherwood missions only.  Sprites load once per mission;
@@ -1229,13 +1241,12 @@ pub(crate) async fn run_mission(
     // loop from the renderer's current screen size (cheap rect
     // arithmetic) so nested menus that change resolution don't need
     // to plumb a layout ref.
-    let corner_sprites =
-        crate::corner_hud::CornerButtonSprites::load(&mut cursor_res, &mut renderer);
+    let corner_sprites = CornerButtonSprites::load(&mut cursor_res, &mut renderer);
     // Initial layout placeholder; re-assigned at the top of every frame
     // before use, so any value here is overwritten before it's read.
     let mut corner_layout;
-    let mut corner_tooltip = crate::corner_hud::CornerTooltipTracker::new();
-    let stature_sprites = crate::stature_hud::StatureSprites::load(&mut cursor_res, &mut renderer);
+    let mut corner_tooltip = CornerTooltipTracker::new();
+    let stature_sprites = StatureSprites::load(&mut cursor_res, &mut renderer);
     let mut stature_layout;
 
     // Pause menu state
@@ -1243,18 +1254,18 @@ pub(crate) async fn run_mission(
     let mut active_modal: Option<ActiveModal> = None;
     // In-game cheat / debug console overlay (toggled via `~`).  Lives
     // for the whole mission so command history persists across opens.
-    let mut console_overlay = crate::console_overlay::ConsoleOverlay::new();
+    let mut console_overlay = ConsoleOverlay::new();
     // Hover-idle tracker for the Sherwood requirements-bar tooltip.
-    let mut requirements_tooltip = crate::ui_panel::RequirementsTooltipTracker::new();
+    let mut requirements_tooltip = RequirementsTooltipTracker::new();
     // Same pipeline for the blazon-bar slots.
-    let mut blazon_tooltip = crate::ui_panel::BlazonTooltipTracker::new();
+    let mut blazon_tooltip = BlazonTooltipTracker::new();
     // Stature arrow (up / down) and Sherwood-HUD tooltip timers.
-    let mut stature_tooltip = crate::stature_hud::StatureTooltipTracker::new();
-    let mut sherwood_tooltip = crate::sherwood_hud::SherwoodTooltipTracker::new();
+    let mut stature_tooltip = StatureTooltipTracker::new();
+    let mut sherwood_tooltip = SherwoodTooltipTracker::new();
     // PC portrait action-button tooltip timer — each of the three
     // per-PC action buttons gets a localized tooltip after 75 idle
     // ticks.
-    let mut pc_action_tooltip = crate::ui_panel::PcActionTooltipTracker::new();
+    let mut pc_action_tooltip = PcActionTooltipTracker::new();
     let mut last_cursor_id: i32 = crate::resource_ids::RHMOUSE_DEFAULT;
 
     // ── Replay recording / playback + rollback + rewind ──
@@ -1305,9 +1316,7 @@ pub(crate) async fn run_mission(
     // client compares its locally-computed hash at the same sampling
     // point.  Drained as frames are reached.
     let mut peer_hashes: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
-    let mut recent_timeline_history = crate::sim_timeline::RecentTimelineHistory::new(
-        crate::sim_timeline::RECENT_TIMELINE_HISTORY_FRAMES,
-    );
+    let mut recent_timeline_history = RecentTimelineHistory::new(RECENT_TIMELINE_HISTORY_FRAMES);
 
     // Manual pause toggle, distinct from the pause menu.  Set on mission
     // entry by `--start-paused` or by a `load-replay` RPC call that
@@ -1448,10 +1457,7 @@ pub(crate) async fn run_mission(
         }
         let net_inputs = net_drain.inputs;
         if host.net.is_some() {
-            recent_timeline_history.remember(crate::sim_timeline::SimSnapshot::new(
-                manager.sim_frame,
-                &manager.engine,
-            ));
+            recent_timeline_history.remember(SimSnapshot::new(manager.sim_frame, &manager.engine));
         }
         if !net_inputs.is_empty() {
             manager.engine.apply_commands(
@@ -1472,12 +1478,12 @@ pub(crate) async fn run_mission(
         // flow, etc.) take effect without needing every call site to
         // plumb a mutable layout ref.  Cheap — just a few rect
         // arithmetic operations.
-        corner_layout = crate::corner_hud::CornerHudLayout::for_resolution(
+        corner_layout = CornerHudLayout::for_resolution(
             renderer.screen_width() as u32,
             renderer.screen_height() as u32,
             &corner_sprites,
         );
-        stature_layout = crate::stature_hud::StatureHudLayout::for_resolution(
+        stature_layout = StatureHudLayout::for_resolution(
             renderer.screen_width() as u32,
             renderer.screen_height() as u32,
             &stature_sprites,
@@ -1581,7 +1587,7 @@ pub(crate) async fn run_mission(
             renderer.clear_frozen_scene();
             threaded_input.reset_input_state();
             input_translator.reset_state();
-            callbacks.set_sound_mode(crate::game::SoundMode::Mission);
+            callbacks.set_sound_mode(SoundMode::Mission);
             threaded_input.queue_mouse_motion_resync();
         }
         // Disjoint-borrow event poll: `event_pump`/`width`/`height` are
@@ -1643,8 +1649,8 @@ pub(crate) async fn run_mission(
                 window.set_logical_size(new_w, new_h);
                 host.viewport.set_screen_size(w, h);
                 renderer.resize(new_w as u16, new_h as u16);
-                threaded_input.set_clipping(crate::geo2d::BBox2D::from_coords(0.0, 0.0, w, h));
-                input_translator = crate::input_translator::InputTranslator::new(w, h);
+                threaded_input.set_clipping(BBox2D::from_coords(0.0, 0.0, w, h));
+                input_translator = InputTranslator::new(w, h);
                 // Reflect the active key profile into the freshly-
                 // built translator.  Without this the resized
                 // translator would fall back to the hardcoded
@@ -1669,23 +1675,11 @@ pub(crate) async fn run_mission(
                 }
                 // Reposition the Sherwood HUD buttons alongside the
                 // other resolution-dependent layouts.
-                sherwood_layout = crate::sherwood_hud::SherwoodHudLayout::for_resolution(
-                    new_w,
-                    new_h,
-                    &sherwood_sprites,
-                );
-                zoom_layout =
-                    crate::zoom_hud::ZoomHudLayout::for_resolution(new_w, new_h, &zoom_sprites);
-                corner_layout = crate::corner_hud::CornerHudLayout::for_resolution(
-                    new_w,
-                    new_h,
-                    &corner_sprites,
-                );
-                stature_layout = crate::stature_hud::StatureHudLayout::for_resolution(
-                    new_w,
-                    new_h,
-                    &stature_sprites,
-                );
+                sherwood_layout =
+                    SherwoodHudLayout::for_resolution(new_w, new_h, &sherwood_sprites);
+                zoom_layout = ZoomHudLayout::for_resolution(new_w, new_h, &zoom_sprites);
+                corner_layout = CornerHudLayout::for_resolution(new_w, new_h, &corner_sprites);
+                stature_layout = StatureHudLayout::for_resolution(new_w, new_h, &stature_sprites);
             }
         }
 
@@ -1731,10 +1725,7 @@ pub(crate) async fn run_mission(
         // `EngineStateRequest::ZoomingUp/Down` — same path the
         // mouse wheel + keyboard bindings use.
         if !input_suppressed {
-            let zoom_enable = crate::zoom_hud::ZoomButtonEnable::from_engine(
-                &manager.engine,
-                &host.engine_display,
-            );
+            let zoom_enable = ZoomButtonEnable::from_engine(&manager.engine, &host.engine_display);
             let mut zoom_btn_hit = None;
             for event in &events {
                 if let GameEvent::MouseDown(mx, my, 1 /* left */, _) = *event
@@ -1745,7 +1736,6 @@ pub(crate) async fn run_mission(
                 }
             }
             if let Some((btn, mx, my)) = zoom_btn_hit {
-                use crate::zoom_hud::ZoomButton;
                 let factor = match btn {
                     ZoomButton::ZoomUp => 2.0,
                     ZoomButton::ZoomDown => 0.5,
@@ -1766,7 +1756,7 @@ pub(crate) async fn run_mission(
         // lock-alt / launch-all).  Right-click unlocks / deletes
         // macros.
         if !game.is_sherwood && !input_suppressed {
-            let corner_enable = crate::corner_hud::CornerButtonEnable::from_engine(&manager.engine);
+            let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
             for event in &events {
                 match *event {
                     GameEvent::MouseDown(mx, my, 1 /* left */, _) => {
@@ -1806,8 +1796,8 @@ pub(crate) async fn run_mission(
             // shifts.
             let stature = manager.engine.retrieve_stature(None);
             game.stature_focus.maybe_clear(stature);
-            let stature_enable = crate::stature_hud::StatureEnable::from_stature(stature)
-                .with_focus_latch(game.stature_focus);
+            let stature_enable =
+                StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
             for event in &events {
                 if let GameEvent::MouseDown(mx, my, 1 /* left */, _) = *event
                     && let Some(btn) = stature_layout.hit_test(mx, my, stature_enable)
@@ -1821,10 +1811,10 @@ pub(crate) async fn run_mission(
                         &cmd,
                     );
                     match btn {
-                        crate::stature_hud::StatureButton::Up => {
+                        StatureButton::Up => {
                             game.stature_focus.latch_stand_up(stature);
                         }
-                        crate::stature_hud::StatureButton::Down => {
+                        StatureButton::Down => {
                             game.stature_focus.latch_crouch_down(stature);
                         }
                     }
@@ -1909,10 +1899,8 @@ pub(crate) async fn run_mission(
         let step_back_pressed = step_back_pressed && !step_keys_gated;
 
         // Translate to game actions
-        let mut kb_actions = input_translator.translate_keyboard(
-            &threaded_input.keyboard_state().keys,
-            crate::input_translator::TranslationFlags::ALL,
-        );
+        let mut kb_actions = input_translator
+            .translate_keyboard(&threaded_input.keyboard_state().keys, TranslationFlags::ALL);
         if events
             .iter()
             .any(|event| matches!(event, GameEvent::MenuToggleRequested))
@@ -1922,7 +1910,7 @@ pub(crate) async fn run_mission(
                     .iter()
                     .any(|event| matches!(event, GameEvent::PauseRequested)))
         {
-            kb_actions.push(crate::input_translator::GameAction::DisplayMenu);
+            kb_actions.push(GameAction::DisplayMenu);
         }
         let mouse_actions = if threaded_input.has_position() {
             input_translator.translate_mouse(
@@ -1977,7 +1965,6 @@ pub(crate) async fn run_mission(
         // user wants to pan/zoom around the paused world.  Suppressed
         // only when the console or the pause menu has focus.
         {
-            use crate::input_translator::GameAction;
             use robin_engine::engine::ScrollDirection;
             let view_suppressed =
                 console_overlay.is_visible() || pause_menu.is_some() || pause_closed_this_frame;
@@ -2062,7 +2049,6 @@ pub(crate) async fn run_mission(
             }
 
             for action in kb_actions.iter().chain(mouse_actions.iter()) {
-                use crate::input_translator::GameAction;
                 // Console captures every other action while it has focus.
                 if console_overlay.is_visible() {
                     continue;
@@ -2087,7 +2073,7 @@ pub(crate) async fn run_mission(
                             renderer.clear_frozen_scene();
                             threaded_input.reset_input_state();
                             input_translator.reset_state();
-                            callbacks.set_sound_mode(crate::game::SoundMode::Mission);
+                            callbacks.set_sound_mode(SoundMode::Mission);
                             // Forward a MSG_MOUSE_MOVED at the current
                             // cursor position so HUD widgets /
                             // portraits / buttons under the cursor
@@ -2124,7 +2110,7 @@ pub(crate) async fn run_mission(
                                 // symmetric close-branch above calls
                                 // `clear_frozen_scene`.
                                 renderer.freeze_scene_for_modal();
-                                callbacks.set_sound_mode(crate::game::SoundMode::Menu);
+                                callbacks.set_sound_mode(SoundMode::Menu);
                             }
                         }
                     }
@@ -2242,9 +2228,7 @@ pub(crate) async fn run_mission(
                                         .map(|c| current_mission_id(c, &assets.profile_manager))
                                         .unwrap_or(0);
                                     callbacks.pending =
-                                        Some(crate::main_entry::SaveLoadRequest::QuickSave {
-                                            mission_id,
-                                        });
+                                        Some(SaveLoadRequest::QuickSave { mission_id });
                                 }
                             }
                             GameAction::QuickLoad => {
@@ -2266,10 +2250,9 @@ pub(crate) async fn run_mission(
                                 if !manager.engine.is_zoom_possible(&host.engine_display) {
                                     game.quick_load_after_zoom = true;
                                 } else {
-                                    callbacks.pending =
-                                        Some(crate::main_entry::SaveLoadRequest::QuickLoad {
-                                            use_backup: shift_held,
-                                        });
+                                    callbacks.pending = Some(SaveLoadRequest::QuickLoad {
+                                        use_backup: shift_held,
+                                    });
                                 }
                             }
                             GameAction::CrouchDown => {
@@ -2414,7 +2397,7 @@ pub(crate) async fn run_mission(
                                 // the currently-selected PC(s).
                                 if !game.is_sherwood {
                                     dispatch_corner_button_left_click(
-                                        crate::corner_hud::CornerButton::Clock,
+                                        CornerButton::Clock,
                                         &mut manager,
                                         &mut game,
                                         &mut host,
@@ -2666,8 +2649,8 @@ pub(crate) async fn run_mission(
         // `Game::display_message`.
         if let Some(kind) = callbacks.pending_save_banner.take() {
             let text = match kind {
-                crate::main_entry::SaveBannerKind::Saved => "Game saved.",
-                crate::main_entry::SaveBannerKind::Loaded => "Game loaded.",
+                SaveBannerKind::Saved => "Game saved.",
+                SaveBannerKind::Loaded => "Game loaded.",
             };
             // 100 ticks — `display_message` is a fire-and-forget
             // delay that the renderer polls (the hook lives in
@@ -2771,10 +2754,8 @@ pub(crate) async fn run_mission(
                 }
             }
             if pre_tick_net_drain.rewrote_sim_state && host.net.is_some() {
-                recent_timeline_history.remember(crate::sim_timeline::SimSnapshot::new(
-                    manager.sim_frame,
-                    &manager.engine,
-                ));
+                recent_timeline_history
+                    .remember(SimSnapshot::new(manager.sim_frame, &manager.engine));
             }
             if !pre_tick_net_drain.inputs.is_empty() {
                 manager.engine.apply_commands(
@@ -3467,7 +3448,7 @@ pub(crate) async fn run_mission(
                     };
                     active_modal = Some(ActiveModal::MissionState {
                         kind,
-                        state: crate::ingame_menu::MissionStatePopupState::new(
+                        state: MissionStatePopupState::new(
                             &renderer,
                             resources,
                             message_str,
@@ -3525,15 +3506,14 @@ pub(crate) async fn run_mission(
                     .campaign()
                     .map(|c| current_mission_id(c, &assets.profile_manager))
                     .unwrap_or(0);
-                callbacks.pending =
-                    Some(crate::main_entry::SaveLoadRequest::QuickSave { mission_id });
+                callbacks.pending = Some(SaveLoadRequest::QuickSave { mission_id });
             }
             if game.quick_load_after_zoom {
                 game.quick_load_after_zoom = false;
                 // Shift state at drain time differs from press time;
                 // re-read it on the deferred fire to keep the
                 // shift-modifier semantics intact.
-                callbacks.pending = Some(crate::main_entry::SaveLoadRequest::QuickLoad {
+                callbacks.pending = Some(SaveLoadRequest::QuickLoad {
                     use_backup: shift_held,
                 });
             }
@@ -3683,9 +3663,7 @@ pub(crate) async fn run_mission(
                 // Pull the configured `QuickLoad1` scancode out of
                 // the input translator so the modal can fire on that
                 // key.
-                let quick_load_scancode = Some(
-                    input_translator.get_binding(crate::input_translator::GameKey::QuickLoad1),
-                );
+                let quick_load_scancode = Some(input_translator.get_binding(GameKey::QuickLoad1));
                 // Restart only fires when a restart snapshot exists.
                 // When missing, the body window closes and the stat
                 // panel still shows.  Probe the save manager up
@@ -3735,7 +3713,7 @@ pub(crate) async fn run_mission(
                         )
                         .await;
                         match outcome {
-                            crate::ingame_menu::DebriefingOutcome::LoadAttempt {
+                            DebriefingOutcome::LoadAttempt {
                                 body_remaining,
                                 was_on_stat,
                             } => {
@@ -3756,7 +3734,7 @@ pub(crate) async fn run_mission(
                                     &mut callbacks.save_manager,
                                     mission_id,
                                     Some(&assets.profile_manager),
-                                    crate::ingame_menu::SaveLoadMode::Load,
+                                    SaveLoadMode::Load,
                                     Some(&mut host.sound),
                                     audio_backend
                                         .as_mut()
@@ -3765,14 +3743,14 @@ pub(crate) async fn run_mission(
                                 )
                                 .await;
                                 match picker_outcome {
-                                    crate::ingame_menu::SaveLoadOutcome::Slot(slot) => {
+                                    SaveLoadOutcome::Slot(slot) => {
                                         // Synthesise a Load-resolved outcome and
                                         // exit the re-entry loop.  Stored in
                                         // `post_load_outcome` so the match
                                         // below processes it uniformly.
                                         break SettledDebriefingOutcome::Load { slot };
                                     }
-                                    crate::ingame_menu::SaveLoadOutcome::Cancel => {
+                                    SaveLoadOutcome::Cancel => {
                                         // Picker cancelled — re-enter the
                                         // debriefing on the same page.
                                         current_body = body_remaining;
@@ -3781,13 +3759,13 @@ pub(crate) async fn run_mission(
                                     }
                                 }
                             }
-                            crate::ingame_menu::DebriefingOutcome::Ok { .. } => {
+                            DebriefingOutcome::Ok { .. } => {
                                 break SettledDebriefingOutcome::Ok;
                             }
-                            crate::ingame_menu::DebriefingOutcome::Restart => {
+                            DebriefingOutcome::Restart => {
                                 break SettledDebriefingOutcome::Restart;
                             }
-                            crate::ingame_menu::DebriefingOutcome::EmergencyEnd => {
+                            DebriefingOutcome::EmergencyEnd => {
                                 break SettledDebriefingOutcome::EmergencyEnd;
                             }
                         }
@@ -3817,14 +3795,14 @@ pub(crate) async fn run_mission(
                         // `game.operation` so the next frame's
                         // `perform_pending_save_load` applies it in
                         // place.
-                        callbacks.pending = Some(crate::main_entry::SaveLoadRequest::LoadRestart);
+                        callbacks.pending = Some(SaveLoadRequest::LoadRestart);
                         game.operation.set(GameCode::LevelInProgress);
                     }
                     SettledDebriefingOutcome::Load { slot } => {
                         // The Load button chains into the save-load
                         // picker (run inline above) and queues a
                         // level load.
-                        callbacks.pending = Some(crate::main_entry::SaveLoadRequest::Load {
+                        callbacks.pending = Some(SaveLoadRequest::Load {
                             slot: Some(slot),
                             mission_id,
                         });
