@@ -1737,11 +1737,8 @@ pub fn tick_bow_shots(
         .map(|slot| slot.as_ref().map(bow_target_ground_position))
         .collect();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
+    for (shooter_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
+        let idx = shooter_id.index() as usize;
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -1962,7 +1959,7 @@ pub fn tick_bow_shots(
             };
 
             pending_fired.push(PendingShotTickResult {
-                shooter: EntityId::from_raw(idx as u32),
+                shooter: shooter_id,
                 target,
                 seq_id: shot_seq_id,
                 elem_idx: shot.element_index,
@@ -3085,16 +3082,12 @@ fn tick_arrows_matching(
         })
         .collect();
 
-    for (idx, slot) in entities.iter_mut().enumerate() {
+    for (arrow_id, entity) in crate::engine::occupied_entity_slots_mut(entities) {
         if let Some(only_arrow_id) = only_arrow_id
-            && only_arrow_id.index() != idx as u32
+            && only_arrow_id != arrow_id
         {
             continue;
         }
-        let entity = match slot {
-            Some(e) => e,
-            None => continue,
-        };
         let is_arrow = matches!(entity, Entity::Projectile(_)) && entity.element_data().active;
         if !is_arrow {
             continue;
@@ -3103,7 +3096,6 @@ fn tick_arrows_matching(
             Entity::Projectile(p) => p,
             _ => continue,
         };
-        let arrow_id = EntityId::from_raw(idx as u32);
         // `Entity::Projectile` is shared by arrows, apples, stones,
         // purses, coins, nets, wasp nests, and wasps.  Purses, coins,
         // wasp nests, and wasps follow their own per-tick update paths

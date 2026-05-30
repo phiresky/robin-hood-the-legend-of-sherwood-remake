@@ -634,14 +634,11 @@ impl EngineInner {
         // the ref offset for carried/attached ones (which need the base
         // values computed first).
         let mut depths: HashMap<EntityId, f32> = HashMap::with_capacity(self.entities.len());
-        for (i, slot) in self.entities.iter().enumerate() {
-            if let Some(e) = slot {
-                depths.insert(EntityId::from_raw(i as u32), e.element_data().position().y);
-            }
+        for (id, e) in self.entities_iter_with_id() {
+            depths.insert(id, e.element_data().position().y);
         }
 
-        for (i, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (id, entity) in self.entities_iter_with_id() {
             let sprite = &entity.element_data().sprite;
             let Some(ref_id) = sprite.display_order_ref else {
                 continue;
@@ -654,7 +651,7 @@ impl EngineInner {
             } else {
                 0.001
             };
-            depths.insert(EntityId::from_raw(i as u32), ref_depth + offset);
+            depths.insert(id, ref_depth + offset);
         }
 
         // ── Phase 2: Classify and sort ───────────────────────────
@@ -670,9 +667,7 @@ impl EngineInner {
         let mut animations: Vec<EntityId> = Vec::new();
         let mut non_animations: Vec<EntityId> = Vec::new();
 
-        for (i, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
-            let id = EntityId::from_raw(i as u32);
+        for (id, entity) in self.entities_iter_with_id() {
             // Scrolls whose current status is neither Visible nor
             // Opened are filtered out entirely — Invisible / Taken
             // scrolls don't render, and dropping them from the draw
@@ -847,12 +842,7 @@ impl EngineInner {
     // Returns every live entity; callers filter on `is_active()` /
     // `custom_minimap_dot`.
     pub fn sort_for_minimap(&self) -> Vec<EntityId> {
-        let mut ids: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(i, slot)| slot.as_ref().map(|_| EntityId::from_raw(i as u32)))
-            .collect();
+        let mut ids: Vec<EntityId> = self.entities_iter_with_id().map(|(id, _)| id).collect();
 
         ids.sort_by(|&a, &b| {
             let ea = self.entities[a.index() as usize]

@@ -437,9 +437,8 @@ impl EngineInner {
             m
         };
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(Entity::Pc(pc)) = slot else { continue };
-            let id = EntityId::from_raw(idx as u32);
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let Entity::Pc(pc) = entity else { continue };
             let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
                 None => (0, None, None),
@@ -543,13 +542,10 @@ impl EngineInner {
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
     pub(super) fn tick_tiredness(&mut self, assets: &LevelAssets) {
         let frame = self.frame_counter;
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let idx = id.index();
             // Spread the work — only every 64 frames per entity
-            if (frame & 63) != (idx as u32 & 31) {
+            if (frame & 63) != (idx & 31) {
                 continue;
             }
             if !entity.is_human() || entity.is_dead() {

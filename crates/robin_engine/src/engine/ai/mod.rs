@@ -41,12 +41,10 @@ struct PotentialDetectable {
 /// pass.
 fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
-    for (slot_idx, slot) in engine.entities.iter().enumerate() {
-        let Some(entity) = slot else { continue };
+    for (id, entity) in engine.entities_iter_with_id() {
         if !entity.element_data().active {
             continue;
         }
-        let id = EntityId::from_raw(slot_idx as u32);
         match entity {
             Entity::Pc(_) => {
                 out.push(PotentialDetectable {
@@ -2978,14 +2976,13 @@ impl EngineInner {
         }
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let Some(npc) = entity.npc_data_mut() else {
                 continue;
             };
             if npc.inform_my_friends {
                 npc.inform_my_friends = false;
-                to_broadcast.push(EntityId::from_raw(idx as u32));
+                to_broadcast.push(id);
             }
         }
 
@@ -3117,17 +3114,16 @@ impl EngineInner {
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
             if ai.pending_inform_resurrection {
                 ai.pending_inform_resurrection = false;
-                to_broadcast.push(EntityId::from_raw(idx as u32));
+                to_broadcast.push(id);
             }
             if let Some(status) = ai.pending_set_eye_status.take() {
-                to_set_eye.push((EntityId::from_raw(idx as u32), status));
+                to_set_eye.push((id, status));
             }
         }
 

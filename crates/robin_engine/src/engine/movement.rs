@@ -2810,11 +2810,8 @@ impl EngineInner {
         // movement and facing.
         let mut combat_face_targets: Vec<Option<crate::coordinates::MapPoint>> =
             vec![None; self.entities.len()];
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+            let idx = entity_id.index() as usize;
             let actor = match entity.actor_data() {
                 Some(a) => a,
                 None => continue,
@@ -2964,12 +2961,11 @@ impl EngineInner {
             vec![None; self.entities.len()];
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+            let idx = entity_id.index() as usize;
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
-            let entity_id = EntityId::from_raw(idx as u32);
             let Some((seq_id, elem_idx)) = self
                 .sequence_manager
                 .in_progress_element_for_actor_matching(entity_id, |e| e.data.is_movement())
@@ -3080,8 +3076,8 @@ impl EngineInner {
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
         let mut drunk_turn_overrides: Vec<Option<i16>> = vec![None; self.entities.len()];
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let idx = entity_id.index() as usize;
             if !matches!(entity, crate::element::Entity::Soldier(_)) {
                 continue;
             }
@@ -3097,7 +3093,6 @@ impl EngineInner {
             // an active movement path — idle drunk soldiers don't
             // wobble.  Goal is read from the actor's Move element's
             // current order (authoritative path source).
-            let entity_id = EntityId::from_raw(idx as u32);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -3165,8 +3160,8 @@ impl EngineInner {
         // mutably without touching `self.fast_grid` or the door table.
         let mut lift_translations: Vec<Option<LiftAnimContext>> = vec![None; self.entities.len()];
         let mut door_pass_wall_directions: Vec<Option<i16>> = vec![None; self.entities.len()];
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+            let idx = entity_id.index() as usize;
             let posture = entity.element_data().posture;
             let door_pass_action = entity
                 .actor_data()
@@ -3374,11 +3369,8 @@ impl EngineInner {
             crate::element::ActionState,
         )> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            let idx = entity_id.index() as usize;
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
             // is derived from the action state machine, not hardcoded
@@ -3422,7 +3414,7 @@ impl EngineInner {
                 {
                     continue;
                 }
-                let entity_id_inner = EntityId::from_raw(idx as u32);
+                let entity_id_inner = entity_id;
                 // Read goal from the current **movement** element's
                 // front order on the Move / PassDoor / Seek element.
                 //
@@ -3949,14 +3941,10 @@ impl EngineInner {
             if let Some((posture, action_state)) =
                 movement_execute_state_effect(order_action, motion_state)
             {
-                movement_state_effects.push((
-                    EntityId::from_raw(idx as u32),
-                    posture,
-                    action_state,
-                ));
+                movement_state_effects.push((entity_id, posture, action_state));
             }
             if matches!(motion_state, MotionState::Start) && is_sword_motion {
-                sword_movement_starts.push(EntityId::from_raw(idx as u32));
+                sword_movement_starts.push(entity_id);
             }
             if door_pass_anim.is_some()
                 && matches!(motion_state, MotionState::Done)
@@ -3970,10 +3958,10 @@ impl EngineInner {
                         | OrderType::TransitionClimbingWallDownWaitingUpright
                 )
             {
-                door_pass_transition_done_effects.push(EntityId::from_raw(idx as u32));
+                door_pass_transition_done_effects.push(entity_id);
             }
             if matches!(motion_state, MotionState::Terminated) && is_sword_motion {
-                sword_movement_terminations.push(EntityId::from_raw(idx as u32));
+                sword_movement_terminations.push(entity_id);
             }
             if active_move_flags.contains(crate::sequence::MoveFlags::RIDER_CHARGE)
                 && anim == OrderType::RunningUpright
@@ -3981,7 +3969,7 @@ impl EngineInner {
                 let frame_count = sprite.num_frames_for_anim(OrderType::RunningUpright);
                 let cur = sprite.current_frame;
                 if frame_count >= 2 && (cur == frame_count / 2 - 1 || cur == frame_count - 1) {
-                    galopp_events.push(EntityId::from_raw(idx as u32));
+                    galopp_events.push(entity_id);
                 }
             }
             // Turn-slowdown: when the sprite is still rotating toward
@@ -4097,7 +4085,7 @@ impl EngineInner {
                     elem.update_grid_cell();
                 }
                 if matches!(motion_state, MotionState::Terminated) {
-                    let eid = EntityId::from_raw(idx as u32);
+                    let eid = entity_id;
                     if is_final_waypoint
                         && is_sword_motion
                         && let Some(human) = entity.human_data_mut()
@@ -4383,7 +4371,7 @@ impl EngineInner {
                 // tolerance and should not teleport to the
                 // midpoint.
 
-                let eid = EntityId::from_raw(idx as u32);
+                let eid = entity_id;
 
                 // Transition-animation refresh.  When this arrival
                 // pop will leave a transition-to-waiting order as the
@@ -4675,7 +4663,7 @@ impl EngineInner {
                             let pos = elem.position();
                             let layer = elem.layer();
                             water_splash_emits.push((
-                                EntityId::from_raw(idx as u32),
+                                entity_id,
                                 crate::coordinates::WorldPoint3D {
                                     x: pos.x,
                                     y: pos.y,
@@ -4701,7 +4689,7 @@ impl EngineInner {
                         let restore_anti_collision = actor.active_door_pass.is_some();
                         if restore_anti_collision {
                             tracing::warn!(
-                                entity = ?EntityId::from_raw(idx as u32),
+                                entity = ?entity_id,
                                 "DoorPass: movement blocked; clearing active pass with aborted movement"
                             );
                             actor.active_door_pass = None;
@@ -4760,31 +4748,16 @@ impl EngineInner {
                 let new_pos_geo = crate::geo2d::pt(new_pos.x, new_pos.y);
                 if self.fast_grid.level.map_bbox.contains_point(new_pos_geo) {
                     let old_pos = MapPoint::from_geo(old_pos_geo);
-                    line_cross_checks.push((
-                        EntityId::from_raw(idx as u32),
-                        old_pos,
-                        new_pos,
-                        entity_layer,
-                    ));
+                    line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     if entity.is_pc() {
-                        patch_cross_checks.push((
-                            EntityId::from_raw(idx as u32),
-                            old_pos,
-                            new_pos,
-                            entity_layer,
-                        ));
+                        patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     }
                     // LINE_SOUND crossing is not gated on PC — every
                     // moving actor refreshes its `material` on
                     // crossing a sound-material boundary so footstep
                     // sound playback picks the right per-frame
                     // material.
-                    sound_cross_checks.push((
-                        EntityId::from_raw(idx as u32),
-                        old_pos,
-                        new_pos,
-                        entity_layer,
-                    ));
+                    sound_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                 }
             }
         }

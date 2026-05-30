@@ -79,8 +79,7 @@ impl EngineInner {
         }
         let mut impacts: Vec<NestImpact> = Vec::new();
 
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             if !entity.element_data().active {
                 continue;
             }
@@ -101,7 +100,7 @@ impl EngineInner {
             let exhausted = proj.advance_trajectory_one_frame();
             if exhausted {
                 impacts.push(NestImpact {
-                    id: EntityId::from_raw(idx as u32),
+                    id,
                     pos: proj.element.position(),
                     layer: proj.element.layer(),
                 });
@@ -198,14 +197,12 @@ impl EngineInner {
         // Snapshot wasp ids up-front so we can mutate `self.entities`
         // from inside the per-wasp loop without iterator invalidation.
         let wasp_ids: Vec<EntityId> = self
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| match slot {
-                Some(Entity::Projectile(p))
+            .entities_iter_with_id()
+            .filter_map(|(id, entity)| match entity {
+                Entity::Projectile(p)
                     if p.element.active && p.object.object_type == ObjectType::Wasp =>
                 {
-                    Some(EntityId::from_raw(idx as u32))
+                    Some(id)
                 }
                 _ => None,
             })
@@ -871,13 +868,9 @@ mod tests {
             // Force-kill every wasp (mirrors what the per-wasp AI does
             // once each sting fires or each retry budget is exhausted).
             let wasp_ids: Vec<EntityId> = engine
-                .entities
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, slot)| match slot {
-                    Some(Entity::Projectile(p)) if p.object.object_type == ObjectType::Wasp => {
-                        Some(EntityId::from_raw(idx as u32))
-                    }
+                .entities_iter_with_id()
+                .filter_map(|(id, entity)| match entity {
+                    Entity::Projectile(p) if p.object.object_type == ObjectType::Wasp => Some(id),
                     _ => None,
                 })
                 .collect();

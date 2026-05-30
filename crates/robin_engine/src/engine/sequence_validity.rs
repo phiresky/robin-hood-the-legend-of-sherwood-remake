@@ -988,8 +988,7 @@ impl EngineInner {
         }
         let mut pending: Vec<Pending> = Vec::new();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (entity_id, entity) in self.entities_iter_with_id() {
             if !entity.is_pc() || entity.is_dead() {
                 continue;
             }
@@ -1007,7 +1006,6 @@ impl EngineInner {
                 continue;
             }
 
-            let entity_id = EntityId::from_raw(idx as u32);
             let snapshot = self
                 .sequence_manager
                 .current_order_for_actor(entity_id)

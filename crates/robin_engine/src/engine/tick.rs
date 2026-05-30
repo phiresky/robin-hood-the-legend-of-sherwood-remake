@@ -247,12 +247,10 @@ impl EngineInner {
             terminate: bool,
         }
         let mut pending: Vec<Pending> = Vec::new();
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (owner, entity) in self.entities_iter_with_id() {
             if entity.actor_data().is_none() {
                 continue;
             }
-            let owner = EntityId::from_raw(idx as u32);
             let Some((seq_id, elem_idx)) = self.sequence_manager.current_element_for_actor(owner)
             else {
                 continue;
@@ -1091,11 +1089,9 @@ impl EngineInner {
 
         // ── Element hourglass (per-element update) ───────────────
         let mut to_remove = Vec::new();
-        for (idx, slot) in self.entities.iter_mut().enumerate() {
-            if let Some(entity) = slot
-                && !entity.hourglass()
-            {
-                to_remove.push(EntityId::from_raw(idx as u32));
+        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            if !entity.hourglass() {
+                to_remove.push(id);
             }
         }
         for id in to_remove {
