@@ -26,6 +26,7 @@
 //! preserves door-sector and line-goal metadata when rebuilding those
 //! seek variants.
 
+use super::movement::GoalShape;
 use crate::coordinates::MapPoint;
 use crate::element::{ActionState, EntityId};
 use crate::engine::LevelAssets;
@@ -564,7 +565,7 @@ impl crate::engine::EngineInner {
         self.build_gate_movement_sequence(
             owner,
             gate_path,
-            crate::engine::movement::GoalShape::Seek {
+            GoalShape::Seek {
                 point: resolved.destination,
                 target,
                 tolerance: resolved.tolerance,

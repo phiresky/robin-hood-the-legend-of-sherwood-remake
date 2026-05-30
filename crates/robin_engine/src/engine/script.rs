@@ -1,5 +1,6 @@
 //! Script/GameHost wiring, mission script management, campaign integration.
 
+use super::scroll_reveal::ScrollStatus;
 use super::*;
 use crate::ai::AiStateChangeSource;
 use crate::campaign::{Campaign, CampaignValue};
@@ -1339,7 +1340,7 @@ impl EngineInner {
         pc_id: crate::element::EntityId,
     ) -> bool {
         use crate::element::Entity;
-        use crate::engine::scroll_reveal::ScrollStatus;
+        use ScrollStatus;
 
         let handle = crate::natives::GameHost::actor_handle(scroll_id);
 
@@ -2947,7 +2948,7 @@ impl EngineInner {
                         continue;
                     };
                     let eid = self.expect_entity_id_for_index(idx as u32, "SetScrollStatus scroll");
-                    let st = crate::engine::scroll_reveal::ScrollStatus::from_i32(status);
+                    let st = ScrollStatus::from_i32(status);
                     self.set_scroll_status(eid, st);
                     if matches!(st, crate::engine::scroll_reveal::ScrollStatus::Opened)
                         && let Some(entity) = self.get_entity_mut(eid)

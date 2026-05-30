@@ -674,7 +674,7 @@ impl EngineInner {
             // order here also hides them from input hit-testing that
             // reuses `draw_order.ids` (e.g. `find_focusable_entity`).
             if matches!(entity, crate::element::Entity::Scroll(_)) {
-                use crate::engine::scroll_reveal::ScrollStatus;
+                use super::scroll_reveal::ScrollStatus;
                 if !matches!(
                     self.scroll_status(id),
                     ScrollStatus::Visible | ScrollStatus::Opened

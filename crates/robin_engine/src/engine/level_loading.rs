@@ -1,5 +1,6 @@
 //! Level loading, entity spawning, and background initialization.
 
+use super::scroll_reveal::ScrollStatus;
 use super::*;
 use crate::coordinates::MapPoint;
 use crate::element::{BonusItemTypeExt, Entity};
@@ -3191,7 +3192,7 @@ impl EngineInner {
         if !force_visible_scroll_ids.is_empty() {
             let count = force_visible_scroll_ids.len();
             for eid in force_visible_scroll_ids {
-                self.set_scroll_status(eid, crate::engine::scroll_reveal::ScrollStatus::Visible);
+                self.set_scroll_status(eid, ScrollStatus::Visible);
             }
             tracing::info!("Applied force_visible to {count} scroll(s)");
         }
