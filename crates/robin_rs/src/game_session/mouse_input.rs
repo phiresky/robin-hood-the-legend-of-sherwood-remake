@@ -17,7 +17,7 @@ use crate::cursor::CursorRenderer;
 use crate::element::{Command, Posture};
 use crate::game::{Game, GameCallbacks, SoundMode};
 use crate::game_operation::GameCode;
-use crate::geo2d::{self, BBox2D};
+use crate::geo2d::BBox2D;
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
