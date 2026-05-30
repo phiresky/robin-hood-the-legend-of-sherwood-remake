@@ -987,14 +987,10 @@ impl EngineInner {
                 .unwrap_or(crate::profiles::Action::NoAction)
         };
 
-        // Helper: entity map position as geo2d::GeoPoint2D (the macro
-        // store's coord type) — `element::GeoPoint2D` and
-        // `geo2d::GeoPoint2D` are sibling types with the same layout.
-        let entity_pos = |engine: &EngineInner, id: EntityId| -> Option<crate::geo2d::GeoPoint2D> {
-            engine.get_entity(id).map(|e| {
-                let p = e.element_data().position_map();
-                crate::geo2d::pt(p.x, p.y)
-            })
+        let entity_pos = |engine: &EngineInner, id: EntityId| -> Option<MapPoint> {
+            engine
+                .get_entity(id)
+                .map(|e| e.element_data().position_map())
         };
 
         // Track whether this command is a running move (selects Run
@@ -1009,7 +1005,7 @@ impl EngineInner {
         let (actor, action, position, replay): (
             EntityId,
             crate::profiles::Action,
-            crate::geo2d::GeoPoint2D,
+            MapPoint,
             QaReplayCommand,
         ) = match cmd {
             GroupMove {
@@ -1026,7 +1022,7 @@ impl EngineInner {
                 (
                     recording_pc,
                     crate::profiles::Action::NoAction, // move → Walk/Run titbit path
-                    crate::geo2d::pt(destination.x, destination.y),
+                    *destination,
                     QaReplayCommand::Move {
                         destination: *destination,
                         running: *running,
@@ -1072,7 +1068,7 @@ impl EngineInner {
                     return;
                 }
                 let action = pc_action(self, *actor);
-                let pos = crate::geo2d::pt(target_pos.x, target_pos.y);
+                let pos = MapPoint::new(target_pos.x, target_pos.y);
                 (
                     *actor,
                     action,
@@ -1094,7 +1090,7 @@ impl EngineInner {
                     return;
                 }
                 running_move = *running;
-                let pos = crate::geo2d::pt(target_pos.x, target_pos.y);
+                let pos = *target_pos;
                 (
                     *actor,
                     crate::profiles::Action::Ale,
@@ -4011,7 +4007,7 @@ mod tests {
         state.begin_recording(0);
         state.append_if_recording(QuickActionStep {
             action: Action::Search,
-            position: crate::geo2d::pt(110.0, 100.0),
+            position: crate::coordinates::MapPoint::new(110.0, 100.0),
             replay: QaReplayCommand::ScrollRead {
                 target: npc_id,
                 running: false,

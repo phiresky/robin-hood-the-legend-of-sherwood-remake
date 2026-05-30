@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::geo2d::GeoPoint2D;
 use crate::{gfx_types::Rect, renderer::Renderer};
+use robin_engine::coordinates::{MapPoint, ScreenPoint};
 use robin_engine::sprite::BBox;
 
 // ---------------------------------------------------------------------------
@@ -114,9 +115,9 @@ impl DrawManager {
 
     // -- Coordinate helpers --
 
-    /// Transform a world point to screen coordinates.
-    pub fn world_to_screen(&self, point: GeoPoint2D) -> GeoPoint2D {
-        let mut result = GeoPoint2D {
+    /// Transform a projected map point to screen coordinates.
+    pub fn map_to_screen(&self, point: MapPoint) -> ScreenPoint {
+        let mut result = ScreenPoint {
             x: point.x - self.view_rect.min.x,
             y: point.y - self.view_rect.min.y,
         };
@@ -283,7 +284,7 @@ impl DrawManager {
 
     /// Draw a polyline without clipping (assumes points are already in view).
     ///
-    /// Currently dead code (no callers). Applies `world_to_screen` so it
+    /// Currently dead code (no callers). Applies `map_to_screen` so it
     /// matches the rest of the `DrawManager` API if ever resurrected.
     pub fn draw_polyline_no_clip(
         &self,
@@ -292,8 +293,10 @@ impl DrawManager {
         color: u16,
     ) {
         for i in 0..points.len().saturating_sub(1) {
-            let a = self.world_to_screen(points[i]);
-            let b = self.world_to_screen(points[i + 1]);
+            let a = self.map_to_screen(MapPoint::from_geo(points[i])).to_geo();
+            let b = self
+                .map_to_screen(MapPoint::from_geo(points[i + 1]))
+                .to_geo();
             renderer.draw_line_screen(a.x as i32, a.y as i32, b.x as i32, b.y as i32, color);
         }
     }
@@ -311,7 +314,7 @@ impl DrawManager {
         // cos(55°), the game's isometric projection angle.
         const ISOMETRIC_MINOR_AXIS_RATIO: f64 = 0.573576436351046096108031912826158;
 
-        let center = self.world_to_screen(position);
+        let center = self.map_to_screen(MapPoint::from_geo(position)).to_geo();
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
             (radius as f32 * self.zoom_factor) as u16 as i32
@@ -331,7 +334,7 @@ impl DrawManager {
         radius: u16,
         color: u16,
     ) {
-        let center = self.world_to_screen(position);
+        let center = self.map_to_screen(MapPoint::from_geo(position)).to_geo();
         // Cast through u16 to truncate to 16 bits.
         let r = if self.zoom_factor != 1.0 {
             (radius as f32 * self.zoom_factor) as u16 as i32
@@ -407,7 +410,7 @@ impl DrawManager {
         let screen_pts: Vec<[f32; 2]> = points
             .iter()
             .map(|p| {
-                let s = self.world_to_screen(*p);
+                let s = self.map_to_screen(MapPoint::from_geo(*p)).to_geo();
                 [s.x, s.y]
             })
             .collect();
@@ -702,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn test_world_to_screen() {
+    fn test_map_to_screen() {
         let mut dm = DrawManager::new(16);
         dm.update_drawing_parameters(
             0,
@@ -713,13 +716,13 @@ mod tests {
             1.0,
         );
 
-        let screen = dm.world_to_screen(GeoPoint2D { x: 150.0, y: 250.0 });
+        let screen = dm.map_to_screen(MapPoint::new(150.0, 250.0));
         assert_eq!(screen.x, 50.0);
         assert_eq!(screen.y, 50.0);
     }
 
     #[test]
-    fn test_world_to_screen_zoomed() {
+    fn test_map_to_screen_zoomed() {
         let mut dm = DrawManager::new(16);
         dm.update_drawing_parameters(
             0,
@@ -730,7 +733,7 @@ mod tests {
             2.0,
         );
 
-        let screen = dm.world_to_screen(GeoPoint2D { x: 150.0, y: 250.0 });
+        let screen = dm.map_to_screen(MapPoint::new(150.0, 250.0));
         assert_eq!(screen.x, 100.0); // (150-100) * 2
         assert_eq!(screen.y, 100.0); // (250-200) * 2
     }

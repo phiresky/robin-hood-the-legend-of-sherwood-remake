@@ -2960,7 +2960,9 @@ pub(crate) fn render_noise_display(
                 GameMaterial::LightShadow => "shadow",
             };
             // Offset (+10, -40) from the centre, in screen space.
-            let screen = host.draw_manager.world_to_screen(origin);
+            let screen = host
+                .draw_manager
+                .map_to_screen(robin_engine::coordinates::MapPoint::from_geo(origin));
             render_text_with_shadow(
                 renderer,
                 fonts,

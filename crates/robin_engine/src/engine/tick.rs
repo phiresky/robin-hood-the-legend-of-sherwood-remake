@@ -6312,8 +6312,7 @@ impl EngineInner {
             .get_entity(entity_id)
             .map(|entity| entity.element_data().layer())
             .unwrap_or(0);
-        let obstacle =
-            self.find_plane_obstacle_at(assets, layer, crate::geo2d::pt(point.x, point.y));
+        let obstacle = self.find_plane_obstacle_at(assets, layer, point);
         if obstacle.is_none() {
             tracing::warn!(
                 entity = ?entity_id,

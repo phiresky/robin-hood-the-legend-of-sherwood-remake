@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
-use crate::geo2d::{GeoPoint2D, pt};
 use crate::profiles::Action;
 use crate::sequence::Field;
 
@@ -160,23 +159,23 @@ pub struct QuickActionStep {
     pub action: Action,
     /// Captured world position of the interaction target (the titbit's
     /// recorded position).  Drives the dotted chain.
-    #[serde(with = "geo_point_serde")]
-    pub position: GeoPoint2D,
+    #[serde(with = "map_point_tuple_serde")]
+    pub position: MapPoint,
     /// The command to dispatch at playback time.
     pub replay: QaReplayCommand,
 }
 
-mod geo_point_serde {
-    use super::GeoPoint2D;
+mod map_point_tuple_serde {
+    use super::MapPoint;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer>(p: &GeoPoint2D, s: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer>(p: &MapPoint, s: S) -> Result<S::Ok, S::Error> {
         (p.x, p.y).serialize(s)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<GeoPoint2D, D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<MapPoint, D::Error> {
         let (x, y) = <(f32, f32)>::deserialize(d)?;
-        Ok(super::pt(x, y))
+        Ok(MapPoint::new(x, y))
     }
 }
 
@@ -411,9 +410,9 @@ impl MacroStore {
 /// each into `DrawManager::draw_dotted_line` with `DISTANCE_DOT` spacing
 /// and the global titbit dotted-start phase (one per game).
 pub fn dotted_chain_segments(
-    pc_position_map: GeoPoint2D,
+    pc_position_map: MapPoint,
     slot: &QuickActionSlot,
-) -> Vec<(GeoPoint2D, GeoPoint2D)> {
+) -> Vec<(MapPoint, MapPoint)> {
     let mut segs = Vec::with_capacity(slot.steps.len());
     let mut from = pc_position_map;
     for step in &slot.steps {
@@ -431,7 +430,7 @@ mod tests {
     fn step(action: Action, x: f32, y: f32) -> QuickActionStep {
         QuickActionStep {
             action,
-            position: pt(x, y),
+            position: MapPoint::new(x, y),
             replay: QaReplayCommand::Move {
                 destination: MapPoint::new(x, y),
                 running: false,
@@ -569,16 +568,22 @@ mod tests {
         slot.steps.push(step(Action::Hit, 20.0, 0.0));
         slot.steps.push(step(Action::Heal, 20.0, 10.0));
 
-        let segs = dotted_chain_segments(pt(0.0, 0.0), &slot);
+        let segs = dotted_chain_segments(MapPoint::new(0.0, 0.0), &slot);
         assert_eq!(segs.len(), 3);
-        assert_eq!(segs[0], (pt(0.0, 0.0), pt(10.0, 0.0)));
-        assert_eq!(segs[1], (pt(10.0, 0.0), pt(20.0, 0.0)));
-        assert_eq!(segs[2], (pt(20.0, 0.0), pt(20.0, 10.0)));
+        assert_eq!(segs[0], (MapPoint::new(0.0, 0.0), MapPoint::new(10.0, 0.0)));
+        assert_eq!(
+            segs[1],
+            (MapPoint::new(10.0, 0.0), MapPoint::new(20.0, 0.0))
+        );
+        assert_eq!(
+            segs[2],
+            (MapPoint::new(20.0, 0.0), MapPoint::new(20.0, 10.0))
+        );
     }
 
     #[test]
     fn dotted_chain_empty_slot_is_empty() {
-        let segs = dotted_chain_segments(pt(5.0, 5.0), &QuickActionSlot::default());
+        let segs = dotted_chain_segments(MapPoint::new(5.0, 5.0), &QuickActionSlot::default());
         assert!(segs.is_empty());
     }
 
@@ -599,12 +604,12 @@ mod tests {
         s.begin_recording(0);
         s.append_if_recording(QuickActionStep {
             action: Action::NoAction,
-            position: pt(0.0, 0.0),
+            position: MapPoint::new(0.0, 0.0),
             replay: QaReplayCommand::PostureToggle { to_crouch: true },
         });
         s.append_if_recording(QuickActionStep {
             action: Action::NoAction,
-            position: pt(0.0, 0.0),
+            position: MapPoint::new(0.0, 0.0),
             replay: QaReplayCommand::PostureToggle { to_crouch: false },
         });
         s.stop_recording();

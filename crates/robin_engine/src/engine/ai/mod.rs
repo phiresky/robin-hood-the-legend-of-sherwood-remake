@@ -14,6 +14,7 @@ use super::*;
 use crate::ai::{AiContext, AiPerTickData, StimulusType};
 use crate::ai_entity_view::{self, AiEntityViewMap, SharedAiEntityViews};
 use crate::ai_vision;
+use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId};
 use crate::engine::SimScratch;
 use crate::geo2d::{self};
@@ -5064,17 +5065,12 @@ impl EngineInner {
     ///
     /// `radius` is `VIEW_LOOK_THERE_RADIUS = 100` for vision-based
     /// alerts and 200 for noise-based ones.
-    pub(crate) fn hey_folks_look_there(
-        &mut self,
-        source: EntityId,
-        pos: geo2d::GeoPoint2D,
-        radius: f32,
-    ) {
+    pub(crate) fn hey_folks_look_there(&mut self, source: EntityId, pos: MapPoint, radius: f32) {
         let (source_camp, source_pos) = {
             let Some(Some(Entity::Soldier(src))) = self.entities.get(source.0 as usize) else {
                 return;
             };
-            (src.soldier.cached_camp, src.element.position_map().to_geo())
+            (src.soldier.cached_camp, src.element.position_map())
         };
 
         let radius_sq = radius * radius;
@@ -5108,7 +5104,7 @@ impl EngineInner {
                     continue;
                 }
                 // Range check (square distance to avoid sqrt).
-                let p = s.element.position_map().to_geo();
+                let p = s.element.position_map();
                 let dx = source_pos.x - p.x;
                 let dy = source_pos.y - p.y;
                 dx * dx + dy * dy < radius_sq
@@ -5121,7 +5117,7 @@ impl EngineInner {
             if let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.0 as usize) {
                 // Face toward the seek position via
                 // `vector_to_sector_0_to_15_iso`.
-                let p = s.element.position_map().to_geo();
+                let p = s.element.position_map();
                 let dx = pos.x - p.x;
                 let dy = pos.y - p.y;
                 s.element.set_direction_instantly(

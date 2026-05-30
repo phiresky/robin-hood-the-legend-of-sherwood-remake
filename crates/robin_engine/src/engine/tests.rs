@@ -3357,12 +3357,12 @@ fn seed_macro_slot(
     let state = engine.macro_store.get_or_insert(pc);
     state.begin_recording(slot);
     for (x, y) in steps {
-        let pos = crate::geo2d::pt(x, y);
+        let pos = crate::coordinates::MapPoint::new(x, y);
         state.append_if_recording(QuickActionStep {
             action: crate::profiles::Action::NoAction,
             position: pos,
             replay: QaReplayCommand::Move {
-                destination: pos.into(),
+                destination: pos,
                 running: false,
             },
         });

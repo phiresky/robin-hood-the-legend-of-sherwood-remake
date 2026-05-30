@@ -2336,12 +2336,14 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
     // Snapshot the PC positions first — the draw call borrows engine.host
     // mutably for the draw_manager and its phase store, so we can't
     // still be iterating `engine.pc_ids()` while calling it.
-    let mut per_pc: Vec<(crate::element::EntityId, GeoPoint2D)> =
-        Vec::with_capacity(engine.pc_ids().len());
+    let mut per_pc: Vec<(
+        crate::element::EntityId,
+        robin_engine::coordinates::MapPoint,
+    )> = Vec::with_capacity(engine.pc_ids().len());
     for &pc_id in engine.pc_ids() {
         if let Some(ent) = engine.get_entity(pc_id) {
             let pos = ent.element_data().position_map();
-            per_pc.push((pc_id, GeoPoint2D { x: pos.x, y: pos.y }));
+            per_pc.push((pc_id, pos));
         }
     }
 
@@ -2370,8 +2372,8 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
                 let to = step.position;
                 host.draw_manager.draw_dotted_line(
                     renderer,
-                    from,
-                    to,
+                    from.to_geo(),
+                    to.to_geo(),
                     &mut phase,
                     DISTANCE_DOT,
                     1.0,

@@ -9,7 +9,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::geo2d;
 use crate::profiles::{ArmorMaterial, WeaponMaterial};
 use crate::sound_cache::{Material, SampleLoader, SoundCache};
 use crate::sound_config::SoundConfig;
@@ -434,7 +433,7 @@ impl SoundManager {
     }
 
     pub fn listen_point(&self) -> MapPoint {
-        MapPoint::from_geo(self.geometry_engine.listen_point())
+        self.geometry_engine.listen_point()
     }
 
     pub fn is_dialog_finished(&self) -> bool {
@@ -632,9 +631,8 @@ impl SoundManager {
 
     /// Update the listener position and zoom level.
     pub fn set_listen_point(&mut self, position: MapPoint, zoom_level: f32) {
-        let position_geo = position.to_geo();
-        if self.geometry_engine.listen_point() != position_geo {
-            self.geometry_engine.set_listen_point(position_geo);
+        if self.geometry_engine.listen_point() != position {
+            self.geometry_engine.set_listen_point(position);
             self.update_pending_sounds = true;
         }
         if (self.geometry_engine.zoom_factor() - zoom_level).abs() > f32::EPSILON {
@@ -918,7 +916,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::Fx,
-            position: position.to_geo(),
+            position,
             identifier: fx_id,
             source: SoundSettingsSource::Position {
                 material: material.map_or(Material::NUM_MATERIALS as u8, |m| m as u8),
@@ -977,7 +975,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position: position.to_geo(),
+            position,
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1023,7 +1021,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position: position.to_geo(),
+            position,
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1058,7 +1056,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position: position.to_geo(),
+            position,
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1106,7 +1104,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::CombatFx,
-            position: position.to_geo(),
+            position,
             identifier,
             source: SoundSettingsSource::Position { material: 0 },
         };
@@ -1143,7 +1141,7 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::Fx,
-            position: position.to_geo(),
+            position,
             identifier: fx_id,
             source: SoundSettingsSource::Position {
                 material: material.map_or(Material::NUM_MATERIALS as u8, |m| m as u8),
@@ -1201,7 +1199,7 @@ impl SoundManager {
             }
             lp
         } else {
-            position.to_geo()
+            position
         };
 
         let excl_id = (profile_id & 0xFFFF_0000) | exclamation_id as u32;
@@ -1888,7 +1886,12 @@ impl SoundManager {
 
         let settings = SoundSettings {
             sound_type: SoundType::Source,
-            position: src.shape.first().copied().unwrap_or(geo2d::pt(0.0, 0.0)),
+            position: src
+                .shape
+                .first()
+                .copied()
+                .map(MapPoint::from_geo)
+                .unwrap_or(MapPoint::ZERO),
             identifier: src.id,
             source: SoundSettingsSource::SoundSource {
                 info: src.to_source_info(),

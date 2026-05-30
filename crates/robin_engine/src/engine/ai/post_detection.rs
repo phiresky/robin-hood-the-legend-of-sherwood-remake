@@ -5,8 +5,8 @@
 
 use super::snapshots::{Detection, PcSnapshot};
 use super::*;
+use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
-use crate::geo2d::{self};
 
 impl EngineInner {
     /// P4 — fire `HeyFolksLookThere` + log on every fresh detection
@@ -14,7 +14,7 @@ impl EngineInner {
     /// PC.
     pub(super) fn tick_enemy_ai_alert_allies(&mut self, transitions: &[Detection]) {
         const VIEW_LOOK_THERE_RADIUS: f32 = 100.0;
-        let alert_calls: Vec<(EntityId, geo2d::GeoPoint2D)> = transitions
+        let alert_calls: Vec<(EntityId, MapPoint)> = transitions
             .iter()
             .filter(|d| d.newly_alerted)
             .map(|d| (d.enemy, d.target_pos))
@@ -291,7 +291,7 @@ impl EngineInner {
             self.entities
                 .get(tid.0 as usize)
                 .and_then(|s| s.as_ref())
-                .map(|e| e.element_data().position_map().to_geo())
+                .map(|e| e.element_data().position_map())
                 .map(|tp| {
                     crate::position_interface::vector_to_sector_0_to_15_iso(
                         tp.x - enemy_pos.x,
