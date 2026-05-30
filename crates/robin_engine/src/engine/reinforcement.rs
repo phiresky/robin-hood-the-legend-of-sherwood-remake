@@ -166,7 +166,7 @@ impl EngineInner {
                 assets,
                 door_snap.sector_out,
                 door_snap.layer_out,
-                crate::geo2d::pt(door_snap.point_out.0, door_snap.point_out.1),
+                crate::coordinates::MapPoint::new(door_snap.point_out.0, door_snap.point_out.1),
             )
         };
         let spawn_sector = crate::position_interface::SectorHandle::new(door_snap.sector_out);

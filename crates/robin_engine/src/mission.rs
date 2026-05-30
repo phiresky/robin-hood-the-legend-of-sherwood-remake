@@ -6,8 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::sbfile::SbFile;
-
 /// Mission completion status.
 #[repr(u32)]
 #[derive(

@@ -334,11 +334,9 @@ impl EngineInner {
         };
 
         // Reachability test.
-        let p1 = crate::geo2d::pt(my_pos_map.x, my_pos_map.y);
-        let p2 = crate::geo2d::pt(destination.x, destination.y);
         let mut is_reachable = self.fast_grid.is_straight_movement_authorized(
-            p1.into(),
-            p2.into(),
+            my_pos_map,
+            destination,
             my_layer,
             &my_move_box,
         );
@@ -1021,11 +1019,9 @@ impl EngineInner {
         };
         let layer = entity.element_data().layer();
         let move_box = *entity.position_iface().get_move_box();
-        let p1 = crate::geo2d::pt(my_map.x, my_map.y);
-        let p2 = crate::geo2d::pt(dest.x, dest.y);
         if !self
             .fast_grid
-            .is_straight_movement_authorized(p1.into(), p2.into(), layer, &move_box)
+            .is_straight_movement_authorized(my_map, dest, layer, &move_box)
         {
             return None;
         }
@@ -1494,7 +1490,7 @@ impl EngineInner {
             let layer = s.element.layer();
             let dir = s.element.direction();
             let boredom = s.human.sword_strike_boredom.clone();
-            let principal = EntityId::from_raw(ai.base.primary_target);
+            let principal = EntityId::Pc(ai.base.primary_target);
             (
                 ai.hth_weapon_id,
                 fa,
@@ -1520,7 +1516,6 @@ impl EngineInner {
         // `INVERSE_SWORDFIGHT_ASPECT_RATIO` (= 1.0 in the shipping
         // game).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        let attacker_pos_geo = victim_pos.to_geo();
         let nearby: Vec<crate::combat::NearbyVictim> = self
             .entities_iter_with_id()
             .filter_map(|(eid, e)| {
@@ -1534,8 +1529,8 @@ impl EngineInner {
                 if elem.layer() != victim_layer {
                     return None;
                 }
-                let vdx = elem.position_map().x - attacker_pos_geo.x;
-                let vdy = (elem.position_map().y - attacker_pos_geo.y) * inv_aspect;
+                let vdx = elem.position_map().x - victim_pos.x;
+                let vdy = (elem.position_map().y - victim_pos.y) * inv_aspect;
                 if vdx.abs().max(vdy.abs()) > 150.0 {
                     return None;
                 }

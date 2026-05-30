@@ -511,11 +511,10 @@ pub(super) fn build_friend_swap_candidates(
     my_camp: crate::element::Camp,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
     let mut out = Vec::new();
-    for (idx, slot) in entities.iter().enumerate() {
-        let Some(Entity::Soldier(s)) = slot else {
+    for (friend_id, entity) in occupied_entity_slots(entities) {
+        let Entity::Soldier(s) = entity else {
             continue;
         };
-        let friend_id = crate::element::EntityId::from_raw(idx as u32);
         if friend_id == me_id {
             continue;
         }
@@ -541,7 +540,7 @@ pub(super) fn build_friend_swap_candidates(
             0 => continue,
             h => h,
         };
-        let friend_target_id = crate::element::EntityId::from_raw(friend_target_handle);
+        let friend_target_id = crate::element::EntityId::Pc(friend_target_handle);
         let friend_target = entities
             .get(friend_target_id.index() as usize)
             .and_then(|ts| ts.as_ref());
@@ -685,8 +684,8 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     // Net radius: 10 when crumpled, else 40.
     let mut nets_by_victim: std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> =
         std::collections::HashMap::new();
-    for (net_slot, net_opt) in engine.entities.iter().enumerate() {
-        let Some(Entity::Net(net)) = net_opt else {
+    for (net_id, entity) in crate::engine::occupied_entity_slots(&engine.entities) {
+        let Entity::Net(net) = entity else {
             continue;
         };
         if !net.element.active {
@@ -697,7 +696,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         }
         let net_pos = net.element.position_map();
         let info = ai_entity_view::NetCoverInfo {
-            handle: net_slot as u32,
+            handle: net_id.index(),
             position: crate::ai::Position {
                 x: net_pos.x,
                 y: net_pos.y,
@@ -712,8 +711,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     }
 
     let mut map = AiEntityViewMap::with_capacity(engine.entities.len());
-    for (slot_idx, slot) in engine.entities.iter().enumerate() {
-        let Some(entity) = slot else { continue };
+    for (entity_id, entity) in crate::engine::occupied_entity_slots(&engine.entities) {
         let elem = entity.element_data();
         if !elem.active {
             continue;
@@ -767,7 +765,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         // Attach pre-scanned covering nets for stuck victims, consumed
         // by `RunToFreeNetVictim`.
         if view.stuck_under_net
-            && let Some(nets) = nets_by_victim.remove(&(slot_idx as u32))
+            && let Some(nets) = nets_by_victim.remove(&entity_id.index())
         {
             view.covering_nets = nets;
         }
@@ -796,7 +794,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         // AI handle == entity slot index (see `FighterSnapshot.handle =
         // target_id.index()` elsewhere, and `self.entities.get_mut(target as
         // usize)` for `CrossNpcAction` handlers).
-        map.insert(slot_idx as u32, view);
+        map.insert(entity_id.index(), view);
     }
     map
 }
@@ -893,7 +891,7 @@ impl EngineInner {
             .map(|id| id.index())
             .unwrap_or(ai.primary_target);
         let target_id = if primary_target_handle != 0 {
-            Some(crate::element::EntityId::from_raw(primary_target_handle))
+            Some(crate::element::EntityId::Pc(primary_target_handle))
         } else {
             None
         };
@@ -2314,11 +2312,7 @@ impl EngineInner {
             Vec<EntityId>,
         > = std::collections::HashMap::new();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (entity_id, entity) in self.entities_iter_with_id() {
             if entity.actor_data().is_none() {
                 continue;
             }
@@ -2335,7 +2329,7 @@ impl EngineInner {
             occupants_by_building
                 .entry(sector_raw)
                 .or_default()
-                .push(EntityId::from_raw(idx as u32));
+                .push(entity_id);
         }
 
         // Build the houses list from the collected door/occupant maps.
@@ -3260,7 +3254,7 @@ impl EngineInner {
                 && let Some(npc) = entity.npc_data_mut()
             {
                 if ai_primary_target != 0 {
-                    ai_vision::focus_entity(npc, EntityId::from_raw(ai_primary_target));
+                    ai_vision::focus_entity(npc, EntityId::Pc(ai_primary_target));
                 } else {
                     ai_vision::unfocus(npc);
                 }
@@ -3599,7 +3593,7 @@ impl EngineInner {
                 self.pending_side_effects
                     .sounds
                     .push(super::SoundCommand::StopExclamation {
-                        actor_id: crate::element::EntityId::from_raw(snap.entity_id),
+                        actor_id: crate::element::EntityId::Soldier(snap.entity_id),
                     });
                 self.sound_sim
                     .playing_exclamations
@@ -3617,7 +3611,7 @@ impl EngineInner {
                     exclamation_id: excl_id,
                     variant,
                     position: snap.position.into(),
-                    actor_id: Some(crate::element::EntityId::from_raw(snap.entity_id)),
+                    actor_id: Some(crate::element::EntityId::Soldier(snap.entity_id)),
                 });
             // Schedule the deterministic MYTALK finish from the
             // host-populated sample-duration table. Missing entries fall
@@ -4178,7 +4172,7 @@ impl EngineInner {
         // torn down before the engine-side ENTER_SWORDFIGHT sequence
         // runs.
         if let Some(target_handle) = stop_target {
-            let target_id = EntityId::from_raw(target_handle);
+            let target_id = EntityId::Pc(target_handle);
             self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
         }
 
@@ -4203,7 +4197,7 @@ impl EngineInner {
                     self.launch_element(elem);
                 }
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
-                    let target_id = EntityId::from_raw(target_handle);
+                    let target_id = EntityId::Pc(target_handle);
                     let aggressor_jl = enter_jl.and_then(crate::jump_line::JumpLineIndex::new);
                     self.enter_swordfight_with_jump_line(
                         assets,
@@ -4218,7 +4212,7 @@ impl EngineInner {
 
         // Process set_as_new_principal_opponent.
         if let Some(opponent_handle) = set_principal {
-            let opponent_id = EntityId::from_raw(opponent_handle);
+            let opponent_id = EntityId::Pc(opponent_handle);
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
@@ -4236,7 +4230,7 @@ impl EngineInner {
 
         // Process pending bow shot.
         if let Some(target_handle) = shoot {
-            let target_id = EntityId::from_raw(target_handle);
+            let target_id = EntityId::Pc(target_handle);
             self.shoot_bow_at(assets, npc_id, target_id);
         }
 
@@ -4254,7 +4248,7 @@ impl EngineInner {
         if let Some(target_handle) = do_focus
             && let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(npc_id.index() as usize)
         {
-            crate::ai_vision::focus_entity(&mut s.npc, EntityId::from_raw(target_handle));
+            crate::ai_vision::focus_entity(&mut s.npc, EntityId::Pc(target_handle));
             focus_channel_fired = true;
         }
 
@@ -4665,7 +4659,7 @@ impl EngineInner {
         // other_actor)` call as used by the enemy beggar-identify
         // cascade.
         for (target_handle, cmd) in launch_on_target {
-            let target_id = EntityId::from_raw(target_handle);
+            let target_id = EntityId::Pc(target_handle);
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
             self.launch_element(elem);
         }
@@ -4845,8 +4839,7 @@ impl EngineInner {
             use crate::element_kinds::ObjectType;
             let det_idx = DetectableType::Object as usize;
             let mut to_add: Vec<EntityId> = Vec::new();
-            for (idx, slot) in self.entities.iter().enumerate() {
-                let Some(entity) = slot else { continue };
+            for (entity_id, entity) in self.entities_iter_with_id() {
                 if !entity.is_object() || !entity.is_active() {
                     continue;
                 }
@@ -4859,7 +4852,7 @@ impl EngineInner {
                     _ => false,
                 };
                 if restore_this {
-                    to_add.push(EntityId::from_raw(idx as u32));
+                    to_add.push(entity_id);
                 }
             }
             if !to_add.is_empty()
@@ -6413,7 +6406,7 @@ impl EngineInner {
         // ── Phase 6: Dispatch CALL_PATROL_COORDINATE to minions ──
         let patrol_frame = self.frame_counter;
         for cmd in patrol_cmds {
-            let minion_id = EntityId::from_raw(cmd.minion);
+            let minion_id = EntityId::Soldier(cmd.minion);
             let ctx = {
                 let Some(Some(entity)) = self.entities.get_mut(cmd.minion as usize) else {
                     continue;
@@ -6666,7 +6659,7 @@ impl EngineInner {
                     position,
                     direction,
                 } => {
-                    let target_id = EntityId::from_raw(target);
+                    let target_id = EntityId::Soldier(target);
                     let ctx = {
                         let Some(Some(entity @ Entity::Soldier(_))) =
                             self.entities.get_mut(target as usize)
@@ -6705,7 +6698,7 @@ impl EngineInner {
                 }
 
                 crate::ai::CrossNpcAction::BreakPhalanx { target } => {
-                    let target_id = EntityId::from_raw(target);
+                    let target_id = EntityId::Soldier(target);
                     let ctx = {
                         let Some(Some(entity @ Entity::Soldier(_))) =
                             self.entities.get_mut(target as usize)
@@ -6749,7 +6742,7 @@ impl EngineInner {
                     fallback_to_sender,
                     to_whole_patrol,
                 } => {
-                    let target_id = EntityId::from_raw(target);
+                    let target_id = EntityId::Soldier(target);
                     let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
                     stimulus.info = info;
                     stimulus.to_whole_patrol = to_whole_patrol;
@@ -6760,7 +6753,7 @@ impl EngineInner {
                         else {
                             // Target missing → try fallback directly below.
                             if let Some(sender) = fallback_to_sender {
-                                let sender_id = EntityId::from_raw(sender);
+                                let sender_id = EntityId::Soldier(sender);
                                 if let Some(Some(entity @ Entity::Soldier(_))) =
                                     self.entities.get(sender as usize)
                                 {
@@ -6811,7 +6804,7 @@ impl EngineInner {
                     // Fallback: if target couldn't handle the stimulus,
                     // redeliver to the sender (e.g. conversation chains).
                     if !handled && let Some(sender) = fallback_to_sender {
-                        let sender_id = EntityId::from_raw(sender);
+                        let sender_id = EntityId::Soldier(sender);
                         let ctx2 = {
                             let Some(Some(entity @ Entity::Soldier(_))) =
                                 self.entities.get(sender as usize)

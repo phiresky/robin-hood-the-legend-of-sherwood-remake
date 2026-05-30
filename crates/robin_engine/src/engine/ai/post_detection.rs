@@ -194,7 +194,7 @@ impl EngineInner {
                 s.npc
                     .ai_brain
                     .base()
-                    .map(|ai| EntityId::from_raw(ai.primary_target))
+                    .map(|ai| EntityId::Pc(ai.primary_target))
             };
 
             // Set the soldier into combat stance.  Clearing
@@ -262,7 +262,7 @@ impl EngineInner {
             // `primary_target == 0` means "no target selected" — the AI
             // hasn't seen a PC yet.  Treating 0 as an EntityId would
             // route target lookups to the first level entity.
-            let tid = (ai.primary_target != 0).then_some(EntityId::from_raw(ai.primary_target));
+            let tid = (ai.primary_target != 0).then_some(EntityId::Pc(ai.primary_target));
             let alerted = match entity {
                 Entity::Soldier(s) => s.npc.alerted,
                 _ => false,
@@ -461,7 +461,7 @@ impl EngineInner {
                             | crate::ai::StimulusType::EventEnemyNear
                     ) =>
                 {
-                    Some(EntityId::from_raw(handle))
+                    Some(EntityId::Pc(handle))
                 }
                 _ => None,
             };

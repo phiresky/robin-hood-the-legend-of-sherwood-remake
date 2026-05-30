@@ -9,7 +9,7 @@
 //! - **Demo** (`ENABLE_DEMO`): tags like `RHPL`/`RHMI`, lower version numbers
 //! - **Fullgame** (`_NEW_LEVELS`): obfuscated tags like `MEUH`/`DUTY`, higher versions
 
-use crate::geo2d;
+use crate::coordinates::MapPoint;
 use crate::sbfile::{SB_FILE_READ, SbFile};
 use serde::{Deserialize, Serialize};
 
@@ -727,7 +727,7 @@ pub struct MissionHeader {
 /// Beam-me spawn point from the GOOD/SCOT chunk.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct BeamMe {
-    pub position: geo2d::GeoPoint2D,
+    pub position: MapPoint,
     pub direction: u32,
     pub action: u32,
     pub projection_area: u16,
@@ -2398,7 +2398,7 @@ fn read_beam_mes(reader: &mut ChunkReader, format: LevelFormat) -> Result<Vec<Be
         let required_pc = reader.read_u8()?;
 
         beam_mes.push(BeamMe {
-            position: geo2d::pt(pos_x as f32, pos_y as f32),
+            position: MapPoint::new(pos_x as f32, pos_y as f32),
             direction,
             action,
             projection_area,

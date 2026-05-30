@@ -3,7 +3,7 @@
 use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
-use crate::element::{Command, Entity, EntityId, EntityIdKind};
+use crate::element::{Command, Entity, EntityId};
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
 pub const APPLE_SMELL_DURATION: u32 = 1500;
@@ -1366,12 +1366,12 @@ impl EngineInner {
             })
             .collect();
 
-        for (idx, slot) in self.entities.iter().enumerate() {
+        for (bonus_id, entity) in self.entities_iter_with_id() {
             // Match either a regular Bonus or a landed coin/purse
             // projectile (post-burst).  Coins and purses are projectiles
             // but the pickup switch dispatches by `ObjectType`.
-            let (bx, by, blayer, quantity, obj_type, assoc_action) = match slot {
-                Some(Entity::Bonus(b)) if b.element.active && !b.object.taken => (
+            let (bx, by, blayer, quantity, obj_type, assoc_action) = match entity {
+                Entity::Bonus(b) if b.element.active && !b.object.taken => (
                     b.element.position_map().x,
                     b.element.position_map().y,
                     b.element.layer(),
@@ -1379,7 +1379,7 @@ impl EngineInner {
                     b.object.object_type,
                     b.object.associated_action,
                 ),
-                Some(Entity::Projectile(p))
+                Entity::Projectile(p)
                     if p.element.active
                         && !p.object.taken
                         && !p.projectile.flying
@@ -1416,7 +1416,7 @@ impl EngineInner {
                 if dx * dx + dy * dy <= PICKUP_RADIUS_SQ {
                     pickups.push(Pickup {
                         pc_id,
-                        bonus_id: EntityId::new(idx as u32, EntityIdKind::Projectile),
+                        bonus_id,
                         obj_type,
                         assoc_action,
                         quantity,
@@ -2313,8 +2313,8 @@ impl EngineInner {
     /// The associated titbit is auto-removed by
     /// `sync_apple_smell_titbits` once the counter reaches 0.
     pub(super) fn tick_apple_smell(&mut self) {
-        for slot in self.entities.iter_mut() {
-            if let Some(Entity::Soldier(s)) = slot.as_mut()
+        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+            if let Entity::Soldier(s) = entity
                 && s.soldier.apple_smell > 0
             {
                 s.soldier.apple_smell -= 1;
@@ -3713,13 +3713,11 @@ impl EngineInner {
         // Collect (carrier_id, victim_id) pairs first to avoid
         // overlapping borrows with launch_element.
         let mut drops: Vec<(crate::element::EntityId, crate::element::EntityId)> = Vec::new();
-        for (idx, slot) in self.entities.iter().enumerate() {
-            let Some(entity) = slot else { continue };
+        for (carrier_id, entity) in self.entities_iter_with_id() {
             let elem = entity.element_data();
             if elem.posture != crate::element::Posture::CarryingOnShoulders {
                 continue;
             }
-            let carrier_id = crate::element::EntityId::from_raw(idx as u32);
             let carrier_pos = elem.position();
 
             let obstacles = self.sight_obstacles(assets);
@@ -3730,11 +3728,10 @@ impl EngineInner {
             // Find the shouldered victim — the human whose `carrier`
             // back-pointer references this carrier.  We track the
             // relationship from the victim side only.
-            let victim_id = self.entities.iter().enumerate().find_map(|(vidx, vslot)| {
-                let v = vslot.as_ref()?;
+            let victim_id = self.entities_iter_with_id().find_map(|(victim_id, v)| {
                 let hd = v.human_data()?;
                 if hd.carrier == Some(carrier_id) {
-                    Some(crate::element::EntityId::from_raw(vidx as u32))
+                    Some(victim_id)
                 } else {
                     None
                 }

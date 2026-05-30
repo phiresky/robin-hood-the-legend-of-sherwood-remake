@@ -226,8 +226,8 @@ pub struct PathGraphLink {
 /// A node in the pathfinding graph (placed at an obstacle corner).
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PathGraphNode {
-    /// World position of this node.
-    pub position: GeoPoint2D,
+    /// Map-space position of this graph corner.
+    pub position: MapPoint,
 
     /// Vector from the obstacle point *before* this node to this node.
     pub vector_to_node: Vec2D,
@@ -635,7 +635,7 @@ impl PathGraph {
                         }
 
                         self.nodes.push(PathGraphNode {
-                            position: pt(px, py),
+                            position: MapPoint::new(px, py),
                             vector_to_node: pt(tx, ty),
                             vector_from_node: pt(fx, fy),
                             required_state,
@@ -1153,7 +1153,7 @@ impl PathFinderRuntime {
         while !self.open_nodes.is_empty() {
             // Pop the node with the lowest score
             let current_idx = self.open_nodes.remove(0);
-            let current_pos = MapPoint::from_geo(self.graph.nodes[current_idx.0 as usize].position);
+            let current_pos = self.graph.nodes[current_idx.0 as usize].position;
             let node_config = self.graph.nodes[current_idx.0 as usize]
                 .configurations
                 .get(self.current_half_diagonal_idx as usize)
@@ -1239,10 +1239,8 @@ impl PathFinderRuntime {
                             next.distance_from_source = new_dist;
 
                             if !next.visited {
-                                next.distance_to_goal = Self::estimate_distance(
-                                    MapPoint::from_geo(next.position),
-                                    goal,
-                                );
+                                next.distance_to_goal =
+                                    Self::estimate_distance(next.position, goal);
                             }
 
                             next.score = new_dist + next.distance_to_goal;
@@ -1409,8 +1407,8 @@ impl PathFinderRuntime {
                 }
 
                 // Check if node is in range, useful, and reachable
-                let node_position = MapPoint::from_geo(node.position);
-                if !box_link.contains_point(node.position)
+                let node_position = node.position;
+                if !box_link.contains_point(node.position.to_geo())
                     || !self.is_useful_link(source, node_idx)
                     || !self.is_reachable_fast(source, node_position)
                 {
@@ -1484,14 +1482,13 @@ impl PathFinderRuntime {
     #[inline]
     pub fn docking_point(&self, node: NodeIdx, place: u8, half_diagonal: Vec2D) -> MapPoint {
         let pos = self.graph.nodes[node.0 as usize].position;
-        let p = match place {
-            TOP_LEFT => pt(pos.x - half_diagonal.x, pos.y - half_diagonal.y),
-            TOP_RIGHT => pt(pos.x + half_diagonal.x, pos.y - half_diagonal.y),
-            BOTTOM_LEFT => pt(pos.x - half_diagonal.x, pos.y + half_diagonal.y),
-            BOTTOM_RIGHT => pt(pos.x + half_diagonal.x, pos.y + half_diagonal.y),
+        match place {
+            TOP_LEFT => MapPoint::new(pos.x - half_diagonal.x, pos.y - half_diagonal.y),
+            TOP_RIGHT => MapPoint::new(pos.x + half_diagonal.x, pos.y - half_diagonal.y),
+            BOTTOM_LEFT => MapPoint::new(pos.x - half_diagonal.x, pos.y + half_diagonal.y),
+            BOTTOM_RIGHT => MapPoint::new(pos.x + half_diagonal.x, pos.y + half_diagonal.y),
             _ => pos,
-        };
-        MapPoint::from_geo(p)
+        }
     }
 
     /// Check if a docking place is appropriate for a unit at `point`.
@@ -1718,10 +1715,10 @@ impl PathFinderRuntime {
             let last = path[i + 2];
 
             let small_vec = pt(0.5e-4 * (last.x - first.x), 0.5e-4 * (last.y - first.y));
-            let p1 = pt(first.x + small_vec.x, first.y + small_vec.y);
-            let p2 = pt(last.x - small_vec.x, last.y - small_vec.y);
+            let p1 = MapPoint::new(first.x + small_vec.x, first.y + small_vec.y);
+            let p2 = MapPoint::new(last.x - small_vec.x, last.y - small_vec.y);
 
-            if self.is_reachable_grid(grid, MapPoint::from_geo(p1), MapPoint::from_geo(p2)) {
+            if self.is_reachable_grid(grid, p1, p2) {
                 path.remove(i + 1);
             } else {
                 i += 1;
@@ -2129,7 +2126,7 @@ impl PathFinderRuntime {
                 for obstacle in area {
                     for &node_idx in obstacle {
                         let node = &self.graph.nodes[node_idx.0 as usize];
-                        if !view_rect.contains_point(node.position) {
+                        if !view_rect.contains_point(node.position.to_geo()) {
                             continue;
                         }
                         let Some(&config) = node.configurations.get(hd_idx) else {
@@ -2138,7 +2135,7 @@ impl PathFinderRuntime {
                         for &(bit, dx, dy) in &STUBS {
                             if (config & bit) != 0 {
                                 let q = MapPoint::new(node.position.x + dx, node.position.y + dy);
-                                emit(MapPoint::from_geo(node.position), q, 0xFFFF);
+                                emit(node.position, q, 0xFFFF);
                             }
                         }
                     }
@@ -2230,7 +2227,7 @@ mod tests {
     fn test_docking_point_positions() {
         let mut runtime = PathFinderRuntime::new();
         runtime.graph.nodes.push(PathGraphNode {
-            position: pt(100.0, 100.0),
+            position: MapPoint::new(100.0, 100.0),
             vector_to_node: pt(0.0, 0.0),
             vector_from_node: pt(0.0, 0.0),
             required_state: 0,
@@ -2449,7 +2446,7 @@ mod tests {
 
         // Set up a minimal graph with one layer, one area, one obstacle, two nodes
         runtime.graph.nodes.push(PathGraphNode {
-            position: pt(10.0, 10.0),
+            position: MapPoint::new(10.0, 10.0),
             vector_to_node: pt(0.0, 0.0),
             vector_from_node: pt(0.0, 0.0),
             required_state: 0, // Always active (matches any state)
@@ -2465,7 +2462,7 @@ mod tests {
             enter_place: 0,
         });
         runtime.graph.nodes.push(PathGraphNode {
-            position: pt(50.0, 50.0),
+            position: MapPoint::new(50.0, 50.0),
             vector_to_node: pt(0.0, 0.0),
             vector_from_node: pt(0.0, 0.0),
             required_state: 1, // Only active when bit 0 is set

@@ -669,23 +669,23 @@ impl EngineInner {
         // chosen point is inside the minimal-goal sector's polygon
         // and revert to minimal goal on failure.
         let (goal_x, goal_y) = {
-            let pt_start = crate::geo2d::pt(victim_pos.x, victim_pos.y);
+            let pt_start = victim_pos;
             let try_pt = |frac: f32| {
-                crate::geo2d::pt(
+                crate::coordinates::MapPoint::new(
                     victim_pos.x + flight_x * frac,
                     victim_pos.y + flight_y * frac,
                 )
             };
-            let authorized = |pt_try: crate::geo2d::GeoPoint2D| {
+            let authorized = |pt_try: crate::coordinates::MapPoint| {
                 self.fast_grid.is_straight_movement_authorized(
-                    pt_start.into(),
-                    pt_try.into(),
+                    pt_start,
+                    pt_try,
                     victim_layer,
                     &victim_move_box,
                 )
             };
 
-            let mut chosen: Option<crate::geo2d::GeoPoint2D> = None;
+            let mut chosen: Option<crate::coordinates::MapPoint> = None;
             // 100%
             let pt_full = try_pt(1.0);
             if authorized(pt_full) {
@@ -723,7 +723,7 @@ impl EngineInner {
                             .copied()
                     })
                     .and_then(|idx| self.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.contains_point(crate::coordinates::MapPoint::from_geo(pt)))
+                    .map(|gs| gs.contains_point(pt))
                     // Without a known sector, trust the
                     // `is_straight_movement_authorized` result.
                     .unwrap_or(true);
@@ -771,7 +771,7 @@ impl EngineInner {
                 assets,
                 sh.get(),
                 victim_layer,
-                crate::geo2d::pt(goal_x, goal_y),
+                crate::coordinates::MapPoint::new(goal_x, goal_y),
             ) {
                 Some(obs_idx) => {
                     let z = self

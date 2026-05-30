@@ -6,7 +6,6 @@
 //! operations.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 use crate::geo2d::{self, GeoPoint2D};
 use crate::position_interface::{ASPECT_RATIO, vector_norm_iso};

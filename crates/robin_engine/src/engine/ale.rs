@@ -9,11 +9,6 @@
 //! The `Command::DropAle` dispatcher lives in the action-dispatch
 //! layer; this helper is the receiver that materialises the bottle.
 
-use super::{EngineInner, LevelAssets};
-use crate::element::{
-    ElementBonus, ElementData, ElementKind, Entity, EntityId, GameMaterial, ObjectData, ObjectType,
-};
-use crate::order::OrderType;
-use crate::position_interface::{ObstacleHandle, SectorHandle};
+use super::EngineInner;
 
 impl EngineInner {}

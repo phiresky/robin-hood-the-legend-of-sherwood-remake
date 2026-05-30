@@ -5222,11 +5222,8 @@ impl EngineInner {
         // Only check entities actively moving in sword state.
         {
             let ids_to_check: Vec<EntityId> = self
-                .entities
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, slot)| {
-                    let e = slot.as_ref()?;
+                .entities_iter_with_id()
+                .filter_map(|(entity_id, e)| {
                     let h = e.human_data()?;
                     if h.opponents.is_empty() {
                         return None;
@@ -5240,7 +5237,7 @@ impl EngineInner {
                     ) {
                         return None;
                     }
-                    Some(EntityId::from_raw(idx as u32))
+                    Some(entity_id)
                 })
                 .collect();
             for eid in ids_to_check {
@@ -5260,11 +5257,8 @@ impl EngineInner {
         // behaviour.
         {
             let pinch_aborts: Vec<(crate::sequence::SequenceId, usize)> = self
-                .entities
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, slot)| {
-                    let e = slot.as_ref()?;
+                .entities_iter_with_id()
+                .filter_map(|(eid, e)| {
                     if !e.is_pc() {
                         return None;
                     }
@@ -5281,7 +5275,6 @@ impl EngineInner {
                     if !e.position_iface().is_moving_map() {
                         return None;
                     }
-                    let eid = EntityId::from_raw(idx as u32);
                     if !crate::engine::melee::enemies_are_blocking_my_movement(&self.entities, eid)
                     {
                         return None;
@@ -6212,7 +6205,7 @@ impl EngineInner {
                     assets,
                     layer_in,
                     u16::from(sector_in),
-                    crate::geo2d::pt(point_in.x, point_in.y),
+                    crate::coordinates::MapPoint::new(point_in.x, point_in.y),
                 );
                 if obstacle.is_none() {
                     tracing::warn!(
@@ -6270,7 +6263,7 @@ impl EngineInner {
                     assets,
                     layer_out,
                     u16::from(sector_out),
-                    crate::geo2d::pt(point_out.x, point_out.y),
+                    crate::coordinates::MapPoint::new(point_out.x, point_out.y),
                 );
                 if obstacle.is_none() {
                     tracing::warn!(
@@ -6692,7 +6685,7 @@ impl EngineInner {
                 if !target_mutual {
                     continue;
                 }
-                let pos = entity.element_data().position_map().to_geo();
+                let pos = entity.element_data().position_map();
                 let weapon1 =
                     super::melee::weapon_material_from_profile(entity, &assets.profile_manager);
                 (target_id, pos, weapon1)
@@ -6707,7 +6700,7 @@ impl EngineInner {
                     strike_kind: crate::sound::StrikeKind::Swipe,
                     weapon1,
                     weapon2,
-                    position: position.into(),
+                    position,
                 });
         }
 
@@ -7442,10 +7435,7 @@ impl EngineInner {
                     // When either step fails the entire apply
                     // block is skipped — the actor stays put but
                     // the new-position star burst still fires.
-                    let dest_geo = crate::geo2d::pt(dest.x, dest.y);
-                    let probe = self.fast_grid.get_sector_screen_accessible(
-                        crate::coordinates::MapPoint::from_geo(dest_geo),
-                    );
+                    let probe = self.fast_grid.get_sector_screen_accessible(dest);
                     let move_box = self
                         .get_entity(owner)
                         .map(|e| *e.position_iface().get_move_box());
@@ -7453,7 +7443,7 @@ impl EngineInner {
                         if let (Some(_sector_idx), Some(sector_number), Some(move_box)) =
                             (probe.sector_idx, probe.sector, move_box)
                         {
-                            let mut box_at = move_box.translated(dest_geo);
+                            let mut box_at = move_box.translated(dest.to_geo());
                             if self.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
                                 dest,
@@ -7515,7 +7505,7 @@ impl EngineInner {
                             assets,
                             final_layer,
                             u16::from(final_sector_number),
-                            crate::geo2d::pt(final_dest.x, final_dest.y),
+                            final_dest,
                         );
                         self.set_obstacle_and_material(assets, owner, obstacle_idx);
 
@@ -8155,7 +8145,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         // Otherwise, check if the current animation is weak/stunned sword.
         // Orders live on the owning `SequenceElement.orders` now —
         // look up via the actor's current in-progress element.
-        let entity_id = EntityId::from_raw(element.0);
+        let entity_id = crate::engine::entity_id_for_occupied_slot(element.0, entity);
         matches!(
             self.sequence_manager
                 .current_order_for_actor(entity_id)
@@ -8481,14 +8471,12 @@ mod drop_ammo_merge_tests {
 
     fn count_bonuses(engine: &EngineInner, action: Action) -> Vec<(EntityId, u16)> {
         engine
-            .entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| match slot {
-                Some(crate::element::Entity::Bonus(b))
+            .entities_iter_with_id()
+            .filter_map(|(entity_id, entity)| match entity {
+                crate::element::Entity::Bonus(b)
                     if b.element.active && b.object.associated_action == action =>
                 {
-                    Some((EntityId::from_raw(idx as u32), b.object.quantity))
+                    Some((entity_id, b.object.quantity))
                 }
                 _ => None,
             })

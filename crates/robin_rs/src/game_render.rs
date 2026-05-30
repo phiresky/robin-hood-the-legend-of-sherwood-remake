@@ -1311,7 +1311,7 @@ pub(crate) fn render_entities_gpu(
                 engine.fast_grid().get_masks_applied_to_projectile(
                     engine.fast_grid().level.special_layer,
                     &sprite_world_bbox,
-                    projectile_mask_position.into(),
+                    projectile_mask_position,
                     is_flying_human, // is_human — bottom-plane test
                     engine.sight_obstacles(assets),
                 )
@@ -2032,7 +2032,10 @@ pub(crate) fn render_minimap(
         if !h.refresh {
             continue;
         }
-        let entity = match engine.get_entity(engine_element::EntityId::from_raw(h.element_index)) {
+        let Some(entity_id) = engine.entity_id_for_index(h.element_index) else {
+            continue;
+        };
+        let entity = match engine.get_entity(entity_id) {
             Some(e) => e,
             None => continue,
         };

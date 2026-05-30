@@ -857,8 +857,8 @@ impl EnemyAi {
         let net_pos = net.position;
         let grid = grid.unwrap_or(&ctx.fast_grid);
         let reachable = grid.is_straight_movement_authorized(
-            crate::geo2d::pt(victim_pos.x, victim_pos.y).into(),
-            crate::geo2d::pt(net_pos.x, net_pos.y).into(),
+            crate::coordinates::MapPoint::new(victim_pos.x, victim_pos.y),
+            crate::coordinates::MapPoint::new(net_pos.x, net_pos.y),
             victim_pos.level,
             &ctx.move_box,
         );

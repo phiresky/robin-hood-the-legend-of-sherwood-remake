@@ -3,7 +3,7 @@
 //! Extracted from the original `melee.rs` mega-file.
 
 use super::*;
-use crate::element::{Command, Entity, EntityId, Posture};
+use crate::element::{Command, Entity, EntityId};
 
 impl EngineInner {
     // ─── Speech / sound effects ─────────────────────────────────────
@@ -385,11 +385,7 @@ impl EngineInner {
 
     /// Per-frame refresh of all PCs' forbidden expression list counters.
     pub(super) fn tick_refresh_hero_mouth(&mut self) {
-        for slot in self.entities.iter_mut() {
-            let entity = match slot {
-                Some(e) => e,
-                None => continue,
-            };
+        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
             if let Entity::Pc(pc) = entity {
                 pc.pc.forbidden_expressions.retain_mut(|(_, timer)| {
                     *timer = timer.saturating_sub(1);

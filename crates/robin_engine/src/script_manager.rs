@@ -7,7 +7,7 @@
 use std::fmt;
 
 use crate::interp::{Frame, HostFunctions, StopReason, Vm};
-use crate::scb::{self, ClassEntry, Function, ScbFile};
+use crate::scb::{self, Function, ScbFile};
 use crate::vm::{self, Instruction};
 
 // ───────────────────────── Errors ─────────────────────────

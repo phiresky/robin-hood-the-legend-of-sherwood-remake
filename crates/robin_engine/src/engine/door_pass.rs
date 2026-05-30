@@ -997,7 +997,7 @@ impl EngineInner {
                 assets,
                 target_layer,
                 u16::from(target_sector_num),
-                door_point_out,
+                door_point_out.into(),
             );
             self.set_obstacle_and_material(assets, entity_id, new_obstacle);
         }
@@ -1195,7 +1195,7 @@ impl EngineInner {
         assets: &LevelAssets,
         layer: u16,
         sector_number: u16,
-        point: GeoPoint2D,
+        point: crate::coordinates::MapPoint,
     ) -> Option<u16> {
         self.get_projection_area_index(assets, sector_number, layer, point)
     }

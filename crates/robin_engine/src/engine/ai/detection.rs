@@ -247,8 +247,7 @@ impl EngineInner {
         // `IElementTargetScript::ActivatedByListenable`.
         let mut to_hear: Vec<(usize, EntityId)> = Vec::new();
 
-        for (idx, entity_opt) in self.entities.iter().enumerate() {
-            let Some(entity) = entity_opt else { continue };
+        for (entity_id, entity) in self.entities_iter_with_id() {
             let elem = entity.element_data();
 
             // ── FX target Heard() check. ─────────────────────
@@ -268,7 +267,7 @@ impl EngineInner {
                     let dz = target_z - pc.position_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
                     if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        to_hear.push((idx, pc.pc_id));
+                        to_hear.push((entity_id.index() as usize, pc.pc_id));
                         break;
                     }
                 }
@@ -288,7 +287,7 @@ impl EngineInner {
                 && let Entity::Soldier(s) = entity
                 && s.soldier.cached_camp == Camp::Royalists
             {
-                to_reveal.push(idx);
+                to_reveal.push(entity_id.index() as usize);
                 continue;
             }
 
@@ -297,7 +296,7 @@ impl EngineInner {
             // order to stagger NPC detection across 16 frames.
             // EntityId (monotonic slot index, never reused) stands in
             // for that creation counter directly.
-            let modified_frame = self.frame_counter.wrapping_add(idx as u32);
+            let modified_frame = self.frame_counter.wrapping_add(entity_id.index());
             let sees_blip_gate = is_npc && modified_frame.is_multiple_of(DETECTION_FREQUENCY_BLIP);
 
             // Listen path only fires on the frame a listening PC's
@@ -448,7 +447,7 @@ impl EngineInner {
             }
 
             if revealed {
-                to_reveal.push(idx);
+                to_reveal.push(entity_id.index() as usize);
             }
         }
 
@@ -1300,7 +1299,7 @@ impl EngineInner {
                     if target_handle != 0
                         && let Some(pc) = pc_snapshots
                             .iter()
-                            .find(|p| p.id == EntityId::from_raw(target_handle))
+                            .find(|p| p.id == EntityId::Pc(target_handle))
                     {
                         (
                             Some(crate::ai::Position {

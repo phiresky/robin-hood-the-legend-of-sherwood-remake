@@ -79,54 +79,50 @@ pub fn snapshot_all(
     sequence_manager: &SequenceManager,
     profile_manager: &ProfileManager,
 ) -> Vec<Option<ActorSnapshot>> {
-    entities
-        .iter()
-        .enumerate()
-        .map(|(idx, slot)| {
-            let entity = slot.as_ref()?;
-            let elem = entity.element_data();
-            let is_actor = entity.is_actor();
-            let actor = entity.actor_data();
-            let target_element = actor.and_then(|a| {
-                a.seek_target.or_else(|| {
-                    let seq_id = a.active_movement.sequence_id?;
-                    let elem =
-                        sequence_manager.get_element(seq_id, a.active_movement.element_index)?;
-                    match &elem.data {
-                        SequenceElementData::Movement { element, .. } => *element,
-                        _ => None,
-                    }
-                })
-            });
-            Some(ActorSnapshot {
-                id: EntityId::from_raw(idx as u32),
-                active: elem.active,
-                is_actor,
-                is_human: entity.is_human(),
-                is_ignored_for_anti_collision: actor
-                    .map(|a| a.is_ignored_for_anti_collision)
-                    .unwrap_or(false),
-                position_map: elem.position_map(),
-                layer: elem.layer(),
-                sector: elem.sector(),
-                posture: elem.posture,
-                element_kind: elem.kind,
-                // Prefer the live seek target, then fall back to the
-                // active movement element's antagonist/target field.
-                // For combat / pickup movements this is the opponent
-                // / item the actor is closing on — the "don't repel
-                // my target" rule applies to it.
-                target_element,
-                is_swordfighting: entity
-                    .human_data()
-                    .map(|h| !h.opponents.is_empty())
-                    .unwrap_or(false),
-                repulsive_point: entity_repulsive_point(entity, profile_manager),
-                extra_repulsive_points: entity_extra_repulsive_points(entity),
-                repulsive_lines: entity_repulsive_lines(entity),
+    let mut snapshots = vec![None; entities.len()];
+    for (entity_id, entity) in crate::engine::occupied_entity_slots(entities) {
+        let elem = entity.element_data();
+        let is_actor = entity.is_actor();
+        let actor = entity.actor_data();
+        let target_element = actor.and_then(|a| {
+            a.seek_target.or_else(|| {
+                let seq_id = a.active_movement.sequence_id?;
+                let elem = sequence_manager.get_element(seq_id, a.active_movement.element_index)?;
+                match &elem.data {
+                    SequenceElementData::Movement { element, .. } => *element,
+                    _ => None,
+                }
             })
-        })
-        .collect()
+        });
+        snapshots[entity_id.index() as usize] = Some(ActorSnapshot {
+            id: entity_id,
+            active: elem.active,
+            is_actor,
+            is_human: entity.is_human(),
+            is_ignored_for_anti_collision: actor
+                .map(|a| a.is_ignored_for_anti_collision)
+                .unwrap_or(false),
+            position_map: elem.position_map(),
+            layer: elem.layer(),
+            sector: elem.sector(),
+            posture: elem.posture,
+            element_kind: elem.kind,
+            // Prefer the live seek target, then fall back to the
+            // active movement element's antagonist/target field.
+            // For combat / pickup movements this is the opponent
+            // / item the actor is closing on — the "don't repel
+            // my target" rule applies to it.
+            target_element,
+            is_swordfighting: entity
+                .human_data()
+                .map(|h| !h.opponents.is_empty())
+                .unwrap_or(false),
+            repulsive_point: entity_repulsive_point(entity, profile_manager),
+            extra_repulsive_points: entity_extra_repulsive_points(entity),
+            repulsive_lines: entity_repulsive_lines(entity),
+        });
+    }
+    snapshots
 }
 
 /// Filter static (Lua-authored) repulsive points by the mover's
@@ -854,7 +850,7 @@ mod tests {
 
     fn mk_snapshot(id: u32, x: f32, y: f32) -> ActorSnapshot {
         ActorSnapshot {
-            id: EntityId::from_raw(id),
+            id: EntityId::Pc(id),
             active: true,
             is_actor: true,
             is_human: true,
@@ -959,7 +955,7 @@ mod tests {
     fn target_element_is_skipped() {
         // Mover's seek_target == B's id → B contributes no push.
         let mut a = mk_snapshot(0, 0.0, 0.0);
-        a.target_element = Some(EntityId::from_raw(1));
+        a.target_element = Some(EntityId::Pc(1));
         let b = mk_snapshot(1, 8.0, 0.0);
         let snapshots = vec![Some(a.clone()), Some(b.clone())];
         let (dx, dy) =
@@ -1002,7 +998,7 @@ mod tests {
         element.set_position_map(geo2d::pt(10.0, 20.0).into());
 
         let mut human = crate::element::HumanData::default();
-        human.opponents.push(EntityId::from_raw(2));
+        human.opponents.push(EntityId::Pc(2));
         let entity = Entity::Pc(crate::element::ActorPc {
             element,
             actor: crate::element::ActorData::default(),

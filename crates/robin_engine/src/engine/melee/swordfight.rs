@@ -477,7 +477,7 @@ impl EngineInner {
             // bail rather than fabricating an opponent.
             tracing::trace!(
                 ?initiator,
-                "enter_swordfight called with opponent=EntityId::from_raw(0) — \
+                "enter_swordfight called with opponent index 0 — \
                  raise-sword-no-opponent should be routed via the \
                  EnterSwordfightRequest::RaiseSword drain instead"
             );

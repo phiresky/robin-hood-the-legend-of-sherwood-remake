@@ -2152,7 +2152,7 @@ impl EngineInner {
             }
 
             let weapon_id = ai.hth_weapon_id;
-            let target_id = EntityId::from_raw(ai.base.primary_target);
+            let target_id = EntityId::Pc(ai.base.primary_target);
 
             // Validate target
             let target_ok = self

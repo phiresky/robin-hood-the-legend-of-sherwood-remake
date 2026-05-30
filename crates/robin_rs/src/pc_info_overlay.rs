@@ -167,17 +167,10 @@ mod tests {
     #[test]
     fn show_applies_mouse_offset_and_archer_size() {
         let mut ov = PcInfoOverlay::default();
-        ov.show(
-            EntityId::from_raw(42),
-            p(100.0, 100.0),
-            (640, 480),
-            true,
-            40,
-            20,
-        );
+        ov.show(EntityId::Pc(42), p(100.0, 100.0), (640, 480), true, 40, 20);
 
         assert!(ov.visible);
-        assert_eq!(ov.pc_id, Some(EntityId::from_raw(42)));
+        assert_eq!(ov.pc_id, Some(EntityId::Pc(42)));
         // 100 + 25, 100 + 10
         assert_eq!(ov.position, (125, 110));
         assert!(ov.is_archer);
@@ -188,14 +181,7 @@ mod tests {
     #[test]
     fn non_archer_suppresses_bow_row() {
         let mut ov = PcInfoOverlay::default();
-        ov.show(
-            EntityId::from_raw(1),
-            p(0.0, 0.0),
-            (640, 480),
-            false,
-            99,
-            99,
-        );
+        ov.show(EntityId::Pc(1), p(0.0, 0.0), (640, 480), false, 99, 99);
         assert!(!ov.is_archer);
         assert_eq!(ov.bow_pips, 0);
         assert_eq!(ov.sword_pips, PcInfoOverlay::pip_count(99));
@@ -205,14 +191,7 @@ mod tests {
     fn clamps_to_screen_right_edge() {
         let mut ov = PcInfoOverlay::default();
         // Mouse near right edge: 640 - 25 = 615; + 25 = 640; + 91 width = 731 → shift -91.
-        ov.show(
-            EntityId::from_raw(1),
-            p(615.0, 100.0),
-            (640, 480),
-            true,
-            0,
-            0,
-        );
+        ov.show(EntityId::Pc(1), p(615.0, 100.0), (640, 480), true, 0, 0);
         // After clamp: x = 640 - 91 = 549.
         assert_eq!(ov.position.0, 549);
     }
@@ -221,21 +200,14 @@ mod tests {
     fn clamps_to_screen_bottom_edge() {
         let mut ov = PcInfoOverlay::default();
         // Mouse near bottom: y=470 + 10 = 480; + 42 = 522 → shift -42.
-        ov.show(
-            EntityId::from_raw(1),
-            p(100.0, 470.0),
-            (640, 480),
-            true,
-            0,
-            0,
-        );
+        ov.show(EntityId::Pc(1), p(100.0, 470.0), (640, 480), true, 0, 0);
         assert_eq!(ov.position.1, 480 - 42);
     }
 
     #[test]
     fn hide_clears_state() {
         let mut ov = PcInfoOverlay::default();
-        ov.show(EntityId::from_raw(1), p(0.0, 0.0), (640, 480), true, 0, 0);
+        ov.show(EntityId::Pc(1), p(0.0, 0.0), (640, 480), true, 0, 0);
         ov.hide();
         assert!(!ov.visible);
         assert_eq!(ov.pc_id, None);
@@ -244,7 +216,7 @@ mod tests {
     #[test]
     fn pip_positions_step_by_16() {
         let mut ov = PcInfoOverlay::default();
-        ov.show(EntityId::from_raw(1), p(0.0, 0.0), (640, 480), true, 0, 0);
+        ov.show(EntityId::Pc(1), p(0.0, 0.0), (640, 480), true, 0, 0);
         let p0 = ov.sword_pip_position(0);
         let p1 = ov.sword_pip_position(1);
         assert_eq!(p1.0 - p0.0, PIP_SPACING);
@@ -256,14 +228,7 @@ mod tests {
     #[test]
     fn serde_roundtrip() {
         let mut ov = PcInfoOverlay::default();
-        ov.show(
-            EntityId::from_raw(7),
-            p(50.0, 50.0),
-            (640, 480),
-            true,
-            60,
-            40,
-        );
+        ov.show(EntityId::Pc(7), p(50.0, 50.0), (640, 480), true, 60, 40);
         let json = serde_json::to_string(&ov).unwrap();
         let back: PcInfoOverlay = serde_json::from_str(&json).unwrap();
         assert_eq!(ov, back);
