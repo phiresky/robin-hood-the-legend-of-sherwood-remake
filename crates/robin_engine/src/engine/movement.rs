@@ -2791,8 +2791,7 @@ impl EngineInner {
         // (forward/backward/strafe) based on the angle between
         // movement and facing.
         let mut combat_face_targets = EntitySlots::filled(self.entities.len(), None);
-        for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
+        for (actor_id, entity) in self.entities.actors() {
             let actor = entity
                 .actor_data()
                 .expect("entities.actors() yielded non-actor entity");
@@ -2803,7 +2802,7 @@ impl EngineInner {
             // Shield bearers face the stored danger point.
             // Sword fighters face their principal opponent.
             if is_shield_moving && let Some(pt) = actor.shield_face_point {
-                combat_face_targets[entity_id] = Some(pt);
+                combat_face_targets[actor_id] = Some(pt);
                 continue;
             }
             // Shield bearer with no danger point stored: face *away*
@@ -2817,7 +2816,7 @@ impl EngineInner {
             {
                 let self_pos = entity.element_data().position_map();
                 let ally_pos = ally.element_data().position_map();
-                combat_face_targets[entity_id] = Some(crate::coordinates::MapPoint {
+                combat_face_targets[actor_id] = Some(crate::coordinates::MapPoint {
                     x: 2.0 * self_pos.x - ally_pos.x,
                     y: 2.0 * self_pos.y - ally_pos.y,
                 });
@@ -2861,12 +2860,12 @@ impl EngineInner {
             if let Some(opp_id) = opp_id_opt
                 && let Some(opp) = self.entities.get(opp_id)
             {
-                combat_face_targets[entity_id] = Some(opp.element_data().position_map());
+                combat_face_targets[actor_id] = Some(opp.element_data().position_map());
             } else {
                 // Sentinel: face self → no rotation, no movement-direction
                 // fallback (the "return WALKING_SWORD without changing
                 // facing" branch).
-                combat_face_targets[entity_id] = Some(entity.element_data().position_map());
+                combat_face_targets[actor_id] = Some(entity.element_data().position_map());
             }
         }
 
@@ -2939,8 +2938,8 @@ impl EngineInner {
         let mut point_seek_post_sectors = EntitySlots::filled(self.entities.len(), None);
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
-        for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
+        for (actor_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(actor_id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -2951,7 +2950,7 @@ impl EngineInner {
                 continue;
             };
             if let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) {
-                speed_factors[entity_id] = elem.speed_factor();
+                speed_factors[actor_id] = elem.speed_factor();
                 if let crate::sequence::SequenceElementData::Movement {
                     flags,
                     line_id,
@@ -2963,7 +2962,7 @@ impl EngineInner {
                 } = &elem.data
                 {
                     if line_id.is_some() && flags.contains(crate::sequence::MoveFlags::LINE) {
-                        line_snaps[entity_id] = Some((line_id.unwrap(), *tolerance));
+                        line_snaps[actor_id] = Some((line_id.unwrap(), *tolerance));
                     } else if *tolerance > 0.0 && flags.contains(crate::sequence::MoveFlags::SEEK) {
                         // The per-tick seek-arrival predicate (and its
                         // FROZEN-wait sibling) is a SEEK-only
@@ -3018,7 +3017,7 @@ impl EngineInner {
                                 // entity-target seek-distance check.
                                 None => {
                                     if actor.post_seek_sequence.is_some() {
-                                        point_seek_post_sectors[entity_id] = *sector;
+                                        point_seek_post_sectors[actor_id] = *sector;
                                     }
                                     (None, false, None, None)
                                 }
@@ -3028,7 +3027,7 @@ impl EngineInner {
                         // None and there's no shield destination), so
                         // the seek-arrival predicate doesn't fire.
                         if target_pos.is_some() || seek_shield {
-                            final_tolerances[entity_id] = FinalTol {
+                            final_tolerances[actor_id] = FinalTol {
                                 tol: *tolerance,
                                 directional,
                                 target_sector,
@@ -3054,8 +3053,8 @@ impl EngineInner {
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
         let mut drunk_turn_overrides = EntitySlots::filled(self.entities.len(), None);
-        for (entity_id, soldier) in self.entities.soldiers_mut() {
-            let entity_id = EntityId::from(entity_id);
+        for (soldier_id, soldier) in self.entities.soldiers_mut() {
+            let entity_id = EntityId::from(soldier_id);
             let is_drunk = soldier
                 .npc
                 .ai_brain
@@ -3112,7 +3111,7 @@ impl EngineInner {
                 } else {
                     pi.turn_slow(2);
                 }
-                drunk_turn_overrides[entity_id] = Some(i16::from(pi.get_direction()));
+                drunk_turn_overrides[soldier_id] = Some(i16::from(pi.get_direction()));
             }
         }
 
@@ -3134,7 +3133,7 @@ impl EngineInner {
         // mutably without touching `self.fast_grid` or the door table.
         let mut lift_translations = EntitySlots::filled(self.entities.len(), None);
         let mut door_pass_wall_directions = EntitySlots::filled(self.entities.len(), None);
-        for (entity_id, entity) in self.entities.occupied() {
+        for (actor_id, entity) in self.entities.actors() {
             let posture = entity.element_data().posture;
             let door_pass_action = entity
                 .actor_data()
@@ -3163,7 +3162,7 @@ impl EngineInner {
                         | OrderType::ClimbingWallDownFast
                 )
             ) {
-                door_pass_wall_directions[entity_id] = entity
+                door_pass_wall_directions[actor_id] = entity
                     .actor_data()
                     .and_then(|actor| actor.active_door_pass.as_ref())
                     .and_then(|dp| {
@@ -3189,7 +3188,7 @@ impl EngineInner {
             let Some(lt) = gs.lift_type else { continue };
             match posture {
                 crate::element::Posture::Upright => {
-                    lift_translations[entity_id] = Some(LiftAnimContext::Upright(lt));
+                    lift_translations[actor_id] = Some(LiftAnimContext::Upright(lt));
                 }
                 crate::element::Posture::OnLadder | crate::element::Posture::OnWall
                     if matches!(
@@ -3208,7 +3207,7 @@ impl EngineInner {
                     let (pt_low, pt_high) = self.lift_endpoint_points(gs.sector_number);
                     let ladder_dx = pt_low.x - pt_high.x;
                     let ladder_dy = pt_low.y - pt_high.y;
-                    lift_translations[entity_id] = Some(LiftAnimContext::OnClimb {
+                    lift_translations[actor_id] = Some(LiftAnimContext::OnClimb {
                         lift_type: lt,
                         lift_direction: gs.lift_direction,
                         ladder_dx,
@@ -3217,7 +3216,7 @@ impl EngineInner {
                 }
                 _ => {}
             }
-            if lift_translations[entity_id].is_none()
+            if lift_translations[actor_id].is_none()
                 && matches!(
                     (lt, door_pass_action),
                     (
@@ -3240,7 +3239,7 @@ impl EngineInner {
                 )
             {
                 let (pt_low, pt_high) = self.lift_endpoint_points(gs.sector_number);
-                lift_translations[entity_id] = Some(LiftAnimContext::OnClimb {
+                lift_translations[actor_id] = Some(LiftAnimContext::OnClimb {
                     lift_type: lt,
                     lift_direction: gs.lift_direction,
                     ladder_dx: pt_low.x - pt_high.x,
@@ -3341,8 +3340,8 @@ impl EngineInner {
             crate::element::ActionState,
         )> = Vec::new();
 
-        for (entity_id, entity) in self.entities.actors_mut() {
-            let entity_id = EntityId::from(entity_id);
+        for (actor_id, entity) in self.entities.actors_mut() {
+            let entity_id = EntityId::from(actor_id);
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
             // is derived from the action state machine, not hardcoded
@@ -3513,7 +3512,7 @@ impl EngineInner {
             // movement direction), face toward opponent, pick
             // forward/backward/strafe animation based on angle between
             // movement vector and facing vector.
-            let combat_target = combat_face_targets[entity_id];
+            let combat_target = combat_face_targets[actor_id];
             let door_pass_sword_nonanimation =
                 door_pass_anim.is_some_and(is_sword_movement_nonanimation);
             let order_sword_nonanimation = is_sword_movement_nonanimation(order_action);
@@ -3562,7 +3561,7 @@ impl EngineInner {
                 // `order.reverse` flips the facing 180° (sector ^ 8)
                 // so reverse-walked animations face away from the
                 // movement vector.
-                let raw = drunk_turn_overrides[entity_id]
+                let raw = drunk_turn_overrides[actor_id]
                     .unwrap_or_else(|| vector_to_sector_0_to_15(dx, dy));
                 let dir = if order_reverse { raw ^ 8 } else { raw };
                 elem.set_direction_goal(dir);
@@ -3704,7 +3703,7 @@ impl EngineInner {
                 // vector — non-negative means moving down.  Snapshotted
                 // in `lift_translations` so we don't have to re-borrow
                 // `self.fast_grid` or the door table mid-loop.
-                match lift_translations[entity_id] {
+                match lift_translations[actor_id] {
                     Some(LiftAnimContext::Upright(lt)) => lt.translate_upright_action(base),
                     Some(LiftAnimContext::OnClimb {
                         lift_type,
@@ -3753,7 +3752,7 @@ impl EngineInner {
             // * speed_factor` sees the adjusted value this tick.  The
             // captured value is reread from the element next tick.
             {
-                let ft = final_tolerances[entity_id];
+                let ft = final_tolerances[actor_id];
                 if ft.tol > 0.0
                     && ft.target_is_actor
                     && matches!(action_state, crate::element::ActionState::MovingShield)
@@ -3764,7 +3763,7 @@ impl EngineInner {
                         .map(|p| (p.x - elem.position_map().x, p.y - elem.position_map().y))
                         .unwrap_or((dx, dy));
                     let dist_sq = sdx * sdx + sdy * sdy;
-                    speed_factors[entity_id] = if dist_sq < 25.0 {
+                    speed_factors[actor_id] = if dist_sq < 25.0 {
                         1.0
                     } else if dist_sq < 100.0 {
                         1.5
@@ -3773,7 +3772,7 @@ impl EngineInner {
                     };
                 }
             }
-            let speed_factor = speed_factors[entity_id];
+            let speed_factor = speed_factors[actor_id];
             // Dispatch by order action: transition-animation orders
             // route to `MotionMethod::TillLastFrame`, while walking /
             // running orders route to `MotionMethod::Walk` (or
@@ -3809,7 +3808,7 @@ impl EngineInner {
                 lift_type,
                 lift_direction,
                 ..
-            }) = lift_translations[entity_id]
+            }) = lift_translations[actor_id]
             {
                 match (anim, lift_type) {
                     (
@@ -3864,7 +3863,7 @@ impl EngineInner {
                 }
                 _ => {}
             }
-            if let Some(wall_dir) = door_pass_wall_directions[entity_id] {
+            if let Some(wall_dir) = door_pass_wall_directions[actor_id] {
                 let dir = if matches!(
                     (anim, elem.posture),
                     (
@@ -4184,7 +4183,7 @@ impl EngineInner {
             // to the line (not the midpoint) against the element's
             // tolerance — snaps to the nearest line point instead of
             // the stored destination.
-            let line_snap_arrival = if let Some((line_idx, tol)) = line_snaps[entity_id] {
+            let line_snap_arrival = if let Some((line_idx, tol)) = line_snaps[actor_id] {
                 if !is_final_waypoint {
                     false
                 } else {
@@ -4227,10 +4226,10 @@ impl EngineInner {
             // speed` arrival.  USE_POINT samples the target's current
             // hotspot; SEEK_SHIELD uses the movement element
             // destination.
-            let ft = final_tolerances[entity_id];
+            let ft = final_tolerances[actor_id];
             let point_seek_post_arrival = is_final_waypoint
                 && dist <= speed
-                && point_seek_post_sectors[entity_id]
+                && point_seek_post_sectors[actor_id]
                     .map(|seek_sector| elem.sector() == Some(seek_sector))
                     .unwrap_or(false);
             let tolerance_arrival = ft.tol > 0.0 && {
@@ -4585,7 +4584,7 @@ impl EngineInner {
                 };
 
                 let (dx_step, dy_step) = if let Some(mover_snap) =
-                    anti_snapshots.get(entity_id).and_then(|slot| slot.as_ref())
+                    anti_snapshots.get(actor_id).and_then(|slot| slot.as_ref())
                 {
                     let pi = entity.position_iface_mut();
                     let mut state = super::anti_collision::AntiCollisionState {
@@ -4687,7 +4686,7 @@ impl EngineInner {
                 // two actors heading for the same cell both see each
                 // other at the *old* position and can still overlap.
                 if let Some(snap) = anti_snapshots
-                    .get_mut(entity_id)
+                    .get_mut(actor_id)
                     .and_then(|slot| slot.as_mut())
                 {
                     let new_pos = crate::geo2d::pt(new_pos_x, new_pos_y);

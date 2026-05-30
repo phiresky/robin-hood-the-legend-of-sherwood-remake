@@ -401,19 +401,19 @@ impl EngineInner {
         let mut clean: Vec<(u32, EntityId)> = Vec::new();
         let mut vip_remarks: Vec<EntityId> = Vec::new();
 
-        let npc_ids: Vec<EntityId> = self
+        let soldier_ids: Vec<EntityId> = self
             .entities
-            .npc_ids()
+            .soldier_ids()
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .collect();
-        for npc_id in npc_ids {
-            let entity = match self.get_entity(npc_id) {
+        for soldier_id in soldier_ids {
+            let entity = match self.get_entity(soldier_id) {
                 Some(e) => e,
                 None => continue,
             };
-            if !entity.is_active() || !entity.is_soldier() || entity.camp() != Camp::Lacklandists {
+            if !entity.is_active() || entity.camp() != Camp::Lacklandists {
                 continue;
             }
             // Exclude already-swordfighting soldiers and existing
@@ -455,14 +455,14 @@ impl EngineInner {
             // VIP filter — VIPs get the VipWaspsNo remark instead of
             // becoming a victim.
             if super::melee::is_vip_from_profile(entity, &assets.profile_manager) {
-                vip_remarks.push(npc_id);
+                vip_remarks.push(soldier_id);
                 continue;
             }
 
             if smelling_apple {
-                smelling.push((dist, npc_id));
+                smelling.push((dist, soldier_id));
             } else {
-                clean.push((dist, npc_id));
+                clean.push((dist, soldier_id));
             }
         }
 

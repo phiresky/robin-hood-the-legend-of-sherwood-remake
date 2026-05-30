@@ -82,7 +82,7 @@ pub fn snapshot_all(
 ) -> EntitySlots<Option<ActorSnapshot>> {
     let mut snapshots = EntitySlots::filled(entities.len(), None);
     for (entity_id, entity) in entities.actors() {
-        let entity_id = EntityId::from(entity_id);
+        let snapshot_id = EntityId::from(entity_id);
         let elem = entity.element_data();
         let is_actor = true;
         let actor = entity.actor_data();
@@ -97,7 +97,7 @@ pub fn snapshot_all(
             })
         });
         snapshots[entity_id] = Some(ActorSnapshot {
-            id: entity_id,
+            id: snapshot_id,
             active: elem.active,
             is_actor,
             is_human: entity.is_human(),
