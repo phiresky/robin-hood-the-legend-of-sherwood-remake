@@ -723,7 +723,7 @@ impl EngineInner {
                             .copied()
                     })
                     .and_then(|idx| self.fast_grid.level.sectors.get(idx))
-                    .map(|gs| gs.contains_point(pt))
+                    .map(|gs| gs.contains_point(crate::coordinates::MapPoint::from_geo(pt)))
                     // Without a known sector, trust the
                     // `is_straight_movement_authorized` result.
                     .unwrap_or(true);

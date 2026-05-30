@@ -42,9 +42,10 @@ impl EngineInner {
             let pos = entity.element_data().position();
             crate::geo2d::pt(pos.x, pos.y - pos.z)
         };
-        let resolution = self
-            .fast_grid
-            .resolve_projectile_landing(landing_screen, self.sight_obstacles(assets));
+        let resolution = self.fast_grid.resolve_projectile_landing(
+            crate::coordinates::MapPoint::from_geo(landing_screen),
+            self.sight_obstacles(assets),
+        );
         if let Some(entity) = self
             .entities
             .get_mut(projectile_id.0 as usize)

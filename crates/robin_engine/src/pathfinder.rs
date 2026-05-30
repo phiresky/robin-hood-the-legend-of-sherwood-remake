@@ -1849,7 +1849,7 @@ impl PathFinderRuntime {
         // Check if any line endpoint lies inside the corridor
         for &idx in &line_indices {
             let p = grid.level.lines[usize::from(idx)].a;
-            if corridor.point_inside(p) {
+            if corridor.point_inside(p.to_geo()) {
                 return false;
             }
         }

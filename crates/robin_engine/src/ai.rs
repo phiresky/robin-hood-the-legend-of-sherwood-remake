@@ -9263,15 +9263,19 @@ mod tests {
     #[test]
     fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
         let mut bbox = crate::geo2d::BBox2D::new();
-        let points = vec![
+        let points_geo = vec![
             crate::geo2d::pt(0.0, 0.0),
             crate::geo2d::pt(100.0, 0.0),
             crate::geo2d::pt(100.0, 100.0),
             crate::geo2d::pt(0.0, 100.0),
         ];
-        for &point in &points {
+        for &point in &points_geo {
             bbox.expand_point(point);
         }
+        let points = points_geo
+            .into_iter()
+            .map(crate::coordinates::MapPoint::from_geo)
+            .collect();
 
         let sector_number = crate::sector::SectorNumber::new(7);
         let mut level = crate::fast_find_grid::LevelGrid::default();

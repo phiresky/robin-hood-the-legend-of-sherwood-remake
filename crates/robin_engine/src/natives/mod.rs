@@ -139,7 +139,7 @@ const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
 pub struct ScriptZonePolygon {
     pub layer: u16,
     pub bounding_box: BBox2D,
-    pub points: Vec<crate::geo2d::GeoPoint2D>,
+    pub points: Vec<crate::coordinates::MapPoint>,
 }
 
 /// A host-function implementation that handles the global-variable

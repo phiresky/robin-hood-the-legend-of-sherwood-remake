@@ -1484,7 +1484,9 @@ impl EngineInner {
                     continue;
                 }
                 let gs = &self.fast_grid.level.sectors[grid_idx as usize];
-                if gs.layer == layer && gs.contains_point(pos) {
+                if gs.layer == layer
+                    && gs.contains_point(crate::coordinates::MapPoint::from_geo(pos))
+                {
                     entries.push((
                         zone_idx,
                         crate::entity_id::EntityId(entity_idx as u32),
@@ -1656,7 +1658,9 @@ impl EngineInner {
                 }
                 let gs = &self.fast_grid.level.sectors[grid_idx as usize];
                 let was_inside = self.script_zone_data[zone_idx].is_inside(eidx);
-                let is_inside = active && gs.layer == layer && gs.contains_point(pos);
+                let is_inside = active
+                    && gs.layer == layer
+                    && gs.contains_point(crate::coordinates::MapPoint::from_geo(pos));
 
                 if is_inside && !was_inside {
                     enter_events.push((zone_idx, eidx, handle));

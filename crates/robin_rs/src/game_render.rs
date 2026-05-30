@@ -63,7 +63,7 @@ pub(crate) fn render_door_overlays(
         return;
     };
 
-    let draw_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
+    let draw_geo_polygon = |renderer: &mut Renderer, pts: &[GeoPoint2D], color: u32, alpha: u32| {
         if pts.len() < 3 {
             return;
         }
@@ -71,12 +71,24 @@ pub(crate) fn render_door_overlays(
             .draw_alpha_polygon(renderer, pts, color, alpha);
     };
 
+    let draw_map_polygon = |renderer: &mut Renderer,
+                            pts: &[robin_engine::coordinates::MapPoint],
+                            color: u32,
+                            alpha: u32| {
+        if pts.len() < 3 {
+            return;
+        }
+        let pts: Vec<GeoPoint2D> = pts.iter().map(|p| p.to_geo()).collect();
+        host.draw_manager
+            .draw_alpha_polygon(renderer, &pts, color, alpha);
+    };
+
     let draw_door = |renderer: &mut Renderer, door: &crate::gate::Door| {
         if door.click_polygon.len() < 3 {
             return;
         }
         let pts: Vec<GeoPoint2D> = door.click_polygon.iter().map(|&(x, y)| pt(x, y)).collect();
-        draw_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
+        draw_geo_polygon(renderer, &pts, COLOR_DOOR, ALPHA_DOOR);
     };
 
     // Walk a motion-area / building sector's gate list and paint each door.
@@ -160,7 +172,7 @@ pub(crate) fn render_door_overlays(
             if !sector.sector_type.contains(SectorType::JUMP) {
                 continue;
             }
-            draw_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
+            draw_map_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
         }
         return;
     }
@@ -255,7 +267,7 @@ pub(crate) fn render_door_overlays(
                 _ => {
                     if owning_patch.is_none() && !sector.points.is_empty() && selected_sector_active
                     {
-                        draw_polygon(renderer, &sector.points, COLOR_DOOR, ALPHA_DOOR);
+                        draw_map_polygon(renderer, &sector.points, COLOR_DOOR, ALPHA_DOOR);
                     }
                 }
             }
@@ -300,7 +312,7 @@ pub(crate) fn render_door_overlays(
                 break;
             }
             if paint {
-                draw_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
+                draw_map_polygon(renderer, &sector.points, COLOR_JUMPZONE, ALPHA_JUMPZONE);
             }
         }
     }
@@ -325,7 +337,7 @@ pub(crate) fn render_door_overlays(
                     continue;
                 };
                 if s.sector_type.is_patch() && engine.fast_grid().is_sector_active(grid_idx) {
-                    draw_polygon(renderer, &s.points, COLOR_DOOR, ALPHA_DOOR);
+                    draw_map_polygon(renderer, &s.points, COLOR_DOOR, ALPHA_DOOR);
                     break;
                 }
             }
