@@ -1304,7 +1304,7 @@ pub(crate) fn render_entities_gpu(
                 engine.fast_grid().get_masks_applied_to_projectile(
                     engine.fast_grid().level.special_layer,
                     &sprite_world_bbox,
-                    projectile_mask_position.into(),
+                    projectile_mask_position,
                     is_flying_human, // is_human — bottom-plane test
                     engine.sight_obstacles(assets),
                 )

@@ -32,17 +32,11 @@ pub enum MouseButton {
 
 /// Keyboard state keyed by winit physical key location.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct KeyboardState {
     pub keys: BTreeSet<KeyCode>,
 }
 
-impl Default for KeyboardState {
-    fn default() -> Self {
-        Self {
-            keys: BTreeSet::new(),
-        }
-    }
-}
 
 impl KeyboardState {
     pub fn new() -> Self {

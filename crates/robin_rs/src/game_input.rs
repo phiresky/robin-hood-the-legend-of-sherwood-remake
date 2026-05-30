@@ -333,7 +333,7 @@ pub fn resolve_left_click(
     let actors: Vec<EntityId> = selected.to_vec();
     vec![PlayerCommand::GroupMove {
         actors,
-        destination: map_pt.into(),
+        destination: map_pt,
         running: is_double,
         show_marker: true,
         goal_override: None,
@@ -383,7 +383,7 @@ fn resolve_action_left_click(
             robin_engine::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             engine.sight_obstacles(assets),
         );
-        robin_engine::coordinates::WorldPoint3D::from(p3d)
+        p3d
     };
 
     // Post-launch tail for actions that deselect on launch (non-
@@ -736,7 +736,7 @@ fn resolve_action_left_click(
                 PlayerCommand::RaiseShieldWithDanger {
                     actor: pc_id,
                     protected_pc,
-                    danger_point: map_pt.into(),
+                    danger_point: map_pt,
                     danger_point_layer: selected_layer,
                 },
                 commit_tail(is_recording),
@@ -878,13 +878,13 @@ fn resolve_action_left_click(
             // Move → DropAle sequence; the engine tick's
             // `Command::DropAle` arm then spawns the bottle and
             // decrements `Action::Ale` ammo.
-            if !engine.is_mouse_sector_valid_for_ground_target(map_pt.into()) {
+            if !engine.is_mouse_sector_valid_for_ground_target(map_pt) {
                 return vec![];
             }
             return vec![
                 PlayerCommand::DropAleAt {
                     actor: pc_id,
-                    target_pos: map_pt.into(),
+                    target_pos: map_pt,
                     running: is_double,
                 },
                 commit_tail(is_recording),
