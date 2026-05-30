@@ -846,8 +846,7 @@ pub(super) fn render_frame(
                 next_idx,
                 &mission_team,
                 &selected,
-            ) && let Some(slot_idx) =
-                crate::ui_panel::hit_test_requirements_bar(sw, &req, mp.x as i32, mp.y as i32)
+            ) && let Some(slot_idx) = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp)
                 && let Some(RequirementSlot::RequiredAction { action, .. }) =
                     req.slots.get(slot_idx)
             {
@@ -1058,8 +1057,7 @@ pub(super) fn render_frame(
             // crosses the idle threshold.
             let mp = threaded_input.position();
             let sw = renderer.screen_width();
-            let hovered_slot =
-                crate::ui_panel::hit_test_requirements_bar(sw, &req, mp.x as i32, mp.y as i32);
+            let hovered_slot = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp);
             requirements_tooltip.update(hovered_slot);
             if let Some(slot_idx) = requirements_tooltip.ready_slot()
                 && let Some(slot) = req.slots.get(slot_idx)
@@ -1283,7 +1281,7 @@ pub(super) fn render_frame(
             &assets.profile_manager,
             renderer,
             portrait_cache,
-            mouse_pos.to_geo(),
+            mouse_pos,
         );
     }
 

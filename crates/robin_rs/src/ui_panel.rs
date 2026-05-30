@@ -25,6 +25,7 @@ use crate::resource_manager::{ResourceId, ResourceManager};
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
+use robin_engine::coordinates::ScreenPoint;
 use robin_engine::engine::Engine;
 use robin_engine::player_command::PlayerId;
 use robin_engine::sprite::BBox;
@@ -1850,9 +1851,10 @@ fn requirements_bar_start_x(screen_width: u16, slot_count: usize) -> Option<i32>
 pub fn hit_test_requirements_bar(
     screen_width: u16,
     state: &crate::widget::requirements::RequirementsState,
-    mouse_x: i32,
-    mouse_y: i32,
+    mouse: ScreenPoint,
 ) -> Option<usize> {
+    let mouse_x = mouse.x as i32;
+    let mouse_y = mouse.y as i32;
     let start_x = requirements_bar_start_x(screen_width, state.slots.len())?;
     let step = (REQ_BAR_ICON_MARGIN + REQ_BAR_ICON_W) as i32;
     let y0 = REQ_BAR_Y as i32;
@@ -2244,7 +2246,7 @@ pub fn draw_pc_info_overlay(
     profiles: &robin_engine::profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    mouse: GeoPoint2D,
+    mouse: ScreenPoint,
 ) {
     use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
 
@@ -2786,18 +2788,24 @@ mod tests {
         let slot1_cx = slot0_cx + step;
         assert_eq!(start_x, 355);
         assert_eq!(
-            hit_test_requirements_bar(800, &state, slot0_cx, y_in),
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot0_cx as f32, y_in as f32)),
             Some(0)
         );
         assert_eq!(
-            hit_test_requirements_bar(800, &state, slot1_cx, y_in),
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot1_cx as f32, y_in as f32)),
             Some(1)
         );
         // In the margin between slot 0 and slot 1.
         let gap_x = start_x + REQ_BAR_ICON_W as i32 + 1;
-        assert_eq!(hit_test_requirements_bar(800, &state, gap_x, y_in), None);
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(gap_x as f32, y_in as f32)),
+            None
+        );
         // Below the bar.
-        assert_eq!(hit_test_requirements_bar(800, &state, slot0_cx, 200), None);
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot0_cx as f32, 200.0)),
+            None
+        );
     }
 
     #[test]
