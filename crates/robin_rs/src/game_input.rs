@@ -8,7 +8,7 @@
 //! for deterministic replay and rollback networking.
 
 use crate::Host;
-use crate::element::{ActionState, Command, EntityId, Focus, Posture};
+use crate::element::{ActionState, Camp, Command, Entity, EntityId, Focus, ListenPhase, Posture};
 use crate::geo2d;
 use crate::mouse_way::MouseWayPattern;
 use crate::player_command::{PlayerCommand, PlayerId};
@@ -755,11 +755,11 @@ fn resolve_action_left_click(
             let disabled = engine
                 .get_entity(pc_id)
                 .and_then(|e| match e {
-                    crate::element::Entity::Pc(pc) => Some(&pc.pc),
+                    Entity::Pc(pc) => Some(&pc.pc),
                     _ => None,
                 })
                 .map(|pc| {
-                    let i = crate::profiles::Action::Listen as usize;
+                    let i = Action::Listen as usize;
                     pc.disabled_actions.get(i).copied().unwrap_or(false)
                         || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
                 })
@@ -772,17 +772,16 @@ fn resolve_action_left_click(
                 .get_entity(pc_id)
                 .and_then(|e| e.actor_data())
                 .map(|a| a.listen_phase)
-                .unwrap_or(crate::element::ListenPhase::Inactive);
+                .unwrap_or(ListenPhase::Inactive);
             // Deliberate behaviour change: this code emits a toggle —
             // a click while listening emits `LeaveListen`, matching
             // player expectation from the HUD state, instead of
             // re-emitting `EnterListen` and relying on the ability to
             // short-circuit when already active.
             let cmd = match listen_phase {
-                crate::element::ListenPhase::Inactive => Command::EnterListen,
-                crate::element::ListenPhase::EnterTransition
-                | crate::element::ListenPhase::CountingDown => Command::LeaveListen,
-                crate::element::ListenPhase::ExitTransition => return vec![],
+                ListenPhase::Inactive => Command::EnterListen,
+                ListenPhase::EnterTransition | ListenPhase::CountingDown => Command::LeaveListen,
+                ListenPhase::ExitTransition => return vec![],
             };
             return vec![
                 PlayerCommand::LaunchSelfAbility {
@@ -818,8 +817,8 @@ fn resolve_action_left_click(
             let posture = engine
                 .get_entity(pc_id)
                 .map(|e| e.element_data().posture)
-                .unwrap_or(crate::element::Posture::Undefined);
-            if posture == crate::element::Posture::SimulatingBeggar {
+                .unwrap_or(Posture::Undefined);
+            if posture == Posture::SimulatingBeggar {
                 if is_double && !is_recording {
                     return vec![PlayerCommand::MakePcFast { pc_id }];
                 }
@@ -849,11 +848,10 @@ fn resolve_action_left_click(
             let posture = engine
                 .get_entity(pc_id)
                 .map(|e| e.element_data().posture)
-                .unwrap_or(crate::element::Posture::Undefined);
+                .unwrap_or(Posture::Undefined);
             if matches!(
                 posture,
-                crate::element::Posture::HelpingToClimb
-                    | crate::element::Posture::CarryingOnShoulders
+                Posture::HelpingToClimb | Posture::CarryingOnShoulders
             ) {
                 if is_double && !is_recording {
                     return vec![PlayerCommand::MakePcFast { pc_id }];
@@ -1497,8 +1495,8 @@ pub fn resolve_swordfight(
 /// on the entity is sufficient here.
 fn is_target_scroll_attached_npc(engine: &Engine, target_id: EntityId) -> bool {
     match engine.get_entity(target_id) {
-        Some(crate::element::Entity::Soldier(s)) => s.npc.scroll_attached,
-        Some(crate::element::Entity::Civilian(c)) => c.npc.scroll_attached,
+        Some(Entity::Soldier(s)) => s.npc.scroll_attached,
+        Some(Entity::Civilian(c)) => c.npc.scroll_attached,
         _ => false,
     }
 }
@@ -1524,13 +1522,13 @@ fn determine_use_command(
     // sequence per object type after the seek + Taking animation
     // completes.  `IsFocusable(Focus::Use)` already gated the status /
     // focus checks.
-    if let crate::element::Entity::Scroll(_) = entity {
+    if let Entity::Scroll(_) = entity {
         return Some(Command::Take);
     }
-    if let crate::element::Entity::Bonus(_) = entity {
+    if let Entity::Bonus(_) = entity {
         return Some(Command::Take);
     }
-    if let crate::element::Entity::Projectile(p) = entity
+    if let Entity::Projectile(p) = entity
         && !p.projectile.flying
     {
         return Some(Command::Take);
@@ -1547,7 +1545,7 @@ fn determine_use_command(
     // `is_entity_focusable(Focus::Use)` already gates the cursor on
     // `posture == HelpingToClimb && has_jump && !selector_swordfighting`,
     // so this arm just produces the matching Command.
-    if matches!(entity, crate::element::Entity::Pc(_)) && posture == Posture::HelpingToClimb {
+    if matches!(entity, Entity::Pc(_)) && posture == Posture::HelpingToClimb {
         if engine.selected_pc_has_contextual_action(
             assets,
             Some(pc_id),
@@ -1565,7 +1563,7 @@ fn determine_use_command(
     if !is_dead
         && !is_unconscious
         && posture != Posture::Carried
-        && matches!(entity, crate::element::Entity::Civilian(c)
+        && matches!(entity, Entity::Civilian(c)
             if c.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
                 && !c.npc.scroll_attached)
     {
@@ -1595,10 +1593,8 @@ fn determine_use_command(
         )
     {
         let target_pc_or_same_camp = match entity {
-            crate::element::Entity::Pc(_) => true,
-            crate::element::Entity::Soldier(s) => {
-                s.soldier.cached_camp == crate::element::Camp::Royalists
-            }
+            Entity::Pc(_) => true,
+            Entity::Soldier(s) => s.soldier.cached_camp == Camp::Royalists,
             _ => false,
         };
         if target_pc_or_same_camp {
@@ -1613,7 +1609,7 @@ fn determine_use_command(
         && engine.selected_pc_can_carry(assets, Some(pc_id))
     {
         let is_heavy = match entity {
-            crate::element::Entity::Soldier(s) => assets
+            Entity::Soldier(s) => assets
                 .profile_manager
                 .get_soldier(s.soldier.soldier_profile_index)
                 .map(|p| p.heavy)

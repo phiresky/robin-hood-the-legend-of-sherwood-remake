@@ -4,6 +4,8 @@
 //! state), edge-detection between frames, and the sword-swing gesture
 //! recognizer.
 
+use crate::element::Posture;
+use crate::input::{MouseButton, ThreadedInput};
 use serde::{Deserialize, Serialize};
 
 // ── Constants ───────────────────────────────────────────────────────
@@ -333,7 +335,7 @@ impl GamePadState {
         &mut self,
         now_ms: u32,
         engine: &crate::Engine,
-        threaded_input: &mut crate::input::ThreadedInput,
+        threaded_input: &mut ThreadedInput,
     ) -> GamepadFrame {
         let snapshot = self.pending.clone();
         self.update(snapshot);
@@ -502,7 +504,7 @@ impl GamePadState {
                     engine,
                     robin_engine::player_command::PlayerId::HOST,
                 ));
-            } else if leader_posture == crate::element::Posture::Crouched {
+            } else if leader_posture == Posture::Crouched {
                 cmds.push(PlayerCommand::StandUp);
             } else {
                 cmds.push(PlayerCommand::CrouchDown);
@@ -517,7 +519,7 @@ impl GamePadState {
     pub fn manage_mouse_axis(
         &mut self,
         engine: &crate::Engine,
-        threaded_input: &mut crate::input::ThreadedInput,
+        threaded_input: &mut ThreadedInput,
     ) -> Vec<robin_engine::player_command::PlayerCommand> {
         use robin_engine::player_command::PlayerCommand;
         let mut cmds = Vec::new();
@@ -540,10 +542,10 @@ impl GamePadState {
                 ));
             }
             if self.is_pushed(GamePadButton::SimulatedLeftMouse) {
-                threaded_input.push_button(crate::input::MouseButton::Left);
+                threaded_input.push_button(MouseButton::Left);
             }
             if self.is_released(GamePadButton::SimulatedLeftMouse) {
-                threaded_input.release_button(crate::input::MouseButton::Left);
+                threaded_input.release_button(MouseButton::Left);
             }
         } else if dx != 0.0 || dy != 0.0 {
             self.sword_swing.push((dx, dy));
@@ -1558,7 +1560,7 @@ mod tests {
     #[test]
     fn process_gamepad_input_promotes_pending_to_current() {
         let mut pad = GamePadState::new();
-        let mut threaded = crate::input::ThreadedInput::new();
+        let mut threaded = ThreadedInput::new();
         pad.apply_axis_event(0, 15000);
         let engine = empty_engine();
         let _ = pad.process_gamepad_input(0, &engine, &mut threaded);

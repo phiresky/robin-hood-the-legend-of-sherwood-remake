@@ -7,6 +7,7 @@
 //! background writes.
 
 use super::{BackgroundDecal, Host, PendingBgBlit};
+use crate::gfx_types::Rect;
 use robin_assets::frame_holder::SpriteVariant;
 use robin_engine::engine::PendingBgBlitDecal;
 
@@ -71,7 +72,7 @@ pub fn render_background_decals(host: &Host, renderer: &mut crate::renderer::Ren
             SpriteVariant::Day,
             decal.shadow_color,
             decal.shadow_level,
-            crate::gfx_types::Rect::new(dst_x, dst_y, dst_w, dst_h),
+            Rect::new(dst_x, dst_y, dst_w, dst_h),
         );
     }
 }

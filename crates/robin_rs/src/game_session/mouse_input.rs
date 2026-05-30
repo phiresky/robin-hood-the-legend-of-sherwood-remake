@@ -11,6 +11,7 @@ use super::{
 };
 use crate::Host;
 use crate::campaign::Campaign;
+use crate::element::{Command, Posture};
 use crate::game::{Game, GameCallbacks};
 use crate::game_operation::GameCode;
 use crate::gfx_types::GameEvent;
@@ -18,6 +19,7 @@ use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu, PauseMenuOutcome};
 use crate::main_entry::{RustCallbacks, current_mission_id};
 use crate::player_command::{FrameCommands, PlayerCommand};
+use crate::profiles::Action;
 use crate::sdl_audio::SdlMixerBackend;
 use crate::ui_screens::MissionChoice;
 use robin_engine::engine::Engine;
@@ -148,31 +150,31 @@ pub(super) fn handle_mouse_input(
                         let selected_action = engine.selected_action_for_seat(local_seat);
                         let is_swordfighting = engine.is_seat_selection_swordfighting(local_seat);
                         match selected_action {
-                            crate::profiles::Action::HelpToClimb => {
+                            Action::HelpToClimb => {
                                 let posture_ok = engine
                                     .seat_selection(local_seat)
                                     .first()
                                     .and_then(|&id| engine.get_entity(id))
                                     .map(|e| e.element_data().posture)
-                                    == Some(crate::element::Posture::HelpingToClimb);
+                                    == Some(Posture::HelpingToClimb);
                                 if posture_ok && !is_swordfighting {
                                     host.input.start_multi_selection(map_pt);
                                 }
                             }
-                            crate::profiles::Action::NoAction
+                            Action::NoAction
                                 if !host.input.is_alt
                                     && !engine.locker_active()
                                     && !is_swordfighting =>
                             {
                                 host.input.start_multi_selection(map_pt);
                             }
-                            crate::profiles::Action::Apple
-                            | crate::profiles::Action::Stone
-                            | crate::profiles::Action::Hit
-                            | crate::profiles::Action::HitHard
-                            | crate::profiles::Action::Heal
-                            | crate::profiles::Action::Lever
-                            | crate::profiles::Action::Strangle => {
+                            Action::Apple
+                            | Action::Stone
+                            | Action::Hit
+                            | Action::HitHard
+                            | Action::Heal
+                            | Action::Lever
+                            | Action::Strangle => {
                                 let cmds = crate::game_input::resolve_action_drag(
                                     host, engine, assets, map_pt,
                                 );
@@ -233,8 +235,7 @@ pub(super) fn handle_mouse_input(
                     // double-click stops the append path.
                     if host.input.is_dragging
                         && !host.input.is_alt
-                        && engine.selected_action_for_seat(local_seat)
-                            == crate::profiles::Action::NoAction
+                        && engine.selected_action_for_seat(local_seat) == Action::NoAction
                         && engine.is_seat_selection_swordfighting(local_seat)
                     {
                         host.mouse_way.add_point(mouse_pt.to_geo());
@@ -451,7 +452,7 @@ pub(super) fn handle_mouse_input(
                             if !hit.is_burned && !is_double && !macro_stop_handled {
                                 let selected_action = engine.selected_action_for_seat(local_seat);
                                 portrait_action_handled = match selected_action {
-                                    crate::profiles::Action::Heal => {
+                                    Action::Heal => {
                                         // Target must be alive and injured (life < 100).
                                         let can_heal = engine
                                             .get_entity(pc_id)
@@ -466,7 +467,7 @@ pub(super) fn handle_mouse_input(
                                                 let cmd = PlayerCommand::LaunchInteraction {
                                                     actor: healer_id,
                                                     target: pc_id,
-                                                    command: crate::element::Command::HealCmd,
+                                                    command: Command::HealCmd,
                                                     running: false,
                                                 };
                                                 dispatch_local_command(
@@ -491,8 +492,7 @@ pub(super) fn handle_mouse_input(
                                             false
                                         }
                                     }
-                                    crate::profiles::Action::Shield
-                                    | crate::profiles::Action::BigShield => {
+                                    Action::Shield | Action::BigShield => {
                                         // While the engine is mid-prompt
                                         // for the shield's protected
                                         // target, the same-click commit
@@ -515,7 +515,7 @@ pub(super) fn handle_mouse_input(
                                                 let cmd = PlayerCommand::LaunchInteraction {
                                                     actor: shielder_id,
                                                     target: pc_id,
-                                                    command: crate::element::Command::RaiseShield,
+                                                    command: Command::RaiseShield,
                                                     running: false,
                                                 };
                                                 dispatch_local_command(
@@ -636,7 +636,7 @@ pub(super) fn handle_mouse_input(
                                         // 1, Several (shift) = 5.
                                         if host.input.portrait_drop_ammo_armed
                                             && engine.selected_action_for_seat(local_seat)
-                                                == crate::profiles::Action::NoAction
+                                                == Action::NoAction
                                         {
                                             // Look up the action for this button index
                                             let btn_action = engine
@@ -650,8 +650,8 @@ pub(super) fn handle_mouse_input(
                                                             p.actions.get(btn_idx as usize).copied()
                                                         })
                                                 })
-                                                .unwrap_or(crate::profiles::Action::NoAction);
-                                            if btn_action != crate::profiles::Action::NoAction {
+                                                .unwrap_or(Action::NoAction);
+                                            if btn_action != Action::NoAction {
                                                 let amount: u32 = if shift_held { 5 } else { 1 };
                                                 let cmd = PlayerCommand::DropAmmo {
                                                     pc_id,
