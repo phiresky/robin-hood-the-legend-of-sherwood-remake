@@ -5541,11 +5541,9 @@ impl EngineInner {
             return false;
         }
 
-        let mut indices = self.fast_grid.get_crossing_elevation_line_indices(
-            layer,
-            old_pos.to_geo(),
-            new_pos.to_geo(),
-        );
+        let mut indices = self
+            .fast_grid
+            .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
         if indices.is_empty() {
             return false;
         }
@@ -5648,11 +5646,9 @@ impl EngineInner {
             return;
         }
 
-        let indices = self.fast_grid.get_crossing_patch_line_indices(
-            layer,
-            old_pos.to_geo(),
-            new_pos.to_geo(),
-        );
+        let indices = self
+            .fast_grid
+            .get_crossing_patch_line_indices(layer, old_pos, new_pos);
         if indices.is_empty() {
             return;
         }
@@ -5799,11 +5795,9 @@ impl EngineInner {
             return;
         }
 
-        let indices = self.fast_grid.get_crossing_sound_line_indices(
-            layer,
-            old_pos.to_geo(),
-            new_pos.to_geo(),
-        );
+        let indices = self
+            .fast_grid
+            .get_crossing_sound_line_indices(layer, old_pos, new_pos);
         if indices.is_empty() {
             return;
         }

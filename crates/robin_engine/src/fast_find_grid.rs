@@ -1044,11 +1044,6 @@ impl FastFindGrid {
     /// Test if a projected map point is inside the grid.
     #[inline]
     pub fn is_inside_grid_point(&self, point: MapPoint) -> bool {
-        self.is_inside_grid_point_geo(point.to_geo())
-    }
-
-    #[inline]
-    fn is_inside_grid_point_geo(&self, point: GeoPoint2D) -> bool {
         let x = point.x as i32;
         let y = point.y as i32;
         x >= 0
@@ -1060,11 +1055,6 @@ impl FastFindGrid {
     /// Compute the flat block index for a world-space point on a given layer.
     #[inline]
     pub fn get_block_index(&self, point: MapPoint, layer: u16) -> usize {
-        self.get_block_index_geo(point.to_geo(), layer)
-    }
-
-    #[inline]
-    fn get_block_index_geo(&self, point: GeoPoint2D, layer: u16) -> usize {
         let bx = (point.x as i32) >> 6; // divide by 64
         let by = (point.y as i32) >> 6;
         (bx as usize)
@@ -2176,12 +2166,12 @@ impl FastFindGrid {
     pub fn get_crossing_elevation_line_indices(
         &self,
         layer: u16,
-        old_pos: GeoPoint2D,
-        new_pos: GeoPoint2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos);
-        bbox.expand_point(new_pos);
+        bbox.expand_point(old_pos.to_geo());
+        bbox.expand_point(new_pos.to_geo());
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2196,7 +2186,7 @@ impl FastFindGrid {
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
-        let movement = geo2d::segment(old_pos, new_pos);
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
                 let block_idx = self.block_index_from_cell(cx, cy, layer);
@@ -2250,7 +2240,7 @@ impl FastFindGrid {
     fn remove_old_position_elevation_crossings(
         &self,
         indices: &mut Vec<LineIndex>,
-        old_pos: GeoPoint2D,
+        old_pos: MapPoint,
     ) {
         indices.retain(|&idx| {
             let Some(line) = self.level.lines.get(usize::from(idx)) else {
@@ -2259,7 +2249,7 @@ impl FastFindGrid {
             let line_a = line.a.to_geo();
             let line_b = line.b.to_geo();
             let line_vec = line_b - line_a;
-            let test_vec = old_pos - line_a;
+            let test_vec = old_pos.to_geo() - line_a;
             line_vec.x * test_vec.y - line_vec.y * test_vec.x != 0.0
         });
     }
@@ -2270,12 +2260,12 @@ impl FastFindGrid {
     pub fn get_crossing_patch_line_indices(
         &self,
         layer: u16,
-        old_pos: GeoPoint2D,
-        new_pos: GeoPoint2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos);
-        bbox.expand_point(new_pos);
+        bbox.expand_point(old_pos.to_geo());
+        bbox.expand_point(new_pos.to_geo());
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2288,7 +2278,7 @@ impl FastFindGrid {
         let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
             .min(self.level.grid_height.saturating_sub(1));
 
-        let movement = geo2d::segment(old_pos, new_pos);
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -2392,12 +2382,12 @@ impl FastFindGrid {
     pub fn get_crossing_sound_line_indices(
         &self,
         layer: u16,
-        old_pos: GeoPoint2D,
-        new_pos: GeoPoint2D,
+        old_pos: MapPoint,
+        new_pos: MapPoint,
     ) -> Vec<LineIndex> {
         let mut bbox = BBox2D::new();
-        bbox.expand_point(old_pos);
-        bbox.expand_point(new_pos);
+        bbox.expand_point(old_pos.to_geo());
+        bbox.expand_point(new_pos.to_geo());
         let rect = match bbox.0 {
             Some(r) => r,
             None => return Vec::new(),
@@ -2410,7 +2400,7 @@ impl FastFindGrid {
         let y_max = ((rect.max().y / GRID_CELL_SIZE_F).floor() as u16)
             .min(self.level.grid_height.saturating_sub(1));
 
-        let movement = geo2d::segment(old_pos, new_pos);
+        let movement = geo2d::segment(old_pos.to_geo(), new_pos.to_geo());
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         let mut result = Vec::new();
@@ -2722,14 +2712,10 @@ impl FastFindGrid {
 
     /// Check thin (zero-width) reachability between two points.
     pub fn is_reachable_thin(&self, p1: MapPoint, p2: MapPoint, layer: u16) -> bool {
-        self.is_reachable_thin_geo(p1.to_geo(), p2.to_geo(), layer)
-    }
-
-    fn is_reachable_thin_geo(&self, p1: GeoPoint2D, p2: GeoPoint2D, layer: u16) -> bool {
-        let seg = geo2d::segment(p1, p2);
+        let seg = geo2d::segment(p1.to_geo(), p2.to_geo());
         let mut bbox = BBox2D::new();
-        bbox.expand_point(p1);
-        bbox.expand_point(p2);
+        bbox.expand_point(p1.to_geo());
+        bbox.expand_point(p2.to_geo());
 
         let mut reachable = true;
         self.visit_active_motion_line_indices(layer, &bbox, |idx| {
@@ -3077,22 +3063,13 @@ impl FastFindGrid {
         click: MapPoint,
         layer: u16,
     ) -> bool {
-        self.find_authorized_position_toward_geo(bbox, click.to_geo(), layer)
-    }
-
-    fn find_authorized_position_toward_geo(
-        &self,
-        bbox: &mut BBox2D,
-        click: GeoPoint2D,
-        layer: u16,
-    ) -> bool {
         for _ in 0..50 {
             // Collect lines from both the segment (center→click) and the box itself
             let center = bbox.center();
             let seg_bbox = {
                 let mut b = BBox2D::new();
                 b.expand_point(center);
-                b.expand_point(click);
+                b.expand_point(click.to_geo());
                 b
             };
             let seg_lines = self.get_active_motion_line_indices(layer, &seg_bbox);
@@ -3112,7 +3089,7 @@ impl FastFindGrid {
                 .filter(|&idx| {
                     let line = &self.level.lines[usize::from(idx)];
                     line.intersects_bbox(bbox)
-                        || line.intersects_segment(geo2d::segment(center, click))
+                        || line.intersects_segment(geo2d::segment(center, click.to_geo()))
                 })
                 .collect();
 
@@ -3141,22 +3118,13 @@ impl FastFindGrid {
         start: MapPoint,
         layer: u16,
     ) -> bool {
-        self.find_authorized_position_straight_geo(bbox, start.to_geo(), layer)
-    }
-
-    fn find_authorized_position_straight_geo(
-        &self,
-        bbox: &mut BBox2D,
-        start: GeoPoint2D,
-        layer: u16,
-    ) -> bool {
         // Phase 1: push along segment (center → start)
         for _ in 0..50 {
             let center = bbox.center();
             let seg_bbox = {
                 let mut b = BBox2D::new();
                 b.expand_point(center);
-                b.expand_point(start);
+                b.expand_point(start.to_geo());
                 b
             };
             let line_indices = self.get_active_motion_line_indices(layer, &seg_bbox);
@@ -3164,7 +3132,7 @@ impl FastFindGrid {
                 .into_iter()
                 .filter(|&idx| {
                     self.level.lines[usize::from(idx)]
-                        .intersects_segment(geo2d::segment(center, start))
+                        .intersects_segment(geo2d::segment(center, start.to_geo()))
                 })
                 .collect();
 
@@ -3236,7 +3204,11 @@ impl FastFindGrid {
                 let vy = -angle.cos();
                 *bbox = initial;
                 bbox.translate(pt(vx * radius_try, vy * radius_try));
-                if self.find_authorized_position_toward_geo(bbox, center_initial, layer) {
+                if self.find_authorized_position_toward(
+                    bbox,
+                    MapPoint::from_geo(center_initial),
+                    layer,
+                ) {
                     return true;
                 }
             }

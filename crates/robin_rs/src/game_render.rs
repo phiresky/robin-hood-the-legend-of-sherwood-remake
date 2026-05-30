@@ -2575,7 +2575,7 @@ pub(crate) fn render_debug_motion_graph(
         .map(|e| e.sprite().position_iface.get_pathfinder_index())
         .unwrap_or(0);
 
-    let world_to_screen = |p: robin_engine::geo2d::GeoPoint2D| -> (i32, i32) {
+    let world_to_screen = |p: robin_engine::coordinates::MapPoint| -> (i32, i32) {
         let sx = ((p.x - view.x) * zoom).round() as i32;
         let sy = ((p.y - view.y) * zoom).round() as i32;
         (sx, sy)
