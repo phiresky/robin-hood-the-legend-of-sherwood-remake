@@ -1041,7 +1041,7 @@ fn compute_trajectory_ballistic_impl(
                 // continuing the bounce integration.  Stop here;
                 // `maybe_splash_on_landing` marks `dive`.
                 if let Some(water_zones) = check.water_zones {
-                    let map_pt = MapPoint::from_world_xyz(impact.x, impact.y, impact.z).to_geo();
+                    let map_pt = MapPoint::from_world_xyz(impact.x, impact.y, impact.z);
                     if water_zones.determine_water_hole(map_pt).is_some() {
                         break;
                     }
@@ -1078,8 +1078,8 @@ fn compute_trajectory_ballistic_impl(
     {
         let last = trajectory[trajectory.len() - 1].position;
         let prev = trajectory[trajectory.len() - 2].position;
-        let landing_map = MapPoint::from_world_xyz(last.x, last.y, last.z).to_geo();
-        let prev_map = MapPoint::from_world_xyz(prev.x, prev.y, prev.z).to_geo();
+        let landing_map = MapPoint::from_world_xyz(last.x, last.y, last.z);
+        let prev_map = MapPoint::from_world_xyz(prev.x, prev.y, prev.z);
         if let Some(exit) = water_zones.find_hole_far_exit(prev_map, landing_map) {
             // Duration proportional to the 2D distance from the
             // landing point to the exit.
@@ -1103,11 +1103,7 @@ fn compute_trajectory_ballistic_impl(
             trajectory.push(TrajectoryPoint {
                 position: WorldPoint3D {
                     x: exit.x,
-                    y: crate::coordinates::GroundPoint::from_map_and_z(
-                        MapPoint::from_geo(exit),
-                        last.z,
-                    )
-                    .y,
+                    y: crate::coordinates::GroundPoint::from_map_and_z(exit, last.z).y,
                     z: last.z,
                 },
                 time,

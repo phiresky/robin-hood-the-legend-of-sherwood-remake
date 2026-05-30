@@ -199,9 +199,9 @@ impl DrawManager {
     // -- Drawing methods --
     // These clip/transform then delegate to the Renderer.
 
-    /// Draw a line segment in world coordinates, clipped to the view.
-    pub fn draw_segment(&self, renderer: &mut Renderer, a: GeoPoint2D, b: GeoPoint2D, color: u16) {
-        if let Some((pa, pb)) = self.clip_segment(a, b) {
+    /// Draw a line segment in projected map coordinates, clipped to the view.
+    pub fn draw_segment(&self, renderer: &mut Renderer, a: MapPoint, b: MapPoint, color: u16) {
+        if let Some((pa, pb)) = self.clip_segment(a.to_geo(), b.to_geo()) {
             renderer.draw_line_screen(pa.x as i32, pa.y as i32, pb.x as i32, pb.y as i32, color);
         }
     }
@@ -275,8 +275,8 @@ impl DrawManager {
         }
     }
 
-    /// Draw a polyline in world coordinates.
-    pub fn draw_polyline(&self, renderer: &mut Renderer, points: &[GeoPoint2D], color: u16) {
+    /// Draw a polyline in projected map coordinates.
+    pub fn draw_polyline(&self, renderer: &mut Renderer, points: &[MapPoint], color: u16) {
         for i in 0..points.len().saturating_sub(1) {
             self.draw_segment(renderer, points[i], points[i + 1], color);
         }

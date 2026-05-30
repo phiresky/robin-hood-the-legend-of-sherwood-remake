@@ -952,11 +952,12 @@ impl EngineInner {
                 // rather than panicking — we don't want to crash the
                 // renderer over a bad asset reference, but the issue
                 // should still surface.
-                obs.material_sectors =
-                    raw.material_indices
-                        .iter()
-                        .filter_map(|&idx| {
-                            let raw_sector = loaded
+                obs.material_sectors = raw
+                    .material_indices
+                    .iter()
+                    .filter_map(|&idx| {
+                        let raw_sector =
+                            loaded
                                 .proto
                                 .material_sectors
                                 .get(idx as usize)
@@ -970,36 +971,36 @@ impl EngineInner {
                                     );
                                     None
                                 })?;
-                            if raw_sector.polygon.points.len() < 3 {
-                                return None;
-                            }
-                            let points: Vec<crate::geo2d::GeoPoint2D> = raw_sector
-                                .polygon
-                                .points
-                                .iter()
-                                .map(|&(x, y)| crate::geo2d::pt(x as f32, y as f32))
-                                .collect();
-                            let mut bbox = crate::geo2d::BBox2D::new();
-                            for &p in &points {
-                                bbox.expand_point(p);
-                            }
-                            // Same material-code → GameMaterial mapping
-                            // as `MaterialSectors::build_from_raw` (clamp
-                            // out-of-range / LIGHT_SHADOW to default).
-                            const N_MATERIALS: u32 = 9;
-                            let code = raw_sector.material as u32;
-                            let material = if code >= N_MATERIALS {
-                                crate::element::GameMaterial::from_u32(default_material_code)
-                            } else {
-                                crate::element::GameMaterial::from_u32(code)
-                            };
-                            Some(crate::material_sectors::MaterialSector {
-                                points,
-                                bounding_box: bbox,
-                                material,
-                            })
+                        if raw_sector.polygon.points.len() < 3 {
+                            return None;
+                        }
+                        let points: Vec<crate::coordinates::MapPoint> = raw_sector
+                            .polygon
+                            .points
+                            .iter()
+                            .map(|&(x, y)| crate::coordinates::MapPoint::new(x as f32, y as f32))
+                            .collect();
+                        let mut bbox = crate::geo2d::BBox2D::new();
+                        for &p in &points {
+                            bbox.expand_point(p.to_geo());
+                        }
+                        // Same material-code → GameMaterial mapping
+                        // as `MaterialSectors::build_from_raw` (clamp
+                        // out-of-range / LIGHT_SHADOW to default).
+                        const N_MATERIALS: u32 = 9;
+                        let code = raw_sector.material as u32;
+                        let material = if code >= N_MATERIALS {
+                            crate::element::GameMaterial::from_u32(default_material_code)
+                        } else {
+                            crate::element::GameMaterial::from_u32(code)
+                        };
+                        Some(crate::material_sectors::MaterialSector {
+                            points,
+                            bounding_box: bbox,
+                            material,
                         })
-                        .collect();
+                    })
+                    .collect();
                 // Capture vertices 0/1/2 as (point3, point1, point2) and
                 // seed the top/bottom planes from (point1, point2, point3).
                 // Orientation flip is skipped because `compute_plane_z` is

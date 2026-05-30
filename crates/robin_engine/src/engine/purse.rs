@@ -269,7 +269,7 @@ impl EngineInner {
         // Result is written onto the element so `coin_fx_for_material`
         // (and later readers) see the correct material instead of the
         // default `Ground`.
-        let impact_map = crate::geo2d::pt(source_pos.x, source_pos.y);
+        let impact_map = crate::coordinates::MapPoint::new(source_pos.x, source_pos.y);
         let landing_obstacle_idx = self.get_entity(purse_id).and_then(|e| match e {
             Entity::Projectile(p) => p.element.obstacle_index(),
             _ => None,

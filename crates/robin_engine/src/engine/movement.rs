@@ -5797,7 +5797,7 @@ impl EngineInner {
         // collapses the polygon scan + default-material fallback;
         // the obstacle-based fallback is then applied on top when no
         // sound polygon matches and the actor has an active obstacle.
-        let polygon_material = assets.material_sectors.material_at(new_pos.to_geo());
+        let polygon_material = assets.material_sectors.material_at(new_pos);
         let new_material = if polygon_material == assets.material_sectors.default_material {
             // No SECTOR_SOUND polygon matched; apply the obstacle
             // fallback.  Without an obstacle pointer the default-

@@ -2368,7 +2368,7 @@ impl FastFindGrid {
     pub fn add_sector_lines_for_sound(
         &mut self,
         layer: u16,
-        points: &[GeoPoint2D],
+        points: &[MapPoint],
         sector_active: bool,
     ) -> Vec<LineIndex> {
         if points.len() < 2 {
@@ -2377,7 +2377,7 @@ impl FastFindGrid {
         let mut indices = Vec::with_capacity(points.len());
         let mut last = points[points.len() - 1];
         for &current in points {
-            let line = GridLine::new_sound(MapPoint::from_geo(last), MapPoint::from_geo(current));
+            let line = GridLine::new_sound(last, current);
             let idx = self.add_line(line, layer);
             self.set_line_active(idx, sector_active);
             indices.push(idx);

@@ -2941,7 +2941,7 @@ pub(crate) fn render_noise_display(
         }
         // `draw_polyline` draws segments between consecutive points —
         // append the first point so the polygon closes.
-        let mut closed: Vec<geo2d::GeoPoint2D> = sector.points.clone();
+        let mut closed = sector.points.clone();
         closed.push(sector.points[0]);
         host.draw_manager.draw_polyline(renderer, &closed, 0x00AF);
     }
@@ -3076,10 +3076,7 @@ pub(crate) fn render_debug_animation_lines(
         }
         let color: u16 = if entity.is_active() { 0xFFFF } else { 0xFA00 };
 
-        // Convert GeoPoint2D (crate::element) to geo2d::GeoPoint2D for draw_polyline
-        let points: Vec<geo2d::GeoPoint2D> = polyline.iter().map(|p| geo2d::pt(p.x, p.y)).collect();
-
-        host.draw_manager.draw_polyline(renderer, &points, color);
+        host.draw_manager.draw_polyline(renderer, polyline, color);
     }
 }
 

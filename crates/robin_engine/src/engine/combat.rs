@@ -491,10 +491,12 @@ impl EngineInner {
             // the last two points — one of them is the original
             // pre-extension landing.
             let lands_in_hole = trajectory.iter().rev().take(2).any(|tp| {
-                assets.water_zones.landing_is_in_hole(crate::geo2d::pt(
-                    tp.position.x,
-                    tp.position.y - tp.position.z,
-                ))
+                assets
+                    .water_zones
+                    .landing_is_in_hole(crate::coordinates::MapPoint::new(
+                        tp.position.x,
+                        tp.position.y - tp.position.z,
+                    ))
             });
             let arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
                 shooter: result.shooter,
@@ -2526,8 +2528,8 @@ impl EngineInner {
         // is the correct one.  If none of the projection-area obstacles
         // cover the landing, fall through to the standalone water-zone
         // scan (branch 1).
-        let landing = position_map.to_geo();
-        let landing_obstacle = self.find_landing_water_obstacle(assets, landing);
+        let landing = position_map;
+        let landing_obstacle = self.find_landing_water_obstacle(assets, landing.to_geo());
         let resolved_material = if let Some(obs) = landing_obstacle {
             crate::water_zones::determine_water_hole_with_obstacle(obs, landing)
         } else {
