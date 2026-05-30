@@ -166,7 +166,7 @@ fn entity_display_name(
                 .get_civilian(c.civilian.civilian_profile_index);
             let is_vip =
                 civ_profile.is_some_and(|p| p.civilian_type == profiles::CivilianType::Vip);
-            if !is_vip && let Some(name) = assets.random_peasant_name(id.0 as usize) {
+            if !is_vip && let Some(name) = assets.random_peasant_name(id.index() as usize) {
                 Some(name)
             } else {
                 civ_profile.map(|p| {
@@ -511,7 +511,7 @@ pub fn render_entity_id_overlay(
             continue;
         };
 
-        let text = id.0.to_string();
+        let text = id.index().to_string();
         let tw = font.text_width(&text);
         let text_x = screen_pt.x as i32 - tw / 2;
         // +6 px offset clears the feet / selection ring without

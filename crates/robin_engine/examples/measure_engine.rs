@@ -415,7 +415,7 @@ fn main() {
         entry.0 += 1;
         entry.1 += entity_bincode;
         entry.2 += entity_json;
-        largest_entities.push((id.0, kind, entity_bincode, entity_json));
+        largest_entities.push((id.index(), kind, entity_bincode, entity_json));
         measure_entity_components(entity, &mut component_totals, &mut detail_totals);
     }
     largest_entities.sort_by_key(|(_, _, bytes, _)| std::cmp::Reverse(*bytes));

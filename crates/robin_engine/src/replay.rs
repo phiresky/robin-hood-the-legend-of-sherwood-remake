@@ -463,7 +463,7 @@ mod tests {
 
             // Frame 50: two commands
             rec.push(PlayerCommand::GroupMove {
-                actors: vec![crate::element::EntityId(1)],
+                actors: vec![crate::element::EntityId::from_raw(1)],
                 destination: crate::coordinates::MapPoint::new(100.0, 200.0),
                 running: false,
                 show_marker: true,
@@ -602,7 +602,7 @@ mod tests {
     #[test]
     fn group_move_goal_override_serde_roundtrip() {
         let with_override = PlayerCommand::GroupMove {
-            actors: vec![crate::element::EntityId(1)],
+            actors: vec![crate::element::EntityId::from_raw(1)],
             destination: crate::coordinates::MapPoint::new(50.0, 75.0),
             running: true,
             show_marker: false,

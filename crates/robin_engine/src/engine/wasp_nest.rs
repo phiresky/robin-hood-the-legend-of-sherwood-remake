@@ -101,7 +101,7 @@ impl EngineInner {
             let exhausted = proj.advance_trajectory_one_frame();
             if exhausted {
                 impacts.push(NestImpact {
-                    id: EntityId(idx as u32),
+                    id: EntityId::from_raw(idx as u32),
                     pos: proj.element.position(),
                     layer: proj.element.layer(),
                 });
@@ -164,7 +164,7 @@ impl EngineInner {
 
         if let Some(Entity::Projectile(nest)) = self
             .entities
-            .get_mut(nest_id.0 as usize)
+            .get_mut(nest_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             nest.object.animation = Animation::ObjectBursting;
@@ -205,7 +205,7 @@ impl EngineInner {
                 Some(Entity::Projectile(p))
                     if p.element.active && p.object.object_type == ObjectType::Wasp =>
                 {
-                    Some(EntityId(idx as u32))
+                    Some(EntityId::from_raw(idx as u32))
                 }
                 _ => None,
             })
@@ -245,7 +245,7 @@ impl EngineInner {
                 let jitter = crate::sim_rng::u32(0..3) as u16;
                 if let Some(Entity::Projectile(p)) = self
                     .entities
-                    .get_mut(wasp_id.0 as usize)
+                    .get_mut(wasp_id.index() as usize)
                     .and_then(|s| s.as_mut())
                 {
                     p.projectile.wasp.timeout = DIRECTION_CHANGE_TIMEOUT + jitter;
@@ -284,7 +284,7 @@ impl EngineInner {
             }
         } else if let Some(Entity::Projectile(p)) = self
             .entities
-            .get_mut(wasp_id.0 as usize)
+            .get_mut(wasp_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             p.projectile.wasp.timeout -= 1;
@@ -300,7 +300,7 @@ impl EngineInner {
         if !stinging_now
             && let Some(Entity::Projectile(p)) = self
                 .entities
-                .get_mut(wasp_id.0 as usize)
+                .get_mut(wasp_id.index() as usize)
                 .and_then(|s| s.as_mut())
         {
             let mut pos = p.element.position();
@@ -343,7 +343,7 @@ impl EngineInner {
                     let delay = crate::sim_rng::u32(0..STINGING_MAX_TIMEOUT as u32) as u16 + 1;
                     if let Some(Entity::Projectile(p)) = self
                         .entities
-                        .get_mut(wasp_id.0 as usize)
+                        .get_mut(wasp_id.index() as usize)
                         .and_then(|s| s.as_mut())
                     {
                         p.projectile.wasp.stinging = true;
@@ -383,7 +383,7 @@ impl EngineInner {
                 self.clear_wasp_victim_flag(victim_id);
                 if let Some(Entity::Projectile(p)) = self
                     .entities
-                    .get_mut(wasp_id.0 as usize)
+                    .get_mut(wasp_id.index() as usize)
                     .and_then(|s| s.as_mut())
                 {
                     p.projectile.wasp.victim = None;
@@ -397,12 +397,12 @@ impl EngineInner {
         if let Some(vid) = new_victim {
             if let Some(Entity::Projectile(p)) = self
                 .entities
-                .get_mut(wasp_id.0 as usize)
+                .get_mut(wasp_id.index() as usize)
                 .and_then(|s| s.as_mut())
             {
                 p.projectile.wasp.victim = Some(vid);
             }
-            if let Some(Some(v)) = self.entities.get_mut(vid.0 as usize)
+            if let Some(Some(v)) = self.entities.get_mut(vid.index() as usize)
                 && let Some(npc) = v.npc_data_mut()
             {
                 npc.wasp_victim = true;
@@ -496,7 +496,7 @@ impl EngineInner {
 
         // VIPs say `VipWaspsNo` instead of being targeted.
         for vid in vip_remarks {
-            if let Some(Some(entity)) = self.entities.get_mut(vid.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(vid.index() as usize)
                 && let Some(base) = entity.ai_controller_mut()
             {
                 base.say(crate::ai::Remark::VipWaspsNo);
@@ -558,7 +558,7 @@ impl EngineInner {
                 // Degenerate roll: zero movement and bail.
                 if let Some(Entity::Projectile(p)) = self
                     .entities
-                    .get_mut(wasp_id.0 as usize)
+                    .get_mut(wasp_id.index() as usize)
                     .and_then(|s| s.as_mut())
                 {
                     p.projectile.wasp.movement = WorldVec3D {
@@ -659,7 +659,7 @@ impl EngineInner {
             if clear {
                 if let Some(Entity::Projectile(p)) = self
                     .entities
-                    .get_mut(wasp_id.0 as usize)
+                    .get_mut(wasp_id.index() as usize)
                     .and_then(|s| s.as_mut())
                 {
                     p.projectile.wasp.movement = mv;
@@ -701,7 +701,7 @@ impl EngineInner {
     fn wasp_killed(&mut self, nest_id: EntityId) {
         if let Some(Entity::Projectile(nest)) = self
             .entities
-            .get_mut(nest_id.0 as usize)
+            .get_mut(nest_id.index() as usize)
             .and_then(|s| s.as_mut())
             && nest.projectile.wasp.flying_wasp_count > 0
         {
@@ -711,7 +711,7 @@ impl EngineInner {
 
     /// Clear a soldier's `wasp_victim` flag.
     fn clear_wasp_victim_flag(&mut self, victim_id: EntityId) {
-        if let Some(Some(entity)) = self.entities.get_mut(victim_id.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(victim_id.index() as usize)
             && let Some(npc) = entity.npc_data_mut()
         {
             npc.wasp_victim = false;
@@ -876,7 +876,7 @@ mod tests {
                 .enumerate()
                 .filter_map(|(idx, slot)| match slot {
                     Some(Entity::Projectile(p)) if p.object.object_type == ObjectType::Wasp => {
-                        Some(EntityId(idx as u32))
+                        Some(EntityId::from_raw(idx as u32))
                     }
                     _ => None,
                 })

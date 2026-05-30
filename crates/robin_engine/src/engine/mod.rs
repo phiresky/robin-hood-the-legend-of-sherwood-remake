@@ -724,7 +724,7 @@ impl EngineInner {
     fn validate_actor_placement(&self) {
         let special_layer = self.fast_grid.level.special_layer;
         for &actor_id in &self.actor_ids {
-            let Some(Some(entity)) = self.entities.get(actor_id.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get(actor_id.index() as usize) else {
                 continue;
             };
             let elem = entity.element_data();
@@ -1177,7 +1177,7 @@ impl EngineInner {
 
     /// Add an entity to the world. Returns its EntityId.
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
-        let id = EntityId(self.entities.len() as u32);
+        let id = EntityId::new(self.entities.len() as u32, entity.entity_id_kind());
 
         // Initialise outline colours based on entity kind.  For
         // soldiers, route the VIP flag (cached on `EnemyAi.is_vip` from
@@ -1255,7 +1255,9 @@ impl EngineInner {
 
     /// Get a reference to an entity by ID.
     pub fn get_entity(&self, id: EntityId) -> Option<&Entity> {
-        self.entities.get(id.0 as usize).and_then(|e| e.as_ref())
+        self.entities
+            .get(id.index() as usize)
+            .and_then(|e| e.as_ref())
     }
 
     /// The command of the actor's currently-executing sequence element,
@@ -1313,9 +1315,11 @@ impl EngineInner {
             if elem.executed_immediately() {
                 return crate::sequence::SequencePriority::Normal;
             }
-            let owner_entity = elem
-                .owner
-                .and_then(|id| entities.get(id.0 as usize).and_then(|slot| slot.as_ref()));
+            let owner_entity = elem.owner.and_then(|id| {
+                entities
+                    .get(id.index() as usize)
+                    .and_then(|slot| slot.as_ref())
+            });
             match owner_entity {
                 Some(entity) if entity.kind().is_actor() => {
                     let is_unconscious =
@@ -1405,7 +1409,7 @@ impl EngineInner {
         // Unfreeze actor on any incoming command, so a
         // `FreezeExecution`'d actor can be resumed by dispatching
         // a new element (e.g. scripted Wait on a held PC).
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = false;
@@ -1500,7 +1504,7 @@ impl EngineInner {
         use crate::sequence::SequenceState;
 
         // Unfreeze actor on any incoming command.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = false;
@@ -1582,7 +1586,7 @@ impl EngineInner {
                 // transitions to InProgress.  Read by
                 // `non_interruptable_guard` to gate the PASS_DOOR+MOVE
                 // IMPOSSIBLE fast-fail.
-                if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+                if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
                     && let Some(actor) = entity.actor_data_mut()
                 {
                     actor.sequence_element_started = true;
@@ -1751,7 +1755,7 @@ impl EngineInner {
     pub(crate) fn actor_freeze_execution(&mut self, owner: EntityId) {
         use crate::sequence::CascadeFlags;
 
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = true;
@@ -1883,7 +1887,7 @@ impl EngineInner {
         // before the arbitration / dispatch logic runs.  Without this
         // clear, a freeze imposed via paths other than `DropDone`
         // (which clears it inline) would persist past the next Instruct.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = false;
@@ -2160,7 +2164,7 @@ impl EngineInner {
                     entity.element_data().sprite.last_motion_state,
                     Some(crate::sprite::MotionState::Done)
                 )
-                .then_some(crate::element::EntityId(idx as u32))
+                .then_some(crate::element::EntityId::from_raw(idx as u32))
             })
             .collect();
 
@@ -2330,7 +2334,7 @@ impl EngineInner {
         // failed-path retries — otherwise the entry would stay in the
         // queue until the element resumes or times out.
         self.failed_path_requests.retain(|r| r.owner != owner);
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_movement.clear();
@@ -2445,7 +2449,7 @@ impl EngineInner {
         let npc_ids = self.npc_ids.clone();
         for npc_id in npc_ids {
             let busy = self.is_very_very_busy(npc_id);
-            if let Some(Some(entity)) = self.entities.get_mut(npc_id.0 as usize)
+            if let Some(Some(entity)) = self.entities.get_mut(npc_id.index() as usize)
                 && let Some(ai) = entity.ai_controller_mut()
             {
                 if !ai.was_busy && busy {
@@ -2569,10 +2573,10 @@ impl EngineInner {
     /// exposed so overlays / debug renderers can label entities
     /// without a reverse lookup.
     pub fn entities_iter_with_id(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.entities
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, slot)| slot.as_ref().map(|e| (EntityId(idx as u32), e)))
+        self.entities.iter().enumerate().filter_map(|(idx, slot)| {
+            slot.as_ref()
+                .map(|e| (EntityId::new(idx as u32, e.entity_id_kind()), e))
+        })
     }
 
     /// All player characters (portrait order).
@@ -3231,7 +3235,7 @@ impl EngineInner {
             .copied()
             .filter(|id| {
                 self.entities
-                    .get(id.0 as usize)
+                    .get(id.index() as usize)
                     .and_then(|slot| slot.as_ref())
                     .is_some_and(|entity| entity.is_active())
             })
@@ -3271,13 +3275,13 @@ impl EngineInner {
     /// Get a mutable reference to an entity by ID.
     pub(crate) fn get_entity_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
         self.entities
-            .get_mut(id.0 as usize)
+            .get_mut(id.index() as usize)
             .and_then(|e| e.as_mut())
     }
 
     /// Remove an entity. Leaves a None hole (IDs are stable).
     pub(crate) fn remove_entity(&mut self, id: EntityId) {
-        if let Some(slot) = self.entities.get_mut(id.0 as usize) {
+        if let Some(slot) = self.entities.get_mut(id.index() as usize) {
             *slot = None;
         }
         // Remove from index lists
@@ -3801,7 +3805,11 @@ impl EngineInner {
         // the messenger had a pending unselect).  Drop any selected id
         // whose PC has had its portrait hidden or been made unplayable.
         self.seats[0].selection.retain(|&id| {
-            match self.entities.get(id.0 as usize).and_then(|e| e.as_ref()) {
+            match self
+                .entities
+                .get(id.index() as usize)
+                .and_then(|e| e.as_ref())
+            {
                 Some(crate::element::Entity::Pc(pc)) => {
                     !pc.pc.interface_hidden && pc.pc.playable && pc.pc.life_points > 0
                 }

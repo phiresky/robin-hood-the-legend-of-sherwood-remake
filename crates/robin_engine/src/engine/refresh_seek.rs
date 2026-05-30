@@ -243,7 +243,7 @@ impl crate::engine::EngineInner {
             };
             let target_pos = target_entity.element_data().position_map();
 
-            let owner_id = EntityId(idx as u32);
+            let owner_id = EntityId::from_raw(idx as u32);
 
             // Countdown gate — when still >0, just decrement and skip
             // (collected below via `decrement_only`).
@@ -373,7 +373,7 @@ impl crate::engine::EngineInner {
         // `try_dispatch_move_path` will overwrite both when the new
         // element dispatches, but stamp them here too so a dispatch
         // failure still leaves coherent state.
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.last_seek_target_position = new_target_pos;

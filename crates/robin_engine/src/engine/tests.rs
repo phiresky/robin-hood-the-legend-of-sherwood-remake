@@ -1364,14 +1364,14 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         soldier: Default::default(),
     }));
 
-    if let Some(Some(attacker)) = engine.entities.get_mut(attacker_id.0 as usize) {
+    if let Some(Some(attacker)) = engine.entities.get_mut(attacker_id.index() as usize) {
         attacker.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = attacker.human_data_mut().unwrap();
         human.opponents.push(defender_id);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    if let Some(Some(defender)) = engine.entities.get_mut(defender_id.0 as usize) {
+    if let Some(Some(defender)) = engine.entities.get_mut(defender_id.index() as usize) {
         defender.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         defender
             .human_data_mut()
@@ -1459,7 +1459,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         soldier: Default::default(),
     }));
 
-    if let Some(Some(pc)) = engine.entities.get_mut(pc_id.0 as usize) {
+    if let Some(Some(pc)) = engine.entities.get_mut(pc_id.index() as usize) {
         pc.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = pc.human_data_mut().unwrap();
         human.opponents.push(soldier_id);
@@ -1467,7 +1467,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         human.smalltalk_hint = SmalltalkHint::Left;
         human.smalltalk_hint_opponent = Some(soldier_id);
     }
-    if let Some(Some(soldier)) = engine.entities.get_mut(soldier_id.0 as usize) {
+    if let Some(Some(soldier)) = engine.entities.get_mut(soldier_id.index() as usize) {
         soldier.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         soldier.human_data_mut().unwrap().opponents.push(pc_id);
     }
@@ -1573,7 +1573,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         soldier: Default::default(),
     }));
 
-    if let Some(Some(hinted)) = engine.entities.get_mut(hinted_id.0 as usize) {
+    if let Some(Some(hinted)) = engine.entities.get_mut(hinted_id.index() as usize) {
         hinted.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = hinted.human_data_mut().unwrap();
         human.opponents.push(hinted_opponent_id);
@@ -1582,7 +1582,9 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         human.smalltalk_hint = SmalltalkHint::Left;
         human.smalltalk_hint_opponent = Some(hinted_opponent_id);
     }
-    if let Some(Some(hinted_opponent)) = engine.entities.get_mut(hinted_opponent_id.0 as usize) {
+    if let Some(Some(hinted_opponent)) =
+        engine.entities.get_mut(hinted_opponent_id.index() as usize)
+    {
         hinted_opponent.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         hinted_opponent
             .human_data_mut()
@@ -1590,14 +1592,14 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             .opponents
             .push(hinted_id);
     }
-    if let Some(Some(free_attacker)) = engine.entities.get_mut(free_attacker_id.0 as usize) {
+    if let Some(Some(free_attacker)) = engine.entities.get_mut(free_attacker_id.index() as usize) {
         free_attacker.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = free_attacker.human_data_mut().unwrap();
         human.opponents.push(free_defender_id);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    if let Some(Some(free_defender)) = engine.entities.get_mut(free_defender_id.0 as usize) {
+    if let Some(Some(free_defender)) = engine.entities.get_mut(free_defender_id.index() as usize) {
         free_defender.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         free_defender
             .human_data_mut()
@@ -1678,12 +1680,12 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         soldier: Default::default(),
     }));
 
-    if let Some(Some(attacker)) = engine.entities.get_mut(attacker_id.0 as usize) {
+    if let Some(Some(attacker)) = engine.entities.get_mut(attacker_id.index() as usize) {
         let human = attacker.human_data_mut().unwrap();
         human.opponents.push(defender_id);
         human.smalltalk_initiative = true;
     }
-    if let Some(Some(defender)) = engine.entities.get_mut(defender_id.0 as usize) {
+    if let Some(Some(defender)) = engine.entities.get_mut(defender_id.index() as usize) {
         let human = defender.human_data_mut().unwrap();
         human.opponents.push(attacker_id);
         human.smalltalk_initiative = false;
@@ -1880,7 +1882,7 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
     engine.dispatch_scroll_hourglasses(&assets);
-    let entity = engine.get_entity(crate::element::EntityId(0));
+    let entity = engine.get_entity(crate::element::EntityId::from_raw(0));
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,
         _ => unreachable!("scroll entity missing"),
@@ -2038,7 +2040,10 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(&LevelAssets::new());
 
-    assert_eq!(pending_specific_blinks(&engine, same_camp_npc), Vec::new());
+    assert_eq!(
+        pending_specific_blinks(&engine, same_camp_npc),
+        Vec::<EntityId>::new()
+    );
     assert_eq!(
         pending_specific_blinks(&engine, opposite_camp_npc),
         vec![waker]
@@ -2062,8 +2067,14 @@ fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(&LevelAssets::new());
 
-    assert_eq!(pending_specific_blinks(&engine, waker), Vec::new());
-    assert_eq!(pending_specific_blinks(&engine, same_camp_npc), Vec::new());
+    assert_eq!(
+        pending_specific_blinks(&engine, waker),
+        Vec::<EntityId>::new()
+    );
+    assert_eq!(
+        pending_specific_blinks(&engine, same_camp_npc),
+        Vec::<EntityId>::new()
+    );
     assert_eq!(
         pending_specific_blinks(&engine, opposite_camp_npc),
         vec![waker]
@@ -2086,7 +2097,7 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
 
     assert_eq!(
         pending_specific_blinks(&engine, opposite_camp_npc),
-        Vec::new()
+        Vec::<EntityId>::new()
     );
 }
 
@@ -3127,7 +3138,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     let victim = engine.add_entity(make_test_soldier(Posture::Lying));
     if let Some(crate::element::Entity::Soldier(soldier)) = engine
         .entities
-        .get_mut(victim.0 as usize)
+        .get_mut(victim.index() as usize)
         .and_then(|s| s.as_mut())
     {
         soldier.npc.life_points = 30;
@@ -3167,7 +3178,7 @@ fn npc_sit_down_anim_completion_flips_posture_to_sitting() {
         OrderType::TransitionWaitingUprightSitting,
         MotionState::Terminated,
         None,
-        EntityId(0),
+        EntityId::from_raw(0),
         &mut outcomes,
     );
 
@@ -3251,7 +3262,7 @@ fn npc_enter_leisure_anim_completion_flips_posture_to_leisure() {
         OrderType::TransitionWaitingUprightSpecial,
         MotionState::Done,
         None,
-        EntityId(0),
+        EntityId::from_raw(0),
         &mut outcomes,
     );
 
@@ -3272,14 +3283,14 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let mut engine = EngineInner::new();
-    let pc = EntityId(42);
+    let pc = EntityId::from_raw(42);
     let slot: u8 = 1;
 
     // Empty slot → early-returns on the sentinel id.
     assert!(!engine.remove_quick_action_titbits_for(pc, slot));
 
     // Add a QA titbit and wire its id into the PC's macro slot.
-    let pc_handle = ElementHandle(pc.0);
+    let pc_handle = ElementHandle(pc.index());
     let titbit_id = engine.titbit_manager.add_titbit(
         WorldPoint3D {
             x: 0.0,
@@ -3335,7 +3346,7 @@ fn seed_macro_slot(
     use crate::macro_store::{QaReplayCommand, QuickActionStep};
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
-    let pc_handle = ElementHandle(pc.0);
+    let pc_handle = ElementHandle(pc.index());
     let titbit_id = engine.titbit_manager.add_titbit(
         WorldPoint3D {
             x: 0.0,
@@ -3380,7 +3391,7 @@ fn has_quick_action_reads_macro_store() {
     use crate::element::EntityId;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId(10);
+    let pc = EntityId::from_raw(10);
 
     assert!(!engine.has_quick_action(pc, 0));
 
@@ -3398,7 +3409,7 @@ fn abort_quick_action_clears_slot_and_titbit() {
     use crate::element::EntityId;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId(20);
+    let pc = EntityId::from_raw(20);
 
     // Empty slot → false.
     assert!(!engine.abort_quick_action(pc, 0));
@@ -3426,8 +3437,8 @@ fn delete_macro_command_matches_original_single_vs_all() {
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId(30);
-    let pc_b = EntityId(31);
+    let pc_a = EntityId::from_raw(30);
+    let pc_b = EntityId::from_raw(31);
     engine.pc_ids.push(pc_a);
     engine.pc_ids.push(pc_b);
 
@@ -3481,8 +3492,8 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc_a = EntityId(40);
-    let pc_b = EntityId(41);
+    let pc_a = EntityId::from_raw(40);
+    let pc_b = EntityId::from_raw(41);
     engine.pc_ids.push(pc_a);
     engine.pc_ids.push(pc_b);
 
@@ -3527,7 +3538,7 @@ fn start_macro_empty_slot_is_noop() {
     use crate::player_command::PlayerCommand;
 
     let mut engine = EngineInner::new();
-    let pc = EntityId(50);
+    let pc = EntityId::from_raw(50);
     engine.pc_ids.push(pc);
 
     // pc has a macro only in slot 2 — starting slot 0 should NOT tetris,

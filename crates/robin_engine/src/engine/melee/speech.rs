@@ -126,7 +126,7 @@ impl EngineInner {
                     .push(super::SoundCommand::StopExclamation {
                         actor_id: entity_id,
                     });
-                if let Some(Some(entity)) = self.entities.get_mut(entity_id.0 as usize)
+                if let Some(Some(entity)) = self.entities.get_mut(entity_id.index() as usize)
                     && let Some(npc) = entity.npc_data_mut()
                     && let Some(base) = npc.ai_brain.base_mut()
                     && (base.current_remark != crate::ai::Remark::TheSoundOfSilence
@@ -138,7 +138,7 @@ impl EngineInner {
                 }
                 self.sound_sim
                     .playing_exclamations
-                    .retain(|p| p.actor_id != entity_id.0);
+                    .retain(|p| p.actor_id != entity_id.index());
             }
             return;
         }
@@ -197,7 +197,7 @@ impl EngineInner {
             });
         self.sound_sim
             .playing_exclamations
-            .retain(|p| p.actor_id != entity_id.0);
+            .retain(|p| p.actor_id != entity_id.index());
         self.pending_side_effects
             .sounds
             .push(super::SoundCommand::Exclamation {
@@ -216,7 +216,7 @@ impl EngineInner {
         self.sound_sim
             .playing_exclamations
             .push(crate::sound::PlayingExclamation {
-                actor_id: entity_id.0,
+                actor_id: entity_id.index(),
                 exclamation_id: remark as u32,
                 finish_frame: self.frame_counter + duration,
             });
@@ -367,7 +367,7 @@ impl EngineInner {
         self.sound_sim
             .playing_exclamations
             .push(crate::sound::PlayingExclamation {
-                actor_id: pc_id.0,
+                actor_id: pc_id.index(),
                 exclamation_id: expression as u32,
                 finish_frame: self.frame_counter + duration,
             });
@@ -377,7 +377,7 @@ impl EngineInner {
             HERO_SELECT => TIME_FORBID_HERO_SELECT,
             _ => HERO_EXPRESSION_DEFAULT_FORBID,
         };
-        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.0 as usize) {
+        if let Some(Some(Entity::Pc(pc))) = self.entities.get_mut(pc_id.index() as usize) {
             pc.pc.forbidden_expressions.push((expression, forbid_timer));
         }
         self.chorus_timer = DEFAULT_ANTI_CHORUS_TIMER;
@@ -439,7 +439,7 @@ impl EngineInner {
 
         for (idx, slot) in self.entities.iter_mut().enumerate() {
             let Some(Entity::Pc(pc)) = slot else { continue };
-            let id = EntityId(idx as u32);
+            let id = EntityId::from_raw(idx as u32);
             let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
                 None => (0, None, None),
@@ -524,7 +524,8 @@ impl EngineInner {
         entity_id: EntityId,
         stimulus: crate::ai::Stimulus,
     ) {
-        let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(entity_id.0 as usize) else {
+        let Some(Some(Entity::Soldier(s))) = self.entities.get_mut(entity_id.index() as usize)
+        else {
             return;
         };
         if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {

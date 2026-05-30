@@ -1007,7 +1007,7 @@ impl EngineInner {
                 continue;
             }
 
-            let entity_id = EntityId(idx as u32);
+            let entity_id = EntityId::from_raw(idx as u32);
             let snapshot = self
                 .sequence_manager
                 .current_order_for_actor(entity_id)

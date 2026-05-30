@@ -77,7 +77,7 @@ impl EngineInner {
             })
             .unwrap_or((0.0, 0.0));
 
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
             entity.element_data_mut().set_direction_instantly(dir);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_melee = ActiveMelee::new(target, strike, Some(seq_id), elem_idx);
@@ -96,11 +96,11 @@ impl EngineInner {
         // tick (reading `active_melee.order_id`), wedging the strike
         // at `MotionState::Start`.
         let mut order = crate::order::Order::new(anim, tx, ty, self.alloc_order_id());
-        order.target_actor = Some(target.0);
+        order.target_actor = Some(target.index());
         order.compute_direction = false;
         let order_id = order.order_id;
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_melee.order_id = Some(order_id);
@@ -146,7 +146,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         {
-            let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) else {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return;
             };
@@ -192,7 +192,7 @@ impl EngineInner {
             .map(|e| e.element_data().position_map());
 
         let queue_raise = {
-            let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) else {
+            let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) else {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return;
             };
@@ -382,7 +382,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let queue_lower = if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        let queue_lower = if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Queue lowering-sword animation if in sword state.
@@ -421,7 +421,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let Some(Some(entity)) = self.entities.get(owner.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get(owner.index() as usize) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -480,7 +480,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let Some(Some(entity)) = self.entities.get(owner.0 as usize) else {
+        let Some(Some(entity)) = self.entities.get(owner.index() as usize) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -539,7 +539,7 @@ impl EngineInner {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => {
                     let pt = antagonist.and_then(|id| {
                         self.entities
-                            .get(id.0 as usize)
+                            .get(id.index() as usize)
                             .and_then(|s| s.as_ref())
                             .map(|e| e.element_data().position_map())
                     });
@@ -597,7 +597,7 @@ impl EngineInner {
         // `sync_danger_point_titbits`).
         if let Some(pt3d) = danger_pt3d
             && (pt3d.x != 0.0 || pt3d.y != 0.0 || pt3d.z != 0.0)
-            && let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+            && let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.shield_danger_point = pt3d;
@@ -680,7 +680,7 @@ impl EngineInner {
         }
 
         let mut started = false;
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
             // Face toward danger point if available.  Sets the
             // direction *goal*; the per-tick `turn()` (in the
             // order-driven animation handler) interpolates toward it
@@ -739,7 +739,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize) {
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
                 actor.clear_path();
@@ -766,7 +766,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
             && actor.action_state.is_shield()
         {
@@ -810,7 +810,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(Some(entity)) = self.entities.get_mut(owner.0 as usize)
+        if let Some(Some(entity)) = self.entities.get_mut(owner.index() as usize)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Requires the actor to currently be holding the shield.
@@ -925,7 +925,7 @@ impl EngineInner {
                 if command == Command::ReceiveArrowDamage {
                     let posture = self
                         .entities
-                        .get(victim_id.0 as usize)
+                        .get(victim_id.index() as usize)
                         .and_then(|s| s.as_ref())
                         .map(|e| e.element_data().posture)
                         .unwrap_or(Posture::Upright);

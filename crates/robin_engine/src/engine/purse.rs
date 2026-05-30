@@ -104,7 +104,7 @@ impl EngineInner {
             // ran out — the projectile has landed.
             let exhausted = proj.advance_trajectory_one_frame();
             if exhausted {
-                let id = EntityId(idx as u32);
+                let id = EntityId::from_raw(idx as u32);
                 let pos = proj.element.position();
                 let layer = proj.element.layer();
                 impacts.push(Impact {
@@ -159,7 +159,7 @@ impl EngineInner {
                         && p.projectile.purse.burst
                         && !p.projectile.purse.child_coins.is_empty() =>
                 {
-                    Some(EntityId(idx as u32))
+                    Some(EntityId::from_raw(idx as u32))
                 }
                 _ => None,
             })
@@ -186,7 +186,7 @@ impl EngineInner {
                 .collect();
             if let Some(Entity::Projectile(purse)) = self
                 .entities
-                .get_mut(purse_id.0 as usize)
+                .get_mut(purse_id.index() as usize)
                 .and_then(|s| s.as_mut())
             {
                 purse.projectile.purse.child_coins = alive;
@@ -281,7 +281,7 @@ impl EngineInner {
             .material_at_with_obstacle(landing_obstacle, impact_map);
         if let Some(Entity::Projectile(p)) = self
             .entities
-            .get_mut(purse_id.0 as usize)
+            .get_mut(purse_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             p.element.set_material(material);
@@ -393,7 +393,7 @@ impl EngineInner {
         // as decoration).
         if let Some(Entity::Projectile(purse)) = self
             .entities
-            .get_mut(purse_id.0 as usize)
+            .get_mut(purse_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             debug_assert!(
@@ -435,7 +435,7 @@ impl EngineInner {
     fn coin_landed(&mut self, coin_id: EntityId, impact_pos: WorldPoint3D, layer: u16) {
         if let Some(Entity::Projectile(coin)) = self
             .entities
-            .get_mut(coin_id.0 as usize)
+            .get_mut(coin_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             // Snap to the resolved goal stored at spawn.  Falls back to
@@ -499,7 +499,7 @@ impl EngineInner {
         for cid in children {
             if let Some(Entity::Projectile(c)) = self
                 .entities
-                .get_mut(cid.0 as usize)
+                .get_mut(cid.index() as usize)
                 .and_then(|s| s.as_mut())
                 && c.element.active
                 && !c.object.taken
@@ -511,7 +511,7 @@ impl EngineInner {
         }
         if let Some(Entity::Projectile(purse)) = self
             .entities
-            .get_mut(purse_id.0 as usize)
+            .get_mut(purse_id.index() as usize)
             .and_then(|s| s.as_mut())
         {
             purse.projectile.purse.child_coins.clear();
@@ -703,7 +703,7 @@ mod tests {
         for cid in &coin_ids {
             if let Some(Entity::Projectile(c)) = engine
                 .entities
-                .get_mut(cid.0 as usize)
+                .get_mut(cid.index() as usize)
                 .and_then(|s| s.as_mut())
             {
                 c.element.active = false;

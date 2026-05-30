@@ -1668,7 +1668,7 @@ impl FriendlyAi {
             // me" checks later find it.
             if !check_door_path {
                 detectables_to_add.push((
-                    crate::element::EntityId(handle),
+                    crate::element::EntityId::from_raw(handle),
                     crate::element::DetectableType::Friend,
                 ));
             }
