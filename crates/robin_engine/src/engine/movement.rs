@@ -2800,12 +2800,12 @@ impl EngineInner {
         // movement and facing.
         let mut combat_face_targets: Vec<Option<crate::coordinates::MapPoint>> =
             vec![None; self.entities.len()];
-        for (entity_id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+        for (entity_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(entity_id);
             let idx = entity_id.index() as usize;
-            let actor = match entity.actor_data() {
-                Some(a) => a,
-                None => continue,
-            };
+            let actor = entity
+                .actor_data()
+                .expect("entities.actors() yielded non-actor entity");
             let is_shield_moving = matches!(
                 actor.action_state,
                 crate::element::ActionState::MovingShield
@@ -2951,7 +2951,7 @@ impl EngineInner {
             vec![None; self.entities.len()];
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
-        for (entity_id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+        for (entity_id, entity) in self.entities.occupied() {
             let idx = entity_id.index() as usize;
             let Some(actor) = entity.actor_data() else {
                 continue;
@@ -3066,7 +3066,7 @@ impl EngineInner {
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
         let mut drunk_turn_overrides: Vec<Option<i16>> = vec![None; self.entities.len()];
-        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (entity_id, entity) in self.entities.occupied_mut() {
             let idx = entity_id.index() as usize;
             if !matches!(entity, crate::element::Entity::Soldier(_)) {
                 continue;
@@ -3150,7 +3150,7 @@ impl EngineInner {
         // mutably without touching `self.fast_grid` or the door table.
         let mut lift_translations: Vec<Option<LiftAnimContext>> = vec![None; self.entities.len()];
         let mut door_pass_wall_directions: Vec<Option<i16>> = vec![None; self.entities.len()];
-        for (entity_id, entity) in crate::engine::occupied_entity_slots(&self.entities) {
+        for (entity_id, entity) in self.entities.occupied() {
             let idx = entity_id.index() as usize;
             let posture = entity.element_data().posture;
             let door_pass_action = entity
@@ -3359,7 +3359,7 @@ impl EngineInner {
             crate::element::ActionState,
         )> = Vec::new();
 
-        for (entity_id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (entity_id, entity) in self.entities.occupied_mut() {
             let idx = entity_id.index() as usize;
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state

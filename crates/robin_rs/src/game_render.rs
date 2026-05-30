@@ -2155,15 +2155,11 @@ pub(crate) fn render_bg_animations_gpu(
     _assets: &LevelAssets,
     renderer: &mut Renderer,
 ) {
-    if engine.bg_animation_ids().is_empty() {
+    let bg_animation_ids = engine.bg_animation_ids();
+    if bg_animation_ids.is_empty() {
         return;
     }
-    render_fx_entities_gpu(
-        engine.bg_animation_ids().iter().copied(),
-        engine,
-        host,
-        renderer,
-    );
+    render_fx_entities_gpu(bg_animation_ids.iter().copied(), engine, host, renderer);
 }
 
 pub(crate) fn render_patch_fx_gpu(

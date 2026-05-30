@@ -2310,7 +2310,7 @@ impl EngineInner {
     /// The associated titbit is auto-removed by
     /// `sync_apple_smell_titbits` once the counter reaches 0.
     pub(super) fn tick_apple_smell(&mut self) {
-        for (_, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (_, entity) in self.entities.occupied_mut() {
             if let Entity::Soldier(s) = entity
                 && s.soldier.apple_smell > 0
             {

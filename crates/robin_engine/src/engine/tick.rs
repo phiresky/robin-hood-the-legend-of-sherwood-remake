@@ -1090,7 +1090,7 @@ impl EngineInner {
 
         // ── Element hourglass (per-element update) ───────────────
         let mut to_remove = Vec::new();
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             if !entity.hourglass() {
                 to_remove.push(id);
             }

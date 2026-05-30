@@ -72,6 +72,7 @@ pub use types::*;
 
 use crate::ai::AiGlobalState;
 use crate::element::{Entity, EntityId};
+use crate::entities::Entities;
 use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d::{self};
 use crate::markers::GroundMark;
@@ -239,17 +240,11 @@ pub struct EngineInner {
 
     // ── Entity storage ────────────────────────────────────────────
     /// All entities indexed by EntityId.
-    pub(crate) entities: Vec<Option<Entity>>,
-    /// Indices of all actors (PC + NPC + animal).
-    pub(crate) actor_ids: Vec<EntityId>,
+    pub(crate) entities: Entities,
     /// Indices of player characters.
     pub(crate) pc_ids: Vec<EntityId>,
     /// Indices of NPCs (soldiers + civilians).
     pub(crate) npc_ids: Vec<EntityId>,
-    /// Indices of FX animations.
-    pub(crate) animation_ids: Vec<EntityId>,
-    /// Indices of background animations.
-    pub(crate) bg_animation_ids: Vec<EntityId>,
     /// Floating indicator manager (titbits: stars, emoticons, smoke, splashes, etc.).
     pub(crate) titbit_manager: crate::titbit::TitbitManager,
     /// Per-seat sim-tracked state (selection, hotgroups). Indexed by
@@ -259,13 +254,6 @@ pub struct EngineInner {
     /// Shared script/director camera. Local player viewport state is
     /// host-owned so the deterministic engine is identical for every seat.
     pub(crate) cutscene_camera: CameraState,
-    /// Fighters per camp.  Index matches `Camp::index()`:
-    /// `0 = Royalists` (Robin Hood's gang — the player camp),
-    /// `1 = Lacklandists` (Prince John's men — enemies).
-    pub(crate) fighter_ids: [Vec<EntityId>; 2],
-    /// Soldiers per camp, indexed identically to `fighter_ids`.
-    pub(crate) soldier_ids: [Vec<EntityId>; 2],
-
     // ── Simulation RNG ───────────────────────────────────────────
     /// The authoritative deterministic RNG for every gameplay random roll.
     /// Installed into [`crate::sim_rng`] for the duration of each tick so
@@ -561,7 +549,7 @@ impl EngineInner {
             }
             script.game_host.profile_manager = assets.profile_manager.clone().into();
         }
-        for (id, entity) in occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             entity
                 .sprite_mut()
                 .attach_runtime_from_cache(&assets.sprite_scriptor)
@@ -641,17 +629,11 @@ impl EngineInner {
             pending_move_requests: Vec::new(),
             failed_path_requests: Vec::new(),
 
-            entities: Vec::new(),
-            actor_ids: Vec::new(),
+            entities: Entities::new(),
             pc_ids: Vec::new(),
             npc_ids: Vec::new(),
-            animation_ids: Vec::new(),
-            bg_animation_ids: Vec::new(),
             titbit_manager: crate::titbit::TitbitManager::new(),
             seats: vec![SeatState::default()],
-            fighter_ids: [Vec::new(), Vec::new()],
-            soldier_ids: [Vec::new(), Vec::new()],
-
             ai_global: AiGlobalState::default(),
             macro_store: crate::macro_store::MacroStore::new(),
 
@@ -746,10 +728,7 @@ impl EngineInner {
     /// * Move-box colliding with an obstacle is a non-fatal warn.
     fn validate_actor_placement(&self) {
         let special_layer = self.fast_grid.level.special_layer;
-        for &actor_id in &self.actor_ids {
-            let Some(Some(entity)) = self.entities.get(actor_id.index() as usize) else {
-                continue;
-            };
+        for (_, entity) in self.entities.actors() {
             let elem = entity.element_data();
             let layer = elem.layer();
             if layer == 0xFFFF {
@@ -791,7 +770,7 @@ impl EngineInner {
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
         let rng = &mut self.rng;
-        for (_, entity) in occupied_entity_slots_mut(&mut self.entities) {
+        for (_, entity) in self.entities.occupied_mut() {
             if !matches!(entity, Entity::Scroll(_)) {
                 continue;
             }
@@ -1230,47 +1209,19 @@ impl EngineInner {
             colors[N::Target as usize] = npc_vip_target();
         }
 
-        // Track by kind in index lists.  PCs / Soldiers / Civilians
-        // also feed the camp-keyed `fighter_ids` and (Soldier-only)
-        // `soldier_ids` lists.
-        let camp_idx = entity.camp().index();
+        // Track kind lists that carry ordering semantics. Other views
+        // are derived from the entity store.
         match &entity {
             Entity::Pc(_) => {
-                self.actor_ids.push(id);
                 self.pc_ids.push(id);
-                if let Some(idx) = camp_idx {
-                    self.fighter_ids[idx].push(id);
-                }
             }
             Entity::Soldier(_) => {
-                self.actor_ids.push(id);
                 self.npc_ids.push(id);
-                if let Some(idx) = camp_idx {
-                    self.fighter_ids[idx].push(id);
-                    self.soldier_ids[idx].push(id);
-                }
             }
             Entity::Civilian(_) => {
-                // Civilians go only into the NPC list, never into
-                // `fighter_ids`.  Keeping civilians out of `fighter_ids`
-                // matters for the CheatHighlander paths
-                // (`console_dispatch.rs:CheatHighlander*`) which iterate
-                // all camp fighters — civilians must not become
-                // invulnerable there.
-                self.actor_ids.push(id);
                 self.npc_ids.push(id);
             }
-            Entity::Fx(fx) => {
-                // FX base elements at elevation 0 are tracked as
-                // background animations; everything else (elevated
-                // base, masked, target) falls through to the regular
-                // animation list.
-                if fx.element.position().z == 0.0 {
-                    self.bg_animation_ids.push(id);
-                } else {
-                    self.animation_ids.push(id);
-                }
-            }
+            Entity::Fx(_) => {}
             Entity::Target(_) | Entity::Net(_) | Entity::Scroll(_) | Entity::Projectile(_) => {}
             Entity::Bonus(_) => {}
         }
@@ -2225,7 +2176,7 @@ impl EngineInner {
         // Reset every sprite's transient last_motion_state so the next
         // tick starts clean, regardless of whether the slot was an
         // actor or had an order to mark.
-        for (_, entity) in occupied_entity_slots_mut(&mut self.entities) {
+        for (_, entity) in self.entities.occupied_mut() {
             entity.element_data_mut().sprite.last_motion_state = None;
         }
     }
@@ -2614,7 +2565,7 @@ impl EngineInner {
     /// exposed so overlays / debug renderers can label entities
     /// without a reverse lookup.
     pub fn entities_iter_with_id(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        occupied_entity_slots(&self.entities)
+        self.entities.occupied()
     }
 
     /// All player characters (portrait order).
@@ -2746,8 +2697,11 @@ impl EngineInner {
     }
 
     /// Background animation entity ids.
-    pub fn bg_animation_ids(&self) -> &[EntityId] {
-        &self.bg_animation_ids
+    pub fn bg_animation_ids(&self) -> Vec<EntityId> {
+        self.entities
+            .fxs()
+            .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(EntityId::from(id)))
+            .collect()
     }
 
     /// Quick-select group `idx` (0 = group 1, 8 = group 9).
@@ -3268,15 +3222,9 @@ impl EngineInner {
     /// and the sprite can remain on the last movement frame.
     pub(crate) fn ensure_wait_elements_for_idle_actors(&mut self) {
         let actor_ids: Vec<EntityId> = self
-            .actor_ids
-            .iter()
-            .copied()
-            .filter(|id| {
-                self.entities
-                    .get(id.index() as usize)
-                    .and_then(|slot| slot.as_ref())
-                    .is_some_and(|entity| entity.is_active())
-            })
+            .entities
+            .actors()
+            .filter_map(|(id, entity)| entity.is_active().then_some(EntityId::from(id)))
             .collect();
         for actor_id in actor_ids {
             self.ensure_wait_element(actor_id);
@@ -3303,7 +3251,7 @@ impl EngineInner {
     /// Reveal all blipped entities — backs the console `UNBLIP`
     /// command, which iterates every NPC and reveals it.
     pub(crate) fn reveal_all_blips(&mut self) {
-        for (_, entity) in occupied_entity_slots_mut(&mut self.entities) {
+        for (_, entity) in self.entities.occupied_mut() {
             if entity.element_data().blipped {
                 entity.reveal_blip();
             }
@@ -3323,18 +3271,9 @@ impl EngineInner {
             *slot = None;
         }
         // Remove from index lists
-        self.actor_ids.retain(|&i| i != id);
         self.pc_ids.retain(|&i| i != id);
         self.npc_ids.retain(|&i| i != id);
-        self.animation_ids.retain(|&i| i != id);
-        self.bg_animation_ids.retain(|&i| i != id);
         self.seats[0].selection.retain(|&i| i != id);
-        for camp in &mut self.fighter_ids {
-            camp.retain(|&i| i != id);
-        }
-        for camp in &mut self.soldier_ids {
-            camp.retain(|&i| i != id);
-        }
         // Any pending path request for this actor is cancelled when
         // the element tears down.  Entity removal implies all its
         // elements die, so drop the retry-queue entries eagerly

@@ -92,7 +92,7 @@ impl EngineInner {
         // `GetCurrentAction` that must return the animation enum value
         // for the current frame.
         let mut current_animations: Vec<(i32, crate::order::OrderType)> =
-            Vec::with_capacity(self.actor_ids.len() + self.animation_ids.len());
+            Vec::with_capacity(self.entities.len());
         for (entity_id, entity) in self.entities_iter_with_id() {
             let idx = entity_id.index() as usize;
             let handle = crate::natives::GameHost::actor_handle_from_index(idx);
@@ -1259,7 +1259,7 @@ impl EngineInner {
         // (it gets swapped into the script manager below), so the list
         // of ready-to-fire scrolls is captured first.
         let mut ready: Vec<i32> = Vec::new();
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             let crate::element::Entity::Scroll(s) = entity else {
                 continue;
             };
@@ -2311,7 +2311,7 @@ impl EngineInner {
 
         // Collect state changes: (npc_handle, source_handle, state_change_code).
         let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
-        for (id, entity) in crate::engine::occupied_entity_slots_mut(&mut self.entities) {
+        for (id, entity) in self.entities.occupied_mut() {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
