@@ -6212,7 +6212,7 @@ impl EngineInner {
                     assets,
                     layer_in,
                     u16::from(sector_in),
-                    crate::geo2d::pt(point_in.x, point_in.y),
+                    crate::coordinates::MapPoint::new(point_in.x, point_in.y),
                 );
                 if obstacle.is_none() {
                     tracing::warn!(
@@ -6270,7 +6270,7 @@ impl EngineInner {
                     assets,
                     layer_out,
                     u16::from(sector_out),
-                    crate::geo2d::pt(point_out.x, point_out.y),
+                    crate::coordinates::MapPoint::new(point_out.x, point_out.y),
                 );
                 if obstacle.is_none() {
                     tracing::warn!(
@@ -6692,7 +6692,7 @@ impl EngineInner {
                 if !target_mutual {
                     continue;
                 }
-                let pos = entity.element_data().position_map().to_geo();
+                let pos = entity.element_data().position_map();
                 let weapon1 =
                     super::melee::weapon_material_from_profile(entity, &assets.profile_manager);
                 (target_id, pos, weapon1)
@@ -6707,7 +6707,7 @@ impl EngineInner {
                     strike_kind: crate::sound::StrikeKind::Swipe,
                     weapon1,
                     weapon2,
-                    position: position.into(),
+                    position,
                 });
         }
 
@@ -7442,10 +7442,7 @@ impl EngineInner {
                     // When either step fails the entire apply
                     // block is skipped — the actor stays put but
                     // the new-position star burst still fires.
-                    let dest_geo = crate::geo2d::pt(dest.x, dest.y);
-                    let probe = self.fast_grid.get_sector_screen_accessible(
-                        crate::coordinates::MapPoint::from_geo(dest_geo),
-                    );
+                    let probe = self.fast_grid.get_sector_screen_accessible(dest);
                     let move_box = self
                         .get_entity(owner)
                         .map(|e| *e.position_iface().get_move_box());
@@ -7453,7 +7450,7 @@ impl EngineInner {
                         if let (Some(_sector_idx), Some(sector_number), Some(move_box)) =
                             (probe.sector_idx, probe.sector, move_box)
                         {
-                            let mut box_at = move_box.translated(dest_geo);
+                            let mut box_at = move_box.translated(dest.to_geo());
                             if self.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
                                 dest,
@@ -7515,7 +7512,7 @@ impl EngineInner {
                             assets,
                             final_layer,
                             u16::from(final_sector_number),
-                            crate::geo2d::pt(final_dest.x, final_dest.y),
+                            final_dest,
                         );
                         self.set_obstacle_and_material(assets, owner, obstacle_idx);
 

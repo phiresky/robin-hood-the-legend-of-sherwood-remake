@@ -3,7 +3,6 @@
 use super::*;
 use crate::coordinates::{MapPoint, MapVec};
 use crate::element::EntityId;
-use crate::geo2d;
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::position_interface::vector_to_sector_0_to_15;
@@ -798,7 +797,8 @@ impl EngineInner {
             .fast_grid
             .find_authorized_position_toward(&mut bbox, reference, layer)
         {
-            Some(MapPoint::from_geo(bbox.center()))
+            let center = bbox.center();
+            Some(MapPoint::new(center.x, center.y))
         } else {
             None
         }
@@ -2568,11 +2568,7 @@ impl EngineInner {
             };
             let pi = entity.position_iface();
             let pm = pi.map_position();
-            (
-                *pi.get_move_box(),
-                entity.element_data().layer(),
-                pm.to_geo(),
-            )
+            (*pi.get_move_box(), entity.element_data().layer(), pm)
         };
 
         // Snap destination to the nearest authorised position when
@@ -2580,7 +2576,7 @@ impl EngineInner {
         // requested destination and ask the grid.  On success rewrite
         // the intent target to the box centre.
         if intent.find_accessible {
-            let dest = crate::geo2d::pt(intent.target_x, intent.target_y);
+            let dest = MapPoint::new(intent.target_x, intent.target_y);
             let mut bbox = if move_box.is_somewhere() {
                 crate::geo2d::BBox2D::from_corners(
                     crate::geo2d::pt(move_box.x_min() + dest.x, move_box.y_min() + dest.y),
@@ -2603,13 +2599,11 @@ impl EngineInner {
         // `ask_obstacle` is set without straight-mode the check is
         // silently skipped rather than asserting.
         if intent.ask_obstacle && !intent.compute_direction {
-            let dest = crate::geo2d::pt(intent.target_x, intent.target_y);
-            if !self.fast_grid.is_straight_movement_authorized(
-                position.into(),
-                dest.into(),
-                layer,
-                &move_box,
-            ) {
+            let dest = MapPoint::new(intent.target_x, intent.target_y);
+            if !self
+                .fast_grid
+                .is_straight_movement_authorized(position, dest, layer, &move_box)
+            {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return false;
             }
@@ -3103,7 +3097,7 @@ impl EngineInner {
             else {
                 continue;
             };
-            let goal = crate::geo2d::pt(order.target_x, order.target_y);
+            let goal = MapPoint::new(order.target_x, order.target_y);
             let pos = entity.element_data().position_map();
             let dx = goal.x - pos.x;
             let dy = goal.y - pos.y;
@@ -4192,21 +4186,24 @@ impl EngineInner {
             // map, not flying, not carried, inside grid) map to:
             // `dist > 0`, posture not Flying/Carried-ish, position
             // inside `fast_grid.level.map_bbox`.
-            let old_pos_geo = crate::geo2d::pt(elem.position_map().x, elem.position_map().y);
+            let old_pos = elem.position_map();
             let entity_layer = elem.layer();
             let entity_posture = elem.posture;
-            let eligible_for_crossing =
-                !matches!(
-                    entity_posture,
-                    crate::element::Posture::Flying
-                        | crate::element::Posture::OnWall
-                        | crate::element::Posture::OnLadder
-                        | crate::element::Posture::Carried
-                        | crate::element::Posture::OnShoulders
-                        | crate::element::Posture::CarryingCorpse
-                        | crate::element::Posture::CarryingOnShoulders
-                        | crate::element::Posture::HelpingToClimb
-                ) && self.fast_grid.level.map_bbox.contains_point(old_pos_geo);
+            let eligible_for_crossing = !matches!(
+                entity_posture,
+                crate::element::Posture::Flying
+                    | crate::element::Posture::OnWall
+                    | crate::element::Posture::OnLadder
+                    | crate::element::Posture::Carried
+                    | crate::element::Posture::OnShoulders
+                    | crate::element::Posture::CarryingCorpse
+                    | crate::element::Posture::CarryingOnShoulders
+                    | crate::element::Posture::HelpingToClimb
+            ) && self
+                .fast_grid
+                .level
+                .map_bbox
+                .contains_point(old_pos.to_geo());
 
             // LINE-snap early arrival: when the active element
             // carries `MoveFlags::LINE` + `line_id` and the actor is
@@ -4745,9 +4742,12 @@ impl EngineInner {
             // LINE_PATCH handling is gated to PCs only.
             if eligible_for_crossing {
                 let new_pos = entity.element_data().position_map();
-                let new_pos_geo = crate::geo2d::pt(new_pos.x, new_pos.y);
-                if self.fast_grid.level.map_bbox.contains_point(new_pos_geo) {
-                    let old_pos = MapPoint::from_geo(old_pos_geo);
+                if self
+                    .fast_grid
+                    .level
+                    .map_bbox
+                    .contains_point(new_pos.to_geo())
+                {
                     line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     if entity.is_pc() {
                         patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
@@ -6100,7 +6100,7 @@ impl EngineInner {
                 if i == u16::MAX { 0 } else { i }
             };
             (
-                geo2d::pt(elem.position_map().x, elem.position_map().y),
+                elem.position_map(),
                 elem.layer(),
                 elem.sector().map(u16::from).unwrap_or(0),
                 pf_idx,
@@ -6128,16 +6128,11 @@ impl EngineInner {
                 .find_authorized_position(&mut box_element, entity_layer)
             {
                 let center = box_element.center();
-                source = geo2d::pt(center.x, center.y);
+                source = MapPoint::new(center.x, center.y);
                 if let Some(entity) = self.get_entity_mut(owner) {
-                    entity
-                        .position_iface_mut()
-                        .set_map_position(crate::coordinates::MapPoint::from_geo(source));
+                    entity.position_iface_mut().set_map_position(source);
                     let elem = entity.element_data_mut();
-                    elem.set_position_map(crate::coordinates::MapPoint {
-                        x: source.x,
-                        y: source.y,
-                    });
+                    elem.set_position_map(source);
                     elem.update_grid_cell();
                     move_box_map = *entity.position_iface().get_move_box_map();
                 }
@@ -6183,7 +6178,7 @@ impl EngineInner {
             || source_is_lift_rail
             || self
                 .fast_grid
-                .is_reachable_thick(source.into(), dest, entity_layer, half_diagonal);
+                .is_reachable_thick(source, dest, entity_layer, half_diagonal);
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position.  This mirrors legacy implementation
@@ -6248,7 +6243,7 @@ impl EngineInner {
                 new_src_y = center.y,
                 "try_dispatch_move_path: extracted source from obstacle (use_first_point=true)",
             );
-            source = geo2d::pt(center.x, center.y);
+            source = MapPoint::new(center.x, center.y);
             use_first_point = true;
         }
 
@@ -6257,7 +6252,7 @@ impl EngineInner {
         // build a two-point "path" that the downstream emission loop
         // turns into a single walking order to `dest`.
         let mut waypoints = if straight_ok {
-            vec![MapPoint::from_geo(source), dest]
+            vec![source, dest]
         } else {
             let path = self.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
@@ -6265,7 +6260,7 @@ impl EngineInner {
                 entity_layer,
                 entity_sector,
                 pf_idx,
-                MapPoint::from_geo(source),
+                source,
                 dest,
                 use_first_point,
             );
@@ -6318,7 +6313,7 @@ impl EngineInner {
                     .unwrap_or_default();
                 waypoints = apply_drunken_path_deviation(
                     waypoints,
-                    source.into(),
+                    source,
                     blood_alcohol,
                     move_action == OrderType::RunningUpright,
                     entity_layer,

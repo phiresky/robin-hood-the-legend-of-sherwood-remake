@@ -1896,8 +1896,10 @@ impl EnemyAi {
         let aggressor_line = grid.level.jump_lines.get(line_idx as usize)?;
         let victim_line_idx = aggressor_line.associated_line_index?;
         let victim_line = grid.level.jump_lines.get(victim_line_idx as usize)?;
-        let t_victim = victim_line
-            .compute_nearest_point_param(crate::geo2d::pt(victim_pos.x, victim_pos.y).into());
+        let t_victim = victim_line.compute_nearest_point_param(crate::coordinates::MapPoint::new(
+            victim_pos.x,
+            victim_pos.y,
+        ));
         let coeff = t_victim * victim_line.norm();
         let aggressor_vec = aggressor_line.vector();
         let aggressor_len = aggressor_line.norm().max(f32::EPSILON);
@@ -2134,14 +2136,9 @@ impl EnemyAi {
 
         // Check if straight movement from me to goal is clear.
         if let Some(g) = grid {
-            let pt_me = crate::geo2d::pt(my_pos.x, my_pos.y);
-            let pt_goal = crate::geo2d::pt(goal_x, goal_y);
-            if !g.is_straight_movement_authorized(
-                pt_me.into(),
-                pt_goal.into(),
-                my_pos.level,
-                &ctx.move_box,
-            ) {
+            let pt_me = crate::coordinates::MapPoint::new(my_pos.x, my_pos.y);
+            let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
+            if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
                 return None;
             }
         }
@@ -2247,7 +2244,7 @@ impl EnemyAi {
     ) -> Option<Position> {
         let my_pos = ctx.position;
         let my_dir = ctx.direction;
-        let pt_me = crate::geo2d::pt(my_pos.x, my_pos.y);
+        let pt_me = crate::coordinates::MapPoint::new(my_pos.x, my_pos.y);
 
         // Try distances from MAX down to 10, testing directions 0, +1, -1
         // at each distance.
@@ -2270,8 +2267,8 @@ impl EnemyAi {
                 // IsStraightMovementAutorized.
                 let clear = match grid {
                     Some(g) => g.is_straight_movement_authorized(
-                        pt_me.into(),
-                        crate::geo2d::pt(gx, gy).into(),
+                        pt_me,
+                        crate::coordinates::MapPoint::new(gx, gy),
                         my_pos.level,
                         &ctx.move_box,
                     ),

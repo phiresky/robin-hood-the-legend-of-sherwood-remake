@@ -1523,7 +1523,7 @@ impl EngineInner {
             if !ed.active || ed.in_honolulu {
                 continue;
             }
-            let pos = crate::geo2d::pt(ed.position_map().x, ed.position_map().y);
+            let pos = ed.position_map();
             let layer = ed.layer();
             let handle =
                 crate::natives::GameHost::actor_handle_from_index(entity_id.index() as usize);
@@ -1540,9 +1540,7 @@ impl EngineInner {
                     continue;
                 }
                 let gs = &self.fast_grid.level.sectors[grid_idx as usize];
-                if gs.layer == layer
-                    && gs.contains_point(crate::coordinates::MapPoint::from_geo(pos))
-                {
+                if gs.layer == layer && gs.contains_point(pos) {
                     entries.push((zone_idx, entity_id, handle));
                 }
             }
@@ -1697,7 +1695,7 @@ impl EngineInner {
             }
             let ed = entity.element_data();
             let active = ed.active && !ed.in_honolulu;
-            let pos = crate::geo2d::pt(ed.position_map().x, ed.position_map().y);
+            let pos = ed.position_map();
             let layer = ed.layer();
             let handle = crate::natives::GameHost::actor_handle_from_index(eidx.index() as usize);
 
@@ -1708,9 +1706,7 @@ impl EngineInner {
                 }
                 let gs = &self.fast_grid.level.sectors[grid_idx as usize];
                 let was_inside = self.script_zone_data[zone_idx].is_inside(eidx);
-                let is_inside = active
-                    && gs.layer == layer
-                    && gs.contains_point(crate::coordinates::MapPoint::from_geo(pos));
+                let is_inside = active && gs.layer == layer && gs.contains_point(pos);
 
                 if is_inside && !was_inside {
                     enter_events.push((zone_idx, eidx, handle));
@@ -1901,7 +1897,12 @@ impl EngineInner {
             let sector = assets.script_location_sectors[loc_idx];
             // GetProjectionArea(point) → GetObstacleIndex.
             let obstacle = self
-                .get_projection_area_index(assets, sector, layer, crate::geo2d::pt(x, y))
+                .get_projection_area_index(
+                    assets,
+                    sector,
+                    layer,
+                    crate::coordinates::MapPoint::new(x, y),
+                )
                 .unwrap_or(0xFFFF);
             if let Some(campaign) = self.campaign.as_mut()
                 && (prod_type as usize) < campaign.production_sectors.len()
@@ -2871,12 +2872,8 @@ impl EngineInner {
                     // the destination was a real script point or
                     // script sector.
                     if let Some((layer, sector_num)) = dest_layer_sector {
-                        let new_obstacle = self.get_projection_area_index(
-                            assets,
-                            sector_num,
-                            layer,
-                            crate::geo2d::pt(pt.x, pt.y),
-                        );
+                        let new_obstacle =
+                            self.get_projection_area_index(assets, sector_num, layer, pt);
                         let new_material = new_obstacle.and_then(|oi| {
                             self.sight_obstacles(assets).get(oi as usize).map(|obs| {
                                 crate::element::GameMaterial::from_u32(obs.material as u32)

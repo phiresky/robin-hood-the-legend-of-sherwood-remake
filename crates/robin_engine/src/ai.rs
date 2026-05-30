@@ -3069,7 +3069,7 @@ impl AmbushPoint {
     /// `(AMBUSH_BOX_HALF_SIZE, AMBUSH_BOX_HALF_SIZE * ASPECT_RATIO)`.
     pub fn is_near(
         &self,
-        point: crate::geo2d::GeoPoint2D,
+        point: crate::coordinates::MapPoint,
         level: u16,
         sector: Option<crate::position_interface::SectorHandle>,
     ) -> bool {

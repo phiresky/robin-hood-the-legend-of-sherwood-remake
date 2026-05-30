@@ -200,14 +200,9 @@ impl EnemyAi {
         // Early return if the proposed line position is not reachable in
         // a straight line.
         if let Some(grid) = grid {
-            let me_pt = crate::geo2d::pt(ctx.position.x, ctx.position.y);
-            let there_pt = crate::geo2d::pt(there.x, there.y);
-            if !grid.is_straight_movement_authorized(
-                me_pt.into(),
-                there_pt.into(),
-                there.level,
-                &ctx.move_box,
-            ) {
+            let me_pt = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
+            let there_pt = crate::coordinates::MapPoint::new(there.x, there.y);
+            if !grid.is_straight_movement_authorized(me_pt, there_pt, there.level, &ctx.move_box) {
                 return;
             }
         }
@@ -461,7 +456,7 @@ impl EnemyAi {
             // Project victim onto its own line, then mirror that offset
             // back along the aggressor line (from B toward A).
             let t_victim = victim_line.compute_nearest_point_param(
-                crate::geo2d::pt(enemy.position.x, enemy.position.y).into(),
+                crate::coordinates::MapPoint::new(enemy.position.x, enemy.position.y),
             );
             let f_coeff = t_victim * victim_line.norm();
             let aggressor_norm = aggressor_line.norm().max(f32::EPSILON);
@@ -511,11 +506,11 @@ impl EnemyAi {
 
             // Skip unreachable positions.
             if let Some(grid) = grid {
-                let me_pt = crate::geo2d::pt(me_pos.x, me_pos.y);
-                let new_pt = crate::geo2d::pt(new_pos.x, new_pos.y);
+                let me_pt = crate::coordinates::MapPoint::new(me_pos.x, me_pos.y);
+                let new_pt = crate::coordinates::MapPoint::new(new_pos.x, new_pos.y);
                 if !grid.is_straight_movement_authorized(
-                    me_pt.into(),
-                    new_pt.into(),
+                    me_pt,
+                    new_pt,
                     new_pos.level,
                     &ctx.move_box,
                 ) {
@@ -922,27 +917,17 @@ impl EnemyAi {
         // Check each slot for straight-line reachability from the
         // anchor soldier.
         let left_accessible = grid.is_none_or(|g| {
-            let anchor_pt = crate::geo2d::pt(left_pos.x, left_pos.y);
-            let slot_pt = crate::geo2d::pt(pos_left.x, pos_left.y);
-            g.is_straight_movement_authorized(
-                anchor_pt.into(),
-                slot_pt.into(),
-                left_pos.level,
-                &ctx.move_box,
-            )
+            let anchor_pt = crate::coordinates::MapPoint::new(left_pos.x, left_pos.y);
+            let slot_pt = crate::coordinates::MapPoint::new(pos_left.x, pos_left.y);
+            g.is_straight_movement_authorized(anchor_pt, slot_pt, left_pos.level, &ctx.move_box)
         });
         // The reference passes `left_guy.layer` here (a copy-paste bug);
         // we use `right_pos.level` so the right-side check matches the
         // right anchor when phalanx ends straddle stairs/ramps.
         let right_accessible = grid.is_none_or(|g| {
-            let anchor_pt = crate::geo2d::pt(right_pos.x, right_pos.y);
-            let slot_pt = crate::geo2d::pt(pos_right.x, pos_right.y);
-            g.is_straight_movement_authorized(
-                anchor_pt.into(),
-                slot_pt.into(),
-                right_pos.level,
-                &ctx.move_box,
-            )
+            let anchor_pt = crate::coordinates::MapPoint::new(right_pos.x, right_pos.y);
+            let slot_pt = crate::coordinates::MapPoint::new(pos_right.x, pos_right.y);
+            g.is_straight_movement_authorized(anchor_pt, slot_pt, right_pos.level, &ctx.move_box)
         });
 
         let me_pos = ctx.position;
@@ -1102,14 +1087,10 @@ impl EnemyAi {
         };
         // Cover line must be unobstructed from the bearer.
         if let Some(g) = grid {
-            let bearer_pt = crate::geo2d::pt(bearer_pos.x, bearer_pos.y);
-            let cover_pt = crate::geo2d::pt(behind.x, behind.y);
-            if !g.is_straight_movement_authorized(
-                bearer_pt.into(),
-                cover_pt.into(),
-                behind.level,
-                &ctx.move_box,
-            ) {
+            let bearer_pt = crate::coordinates::MapPoint::new(bearer_pos.x, bearer_pos.y);
+            let cover_pt = crate::coordinates::MapPoint::new(behind.x, behind.y);
+            if !g.is_straight_movement_authorized(bearer_pt, cover_pt, behind.level, &ctx.move_box)
+            {
                 return None;
             }
         }
@@ -1685,18 +1666,18 @@ impl EnemyAi {
                 // Check that the new phalanx line is free of obstacles
                 // AND at least one path from old to new is clear.
                 let reachable = if let Some(grid) = grid {
-                    let nl = crate::geo2d::pt(new_left.x, new_left.y);
-                    let nr = crate::geo2d::pt(new_right.x, new_right.y);
-                    let nc = crate::geo2d::pt(new_center.x, new_center.y);
-                    let ol = crate::geo2d::pt(ctx.position.x, ctx.position.y);
-                    let or_ = crate::geo2d::pt(last_pos.x, last_pos.y);
-                    let oc = crate::geo2d::pt(phalanx_center.x, phalanx_center.y);
+                    let nl = crate::coordinates::MapPoint::new(new_left.x, new_left.y);
+                    let nr = crate::coordinates::MapPoint::new(new_right.x, new_right.y);
+                    let nc = crate::coordinates::MapPoint::new(new_center.x, new_center.y);
+                    let ol = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
+                    let or_ = crate::coordinates::MapPoint::new(last_pos.x, last_pos.y);
+                    let oc = crate::coordinates::MapPoint::new(phalanx_center.x, phalanx_center.y);
                     let lvl = new_left.level;
                     let mb = &ctx.move_box;
-                    grid.is_straight_movement_authorized(nl.into(), nr.into(), lvl, mb)
-                        && (grid.is_straight_movement_authorized(ol.into(), nl.into(), lvl, mb)
-                            || grid.is_straight_movement_authorized(or_.into(), nr.into(), lvl, mb)
-                            || grid.is_straight_movement_authorized(oc.into(), nc.into(), lvl, mb))
+                    grid.is_straight_movement_authorized(nl, nr, lvl, mb)
+                        && (grid.is_straight_movement_authorized(ol, nl, lvl, mb)
+                            || grid.is_straight_movement_authorized(or_, nr, lvl, mb)
+                            || grid.is_straight_movement_authorized(oc, nc, lvl, mb))
                 } else {
                     true
                 };
@@ -1771,11 +1752,13 @@ impl EnemyAi {
 
                 // Check if the new phalanx line is free of obstacles
                 if let Some(grid) = grid {
-                    let left_pt = crate::geo2d::pt(candidate_left.x, candidate_left.y);
-                    let right_pt = crate::geo2d::pt(candidate_right.x, candidate_right.y);
+                    let left_pt =
+                        crate::coordinates::MapPoint::new(candidate_left.x, candidate_left.y);
+                    let right_pt =
+                        crate::coordinates::MapPoint::new(candidate_right.x, candidate_right.y);
                     if grid.is_straight_movement_authorized(
-                        left_pt.into(),
-                        right_pt.into(),
+                        left_pt,
+                        right_pt,
                         candidate_left.level,
                         &ctx.move_box,
                     ) {

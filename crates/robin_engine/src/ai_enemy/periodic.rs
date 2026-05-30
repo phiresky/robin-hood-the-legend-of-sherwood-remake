@@ -256,7 +256,7 @@ impl EnemyAi {
             false
         };
 
-        let my_point = crate::geo2d::pt(ctx.position.x, ctx.position.y);
+        let my_point = crate::coordinates::MapPoint::new(ctx.position.x, ctx.position.y);
         let level = ctx.position.level;
         let sector = ctx.position.sector;
 
