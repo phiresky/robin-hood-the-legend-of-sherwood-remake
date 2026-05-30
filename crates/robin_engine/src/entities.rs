@@ -45,15 +45,18 @@ impl Entities {
         Some(EntityId::new(index, entity.entity_id_kind()))
     }
 
-    pub fn get(&self, id: EntityId) -> Option<&Entity> {
+    pub fn get<I: Into<EntityId>>(&self, id: I) -> Option<&Entity> {
+        let id = id.into();
         self.0.get(id.index() as usize)?.as_ref()
     }
 
-    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
+    pub fn get_mut<I: Into<EntityId>>(&mut self, id: I) -> Option<&mut Entity> {
+        let id = id.into();
         self.0.get_mut(id.index() as usize)?.as_mut()
     }
 
-    pub fn remove(&mut self, id: EntityId) -> Option<Entity> {
+    pub fn remove<I: Into<EntityId>>(&mut self, id: I) -> Option<Entity> {
+        let id = id.into();
         self.0.get_mut(id.index() as usize)?.take()
     }
 
@@ -345,11 +348,13 @@ impl<T> EntitySlots<T> {
         self.0.is_empty()
     }
 
-    pub fn get(&self, id: EntityId) -> Option<&T> {
+    pub fn get<I: Into<EntityId>>(&self, id: I) -> Option<&T> {
+        let id = id.into();
         self.0.get(id.index() as usize)
     }
 
-    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut T> {
+    pub fn get_mut<I: Into<EntityId>>(&mut self, id: I) -> Option<&mut T> {
+        let id = id.into();
         self.0.get_mut(id.index() as usize)
     }
 
@@ -358,30 +363,34 @@ impl<T> EntitySlots<T> {
     }
 }
 
-impl<T> std::ops::Index<EntityId> for EntitySlots<T> {
+impl<T, I: Into<EntityId>> std::ops::Index<I> for EntitySlots<T> {
     type Output = T;
 
-    fn index(&self, index: EntityId) -> &Self::Output {
+    fn index(&self, index: I) -> &Self::Output {
+        let index = index.into();
         &self.0[index.index() as usize]
     }
 }
 
-impl<T> std::ops::IndexMut<EntityId> for EntitySlots<T> {
-    fn index_mut(&mut self, index: EntityId) -> &mut Self::Output {
+impl<T, I: Into<EntityId>> std::ops::IndexMut<I> for EntitySlots<T> {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        let index = index.into();
         &mut self.0[index.index() as usize]
     }
 }
 
-impl std::ops::Index<EntityId> for Entities {
+impl<I: Into<EntityId>> std::ops::Index<I> for Entities {
     type Output = Option<Entity>;
 
-    fn index(&self, index: EntityId) -> &Self::Output {
+    fn index(&self, index: I) -> &Self::Output {
+        let index = index.into();
         &self.0[index.index() as usize]
     }
 }
 
-impl std::ops::IndexMut<EntityId> for Entities {
-    fn index_mut(&mut self, index: EntityId) -> &mut Self::Output {
+impl<I: Into<EntityId>> std::ops::IndexMut<I> for Entities {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        let index = index.into();
         &mut self.0[index.index() as usize]
     }
 }

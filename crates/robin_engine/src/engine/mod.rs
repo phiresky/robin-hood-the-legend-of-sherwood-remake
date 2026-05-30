@@ -3218,7 +3218,7 @@ impl EngineInner {
     /// Reveal all blipped entities — backs the console `UNBLIP`
     /// command, which iterates every NPC and reveals it.
     pub(crate) fn reveal_all_blips(&mut self) {
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.entities.npcs_mut() {
             if entity.element_data().blipped {
                 entity.reveal_blip();
             }
