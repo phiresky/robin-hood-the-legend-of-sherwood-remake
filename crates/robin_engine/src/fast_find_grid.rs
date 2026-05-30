@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{GroundBBox, MapBBox, MapPoint, MapVec, MoveBox, MoveBoxHalfDiagonal};
-use crate::geo2d::{self, BBox2D, pt};
+use crate::geo2d;
 
 // ---------------------------------------------------------------------------
 // SectorIndex — nominal newtype
@@ -410,7 +410,7 @@ impl GridLine {
     }
 
     /// Test if this line's segment intersects a bounding box.
-    pub fn intersects_bbox(&self, bbox: &BBox2D) -> bool {
+    pub fn intersects_bbox(&self, bbox: &MapBBox) -> bool {
         if let (Some(line_rect), Some(box_rect)) = (self.bbox.0, bbox.0) {
             use geo::Intersects;
             if !line_rect.intersects(&box_rect) {
@@ -528,13 +528,13 @@ impl GridSector {
     /// edge (including the closing edge) intersects the box, or the
     /// box's top-left corner lies inside the polygon (box fully
     /// contained).
-    pub fn intersects_bbox(&self, bbox: &BBox2D) -> bool {
+    pub fn intersects_bbox(&self, bbox: &MapBBox) -> bool {
         let n = self.points.len();
         if n == 0 {
             return false;
         }
         if n == 1 {
-            return bbox.contains_point(self.points[0].to_geo());
+            return bbox.contains_point(self.points[0]);
         }
 
         let rect = match bbox.0 {
@@ -544,7 +544,7 @@ impl GridSector {
 
         // Any polygon point inside the box?
         for p in &self.points {
-            if bbox.contains_point(p.to_geo()) {
+            if bbox.contains_point(*p) {
                 return true;
             }
         }
@@ -1123,7 +1123,7 @@ impl FastFindGrid {
                     // Only register the line in cells its segment actually
                     // touches, not every cell in the bbox rectangle — avoids
                     // over-registering diagonals.
-                    let block_bbox = BBox2D::from_coords(
+                    let block_bbox = MapBBox::from_coords(
                         f32::from(cx) * GRID_CELL_SIZE_F,
                         f32::from(cy) * GRID_CELL_SIZE_F,
                         f32::from(cx) * GRID_CELL_SIZE_F + GRID_CELL_SIZE_F,
@@ -1259,12 +1259,13 @@ impl FastFindGrid {
                     if block_idx >= level.blocks.len() {
                         continue;
                     }
-                    let cell_min = pt(
+                    let cell_min = MapPoint::new(
                         f32::from(cx) * GRID_CELL_SIZE_F,
                         f32::from(cy) * GRID_CELL_SIZE_F,
                     );
-                    let cell_max = pt(cell_min.x + GRID_CELL_SIZE_F, cell_min.y + GRID_CELL_SIZE_F);
-                    let block_box = BBox2D::from_corners(cell_min, cell_max);
+                    let cell_max =
+                        MapPoint::new(cell_min.x + GRID_CELL_SIZE_F, cell_min.y + GRID_CELL_SIZE_F);
+                    let block_box = MapBBox::from_corners(cell_min, cell_max);
                     if sector.intersects_bbox(&block_box) {
                         level.blocks[block_idx].sector_indices.push(idx);
                     }
@@ -2489,9 +2490,12 @@ impl FastFindGrid {
         for cy in y_min..=y_max {
             for cx in x_min..=x_max {
                 // Check if the cell box intersects either segment
-                let cell_min = pt(cx as f32 * GRID_CELL_SIZE_F, cy as f32 * GRID_CELL_SIZE_F);
-                let cell_bbox =
-                    BBox2D::from_corners(cell_min, pt(cell_min.x + 64.0, cell_min.y + 64.0));
+                let cell_min =
+                    MapPoint::new(cx as f32 * GRID_CELL_SIZE_F, cy as f32 * GRID_CELL_SIZE_F);
+                let cell_bbox = MapBBox::from_corners(
+                    cell_min,
+                    MapPoint::new(cell_min.x + 64.0, cell_min.y + 64.0),
+                );
                 let cell_rect = cell_bbox.0.unwrap();
 
                 use geo::Intersects;
@@ -2534,81 +2538,101 @@ impl FastFindGrid {
         p2: MapPoint,
         half_diagonal: MoveBoxHalfDiagonal,
     ) -> Option<ThickMoveCorridor> {
-        let move_vec = pt(p2.x - p1.x, p2.y - p1.y);
+        let move_vec = MapVec::new(p2.x - p1.x, p2.y - p1.y);
 
         // Shrink half-diagonal by 1 pixel.
-        let hd = pt(half_diagonal.x - 1.0, half_diagonal.y - 1.0);
+        let hd = MapVec::new(half_diagonal.x - 1.0, half_diagonal.y - 1.0);
 
         let (seg1, seg2, mut bbox) = if move_vec.x == 0.0 {
             if move_vec.y > 0.0 {
                 // Moving straight down
-                let s1_a = pt(p1.x + hd.x, p1.y - hd.y);
-                let s1_b = pt(p2.x + hd.x, p2.y + hd.y);
-                let s2_a = pt(p2.x - hd.x, p2.y + hd.y);
-                let s2_b = pt(p1.x - hd.x, p1.y - hd.y);
-                let mut bb = BBox2D::new();
+                let s1_a = MapPoint::new(p1.x + hd.x, p1.y - hd.y);
+                let s1_b = MapPoint::new(p2.x + hd.x, p2.y + hd.y);
+                let s2_a = MapPoint::new(p2.x - hd.x, p2.y + hd.y);
+                let s2_b = MapPoint::new(p1.x - hd.x, p1.y - hd.y);
+                let mut bb = MapBBox::new();
                 bb.expand_point(s2_b); // top-left
                 bb.expand_point(s1_b); // bottom-right
-                (geo2d::segment(s1_a, s1_b), geo2d::segment(s2_a, s2_b), bb)
+                (
+                    geo2d::segment(s1_a.to_geo(), s1_b.to_geo()),
+                    geo2d::segment(s2_a.to_geo(), s2_b.to_geo()),
+                    bb,
+                )
             } else if move_vec.y < 0.0 {
                 // Moving straight up
-                let s1_a = pt(p1.x - hd.x, p1.y + hd.y);
-                let s1_b = pt(p2.x - hd.x, p2.y - hd.y);
-                let s2_a = pt(p2.x + hd.x, p2.y - hd.y);
-                let s2_b = pt(p1.x + hd.x, p1.y + hd.y);
-                let mut bb = BBox2D::new();
+                let s1_a = MapPoint::new(p1.x - hd.x, p1.y + hd.y);
+                let s1_b = MapPoint::new(p2.x - hd.x, p2.y - hd.y);
+                let s2_a = MapPoint::new(p2.x + hd.x, p2.y - hd.y);
+                let s2_b = MapPoint::new(p1.x + hd.x, p1.y + hd.y);
+                let mut bb = MapBBox::new();
                 bb.expand_point(s1_b); // top-left
                 bb.expand_point(s2_b); // bottom-right
-                (geo2d::segment(s1_a, s1_b), geo2d::segment(s2_a, s2_b), bb)
+                (
+                    geo2d::segment(s1_a.to_geo(), s1_b.to_geo()),
+                    geo2d::segment(s2_a.to_geo(), s2_b.to_geo()),
+                    bb,
+                )
             } else {
                 return None; // Zero movement
             }
         } else {
             // Normalize so X is positive (swap points if needed)
             let (mp1, mp2, mv) = if move_vec.x < 0.0 {
-                (p2, p1, pt(-move_vec.x, -move_vec.y))
+                (p2, p1, MapVec::new(-move_vec.x, -move_vec.y))
             } else {
                 (p1, p2, move_vec)
             };
 
             if mv.y > 0.0 {
                 // Right + down
-                let s1_a = pt(mp1.x + hd.x, mp1.y - hd.y);
-                let s1_b = pt(mp2.x + hd.x, mp2.y - hd.y);
-                let s2_a = pt(mp2.x - hd.x, mp2.y + hd.y);
-                let s2_b = pt(mp1.x - hd.x, mp1.y + hd.y);
-                let mut bb = BBox2D::new();
-                bb.expand_point(pt(mp1.x - hd.x, mp1.y - hd.y));
-                bb.expand_point(pt(mp2.x + hd.x, mp2.y + hd.y));
-                (geo2d::segment(s1_a, s1_b), geo2d::segment(s2_a, s2_b), bb)
+                let s1_a = MapPoint::new(mp1.x + hd.x, mp1.y - hd.y);
+                let s1_b = MapPoint::new(mp2.x + hd.x, mp2.y - hd.y);
+                let s2_a = MapPoint::new(mp2.x - hd.x, mp2.y + hd.y);
+                let s2_b = MapPoint::new(mp1.x - hd.x, mp1.y + hd.y);
+                let mut bb = MapBBox::new();
+                bb.expand_point(MapPoint::new(mp1.x - hd.x, mp1.y - hd.y));
+                bb.expand_point(MapPoint::new(mp2.x + hd.x, mp2.y + hd.y));
+                (
+                    geo2d::segment(s1_a.to_geo(), s1_b.to_geo()),
+                    geo2d::segment(s2_a.to_geo(), s2_b.to_geo()),
+                    bb,
+                )
             } else if mv.y < 0.0 {
                 // Right + up
-                let s1_a = pt(mp1.x - hd.x, mp1.y - hd.y);
-                let s1_b = pt(mp2.x - hd.x, mp2.y - hd.y);
-                let s2_a = pt(mp2.x + hd.x, mp2.y + hd.y);
-                let s2_b = pt(mp1.x + hd.x, mp1.y + hd.y);
-                let mut bb = BBox2D::new();
-                bb.expand_point(pt(mp1.x - hd.x, mp1.y + hd.y));
-                bb.expand_point(pt(mp2.x + hd.x, mp2.y - hd.y));
-                (geo2d::segment(s1_a, s1_b), geo2d::segment(s2_a, s2_b), bb)
+                let s1_a = MapPoint::new(mp1.x - hd.x, mp1.y - hd.y);
+                let s1_b = MapPoint::new(mp2.x - hd.x, mp2.y - hd.y);
+                let s2_a = MapPoint::new(mp2.x + hd.x, mp2.y + hd.y);
+                let s2_b = MapPoint::new(mp1.x + hd.x, mp1.y + hd.y);
+                let mut bb = MapBBox::new();
+                bb.expand_point(MapPoint::new(mp1.x - hd.x, mp1.y + hd.y));
+                bb.expand_point(MapPoint::new(mp2.x + hd.x, mp2.y - hd.y));
+                (
+                    geo2d::segment(s1_a.to_geo(), s1_b.to_geo()),
+                    geo2d::segment(s2_a.to_geo(), s2_b.to_geo()),
+                    bb,
+                )
             } else {
                 // Right, horizontal (Y == 0) — special +/- 1 adjustment
-                let s1_a = pt(mp1.x - hd.x - 1.0, mp1.y - hd.y);
-                let s1_b = pt(mp2.x + hd.x - 1.0, mp2.y - hd.y);
-                let s2_a = pt(mp2.x + hd.x - 1.0, mp2.y + hd.y);
-                let s2_b = pt(mp1.x - hd.x - 1.0, mp1.y + hd.y);
-                let mut bb = BBox2D::new();
+                let s1_a = MapPoint::new(mp1.x - hd.x - 1.0, mp1.y - hd.y);
+                let s1_b = MapPoint::new(mp2.x + hd.x - 1.0, mp2.y - hd.y);
+                let s2_a = MapPoint::new(mp2.x + hd.x - 1.0, mp2.y + hd.y);
+                let s2_b = MapPoint::new(mp1.x - hd.x - 1.0, mp1.y + hd.y);
+                let mut bb = MapBBox::new();
                 bb.expand_point(s1_a);
                 bb.expand_point(s2_a);
-                (geo2d::segment(s1_a, s1_b), geo2d::segment(s2_a, s2_b), bb)
+                (
+                    geo2d::segment(s1_a.to_geo(), s1_b.to_geo()),
+                    geo2d::segment(s2_a.to_geo(), s2_b.to_geo()),
+                    bb,
+                )
             }
         };
 
         // Ensure bbox covers both segment endpoints
-        bbox.expand_point(seg1.start);
-        bbox.expand_point(seg1.end);
-        bbox.expand_point(seg2.start);
-        bbox.expand_point(seg2.end);
+        bbox.expand_point(MapPoint::from_geo(seg1.start));
+        bbox.expand_point(MapPoint::from_geo(seg1.end));
+        bbox.expand_point(MapPoint::from_geo(seg2.start));
+        bbox.expand_point(MapPoint::from_geo(seg2.end));
 
         // Compute corridor edge vectors for point-in-corridor test
         let vec1 = MapVec::new(seg1.end.x - seg1.start.x, seg1.end.y - seg1.start.y);
@@ -2619,7 +2643,7 @@ impl FastFindGrid {
         Some(ThickMoveCorridor {
             seg1,
             seg2,
-            bbox: MapBBox::from_geo(bbox),
+            bbox,
             vec1,
             vec2,
             vec3,
@@ -2631,7 +2655,6 @@ impl FastFindGrid {
 
     /// Check if a bounding box does not intersect any active motion line.
     pub fn is_position_authorized(&self, bbox: &MapBBox, layer: u16) -> bool {
-        let bbox_geo = bbox.to_geo();
         // This gates only on the grid-block bounds; the pathfinder
         // wrapper (`PathFinder::object_position_authorized`) does the
         // out-of-grid rejection before invoking this. A previous
@@ -2642,7 +2665,7 @@ impl FastFindGrid {
         let mut authorized = true;
         self.visit_active_motion_line_indices(layer, bbox, |idx| {
             let line = &self.level.lines[usize::from(idx)];
-            if line.intersects_bbox(&bbox_geo) {
+            if line.intersects_bbox(bbox) {
                 tracing::trace!(
                     ?bbox,
                     layer,
@@ -2923,7 +2946,7 @@ impl FastFindGrid {
         move_box: &MoveBox,
     ) -> bool {
         // Check destination position is authorized
-        let dest_box = move_box.translated(pt(p2.x, p2.y));
+        let dest_box = move_box.translated(p2);
         if !self.is_position_authorized(&dest_box, layer) {
             return false;
         }
@@ -2961,12 +2984,11 @@ impl FastFindGrid {
         let Some(corridor) = Self::build_thick_move_corridor(p1, p2, half_diagonal) else {
             return true;
         };
-        let corridor_bbox = corridor.bbox.to_geo();
         for line in mobile_lines {
             // Mobile (per-entity repulsive) lines have no runtime active
             // toggle — they're rebuilt each tick from the live entity
             // set, so they're implicitly "always active."
-            if !line.intersects_bbox(&corridor_bbox) {
+            if !line.intersects_bbox(&corridor.bbox) {
                 continue;
             }
             if line.intersects_segment(corridor.seg1) || line.intersects_segment(corridor.seg2) {
@@ -3029,7 +3051,7 @@ impl FastFindGrid {
             let line_indices = self.get_active_motion_line_indices(layer, bbox);
             let intersecting: Vec<LineIndex> = line_indices
                 .into_iter()
-                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(&bbox.to_geo()))
+                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(bbox))
                 .collect();
 
             if intersecting.is_empty() {
@@ -3041,8 +3063,8 @@ impl FastFindGrid {
                 // Recompute center on every line iteration so a push
                 // from an earlier line can flip this gate.
                 let center = bbox.center();
-                let to_center = pt(center.x - line.a.x, center.y - line.a.y);
-                if geo2d::dot(line.normal.to_geo(), to_center) <= 0.0 {
+                let to_center = MapVec::new(center.x - line.a.x, center.y - line.a.y);
+                if geo2d::dot(line.normal.to_geo(), to_center.to_geo()) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3094,7 +3116,7 @@ impl FastFindGrid {
                 .into_iter()
                 .filter(|&idx| {
                     let line = &self.level.lines[usize::from(idx)];
-                    line.intersects_bbox(&bbox.to_geo())
+                    line.intersects_bbox(bbox)
                         || line.intersects_segment(geo2d::segment(center.to_geo(), click.to_geo()))
                 })
                 .collect();
@@ -3106,8 +3128,8 @@ impl FastFindGrid {
             for &idx in &intersecting {
                 let line = &self.level.lines[usize::from(idx)];
                 // Push toward the click side of the line
-                let to_click = pt(click.x - line.a.x, click.y - line.a.y);
-                if geo2d::dot(line.normal.to_geo(), to_click) <= 0.0 {
+                let to_click = MapVec::new(click.x - line.a.x, click.y - line.a.y);
+                if geo2d::dot(line.normal.to_geo(), to_click.to_geo()) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3157,8 +3179,8 @@ impl FastFindGrid {
 
             for &idx in &intersecting {
                 let line = &self.level.lines[usize::from(idx)];
-                let to_start = pt(start.x - line.a.x, start.y - line.a.y);
-                if geo2d::dot(line.normal.to_geo(), to_start) <= 0.0 {
+                let to_start = MapVec::new(start.x - line.a.x, start.y - line.a.y);
+                if geo2d::dot(line.normal.to_geo(), to_start.to_geo()) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3170,7 +3192,7 @@ impl FastFindGrid {
             let line_indices = self.get_active_motion_line_indices(layer, bbox);
             let intersecting: Vec<LineIndex> = line_indices
                 .into_iter()
-                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(&bbox.to_geo()))
+                .filter(|&idx| self.level.lines[usize::from(idx)].intersects_bbox(bbox))
                 .collect();
 
             if intersecting.is_empty() {
@@ -3179,8 +3201,8 @@ impl FastFindGrid {
 
             for &idx in &intersecting {
                 let line = &self.level.lines[usize::from(idx)];
-                let to_start = pt(start.x - line.a.x, start.y - line.a.y);
-                if geo2d::dot(line.normal.to_geo(), to_start) <= 0.0 {
+                let to_start = MapVec::new(start.x - line.a.x, start.y - line.a.y);
+                if geo2d::dot(line.normal.to_geo(), to_start.to_geo()) <= 0.0 {
                     continue;
                 }
                 push_corners_away_from_line(bbox, line);
@@ -3255,8 +3277,8 @@ impl FastFindGrid {
 fn push_corners_away_from_line(bbox: &mut MapBBox, line: &GridLine) {
     // Corner-read order: top-left, bottom-right, (xmax, ymin), (xmin, ymax).
     let push_if_close = |bbox: &mut MapBBox, corner: MapPoint| {
-        let to_corner = pt(line.a.x - corner.x, line.a.y - corner.y);
-        let dist = geo2d::dot(line.normal.to_geo(), to_corner);
+        let to_corner = MapVec::new(line.a.x - corner.x, line.a.y - corner.y);
+        let dist = geo2d::dot(line.normal.to_geo(), to_corner.to_geo());
         if dist > -0.1 {
             let push = MapVec::new((dist + 1.0) * line.normal.x, (dist + 1.0) * line.normal.y);
             bbox.translate(push);
@@ -3308,19 +3330,19 @@ impl ThickMoveCorridor {
     pub fn point_inside(&self, p: MapPoint) -> bool {
         let d1 = geo2d::cross(
             self.vec1.to_geo(),
-            pt(p.x - self.seg1.start.x, p.y - self.seg1.start.y),
+            MapVec::new(p.x - self.seg1.start.x, p.y - self.seg1.start.y).to_geo(),
         );
         let d2 = geo2d::cross(
             self.vec2.to_geo(),
-            pt(p.x - self.seg2.start.x, p.y - self.seg2.start.y),
+            MapVec::new(p.x - self.seg2.start.x, p.y - self.seg2.start.y).to_geo(),
         );
         let d3 = geo2d::cross(
             self.vec3.to_geo(),
-            pt(p.x - self.seg1.end.x, p.y - self.seg1.end.y),
+            MapVec::new(p.x - self.seg1.end.x, p.y - self.seg1.end.y).to_geo(),
         );
         let d4 = geo2d::cross(
             self.vec4.to_geo(),
-            pt(p.x - self.seg2.end.x, p.y - self.seg2.end.y),
+            MapVec::new(p.x - self.seg2.end.x, p.y - self.seg2.end.y).to_geo(),
         );
         d1 > 0.0 && d2 > 0.0 && d3 > 0.0 && d4 > 0.0
     }
@@ -3602,18 +3624,18 @@ mod tests {
         sector_number: i16,
     ) -> GridSector {
         let pts = vec![
-            pt(min.x, min.y),
-            pt(max.x, min.y),
-            pt(max.x, max.y),
-            pt(min.x, max.y),
+            MapPoint::new(min.x, min.y),
+            MapPoint::new(max.x, min.y),
+            MapPoint::new(max.x, max.y),
+            MapPoint::new(min.x, max.y),
         ];
-        let mut bbox = BBox2D::new();
+        let mut bbox = MapBBox::new();
         for &p in &pts {
             bbox.expand_point(p);
         }
         GridSector {
-            points: pts.iter().copied().map(MapPoint::from_geo).collect(),
-            bounding_box: MapBBox::from_geo(bbox),
+            points: pts,
+            bounding_box: bbox,
             sector_type,
             layer,
             sector_number: crate::sector::SectorNumber::new(sector_number),

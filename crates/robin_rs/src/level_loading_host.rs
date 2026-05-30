@@ -15,7 +15,7 @@ use robin_assets::frame_holder::ProgressUpdate;
 use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::coordinates::{MapPoint, MinimapSize, ScreenBBox};
+use robin_engine::coordinates::{MapPoint, MinimapSize};
 use robin_engine::engine::level_loading::{
     MinimapBitmapSetup, PreDecodedBackground, PreDecodedMinimap,
 };
@@ -404,8 +404,7 @@ impl EngineLevelLoadExt for Engine {
         );
         let src = BBox::from_coords(src_min.x, src_min.y, src_max.x, src_max.y);
 
-        let dst_bbox = ScreenBBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
-        let dst = BBox::new(dst_bbox.top_left(), dst_bbox.bottom_right());
+        let dst = BBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
 
         renderer.render_background_texture(Some(&src), Some(&dst));
     }

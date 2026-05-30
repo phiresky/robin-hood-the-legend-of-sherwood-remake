@@ -998,7 +998,7 @@ fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
 fn screen_bbox_to_sprite_bbox(bbox: ScreenBBox) -> BBox {
     let min = bbox.top_left();
     let max = bbox.bottom_right();
-    BBox::new(min, max)
+    BBox::from_coords(min.x, min.y, max.x, max.y)
 }
 
 fn blit_to_screen_widget(

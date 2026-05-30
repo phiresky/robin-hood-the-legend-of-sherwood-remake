@@ -10,7 +10,6 @@ use crate::campaign::CampaignValue;
 use crate::element::{
     ElementKind, Entity, GameMaterial, ListenPhase, OutlineColorName, Posture, RenderingProperties,
 };
-use crate::geo2d::BBox2D;
 use crate::gfx_types::Rect;
 use crate::hud_text::{self, HudFonts};
 use crate::ingame_menu::layout;
@@ -602,9 +601,9 @@ fn view_cone_polys_for_render(
 
     let cone_bbox = {
         let cone = crate::shadow_polygon::compute_view_cone(viewer, params);
-        let mut bbox = BBox2D::new();
+        let mut bbox = engine_coordinates::GroundBBox::new();
         for p in cone {
-            bbox.expand_point(p.to_geo());
+            bbox.expand_point(p);
         }
         bbox
     };
@@ -612,8 +611,7 @@ fn view_cone_polys_for_render(
     for (projection_idx, projection_area) in active_obstacles.iter().copied().filter(|(_, o)| {
         o.is_projection_area()
             && o.is_showing_shadow_polygon()
-            && o.box_ground
-                .intersects_bbox(&engine_coordinates::GroundBBox::from_geo(cone_bbox))
+            && o.box_ground.intersects_bbox(&cone_bbox)
     }) {
         let obstacles: Vec<&crate::sight_obstacle::SightObstacle> = active_obstacles
             .iter()
@@ -972,7 +970,7 @@ fn render_ground_mark_set(
             &mark_world_bbox,
             mark_position,
             mark_rect,
-            view_pos.to_geo(),
+            view_pos,
             zoom,
         );
     }
@@ -986,7 +984,7 @@ fn render_character_masks_clipped(
     world_bbox: &engine_coordinates::MapBBox,
     position: engine_coordinates::MapPoint,
     clip_rect: Rect,
-    view: crate::geo2d::GeoPoint2D,
+    view: engine_coordinates::MapPoint,
     zoom: f32,
 ) {
     for mask_idx in engine
@@ -2301,7 +2299,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
     fn render_arc(
         start: engine_coordinates::WorldPoint3D,
         points: &[crate::element::TrajectoryPoint],
-        view: crate::geo2d::GeoPoint2D,
+        view: engine_coordinates::MapPoint,
         zoom: f32,
         screen_w: i32,
         screen_h: i32,
@@ -2359,7 +2357,7 @@ pub(crate) fn render_trajectory_preview(host: &mut Host, renderer: &mut Renderer
         render_arc(
             host.trajectory_preview_start,
             &host.trajectory_preview_points,
-            view.to_geo(),
+            view,
             zoom,
             screen_w,
             screen_h,

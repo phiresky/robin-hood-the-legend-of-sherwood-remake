@@ -7,8 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::MapPoint;
-use crate::geo2d;
+use crate::coordinates::{MapPoint, MapVec};
 use crate::position_interface::{ASPECT_RATIO, vector_norm_iso};
 use crate::sound_geometry::{SoundSourceAltitude, SoundSourceInfo};
 
@@ -141,42 +140,39 @@ impl SoundSource {
     /// perpendicular projection doesn't fall within the segment bounds.
     fn distance_to_segment(seg_a: MapPoint, seg_b: MapPoint, position: MapPoint) -> Option<f32> {
         // Segment direction
-        let dir = geo2d::pt(seg_b.x - seg_a.x, seg_b.y - seg_a.y);
+        let dir = MapVec::new(seg_b.x - seg_a.x, seg_b.y - seg_a.y);
 
         // Normal (perpendicular) of direction vector
-        let normal_raw = geo2d::pt(-dir.y, dir.x);
+        let normal_raw = MapVec::new(-dir.y, dir.x);
         // Apply isometric Y correction, then normalize
-        let corrected = geo2d::pt(normal_raw.x, normal_raw.y * ASPECT_RATIO);
+        let corrected = MapVec::new(normal_raw.x, normal_raw.y * ASPECT_RATIO);
         let len = (corrected.x * corrected.x + corrected.y * corrected.y).sqrt();
         if len < 1e-9 {
             return None;
         }
-        let norm = geo2d::pt(corrected.x / len, corrected.y / len);
+        let norm = MapVec::new(corrected.x / len, corrected.y / len);
 
         // Line through `position` along the corrected normal
-        let line_b = geo2d::pt(position.x + norm.x, position.y + norm.y);
+        let line_b = MapPoint::new(position.x + norm.x, position.y + norm.y);
 
         // Intersect segment [seg_a, seg_b] with line [position, line_b]
-        let d1 = geo2d::pt(seg_b.x - seg_a.x, seg_b.y - seg_a.y);
-        let d2 = geo2d::pt(line_b.x - position.x, line_b.y - position.y);
+        let d1 = MapVec::new(seg_b.x - seg_a.x, seg_b.y - seg_a.y);
+        let d2 = MapVec::new(line_b.x - position.x, line_b.y - position.y);
 
         let cross = d1.x * d2.y - d1.y * d2.x;
         if cross.abs() < 1e-9 {
             return None; // Parallel
         }
 
-        let dp = geo2d::pt(position.x - seg_a.x, position.y - seg_a.y);
+        let dp = MapVec::new(position.x - seg_a.x, position.y - seg_a.y);
         let t = (dp.x * d2.y - dp.y * d2.x) / cross;
 
         if !(0.0..=1.0).contains(&t) {
             return None; // Intersection outside segment
         }
 
-        let intersection = geo2d::pt(seg_a.x + t * d1.x, seg_a.y + t * d1.y);
-        Some(Self::distance_for_point(
-            MapPoint::from_geo(intersection),
-            position,
-        ))
+        let intersection = MapPoint::new(seg_a.x + t * d1.x, seg_a.y + t * d1.y);
+        Some(Self::distance_for_point(intersection, position))
     }
 
     // ── Noise covering ───────────────────────────────────────────────

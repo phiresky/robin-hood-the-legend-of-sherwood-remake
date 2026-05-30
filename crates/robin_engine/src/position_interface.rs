@@ -1580,11 +1580,10 @@ impl PositionInterface {
     /// motion-line collisions on the current layer.
     pub fn is_position_authorized(&self, grid: &FastFindGrid) -> bool {
         let move_box_map = self.move_box_map;
-        let move_box_map_geo = move_box_map.to_geo();
         let lines = grid.get_active_motion_line_indices(self.layer.get(), &move_box_map);
         for &line_idx in &lines {
             let line = &grid.level.lines[usize::from(line_idx)];
-            if line.intersects_bbox(&move_box_map_geo) {
+            if line.intersects_bbox(&move_box_map) {
                 return false;
             }
         }

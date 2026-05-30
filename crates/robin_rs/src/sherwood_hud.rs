@@ -22,7 +22,6 @@
 //!   back out).
 
 use crate::gfx_types::{Point, Rect as SdlRect};
-use robin_engine::coordinates::ScreenBBox;
 use robin_engine::sprite as engine_sprite;
 
 use crate::ingame_menu::layout::{
@@ -36,13 +35,12 @@ use crate::resource_ids::{
 use crate::resource_manager::ResourceManager;
 
 fn screen_rect_to_sprite_bbox(rect: SdlRect) -> engine_sprite::BBox {
-    let bbox = ScreenBBox::from_coords(
+    engine_sprite::BBox::from_coords(
         rect.x() as f32,
         rect.y() as f32,
         (rect.x() + rect.width() as i32) as f32,
         (rect.y() + rect.height() as i32) as f32,
-    );
-    engine_sprite::BBox::new(bbox.top_left(), bbox.bottom_right())
+    )
 }
 
 /// Logical Sherwood button id.

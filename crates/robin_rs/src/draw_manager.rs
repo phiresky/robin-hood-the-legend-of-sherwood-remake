@@ -353,7 +353,7 @@ impl DrawManager {
 }
 
 fn screen_bbox(min: ScreenPoint, max: ScreenPoint) -> BBox {
-    BBox::new(min, max)
+    BBox::from_coords(min.x, min.y, max.x, max.y)
 }
 
 // ---------------------------------------------------------------------------

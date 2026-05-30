@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use crate::coordinates::{MapBBox, MapPoint, MapVec, MoveBoxHalfDiagonal};
 use crate::element::EntityId;
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d::{self, BBox2D, pt};
+use crate::geo2d;
 use robin_util::static_arc::StaticArc;
 
 // ─── Geometry helpers ────────────────────────────────────────────
@@ -1290,30 +1290,30 @@ impl PathFinderRuntime {
     /// Link the source point to reachable graph nodes, populating the open list.
     fn link_source(&mut self, grid: &FastFindGrid, source: MapPoint, goal: MapPoint) {
         // Build a bounding box to limit which nodes we consider
-        let movement = pt(goal.x - source.x, goal.y - source.y);
-        let link_margin = pt(400.0, 400.0);
+        let movement = MapVec::new(goal.x - source.x, goal.y - source.y);
+        let link_margin = MapVec::new(400.0, 400.0);
 
         let box_link = if movement.x > 0.0 {
             if movement.y > 0.0 {
-                BBox2D::from_corners(
-                    pt(source.x - link_margin.x, source.y - link_margin.y),
-                    pt(goal.x + link_margin.x, goal.y + link_margin.y),
+                MapBBox::from_corners(
+                    MapPoint::new(source.x - link_margin.x, source.y - link_margin.y),
+                    MapPoint::new(goal.x + link_margin.x, goal.y + link_margin.y),
                 )
             } else {
-                BBox2D::from_corners(
-                    pt(source.x - link_margin.x, goal.y - link_margin.y),
-                    pt(goal.x + link_margin.x, source.y + link_margin.y),
+                MapBBox::from_corners(
+                    MapPoint::new(source.x - link_margin.x, goal.y - link_margin.y),
+                    MapPoint::new(goal.x + link_margin.x, source.y + link_margin.y),
                 )
             }
         } else if movement.y > 0.0 {
-            BBox2D::from_corners(
-                pt(goal.x - link_margin.x, source.y - link_margin.y),
-                pt(source.x + link_margin.x, goal.y + link_margin.y),
+            MapBBox::from_corners(
+                MapPoint::new(goal.x - link_margin.x, source.y - link_margin.y),
+                MapPoint::new(source.x + link_margin.x, goal.y + link_margin.y),
             )
         } else {
-            BBox2D::from_corners(
-                pt(goal.x - link_margin.x, goal.y - link_margin.y),
-                pt(source.x + link_margin.x, source.y + link_margin.y),
+            MapBBox::from_corners(
+                MapPoint::new(goal.x - link_margin.x, goal.y - link_margin.y),
+                MapPoint::new(source.x + link_margin.x, source.y + link_margin.y),
             )
         };
 
@@ -1386,7 +1386,7 @@ impl PathFinderRuntime {
         grid: &FastFindGrid,
         source: MapPoint,
         goal: MapPoint,
-        box_link: &BBox2D,
+        box_link: &MapBBox,
         relax_grid: bool,
     ) -> u32 {
         let (layer, area) = self.current_graph_area;
@@ -1409,7 +1409,7 @@ impl PathFinderRuntime {
 
                 // Check if node is in range, useful, and reachable
                 let node_position = node.position;
-                if !box_link.contains_point(node.position.to_geo())
+                if !box_link.contains_point(node.position)
                     || !self.is_useful_link(source, node_idx)
                     || !self.is_reachable_fast(source, node_position)
                 {
@@ -1444,7 +1444,8 @@ impl PathFinderRuntime {
                     let node = &mut self.graph.nodes[node_idx.0 as usize];
                     node.enter_place = start_config;
                     node.distance_from_source =
-                        geo2d::length(pt(node.position.x - source.x, node.position.y - source.y));
+                        MapVec::new(node.position.x - source.x, node.position.y - source.y)
+                            .length();
                     node.distance_to_goal = Self::estimate_distance(node_position, goal);
                     node.score = node.distance_from_source + node.distance_to_goal;
                     node.previous_link_on_path = None;
@@ -1507,30 +1508,32 @@ impl PathFinderRuntime {
         direct: bool,
     ) -> bool {
         let dock_pt = self.docking_point(node, docking_place, half_diagonal);
-        let test_vec = pt(point.x - dock_pt.x, point.y - dock_pt.y);
+        let test_vec = MapVec::new(point.x - dock_pt.x, point.y - dock_pt.y);
 
         let (v1, v2) = if direct {
             match docking_place {
-                TOP_LEFT => (pt(-1.0, 0.0), pt(0.0, 1.0)),
-                TOP_RIGHT => (pt(0.0, -1.0), pt(-1.0, 0.0)),
-                BOTTOM_LEFT => (pt(0.0, 1.0), pt(1.0, 0.0)),
-                BOTTOM_RIGHT => (pt(1.0, 0.0), pt(0.0, -1.0)),
+                TOP_LEFT => (MapVec::new(-1.0, 0.0), MapVec::new(0.0, 1.0)),
+                TOP_RIGHT => (MapVec::new(0.0, -1.0), MapVec::new(-1.0, 0.0)),
+                BOTTOM_LEFT => (MapVec::new(0.0, 1.0), MapVec::new(1.0, 0.0)),
+                BOTTOM_RIGHT => (MapVec::new(1.0, 0.0), MapVec::new(0.0, -1.0)),
                 _ => return false,
             }
         } else {
             match docking_place {
-                TOP_LEFT => (pt(1.0, 0.0), pt(0.0, -1.0)),
-                TOP_RIGHT => (pt(0.0, 1.0), pt(1.0, 0.0)),
-                BOTTOM_LEFT => (pt(0.0, -1.0), pt(-1.0, 0.0)),
-                BOTTOM_RIGHT => (pt(-1.0, 0.0), pt(0.0, 1.0)),
+                TOP_LEFT => (MapVec::new(1.0, 0.0), MapVec::new(0.0, -1.0)),
+                TOP_RIGHT => (MapVec::new(0.0, 1.0), MapVec::new(1.0, 0.0)),
+                BOTTOM_LEFT => (MapVec::new(0.0, -1.0), MapVec::new(-1.0, 0.0)),
+                BOTTOM_RIGHT => (MapVec::new(-1.0, 0.0), MapVec::new(0.0, 1.0)),
                 _ => return false,
             }
         };
 
         if direct {
-            geo2d::cross(v1, test_vec) < 0.0 && geo2d::cross(v2, test_vec) >= 0.0
+            geo2d::cross(v1.to_geo(), test_vec.to_geo()) < 0.0
+                && geo2d::cross(v2.to_geo(), test_vec.to_geo()) >= 0.0
         } else {
-            geo2d::cross(v1, test_vec) <= 0.0 && geo2d::cross(v2, test_vec) > 0.0
+            geo2d::cross(v1.to_geo(), test_vec.to_geo()) <= 0.0
+                && geo2d::cross(v2.to_geo(), test_vec.to_geo()) > 0.0
         }
     }
 
@@ -1720,7 +1723,7 @@ impl PathFinderRuntime {
             let first = path[i];
             let last = path[i + 2];
 
-            let small_vec = pt(0.5e-4 * (last.x - first.x), 0.5e-4 * (last.y - first.y));
+            let small_vec = MapVec::new(0.5e-4 * (last.x - first.x), 0.5e-4 * (last.y - first.y));
             let p1 = MapPoint::new(first.x + small_vec.x, first.y + small_vec.y);
             let p2 = MapPoint::new(last.x - small_vec.x, last.y - small_vec.y);
 
@@ -1801,13 +1804,13 @@ impl PathFinderRuntime {
 
     /// Check if a unit at `point` does not collide with any motion line.
     pub fn object_position_authorized(&self, grid: &FastFindGrid, point: MapPoint) -> bool {
-        let hd = pt(
+        let hd = MapVec::new(
             self.current_half_diagonal.x - 1.0,
             self.current_half_diagonal.y - 1.0,
         );
-        let bbox = BBox2D::from_corners(
-            pt(point.x - hd.x, point.y - hd.y),
-            pt(point.x + hd.x, point.y + hd.y),
+        let bbox = MapBBox::from_corners(
+            MapPoint::new(point.x - hd.x, point.y - hd.y),
+            MapPoint::new(point.x + hd.x, point.y + hd.y),
         );
 
         // Bounds check
@@ -1826,7 +1829,7 @@ impl PathFinderRuntime {
             }
         }
 
-        grid.is_position_authorized(&MapBBox::from_geo(bbox), self.current_layer)
+        grid.is_position_authorized(&bbox, self.current_layer)
     }
 
     /// Check if it is useful to visit a node from a given point.
@@ -1837,19 +1840,19 @@ impl PathFinderRuntime {
 
         // Test all four docking positions
         let offsets = [
-            pt(-hd.x, -hd.y), // TOP_LEFT
-            pt(hd.x, -hd.y),  // TOP_RIGHT
-            pt(hd.x, hd.y),   // BOTTOM_RIGHT
-            pt(-hd.x, hd.y),  // BOTTOM_LEFT
+            MapVec::new(-hd.x, -hd.y), // TOP_LEFT
+            MapVec::new(hd.x, -hd.y),  // TOP_RIGHT
+            MapVec::new(hd.x, hd.y),   // BOTTOM_RIGHT
+            MapVec::new(-hd.x, hd.y),  // BOTTOM_LEFT
         ];
 
         for offset in &offsets {
-            let v = pt(
+            let v = MapVec::new(
                 point.x + offset.x - n.position.x,
                 point.y + offset.y - n.position.y,
             );
-            if geo2d::cross(n.vector_to_node.to_geo(), v) > 0.0
-                || geo2d::cross(n.vector_from_node.to_geo(), v) > 0.0
+            if geo2d::cross(n.vector_to_node.to_geo(), v.to_geo()) > 0.0
+                || geo2d::cross(n.vector_from_node.to_geo(), v.to_geo()) > 0.0
             {
                 return true;
             }
@@ -1861,7 +1864,7 @@ impl PathFinderRuntime {
     /// Estimate the distance between two points (straight-line heuristic).
     #[inline]
     fn estimate_distance(p1: MapPoint, p2: MapPoint) -> f32 {
-        geo2d::length(pt(p2.x - p1.x, p2.y - p1.y))
+        MapVec::new(p2.x - p1.x, p2.y - p1.y).length()
     }
 
     // ── State management ─────────────────────────────────────────
@@ -2307,7 +2310,7 @@ mod tests {
             .move_layers
             .push(vec![MotionArea {
                 polygon: Vec::new(),
-                skeleton: vec![geo2d::segment(pt(0.0, 50.0), pt(200.0, 50.0))],
+                skeleton: vec![geo2d::segment(geo2d::pt(0.0, 50.0), geo2d::pt(200.0, 50.0))],
                 motion_obstacles: Vec::new(),
             }]);
         runtime.current_motion_area = (0, 0);
