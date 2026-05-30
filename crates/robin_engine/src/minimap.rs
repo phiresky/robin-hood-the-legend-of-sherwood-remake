@@ -8,8 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::coordinates::{MapPoint, ScreenPoint};
-use crate::geo2d::{BBox2D, Vec2D, pt};
+use crate::coordinates::{MapPoint, ScreenBBox, ScreenPoint};
+use crate::geo2d::{Vec2D, pt};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Constants
@@ -268,7 +268,7 @@ pub struct MinimapState {
     pub(crate) restore: bool,
 
     /// Saved map box to restore after highlight-driven centering.
-    pub(crate) memory_box: BBox2D,
+    pub(crate) memory_box: ScreenBBox,
 
     /// Queue of elements with delayed highlight reveal.
     pub(crate) highlighted_elements: Vec<HighlightedElement>,
@@ -296,10 +296,10 @@ pub struct MinimapState {
     pub(crate) map_size: Vec2D,
 
     /// Current bounding box of the deployed map.
-    pub(crate) map_box: BBox2D,
+    pub(crate) map_box: ScreenBBox,
 
     /// Bounding box of the minimap button (collapsed state).
-    pub(crate) button_box: BBox2D,
+    pub(crate) button_box: ScreenBBox,
 
     /// Current UI interaction state.
     pub(crate) ui_state: UIState,
@@ -326,7 +326,7 @@ impl Default for MinimapState {
             highlight_refresh: 0,
             close_after_highlight: false,
             restore: false,
-            memory_box: BBox2D::new(),
+            memory_box: ScreenBBox::new(),
             highlighted_elements: Vec::new(),
             drag_start: false,
             dragged: false,
@@ -335,8 +335,8 @@ impl Default for MinimapState {
             dragging_point: ScreenPoint::ZERO,
             position_before_dragging: ScreenPoint::ZERO,
             map_size: pt(0.0, 0.0),
-            map_box: BBox2D::new(),
-            button_box: BBox2D::new(),
+            map_box: ScreenBBox::new(),
+            button_box: ScreenBBox::new(),
             ui_state: UIState::Default,
             map_hit_mask: None,
             button_hit_mask: None,
@@ -358,12 +358,12 @@ impl MinimapState {
 
     /// Current bounding box of the deployed map (`is_somewhere() == false`
     /// until the map has been positioned).
-    pub fn map_box(&self) -> &BBox2D {
+    pub fn map_box(&self) -> &ScreenBBox {
         &self.map_box
     }
 
     /// Bounding box of the collapsed minimap button.
-    pub fn button_box(&self) -> &BBox2D {
+    pub fn button_box(&self) -> &ScreenBBox {
         &self.button_box
     }
 
@@ -409,9 +409,7 @@ impl MinimapState {
 
         // Points exactly on the minimap's four edges register as outside,
         // matching the original `!IsOnBoundary && IsInside` check.
-        if !active_box.contains_point(screen_pos.to_geo())
-            || active_box.is_on_boundary(screen_pos.to_geo())
-        {
+        if !active_box.contains_point(screen_pos) || active_box.is_on_boundary(screen_pos) {
             return false;
         }
 
@@ -539,7 +537,7 @@ impl MinimapState {
             let map_h = self.map_box.height();
             let new_x = (screen_width - map_w) * 0.5;
             let new_y = (screen_height - map_h) * 0.5;
-            self.map_box = BBox2D::from_corners(pt(new_x, new_y), pt(new_x + map_w, new_y + map_h));
+            self.map_box = ScreenBBox::from_coords(new_x, new_y, new_x + map_w, new_y + map_h);
         }
 
         self.display_map(true, false);
@@ -591,12 +589,12 @@ impl MinimapState {
             return None;
         }
 
-        let usable = BBox2D::from_corners(
-            pt(
+        let usable = ScreenBBox::from_corners(
+            ScreenPoint::new(
                 self.map_box.top_left().x + NON_MAP_AREA.x,
                 self.map_box.top_left().y + NON_MAP_AREA.y,
             ),
-            pt(
+            ScreenPoint::new(
                 self.map_box.bottom_right().x - NON_MAP_AREA.x,
                 self.map_box.bottom_right().y - NON_MAP_AREA.y,
             ),
@@ -623,12 +621,12 @@ impl MinimapState {
             return None;
         }
 
-        let usable = BBox2D::from_corners(
-            pt(
+        let usable = ScreenBBox::from_corners(
+            ScreenPoint::new(
                 self.map_box.top_left().x + NON_MAP_AREA.x,
                 self.map_box.top_left().y + NON_MAP_AREA.y,
             ),
-            pt(
+            ScreenPoint::new(
                 self.map_box.bottom_right().x - NON_MAP_AREA.x,
                 self.map_box.bottom_right().y - NON_MAP_AREA.y,
             ),
@@ -663,9 +661,11 @@ impl MinimapState {
         screen_height: f32,
     ) {
         // button_box = base position sized to corner sprite
-        self.button_box = BBox2D::from_corners(
-            base.to_geo(),
-            pt(base.x + corner_size.x, base.y + corner_size.y),
+        self.button_box = ScreenBBox::from_coords(
+            base.x,
+            base.y,
+            base.x + corner_size.x,
+            base.y + corner_size.y,
         );
 
         // Re-validate map position (derives default from button if off-screen).
@@ -674,7 +674,7 @@ impl MinimapState {
         // yet populated, so the call is safe before `setup_minimap_map` has
         // run.
         let map_tl = if self.map_box.is_somewhere() {
-            ScreenPoint::from_geo(self.map_box.top_left())
+            self.map_box.top_left()
         } else {
             // Pre-init re-entry: feed the sentinel so the function takes
             // the default-fallback path once `map_size` has been set.
@@ -701,24 +701,26 @@ impl MinimapState {
             return false;
         }
 
-        let screen_box = BBox2D::from_corners(pt(0.0, 0.0), pt(screen_width, screen_height));
+        let screen_box = ScreenBBox::from_coords(0.0, 0.0, screen_width, screen_height);
 
         let map_w = self.map_size.x;
         let map_h = self.map_size.y;
 
         // Test box inset by the non-map dead zone.
-        let test_box = BBox2D::from_corners(
-            pt(position.x + NON_MAP_AREA.x, position.y + NON_MAP_AREA.y),
-            pt(
+        let test_box = ScreenBBox::from_corners(
+            ScreenPoint::new(position.x + NON_MAP_AREA.x, position.y + NON_MAP_AREA.y),
+            ScreenPoint::new(
                 position.x + map_w - NON_MAP_AREA.x,
                 position.y + map_h - NON_MAP_AREA.y,
             ),
         );
 
         if screen_box.intersects_bbox(&test_box) {
-            self.map_box = BBox2D::from_corners(
-                position.to_geo(),
-                pt(position.x + map_w, position.y + map_h),
+            self.map_box = ScreenBBox::from_coords(
+                position.x,
+                position.y,
+                position.x + map_w,
+                position.y + map_h,
             );
             // The new top-left should be written back to the active player
             // profile.  The engine doesn't carry a profile reference; flag
@@ -729,10 +731,12 @@ impl MinimapState {
         }
 
         // Initial or completely off-screen: snap to default position.
-        let sentinel = pt(65536.0, 65536.0);
-        let full_map_box = BBox2D::from_corners(
-            position.to_geo(),
-            pt(position.x + map_w, position.y + map_h),
+        let sentinel = ScreenPoint::new(65536.0, 65536.0);
+        let full_map_box = ScreenBBox::from_coords(
+            position.x,
+            position.y,
+            position.x + map_w,
+            position.y + map_h,
         );
         let is_sentinel =
             (position.x - sentinel.x).abs() < 1.0 && (position.y - sentinel.y).abs() < 1.0;
@@ -741,10 +745,8 @@ impl MinimapState {
         {
             let default_x = self.button_box.x_min() - map_w;
             let default_y = self.button_box.y_max();
-            self.map_box = BBox2D::from_corners(
-                pt(default_x, default_y),
-                pt(default_x + map_w, default_y + map_h),
-            );
+            self.map_box =
+                ScreenBBox::from_coords(default_x, default_y, default_x + map_w, default_y + map_h);
         }
 
         false
@@ -757,7 +759,7 @@ impl MinimapState {
     pub(crate) fn take_pending_position(&mut self) -> Option<ScreenPoint> {
         if self.position_dirty && self.map_box.is_somewhere() {
             self.position_dirty = false;
-            Some(ScreenPoint::from_geo(self.map_box.top_left()))
+            Some(self.map_box.top_left())
         } else {
             self.position_dirty = false;
             None
@@ -801,7 +803,7 @@ impl MinimapState {
 
         if !self.drag_start {
             if self.map_box.is_somewhere() {
-                self.position_before_dragging = ScreenPoint::from_geo(self.map_box.top_left());
+                self.position_before_dragging = self.map_box.top_left();
             }
             self.dragging_point = mouse_pos;
             self.drag_start = true;
@@ -852,16 +854,16 @@ impl MinimapState {
 ///
 /// Click hit-testing insets [`NON_MAP_AREA`] from the full map bounding
 /// box; this helper produces that inset rectangle.
-pub fn usable_area(map_box: &BBox2D) -> BBox2D {
+pub fn usable_area(map_box: &ScreenBBox) -> ScreenBBox {
     if !map_box.is_somewhere() {
-        return BBox2D::new();
+        return ScreenBBox::new();
     }
-    BBox2D::from_corners(
-        pt(
+    ScreenBBox::from_corners(
+        ScreenPoint::new(
             map_box.top_left().x + NON_MAP_AREA.x,
             map_box.top_left().y + NON_MAP_AREA.y,
         ),
-        pt(
+        ScreenPoint::new(
             map_box.bottom_right().x - NON_MAP_AREA.x,
             map_box.bottom_right().y - NON_MAP_AREA.y,
         ),
@@ -1347,7 +1349,7 @@ mod tests {
     #[test]
     fn real_to_map_conversion() {
         let mut mm = MinimapState::new();
-        mm.map_box = BBox2D::from_corners(pt(100.0, 100.0), pt(300.0, 300.0));
+        mm.map_box = ScreenBBox::from_coords(100.0, 100.0, 300.0, 300.0);
 
         let level_size = pt(1000.0, 1000.0);
 

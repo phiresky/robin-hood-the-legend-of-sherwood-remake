@@ -830,7 +830,7 @@ impl EngineInner {
                             let usable = crate::minimap::usable_area(&display.minimap.map_box);
                             let level_size = self.cutscene_camera.level_size;
                             let world_pt = display.minimap.map_to_real(*click_pt, level_size);
-                            if usable.contains_point(click_pt.to_geo())
+                            if usable.contains_point(*click_pt)
                                 && let Some(world_pt) = world_pt
                             {
                                 // Gate the recenter on `is_zoom_possible`

@@ -232,6 +232,11 @@ impl ScreenBBox {
     }
 
     #[inline]
+    pub fn is_on_boundary(&self, point: ScreenPoint) -> bool {
+        self.to_geo().is_on_boundary(point.to_geo())
+    }
+
+    #[inline]
     pub fn intersects_bbox(&self, other: &ScreenBBox) -> bool {
         self.to_geo().intersects_bbox(&other.to_geo())
     }

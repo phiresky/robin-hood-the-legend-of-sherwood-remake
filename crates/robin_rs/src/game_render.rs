@@ -2026,7 +2026,7 @@ fn refresh_dot(
     level_size: robin_engine::geo2d::Vec2D,
     world_pos: robin_engine::coordinates::MapPoint,
     dot_type: robin_engine::minimap::DotType,
-    widget_box: &robin_engine::geo2d::BBox2D,
+    widget_box: &robin_engine::coordinates::ScreenBBox,
     renderer: &mut Renderer,
 ) {
     let idx = dot_type as usize;
@@ -2041,7 +2041,7 @@ fn refresh_dot(
     };
 
     // Centre the sprite on the converted position.
-    let top_left = robin_engine::geo2d::pt(
+    let top_left = robin_engine::coordinates::ScreenPoint::new(
         map_pos.x - (dot_w as f32) * 0.5,
         map_pos.y - (dot_h as f32) * 0.5,
     );
