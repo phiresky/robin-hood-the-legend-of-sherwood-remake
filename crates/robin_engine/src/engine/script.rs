@@ -1422,7 +1422,7 @@ impl EngineInner {
             return entries;
         }
         for (actor_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(actor_id);
+            let entity_id = actor_id.into();
             let ed = entity.element_data();
             // `in_honolulu` stands in for the `IsInside(GetBoxMap())`
             // reject — honolulu actors are parked off-map.  The extra
@@ -1491,7 +1491,7 @@ impl EngineInner {
             self.script_zone_data[zone_idx].enter(entity_idx);
             let pt = self.script_zone_data[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(EntityId::from(entity_idx), pt, true);
+                self.apply_production_work_icon(entity_idx, pt, true);
             }
         }
     }
@@ -1597,7 +1597,7 @@ impl EngineInner {
         let mut exit_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
 
         for (actor_id, entity) in self.entities.actors() {
-            let eidx = EntityId::from(actor_id);
+            let eidx = actor_id.into();
             let ed = entity.element_data();
             let active = ed.active && !ed.in_honolulu;
             let pos = ed.position_map();
@@ -1679,14 +1679,14 @@ impl EngineInner {
             self.script_zone_data[zone_idx].enter(entity_idx);
             let pt = self.script_zone_data[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(EntityId::from(entity_idx), pt, true);
+                self.apply_production_work_icon(entity_idx, pt, true);
             }
         }
         for &(zone_idx, entity_idx, _) in &exit_events {
             self.script_zone_data[zone_idx].leave(entity_idx);
             let pt = self.script_zone_data[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
-                self.apply_production_work_icon(EntityId::from(entity_idx), pt, false);
+                self.apply_production_work_icon(entity_idx, pt, false);
             }
         }
 

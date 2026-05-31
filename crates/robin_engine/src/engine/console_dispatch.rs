@@ -533,11 +533,7 @@ impl EngineInner {
                 // Prints "Nuking ..." before walking every soldier,
                 // launches a damage(1000, 1000) sequence per victim,
                 // then prints "Nuked N soldiers".
-                let victims: Vec<_> = self
-                    .entities
-                    .soldiers()
-                    .map(|(id, _)| EntityId::from(id))
-                    .collect();
+                let victims: Vec<_> = self.entities.soldiers().map(|(id, _)| id.into()).collect();
                 let count = victims.len();
                 for id in victims {
                     self.launch_damage(id, 1000, 1000);
@@ -554,7 +550,7 @@ impl EngineInner {
                     .npcs()
                     .filter_map(|(id, e)| {
                         if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
-                            Some(EntityId::from(id))
+                            Some(id.into())
                         } else {
                             None
                         }
@@ -766,11 +762,8 @@ impl EngineInner {
             RoterAlarm => {
                 // Sets attentive mode on every soldier — silent cheat,
                 // emits no console output.
-                let soldier_ids: Vec<EntityId> = self
-                    .entities
-                    .soldiers()
-                    .map(|(id, _)| EntityId::from(id))
-                    .collect();
+                let soldier_ids: Vec<EntityId> =
+                    self.entities.soldiers().map(|(id, _)| id.into()).collect();
                 for id in soldier_ids {
                     self.set_soldier_attentive_mode(id, true, false);
                 }

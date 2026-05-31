@@ -4796,7 +4796,7 @@ impl EngineInner {
                     _ => false,
                 };
                 if restore_this {
-                    to_add.push(EntityId::from(entity_id));
+                    to_add.push(entity_id.into());
                 }
             }
             if !to_add.is_empty()

@@ -249,7 +249,7 @@ impl EngineInner {
         }
         let mut pending: Vec<Pending> = Vec::new();
         for (owner, _) in self.entities.actors() {
-            let owner = EntityId::from(owner);
+            let owner = owner.into();
             let Some((seq_id, elem_idx)) = self.sequence_manager.current_element_for_actor(owner)
             else {
                 continue;
@@ -603,7 +603,7 @@ impl EngineInner {
             let mut killed_civilian = None;
             for (npc_id, civilian) in self.entities.civilians() {
                 if civilian.element.posture.is_dead() {
-                    let npc_id = EntityId::from(npc_id);
+                    let npc_id: EntityId = npc_id.into();
                     // Check killed_by_accident via the civilian's human data
                     let accident = civilian.human.killed_by_accident;
                     if !accident {
@@ -5195,7 +5195,7 @@ impl EngineInner {
                 .entities
                 .humans()
                 .filter_map(|(entity_id, e)| {
-                    let entity_id = EntityId::from(entity_id);
+                    let entity_id: EntityId = entity_id.into();
                     let h = e.human_data()?;
                     if h.opponents.is_empty() {
                         return None;
@@ -5232,7 +5232,7 @@ impl EngineInner {
                 .entities
                 .pcs()
                 .filter_map(|(eid, e)| {
-                    let eid = EntityId::from(eid);
+                    let eid: EntityId = eid.into();
                     let a = &e.actor;
                     if !matches!(
                         a.action_state,
@@ -8427,7 +8427,7 @@ mod drop_ammo_merge_tests {
             .bonuses()
             .filter_map(|(entity_id, bonus)| {
                 if bonus.element.active && bonus.object.associated_action == action {
-                    Some((EntityId::from(entity_id), bonus.object.quantity))
+                    Some((entity_id.into(), bonus.object.quantity))
                 } else {
                     None
                 }

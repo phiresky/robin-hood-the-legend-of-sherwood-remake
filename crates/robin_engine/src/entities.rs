@@ -119,7 +119,7 @@ impl Entities {
     }
 
     pub fn npc_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.npcs().map(|(id, _)| EntityId::from(id))
+        self.npcs().map(|(id, _)| id.into())
     }
 
     pub fn npcs_mut(&mut self) -> impl Iterator<Item = (NpcId, &mut Entity)> + '_ {
@@ -181,7 +181,7 @@ impl Entities {
     }
 
     pub fn soldier_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.soldiers().map(|(id, _)| EntityId::from(id))
+        self.soldiers().map(|(id, _)| id.into())
     }
 
     pub fn fighter_ids_for_camp(&self, camp: Camp) -> impl Iterator<Item = EntityId> + '_ {
@@ -194,7 +194,7 @@ impl Entities {
 
     pub fn soldier_ids_for_camp(&self, camp: Camp) -> impl Iterator<Item = EntityId> + '_ {
         self.soldiers()
-            .filter_map(move |(id, soldier)| (soldier.camp() == camp).then_some(EntityId::from(id)))
+            .filter_map(move |(id, soldier)| (soldier.camp() == camp).then_some(id.into()))
     }
 
     pub fn soldiers_mut(&mut self) -> impl Iterator<Item = (SoldierId, &mut ActorSoldier)> + '_ {

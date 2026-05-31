@@ -1754,7 +1754,8 @@ impl EngineInner {
                 // Collect potential victims inside the initial polygon.
                 let mut pending_victims = Vec::new();
                 for (victim_id, victim) in self.entities.humans() {
-                    if EntityId::from(victim_id) == attacker_id {
+                    let victim_id: EntityId = victim_id.into();
+                    if victim_id == attacker_id {
                         continue;
                     }
                     if !is_possible_sword_strike_victim(
