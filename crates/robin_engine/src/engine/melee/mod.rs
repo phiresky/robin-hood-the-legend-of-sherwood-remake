@@ -460,7 +460,8 @@ impl EngineInner {
     /// still fire through the cheat path.  Returns a default (all-false)
     /// context when the entity is missing (the caller then no-ops on
     /// the cheat target anyway).
-    pub(crate) fn concussion_ctx_for(&self, id: EntityId) -> ConcussionContext {
+    pub(crate) fn concussion_ctx_for<I: Into<EntityId>>(&self, id: I) -> ConcussionContext {
+        let id = id.into();
         match self.get_entity(id) {
             Some(entity) => {
                 concussion_ctx_full(entity, self.weather.is_forest_level, self.campaign.as_ref())
@@ -497,12 +498,13 @@ impl EngineInner {
     pub(crate) fn apply_concussion(
         &mut self,
         assets: &LevelAssets,
-        entity_id: EntityId,
+        entity_id: impl Into<EntityId>,
         value: u16,
         force_value: bool,
     ) -> crate::combat::ConcussionOutcome {
         use crate::combat::ConcussionOutcome;
 
+        let entity_id = entity_id.into();
         let mut ctx = self.concussion_ctx_for(entity_id);
         ctx.force_value = force_value;
 
@@ -693,7 +695,8 @@ impl EngineInner {
     /// legacy implementation `SetConcussionOfTheBrain` calls `BlinkEnemy(this)` for
     /// every opposite-camp NPC after a PC wakes, or after a soldier
     /// wakes while NPC-vs-NPC soldier hostility is enabled.
-    pub(crate) fn queue_wake_redetection_blinks(&mut self, waker_id: EntityId) {
+    pub(crate) fn queue_wake_redetection_blinks<I: Into<EntityId>>(&mut self, waker_id: I) {
+        let waker_id = waker_id.into();
         let waker = match self.get_entity(waker_id) {
             Some(e) => e,
             None => return,
@@ -988,7 +991,13 @@ pub(crate) fn get_hth_weapon_id_full(
 }
 
 /// Get the distance between two entities on the ground plane.
-fn entity_distance(entities: &crate::entities::Entities, a: EntityId, b: EntityId) -> f32 {
+fn entity_distance<A: Into<EntityId>, B: Into<EntityId>>(
+    entities: &crate::entities::Entities,
+    a: A,
+    b: B,
+) -> f32 {
+    let a = a.into();
+    let b = b.into();
     let pos_a = match entities.get(a) {
         Some(e) => e.element_data().position_map(),
         None => return f32::MAX,
@@ -1003,7 +1012,13 @@ fn entity_distance(entities: &crate::entities::Entities, a: EntityId, b: EntityI
 }
 
 /// Get the 0-15 direction sector from entity A looking at entity B.
-fn direction_to(entities: &crate::entities::Entities, from: EntityId, to: EntityId) -> i16 {
+fn direction_to<F: Into<EntityId>, T: Into<EntityId>>(
+    entities: &crate::entities::Entities,
+    from: F,
+    to: T,
+) -> i16 {
+    let from = from.into();
+    let to = to.into();
     let pos_a = match entities.get(from) {
         Some(e) => e.element_data().position_map(),
         None => return 0,
@@ -1059,7 +1074,11 @@ fn point_in_quad(
 }
 
 /// Get an entity's camp (faction). PCs are always Royalists.
-fn entity_camp(entities: &crate::entities::Entities, id: EntityId) -> crate::element::Camp {
+fn entity_camp<I: Into<EntityId>>(
+    entities: &crate::entities::Entities,
+    id: I,
+) -> crate::element::Camp {
+    let id = id.into();
     match entities.get(id) {
         Some(Entity::Pc(_)) => crate::element::Camp::Royalists,
         Some(Entity::Soldier(s)) => s.soldier.cached_camp,
@@ -1239,9 +1258,11 @@ pub(crate) fn is_table_swordfight_needed(
     entities: &crate::entities::Entities,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     profile_manager: &crate::profiles::ProfileManager,
-    pc_id: EntityId,
-    victim_id: EntityId,
+    pc_id: impl Into<EntityId>,
+    victim_id: impl Into<EntityId>,
 ) -> Option<u32> {
+    let pc_id = pc_id.into();
+    let victim_id = victim_id.into();
     let pc = entities.get(pc_id)?;
     let victim = entities.get(victim_id)?;
 
@@ -1531,13 +1552,15 @@ fn can_enter_swordfight_with(
 /// Check if `target` is a valid sword strike victim for `attacker`.
 fn is_possible_sword_strike_victim(
     entities: &crate::entities::Entities,
-    attacker: EntityId,
+    attacker: impl Into<EntityId>,
     target_entity: &Entity,
-    target_id: EntityId,
+    target_id: impl Into<EntityId>,
     profile_manager: &crate::profiles::ProfileManager,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
+    let attacker = attacker.into();
+    let target_id = target_id.into();
     if attacker == target_id {
         return false;
     }
@@ -1603,12 +1626,14 @@ fn is_possible_sword_strike_victim(
 
 fn is_possible_sword_strike_victim_id(
     entities: &crate::entities::Entities,
-    attacker: EntityId,
-    target_id: EntityId,
+    attacker: impl Into<EntityId>,
+    target_id: impl Into<EntityId>,
     profile_manager: &crate::profiles::ProfileManager,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> bool {
+    let attacker = attacker.into();
+    let target_id = target_id.into();
     let Some(target_entity) = entities.get(target_id) else {
         return false;
     };
@@ -1642,7 +1667,6 @@ fn collect_arc_victims(
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
     for (target_id, entity) in entities.humans() {
-        let target_id = EntityId::from(target_id);
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1670,7 +1694,7 @@ fn collect_arc_victims(
         // Check if direction is within the arc
         let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
         if is_sector_between(sector, begin_sector, end_sector) {
-            victims.push(target_id);
+            victims.push(target_id.into());
         }
     }
     victims
@@ -1693,7 +1717,6 @@ fn collect_circle_warn_victims(
 ) -> Vec<EntityId> {
     let mut victims = Vec::new();
     for (target_id, entity) in entities.humans() {
-        let target_id = EntityId::from(target_id);
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1728,7 +1751,7 @@ fn collect_circle_warn_victims(
             max_dist += 10.0 + (relative * 5.0 * std::f32::consts::PI) / (8.0 * rotation);
         }
         if distance <= max_dist {
-            victims.push(target_id);
+            victims.push(target_id.into());
         }
     }
     victims
@@ -1781,7 +1804,6 @@ fn collect_push_victims(
 
     let mut victims = Vec::new();
     for (target_id, entity) in entities.humans() {
-        let target_id = EntityId::from(target_id);
         if !is_possible_sword_strike_victim(
             entities,
             attacker_id,
@@ -1811,7 +1833,7 @@ fn collect_push_victims(
         let front_dist = dx * fx + dy * fy;
         let side_dist = (dx * sx + dy * sy).abs();
         if front_dist >= min_distance && front_dist <= max_distance && side_dist <= half_width {
-            victims.push(target_id);
+            victims.push(target_id.into());
         }
     }
     victims

@@ -45,7 +45,6 @@ impl EngineInner {
         // Periodic combat state dump (every 64 frames)
         if self.frame_counter.is_multiple_of(64) {
             for (entity_id, entity) in self.entities.humans() {
-                let entity_id = EntityId::from(entity_id);
                 let Some(human) = entity.human_data() else {
                     continue;
                 };
@@ -96,7 +95,6 @@ impl EngineInner {
             Vec::new();
 
         for (entity_id, entity) in self.entities.humans_mut() {
-            let entity_id = EntityId::from(entity_id);
             let is_parrying = entity
                 .actor_data()
                 .map(|a| {
@@ -132,7 +130,7 @@ impl EngineInner {
             let counter = entity.human_data().map(|h| h.parry_counter).unwrap_or(0);
             if counter == 0 {
                 if matches!(state, Some(ActionState::ParryingSword)) {
-                    launch_stop_parry.push(entity_id);
+                    launch_stop_parry.push(entity_id.into());
                 } else if matches!(state, Some(ActionState::ParryingSwordLow))
                     && let Some(elem_ref) = self
                         .sequence_manager
@@ -140,7 +138,7 @@ impl EngineInner {
                             elem.command == Command::ParrySwordLow
                         })
                 {
-                    terminate_low_parry.push((elem_ref.0, elem_ref.1, entity_id));
+                    terminate_low_parry.push((elem_ref.0, elem_ref.1, entity_id.into()));
                 }
                 tracing::trace!(
                     "tick_parry_counters: entity={} timer already 0",
@@ -155,7 +153,7 @@ impl EngineInner {
             if new_counter == 0 {
                 match state {
                     Some(ActionState::ParryingSword) => {
-                        launch_stop_parry.push(entity_id);
+                        launch_stop_parry.push(entity_id.into());
                     }
                     Some(ActionState::ParryingSwordLow) => {
                         if let Some(elem_ref) = self
@@ -164,7 +162,7 @@ impl EngineInner {
                                 elem.command == Command::ParrySwordLow
                             })
                         {
-                            terminate_low_parry.push((elem_ref.0, elem_ref.1, entity_id));
+                            terminate_low_parry.push((elem_ref.0, elem_ref.1, entity_id.into()));
                         }
                     }
                     _ => {}
@@ -209,9 +207,13 @@ impl EngineInner {
     /// the gate here works on the current animation, so those
     /// in-flight commands must not run the spacing/smalltalk
     /// evaluator in the same window.
-    pub(super) fn is_waiting_sword_idle_for_evaluate(&self, entity_id: EntityId) -> bool {
+    pub(super) fn is_waiting_sword_idle_for_evaluate<I: Into<EntityId>>(
+        &self,
+        entity_id: I,
+    ) -> bool {
         use crate::element::Command;
 
+        let entity_id = entity_id.into();
         let Some(actor) = self.get_entity(entity_id).and_then(|e| e.actor_data()) else {
             return false;
         };
@@ -291,7 +293,6 @@ impl EngineInner {
         // first pass read-only and stage typed ids.
         let mut smalltalk_candidates = Vec::new();
         for (entity_id, entity) in self.entities.humans() {
-            let entity_id = EntityId::from(entity_id);
             let (has_initiative, opponents_empty, principal_id, action_ok, observing) = {
                 if entity.is_dead() {
                     continue;
@@ -332,7 +333,7 @@ impl EngineInner {
                 continue;
             };
 
-            if suppressed_actors.contains(&entity_id) {
+            if suppressed_actors.iter().any(|&id| id == entity_id) {
                 continue;
             }
 
@@ -406,13 +407,13 @@ impl EngineInner {
             // strike pick, and suppresses the strike for this frame
             // when the actor wants to break the encirclement.
             if let Some(dest) = self.is_step_back_needed(entity_id, assets) {
-                pending_step_backs.push((entity_id, dest));
+                pending_step_backs.push((entity_id.into(), dest));
                 continue;
             }
 
             // Pick left or right smalltalk strike
             let is_left = crate::sim_rng::bool();
-            pending_smalltalk_strikes.push((entity_id, principal_id, is_left));
+            pending_smalltalk_strikes.push((entity_id.into(), principal_id, is_left));
         }
 
         for new_owner in pending_initiative_transfers {
@@ -542,7 +543,8 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn evaluate_smalltalk_hint(&mut self, entity_id: EntityId) -> bool {
+    pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(&mut self, entity_id: I) -> bool {
+        let entity_id = entity_id.into();
         let (hint, hint_opponent) = {
             let Some(human) = self.get_entity(entity_id).and_then(|e| e.human_data()) else {
                 return false;
@@ -603,7 +605,6 @@ impl EngineInner {
         // can't access two entities simultaneously.
         let mut pending_directions = Vec::new();
         for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
             let (strike, target_id) = {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
@@ -641,7 +642,6 @@ impl EngineInner {
 
         // Phase 1: advance timers and collect hits
         for (entity_id, entity) in self.entities.actors_mut() {
-            let entity_id = EntityId::from(entity_id);
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
 
@@ -755,7 +755,7 @@ impl EngineInner {
                 let target = melee.target.unwrap();
 
                 hits.push(StrikeHit {
-                    attacker_id,
+                    attacker_id: attacker_id.into(),
                     victim_id: target,
                     strike: melee.strike,
                     attacker_profile_idx: profile_idx,
@@ -778,7 +778,7 @@ impl EngineInner {
                     let elem_idx = melee.element_index;
                     actor.active_melee.clear();
                     completed.push(CompletedStrike {
-                        actor_id: attacker_id,
+                        actor_id: attacker_id.into(),
                         sequence_id: seq_id,
                         element_index: elem_idx,
                         strike: melee.strike,
@@ -1146,7 +1146,6 @@ impl EngineInner {
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
         for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
             let actor = match entity.actor_data() {
                 Some(a) => a,
                 None => continue,
@@ -1154,7 +1153,7 @@ impl EngineInner {
             if let Some(sweep) = &actor.sweep_state {
                 let pos = entity.element_data().position_map();
                 sweeps.push(ActiveSweep {
-                    attacker_id: entity_id,
+                    attacker_id: entity_id.into(),
                     attacker_pos: (pos.x, pos.y),
                     sweep: sweep.clone(),
                 });
@@ -1337,7 +1336,6 @@ impl EngineInner {
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
 
         for (entity_id, entity) in self.entities.actors_mut() {
-            let entity_id = EntityId::from(entity_id);
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -1351,7 +1349,12 @@ impl EngineInner {
             // skips frames where the sprite isn't actually moving.
             let is_moving = flight.increment_x != 0.0 || flight.increment_y != 0.0;
             if is_moving && let Some(hitter) = flight.antagonist {
-                domino_sweeps.push((entity_id, hitter, flight.increment_x, flight.increment_y));
+                domino_sweeps.push((
+                    entity_id.into(),
+                    hitter,
+                    flight.increment_x,
+                    flight.increment_y,
+                ));
             }
 
             // Z (elevation) is tracked explicitly only when the flight
@@ -1376,7 +1379,7 @@ impl EngineInner {
                         });
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
-                    landings.push((entity_id, flight.obstacle.map(|h| h.get())));
+                    landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
                 } else {
                     entity
                         .element_data_mut()
@@ -1685,7 +1688,6 @@ impl EngineInner {
             };
             let mut pending_charge_inits = Vec::new();
             for (attacker_id, entity) in self.entities.actors() {
-                let attacker_id = EntityId::from(attacker_id);
                 let actor = match entity.actor_data() {
                     Some(a) => a,
                     None => continue,
@@ -1752,8 +1754,7 @@ impl EngineInner {
                 // Collect potential victims inside the initial polygon.
                 let mut pending_victims = Vec::new();
                 for (victim_id, victim) in self.entities.humans() {
-                    let victim_id = EntityId::from(victim_id);
-                    if victim_id == attacker_id {
+                    if EntityId::from(victim_id) == attacker_id {
                         continue;
                     }
                     if !is_possible_sword_strike_victim(
@@ -1773,7 +1774,7 @@ impl EngineInner {
                     }
                     let vpos = velem.position_map();
                     if point_in_quad(vpos.x, vpos.y, p0, p1, p2, p3) {
-                        pending_victims.push(victim_id);
+                        pending_victims.push(victim_id.into());
                     }
                 }
 
@@ -1825,8 +1826,7 @@ impl EngineInner {
         let mut hits: Vec<ChargeHit> = Vec::new();
         let mut finished_charges: Vec<EntityId> = Vec::new();
 
-        for (entity_id, entity) in self.entities.actors_mut() {
-            let attacker_id = EntityId::from(entity_id);
+        for (attacker_id, entity) in self.entities.actors_mut() {
             let (elem_pos, _elem_layer, attacker_profile_idx) = {
                 let elem = entity.element_data();
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -1868,7 +1868,7 @@ impl EngineInner {
 
             for &vid in &charge.pending_victims {
                 hits.push(ChargeHit {
-                    attacker_id,
+                    attacker_id: attacker_id.into(),
                     victim_id: vid,
                     attacker_profile_idx,
                     attacker_pos: elem_pos,
@@ -1881,7 +1881,7 @@ impl EngineInner {
             }
 
             if is_last_frame {
-                finished_charges.push(attacker_id);
+                finished_charges.push(attacker_id.into());
             }
         }
 
@@ -2020,11 +2020,10 @@ impl EngineInner {
         // manager and then mutate the AI without aliasing `self`.
         let mut flagged: Vec<EntityId> = Vec::new();
         for (npc_id, soldier) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
             if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
                 && ai.pending_special_strike
             {
-                flagged.push(npc_id);
+                flagged.push(npc_id.into());
             }
         }
         for npc_id in flagged {
@@ -2065,8 +2064,6 @@ impl EngineInner {
         let mut pending_tired: Vec<EntityId> = Vec::new();
 
         for (npc_id, soldier) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
-
             // Must be in swordfight substate and alive.
             //
             // This is a stuck-state detector: if a soldier has
@@ -2122,7 +2119,7 @@ impl EngineInner {
             // dispatcher (tick.rs) wires the BeingWeakSword anim
             // through `active_ai_anim` + `do_next_order`.
             if soldier.human.tiredness >= TIREDNESS_WEAK_THRESHOLD {
-                pending_weak_stunned.push(npc_id);
+                pending_weak_stunned.push(npc_id.into());
                 let already_busy = self
                     .sequence_manager
                     .current_element_for_actor(npc_id)
@@ -2135,7 +2132,7 @@ impl EngineInner {
                     })
                     .unwrap_or(false);
                 if !already_busy {
-                    pending_tired.push(npc_id);
+                    pending_tired.push(npc_id.into());
                 }
                 continue;
             }
@@ -2205,7 +2202,7 @@ impl EngineInner {
             let ba = soldier.npc.ai_brain.base().map_or(0, |a| a.blood_alcohol);
 
             attacks.push(PendingAttack {
-                soldier_id: npc_id,
+                soldier_id: npc_id.into(),
                 target_id,
                 weapon_id,
                 fighting_ability: fa,
@@ -2357,7 +2354,6 @@ impl EngineInner {
                 .entities
                 .humans()
                 .filter_map(|(eid, e)| {
-                    let eid = EntityId::from(eid);
                     if eid == attack.soldier_id {
                         return None;
                     }
@@ -2572,7 +2568,6 @@ impl EngineInner {
         // `self.entities.humans_mut()`.
         let next_order_id = &mut self.next_order_id;
         for (entity_id, entity) in self.entities.humans_mut() {
-            let entity_id = EntityId::from(entity_id);
             if entity.is_dead() {
                 continue;
             }
@@ -2644,7 +2639,7 @@ impl EngineInner {
                     let mut elem = crate::sequence::SequenceElement::new(
                         1,
                         crate::element::Command::Recover,
-                        Some(npc_id),
+                        Some(npc_id.into()),
                     );
                     if let Some(anim) = standing_anim {
                         elem.push_order(crate::order::Order::new(
@@ -2682,7 +2677,7 @@ impl EngineInner {
                     .map(|ai| ai.current_substate == crate::ai::Substate::SleepingUnconscious)
                     .unwrap_or(false);
                 if in_sleeping_unconscious {
-                    pending_fit_again.push(npc_id);
+                    pending_fit_again.push(npc_id.into());
                 }
             }
         }

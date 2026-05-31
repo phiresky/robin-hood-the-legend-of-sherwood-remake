@@ -584,7 +584,6 @@ impl EngineInner {
         let mut npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>> =
             std::collections::HashMap::with_capacity(self.entities.soldiers().count());
         for (npc_id, s) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
             if let Some(ai) = s.npc.ai_brain.enemy()
                 && ai.base.primary_target != 0
             {
@@ -595,7 +594,7 @@ impl EngineInner {
                     npc_id,
                     EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target)),
                 );
-                npc_jump_lines.insert(npc_id, jl);
+                npc_jump_lines.insert(npc_id.into(), jl);
             }
         }
         npc_jump_lines
@@ -616,7 +615,6 @@ impl EngineInner {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
             Vec::with_capacity(self.entities.soldiers().count());
         for (npc_id, s) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
             if !s.element.active || s.human.unconscious {
                 continue;
             }
@@ -845,7 +843,7 @@ impl EngineInner {
             );
 
             soldier_snapshots.push(SoldierSnapshot {
-                id: npc_id,
+                id: npc_id.into(),
                 position: s.element.position_map(),
                 layer: s.element.layer(),
                 camp: s.soldier.cached_camp,
@@ -952,7 +950,6 @@ impl EngineInner {
         let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
             Vec::with_capacity(self.entities.soldiers().count());
         for (npc_id, s) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
             if !s.element.active {
                 continue;
             }
@@ -971,7 +968,7 @@ impl EngineInner {
             {
                 continue;
             }
-            ko_money_fight_soldiers.push((npc_id, s.soldier.cached_camp));
+            ko_money_fight_soldiers.push((npc_id.into(), s.soldier.cached_camp));
         }
         ko_money_fight_soldiers
     }
