@@ -5415,17 +5415,15 @@ impl EngineInner {
         // with an active bow shot; when the animation reports
         // `Done`, spawn an arrow projectile and notify the sequence
         // manager.
-        self.tick_bow_shots(assets);
+        let spawned_projectiles = self.tick_bow_shots(assets);
 
         // ── Per-frame arrow tick ────────────────────────────────
         // C++ `ShootWithBowAt` calls `pArrow->Hourglass()` before
-        // `AddElement`, then appends the arrow immediately to
-        // `marrayElements`. `PerformHourglass` checks the dynamic array
-        // size each iteration, so a freshly released arrow can still be
-        // visited by the normal element hourglass pass later in that
-        // same frame. Keep this after bow-shot release to preserve that
-        // spawn-frame double advance.
-        self.tick_arrows(assets);
+        // `AddElement`. Bow release runs from the sequence-manager phase,
+        // after the global element hourglass loop has already finished for
+        // this frame, so freshly spawned arrows are excluded from this
+        // same-frame global projectile tick.
+        self.tick_arrows(assets, &spawned_projectiles);
 
         // ── Per-frame purse / coin tick ─────────────────────────
         // Drive purse trajectories until impact (then burst into

@@ -224,9 +224,10 @@ impl EngineInner {
     /// shot.  Computes ballistic trajectory, rolls hit chance, and
     /// spawns arrows on the done frame.  Called from the main
     /// hourglass loop.
-    pub(super) fn tick_bow_shots(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_bow_shots(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
+        let mut spawned_projectiles = Vec::new();
         if self.freeze_all {
-            return;
+            return spawned_projectiles;
         }
         let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
         for result in events.fired {
@@ -512,6 +513,7 @@ impl EngineInner {
             // colored-rect fallback.
             self.attach_accessory_sprite(assets, arrow_id);
             self.tick_new_projectile_once(assets, arrow_id);
+            spawned_projectiles.push(arrow_id);
 
             tracing::debug!(
                 shooter = ?result.shooter,
@@ -535,6 +537,7 @@ impl EngineInner {
         for (seq_id, elem_idx) in events.completed {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
         }
+        spawned_projectiles
     }
 
     /// Put an arrow into non-shield falling state — the "armor ricochet"
@@ -1834,7 +1837,7 @@ impl EngineInner {
 
     /// Advance every active arrow projectile by one frame; apply
     /// damage on hit and despawn.  Called from the main hourglass loop.
-    pub(super) fn tick_arrows(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_arrows(&mut self, assets: &LevelAssets, skip_arrow_ids: &[EntityId]) {
         if self.freeze_all {
             return;
         }
@@ -1844,7 +1847,8 @@ impl EngineInner {
             dynamic_obstacles: &self.dynamic_sight_obstacles,
             static_active: &self.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrows(&mut self.entities, sight_obstacles);
+        let results =
+            bow_shot::tick_arrows_excluding(&mut self.entities, sight_obstacles, skip_arrow_ids);
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -2032,6 +2036,11 @@ impl EngineInner {
                                 // sound gate excludes already-falling
                                 // projectiles, so the ricochet impact
                                 // sound is intentionally silent.
+                                tracing::debug!(
+                                    arrow = ?result.arrow,
+                                    victim = ?victim,
+                                    "Arrow ricocheted from armor"
+                                );
                                 self.start_arrow_ricochet(result.arrow);
                                 continue;
                             }

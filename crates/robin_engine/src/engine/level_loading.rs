@@ -226,7 +226,9 @@ impl EngineInner {
         let Some(prototype) = assets.accessory_sprite_prototypes.get(&object_type) else {
             return;
         };
-        let sprite = prototype.clone();
+        let position_iface = entity.element_data().sprite.position_iface.clone();
+        let mut sprite = prototype.clone();
+        sprite.position_iface = position_iface;
         if let Some(entity) = self.entities.get_mut(id) {
             entity.element_data_mut().sprite = sprite;
         }

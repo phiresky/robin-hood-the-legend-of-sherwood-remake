@@ -2873,7 +2873,20 @@ pub fn tick_arrows(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(entities, sight_obstacles, None, false)
+    tick_arrows_matching(entities, sight_obstacles, None, false, &[])
+}
+
+/// Advance every projectile except the ones listed in `skip_arrow_ids`.
+///
+/// Used for bow arrows released from the sequence-manager phase: C++
+/// already called `pArrow->Hourglass()` before insertion, and the global
+/// element hourglass pass for that frame has already finished.
+pub fn tick_arrows_excluding(
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    skip_arrow_ids: &[EntityId],
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(entities, sight_obstacles, None, false, skip_arrow_ids)
 }
 
 /// Advance and resolve collision for one active projectile.
@@ -2886,7 +2899,7 @@ pub fn tick_arrow(
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     arrow_id: EntityId,
 ) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(entities, sight_obstacles, Some(arrow_id), true)
+    tick_arrows_matching(entities, sight_obstacles, Some(arrow_id), true, &[])
 }
 
 fn tick_arrows_matching(
@@ -2894,6 +2907,7 @@ fn tick_arrows_matching(
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     only_arrow_id: Option<EntityId>,
     primed_segment_already_advanced: bool,
+    skip_arrow_ids: &[EntityId],
 ) -> Vec<ArrowTickResult> {
     let mut results = Vec::new();
 
@@ -3067,6 +3081,9 @@ fn tick_arrows_matching(
         if let Some(only_arrow_id) = only_arrow_id
             && only_arrow_id != arrow_id
         {
+            continue;
+        }
+        if skip_arrow_ids.contains(&arrow_id) {
             continue;
         }
         if !entity.element.active {
@@ -3501,6 +3518,12 @@ fn tick_arrows_matching(
 
         // Segment length (range of this frame's movement).
         let range = distance(arrow_old, arrow_new);
+        // C++ compares floating-point segment endpoint distances exactly
+        // (`vtRange.Norm() <= range`).  Rust's f32 integration can land
+        // a target a tiny fraction past the nominal endpoint on flat
+        // shots, so allow a sub-pixel tolerance while keeping the same
+        // old/current range gate.
+        const RANGE_EPSILON: f32 = 0.25;
 
         // Pick the aim anchor by projectile type — arrows and apples
         // aim for the belt, stones aim for the eyes.
@@ -3533,8 +3556,8 @@ fn tick_arrows_matching(
                     // Range gate: the old_pos→target distance must be
                     // within this frame's reach (segment length).
                     let old_to_target = distance(arrow_old, anchor);
-                    old_to_target <= range
-                        && point_to_line_distance(anchor, arrow_old, arrow_new) <= HIT_DISTANCE
+                    let line_distance = point_to_line_distance(anchor, arrow_old, arrow_new);
+                    old_to_target <= range + RANGE_EPSILON && line_distance <= HIT_DISTANCE
                 } else {
                     false
                 };
@@ -3563,7 +3586,7 @@ fn tick_arrows_matching(
                         // leaning-out eye retry, unlike the primary human
                         // belt check's "deguillaumized" old-position gate.
                         let new_to_eyes = distance(arrow_new, eyes);
-                        if new_to_eyes <= range
+                        if new_to_eyes <= range + RANGE_EPSILON
                             && point_to_line_distance(eyes, arrow_old, arrow_new) <= HIT_DISTANCE
                         {
                             hit_victim = Some((snap.id, snap.position_map));
@@ -3600,7 +3623,7 @@ fn tick_arrows_matching(
                     // catches the scripted-target case where the
                     // current frame reaches the center exactly.
                     let new_to_target = distance(arrow_new, snap.center);
-                    new_to_target <= range
+                    new_to_target <= range + RANGE_EPSILON
                         && point_to_line_distance(snap.center, arrow_old, arrow_new) <= HIT_DISTANCE
                 } else {
                     // With no movement C++ still evaluates
