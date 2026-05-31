@@ -93,12 +93,11 @@ impl EngineInner {
             if !proj.projectile.flying {
                 continue;
             }
-            let id = EntityId::from(id);
 
             let exhausted = proj.advance_trajectory_one_frame();
             if exhausted {
                 impacts.push(NestImpact {
-                    id,
+                    id: id.into(),
                     pos: proj.element.position(),
                     layer: proj.element.layer(),
                 });
@@ -195,7 +194,7 @@ impl EngineInner {
             .projectiles()
             .filter_map(|(id, projectile)| {
                 if projectile.element.active && projectile.object.object_type == ObjectType::Wasp {
-                    Some(EntityId::from(id))
+                    Some(id.into())
                 } else {
                     None
                 }
@@ -831,8 +830,7 @@ mod tests {
                 .entities
                 .projectiles()
                 .filter_map(|(id, projectile)| {
-                    (projectile.object.object_type == ObjectType::Wasp)
-                        .then_some(EntityId::from(id))
+                    (projectile.object.object_type == ObjectType::Wasp).then_some(id.into())
                 })
                 .collect();
             for w in wasp_ids {

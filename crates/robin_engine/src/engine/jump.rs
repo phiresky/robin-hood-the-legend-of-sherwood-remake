@@ -932,7 +932,6 @@ impl EngineInner {
         let next_order_id = &mut self.next_order_id;
         let sequence_manager = &self.sequence_manager;
         for (entity_id, entity) in self.entities.actors_mut() {
-            let entity_id = EntityId::from(entity_id);
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };
@@ -954,7 +953,7 @@ impl EngineInner {
                         actor.active_jump = None;
                         actor.jump_z_offset = 0.0;
                         actor.action_state = ActionState::Waiting;
-                        layer_updates.push((entity_id, dest_layer, dest_sector));
+                        layer_updates.push((entity_id.into(), dest_layer, dest_sector));
                         // Defer sequence termination to after the loop.
                         actor.pending_jump_done = Some((seq_id, elem_idx));
                         continue;
@@ -973,11 +972,15 @@ impl EngineInner {
                         | OrderType::TransitionWaitingSwordJumpingLongSword
                 ) && entity.is_pc()
                 {
-                    pending_init_messages.push(entity_id);
+                    pending_init_messages.push(entity_id.into());
                 }
-                if let Some(order) =
-                    start_step(entity, entity_id, step, next_order_id, sequence_manager)
-                {
+                if let Some(order) = start_step(
+                    entity,
+                    entity_id.into(),
+                    step,
+                    next_order_id,
+                    sequence_manager,
+                ) {
                     jump_orders.push(order);
                 }
                 continue;
@@ -995,7 +998,7 @@ impl EngineInner {
                 && let Some(cap) = state.step.max_frames
                 && state.frames_elapsed >= cap
             {
-                force_advance.push(entity_id);
+                force_advance.push(entity_id.into());
             }
         }
 

@@ -432,8 +432,7 @@ impl EngineInner {
         };
 
         for (id, pc) in self.entities.pcs_mut() {
-            let id = EntityId::from(id);
-            let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id) {
+            let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id.into()) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
                 None => (0, None, None),
             };
@@ -445,19 +444,19 @@ impl EngineInner {
                 if let Some(ot) = cur_ot {
                     match ot {
                         OT::TransitionRaisingSword if cur_command != Some(Command::HitTarget) => {
-                            start_immediate.push((id, HERO_PROVOKE_DUEL));
+                            start_immediate.push((id.into(), HERO_PROVOKE_DUEL));
                         }
-                        OT::Provoking => start_immediate.push((id, HERO_PROVOKE_OPPONENT)),
+                        OT::Provoking => start_immediate.push((id.into(), HERO_PROVOKE_OPPONENT)),
                         OT::StrikingLeftSmalltalk
                         | OT::StrikingRightSmalltalk
                         | OT::StrikingLowLeftSmalltalk
                         | OT::StrikingLowRightSmalltalk => {
-                            start_eventual.push((id, HERO_SWEAR_AT));
+                            start_eventual.push((id.into(), HERO_SWEAR_AT));
                         }
                         OT::StrikingRoundLeftSword
                         | OT::StrikingRoundRightSword
                         | OT::ExecutingSword => {
-                            start_eventual.push((id, HERO_WARCRY));
+                            start_eventual.push((id.into(), HERO_WARCRY));
                         }
                         _ => {}
                     }
@@ -473,7 +472,7 @@ impl EngineInner {
                         )
                     )
                 {
-                    on_done.push((id, HERO_PROVOKE_OPPONENT));
+                    on_done.push((id.into(), HERO_PROVOKE_OPPONENT));
                 }
                 pc.pc.prev_combat_anim_id = cur_id;
                 pc.pc.prev_combat_anim_ot = cur_ot;
@@ -536,7 +535,6 @@ impl EngineInner {
     pub(super) fn tick_tiredness(&mut self, assets: &LevelAssets) {
         let frame = self.frame_counter;
         for (id, entity) in self.entities.humans_mut() {
-            let id = EntityId::from(id);
             let idx = id.index();
             // Spread the work — only every 64 frames per entity
             if (frame & 63) != (idx & 31) {

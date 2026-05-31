@@ -82,7 +82,6 @@ impl EngineInner {
         let mut impacts: Vec<Impact> = Vec::new();
 
         for (id, proj) in self.entities.projectiles_mut() {
-            let id = EntityId::from(id);
             if !proj.element.active {
                 continue;
             }
@@ -102,7 +101,7 @@ impl EngineInner {
                 let pos = proj.element.position();
                 let layer = proj.element.layer();
                 impacts.push(Impact {
-                    id,
+                    id: id.into(),
                     kind: match object_type {
                         ObjectType::Purse => ImpactKind::PurseLanded { pos, layer },
                         ObjectType::Coin => ImpactKind::CoinLanded { pos, layer },
@@ -151,7 +150,7 @@ impl EngineInner {
                     && p.projectile.purse.burst
                     && !p.projectile.purse.child_coins.is_empty()
                 {
-                    Some(EntityId::from(id))
+                    Some(id.into())
                 } else {
                     None
                 }
