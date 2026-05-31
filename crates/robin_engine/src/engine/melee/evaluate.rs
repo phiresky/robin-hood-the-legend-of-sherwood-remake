@@ -163,7 +163,7 @@ impl EngineInner {
             let opp_jump_line = human.opponent_jump_lines.first().copied().flatten();
 
             // Selected PC short-circuits.
-            if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
+            if entity.is_pc() && self.selected_pc_ids().iter().any(|&id| id == entity_id) {
                 return false;
             }
             // Combat trainer stays put.
@@ -426,7 +426,6 @@ impl EngineInner {
         // this frame.
         let mut hint_actors = Vec::new();
         for (entity_id, entity) in self.entities.humans() {
-            let entity_id = EntityId::from(entity_id);
             if entity.is_dead() {
                 continue;
             }
@@ -455,7 +454,7 @@ impl EngineInner {
         let mut consumed_smalltalk_hint_actors = Vec::new();
         for entity_id in hint_actors {
             if self.evaluate_smalltalk_hint(entity_id) {
-                consumed_smalltalk_hint_actors.push(entity_id);
+                consumed_smalltalk_hint_actors.push(entity_id.into());
             }
         }
 
@@ -482,7 +481,6 @@ impl EngineInner {
         }
         let mut snaps: Vec<Snap> = Vec::new();
         for (entity_id, entity) in self.entities.humans() {
-            let entity_id = EntityId::from(entity_id);
             if entity.is_dead() {
                 continue;
             }
@@ -527,7 +525,7 @@ impl EngineInner {
                 .map(|opp| opp == entity_id)
                 .unwrap_or(false);
             let is_pc = entity.is_pc();
-            let is_selected_pc = is_pc && self.selected_pc_ids().contains(&entity_id);
+            let is_selected_pc = is_pc && self.selected_pc_ids().iter().any(|&id| id == entity_id);
             let is_soldier = entity.is_soldier();
 
             let self_pos_3d = entity.element_data().position();
@@ -554,7 +552,7 @@ impl EngineInner {
                 .unwrap_or(70.0);
 
             snaps.push(Snap {
-                entity_id,
+                entity_id: entity_id.into(),
                 principal_id,
                 is_pc,
                 is_selected_pc,
@@ -809,7 +807,6 @@ impl EngineInner {
             .entities
             .humans()
             .filter_map(|(eid, e)| {
-                let eid = EntityId::from(eid);
                 if eid == pc_id {
                     return None;
                 }
@@ -929,12 +926,13 @@ impl EngineInner {
     /// satisfy `is_straight_movement_authorized`.
     pub(super) fn is_step_back_needed(
         &self,
-        entity_id: EntityId,
+        entity_id: impl Into<EntityId>,
         assets: &LevelAssets,
     ) -> Option<crate::coordinates::MapPoint> {
+        let entity_id = entity_id.into();
         let entity = self.get_entity(entity_id)?;
 
-        if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
+        if entity.is_pc() && self.selected_pc_ids().iter().any(|&id| id == entity_id) {
             return None;
         }
         if entity.is_soldier() {
@@ -1039,10 +1037,12 @@ impl EngineInner {
     /// each combatant's MAXIMAL sword range.
     pub(super) fn can_he_kill_me_but_me_not(
         &self,
-        me_id: EntityId,
-        opponent_id: EntityId,
+        me_id: impl Into<EntityId>,
+        opponent_id: impl Into<EntityId>,
         assets: &LevelAssets,
     ) -> bool {
+        let me_id = me_id.into();
+        let opponent_id = opponent_id.into();
         let (me_pos, opp_pos) = match (
             self.get_entity(me_id).map(|e| e.element_data().position()),
             self.get_entity(opponent_id)
@@ -1095,8 +1095,8 @@ impl EngineInner {
                     Some(e) => e,
                     None => continue,
                 };
-                let is_selected_pc =
-                    victim.kind().is_pc() && self.selected_pc_ids().contains(&victim_id);
+                let is_selected_pc = victim.kind().is_pc()
+                    && self.selected_pc_ids().iter().any(|&id| id == victim_id);
                 let is_npc_soldier = matches!(victim, Entity::Soldier(_));
                 let npc_substate = if let Entity::Soldier(s) = victim {
                     Some(s.npc.ai_substate())
@@ -1261,7 +1261,6 @@ impl EngineInner {
                 .entities
                 .humans()
                 .filter_map(|(eid, e)| {
-                    let eid = EntityId::from(eid);
                     if eid == victim_id {
                         return None;
                     }
@@ -1523,7 +1522,6 @@ impl EngineInner {
             .entities
             .humans()
             .filter_map(|(eid, e)| {
-                let eid = EntityId::from(eid);
                 if eid == victim_id || !e.is_active() || e.is_dead() {
                     return None;
                 }

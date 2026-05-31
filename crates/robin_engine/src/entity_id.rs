@@ -161,6 +161,40 @@ impl PartialEq for EntityId {
 
 impl Eq for EntityId {}
 
+macro_rules! entity_id_partial_eq {
+    ($($id:ty),+ $(,)?) => {
+        $(
+            impl PartialEq<$id> for EntityId {
+                fn eq(&self, other: &$id) -> bool {
+                    *self == EntityId::from(*other)
+                }
+            }
+
+            impl PartialEq<EntityId> for $id {
+                fn eq(&self, other: &EntityId) -> bool {
+                    EntityId::from(*self) == *other
+                }
+            }
+        )+
+    };
+}
+
+entity_id_partial_eq!(
+    ActorId,
+    HumanId,
+    NpcId,
+    ObjectId,
+    PcId,
+    SoldierId,
+    CivilianId,
+    FxId,
+    TargetId,
+    BonusId,
+    ScrollId,
+    ProjectileId,
+    NetId,
+);
+
 impl PartialOrd for EntityId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
