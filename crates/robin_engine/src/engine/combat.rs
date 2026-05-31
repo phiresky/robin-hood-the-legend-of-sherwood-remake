@@ -1157,11 +1157,7 @@ impl EngineInner {
         let threshold =
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
         let ransom_ok = ransom >= threshold;
-        let pcs: Vec<EntityId> = self
-            .entities
-            .pcs()
-            .map(|(id, _)| EntityId::from(id))
-            .collect();
+        let pcs: Vec<EntityId> = self.entities.pcs().map(|(id, _)| id.into()).collect();
         for pc_id in pcs {
             // Only PCs that have the Purse action in their profile
             // participate in the gate — Robin/Stuteley don't have Purse
@@ -1361,7 +1357,7 @@ impl EngineInner {
             .collect();
 
         for (bonus_id, entity) in self.entities.objects() {
-            let bonus_id = EntityId::from(bonus_id);
+            let bonus_id: EntityId = bonus_id.into();
             // Match either a regular Bonus or a landed coin/purse
             // projectile (post-burst).  Coins and purses are projectiles
             // but the pickup switch dispatches by `ObjectType`.
@@ -2667,7 +2663,7 @@ impl EngineInner {
         let mut dynamic_sight_obstacles = Vec::new();
 
         for (id, entity) in self.entities.humans() {
-            let id = EntityId::from(id);
+            let id: EntityId = id.into();
             if !entity.is_active() || entity.is_dead() {
                 continue;
             }
@@ -3687,7 +3683,7 @@ impl EngineInner {
         // overlapping borrows with launch_element.
         let mut drops: Vec<(crate::element::EntityId, crate::element::EntityId)> = Vec::new();
         for (carrier_id, entity) in self.entities.humans() {
-            let carrier_id = EntityId::from(carrier_id);
+            let carrier_id: EntityId = carrier_id.into();
             let elem = entity.element_data();
             if elem.posture != crate::element::Posture::CarryingOnShoulders {
                 continue;
@@ -3703,7 +3699,7 @@ impl EngineInner {
             // back-pointer references this carrier.  We track the
             // relationship from the victim side only.
             let victim_id = self.entities.humans().find_map(|(victim_id, v)| {
-                let victim_id = EntityId::from(victim_id);
+                let victim_id: EntityId = victim_id.into();
                 let hd = v.human_data()?;
                 if hd.carrier == Some(carrier_id) {
                     Some(victim_id)

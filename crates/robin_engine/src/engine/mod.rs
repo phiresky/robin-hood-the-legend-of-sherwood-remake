@@ -2112,7 +2112,7 @@ impl EngineInner {
                     entity.element_data().sprite.last_motion_state,
                     Some(crate::sprite::MotionState::Done)
                 )
-                .then_some(EntityId::from(entity_id))
+                .then_some(entity_id.into())
             })
             .collect();
 
@@ -2659,7 +2659,7 @@ impl EngineInner {
     pub fn bg_animation_ids(&self) -> Vec<EntityId> {
         self.entities
             .fxs()
-            .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(EntityId::from(id)))
+            .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(id.into()))
             .collect()
     }
 
@@ -2667,7 +2667,7 @@ impl EngineInner {
     pub fn patch_fx_ids(&self) -> Vec<EntityId> {
         self.entities
             .fxs()
-            .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(EntityId::from(id)))
+            .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(id.into()))
             .collect()
     }
 
@@ -3191,7 +3191,7 @@ impl EngineInner {
         let actor_ids: Vec<EntityId> = self
             .entities
             .actors()
-            .filter_map(|(id, entity)| entity.is_active().then_some(EntityId::from(id)))
+            .filter_map(|(id, entity)| entity.is_active().then_some(id.into()))
             .collect();
         for actor_id in actor_ids {
             self.ensure_wait_element(actor_id);

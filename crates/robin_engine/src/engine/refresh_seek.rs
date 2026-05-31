@@ -250,7 +250,7 @@ impl crate::engine::EngineInner {
             }
 
             refreshes.push(Refresh {
-                owner: EntityId::from(owner_id),
+                owner: owner_id.into(),
                 seq_id,
                 elem_idx,
                 target: target_id,

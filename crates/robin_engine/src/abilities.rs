@@ -1933,7 +1933,7 @@ pub fn tick_abilities(
     let mut results = Vec::new();
 
     for (actor_id, entity) in entities.actors_mut() {
-        let entity_id = EntityId::from(actor_id);
+        let entity_id: EntityId = actor_id.into();
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,

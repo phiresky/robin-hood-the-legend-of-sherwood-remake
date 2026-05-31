@@ -3325,7 +3325,7 @@ impl EngineInner {
         )> = Vec::new();
 
         for (actor_id, entity) in self.entities.actors_mut() {
-            let entity_id = EntityId::from(actor_id);
+            let entity_id = actor_id.into();
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
             // is derived from the action state machine, not hardcoded

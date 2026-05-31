@@ -265,7 +265,7 @@ impl EngineInner {
                     let dz = target_z - pc.position_z;
                     let dist_3d_sq = dx * dx + dy * dy + dz * dz;
                     if dist_3d_sq < DISTANCE_LISTEN * DISTANCE_LISTEN {
-                        to_hear.push((EntityId::from(entity_id), pc.pc_id));
+                        to_hear.push((entity_id.into(), pc.pc_id));
                         break;
                     }
                 }
@@ -275,11 +275,11 @@ impl EngineInner {
         for (entity_id, entity) in self
             .entities
             .npcs()
-            .map(|(id, entity)| (EntityId::from(id), entity))
+            .map(|(id, entity)| (id.into(), entity))
             .chain(
                 self.entities
                     .objects()
-                    .map(|(id, entity)| (EntityId::from(id), entity)),
+                    .map(|(id, entity)| (id.into(), entity)),
             )
         {
             let elem = entity.element_data();

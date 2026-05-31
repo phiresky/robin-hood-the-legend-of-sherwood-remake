@@ -1719,7 +1719,7 @@ pub fn tick_bow_shots(
     }
 
     for (actor_id, entity) in entities.actors_mut() {
-        let shooter_id = EntityId::from(actor_id);
+        let shooter_id: EntityId = actor_id.into();
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,
@@ -2925,7 +2925,7 @@ fn tick_arrows_matching(
     let human_snapshots: Vec<HumanSnapshot> = entities
         .humans()
         .filter_map(|(human_id, e)| {
-            let entity_id = EntityId::from(human_id);
+            let entity_id: EntityId = human_id.into();
             if !e.is_human() || !e.is_active() {
                 return None;
             }
@@ -3041,7 +3041,7 @@ fn tick_arrows_matching(
     let shield_snapshots: Vec<ShieldSnapshot> = entities
         .actors()
         .filter_map(|(actor_id, e)| {
-            let entity_id = EntityId::from(actor_id);
+            let entity_id = actor_id.into();
             if !e.is_active() || e.is_dead() {
                 return None;
             }
