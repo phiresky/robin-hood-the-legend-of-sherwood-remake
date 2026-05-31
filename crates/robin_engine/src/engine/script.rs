@@ -32,16 +32,16 @@ impl EngineInner {
             .collect();
 
         for (id, fx) in self.entities.fxs() {
-            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            let handle = crate::natives::GameHost::actor_handle(id);
             entity_active_map.push((handle, fx.element.active));
         }
         for (id, target) in self.entities.targets() {
-            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            let handle = crate::natives::GameHost::actor_handle(id);
             entity_active_map.push((handle, target.element.active));
         }
 
         for (id, pc) in self.entities.pcs() {
-            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            let handle = crate::natives::GameHost::actor_handle(id);
             pc_handles.push(handle);
             pc_profile_map.push((handle, pc.pc.profile_index));
             if pc.pc.robin {
@@ -93,14 +93,13 @@ impl EngineInner {
         let mut current_animations: Vec<(i32, crate::order::OrderType)> =
             Vec::with_capacity(self.entities.len());
         for (entity_id, _) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
             let handle = crate::natives::GameHost::actor_handle(entity_id);
             if let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(entity_id) {
                 current_animations.push((handle, order.order_type));
             }
         }
         for (entity_id, entity) in self.entities.objects() {
-            let handle = crate::natives::GameHost::actor_handle(EntityId::from(entity_id));
+            let handle = crate::natives::GameHost::actor_handle(entity_id);
             if let Some(obj) = entity.object_data() {
                 current_animations.push((handle, obj.animation));
             }
@@ -145,7 +144,7 @@ impl EngineInner {
         let mut bits: Vec<(i32, u16)> = Vec::new();
         let mut pc_bit_idx = 0u16;
         for (id, _) in self.entities.pcs() {
-            let handle = crate::natives::GameHost::actor_handle(EntityId::from(id));
+            let handle = crate::natives::GameHost::actor_handle(id);
             let bit = 1u16 << pc_bit_idx;
             bits.push((handle, bit));
             pc_bit_idx += 1;
@@ -827,7 +826,6 @@ impl EngineInner {
             .entities
             .actors()
             .filter_map(|(entity_id, entity)| {
-                let entity_id = EntityId::from(entity_id);
                 let script_class = &entity.actor_data()?.script_class;
                 if script_class.is_empty() {
                     return None;
@@ -851,7 +849,7 @@ impl EngineInner {
                     return None;
                 }
                 Some((
-                    crate::natives::GameHost::actor_handle(EntityId::from(entity_id)),
+                    crate::natives::GameHost::actor_handle(entity_id),
                     target.target.script_class.clone(),
                 ))
             })
@@ -868,7 +866,7 @@ impl EngineInner {
                     return None;
                 }
                 Some((
-                    crate::natives::GameHost::actor_handle(EntityId::from(entity_id)),
+                    crate::natives::GameHost::actor_handle(entity_id),
                     scroll.script_class.clone(),
                 ))
             })
@@ -1085,10 +1083,8 @@ impl EngineInner {
         // Phase 1: Collect actors whose animation changed.
         // Current animation = front order of the actor's current
         // in-progress sequence element.
-        let mut changes: Vec<(EntityId, crate::order::OrderType, crate::order::OrderType)> =
-            Vec::new();
+        let mut changes = Vec::new();
         for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -1185,11 +1181,10 @@ impl EngineInner {
         // of ready-to-fire scrolls is captured first.
         let mut ready: Vec<i32> = Vec::new();
         for (id, s) in self.entities.scrolls_mut() {
-            let id = EntityId::from(id);
             if !s.element.active {
                 continue;
             }
-            let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
+            let handle = crate::natives::GameHost::actor_handle(id);
             let has_script = self
                 .mission_script
                 .as_ref()
@@ -1426,8 +1421,8 @@ impl EngineInner {
         if assets.script_zone_grid_indices.is_empty() {
             return entries;
         }
-        for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
+        for (actor_id, entity) in self.entities.actors() {
+            let entity_id = EntityId::from(actor_id);
             let ed = entity.element_data();
             // `in_honolulu` stands in for the `IsInside(GetBoxMap())`
             // reject — honolulu actors are parked off-map.  The extra
@@ -1438,8 +1433,7 @@ impl EngineInner {
             }
             let pos = ed.position_map();
             let layer = ed.layer();
-            let handle =
-                crate::natives::GameHost::actor_handle_from_index(entity_id.index() as usize);
+            let handle = crate::natives::GameHost::actor_handle(actor_id);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip zones that `DefineFlatTrajectoryZone` converted
@@ -1602,13 +1596,13 @@ impl EngineInner {
         let mut enter_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
         let mut exit_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
 
-        for (eidx, entity) in self.entities.actors() {
-            let eidx = EntityId::from(eidx);
+        for (actor_id, entity) in self.entities.actors() {
+            let eidx = EntityId::from(actor_id);
             let ed = entity.element_data();
             let active = ed.active && !ed.in_honolulu;
             let pos = ed.position_map();
             let layer = ed.layer();
-            let handle = crate::natives::GameHost::actor_handle_from_index(eidx.index() as usize);
+            let handle = crate::natives::GameHost::actor_handle(actor_id);
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
@@ -2231,7 +2225,6 @@ impl EngineInner {
         // Collect state changes: (npc_handle, source_handle, state_change_code).
         let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
         for (id, entity) in self.entities.npcs_mut() {
-            let id = EntityId::from(id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -2245,7 +2238,7 @@ impl EngineInner {
             if !is_scripted {
                 continue;
             }
-            let handle = crate::natives::GameHost::actor_handle_from_index(id.index() as usize);
+            let handle = crate::natives::GameHost::actor_handle(id);
             for (state, source_kind) in drained {
                 let code = state.state_change_event_code();
                 let source = match source_kind {

@@ -2925,13 +2925,12 @@ impl EngineInner {
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
         for (actor_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(actor_id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
             let Some((seq_id, elem_idx)) = self
                 .sequence_manager
-                .in_progress_element_for_actor_matching(entity_id, |e| e.data.is_movement())
+                .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement())
             else {
                 continue;
             };
@@ -3040,7 +3039,6 @@ impl EngineInner {
         // conflict with `entity.element_data_mut()`).
         let mut drunk_turn_overrides = EntitySlots::filled(self.entities.len(), None);
         for (soldier_id, soldier) in self.entities.soldiers_mut() {
-            let entity_id = EntityId::from(soldier_id);
             let is_drunk = soldier
                 .npc
                 .ai_brain
@@ -3058,7 +3056,7 @@ impl EngineInner {
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
-            let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(entity_id)
+            let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(soldier_id)
             else {
                 continue;
             };
@@ -3371,7 +3369,6 @@ impl EngineInner {
                 {
                     continue;
                 }
-                let entity_id_inner = entity_id;
                 // Read goal from the current **movement** element's
                 // front order on the Move / PassDoor / Seek element.
                 //
@@ -3388,9 +3385,7 @@ impl EngineInner {
                 // element whose data is a `Movement`.
                 let move_elem = self
                     .sequence_manager
-                    .in_progress_element_for_actor_matching(entity_id_inner, |e| {
-                        e.data.is_movement()
-                    });
+                    .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement());
                 let Some((seq_id, elem_idx)) = move_elem else {
                     // No active Move element (element terminated or
                     // was never active) — drop out of the moving
@@ -3399,7 +3394,7 @@ impl EngineInner {
                         let restore_anti_collision = actor.active_door_pass.is_some();
                         if restore_anti_collision {
                             tracing::warn!(
-                                entity = ?entity_id_inner,
+                                entity = ?entity_id,
                                 "DoorPass: clearing stale active pass after movement element disappeared"
                             );
                             actor.active_door_pass = None;

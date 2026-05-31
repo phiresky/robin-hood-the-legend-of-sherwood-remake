@@ -200,7 +200,6 @@ impl crate::engine::EngineInner {
         let mut refreshes: Vec<Refresh> = Vec::new();
 
         for (owner_id, entity) in self.entities.actors() {
-            let owner_id = EntityId::from(owner_id);
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -251,7 +250,7 @@ impl crate::engine::EngineInner {
             }
 
             refreshes.push(Refresh {
-                owner: owner_id,
+                owner: EntityId::from(owner_id),
                 seq_id,
                 elem_idx,
                 target: target_id,
