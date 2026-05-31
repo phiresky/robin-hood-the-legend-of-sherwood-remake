@@ -1,6 +1,11 @@
 use std::fs;
 use std::path::Path;
 
+// These tests intentionally guard the modules where generic geometry caused
+// map/ground/screen coordinate mixups. Low-level geo2d use remains allowed in
+// adapter, serialization, and computational geometry internals; see
+// docs/COORDINATES.md for the policy.
+
 fn read_src(relative_path: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
     fs::read_to_string(&path).unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"))
@@ -21,7 +26,7 @@ fn cleaned_map_geometry_modules_do_not_reintroduce_generic_bboxes() {
         let src = read_src(path);
         assert!(
             !src.contains("BBox2D"),
-            "{path} should use domain coordinates such as MapBBox, not generic geo2d bboxes"
+            "{path} should keep public and stored geometry in domain bboxes such as MapBBox"
         );
     }
 }
@@ -40,7 +45,7 @@ fn cleaned_vector_math_modules_do_not_reintroduce_raw_geo_points() {
         let src = read_src(path);
         assert!(
             !src.contains("geo2d::pt") && !src.contains("use crate::geo2d"),
-            "{path} should use MapPoint/MapVec/ScreenPoint/ScreenVec for domain vector math"
+            "{path} should keep vector math in MapPoint/MapVec/ScreenPoint/ScreenVec"
         );
     }
 }
