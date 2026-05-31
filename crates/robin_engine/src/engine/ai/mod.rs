@@ -42,14 +42,13 @@ struct PotentialDetectable {
 fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
     for (id, entity) in engine.entities.humans() {
-        let id = EntityId::from(id);
         if !entity.element_data().active {
             continue;
         }
         match entity {
             Entity::Pc(_) => {
                 out.push(PotentialDetectable {
-                    id,
+                    id: id.into(),
                     is_pc: true,
                     is_soldier: false,
                     // All PCs are Royalists.
@@ -58,7 +57,7 @@ fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable>
             }
             Entity::Soldier(s) => {
                 out.push(PotentialDetectable {
-                    id,
+                    id: id.into(),
                     is_pc: false,
                     is_soldier: true,
                     camp: s.soldier.cached_camp,
@@ -71,7 +70,7 @@ fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable>
                 // (Good/Evil branches) end up excluding every civilian
                 // from every NPC's enemy list anyway.
                 out.push(PotentialDetectable {
-                    id,
+                    id: id.into(),
                     is_pc: false,
                     is_soldier: false,
                     camp: c.civilian.cached_camp,
@@ -501,12 +500,12 @@ pub(super) fn lookup_primary_target_metadata(
 /// eligible.
 pub(super) fn build_friend_swap_candidates(
     entities: &Entities,
-    me_id: crate::element::EntityId,
+    me_id: impl Into<crate::element::EntityId>,
     my_camp: crate::element::Camp,
 ) -> Vec<crate::ai::FriendSwapCandidate> {
+    let me_id = me_id.into();
     let mut out = Vec::new();
     for (friend_id, s) in entities.soldiers() {
-        let friend_id = EntityId::from(friend_id);
         if friend_id == me_id {
             continue;
         }
@@ -552,7 +551,7 @@ pub(super) fn build_friend_swap_candidates(
             level: ft_elem.layer(),
         };
         out.push(crate::ai::FriendSwapCandidate {
-            friend_id,
+            friend_id: friend_id.into(),
             friend_position: friend_pos,
             friend_primary_target: friend_target_handle,
             friend_primary_target_position: friend_target_pos,
@@ -576,10 +575,12 @@ pub(super) fn build_friend_swap_candidates(
 pub(super) fn precompute_avenger_on_roof_wait_position(
     entities: &crate::entities::Entities,
     doors: &[crate::gate::Door],
-    me_id: crate::element::EntityId,
-    target_id: crate::element::EntityId,
+    me_id: impl Into<crate::element::EntityId>,
+    target_id: impl Into<crate::element::EntityId>,
     sector_lift_type: &impl Fn(crate::sector::SectorNumber) -> Option<crate::sector::LiftType>,
 ) -> Option<crate::ai::Position> {
+    let me_id = me_id.into();
+    let target_id = target_id.into();
     if doors.is_empty() {
         return None;
     }
@@ -672,7 +673,6 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     let mut nets_by_victim: std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> =
         std::collections::HashMap::new();
     for (net_id, net) in engine.entities.nets() {
-        let net_id = EntityId::from(net_id);
         if !net.element.active {
             continue;
         }
@@ -1136,7 +1136,6 @@ impl EngineInner {
         let mut camp_soldiers =
             Vec::with_capacity(self.entities.soldiers().count().saturating_sub(1));
         for (other_id, s) in self.entities.soldiers() {
-            let other_id = EntityId::from(other_id);
             if other_id == npc_id {
                 continue;
             }
@@ -1550,7 +1549,6 @@ impl EngineInner {
         // using the persisted per-AI lists here made combat-position
         // cleanup blind to same-camp fighters and allowed dogpiles.
         for (other_id, s) in self.entities.soldiers() {
-            let other_id = EntityId::from(other_id);
             if other_id.index() == me_handle {
                 continue;
             }
@@ -2292,7 +2290,6 @@ impl EngineInner {
         > = std::collections::HashMap::new();
 
         for (entity_id, entity) in self.entities.actors() {
-            let entity_id = EntityId::from(entity_id);
             let elem = entity.element_data();
             let sector_raw = match elem.sector() {
                 Some(s) => crate::sector::SectorNumber::new(u16::from(s) as i16),
@@ -2306,7 +2303,7 @@ impl EngineInner {
             occupants_by_building
                 .entry(sector_raw)
                 .or_default()
-                .push(entity_id);
+                .push(entity_id.into());
         }
 
         // Build the houses list from the collected door/occupant maps.
@@ -2536,7 +2533,6 @@ impl EngineInner {
         // running).
         let mut updates: Vec<(crate::element::EntityId, i16)> = Vec::new();
         for (npc_id, entity) in self.entities.npcs() {
-            let npc_id = EntityId::from(npc_id);
             let Some((_, _, front)) = self.sequence_manager.current_order_for_actor(npc_id) else {
                 continue;
             };
@@ -2547,7 +2543,7 @@ impl EngineInner {
             let dx = front.target_x - pos.x;
             let dy = front.target_y - pos.y;
             let new_dir = vector_to_sector_0_to_15_iso(dx, dy);
-            updates.push((npc_id, new_dir));
+            updates.push((npc_id.into(), new_dir));
         }
 
         for (npc_id, new_dir) in updates {
@@ -2936,13 +2932,12 @@ impl EngineInner {
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         for (id, entity) in self.entities.npcs_mut() {
-            let id = EntityId::from(id);
             let Some(npc) = entity.npc_data_mut() else {
                 continue;
             };
             if npc.inform_my_friends {
                 npc.inform_my_friends = false;
-                to_broadcast.push(id);
+                to_broadcast.push(id.into());
             }
         }
 
@@ -3075,16 +3070,15 @@ impl EngineInner {
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
         for (id, entity) in self.entities.npcs_mut() {
-            let id = EntityId::from(id);
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
             if ai.pending_inform_resurrection {
                 ai.pending_inform_resurrection = false;
-                to_broadcast.push(id);
+                to_broadcast.push(id.into());
             }
             if let Some(status) = ai.pending_set_eye_status.take() {
-                to_set_eye.push((id, status));
+                to_set_eye.push((id.into(), status));
             }
         }
 
@@ -3280,7 +3274,6 @@ impl EngineInner {
         let mut snaps: Vec<SpeechSnap> = Vec::new();
 
         for (npc_id, entity) in self.entities.npcs_mut() {
-            let npc_id = EntityId::from(npc_id);
             let (npc, is_soldier, is_vip, blipped, sector, in_door_transit, pos) = match entity {
                 crate::element::Entity::Soldier(s) => (
                     &mut s.npc,
@@ -3368,7 +3361,7 @@ impl EngineInner {
                 "process_npc_speech: snap"
             );
             snaps.push(SpeechSnap {
-                entity_id: npc_id,
+                entity_id: npc_id.into(),
                 remark,
                 flags,
                 is_soldier,
@@ -7155,14 +7148,13 @@ impl EngineInner {
         // `Option` so we don't leave stale state when scripts are off.
         let mut requests: Vec<(crate::element::EntityId, crate::ai::PathId, u8)> = Vec::new();
         for (npc_id, entity) in self.entities.npcs_mut() {
-            let npc_id = EntityId::from(npc_id);
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
             if let Some((path_idx, wp_idx)) = ai.pending_waypoint_script_reach_point.take()
                 && scripts_enabled
             {
-                requests.push((npc_id, path_idx, wp_idx));
+                requests.push((npc_id.into(), path_idx, wp_idx));
             }
         }
 

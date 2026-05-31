@@ -1258,9 +1258,11 @@ pub(crate) fn is_table_swordfight_needed(
     entities: &crate::entities::Entities,
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     profile_manager: &crate::profiles::ProfileManager,
-    pc_id: EntityId,
-    victim_id: EntityId,
+    pc_id: impl Into<EntityId>,
+    victim_id: impl Into<EntityId>,
 ) -> Option<u32> {
+    let pc_id = pc_id.into();
+    let victim_id = victim_id.into();
     let pc = entities.get(pc_id)?;
     let victim = entities.get(victim_id)?;
 
