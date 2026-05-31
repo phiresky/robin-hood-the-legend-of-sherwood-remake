@@ -7,11 +7,10 @@
 //! or "none" (no stroke).
 
 use robin_engine::coordinates::{ScreenPoint, ScreenVec};
+use robin_engine::geo2d::{PRECISION, Segment2D, segments_intersect};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::f32::consts::PI;
-
-use crate::geo2d::{self, Segment2D, segments_intersect};
 
 /// Maximum number of points kept in the mouse-way polyline.
 pub const MOUSEWAY_POINT_LIMIT: usize = 350;
@@ -402,10 +401,10 @@ fn perp_ccw(v: ScreenVec) -> ScreenVec {
 }
 
 /// Normalize a vector; returns the zero vector when the input length
-/// is below `geo2d::PRECISION`.
+/// is below the shared geometry precision.
 fn normalize_or_zero(v: ScreenVec) -> ScreenVec {
     let len = (v.x * v.x + v.y * v.y).sqrt();
-    if len < geo2d::PRECISION {
+    if len < PRECISION {
         ScreenVec::ZERO
     } else {
         ScreenVec::new(v.x / len, v.y / len)

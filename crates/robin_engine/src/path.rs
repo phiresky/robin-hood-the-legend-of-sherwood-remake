@@ -2,8 +2,6 @@
 //!
 //! Rust port of `RHPath` / `RHWaypoint` semantics.
 
-use crate::geo2d;
-
 /// A single waypoint on a path.
 #[derive(
     Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
@@ -80,10 +78,9 @@ impl Path {
         self.waypoints
             .windows(2)
             .map(|pair| {
-                geo2d::distance(
-                    geo2d::pt(pair[0].x, pair[0].y),
-                    geo2d::pt(pair[1].x, pair[1].y),
-                )
+                let dx = pair[1].x - pair[0].x;
+                let dy = pair[1].y - pair[0].y;
+                (dx * dx + dy * dy).sqrt()
             })
             .sum()
     }

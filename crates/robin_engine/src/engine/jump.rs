@@ -1507,7 +1507,6 @@ mod tests {
         dst_helper: bool,
     ) -> (crate::fast_find_grid::FastFindGrid, Vec<crate::gate::Door>) {
         use crate::fast_find_grid::{FastFindGrid, GridSector};
-        use crate::geo2d::{BBox2D, pt};
         use crate::sector::SectorType;
 
         let mut grid = FastFindGrid::new();
@@ -1525,10 +1524,10 @@ mod tests {
                 MapPoint::new(0.0, 64.0),
             ],
             bounding_box: {
-                let mut b = BBox2D::new();
-                b.expand_point(pt(0.0, 0.0));
-                b.expand_point(pt(64.0, 64.0));
-                crate::coordinates::MapBBox::from_geo(b)
+                let mut b = crate::coordinates::MapBBox::new();
+                b.expand_point(MapPoint::new(0.0, 0.0));
+                b.expand_point(MapPoint::new(64.0, 64.0));
+                b
             },
             sector_type: SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
             layer: 0,

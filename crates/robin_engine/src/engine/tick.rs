@@ -7977,7 +7977,7 @@ pub(super) fn apply_drunken_path_deviation(
             Vec::with_capacity(waypoints.len() * 2);
         let mut prev = origin;
         for next in &waypoints {
-            let straight = crate::geo2d::pt(next.x - prev.x, next.y - prev.y);
+            let straight = crate::coordinates::MapVec::new(next.x - prev.x, next.y - prev.y);
             let max_norm = straight.x.abs().max(straight.y.abs());
             // Midpoint of the current segment.
             let midpoint = crate::coordinates::MapPoint::new(

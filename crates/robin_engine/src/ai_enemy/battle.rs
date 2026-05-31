@@ -2165,27 +2165,27 @@ impl EnemyAi {
                 let loop_d = Self::RIDER_CHARGE_LOOP_DISTANCE;
                 let lat_d = Self::RIDER_CHARGE_MAX_LATERAL_DISTANCE;
 
-                let p0 = crate::geo2d::pt(first_corner.0, first_corner.1);
-                let p1 = crate::geo2d::pt(
+                let p0 = (first_corner.0, first_corner.1);
+                let p1 = (
                     first_corner.0 + dir_norm.0 * loop_d,
                     first_corner.1 + dir_norm.1 * loop_d,
                 );
-                let p2 = crate::geo2d::pt(
+                let p2 = (
                     first_corner.0 + dir_norm.0 * loop_d + normal.0 * lat_d,
                     first_corner.1 + dir_norm.1 * loop_d + normal.1 * lat_d,
                 );
-                let p3 = crate::geo2d::pt(
+                let p3 = (
                     first_corner.0 + normal.0 * lat_d,
                     first_corner.1 + normal.1 * lat_d,
                 );
 
                 let poly = geo::Polygon::new(
                     geo::LineString::from(vec![
-                        (p0.x as f64, p0.y as f64),
-                        (p1.x as f64, p1.y as f64),
-                        (p2.x as f64, p2.y as f64),
-                        (p3.x as f64, p3.y as f64),
-                        (p0.x as f64, p0.y as f64),
+                        (p0.0 as f64, p0.1 as f64),
+                        (p1.0 as f64, p1.1 as f64),
+                        (p2.0 as f64, p2.1 as f64),
+                        (p3.0 as f64, p3.1 as f64),
+                        (p0.0 as f64, p0.1 as f64),
                     ]),
                     vec![],
                 );

@@ -9035,7 +9035,7 @@ mod tests {
 
     #[test]
     fn position_to_point_3d_uses_waypoint_sector_layer_projection() {
-        let mut bbox = crate::geo2d::BBox2D::new();
+        let mut bbox = crate::coordinates::MapBBox::new();
         let points = vec![
             MapPoint::new(0.0, 0.0),
             MapPoint::new(100.0, 0.0),
@@ -9043,14 +9043,14 @@ mod tests {
             MapPoint::new(0.0, 100.0),
         ];
         for &point in &points {
-            bbox.expand_point(point.to_geo());
+            bbox.expand_point(point);
         }
 
         let sector_number = crate::sector::SectorNumber::new(7);
         let mut level = crate::fast_find_grid::LevelGrid::default();
         level.sectors.push(crate::fast_find_grid::GridSector {
             points,
-            bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+            bounding_box: bbox,
             sector_type: crate::sector::SectorType::MOTION | crate::sector::SectorType::AREA,
             layer: 2,
             sector_number,

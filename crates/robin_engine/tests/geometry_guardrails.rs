@@ -11,6 +11,8 @@ fn cleaned_map_geometry_modules_do_not_reintroduce_generic_bboxes() {
     for path in [
         "src/engine/level_loading.rs",
         "src/engine/movement.rs",
+        "src/engine/jump.rs",
+        "src/ai.rs",
         "src/fast_find_grid.rs",
         "src/pathfinder.rs",
         "src/position_interface.rs",
@@ -30,6 +32,9 @@ fn cleaned_vector_math_modules_do_not_reintroduce_raw_geo_points() {
         "src/engine/anti_collision.rs",
         "src/engine/camera.rs",
         "src/engine/display_state.rs",
+        "src/engine/tick.rs",
+        "src/ai_enemy/battle.rs",
+        "src/path.rs",
         "src/material_sectors.rs",
     ] {
         let src = read_src(path);
@@ -38,4 +43,31 @@ fn cleaned_vector_math_modules_do_not_reintroduce_raw_geo_points() {
             "{path} should use MapPoint/MapVec/ScreenPoint/ScreenVec for domain vector math"
         );
     }
+}
+
+#[test]
+fn robin_rs_does_not_reexport_generic_geometry() {
+    let lib = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../robin_rs/src/lib.rs")
+            .canonicalize()
+            .expect("robin_rs lib path should exist"),
+    )
+    .expect("failed to read robin_rs/src/lib.rs");
+    assert!(
+        !lib.contains("pub use robin_engine::geo2d"),
+        "robin_rs should not re-export generic geo2d; import low-level adapters explicitly"
+    );
+
+    let mouse_way = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../robin_rs/src/mouse_way.rs")
+            .canonicalize()
+            .expect("mouse_way path should exist"),
+    )
+    .expect("failed to read robin_rs/src/mouse_way.rs");
+    assert!(
+        !mouse_way.contains("crate::geo2d") && !mouse_way.contains("geo2d::pt"),
+        "mouse_way should keep its public geometry in ScreenPoint/ScreenVec"
+    );
 }

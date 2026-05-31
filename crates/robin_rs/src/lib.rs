@@ -261,7 +261,6 @@ pub use robin_engine::event;
 pub use robin_engine::fast_find_grid;
 pub use robin_engine::game_operation;
 pub use robin_engine::gate;
-pub use robin_engine::geo2d;
 pub use robin_engine::graphic_config;
 pub use robin_engine::interp;
 pub use robin_engine::inventory;
