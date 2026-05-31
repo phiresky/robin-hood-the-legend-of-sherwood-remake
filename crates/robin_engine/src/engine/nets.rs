@@ -101,13 +101,7 @@ impl EngineInner {
         let candidates: Vec<EntityId> = self
             .entities
             .humans()
-            .filter_map(|(id, e)| {
-                if e.is_active() {
-                    Some(EntityId::from(id))
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(id, e)| if e.is_active() { Some(id.into()) } else { None })
             .collect();
 
         let mut new_victims: Vec<EntityId> = Vec::new();
@@ -434,7 +428,6 @@ impl EngineInner {
             if !net.element.active {
                 continue;
             }
-            let net_id = EntityId::from(net_id);
 
             if net.projectile.flying {
                 advance_net_trajectory(net);
@@ -466,15 +459,15 @@ impl EngineInner {
                     && z_above_landing <= NET_DESCENT_APPLY_THRESHOLD
                     && descending
                 {
-                    applies.push(net_id);
+                    applies.push(net_id.into());
                 }
 
                 if !net.projectile.flying && net.net.was_flying {
                     // Just landed this frame — queue the landing-time
                     // work for phase 2 (which holds `&mut self` so it
                     // can register repulsive points + look up obstacles).
-                    applies.push(net_id);
-                    just_landed.push(net_id);
+                    applies.push(net_id.into());
+                    just_landed.push(net_id.into());
                     net.net.was_flying = false;
                 }
             } else {
@@ -509,7 +502,6 @@ impl EngineInner {
         // entities.
         let mut wriggle_updates: Vec<(EntityId, crate::element::Animation)> = Vec::new();
         for (id, net) in self.entities.nets() {
-            let id = EntityId::from(id);
             if !net.element.active || net.projectile.flying {
                 continue;
             }
@@ -526,7 +518,7 @@ impl EngineInner {
                 crate::element::Animation::ObjectLying
             };
             if desired != net.object.animation {
-                wriggle_updates.push((id, desired));
+                wriggle_updates.push((id.into(), desired));
             }
         }
         for (id, anim) in wriggle_updates {

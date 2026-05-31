@@ -316,7 +316,6 @@ impl EngineInner {
             .entities
             .actors()
             .filter_map(|(id, entity)| {
-                let id = EntityId::from(id);
                 let element = entity.element_data();
                 if element.layer() != layer {
                     return None;
@@ -338,7 +337,7 @@ impl EngineInner {
                                 &move_box_map_geo,
                             )
                     });
-                Some((id, crushed))
+                Some((id.into(), crushed))
             })
             .collect();
 

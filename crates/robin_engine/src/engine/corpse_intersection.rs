@@ -58,7 +58,6 @@ impl EngineInner {
         let mut transitions: Vec<(EntityId, bool)> = Vec::new();
 
         for (entity_id, entity) in self.entities.humans_mut() {
-            let entity_id = EntityId::from(entity_id);
             let is_lying = entity.element_data().posture.is_lying();
             let Some(human) = entity.human_data_mut() else {
                 continue;
@@ -72,7 +71,7 @@ impl EngineInner {
                 }
                 Some(prev) if prev != is_lying => {
                     human.last_is_lying_for_corpse_intersection = Some(is_lying);
-                    transitions.push((entity_id, is_lying));
+                    transitions.push((entity_id.into(), is_lying));
                 }
                 _ => {}
             }
@@ -178,7 +177,6 @@ impl EngineInner {
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
         for (id, actor) in self.entities.humans() {
-            let id = EntityId::from(id);
             if id == corpse {
                 continue;
             }
@@ -201,7 +199,7 @@ impl EngineInner {
             let dx = ed.position_map().x - corpse_pos.x;
             let dy = ed.position_map().y - corpse_pos.y;
             if dx * dx + dy * dy < INTERSECT_SQ_DIST {
-                out.push(id);
+                out.push(id.into());
             }
         }
         out

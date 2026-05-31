@@ -989,7 +989,6 @@ impl EngineInner {
         let mut pending: Vec<Pending> = Vec::new();
 
         for (entity_id, entity) in self.entities.pcs() {
-            let entity_id = EntityId::from(entity_id);
             if entity.element.posture.is_dead() {
                 continue;
             }
@@ -1030,7 +1029,8 @@ impl EngineInner {
             let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
                 continue;
             };
-            if self.check_sequence_element_validity(assets, entity_id, elem, check_position) {
+            if self.check_sequence_element_validity(assets, entity_id.into(), elem, check_position)
+            {
                 continue;
             }
 
@@ -1045,7 +1045,7 @@ impl EngineInner {
             };
 
             pending.push(Pending {
-                entity_id,
+                entity_id: entity_id.into(),
                 seq_id,
                 elem_idx,
                 terminal,

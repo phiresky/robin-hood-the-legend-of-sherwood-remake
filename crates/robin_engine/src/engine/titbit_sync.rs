@@ -796,12 +796,11 @@ impl EngineInner {
 
         let mut states: Vec<AppleState> = Vec::new();
         for (npc_id, s) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
                 continue;
             }
             states.push(AppleState {
-                id: npc_id,
+                id: npc_id.into(),
                 position: WorldPoint3D {
                     x: s.element.position_map().x,
                     y: s.element.position_map().y,
@@ -878,7 +877,6 @@ impl EngineInner {
 
         let mut states: Vec<SpeakState> = Vec::new();
         for (npc_id, entity) in self.entities.npcs() {
-            let npc_id = EntityId::from(npc_id);
             let (pos, layer, active) = match entity {
                 Entity::Soldier(s) => (
                     s.element.position_map(),
@@ -897,7 +895,7 @@ impl EngineInner {
             }
             let script_handle = crate::natives::GameHost::actor_handle(npc_id);
             states.push(SpeakState {
-                id: npc_id,
+                id: npc_id.into(),
                 position: WorldPoint3D {
                     x: pos.x,
                     y: pos.y,

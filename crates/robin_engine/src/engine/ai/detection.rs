@@ -2414,7 +2414,6 @@ impl EngineInner {
         // Build target list from alive Lacklandist soldiers.
         let mut npc_targets: Vec<NpcTarget> = Vec::new();
         for (npc_id, s) in self.entities.soldiers() {
-            let npc_id = EntityId::from(npc_id);
             let (
                 pos,
                 layer,
@@ -2455,7 +2454,7 @@ impl EngineInner {
             // the near-auto-visible check.
             let eye_z = ground_z + crate::stealth::detection_z_for_posture(posture, is_rider);
             npc_targets.push(NpcTarget {
-                id: npc_id,
+                id: npc_id.into(),
                 position: pos,
                 layer,
                 posture,
