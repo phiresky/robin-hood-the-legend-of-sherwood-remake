@@ -13,7 +13,6 @@ use crate::element::{Entity, EntityId};
 use crate::element_kinds::{ElementKind, Posture};
 use crate::entities::{Entities, EntitySlots};
 use crate::fast_find_grid::FastFindGrid;
-use crate::geo2d;
 use crate::position_interface::{RADIUS_GUY, compute_deviated_future};
 use crate::profiles::ProfileManager;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
@@ -441,7 +440,7 @@ pub fn gather_disturbing(
             continue;
         }
         if !is_object {
-            let rel = geo2d::pt(
+            let rel = MapVec::new(
                 other.position_map.x - mover.position_map.x,
                 other.position_map.y - mover.position_map.y,
             );
@@ -559,11 +558,11 @@ pub fn apply_anti_collision_step(
             let obstacle_lines = gather_level_repulsive_lines(grid, mover.layer, &box_future);
             let obstacle_points = gather_level_repulsive_points(grid, mover.layer, &box_future);
             for p in obstacle_points {
-                let rel = geo2d::pt(
+                let rel = MapVec::new(
                     mover.position_map.x - p.position.x,
                     mover.position_map.y - p.position.y,
                 );
-                let dist = geo2d::length(rel);
+                let dist = rel.length();
                 // The original threshold is `input_action_radius +
                 // radius`.  In our `RepulsivePoint`, `action_radius`
                 // already stores `input_action_radius + radius`, so
@@ -574,7 +573,7 @@ pub fn apply_anti_collision_step(
                 }
             }
             for l in obstacle_lines {
-                let rel = geo2d::pt(mover.position_map.x - l.a.x, mover.position_map.y - l.a.y);
+                let rel = MapVec::new(mover.position_map.x - l.a.x, mover.position_map.y - l.a.y);
                 let dist = rel.x * l.normal.x + rel.y * l.normal.y;
                 if dist <= l.action_radius + l.radius {
                     lines.push(l);
@@ -717,12 +716,17 @@ pub fn apply_anti_collision_step(
     // fails widen the box and ask the grid for any authorised cell
     // nearby.
     if state.pi.blocked_count > 0 {
-        let to_goal = geo2d::pt(
+        let to_goal = MapVec::new(
             state.goal_map.x - mover.position_map.x,
             state.goal_map.y - mover.position_map.y,
         );
-        let n = geo2d::normalize(to_goal);
-        let mut barge = geo2d::pt(n.x * speed, n.y * speed);
+        let len = to_goal.length();
+        let n = if len > 0.0 {
+            MapVec::new(to_goal.x / len, to_goal.y / len)
+        } else {
+            MapVec::ZERO
+        };
+        let mut barge = MapVec::new(n.x * speed, n.y * speed);
         let mut barge_future = MapPoint::new(
             mover.position_map.x + barge.x,
             mover.position_map.y + barge.y,
@@ -750,7 +754,7 @@ pub fn apply_anti_collision_step(
                 return (barge.x, barge.y);
             }
             slower *= 0.8;
-            barge = geo2d::pt(barge.x * 0.8, barge.y * 0.8);
+            barge = barge.scale(0.8);
             barge_future = MapPoint::new(
                 mover.position_map.x + barge.x,
                 mover.position_map.y + barge.y,

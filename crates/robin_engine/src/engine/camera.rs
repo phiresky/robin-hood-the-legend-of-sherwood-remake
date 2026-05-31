@@ -1,8 +1,7 @@
 //! Camera control: director work, zoom, scrolling, resize, coordinate conversion.
 
 use super::*;
-use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenSize};
-use crate::geo2d;
+use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint, ScreenSize};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 
 impl EngineInner {
@@ -95,7 +94,7 @@ impl EngineInner {
                     (pos_map.x - view.x) * zoom - saved.x,
                     (pos_map.y - view.y) * zoom - saved.y,
                 );
-                let post = geo2d::pt(
+                let post = ScreenPoint::new(
                     (pos_map.x + increment_map.x - view.x) * zoom - saved.x,
                     (pos_map.y + increment_map.y - view.y) * zoom - saved.y,
                 );
@@ -140,7 +139,8 @@ impl EngineInner {
             if self.cutscene_camera.displacement_counter > 0 {
                 // Apply displacement, but snap any axis where the
                 // character is already at the saved anchor.
-                let point_pos = geo2d::pt((pos_map.x - view.x) * zoom, (pos_map.y - view.y) * zoom);
+                let point_pos =
+                    ScreenPoint::new((pos_map.x - view.x) * zoom, (pos_map.y - view.y) * zoom);
                 self.cutscene_camera.displacement_counter -= 1;
                 let mut scroll = self.cutscene_camera.displacement;
                 if saved.x.floor() == point_pos.x.floor() {
@@ -219,7 +219,7 @@ impl EngineInner {
         // ── Camera slide animation ───────────────────────────────
         if self.cutscene_camera.is_sliding() {
             if self.cutscene_camera.camera_slide != self.cutscene_camera.view_position {
-                let approach = geo2d::pt(
+                let approach = MapVec::new(
                     self.cutscene_camera.camera_slide.x - self.cutscene_camera.view_position.x,
                     self.cutscene_camera.camera_slide.y - self.cutscene_camera.view_position.y,
                 );
@@ -233,12 +233,12 @@ impl EngineInner {
                     self.cutscene_camera.fixed_camera_speed as f32
                 };
                 let mut scroll = if approach_len > 0.0 {
-                    geo2d::pt(
+                    MapVec::new(
                         approach.x / approach_len * slide_speed,
                         approach.y / approach_len * slide_speed,
                     )
                 } else {
-                    geo2d::pt(0.0, 0.0)
+                    MapVec::ZERO
                 };
 
                 // Don't overshoot
@@ -501,7 +501,7 @@ impl EngineInner {
     /// on `InputState` which the host owns; `apply_side_effects` clears
     /// them.
     pub(crate) fn center_on_point(&mut self, seat: usize, point: MapPoint) {
-        let half_screen = geo2d::pt(
+        let half_screen = MapVec::new(
             Self::director_camera_view_size().x / (2.0 * self.cutscene_camera.zoom_factor),
             Self::director_camera_view_size().y / (2.0 * self.cutscene_camera.zoom_factor),
         );

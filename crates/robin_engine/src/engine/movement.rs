@@ -4670,10 +4670,10 @@ impl EngineInner {
                     .get_mut(actor_id)
                     .and_then(|slot| slot.as_mut())
                 {
-                    let new_pos = crate::geo2d::pt(new_pos_x, new_pos_y);
-                    snap.position_map = new_pos.into();
+                    let new_pos = MapPoint::new(new_pos_x, new_pos_y);
+                    snap.position_map = new_pos;
                     if let Some(rp) = snap.repulsive_point.as_mut() {
-                        rp.position = new_pos.into();
+                        rp.position = new_pos;
                     }
                     for rp in snap.extra_repulsive_points.iter_mut() {
                         // Animal front/back points are offsets from
@@ -5288,9 +5288,9 @@ impl EngineInner {
         }
     }
 
-    fn expand_move_box_for_command_extraction(bbox: crate::geo2d::BBox2D) -> crate::geo2d::BBox2D {
+    fn expand_move_box_for_command_extraction(bbox: MapBBox) -> MapBBox {
         if bbox.is_somewhere() {
-            crate::geo2d::BBox2D::from_coords(
+            MapBBox::from_coords(
                 bbox.x_min() - 0.5,
                 bbox.y_min() - 0.5,
                 bbox.x_max() + 0.5,
@@ -6054,9 +6054,7 @@ impl EngineInner {
             .fast_grid
             .is_position_authorized(&move_box_map, entity_layer)
         {
-            let mut box_element = MapBBox::from_geo(Self::expand_move_box_for_command_extraction(
-                move_box_map.to_geo(),
-            ));
+            let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
             if self
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)
@@ -6748,7 +6746,7 @@ mod line_jump_tests {
 
     #[test]
     fn command_extraction_expands_move_box_like_original() {
-        let bbox = crate::geo2d::BBox2D::from_coords(10.0, 20.0, 30.0, 40.0);
+        let bbox = MapBBox::from_coords(10.0, 20.0, 30.0, 40.0);
         let expanded = EngineInner::expand_move_box_for_command_extraction(bbox);
         assert_eq!(expanded.x_min(), 9.5);
         assert_eq!(expanded.y_min(), 19.5);

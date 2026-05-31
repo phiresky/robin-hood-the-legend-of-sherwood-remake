@@ -1,9 +1,8 @@
 //! Rendering: draw, view cone overlay, background, selection box.
 
 use super::*;
-use crate::coordinates::{GroundPoint, MapPoint, MapVec, ScreenPoint};
+use crate::coordinates::{GroundPoint, MapPoint, MapVec, ScreenPoint, ScreenVec};
 use crate::element::EntityId;
-use crate::geo2d;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::shadow_polygon::ViewParameters;
 use std::collections::HashMap;
@@ -162,7 +161,7 @@ impl EngineInner {
                 // re-runs `draw_background` + entity rendering at the
                 // current interpolated zoom each frame.
                 let screen = Self::director_camera_view_size();
-                let screen_vec = geo2d::pt(screen.x, screen.y - PANNEL_HEIGHT);
+                let screen_vec = ScreenVec::new(screen.x, screen.y - PANNEL_HEIGHT);
                 let level_size = self.cutscene_camera.level_size;
 
                 // Source state = whatever the camera is at right now.
@@ -361,7 +360,7 @@ impl EngineInner {
                 let zoom = self.cutscene_camera.zoom_factor;
                 let box_tl = view;
                 let screen = Self::director_camera_view_size();
-                let box_br = crate::geo2d::pt(
+                let box_br = MapPoint::new(
                     view.x + screen.x / zoom,
                     view.y + (screen.y - PANNEL_HEIGHT) / zoom,
                 );

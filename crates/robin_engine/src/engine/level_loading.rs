@@ -2,7 +2,7 @@
 
 use super::scroll_reveal::ScrollStatus;
 use super::*;
-use crate::coordinates::MapPoint;
+use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::{BonusItemTypeExt, Entity, EntityId};
 
 /// CPU-decoded background map ready for GPU upload.
@@ -597,13 +597,13 @@ impl EngineInner {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
                 // avoid integer-aligned vertices confusing point-in-polygon
                 // tests against actor positions on integer Y boundaries.
-                let pts: Vec<crate::geo2d::GeoPoint2D> = sec
+                let pts: Vec<MapPoint> = sec
                     .polygon
                     .points
                     .iter()
-                    .map(|&(x, y)| crate::geo2d::pt(x as f32, y as f32 + 0.000348367))
+                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32 + 0.000348367))
                     .collect();
-                let mut bbox = crate::geo2d::BBox2D::new();
+                let mut bbox = MapBBox::new();
                 for &p in &pts {
                     bbox.expand_point(p);
                 }
@@ -643,11 +643,10 @@ impl EngineInner {
                     );
                 }
 
-                let pts: Vec<MapPoint> = pts.into_iter().map(MapPoint::from_geo).collect();
                 let grid_idx = self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
-                        bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+                        bounding_box: bbox,
                         sector_type,
                         layer: sec.layer,
                         sector_number: crate::sector::SectorNumber::new(-1), // script sectors don't have proto sector numbers
@@ -3949,15 +3948,15 @@ impl EngineInner {
                         .iter()
                         .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                         .collect();
-                    let mut bbox = crate::geo2d::BBox2D::new();
+                    let mut bbox = MapBBox::new();
                     for &p in &pts {
-                        bbox.expand_point(p.to_geo());
+                        bbox.expand_point(p);
                     }
 
                     self.fast_grid.add_sector(
                         crate::fast_find_grid::GridSector {
                             points: pts,
-                            bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+                            bounding_box: bbox,
                             sector_type: area_type,
                             layer: layer_idx as u16,
                             sector_number,
@@ -3986,15 +3985,15 @@ impl EngineInner {
                             .iter()
                             .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                             .collect();
-                        let mut obs_bbox = crate::geo2d::BBox2D::new();
+                        let mut obs_bbox = MapBBox::new();
                         for &p in &obs_pts {
-                            obs_bbox.expand_point(p.to_geo());
+                            obs_bbox.expand_point(p);
                         }
 
                         self.fast_grid.add_sector(
                             crate::fast_find_grid::GridSector {
                                 points: obs_pts,
-                                bounding_box: crate::coordinates::MapBBox::from_geo(obs_bbox),
+                                bounding_box: obs_bbox,
                                 sector_type: SectorType::MOTION,
                                 layer: layer_idx as u16,
                                 sector_number,
@@ -4160,14 +4159,14 @@ impl EngineInner {
                     .iter()
                     .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                     .collect();
-                let mut bbox = crate::geo2d::BBox2D::new();
+                let mut bbox = MapBBox::new();
                 for &p in &pts {
-                    bbox.expand_point(p.to_geo());
+                    bbox.expand_point(p);
                 }
                 self.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
-                        bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+                        bounding_box: bbox,
                         sector_type: SectorType::SHADOW,
                         layer: raw.layer,
                         sector_number,
@@ -4558,13 +4557,13 @@ impl EngineInner {
                 .iter()
                 .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                 .collect();
-            let mut bbox = crate::geo2d::BBox2D::new();
+            let mut bbox = MapBBox::new();
             for &p in &points {
-                bbox.expand_point(p.to_geo());
+                bbox.expand_point(p);
             }
             let gs = crate::fast_find_grid::GridSector {
                 points,
-                bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+                bounding_box: bbox,
                 sector_type: crate::sector::SectorType::MOUSE | crate::sector::SectorType::JUMP,
                 layer: zone.layer,
                 sector_number: crate::sector::SectorNumber::new(-1),
@@ -5145,13 +5144,13 @@ impl EngineInner {
                     .iter()
                     .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
                     .collect();
-                let mut bbox = crate::geo2d::BBox2D::new();
+                let mut bbox = MapBBox::new();
                 for &p in &points {
-                    bbox.expand_point(p.to_geo());
+                    bbox.expand_point(p);
                 }
                 let gs = crate::fast_find_grid::GridSector {
                     points,
-                    bounding_box: crate::coordinates::MapBBox::from_geo(bbox),
+                    bounding_box: bbox,
                     sector_type,
                     layer,
                     sector_number: crate::sector::SectorNumber::new(-1), /* Patch sectors don't have motion sector numbers */

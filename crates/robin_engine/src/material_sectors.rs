@@ -14,8 +14,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{MapBBox, MapPoint};
 use crate::element::GameMaterial;
-use crate::geo2d::pt;
 use crate::level_data::RawMaterialSector;
+
+#[derive(Debug, Clone, Copy)]
+struct AspectPoint {
+    x: f32,
+    y: f32,
+}
+
+impl AspectPoint {
+    fn from_map(point: MapPoint, inverse_aspect_ratio: f32) -> Self {
+        Self {
+            x: point.x,
+            y: point.y * inverse_aspect_ratio,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct MaterialSector {
@@ -116,11 +130,11 @@ impl MaterialSector {
             return min_distance;
         }
 
-        let modified_point = pt(point.x, point.y * inverse_aspect_ratio);
+        let modified_point = AspectPoint::from_map(point, inverse_aspect_ratio);
 
         // (I) check all points (vertex distance, 1-norm)
         for &v in &self.points {
-            let va = pt(v.x, v.y * inverse_aspect_ratio);
+            let va = AspectPoint::from_map(v, inverse_aspect_ratio);
             let distance = (modified_point.x - va.x).abs() + (modified_point.y - va.y).abs();
             if distance < min_distance {
                 min_distance = distance;
@@ -130,14 +144,17 @@ impl MaterialSector {
         // (II) check all segments
         let mut pt_a = {
             let v = self.points[n - 1];
-            pt(v.x, v.y * inverse_aspect_ratio)
+            AspectPoint::from_map(v, inverse_aspect_ratio)
         };
         for i in 0..n {
             let pt_b = {
                 let v = self.points[i];
-                pt(v.x, v.y * inverse_aspect_ratio)
+                AspectPoint::from_map(v, inverse_aspect_ratio)
             };
-            let b_minus_a = pt(pt_b.x - pt_a.x, pt_b.y - pt_a.y);
+            let b_minus_a = AspectPoint {
+                x: pt_b.x - pt_a.x,
+                y: pt_b.y - pt_a.y,
+            };
 
             // Classify edge orientation:
             //   dX > dY ? horizontalish = (dX > -dY) : horizontalish = (dX < -dY)
