@@ -1006,6 +1006,19 @@ fn render_character_masks_clipped(
 
 // ─── GPU entity rendering ─────────────────────────────────────────
 
+fn entity_visual_map_position(entity: &Entity) -> MapPoint {
+    let elem = entity.element_data();
+    if entity.is_fx_target() {
+        // Targets keep `position_map` at their action/interact point.
+        // Their sprite is authored at the preserved 3D `position`.
+        elem.position().to_map()
+    } else {
+        let pos = elem.position_map();
+        let jump_z = entity.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
+        MapPoint::new(pos.x, pos.y - jump_z)
+    }
+}
+
 /// Render all entities using cached GPU textures.
 ///
 /// Replaces `render_entities` for the GPU phase.  Each sprite frame is
@@ -1072,13 +1085,9 @@ pub(crate) fn render_entities_gpu(
         }
 
         let elem = entity.element_data();
-        let world_x = elem.position_map().x;
-        // Airborne actors (mid line-jump) lift off the ground: draw
-        // `position_map.y - jump_z_offset` so the sprite moves up the
-        // screen as the character clears the gap.  Isometric
-        // projection `screenY = mapY - z`.
-        let jump_z = entity.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
-        let world_y = elem.position_map().y - jump_z;
+        let visual_pos = entity_visual_map_position(entity);
+        let world_x = visual_pos.x;
+        let world_y = visual_pos.y;
         if world_x == 0.0 && world_y == 0.0 {
             continue;
         }
