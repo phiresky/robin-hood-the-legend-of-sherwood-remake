@@ -872,6 +872,7 @@ impl EngineInner {
             is_valid,
             is_door_click,
             is_jump_click,
+            jump_underlying_sector,
             clicked_door_index,
         ) = if let Some((override_sector, override_layer)) = goal_override {
             // Explicit host-selected sector path: route to
@@ -890,6 +891,7 @@ impl EngineInner {
                 true,
                 false,
                 false,
+                None,
                 None,
             )
         } else {
@@ -912,6 +914,18 @@ impl EngineInner {
                 .sector_idx
                 .and_then(|i| self.fast_grid.level.sectors.get(usize::from(i)))
                 .is_some_and(|s| s.sector_type.is_jump());
+            let jump_underlying_sector = hit
+                .sector_idx
+                .and_then(|i| self.fast_grid.level.sectors.get(usize::from(i)))
+                .filter(|s| s.sector_type.is_jump())
+                .and_then(|s| s.underlying_sector)
+                .and_then(|i| {
+                    self.fast_grid
+                        .level
+                        .sectors
+                        .get(usize::from(i))
+                        .map(|s| (s.sector_number, s.layer))
+                });
 
             // Door index of the clicked door sector, if any.  Used to
             // route the per-PC gate search via `find_path_to_door` and
@@ -941,6 +955,7 @@ impl EngineInner {
                 is_valid,
                 is_door_click,
                 is_jump_click,
+                jump_underlying_sector,
                 clicked_door_index,
             )
         };
@@ -989,22 +1004,122 @@ impl EngineInner {
         //   1. Same-sector: simple MOVE
         //   2. Cross-sector (door/lift): gate-A* sequence
         for ((pc_id, _, _, src_sector), dest) in positions.iter().zip(dests.iter()) {
+            let mut pc_goal_sector = goal_sector;
+            let mut pc_effective_layer = effective_layer;
             if is_jump_click {
                 let pc_pos = positions
                     .iter()
                     .find(|(id, _, _, _)| *id == *pc_id)
                     .map(|(_, p, _, _)| *p)
                     .unwrap_or(*dest);
-                let source_line_idx =
-                    self.get_nearest_jumpable_jump_line(*pc_id, pc_pos, effective_click, false);
-                let Some(source_line_idx) =
-                    source_line_idx.and_then(crate::jump_line::JumpLineIndex::new)
-                else {
-                    tracing::error!(
+                let source_line_idx = self
+                    .get_nearest_jumpable_jump_line(*pc_id, pc_pos, effective_click, false)
+                    .and_then(crate::jump_line::JumpLineIndex::new);
+                if let Some(source_line_idx) = source_line_idx {
+                    let Some(source_line) = self
+                        .fast_grid
+                        .level
+                        .jump_lines
+                        .get(usize::from(source_line_idx))
+                        .cloned()
+                    else {
+                        panic!("line-jump source line {source_line_idx} is missing");
+                    };
+                    let Some(destination_line_idx) = source_line
+                        .associated_line_index
+                        .and_then(crate::jump_line::JumpLineIndex::new)
+                    else {
+                        panic!("line-jump source line {source_line_idx} has no associated line");
+                    };
+                    if self
+                        .fast_grid
+                        .level
+                        .jump_lines
+                        .get(usize::from(destination_line_idx))
+                        .is_none()
+                    {
+                        panic!(
+                            "line-jump destination line {destination_line_idx} for source {source_line_idx} is missing"
+                        );
+                    }
+
+                    let is_swordfighting = self
+                        .get_entity(*pc_id)
+                        .and_then(|e| e.human_data())
+                        .map(|h| !h.opponents.is_empty())
+                        .unwrap_or(false);
+                    let action = if is_swordfighting {
+                        let want = if run {
+                            OrderType::RunningWithSword
+                        } else {
+                            OrderType::WalkingWithSword
+                        };
+                        let has_sword_row = self
+                            .get_entity(*pc_id)
+                            .map(|e| e.sprite().has_animation(want))
+                            .unwrap_or(false);
+                        if has_sword_row {
+                            want
+                        } else if run {
+                            OrderType::RunningUpright
+                        } else {
+                            OrderType::WalkingUpright
+                        }
+                    } else if run {
+                        OrderType::RunningUpright
+                    } else {
+                        match self.get_entity(*pc_id).map(|e| e.element_data().posture) {
+                            Some(crate::element::Posture::Crouched) => OrderType::WalkingCrouched,
+                            _ => OrderType::WalkingUpright,
+                        }
+                    };
+
+                    let mut seq = build_line_jump_click_sequence(
+                        *pc_id,
+                        action,
+                        source_line_idx,
+                        &source_line,
+                        destination_line_idx,
+                        effective_click,
+                        effective_layer,
+                        1.0,
+                    );
+                    if is_swordfighting {
+                        force_sword_movement_for_sequence(&mut seq);
+                    }
+                    let speak = crate::sequence::SequenceElement::new(
+                        4,
+                        crate::element::Command::SpeakHeroReachDestination,
+                        Some(*pc_id),
+                    );
+                    seq.append_element(speak);
+                    self.append_posture_recovery(*pc_id, &mut seq);
+                    self.launch_sequence(seq);
+                    if show_marker && !is_door_click {
+                        self.ground_mark.add_mark(
+                            effective_click.x,
+                            effective_click.y,
+                            effective_layer,
+                        );
+                    }
+                    continue;
+                } else if let Some((underlying_sector, underlying_layer)) = jump_underlying_sector {
+                    pc_goal_sector = Some(underlying_sector);
+                    pc_effective_layer = underlying_layer;
+                    tracing::debug!(
                         actor = ?pc_id,
                         click_x = effective_click.x,
                         click_y = effective_click.y,
-                        "line-jump click hit a jump sector but no executable jump line was found",
+                        sector = %underlying_sector,
+                        layer = underlying_layer,
+                        "jump-sector click has no executable jump line; falling back to underlying motion sector"
+                    );
+                } else {
+                    tracing::warn!(
+                        actor = ?pc_id,
+                        click_x = effective_click.x,
+                        click_y = effective_click.y,
+                        "jump-sector click has no executable jump line and no underlying motion sector"
                     );
                     self.hero_speaking(
                         assets,
@@ -1013,106 +1128,19 @@ impl EngineInner {
                     );
                     continue;
                 };
-                let Some(source_line) = self
-                    .fast_grid
-                    .level
-                    .jump_lines
-                    .get(usize::from(source_line_idx))
-                    .cloned()
-                else {
-                    panic!("line-jump source line {source_line_idx} is missing");
-                };
-                let Some(destination_line_idx) = source_line
-                    .associated_line_index
-                    .and_then(crate::jump_line::JumpLineIndex::new)
-                else {
-                    panic!("line-jump source line {source_line_idx} has no associated line");
-                };
-                if self
-                    .fast_grid
-                    .level
-                    .jump_lines
-                    .get(usize::from(destination_line_idx))
-                    .is_none()
-                {
-                    panic!(
-                        "line-jump destination line {destination_line_idx} for source {source_line_idx} is missing"
-                    );
-                }
-
-                let is_swordfighting = self
-                    .get_entity(*pc_id)
-                    .and_then(|e| e.human_data())
-                    .map(|h| !h.opponents.is_empty())
-                    .unwrap_or(false);
-                let action = if is_swordfighting {
-                    let want = if run {
-                        OrderType::RunningWithSword
-                    } else {
-                        OrderType::WalkingWithSword
-                    };
-                    let has_sword_row = self
-                        .get_entity(*pc_id)
-                        .map(|e| e.sprite().has_animation(want))
-                        .unwrap_or(false);
-                    if has_sword_row {
-                        want
-                    } else if run {
-                        OrderType::RunningUpright
-                    } else {
-                        OrderType::WalkingUpright
-                    }
-                } else if run {
-                    OrderType::RunningUpright
-                } else {
-                    match self.get_entity(*pc_id).map(|e| e.element_data().posture) {
-                        Some(crate::element::Posture::Crouched) => OrderType::WalkingCrouched,
-                        _ => OrderType::WalkingUpright,
-                    }
-                };
-
-                let mut seq = build_line_jump_click_sequence(
-                    *pc_id,
-                    action,
-                    source_line_idx,
-                    &source_line,
-                    destination_line_idx,
-                    effective_click,
-                    effective_layer,
-                    1.0,
-                );
-                if is_swordfighting {
-                    force_sword_movement_for_sequence(&mut seq);
-                }
-                let speak = crate::sequence::SequenceElement::new(
-                    4,
-                    crate::element::Command::SpeakHeroReachDestination,
-                    Some(*pc_id),
-                );
-                seq.append_element(speak);
-                self.append_posture_recovery(*pc_id, &mut seq);
-                self.launch_sequence(seq);
-                if show_marker && !is_door_click {
-                    self.ground_mark.add_mark(
-                        effective_click.x,
-                        effective_click.y,
-                        effective_layer,
-                    );
-                }
-                continue;
             }
 
             // Same-sector or unknown goal sector: simple move
             if !is_door_click
                 && (!is_valid
-                    || goal_sector.is_none()
-                    || goal_sector.is_some_and(|goal| u16::from(goal) == *src_sector))
+                    || pc_goal_sector.is_none()
+                    || pc_goal_sector.is_some_and(|goal| u16::from(goal) == *src_sector))
             {
                 // Door clicks skip the walkable snap entirely.
                 let snap_res = if is_door_click {
                     Some(*dest)
                 } else {
-                    self.snap_click_to_walkable(*dest, effective_click, effective_layer, 0)
+                    self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
                 };
                 let snapped = match snap_res {
                     Some(pt) => pt,
@@ -1190,7 +1218,7 @@ impl EngineInner {
                 } = &mut move_elem.data
                 {
                     *destination = snapped;
-                    *layer = effective_layer;
+                    *layer = pc_effective_layer;
                     if is_swordfighting {
                         *flags |= crate::sequence::MoveFlags::FORCE_SWORD_MOVEMENT;
                     }
@@ -1216,12 +1244,12 @@ impl EngineInner {
                 self.launch_sequence(seq);
                 if show_marker && !is_door_click {
                     self.ground_mark
-                        .add_mark(snapped.x, snapped.y, effective_layer);
+                        .add_mark(snapped.x, snapped.y, pc_effective_layer);
                 }
                 continue;
             }
 
-            if goal_sector.is_none() && !is_door_click {
+            if pc_goal_sector.is_none() && !is_door_click {
                 tracing::warn!("skipping cross-sector move without resolved goal sector");
                 continue;
             };
@@ -1298,7 +1326,7 @@ impl EngineInner {
             let path = if door_goal_info.is_some() {
                 door_goal_info.as_ref().map(|(_, p, _, _, _)| p.clone())
             } else {
-                let Some(goal_sector) = goal_sector else {
+                let Some(goal_sector) = pc_goal_sector else {
                     tracing::warn!("skipping gate path without resolved goal sector");
                     continue;
                 };
@@ -1326,7 +1354,7 @@ impl EngineInner {
                     tracing::info!(
                         "Gate A* from sector {} to sector {}: {} gates{}",
                         src_sector,
-                        goal_sector.map(u16::from).unwrap_or(*src_sector),
+                        pc_goal_sector.map(u16::from).unwrap_or(*src_sector),
                         gate_steps.len(),
                         if door_goal.is_some() {
                             " (door goal)"
@@ -1349,7 +1377,7 @@ impl EngineInner {
                         *pc_id,
                         gate_steps,
                         goal_shape,
-                        effective_layer,
+                        pc_effective_layer,
                         if run {
                             OrderType::RunningUpright
                         } else {
@@ -1373,7 +1401,8 @@ impl EngineInner {
                         true,
                     );
                     if show_marker && !is_door_click {
-                        self.ground_mark.add_mark(dest.x, dest.y, effective_layer);
+                        self.ground_mark
+                            .add_mark(dest.x, dest.y, pc_effective_layer);
                     }
                 }
                 _ => {
@@ -1383,7 +1412,7 @@ impl EngineInner {
                     let snap_res = if is_door_click {
                         Some(*dest)
                     } else {
-                        self.snap_click_to_walkable(*dest, effective_click, effective_layer, 0)
+                        self.snap_click_to_walkable(*dest, effective_click, pc_effective_layer, 0)
                     };
                     let snapped = match snap_res {
                         Some(pt) => pt,
@@ -1402,7 +1431,7 @@ impl EngineInner {
                     self.issue_move_order(*pc_id, snapped, run);
                     if show_marker && !is_door_click {
                         self.ground_mark
-                            .add_mark(snapped.x, snapped.y, effective_layer);
+                            .add_mark(snapped.x, snapped.y, pc_effective_layer);
                     }
                 }
             }
@@ -4309,7 +4338,25 @@ impl EngineInner {
                 remaining_along_heading <= order_tolerance
             };
 
-            if dist <= speed || line_snap_arrival || tolerance_arrival || order_tolerance_arrival {
+            // C++ `RHSprite::PerformMotion` applies the frame distance,
+            // then calls `IsGoalReached()` and pops the order when the
+            // goal is behind the movement vector.  The Rust loop checks
+            // arrival before moving, so a nonzero frame can step past a
+            // short waypoint and leave later zero-distance frames walking
+            // in place forever.  Mirror the original dot-product test so
+            // an already-crossed waypoint still retires.
+            let movement_goal_reached = elem.sprite.position_iface.is_increment_map_computed()
+                && elem
+                    .sprite
+                    .position_iface
+                    .is_goal_reached(&self.fast_grid, None);
+
+            if dist <= speed
+                || movement_goal_reached
+                || line_snap_arrival
+                || tolerance_arrival
+                || order_tolerance_arrival
+            {
                 // Reached waypoint — snap to it and advance
                 if order_tolerance_arrival {
                     let nx = dx / dist;
