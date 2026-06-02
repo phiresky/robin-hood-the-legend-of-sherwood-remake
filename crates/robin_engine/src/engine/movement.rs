@@ -860,13 +860,11 @@ impl EngineInner {
         // ── Unified sector hit-test ──
         //
         // Top-down layer search to set the selected sector / layer /
-        // valid-for-move flags.  When `goal_override` is set (patch
-        // click), skip the spatial query: the proto-loaded
-        // `(patch.sector, patch.layer)` are authoritative.  This mirrors
-        // C++ where `update_mouse` substitutes
-        // `mpSelectedSector = mFastGrid.GetSector(patch.sector)` and
-        // `muwSelectedLayer = patch.layer` before `PerformGroupMove`
-        // reads them at `RHengine.cpp:5301-5306`.
+        // valid-for-move flags.  When `goal_override` is set, skip the
+        // spatial query: host-side hover already selected the authoritative
+        // sector/layer.  This mirrors C++ where `update_mouse` mutates
+        // `mpSelectedSector` / `muwSelectedLayer` before
+        // `PerformGroupMove` reads them.
         let (
             goal_sector,
             effective_click,
@@ -876,14 +874,15 @@ impl EngineInner {
             is_jump_click,
             clicked_door_index,
         ) = if let Some((override_sector, override_layer)) = goal_override {
-            // Patch-click path: route to (patch.sector, patch.layer)
-            // unconditionally.  The waypoint becomes the destination
-            // without snapping; per-PC routing below still calls
-            // `snap_click_to_walkable` at `effective_layer` to find a
-            // valid landing position.  Patches are never doors / jumps,
-            // so those shortcuts stay false.  `is_valid = true` keeps
-            // the simple-move branch reachable when the PC is already
-            // in `patch.sector`.
+            // Explicit host-selected sector path: route to
+            // `(override_sector, override_layer)` unconditionally.  The
+            // waypoint becomes the destination without snapping; per-PC
+            // routing below still calls `snap_click_to_walkable` at
+            // `effective_layer` to find a valid landing position.  The
+            // host only sends motion-sector overrides, so door / jump
+            // shortcuts stay false.  `is_valid = true` keeps the
+            // simple-move branch reachable when the PC is already in the
+            // selected sector.
             (
                 Some(override_sector),
                 click_point,

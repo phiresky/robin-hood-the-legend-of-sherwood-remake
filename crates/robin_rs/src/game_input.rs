@@ -336,12 +336,27 @@ pub fn resolve_left_click(
     }
 
     let actors: Vec<EntityId> = selected.to_vec();
+    let goal_override = host.input.selected_sector_idx.and_then(|idx| {
+        engine
+            .fast_grid()
+            .level
+            .sectors
+            .get(usize::from(idx))
+            .and_then(|sector| {
+                let st = sector.sector_type;
+                if st.is_door() || st.is_jump() {
+                    None
+                } else {
+                    Some((sector.sector_number, host.input.selected_layer))
+                }
+            })
+    });
     vec![PlayerCommand::GroupMove {
         actors,
         destination: map_pt,
         running: is_double,
         show_marker: true,
-        goal_override: None,
+        goal_override,
     }]
 }
 

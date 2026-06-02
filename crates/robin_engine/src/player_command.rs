@@ -33,16 +33,19 @@ pub enum PlayerCommand {
         #[serde(default = "default_true")]
         show_marker: bool,
         /// Optional explicit goal `(sector, layer)` that bypasses the
-        /// spatial lookup at `destination`.  Used by the patch-click
-        /// flow to mirror C++'s
+        /// spatial lookup at `destination`.  Used by host-side selected
+        /// sector substitutions, including the patch-click flow that
+        /// mirrors C++'s
         /// `pSectorGoal = mFastGrid.GetSector(patch.sector)` and
         /// `muwSelectedLayer = patch.layer` substitution at
         /// `RHengine.cpp:14201-14202`: when hovering a patch overlay,
         /// the move's goal sector and layer come from the patch's
         /// proto-loaded `(sector, final_layer)` rather than from a
         /// spatial query on the waypoint, which can pick the wrong
-        /// layer (or no sector at all when the waypoint sits outside
-        /// any registered geometry).
+        /// layer (or no sector at all when the waypoint sits outside any
+        /// registered geometry). Jump-sector hover also rewrites the
+        /// selected sector to the underlying motion sector when no jump
+        /// line is executable, matching `RHEngine::PerformMove`.
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
     },
     /// Stop a PC (clear path, set waiting).
