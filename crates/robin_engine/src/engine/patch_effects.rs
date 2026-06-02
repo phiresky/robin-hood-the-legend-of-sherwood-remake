@@ -409,6 +409,16 @@ impl EngineInner {
                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                     }
                     MovePathOutcome::Failed => {
+                        tracing::warn!(
+                            actor = ?id,
+                            ?seq_id,
+                            elem_idx,
+                            dest_x = dest.x,
+                            dest_y = dest.y,
+                            action = ?action,
+                            frame = self.frame_counter,
+                            "Patch-triggered move retranslation failed; queuing failed_path timeout"
+                        );
                         // Re-translate failed — slide into MOVE_WAITING.
                         self.failed_path_requests.push(
                             crate::engine::movement::FailedPathRequest {

@@ -6155,7 +6155,7 @@ impl EngineInner {
                 // through `stop_owner` (which clears active sequences
                 // and pending path requests for this owner) and
                 // launch a `Wait` sequence element at `Wait` priority.
-                tracing::debug!(
+                tracing::warn!(
                     actor = ?owner,
                     src_x = source.x,
                     src_y = source.y,
@@ -6207,7 +6207,7 @@ impl EngineInner {
             match path {
                 Some(w) => w,
                 None => {
-                    tracing::debug!(
+                    tracing::warn!(
                         actor = ?owner,
                         ?seq_id,
                         elem_idx,

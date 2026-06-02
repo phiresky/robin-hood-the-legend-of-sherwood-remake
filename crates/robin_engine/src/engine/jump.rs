@@ -653,6 +653,15 @@ pub fn get_nearest_jumpable_jump_line(
     best.map(|(idx, _)| idx)
 }
 
+fn jump_line_sector_number(
+    fast_grid: &crate::fast_find_grid::FastFindGrid,
+    line: &JumpLine,
+) -> Option<u16> {
+    let sector_index = line.sector_index?;
+    let sector = fast_grid.level.sectors.get(usize::from(sector_index))?;
+    Some(u16::from(sector.sector_number))
+}
+
 // ═══════════════════════════════════════════════════════════════════
 //  EngineInner-side driver: start / tick / advance the jump.
 // ═══════════════════════════════════════════════════════════════════
@@ -807,7 +816,7 @@ impl EngineInner {
             .map(|s| s.force_crouched)
             .unwrap_or(false);
 
-        let dest_sector = dst_line.sector_index.map(|i| u32::from(i) as u16);
+        let dest_sector = jump_line_sector_number(&self.fast_grid, &dst_line);
         let dest_layer = dst_line.layer;
 
         // `jump_height = associated.z_a - line.z_a`.  For our source
@@ -1772,6 +1781,19 @@ mod tests {
             false,
         );
         assert_eq!(got, Some(0));
+    }
+
+    #[test]
+    fn jump_destination_sector_uses_sector_number_not_grid_index() {
+        let (grid, _doors) = make_jumpable_fixture(false);
+        let destination_line = &grid.level.jump_lines[1];
+
+        assert_eq!(
+            destination_line.sector_index.map(usize::from),
+            Some(1),
+            "fixture should keep the grid index distinct from sector number"
+        );
+        assert_eq!(jump_line_sector_number(&grid, destination_line), Some(11));
     }
 
     #[test]

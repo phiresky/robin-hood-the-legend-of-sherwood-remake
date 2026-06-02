@@ -1437,6 +1437,16 @@ impl EngineInner {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }
                 MovePathOutcome::Failed => {
+                    tracing::warn!(
+                        actor = ?owner,
+                        ?seq_id,
+                        elem_idx,
+                        dest_x = dest.x,
+                        dest_y = dest.y,
+                        action = ?move_action,
+                        frame = self.frame_counter,
+                        "Move path dispatch failed; queuing 100-frame failed_path timeout"
+                    );
                     // Stamp the failed request with the current frame
                     // counter and push it onto `failed_path_requests`.
                     // The element stays `InProgress` with an empty
