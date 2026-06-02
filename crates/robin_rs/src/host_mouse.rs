@@ -492,7 +492,7 @@ pub fn choose_mouse_pointer_for_no_action(
                             entity.element_data().posture == engine_element::Posture::OnShoulders;
                         let pc_pos_map = entity.element_data().position_map();
                         jump_line_idx = engine.get_nearest_jumpable_jump_line(
-                            pc_id, pc_pos_map, mouse_map, /* test_posture */ false,
+                            pc_id, pc_pos_map, mouse_map, /* test_posture */ false, None,
                         );
                         break;
                     }

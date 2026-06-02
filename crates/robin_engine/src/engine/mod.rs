@@ -44,6 +44,7 @@ mod sector_motion;
 mod selection;
 mod sequence_validity;
 mod soldier_helpers;
+mod special_motion;
 pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;

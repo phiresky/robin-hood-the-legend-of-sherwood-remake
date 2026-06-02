@@ -1437,12 +1437,43 @@ impl EngineInner {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }
                 MovePathOutcome::Failed => {
+                    let source = self.get_entity(owner).map(|e| {
+                        let elem = e.element_data();
+                        (
+                            elem.position_map(),
+                            elem.layer(),
+                            elem.sector().map(u16::from),
+                        )
+                    });
+                    let movement_meta = self
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .and_then(|elem| match &elem.data {
+                            crate::sequence::SequenceElementData::Movement {
+                                flags,
+                                line_id,
+                                gate_id,
+                                sector,
+                                layer,
+                                ..
+                            } => Some((*flags, *line_id, *gate_id, *sector, *layer)),
+                            _ => None,
+                        });
                     tracing::warn!(
                         actor = ?owner,
                         ?seq_id,
                         elem_idx,
                         dest_x = dest.x,
                         dest_y = dest.y,
+                        src_x = source.map(|(p, _, _)| p.x),
+                        src_y = source.map(|(p, _, _)| p.y),
+                        src_layer = source.map(|(_, layer, _)| layer),
+                        src_sector = source.and_then(|(_, _, sector)| sector),
+                        elem_flags = ?movement_meta.map(|(flags, _, _, _, _)| flags),
+                        elem_line = ?movement_meta.and_then(|(_, line, _, _, _)| line),
+                        elem_gate = ?movement_meta.and_then(|(_, _, gate, _, _)| gate),
+                        elem_sector = ?movement_meta.and_then(|(_, _, _, sector, _)| sector),
+                        elem_layer = ?movement_meta.map(|(_, _, _, _, layer)| layer),
                         action = ?move_action,
                         frame = self.frame_counter,
                         "Move path dispatch failed; queuing 100-frame failed_path timeout"
@@ -6255,26 +6286,15 @@ impl EngineInner {
         entity_id: EntityId,
         point: crate::coordinates::MapPoint,
     ) {
-        if let Some(entity) = self.entities.get_mut(entity_id) {
-            let elem = entity.element_data_mut();
-            elem.set_position_map(point);
-            elem.update_grid_cell();
-        }
-        let layer = self
-            .get_entity(entity_id)
-            .map(|entity| entity.element_data().layer())
-            .unwrap_or(0);
-        let obstacle = self.find_plane_obstacle_at(assets, layer, point);
-        if obstacle.is_none() {
-            tracing::warn!(
-                entity = ?entity_id,
-                x = point.x,
-                y = point.y,
-                layer,
-                "wall transition ComputePositionAll found no projection-area obstacle"
-            );
-        }
-        self.set_obstacle_and_material(assets, entity_id, obstacle);
+        self.finalize_special_move_position(
+            assets,
+            entity_id,
+            super::special_motion::SpecialMovePosition::Map(point),
+            None,
+            None,
+            Some(point),
+            "wall transition",
+        );
     }
 
     fn apply_door_pass_transition_completion_side_effects(

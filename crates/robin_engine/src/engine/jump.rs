@@ -107,6 +107,10 @@ pub struct ActiveJump {
     /// Destination sector of the jump (for the post-jump sector swap).
     pub dest_sector: Option<u16>,
     pub dest_layer: u16,
+    /// Projection-area probe used at landing. C++ asks the destination
+    /// motion sector for the projection area at the destination jump-line
+    /// midpoint, not necessarily at the exact landing point.
+    pub dest_projection_point: MapPoint,
 }
 
 /// Produces a polyline of 3D waypoints from `start` to `dest` under
@@ -614,9 +618,11 @@ pub fn get_nearest_jumpable_jump_line(
     pt_start: MapPoint,
     pt_goal: MapPoint,
     test_posture: bool,
+    preferred_destination_sector: Option<u16>,
 ) -> Option<u32> {
     let sector = fast_grid.level.sectors.get(pc_sector_grid_idx as usize)?;
-    let mut best: Option<(u32, f32)> = None;
+    let mut best_preferred: Option<(u32, f32)> = None;
+    let mut best_any: Option<(u32, f32)> = None;
     for &line_idx in &sector.jump_line_indices {
         let line_idx_u32 = u32::from(line_idx);
         if !is_jumpable(
@@ -646,11 +652,17 @@ pub fn get_nearest_jumpable_jump_line(
         let dx_s = line_mid.x - pt_start.x;
         let dy_s = line_mid.y - pt_start.y;
         let d = dx_g * dx_g + dy_g * dy_g + dx_s * dx_s + dy_s * dy_s;
-        if best.map(|(_, bd)| d < bd).unwrap_or(true) {
-            best = Some((line_idx_u32, d));
+        if best_any.map(|(_, bd)| d < bd).unwrap_or(true) {
+            best_any = Some((line_idx_u32, d));
+        }
+        let destination_sector_matches = preferred_destination_sector
+            .map(|sector| jump_line_sector_number(fast_grid, assoc) == Some(sector))
+            .unwrap_or(false);
+        if destination_sector_matches && best_preferred.map(|(_, bd)| d < bd).unwrap_or(true) {
+            best_preferred = Some((line_idx_u32, d));
         }
     }
-    best.map(|(idx, _)| idx)
+    best_preferred.or(best_any).map(|(idx, _)| idx)
 }
 
 fn jump_line_sector_number(
@@ -714,6 +726,7 @@ impl EngineInner {
         pt_start: MapPoint,
         pt_goal: MapPoint,
         test_posture: bool,
+        preferred_destination_sector: Option<u16>,
     ) -> Option<u32> {
         let entity = self.entities.get(pc_entity)?;
         let sector_num = entity.element_data().sector()?;
@@ -738,6 +751,7 @@ impl EngineInner {
             pt_start,
             pt_goal,
             test_posture,
+            preferred_destination_sector,
         )
     }
 
@@ -818,6 +832,7 @@ impl EngineInner {
 
         let dest_sector = jump_line_sector_number(&self.fast_grid, &dst_line);
         let dest_layer = dst_line.layer;
+        let dest_projection_point = dst_line.get_middle_point();
 
         // `jump_height = associated.z_a - line.z_a`.  For our source
         // line, `associated` is the paired dst line.
@@ -880,6 +895,7 @@ impl EngineInner {
             element_index: elem_idx,
             dest_sector,
             dest_layer,
+            dest_projection_point,
         };
 
         // Install on the actor and reset any stale flight state.
@@ -916,7 +932,7 @@ impl EngineInner {
     /// to [`EngineInner::advance_jump_step`].  Position interpolation is
     /// done here so it runs every frame, not just on animation end.
     pub(super) fn tick_active_jumps(&mut self, assets: &LevelAssets) {
-        let mut layer_updates: Vec<(EntityId, u16, Option<u16>)> = Vec::new();
+        let mut jump_finishes: Vec<(EntityId, u16, Option<u16>, MapPoint)> = Vec::new();
         // Entities whose current step has reached its `max_frames`
         // cap — we force-advance them after the loop (can't call
         // advance_jump_step inline due to the mutable borrow on
@@ -959,10 +975,16 @@ impl EngineInner {
                         let elem_idx = jump.element_index;
                         let dest_sector = jump.dest_sector;
                         let dest_layer = jump.dest_layer;
+                        let dest_projection_point = jump.dest_projection_point;
                         actor.active_jump = None;
                         actor.jump_z_offset = 0.0;
                         actor.action_state = ActionState::Waiting;
-                        layer_updates.push((entity_id.into(), dest_layer, dest_sector));
+                        jump_finishes.push((
+                            entity_id.into(),
+                            dest_layer,
+                            dest_sector,
+                            dest_projection_point,
+                        ));
                         // Defer sequence termination to after the loop.
                         actor.pending_jump_done = Some((seq_id, elem_idx));
                         continue;
@@ -1037,19 +1059,27 @@ impl EngineInner {
             self.advance_jump_step(entity_id);
         }
 
-        // Apply destination layer/sector swaps and dispatch sequence
-        // termination for jumps that finished this tick.
-        for (entity_id, new_layer, new_sector) in layer_updates {
-            if let Some(entity) = self.entities.get_mut(entity_id) {
-                let elem = entity.element_data_mut();
-                elem.set_layer(new_layer);
-                if let Some(s) = new_sector {
-                    elem.set_sector(crate::position_interface::SectorHandle::new(s));
-                }
-            }
-            // Refresh opponent jump-line state after every
-            // layer/sector swap.
-            self.update_opponents_jump_lines(assets, entity_id);
+        // Apply destination layer/sector/obstacle finalization for jumps
+        // that finished this tick. This mirrors the C++ landing path:
+        // final 3D position is already snapped by `advance_jump_step`;
+        // landing then recomputes the map/plane/material using the
+        // destination line's projection area.
+        for (entity_id, new_layer, new_sector, projection_point) in jump_finishes {
+            let Some(position) = self
+                .get_entity(entity_id)
+                .map(|entity| entity.element_data().position())
+            else {
+                continue;
+            };
+            self.finalize_special_move_position(
+                assets,
+                entity_id,
+                super::special_motion::SpecialMovePosition::World(position),
+                Some(new_layer),
+                new_sector,
+                Some(projection_point),
+                "jump landing",
+            );
         }
 
         // Drain pending_jump_done — terminate sequence elements for
@@ -1779,8 +1809,64 @@ mod tests {
             MapPoint::new(32.0, 0.0),
             MapPoint::new(32.0, 64.0),
             false,
+            None,
         );
         assert_eq!(got, Some(0));
+    }
+
+    #[test]
+    fn nearest_jumpable_prefers_clicked_destination_sector() {
+        let (mut grid, mut doors) = make_jumpable_fixture(false);
+        let pc = pc_auth(true, Posture::Upright);
+
+        let mut alternate = JumpLine::new(
+            MapPoint::new(0.0, 10.0),
+            MapPoint::new(64.0, 10.0),
+            0.0,
+            0.0,
+        );
+        alternate.sector_index = crate::fast_find_grid::SectorIndex::new(0);
+        alternate.associated_line_index = Some(3);
+        let mut alternate_dest = JumpLine::new(
+            MapPoint::new(0.0, 80.0),
+            MapPoint::new(64.0, 80.0),
+            0.0,
+            0.0,
+        );
+        alternate_dest.sector_index = crate::fast_find_grid::SectorIndex::new(2);
+        alternate_dest.associated_line_index = Some(2);
+        grid.level_mut().jump_lines.push(alternate);
+        grid.level_mut().jump_lines.push(alternate_dest);
+        grid.level_mut().sectors[0]
+            .jump_line_indices
+            .push(crate::jump_line::JumpLineIndex::new(2).unwrap());
+
+        let mut preferred_sector = grid.level.sectors[1].clone();
+        preferred_sector.sector_number = crate::sector::SectorNumber::new(22);
+        preferred_sector.jump_line_indices = Vec::new();
+        grid.level_mut().sectors.push(preferred_sector);
+        grid.level_mut()
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(22), 2);
+
+        doors.push(crate::gate::Door {
+            gate_type: crate::gate::GateType::Jump,
+            jump_line_out: Some(2),
+            jump_line_in: Some(3),
+            ..doors[0].clone()
+        });
+
+        let got = get_nearest_jumpable_jump_line(
+            &grid,
+            &doors,
+            0,
+            &pc,
+            MapPoint::new(32.0, 0.0),
+            MapPoint::new(32.0, 64.0),
+            false,
+            Some(22),
+        );
+        assert_eq!(got, Some(2));
     }
 
     #[test]

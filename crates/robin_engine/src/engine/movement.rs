@@ -537,7 +537,11 @@ pub(crate) fn build_line_jump_click_sequence(
         gate_id: None,
         line_id: None,
         element: None,
-        flags: MoveFlags::empty(),
+        // C++ has already selected/routed the jump interaction before
+        // appending this tail. Do not send the short post-jump click tail
+        // back through A*; execute it as direct map motion from the
+        // landing side.
+        flags: MoveFlags::MAP,
         tolerance: 0.0,
         direction: 0,
         action,
@@ -1003,7 +1007,7 @@ impl EngineInner {
         // For each PC, decide between:
         //   1. Same-sector: simple MOVE
         //   2. Cross-sector (door/lift): gate-A* sequence
-        for ((pc_id, _, _, src_sector), dest) in positions.iter().zip(dests.iter()) {
+        for ((pc_id, _, pc_src_layer, src_sector), dest) in positions.iter().zip(dests.iter()) {
             let mut pc_goal_sector = goal_sector;
             let mut pc_effective_layer = effective_layer;
             if is_jump_click {
@@ -1013,7 +1017,13 @@ impl EngineInner {
                     .map(|(_, p, _, _)| *p)
                     .unwrap_or(*dest);
                 let source_line_idx = self
-                    .get_nearest_jumpable_jump_line(*pc_id, pc_pos, effective_click, false)
+                    .get_nearest_jumpable_jump_line(
+                        *pc_id,
+                        pc_pos,
+                        effective_click,
+                        false,
+                        jump_underlying_sector.map(|(sector, _)| u16::from(sector)),
+                    )
                     .and_then(crate::jump_line::JumpLineIndex::new);
                 if let Some(source_line_idx) = source_line_idx {
                     let Some(source_line) = self
@@ -1134,7 +1144,9 @@ impl EngineInner {
             if !is_door_click
                 && (!is_valid
                     || pc_goal_sector.is_none()
-                    || pc_goal_sector.is_some_and(|goal| u16::from(goal) == *src_sector))
+                    || pc_goal_sector.is_some_and(|goal| {
+                        u16::from(goal) == *src_sector && pc_effective_layer == *pc_src_layer
+                    }))
             {
                 // Door clicks skip the walkable snap entirely.
                 let snap_res = if is_door_click {
@@ -1278,7 +1290,7 @@ impl EngineInner {
                 });
                 match adapted {
                     Some((adj, sector, layer)) => (adj, sector, layer),
-                    None => (pc_pos_raw, *src_sector, src_layer),
+                    None => (pc_pos_raw, *src_sector, *pc_src_layer),
                 }
             };
 
@@ -6127,10 +6139,15 @@ impl EngineInner {
         }
 
         // Before queuing a path request, if the move is flagged
-        // MAP / STRAIGHT, or the source→dest segment is
+        // MAP / STRAIGHT / LINE, or the source→dest segment is
         // thick-reachable, skip the pathfinder entirely and emit a
         // single direct order.  The pathfinder is never invoked when
         // a straight line suffices.
+        //
+        // LINE is included because C++ routes `AppendMoveToLineToSequence`
+        // through gates while building the sequence; the final
+        // `RHMOVE_LINE` element is then a direct move to the target line
+        // in the already-selected sector.
         //
         // Without this pre-check, short clicks that are directly
         // walkable still hit A*, which can route the actor through
@@ -6160,6 +6177,7 @@ impl EngineInner {
             });
         let straight_ok = move_flags.contains(crate::sequence::MoveFlags::MAP)
             || move_flags.contains(crate::sequence::MoveFlags::STRAIGHT)
+            || move_flags.contains(crate::sequence::MoveFlags::LINE)
             || is_pass_door
             || actor_passing_door
             || source_is_lift_rail
@@ -6629,7 +6647,7 @@ mod line_jump_tests {
             } => {
                 assert_eq!((destination.x, destination.y), (90.0, 120.0));
                 assert_eq!(*layer, 5);
-                assert!(flags.is_empty());
+                assert!(flags.contains(MoveFlags::MAP));
                 assert_eq!(*line_id, None);
             }
             other => panic!("expected final movement element, got {other:?}"),

@@ -320,6 +320,7 @@ pub(crate) fn render_door_overlays(
                         pc_pos,
                         host.input.selected_map_point,
                         /* test_posture */ false,
+                        None,
                     )
                     .is_some();
                 break;

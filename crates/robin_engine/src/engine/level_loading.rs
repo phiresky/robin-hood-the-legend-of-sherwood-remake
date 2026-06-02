@@ -4339,9 +4339,13 @@ impl EngineInner {
 
         let num_zones = jump_zones.len();
         let mut loaded_pairs = 0usize;
-        // Count referenced jump lines per zone so we can fail loudly
-        // when a zone has no jump line referencing it.
-        let mut zone_line_counts = vec![0u32; num_zones];
+        // Lines stored on each proto jump zone, matching
+        // `RHLineJump::InitializeFromProtoStream` adding the line to
+        // `RHSectorJump::mapJumpLines`. The line's motion-sector
+        // association is assigned separately below from the paired
+        // zone, like `RHFastFindGrid::InitializeMotion`.
+        let mut zone_jump_lines: Vec<Vec<crate::jump_line::JumpLineIndex>> =
+            vec![Vec::new(); num_zones];
 
         for pair in line_pairs {
             let z1 = pair.line1.jump_zone_index as usize;
@@ -4352,9 +4356,6 @@ impl EngineInner {
                 );
                 continue;
             }
-            zone_line_counts[z1] += 1;
-            zone_line_counts[z2] += 1;
-
             // Each line's home is its *paired* line's jump zone.
             let Some(sec1) = zone_sector[z2] else {
                 tracing::warn!(
@@ -4424,6 +4425,12 @@ impl EngineInner {
             let idx2 = idx1 + 1;
             jl1.associated_line_index = Some(idx2);
             jl2.associated_line_index = Some(idx1);
+            if let Some(idx) = crate::jump_line::JumpLineIndex::new(idx1) {
+                zone_jump_lines[z1].push(idx);
+            }
+            if let Some(idx) = crate::jump_line::JumpLineIndex::new(idx2) {
+                zone_jump_lines[z2].push(idx);
+            }
             // Remember the line geometry we need for the jump gate
             // below; we have to clone before moving the lines into
             // `fast_grid.level.jump_lines`.
@@ -4538,7 +4545,7 @@ impl EngineInner {
             // the zone still gets registered below so cursor hit-tests
             // are consistent, but the mismatch is loud enough to catch
             // authoring errors.
-            if zone_line_counts[zi] == 0 {
+            if zone_jump_lines[zi].is_empty() {
                 tracing::error!(
                     "Jump zone {} has no jump line referencing it (uwSector={}, layer={})",
                     zi,
@@ -4573,7 +4580,7 @@ impl EngineInner {
                 low_exit_point: None,
                 high_exit_point: None,
                 lowest_door_index: None,
-                jump_line_indices: Vec::new(),
+                jump_line_indices: zone_jump_lines[zi].clone(),
                 gate_indices: Vec::new(),
                 underlying_sector: zone_sector[zi]
                     .and_then(crate::fast_find_grid::SectorIndex::new),
