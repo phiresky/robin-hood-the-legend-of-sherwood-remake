@@ -17,9 +17,9 @@
 //!
 //! Each branch pushes a list of [`JumpStep`]s onto `ActorData::active_jump`.
 //! [`EngineInner::tick_active_jumps`] drains them one at a time, interpolating
-//! position over the step's animation duration and lifting the actor's
-//! [`ActorData::jump_z_offset`] during airborne segments so the renderer
-//! can place the sprite above the ground.  When the last step terminates,
+//! position over the step's animation duration. Airborne target points
+//! are absolute Spellbound 3D coordinates, matching the original C++
+//! `SetPosition(pointDestination3D)` path.  When the last step terminates,
 //! the owning sequence element is notified via
 //! [`SequenceManager::element_terminated`].
 
@@ -53,8 +53,8 @@ pub const TIME_FLYSEGMENT: u16 = 4;
 ///
 /// Each step installs one `active_ai_anim` with completion
 /// `AiAnimCompletion::NextJumpStep`.  If `target_3d` is `Some`, the
-/// actor's 2D position plus `jump_z_offset` interpolate linearly from
-/// the start of the step to the target across the animation's duration.
+/// actor's absolute 3D position interpolates linearly from the start of
+/// the step to the target across the animation's duration.
 /// If `None`, the animation plays in place (transition crouch up/down,
 /// waiting↔jumping transitions, etc.).
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
@@ -65,8 +65,8 @@ pub struct JumpStep {
     /// plays in place with no position change.
     pub target_3d: Option<WorldPoint3D>,
     /// Whether this step's animation places the actor airborne.  During
-    /// airborne steps the renderer lifts the sprite by `jump_z_offset`;
-    /// on a ground step `jump_z_offset` is snapped to zero on arrival.
+    /// airborne steps `target_3d` is an absolute world position; on a
+    /// ground step it is a map-space target encoded with z=0.
     pub airborne: bool,
     /// Cap this step at `N` frames instead of the animation's full
     /// duration.  Used for `JumpingLong` trajectory segments where each
@@ -1085,20 +1085,20 @@ impl EngineInner {
         };
 
         // ── Snap position to the step's end ──────────────────────
-        // If the step had a 3D target, ensure `position_map` + the
-        // visual lift land exactly on it, independent of how well the
-        // per-frame counter tracked the sprite's true duration.
+        // If the step had a 3D target, ensure the position lands
+        // exactly on it, independent of frame-count drift. Airborne
+        // steps mirror C++ `SetPosition(pointDestination3D)`.
         if let Some(target) = finished.step.target_3d {
             let elem = entity.element_data_mut();
-            elem.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
-                target.x, target.y, target.z,
-            ));
+            if finished.step.airborne {
+                elem.set_position(target);
+            } else {
+                elem.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
+                    target.x, target.y, target.z,
+                ));
+            }
             if let Some(actor) = entity.actor_data_mut() {
-                actor.jump_z_offset = if finished.step.airborne {
-                    target.z
-                } else {
-                    0.0
-                };
+                actor.jump_z_offset = 0.0;
             }
         } else if let Some(actor) = entity.actor_data_mut() {
             // No target: in-place transition.  A non-airborne
@@ -1202,10 +1202,19 @@ fn start_step(
     next_order_id: &mut u32,
     sequence_manager: &crate::sequence::SequenceManager,
 ) -> Option<(crate::sequence::SequenceId, usize, crate::order::Order)> {
-    let pos = entity.element_data().position_map();
+    if step.airborne {
+        start_airborne_jump_motion(entity, &step);
+    }
+
     let (start_x, start_y, start_z) = {
-        let z = entity.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
-        (pos.x, pos.y, z)
+        if step.airborne {
+            let pos = entity.element_data().position();
+            (pos.x, pos.y, pos.z)
+        } else {
+            let pos = entity.element_data().position_map();
+            let z = entity.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
+            (pos.x, pos.y, z)
+        }
     };
 
     // Sprite's animation duration drives the per-frame increment.
@@ -1256,15 +1265,57 @@ fn start_step(
     Some((jump_seq, jump_elem, order))
 }
 
+fn start_airborne_jump_motion(entity: &mut crate::element::Entity, step: &JumpStep) {
+    entity.set_posture(Posture::Flying);
+
+    if let Some(actor) = entity.actor_data_mut() {
+        actor.action_state = if step.anim == OrderType::JumpingLongSword {
+            ActionState::MovingSword
+        } else {
+            ActionState::Moving
+        };
+    }
+
+    let Some(target) = step.target_3d else {
+        tracing::warn!(
+            ?step.anim,
+            "airborne jump step missing 3D target; cannot set jump direction"
+        );
+        return;
+    };
+
+    let pos = entity.element_data().position();
+    let dx = target.x - pos.x;
+    let dy = target.y - pos.y;
+    if dx.abs().max(dy.abs()) >= f32::EPSILON {
+        let dir = crate::position_interface::vector_to_direction(dx, dy);
+        entity
+            .element_data_mut()
+            .set_direction_instantly(dir.into());
+    }
+}
+
+fn jump_airborne_speed(anim: OrderType) -> f32 {
+    match anim {
+        OrderType::JumpingLong | OrderType::JumpingLongSword => 8.0,
+        OrderType::JumpingUp => 15.0,
+        OrderType::JumpingDown => 20.0,
+        _ => {
+            tracing::warn!(
+                ?anim,
+                "airborne jump step used non-jump animation; falling back to long-jump speed"
+            );
+            8.0
+        }
+    }
+}
+
 /// Per-frame position interpolation for the in-progress step.
 ///
 /// Advances the actor by the sprite's per-frame distance along a
-/// fixed direction vector.  Distance is only non-zero on the first
-/// tick of a new animation frame (`frame_count == 0`) — between frames
-/// the actor is stationary — so motion is discrete and synced to the
-/// animation's per-frame distance table.  `jump_z_offset` uses the
-/// same distance ratio so the vertical lift curve tracks the sprite
-/// speed exactly.
+/// fixed direction vector.  Airborne steps move in absolute 3D, like
+/// the original C++ jump orders; ground target steps keep using the
+/// projected map-space sprite distance table.
 fn advance_step_interpolation(entity: &mut crate::element::Entity) {
     let (target_3d, airborne, mut state) = {
         let Some(actor) = entity.actor_data() else {
@@ -1286,6 +1337,49 @@ fn advance_step_interpolation(entity: &mut crate::element::Entity) {
     state.frames_elapsed = state.frames_elapsed.saturating_add(1);
 
     if let Some(target) = target_3d {
+        if airborne {
+            let full_dx = target.x - state.start_x;
+            let full_dy = target.y - state.start_y;
+            let full_dz = target.z - state.start_z;
+            let full_dist = (full_dx * full_dx + full_dy * full_dy + full_dz * full_dz).sqrt();
+
+            let frame_dist = jump_airborne_speed(state.step.anim);
+
+            if full_dist > f32::EPSILON && frame_dist > 0.0 {
+                let dir_x = full_dx / full_dist;
+                let dir_y = full_dy / full_dist;
+                let dir_z = full_dz / full_dist;
+                let elem = entity.element_data_mut();
+                let pos = elem.position();
+                let new_x = pos.x + dir_x * frame_dist;
+                let new_y = pos.y + dir_y * frame_dist;
+                let new_z = pos.z + dir_z * frame_dist;
+                let travelled_new = (new_x - state.start_x) * dir_x
+                    + (new_y - state.start_y) * dir_y
+                    + (new_z - state.start_z) * dir_z;
+                if travelled_new >= full_dist {
+                    elem.set_position(target);
+                } else {
+                    elem.set_position(crate::coordinates::WorldPoint3D {
+                        x: new_x,
+                        y: new_y,
+                        z: new_z,
+                    });
+                }
+            }
+
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.jump_z_offset = 0.0;
+            }
+
+            if let Some(actor) = entity.actor_data_mut()
+                && let Some(jump) = actor.active_jump.as_mut()
+            {
+                jump.current = Some(state);
+            }
+            return;
+        }
+
         let target_map = target.to_map();
         let full_dx = target.x - state.start_x;
         let full_dy = target_map.y - state.start_y;
@@ -1431,6 +1525,16 @@ mod tests {
             steps.last().unwrap().anim,
             OrderType::TransitionJumpingLongWaitingUpright
         );
+    }
+
+    #[test]
+    fn airborne_jump_speeds_match_original_execute() {
+        // RHelementactorpc.cpp Execute() scales jump increments by
+        // 8/15/20 units per tick for long/up/down jump animations.
+        assert_eq!(jump_airborne_speed(OrderType::JumpingLong), 8.0);
+        assert_eq!(jump_airborne_speed(OrderType::JumpingLongSword), 8.0);
+        assert_eq!(jump_airborne_speed(OrderType::JumpingUp), 15.0);
+        assert_eq!(jump_airborne_speed(OrderType::JumpingDown), 20.0);
     }
 
     #[test]
