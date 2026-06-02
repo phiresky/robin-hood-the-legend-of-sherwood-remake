@@ -3561,7 +3561,11 @@ impl EngineInner {
                     // `RunningWithSword` values are non-animations and
                     // must never be sent directly to the per-frame
                     // motion update.
-                    OrderType::WalkingSword
+                    if elem.sprite.has_animation(OrderType::WalkingSword) {
+                        OrderType::WalkingSword
+                    } else {
+                        order_action
+                    }
                 } else {
                     // Compute angle between movement direction and
                     // facing direction, normalised to [0, 2π).
@@ -3592,7 +3596,7 @@ impl EngineInner {
                     }
 
                     let unit = std::f32::consts::FRAC_PI_4; // π/4 = 45°
-                    match action_state {
+                    let sword_anim = match action_state {
                         crate::element::ActionState::MovingShield => {
                             if angle < unit || angle >= 7.0 * unit {
                                 OrderType::WalkingShield
@@ -3622,6 +3626,11 @@ impl EngineInner {
                                 OrderType::StrafingLeftSword
                             }
                         }
+                    };
+                    if elem.sprite.has_animation(sword_anim) {
+                        sword_anim
+                    } else {
+                        order_action
                     }
                 }
             } else {

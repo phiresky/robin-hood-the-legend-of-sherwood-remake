@@ -318,7 +318,7 @@ pub(crate) fn render_door_overlays(
                     .get_nearest_jumpable_jump_line(
                         pc_id,
                         pc_pos,
-                        MapPoint::ZERO,
+                        host.input.selected_map_point,
                         /* test_posture */ false,
                     )
                     .is_some();

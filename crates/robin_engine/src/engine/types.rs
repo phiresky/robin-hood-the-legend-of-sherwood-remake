@@ -1720,7 +1720,8 @@ pub struct InputState {
     pub ignore_next_left_click: bool,
     pub next_left_double_is_simple: bool,
 
-    // Currently hovered layer/sector.
+    // Currently hovered map point/layer/sector.
+    pub selected_map_point: MapPoint,
     pub selected_layer: u16,
     /// Index into `FastFindGrid::sectors` for the sector under the mouse.
     /// Set each frame in `update_mouse`. Used for door/jump alpha overlays.

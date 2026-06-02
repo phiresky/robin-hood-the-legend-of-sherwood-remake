@@ -758,6 +758,7 @@ pub fn update_mouse(
         } else {
             (None, sector_hit.layer, None)
         };
+    host.input.selected_map_point = mouse_map_pt;
     host.input.selected_sector_idx = final_sector_idx;
     host.input.selected_layer = final_layer;
     host.input.selected_patch_idx = selected_patch_idx;
