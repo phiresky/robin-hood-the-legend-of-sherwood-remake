@@ -6,6 +6,8 @@
 
 - feel free to add crates as dependencies - better use battle-tested code rather than build our own implementations
 
+- Always reference `./original-code` if available when implementing, debugging, or checking behavior against the original game.
+
 - **NEVER use `git stash`.** Multiple worktree agents are often running concurrently, each with their own working tree changes. `git stash` is scoped to the repository, not the worktree, so stashing in one worktree and popping in another (or simply having multiple stashes in flight) will restore files on top of each other and destroy work. If you need to temporarily set aside uncommitted changes, commit them to a scratch branch instead, or just leave them in the working tree and work around them.
 
 ## Worktree agent instructions
@@ -44,5 +46,6 @@ When working in a worktree (`.claude/worktrees/<name>/`), you are in a **full co
 ## Repo structure
 
 - `crates/robin_rs/` — main Rust crate (game engine, renderer, all game logic)
+- `original-code/` — original game code/reference material; consult this if available for parity and behavior questions
 - `assets/` — icons, font, other non-code assets
 - `datadirs/` — symlinks to game data directories (demo, fullgame)
