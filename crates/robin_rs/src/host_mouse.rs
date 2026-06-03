@@ -373,21 +373,6 @@ pub fn choose_mouse_pointer_for_no_action(
                 if st.is_motion() && st.is_area() {
                     // Reset trajectory for motion area navigation.
                     host.valid_trajectory = false;
-                    // If either source or target motion area has 0
-                    // gates, the two areas can't possibly be connected
-                    // by a door → show can't-go-there cursor.
-                    let target_gates = sector.gate_indices.len();
-                    let source_gates = pc_sector_idx
-                        .and_then(|i| engine.fast_grid().level.sectors.get(usize::from(i)))
-                        .map(|s| s.gate_indices.len())
-                        .unwrap_or(0);
-                    if target_gates == 0 || source_gates == 0 {
-                        return if shift_held {
-                            RHMOUSE_CANTGOTHERE_OUTLINE
-                        } else {
-                            RHMOUSE_CANTGOTHERE
-                        };
-                    }
                     if st.is_lift() {
                         if let Some(lt) = sector.lift_type {
                             match lt {
@@ -430,20 +415,37 @@ pub fn choose_mouse_pointer_for_no_action(
                                 }
                             }
                         }
-                    } else {
-                        // Non-lift motion area: normal traversal
-                        return if is_swordfighting {
-                            if shift_held {
-                                RHMOUSE_DEFAULT_OUTLINE
-                            } else {
-                                RHMOUSE_SWORDFIGHT_YES
-                            }
-                        } else if shift_held {
-                            RHMOUSE_DEFAULT_OUTLINE
+                    }
+                    // If either source or target motion area has 0
+                    // gates, the two areas can't possibly be connected
+                    // by a door → show can't-go-there cursor. Lift
+                    // sectors are handled above because wall/ladder
+                    // traversal is authorized by lift type, not by
+                    // door-gate adjacency.
+                    let target_gates = sector.gate_indices.len();
+                    let source_gates = pc_sector_idx
+                        .and_then(|i| engine.fast_grid().level.sectors.get(usize::from(i)))
+                        .map(|s| s.gate_indices.len())
+                        .unwrap_or(0);
+                    if target_gates == 0 || source_gates == 0 {
+                        return if shift_held {
+                            RHMOUSE_CANTGOTHERE_OUTLINE
                         } else {
-                            RHMOUSE_DEFAULT
+                            RHMOUSE_CANTGOTHERE
                         };
                     }
+                    // Non-lift motion area: normal traversal
+                    return if is_swordfighting {
+                        if shift_held {
+                            RHMOUSE_DEFAULT_OUTLINE
+                        } else {
+                            RHMOUSE_SWORDFIGHT_YES
+                        }
+                    } else if shift_held {
+                        RHMOUSE_DEFAULT_OUTLINE
+                    } else {
+                        RHMOUSE_DEFAULT
+                    };
                 }
 
                 // Door sector.
