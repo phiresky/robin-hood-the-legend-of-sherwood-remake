@@ -546,6 +546,39 @@ impl Default for Sprite {
 }
 
 impl Sprite {
+    fn initialize_motion_order(&mut self, ctx: MotionOrderContext) {
+        let pi = &mut self.position_iface;
+        pi.set_map_goal(ctx.destination);
+        pi.set_reversed_movement(ctx.reverse);
+        pi.set_tolerance(ctx.tolerance, ctx.directional_tolerance);
+        if let Some(next) = ctx.next_destination_same_action {
+            pi.set_next_map_goal(next);
+        } else {
+            pi.set_goal_next_valid(false);
+        }
+        pi.compute_increment_all(ctx.compute_direction);
+        pi.reset_box_blocked();
+    }
+
+    pub fn stale_motion_goal(&self, ctx: MotionOrderContext) -> Option<MapPoint> {
+        if self.last_processed_order_id != ctx.order_id.get() {
+            return None;
+        }
+
+        let cached_goal = self.position_iface.map_goal();
+        let cached_goal_mismatch = (cached_goal.x - ctx.destination.x).abs() > 0.01
+            || (cached_goal.y - ctx.destination.y).abs() > 0.01;
+        if !self.position_iface.is_increment_map_computed() || cached_goal_mismatch {
+            Some(cached_goal)
+        } else {
+            None
+        }
+    }
+
+    pub fn reseed_motion_order(&mut self, ctx: MotionOrderContext) {
+        self.initialize_motion_order(ctx);
+    }
+
     /// Construct a sprite with explicit, bound script + conversion
     /// tables.  Replaces the pre-refactor `Sprite::new()` no-arg
     /// constructor that used to leave `scripts: None` and force every
@@ -1631,17 +1664,7 @@ impl Sprite {
         if let Some(ctx) = motion_order
             && self.last_processed_order_id != ctx.order_id.get()
         {
-            let pi = &mut self.position_iface;
-            pi.set_map_goal(ctx.destination);
-            pi.set_reversed_movement(ctx.reverse);
-            pi.set_tolerance(ctx.tolerance, ctx.directional_tolerance);
-            if let Some(next) = ctx.next_destination_same_action {
-                pi.set_next_map_goal(next);
-            } else {
-                pi.set_goal_next_valid(false);
-            }
-            pi.compute_increment_all(ctx.compute_direction);
-            pi.reset_box_blocked();
+            self.initialize_motion_order(ctx);
         }
 
         let state = self.perform_action(order_id, anim, direction, progression, force_init);
@@ -2198,6 +2221,35 @@ mod tests {
         assert_eq!(s.current_frame, 0);
         assert_eq!(s.frame_count, 0);
         assert_eq!(s.last_action, OrderType::WaitingUprightBored);
+    }
+
+    #[test]
+    fn test_reseed_motion_order_repairs_stale_goal() {
+        let mut s = make_test_sprite();
+        let order_id = std::num::NonZeroU32::new(42).unwrap();
+        s.last_processed_order_id = order_id.get();
+        s.position_iface
+            .set_map_position(MapPoint::new(1754.0, 1005.0));
+        s.position_iface.set_map_goal(MapPoint::new(1754.0, 1005.0));
+
+        let ctx = MotionOrderContext {
+            order_id,
+            destination: MapPoint::new(1840.0, 982.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: Some(MapPoint::new(1864.0, 969.0)),
+        };
+
+        let stale = s.stale_motion_goal(ctx).unwrap();
+        assert_eq!(stale, MapPoint::new(1754.0, 1005.0));
+
+        s.reseed_motion_order(ctx);
+
+        assert_eq!(s.position_iface.map_goal(), ctx.destination);
+        assert!(s.position_iface.is_increment_map_computed());
+        assert!(s.stale_motion_goal(ctx).is_none());
     }
 
     #[test]

@@ -3914,6 +3914,39 @@ impl EngineInner {
                 elem.set_direction_instantly(dir);
             }
 
+            let motion_order = order_id.map(|order_id| MotionOrderContext {
+                order_id,
+                destination: goal,
+                reverse: order_reverse,
+                tolerance: order_tolerance,
+                directional_tolerance: active_move_flags
+                    .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
+                compute_direction: order_compute_direction,
+                next_destination_same_action,
+            });
+
+            if motion_method != MotionMethod::TillLastFrame
+                && let Some(motion_order) = motion_order
+                && let Some(cached_goal) = elem.sprite.stale_motion_goal(motion_order)
+            {
+                tracing::warn!(
+                    entity = ?entity_id,
+                    order = ?order_action,
+                    order_id = motion_order.order_id.get(),
+                    cached_goal_x = cached_goal.x,
+                    cached_goal_y = cached_goal.y,
+                    goal_x = goal.x,
+                    goal_y = goal.y,
+                    "movement order had stale PositionInterface goal; reseeding"
+                );
+                // TODO: find which order-pop or restore path can leave
+                // `last_processed_order_id` on the current order while
+                // `PositionInterface::goal_map` still points at the prior
+                // waypoint. C++ sets the sprite goal when the order starts;
+                // this repairs that invariant before `IsGoalReached`.
+                elem.sprite.reseed_motion_order(motion_order);
+            }
+
             // Run a one-step rotation of facing toward the goal
             // direction immediately before `perform_motion`.  If the
             // facing already matches the goal it is a no-op.
@@ -3925,16 +3958,6 @@ impl EngineInner {
             // may have nudged the actor a tiny fraction off the
             // order's recorded destination.
             let dest_already_at_pos = motion_method != MotionMethod::TillLastFrame && dist <= 0.01;
-            let motion_order = order_id.map(|order_id| MotionOrderContext {
-                order_id,
-                destination: goal,
-                reverse: order_reverse,
-                tolerance: order_tolerance,
-                directional_tolerance: active_move_flags
-                    .contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE),
-                compute_direction: order_compute_direction,
-                next_destination_same_action,
-            });
             let sprite = &mut elem.sprite;
             let (motion_state, frame_dist_raw) = sprite.perform_motion(
                 motion_order,
