@@ -9,7 +9,10 @@
 
 use super::{EngineInner, LevelAssets};
 use crate::coordinates::{MapPoint, WorldPoint3D};
-use crate::element::EntityId;
+use crate::element::{ActiveDoorPass, EntityId};
+use crate::movement::ActiveMovement;
+use crate::order::{Order, OrderType};
+use crate::sequence::SequenceId;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum SpecialMovePosition {
@@ -102,5 +105,71 @@ impl EngineInner {
         }
 
         self.update_opponents_jump_lines(assets, entity_id);
+    }
+
+    /// Install a movement order that was produced by a special-motion
+    /// translator such as PassDoor/lift/wall/stairs.
+    ///
+    /// C++ still executes these as normal actor movement orders after the
+    /// translator has selected the exact step. Keeping order creation and
+    /// actor-state setup here prevents the PassDoor launch path and the
+    /// transition-resume path from drifting apart.
+    pub(super) fn install_special_walk_order(
+        &mut self,
+        entity_id: EntityId,
+        seq_id: SequenceId,
+        elem_idx: usize,
+        destination: MapPoint,
+        action: OrderType,
+        reverse: bool,
+        compute_direction: bool,
+        tolerance: f32,
+        active_door_pass: Option<ActiveDoorPass>,
+        context: &'static str,
+    ) {
+        let order_id = self.alloc_order_id();
+        let mut order = Order::new(action, destination.x, destination.y, order_id);
+        order.reverse = reverse;
+        order.compute_direction = compute_direction;
+        order.tolerance = tolerance;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+
+        self.apply_door_pass_continue_state(entity_id, action);
+
+        if let Some(entity) = self.entities.get_mut(entity_id) {
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = match action {
+                    OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,
+                    OrderType::RunningWithSword => crate::element::ActionState::MovingFastSword,
+                    OrderType::RunningUpright => crate::element::ActionState::MovingFast,
+                    _ => crate::element::ActionState::Moving,
+                };
+                actor.active_movement = ActiveMovement::new(seq_id, elem_idx);
+                if let Some(dp) = active_door_pass {
+                    actor.passing_door_directly = dp.direct;
+                    actor.active_door_pass = Some(dp);
+                }
+                actor.sequence_element_started = true;
+            }
+        } else {
+            tracing::warn!(
+                ?entity_id,
+                ?seq_id,
+                elem_idx,
+                context,
+                "special walk order installed for missing entity"
+            );
+        }
+
+        tracing::debug!(
+            entity = ?entity_id,
+            ?seq_id,
+            elem_idx,
+            ?action,
+            target_x = destination.x,
+            target_y = destination.y,
+            context,
+            "special walk order installed"
+        );
     }
 }

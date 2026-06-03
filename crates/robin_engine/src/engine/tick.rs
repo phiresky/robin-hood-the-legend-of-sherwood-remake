@@ -1393,12 +1393,15 @@ impl EngineInner {
                     .map(|s| *element_index + 1 >= s.elements.len())
                     .unwrap_or(false);
                 if owner_in_building && (!is_seek || !is_last_of_seq) {
-                    if let Some(entity) = self.get_entity_mut(*owner) {
-                        let dest_pt_elem = dest_pt;
-                        entity.position_iface_mut().set_map_position(dest_pt_elem);
-                        entity.element_data_mut().set_position_map(dest_pt_elem);
-                        entity.element_data_mut().update_grid_cell();
-                    }
+                    self.finalize_special_move_position(
+                        assets,
+                        *owner,
+                        super::special_motion::SpecialMovePosition::Map(dest_pt),
+                        None,
+                        None,
+                        Some(dest_pt),
+                        "building interior move",
+                    );
                     self.sequence_manager
                         .element_terminated(*sequence_id, *element_index);
                     continue;
@@ -1831,52 +1834,18 @@ impl EngineInner {
                                             // so tick_entity_movement can use it.
                                             dp.current_action = *action;
                                             dp.current_reverse = *reverse;
-
-                                            // Push the first Walk step's
-                                            // destination as a walking order on
-                                            // the PassDoor element's queue —
-                                            // the Move driver reads the current
-                                            // order's `target_x/y` as its goal.
-                                            let order_id = self.alloc_order_id();
-                                            if let Some(elem) = self
-                                                .sequence_manager
-                                                .get_element_mut(seq_id, elem_idx)
-                                            {
-                                                let mut order = crate::order::Order::new(
-                                                    *action,
-                                                    destination.x,
-                                                    destination.y,
-                                                    order_id,
-                                                );
-                                                order.reverse = *reverse;
-                                                order.compute_direction = *compute_direction;
-                                                order.tolerance = *tolerance;
-                                                elem.push_order(order);
-                                            }
-                                            if let Some(entity) = self.entities.get_mut(owner)
-                                                && let Some(actor) = entity.actor_data_mut()
-                                            {
-                                                // Derive action state from the
-                                                // movement element's animation.
-                                                actor.action_state = match *action {
-                                                    crate::order::OrderType::WalkingWithSword => {
-                                                        crate::element::ActionState::MovingSword
-                                                    }
-                                                    crate::order::OrderType::RunningWithSword => {
-                                                        crate::element::ActionState::MovingFastSword
-                                                    }
-                                                    crate::order::OrderType::RunningUpright => {
-                                                        crate::element::ActionState::MovingFast
-                                                    }
-                                                    _ => crate::element::ActionState::Moving,
-                                                };
-                                                actor.active_movement =
-                                                    ActiveMovement::new(seq_id, elem_idx);
-                                                actor.passing_door_directly = direct;
-                                                actor.active_door_pass = Some(dp);
-                                                actor.sequence_element_started = true;
-                                            }
-                                            self.apply_door_pass_continue_state(owner, *action);
+                                            self.install_special_walk_order(
+                                                owner,
+                                                seq_id,
+                                                elem_idx,
+                                                (*destination).into(),
+                                                *action,
+                                                *reverse,
+                                                *compute_direction,
+                                                *tolerance,
+                                                Some(dp),
+                                                "PassDoor initial walk",
+                                            );
                                             tracing::debug!(
                                                 entity = ?owner,
                                                 door = %door_idx,
@@ -1911,6 +1880,7 @@ impl EngineInner {
                         Command::ChangePosition => {
                             if let crate::sequence::SequenceElementData::Movement {
                                 destination,
+                                layer,
                                 sector,
                                 direction,
                                 ..
@@ -1934,29 +1904,23 @@ impl EngineInner {
                                     continue;
                                 }
 
+                                self.finalize_special_move_position(
+                                    assets,
+                                    owner,
+                                    super::special_motion::SpecialMovePosition::Map(dest),
+                                    Some(*layer),
+                                    tgt_sector.map(u16::from),
+                                    Some(dest),
+                                    "ChangePosition",
+                                );
                                 if let Some(entity) = self.entities.get_mut(owner) {
-                                    let el = entity.element_data_mut();
-                                    el.set_position_map(crate::coordinates::MapPoint {
-                                        x: dest.x,
-                                        y: dest.y,
-                                    });
                                     // `SetDirectionInstantly` from the
                                     // element's direction field so a
                                     // ChangePosition can rotate the
                                     // actor in the same step.
-                                    el.set_direction_instantly(tgt_direction);
-                                    // The original `ComputePositionAll`
-                                    // reprojects the sprite's world-
-                                    // space caches.  `set_position_map`
-                                    // already wrote the 2D projection
-                                    // used by the renderer / pathfinder,
-                                    // and the sprite's 3D caches are
-                                    // derived on read, so no extra
-                                    // reproject call is needed here —
-                                    // matches the behaviour of the
-                                    // other `set_position_map` call
-                                    // sites (nets.rs:684,
-                                    // script.rs:2573).
+                                    entity
+                                        .element_data_mut()
+                                        .set_direction_instantly(tgt_direction);
                                 }
                             }
                             self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -6169,24 +6133,16 @@ impl EngineInner {
                 );
             }
             OT::TransitionWaitingCrouchedClimbingWallDownCrenel => {
-                let obstacle = self.find_projection_area_at(
+                let point_in = crate::coordinates::MapPoint::new(point_in.x, point_in.y);
+                self.finalize_special_move_position(
                     assets,
-                    layer_in,
-                    u16::from(sector_in),
-                    crate::coordinates::MapPoint::new(point_in.x, point_in.y),
+                    entity_id,
+                    super::special_motion::SpecialMovePosition::Map(point_in),
+                    Some(layer_in),
+                    Some(u16::from(sector_in)),
+                    Some(point_in),
+                    "crenel climb-down transition",
                 );
-                if obstacle.is_none() {
-                    tracing::warn!(
-                        ?entity_id,
-                        ?door_index,
-                        layer = layer_in,
-                        sector = u16::from(sector_in),
-                        point_x = point_in.x,
-                        point_y = point_in.y,
-                        "missing door input projection area for crenel climb-down transition"
-                    );
-                }
-                self.set_obstacle_and_material(assets, entity_id, obstacle);
                 if let Some(entity) = self.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::OnWall);
                     if let Some(actor) = entity.actor_data_mut() {
@@ -6196,14 +6152,6 @@ impl EngineInner {
                     if let Some(dir) = lift_direction {
                         elem.set_direction_instantly(dir);
                     }
-                    let pi = &mut elem.sprite.position_iface;
-                    pi.set_map_position(crate::coordinates::MapPoint {
-                        x: point_in.x,
-                        y: point_in.y,
-                    });
-                    pi.new_move();
-                    pi.compute_increment_all(false);
-                    elem.update_grid_cell();
                 }
             }
             OT::TransitionClimbingWallUpWaitingCrouched => {
@@ -6227,24 +6175,17 @@ impl EngineInner {
                 );
             }
             OT::TransitionClimbingWallUpWaitingCrouchedCrenel => {
-                let obstacle = self.find_projection_area_at(
+                let point_out_probe = crate::coordinates::MapPoint::new(point_out.x, point_out.y);
+                let point_mid_map = crate::coordinates::MapPoint::new(point_mid.x, point_mid.y);
+                self.finalize_special_move_position(
                     assets,
-                    layer_out,
-                    u16::from(sector_out),
-                    crate::coordinates::MapPoint::new(point_out.x, point_out.y),
+                    entity_id,
+                    super::special_motion::SpecialMovePosition::Map(point_mid_map),
+                    Some(layer_out),
+                    Some(u16::from(sector_out)),
+                    Some(point_out_probe),
+                    "crenel climb-up transition",
                 );
-                if obstacle.is_none() {
-                    tracing::warn!(
-                        ?entity_id,
-                        ?door_index,
-                        layer = layer_out,
-                        sector = u16::from(sector_out),
-                        point_x = point_out.x,
-                        point_y = point_out.y,
-                        "missing door output projection area for crenel climb-up transition"
-                    );
-                }
-                self.set_obstacle_and_material(assets, entity_id, obstacle);
                 if let Some(entity) = self.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::Flying);
                     if let Some(actor) = entity.actor_data_mut() {
@@ -6252,20 +6193,14 @@ impl EngineInner {
                     }
                     {
                         let pi = &mut entity.element_data_mut().sprite.position_iface;
-                        let point_mid = crate::coordinates::MapPoint {
-                            x: point_mid.x,
-                            y: point_mid.y,
-                        };
                         let point_out = crate::coordinates::MapPoint {
                             x: point_out.x,
                             y: point_out.y,
                         };
-                        pi.set_map_position(point_mid);
                         pi.set_old_map_position(point_out);
                         pi.set_map_goal(point_out);
                         pi.compute_increment_all(true);
                     }
-                    entity.element_data_mut().update_grid_cell();
                 }
             }
             OT::TransitionClimbingWallDownWaitingUpright => {
@@ -6553,16 +6488,6 @@ impl EngineInner {
                         compute_direction,
                         tolerance,
                     } => {
-                        let order_id = self.alloc_order_id();
-                        let mut order = crate::order::Order::new(
-                            action,
-                            destination.x,
-                            destination.y,
-                            order_id,
-                        );
-                        order.reverse = reverse;
-                        order.compute_direction = compute_direction;
-                        order.tolerance = tolerance;
                         tracing::debug!(
                             entity = ?entity_id,
                             ?action,
@@ -6570,8 +6495,18 @@ impl EngineInner {
                             target_y = destination.y,
                             "DoorPass: resumed with movement order after transition"
                         );
-                        self.apply_door_pass_continue_state(entity_id, action);
-                        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+                        self.install_special_walk_order(
+                            entity_id,
+                            seq_id,
+                            elem_idx,
+                            destination,
+                            action,
+                            reverse,
+                            compute_direction,
+                            tolerance,
+                            None,
+                            "PassDoor resumed walk",
+                        );
                         self.do_next_order(seq_id, elem_idx);
                     }
                     DoorPassAdvance::Paused { transition_order } => {
@@ -7425,36 +7360,23 @@ impl EngineInner {
                         final_sector_number,
                     )) = validated
                     {
-                        // Apply new position + layer/sector + refresh
-                        // position interface + grid cell.
-                        if let Some(entity) = self.entities.get_mut(owner) {
-                            let pi = entity.position_iface_mut();
-                            pi.set_map_position(crate::coordinates::MapPoint {
-                                x: final_dest.x,
-                                y: final_dest.y,
-                            });
-                            let ed = entity.element_data_mut();
-                            ed.set_position_map(crate::coordinates::MapPoint {
-                                x: final_dest.x,
-                                y: final_dest.y,
-                            });
-                            ed.set_layer(final_layer);
-                            ed.set_sector(final_sector_handle);
-                            ed.update_grid_cell();
-                        }
-
-                        // Re-resolve the projection-area obstacle
-                        // for the new sector + position so
-                        // subsequent elevation / material queries
-                        // see the landing cell rather than stale
-                        // data from the source.
-                        let obstacle_idx = self.find_projection_area_at(
+                        // Apply new position + layer/sector and
+                        // re-resolve projection/material through the
+                        // same finalization path used by jump and
+                        // door/lift transitions.
+                        self.finalize_special_move_position(
                             assets,
-                            final_layer,
-                            u16::from(final_sector_number),
-                            final_dest,
+                            owner,
+                            super::special_motion::SpecialMovePosition::Map(final_dest),
+                            Some(final_layer),
+                            Some(u16::from(final_sector_number)),
+                            Some(final_dest),
+                            "script teleport",
                         );
-                        self.set_obstacle_and_material(assets, owner, obstacle_idx);
+
+                        if let Some(entity) = self.entities.get_mut(owner) {
+                            entity.element_data_mut().set_sector(final_sector_handle);
+                        }
 
                         // Landing in a lift sector snaps posture
                         // / action-state: LIFT_LADDER →
@@ -7490,13 +7412,9 @@ impl EngineInner {
                         // being carried, copy the new position /
                         // layer / sector onto the partner so the
                         // carry link stays synced after the
-                        // teleport.  Full `CopyPositionMapEtc`
-                        // semantics require obstacle + material
-                        // (ported in
-                        // `abilities.rs::sync_carried_positions`);
-                        // here we apply the position/layer/sector
-                        // subset directly so subsequent ticks
-                        // read consistent state.
+                        // teleport.  Route partner snaps through the
+                        // same finalizer so obstacle/material are
+                        // refreshed too.
                         if is_pc {
                             let (carried, carrier) = self
                                 .get_entity(owner)
@@ -7507,15 +7425,19 @@ impl EngineInner {
                                 })
                                 .unwrap_or((None, None));
                             for partner in [carried, carrier].into_iter().flatten() {
+                                self.finalize_special_move_position(
+                                    assets,
+                                    partner,
+                                    super::special_motion::SpecialMovePosition::Map(final_dest),
+                                    Some(final_layer),
+                                    Some(u16::from(final_sector_number)),
+                                    Some(final_dest),
+                                    "script teleport carry partner",
+                                );
                                 if let Some(partner_entity) = self.get_entity_mut(partner) {
-                                    let pel = partner_entity.element_data_mut();
-                                    pel.set_position_map(crate::coordinates::MapPoint {
-                                        x: final_dest.x,
-                                        y: final_dest.y,
-                                    });
-                                    pel.set_layer(final_layer);
-                                    pel.set_sector(final_sector_handle);
-                                    pel.update_grid_cell();
+                                    partner_entity
+                                        .element_data_mut()
+                                        .set_sector(final_sector_handle);
                                 }
                             }
                         }

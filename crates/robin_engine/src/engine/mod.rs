@@ -78,7 +78,6 @@ use crate::fast_find_grid::FastFindGrid;
 use crate::markers::GroundMark;
 use crate::messenger::{Message, MessageType, Messenger, SimpleMessage};
 use crate::mission_stat::MissionStat;
-use crate::movement::ActiveMovement;
 use crate::order::OrderType;
 use crate::pathfinder::PathFinder;
 use crate::profiles::MissionType;
