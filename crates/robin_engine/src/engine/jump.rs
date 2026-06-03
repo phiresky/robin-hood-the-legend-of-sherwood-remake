@@ -606,21 +606,29 @@ pub fn is_jumpable(
     }
 }
 
-/// Walks the PC's home sector's jump lines, filters through
-/// [`is_jumpable`], and returns the index of the line whose paired
-/// (destination) line's midpoint is nearest `pt_goal` plus own midpoint
-/// nearest `pt_start`.
+/// Walks the clicked jump sector's jump lines, filters through
+/// [`is_jumpable`] against the PC's home sector, and returns the index
+/// of the line whose paired (destination) line's midpoint is nearest
+/// `pt_goal` plus own midpoint nearest `pt_start`.
+///
+/// This mirrors `RHSectorJump::GetNearestJumpableJumpLine`: candidate
+/// lines come from the hovered/clicked jump zone, while authorization
+/// rejects lines whose source sector is not the actor's current sector.
 pub fn get_nearest_jumpable_jump_line(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     doors: &[crate::gate::Door],
     pc_sector_grid_idx: u32,
+    candidate_sector_grid_idx: u32,
     pc_auth: &crate::gate::ActorAuthInfo,
     pt_start: MapPoint,
     pt_goal: MapPoint,
     test_posture: bool,
     preferred_destination_sector: Option<u16>,
 ) -> Option<u32> {
-    let sector = fast_grid.level.sectors.get(pc_sector_grid_idx as usize)?;
+    let sector = fast_grid
+        .level
+        .sectors
+        .get(candidate_sector_grid_idx as usize)?;
     let mut best_preferred: Option<(u32, f32)> = None;
     let mut best_any: Option<(u32, f32)> = None;
     for &line_idx in &sector.jump_line_indices {
@@ -723,6 +731,7 @@ impl EngineInner {
     pub fn get_nearest_jumpable_jump_line(
         &self,
         pc_entity: EntityId,
+        candidate_sector_grid_idx: u32,
         pt_start: MapPoint,
         pt_goal: MapPoint,
         test_posture: bool,
@@ -747,6 +756,7 @@ impl EngineInner {
             &self.fast_grid,
             doors,
             pc_sector_grid_idx as u32,
+            candidate_sector_grid_idx,
             &pc_auth,
             pt_start,
             pt_goal,
@@ -1800,10 +1810,12 @@ mod tests {
     fn nearest_jumpable_picks_closest_destination() {
         let (grid, doors) = make_jumpable_fixture(false);
         let pc = pc_auth(true, Posture::Upright);
-        // Only one jumpable line in sector 0 — it should be picked.
+        // The clicked jump sector lists line 0, and line 0 is usable
+        // from the PC's sector — it should be picked.
         let got = get_nearest_jumpable_jump_line(
             &grid,
             &doors,
+            0,
             0,
             &pc,
             MapPoint::new(32.0, 0.0),
@@ -1812,6 +1824,29 @@ mod tests {
             None,
         );
         assert_eq!(got, Some(0));
+    }
+
+    #[test]
+    fn nearest_jumpable_rejects_unrelated_clicked_jump_sector() {
+        let (grid, doors) = make_jumpable_fixture(false);
+        let pc = pc_auth(true, Posture::Upright);
+
+        // PC is in sector 0, but the clicked jump sector lists the
+        // opposite-side line.  C++ iterates the clicked jump zone's
+        // line list and then rejects this line because it does not
+        // belong to the PC's current sector.
+        let got = get_nearest_jumpable_jump_line(
+            &grid,
+            &doors,
+            0,
+            1,
+            &pc,
+            MapPoint::new(32.0, 0.0),
+            MapPoint::new(32.0, 64.0),
+            false,
+            None,
+        );
+        assert_eq!(got, None);
     }
 
     #[test]
@@ -1859,6 +1894,7 @@ mod tests {
         let got = get_nearest_jumpable_jump_line(
             &grid,
             &doors,
+            0,
             0,
             &pc,
             MapPoint::new(32.0, 0.0),

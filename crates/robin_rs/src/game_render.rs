@@ -247,7 +247,7 @@ pub(crate) fn render_door_overlays(
         }
     }
 
-    if let Some(sector) = selected_sector {
+    if let Some((sector_index, sector)) = selected_grid_idx.zip(selected_sector) {
         if host.input.display_door
             && sector.sector_type.is_door()
             && let Some(door_idx) = sector.door_index
@@ -317,6 +317,7 @@ pub(crate) fn render_door_overlays(
                 paint = engine
                     .get_nearest_jumpable_jump_line(
                         pc_id,
+                        sector_index as u32,
                         pc_pos,
                         host.input.selected_map_point,
                         /* test_posture */ false,

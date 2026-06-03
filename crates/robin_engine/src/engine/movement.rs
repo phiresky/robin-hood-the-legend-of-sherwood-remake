@@ -876,6 +876,7 @@ impl EngineInner {
             is_valid,
             is_door_click,
             is_jump_click,
+            clicked_jump_sector_idx,
             jump_underlying_sector,
             clicked_door_index,
         ) = if let Some((override_sector, override_layer)) = goal_override {
@@ -895,6 +896,7 @@ impl EngineInner {
                 true,
                 false,
                 false,
+                None,
                 None,
                 None,
             )
@@ -959,6 +961,7 @@ impl EngineInner {
                 is_valid,
                 is_door_click,
                 is_jump_click,
+                if is_jump_click { hit.sector_idx } else { None },
                 jump_underlying_sector,
                 clicked_door_index,
             )
@@ -1019,6 +1022,9 @@ impl EngineInner {
                 let source_line_idx = self
                     .get_nearest_jumpable_jump_line(
                         *pc_id,
+                        u32::from(clicked_jump_sector_idx.unwrap_or_else(|| {
+                            panic!("jump click missing selected jump sector index")
+                        })),
                         pc_pos,
                         effective_click,
                         false,
