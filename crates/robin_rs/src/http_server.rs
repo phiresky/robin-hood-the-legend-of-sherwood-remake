@@ -13,6 +13,7 @@
 //!   | GET    | `/`                 | —                                            | endpoint listing                                       |
 //!   | GET    | `/natives`          | —                                            | `{natives: [{index, name, return_type, params}]}`     |
 //!   | GET    | `/engine-dump`      | —                                            | full serialized engine for ad-hoc debug                  |
+//!   | GET    | `/level-assets`     | —                                            | level-scoped static assets for ad-hoc debug             |
 //!   | GET    | `/script`           | —                                            | mission-script class & function listing                |
 //!   | GET    | `/script/decompile` | `?class=<name>` (optional)                   | `{source: "..."}` — pseudocode for one or all classes  |
 //!   | POST   | `/native`           | `{op, args, this?}`                          | `{return}` or `{error}`                                |
@@ -127,6 +128,8 @@ pub enum HttpPayload {
     HostDebug,
     /// `GET /engine-dump` — full serialized engine for ad-hoc debug.
     EngineDump,
+    /// `GET /level-assets` — level-scoped static assets for ad-hoc debug.
+    LevelAssets,
     /// `GET /script` — class/function listing for the mission script.
     Script,
     /// `GET /script/decompile?class=<name>` — pseudocode dump.
@@ -359,6 +362,7 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
             (Method::Get, "/state") => relay(&queue, HttpPayload::State),
             (Method::Get, "/host-debug") => relay(&queue, HttpPayload::HostDebug),
             (Method::Get, "/engine-dump") => relay(&queue, HttpPayload::EngineDump),
+            (Method::Get, "/level-assets") => relay(&queue, HttpPayload::LevelAssets),
             (Method::Get, "/script") => relay(&queue, HttpPayload::Script),
             (Method::Get, "/script/decompile") => {
                 let class = query_param(&query, "class").map(str::to_string);
@@ -604,6 +608,7 @@ fn info_json() -> serde_json::Value {
         "endpoints": [
             {"method": "GET",  "path": "/natives",            "desc": "list every NativeFn (index, name, params, return type)"},
             {"method": "GET",  "path": "/engine-dump",        "desc": "full serialized engine for ad-hoc debug"},
+            {"method": "GET",  "path": "/level-assets",       "desc": "level-scoped static assets for ad-hoc debug, including static fast-grid sectors plus runtime fast-grid flags"},
             {"method": "GET",  "path": "/host-debug",         "desc": "host/UI state for ad-hoc debug, including trajectory preview and mouse hover fields"},
             {"method": "GET",  "path": "/script",             "desc": "mission-script class & function listing"},
             {"method": "GET",  "path": "/script/decompile",   "desc": "decompile to TypeScript-like pseudocode (?class=Foo)"},
@@ -844,6 +849,9 @@ fn dispatch_in_engine(
         HttpPayload::EngineDump => engine_dump_json(engine)
             .map(ReplyBody::Json)
             .map_err(|e| format!("engine serialize: {e}")),
+        HttpPayload::LevelAssets => level_assets_json(engine, assets)
+            .map(ReplyBody::Json)
+            .map_err(|e| format!("level assets serialize: {e}")),
         HttpPayload::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
         HttpPayload::Decompile { class } => {
             Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
@@ -1243,6 +1251,165 @@ fn bow_range_debug(
 
 fn engine_dump_json(engine: &Engine) -> Result<serde_json::Value, String> {
     crate::json_value::to_json_value(engine).map_err(|e| e.to_string())
+}
+
+fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json::Value, String> {
+    let mut root = serde_json::Map::new();
+    root.insert("schema".into(), serde_json::json!("level-assets.v1"));
+    root.insert(
+        "counts".into(),
+        serde_json::json!({
+            "level_grid": {
+                "lines": assets.level_grid.lines.len(),
+                "sectors": assets.level_grid.sectors.len(),
+                "masks": assets.level_grid.masks.len(),
+                "jump_lines": assets.level_grid.jump_lines.len(),
+                "blocks": assets.level_grid.blocks.len(),
+                "layers": assets.level_grid.layers.len(),
+                "level_repulsive_points": assets.level_grid.level_repulsive_points.len(),
+                "shadow_data": assets.level_grid.shadow_data.len(),
+            },
+            "pathfinder_graph": {
+                "nodes": assets.pathfinder_graph.nodes.len(),
+                "layers": assets.pathfinder_graph.layers.len(),
+                "links": assets.pathfinder_graph.static_data.links.len(),
+                "link_configs": assets.pathfinder_graph.static_data.link_configs.len(),
+                "move_layers": assets.pathfinder_graph.static_data.move_layers.len(),
+                "alternative_move_layers": assets.pathfinder_graph.static_data.alternative_move_layers.len(),
+            },
+            "profiles": {
+                "characters": assets.profile_manager.characters.len(),
+                "soldiers": assets.profile_manager.soldiers.len(),
+                "civilians": assets.profile_manager.civilians.len(),
+                "hth_weapons": assets.profile_manager.hth_weapons.len(),
+                "bows": assets.profile_manager.bows.len(),
+                "missions": assets.profile_manager.missions.len(),
+            },
+            "mission_script_programs": assets.mission_script_programs.len(),
+            "hiking_paths": assets.hiking_paths.len(),
+            "static_sight_obstacles": assets.static_sight_obstacles.len(),
+            "accessory_sprite_prototypes": assets.accessory_sprite_prototypes.len(),
+            "water_zones": assets.water_zones.zones.len(),
+            "material_sectors": assets.material_sectors.sectors.len(),
+            "script_locations": assets.script_location_count,
+            "script_points": assets.script_point_count,
+            "script_buildings": assets.script_building_count,
+            "script_hiking_paths": assets.script_hiking_path_count,
+        }),
+    );
+    root.insert(
+        "pixel_opacity_attached".into(),
+        serde_json::json!(assets.pixel_opacity.is_some()),
+    );
+    insert_json(&mut root, "fast_grid_runtime", engine.fast_grid())?;
+
+    let mut asset = serde_json::Map::new();
+    insert_json(&mut asset, "sprite_scriptor", &*assets.sprite_scriptor)?;
+    insert_json(&mut asset, "level_grid", &*assets.level_grid)?;
+    insert_json(&mut asset, "pathfinder_graph", &*assets.pathfinder_graph)?;
+    insert_json(&mut asset, "hiking_paths", &*assets.hiking_paths)?;
+    insert_json(&mut asset, "profile_manager", &*assets.profile_manager)?;
+    insert_json(&mut asset, "bank_signature", &assets.bank_signature)?;
+    insert_json(
+        &mut asset,
+        "mission_script_programs",
+        &*assets.mission_script_programs,
+    )?;
+    insert_json(&mut asset, "peasant_firstnames", &assets.peasant_firstnames)?;
+    insert_json(&mut asset, "peasant_surnames", &assets.peasant_surnames)?;
+    insert_json(
+        &mut asset,
+        "accessory_sprite_prototypes",
+        &assets.accessory_sprite_prototypes,
+    )?;
+    insert_json(
+        &mut asset,
+        "exclamation_durations",
+        &assets.exclamation_durations,
+    )?;
+    insert_json(&mut asset, "source_durations", &assets.source_durations)?;
+    insert_json(
+        &mut asset,
+        "sound_source_required_ids",
+        &assets.sound_source_required_ids,
+    )?;
+    insert_json(
+        &mut asset,
+        "patch_entity_handles",
+        &assets.patch_entity_handles,
+    )?;
+    insert_json(&mut asset, "scroll_entity_ids", &assets.scroll_entity_ids)?;
+    insert_json(
+        &mut asset,
+        "all_soldier_entity_ids",
+        &assets.all_soldier_entity_ids,
+    )?;
+    insert_json(
+        &mut asset,
+        "soldier_subordinate_ids",
+        &assets.soldier_subordinate_ids,
+    )?;
+    insert_json(&mut asset, "water_zones", &assets.water_zones)?;
+    insert_json(&mut asset, "material_sectors", &assets.material_sectors)?;
+    insert_json(
+        &mut asset,
+        "static_sight_obstacles",
+        &*assets.static_sight_obstacles,
+    )?;
+    insert_json(
+        &mut asset,
+        "script_location_count",
+        &assets.script_location_count,
+    )?;
+    insert_json(&mut asset, "script_point_count", &assets.script_point_count)?;
+    insert_json(
+        &mut asset,
+        "script_location_positions",
+        &assets.script_location_positions,
+    )?;
+    insert_json(
+        &mut asset,
+        "script_location_layers",
+        &assets.script_location_layers,
+    )?;
+    insert_json(
+        &mut asset,
+        "script_location_sectors",
+        &assets.script_location_sectors,
+    )?;
+    insert_json(
+        &mut asset,
+        "script_building_count",
+        &assets.script_building_count,
+    )?;
+    insert_json(
+        &mut asset,
+        "script_hiking_path_count",
+        &assets.script_hiking_path_count,
+    )?;
+    insert_json(
+        &mut asset,
+        "script_zone_grid_indices",
+        &assets.script_zone_grid_indices,
+    )?;
+    root.insert("assets".into(), serde_json::Value::Object(asset));
+
+    Ok(serde_json::Value::Object(root))
+}
+
+fn insert_json<T>(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: &T,
+) -> Result<(), String>
+where
+    T: serde::Serialize + ?Sized,
+{
+    object.insert(
+        key.into(),
+        crate::json_value::to_json_value(value).map_err(|e| e.to_string())?,
+    );
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1830,6 +1997,7 @@ pub mod wasm_rpc {
             "script" => Ok(HttpPayload::Script),
             "state" => Ok(HttpPayload::State),
             "host-debug" => Ok(HttpPayload::HostDebug),
+            "level-assets" => Ok(HttpPayload::LevelAssets),
             "decompile" => {
                 #[derive(serde::Deserialize, Default)]
                 #[serde(default)]
