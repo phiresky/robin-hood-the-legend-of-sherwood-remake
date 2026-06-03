@@ -2617,33 +2617,48 @@ impl EngineInner {
     /// non-drawing periods naturally paused the animation.
     pub fn any_selected_pc_drawing_selection_mark(&self) -> bool {
         for &pc_id in &self.seats[0].selection {
-            let Some(entity) = self.get_entity(pc_id) else {
-                continue;
-            };
-            if !entity.is_active() {
-                continue;
+            if self.pc_draws_selection_mark(pc_id) {
+                return true;
             }
-            let elem = entity.element_data();
-            if elem.posture == crate::element::Posture::Flying {
-                continue;
-            }
-            let pos =
-                crate::coordinates::MapPoint::new(elem.position_map().x, elem.position_map().y);
-            let in_building = match self.fast_grid().get_sector(pos, pos, elem.layer()) {
-                crate::fast_find_grid::SectorHit::Found { sector_idx, .. } => self
-                    .fast_grid()
-                    .level
-                    .sectors
-                    .get(usize::from(sector_idx))
-                    .is_some_and(|s| s.sector_type.is_building()),
-                _ => false,
-            };
-            if in_building {
-                continue;
-            }
-            return true;
         }
         false
+    }
+
+    /// Check whether the entity's cached sector (set during door-pass
+    /// transitions) is a building sector.
+    ///
+    /// Takes the entity's `element.sector` sector number and returns
+    /// the same handle when the sector has the BUILDING flag, so
+    /// callers can also compare "same building".
+    pub(crate) fn entity_building_sector(
+        &self,
+        sector: Option<crate::position_interface::SectorHandle>,
+    ) -> Option<crate::position_interface::SectorHandle> {
+        let sector_num = sector?;
+        let raw = u16::from(sector_num);
+        let gs = self.grid_sector_by_number(crate::sector::SectorNumber::new(raw as i16))?;
+        gs.sector_type.is_building().then_some(sector_num)
+    }
+
+    /// `true` when the rotating ground selection circle should be drawn
+    /// for `pc_id`.
+    pub fn pc_draws_selection_mark(&self, pc_id: EntityId) -> bool {
+        let Some(entity) = self.get_entity(pc_id) else {
+            return false;
+        };
+        if !entity.is_active() {
+            return false;
+        }
+
+        let elem = entity.element_data();
+        if elem.posture == crate::element::Posture::Flying
+            || elem.hidden_in_building
+            || elem.is_in_door_transit()
+        {
+            return false;
+        }
+
+        self.entity_building_sector(elem.sector()).is_none()
     }
 
     /// `true` if `pc_id` has any queued `Command::ShootBow` sequence

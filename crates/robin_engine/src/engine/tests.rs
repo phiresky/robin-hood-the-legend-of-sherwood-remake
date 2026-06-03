@@ -3,7 +3,7 @@
 use super::movement::mercenary_formation_destinations;
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
-use crate::coordinates::{MapPoint, MapSize, MapVec, SpriteFrameOffset};
+use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
 
 #[test]
@@ -1972,6 +1972,59 @@ fn make_test_pc(posture: crate::element::Posture) -> Entity {
         human: Default::default(),
         pc: Default::default(),
     })
+}
+
+#[test]
+fn selection_mark_skips_hidden_and_building_pcs() {
+    let mut engine = EngineInner::new();
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    engine.seats[0].selection.push(pc_id);
+
+    assert!(engine.pc_draws_selection_mark(pc_id));
+    assert!(engine.any_selected_pc_drawing_selection_mark());
+
+    if let Some(Entity::Pc(pc)) = engine.get_entity_mut(pc_id) {
+        pc.element.hidden_in_building = true;
+    }
+    assert!(!engine.pc_draws_selection_mark(pc_id));
+    assert!(!engine.any_selected_pc_drawing_selection_mark());
+
+    if let Some(Entity::Pc(pc)) = engine.get_entity_mut(pc_id) {
+        pc.element.hidden_in_building = false;
+    }
+
+    let sector_num = crate::position_interface::SectorHandle::new(42).unwrap();
+    let mut level = crate::fast_find_grid::LevelGrid::default();
+    level.sector_number_map.insert(
+        crate::sector::SectorNumber::new(u16::from(sector_num) as i16),
+        0,
+    );
+    level.sectors.push(crate::fast_find_grid::GridSector {
+        points: Vec::new(),
+        bounding_box: MapBBox::new(),
+        sector_type: crate::sector::SectorType::BUILDING,
+        layer: 0,
+        sector_number: crate::sector::SectorNumber::new(u16::from(sector_num) as i16),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+    engine.fast_grid.level = std::sync::Arc::new(level);
+
+    if let Some(Entity::Pc(pc)) = engine.get_entity_mut(pc_id) {
+        pc.element.set_sector(Some(sector_num));
+    }
+
+    assert!(!engine.pc_draws_selection_mark(pc_id));
+    assert!(!engine.any_selected_pc_drawing_selection_mark());
 }
 
 #[test]

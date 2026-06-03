@@ -2886,32 +2886,6 @@ impl EngineInner {
         }
     }
 
-    /// Check whether the entity's cached sector (set during door-pass
-    /// transitions) is a building sector.
-    ///
-    /// Takes the entity's `element.sector` (`Option<u16>` sector
-    /// number, updated by `execute_pass_door` at door transitions)
-    /// and returns the grid sector index when the sector has the
-    /// BUILDING flag — so the caller can also test "same building".
-    ///
-    /// The previous implementation did a spatial grid query which
-    /// returned `None` for building sectors (empty polygons).  This
-    /// version reads the cached sector number directly.
-    pub(super) fn entity_building_sector(
-        &self,
-        sector: Option<crate::position_interface::SectorHandle>,
-    ) -> Option<crate::position_interface::SectorHandle> {
-        let sector_num = sector?;
-        let raw = u16::from(sector_num);
-        let gs = self.grid_sector_by_number(crate::sector::SectorNumber::new(raw as i16))?;
-        if gs.sector_type.is_building() {
-            // Same sector returned if it carries the BUILDING flag.
-            Some(sector_num)
-        } else {
-            None
-        }
-    }
-
     /// Test whether the entity is inside a building: the
     /// building-sector flag OR the door-transit branch — true during
     /// the few frames an actor is on a door whose inside-sector is a

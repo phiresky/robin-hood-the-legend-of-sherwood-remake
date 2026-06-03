@@ -120,20 +120,7 @@ impl EngineInner {
             return true;
         }
         let elem = entity.element_data();
-        let pos = elem.position_map();
-        let pt = crate::coordinates::MapPoint::new(pos.x, pos.y);
-        let layer = elem.layer();
-        let hit = self.fast_grid.get_sector(pt, pt, layer);
-        matches!(
-            hit,
-            crate::fast_find_grid::SectorHit::Found { sector_idx, .. }
-                if self
-                    .fast_grid
-                    .level
-                    .sectors
-                    .get(usize::from(sector_idx))
-                    .is_some_and(|s| s.sector_type.is_building())
-        )
+        self.entity_building_sector(elem.sector()).is_some() || elem.is_in_door_transit()
     }
 
     /// Select a single PC, optionally adding to the current selection.

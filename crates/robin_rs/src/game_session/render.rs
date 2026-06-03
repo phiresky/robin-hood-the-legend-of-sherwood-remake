@@ -754,34 +754,14 @@ pub(super) fn render_frame(
     // ShowDetectionPolygon and before ground marks/entities.  Skipped when
     // the PC is inside a building or in POSTURE_FLYING.
     for &pc_id in engine.seat_selection(local_seat) {
+        if !engine.pc_draws_selection_mark(pc_id) {
+            continue;
+        }
         let entity = match engine.get_entity(pc_id) {
             Some(e) => e,
             None => continue,
         };
-        if !entity.is_active() {
-            continue;
-        }
         let elem = entity.element_data();
-        if elem.posture == Posture::Flying {
-            continue;
-        }
-        let map_pos =
-            engine_coordinates::MapPoint::new(elem.position_map().x, elem.position_map().y);
-        let in_building = match engine
-            .fast_grid()
-            .get_sector(map_pos, map_pos, elem.layer())
-        {
-            crate::fast_find_grid::SectorHit::Found { sector_idx, .. } => engine
-                .fast_grid()
-                .level
-                .sectors
-                .get(usize::from(sector_idx))
-                .is_some_and(|s| s.sector_type.is_building()),
-            _ => false,
-        };
-        if in_building {
-            continue;
-        }
         let pos = &elem.position_map();
         let mut map_pt = *pos;
         // Offset +(0, -50) when the PC is on shoulders.
