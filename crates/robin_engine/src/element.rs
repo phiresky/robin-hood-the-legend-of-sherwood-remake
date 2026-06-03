@@ -2379,6 +2379,26 @@ impl Entity {
         self.kind().is_bonus()
     }
 
+    /// Map-space anchor used for sprite placement and sprite-shaped UI
+    /// affordances such as hit tests and hover outlines.
+    ///
+    /// Targets are special: their `position_map` is the action/interact
+    /// point, while the visible sprite is authored at the preserved 3D
+    /// `position` (`RHElementFX` draws the generated edge map from the
+    /// same sprite position as the target sprite). Other actors keep using
+    /// `position_map`, adjusted by jump height so airborne sprites and
+    /// their outlines stay together.
+    pub fn sprite_visual_map_position(&self) -> MapPoint {
+        let elem = self.element_data();
+        if self.is_fx_target() {
+            elem.position().to_map()
+        } else {
+            let pos = elem.position_map();
+            let jump_z = self.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
+            MapPoint::new(pos.x, pos.y - jump_z)
+        }
+    }
+
     /// Camp allegiance for fighter-camp-keyed iteration.  PCs are
     /// always `Royalists`; Soldiers/Civilians read from their cached
     /// camp.  Non-actor entities have no camp and return
@@ -3731,6 +3751,47 @@ mod tests {
             projectile: ProjectileData::default(),
         });
         assert!(!projectile.hourglass());
+    }
+
+    #[test]
+    fn target_sprite_visual_anchor_uses_preserved_3d_position() {
+        let mut element = ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        };
+        element.set_position(WorldPoint3D::new(120.0, 80.0, 30.0));
+        element.set_position_map_preserving_3d(MapPoint::new(10.0, 20.0));
+        let target = Entity::Target(ElementTarget {
+            element,
+            fx: FxData::default(),
+            target: TargetData::default(),
+        });
+
+        assert_eq!(
+            target.sprite_visual_map_position(),
+            MapPoint::new(120.0, 50.0)
+        );
+    }
+
+    #[test]
+    fn actor_sprite_visual_anchor_applies_jump_offset() {
+        let pc = Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                ..ElementData::default()
+            },
+            actor: ActorData {
+                jump_z_offset: 12.0,
+                ..ActorData::default()
+            },
+            human: HumanData::default(),
+            pc: PcData::default(),
+        });
+        let mut pc = pc;
+        pc.element_data_mut()
+            .set_position_map(MapPoint::new(40.0, 70.0));
+
+        assert_eq!(pc.sprite_visual_map_position(), MapPoint::new(40.0, 58.0));
     }
 
     /// Corpse-transition guard: a dead corpse can only flip to

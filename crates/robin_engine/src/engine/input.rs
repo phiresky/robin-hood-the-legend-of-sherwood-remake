@@ -121,18 +121,19 @@ impl EngineInner {
         let elem = entity.element_data();
         let sprite = &elem.sprite;
 
+        let visual_pos = entity.sprite_visual_map_position();
         let w = sprite.current_width as f32;
         let h = sprite.current_height as f32;
         if w == 0.0 || h == 0.0 {
-            let dx = elem.position_map().x - point_map.x;
-            let dy = elem.position_map().y - point_map.y;
+            let dx = visual_pos.x - point_map.x;
+            let dy = visual_pos.y - point_map.y;
             return dx * dx + dy * dy < 400.0;
         }
 
         // Box from C++ sprite position + offset to + size.
         let offset = sprite.current_offset();
-        let left = elem.position_map().x - sprite.center.x + offset.x;
-        let top = elem.position_map().y - sprite.center.y + offset.y;
+        let left = visual_pos.x - sprite.center.x + offset.x;
+        let top = visual_pos.y - sprite.center.y + offset.y;
         let right = left + w - 1.0;
         let bottom = top + h - 1.0;
 

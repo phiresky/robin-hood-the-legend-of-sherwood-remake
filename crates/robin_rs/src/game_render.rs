@@ -1009,16 +1009,7 @@ fn render_character_masks_clipped(
 // ─── GPU entity rendering ─────────────────────────────────────────
 
 fn entity_visual_map_position(entity: &Entity) -> MapPoint {
-    let elem = entity.element_data();
-    if entity.is_fx_target() {
-        // Targets keep `position_map` at their action/interact point.
-        // Their sprite is authored at the preserved 3D `position`.
-        elem.position().to_map()
-    } else {
-        let pos = elem.position_map();
-        let jump_z = entity.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
-        MapPoint::new(pos.x, pos.y - jump_z)
-    }
+    entity.sprite_visual_map_position()
 }
 
 /// Render all entities using cached GPU textures.
@@ -1637,11 +1628,11 @@ pub(crate) fn render_selection_outlines_gpu(
         }
         let bank_id = script.frame_ids[frame as usize];
 
-        // Screen position.  Lift by `jump_z_offset` so selection
-        // outlines follow airborne actors mid line-jump.
-        let jump_z = entity.actor_data().map(|a| a.jump_z_offset).unwrap_or(0.0);
-        let world_x = elem.position_map().x;
-        let world_y = elem.position_map().y - jump_z;
+        // Screen position. Use the same visual anchor as sprite rendering
+        // so hover outlines stay aligned with targets and airborne actors.
+        let visual_pos = entity_visual_map_position(entity);
+        let world_x = visual_pos.x;
+        let world_y = visual_pos.y;
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
         let margin = 256;
