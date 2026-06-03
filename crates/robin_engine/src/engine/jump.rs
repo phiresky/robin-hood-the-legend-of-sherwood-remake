@@ -1090,6 +1090,9 @@ impl EngineInner {
                 Some(projection_point),
                 "jump landing",
             );
+            if let Some(entity) = self.entities.get_mut(entity_id) {
+                entity.position_iface_mut().settle_current_position();
+            }
         }
 
         // Drain pending_jump_done — terminate sequence elements for

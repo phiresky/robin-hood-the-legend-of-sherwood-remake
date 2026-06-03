@@ -1136,6 +1136,22 @@ impl PositionInterface {
         self.old_position_map = self.position_map;
     }
 
+    /// Mark the current location as a settled/non-moving position.
+    ///
+    /// Special motions such as jumps drive position outside
+    /// `PerformMotion`'s normal new-order setup. Once they finish, stale
+    /// movement goals from the pre-special-motion walk must not make
+    /// `is_moving_map` / `is_in_motion` report phantom movement.
+    pub fn settle_current_position(&mut self) {
+        self.old_position = self.position;
+        self.old_position_map = self.position_map;
+        self.goal_map = self.position_map;
+        self.goal_next_valid = false;
+        self.increment = WorldVec3D::ZERO;
+        self.increment_map = MapVec::ZERO;
+        self.computed_increment = IncrementComputed::NONE;
+    }
+
     // ====================================================================
     // Internal eager re-sync helpers
     //
@@ -2090,6 +2106,27 @@ mod tests {
 
         pi.set_position(p3(11.0, 20.0, 0.0));
         assert!(pi.is_moving());
+    }
+
+    #[test]
+    fn settle_current_position_clears_stale_motion_state() {
+        let mut pi = PositionInterface::new();
+        pi.set_position(p3(10.0, 20.0, 0.0));
+        pi.set_old_position(p3(-10.0, -20.0, 0.0));
+        pi.set_old_map_position(MapPoint::new(-10.0, -20.0));
+        pi.set_map_goal(MapPoint::new(30.0, 40.0));
+        pi.set_next_map_goal(MapPoint::new(50.0, 60.0));
+        pi.compute_increment_all(true);
+
+        assert!(pi.is_moving_map());
+        assert_ne!(pi.map_goal(), pi.map_position());
+
+        pi.settle_current_position();
+
+        assert!(!pi.is_moving());
+        assert!(!pi.is_moving_map());
+        assert_eq!(pi.map_goal(), pi.map_position());
+        assert!(!pi.is_increment_map_computed());
     }
 
     // ── Grid integration tests ──
