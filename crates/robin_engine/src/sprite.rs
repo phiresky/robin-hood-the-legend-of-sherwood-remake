@@ -2253,6 +2253,44 @@ mod tests {
     }
 
     #[test]
+    fn changed_motion_order_id_reinitializes_goal_without_reseed_warning() {
+        let mut s = make_test_sprite();
+        let old_order_id = std::num::NonZeroU32::new(42).unwrap();
+        let new_order_id = std::num::NonZeroU32::new(43).unwrap();
+        s.last_processed_order_id = old_order_id.get();
+        s.position_iface
+            .set_map_position(MapPoint::new(1754.0, 1005.0));
+        s.position_iface.set_map_goal(MapPoint::new(1754.0, 1005.0));
+
+        let ctx = MotionOrderContext {
+            order_id: new_order_id,
+            destination: MapPoint::new(1840.0, 982.0),
+            reverse: false,
+            tolerance: 0.0,
+            directional_tolerance: false,
+            compute_direction: true,
+            next_destination_same_action: None,
+        };
+
+        assert!(s.stale_motion_goal(ctx).is_none());
+
+        let (state, _) = s.perform_motion(
+            Some(ctx),
+            OrderType::WaitingUprightBored,
+            0,
+            FrameProgression::Default,
+            false,
+            MotionMethod::Walk,
+            false,
+        );
+
+        assert_eq!(state, MotionState::Start);
+        assert_eq!(s.last_processed_order_id, new_order_id.get());
+        assert_eq!(s.position_iface.map_goal(), ctx.destination);
+        assert!(s.position_iface.is_increment_map_computed());
+    }
+
+    #[test]
     fn test_perform_action_basic() {
         let mut s = make_test_sprite();
 

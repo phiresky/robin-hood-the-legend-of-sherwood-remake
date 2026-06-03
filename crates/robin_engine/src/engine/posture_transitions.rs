@@ -227,13 +227,19 @@ impl EngineInner {
         );
 
         // Rewrite the walking-order targets on the Move element with
-        // the new deviated points.
+        // the new deviated points. C++ drunken post-processing inserts
+        // fresh RHOrder copies for deviated points, so the sprite sees
+        // a new ulUniqueID and re-runs SetPositionGoalMap /
+        // ComputeIncrementAll. Rust rewrites targets in place here;
+        // reroll the id for any changed target to preserve that
+        // PerformMotion invariant.
         if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
             // Skip any non-walking orders at the front (startup
             // transition or end transition — their geometry is not
             // part of the drunken-rewrite path).  Replace subsequent
             // walking orders' targets with the deviated waypoints.
             let mut dev_iter = deviated.iter();
+            let next_order_id = &mut self.next_order_id;
             for order in elem.orders.iter_mut() {
                 if matches!(
                     order.order_type,
@@ -243,8 +249,13 @@ impl EngineInner {
                         | OrderType::RunningWithSword
                 ) && let Some(next) = dev_iter.next()
                 {
-                    order.target_x = next.x;
-                    order.target_y = next.y;
+                    if (order.target_x - next.x).abs() > 0.01
+                        || (order.target_y - next.y).abs() > 0.01
+                    {
+                        order.target_x = next.x;
+                        order.target_y = next.y;
+                        order.reseed_id(crate::order::alloc_order_id(next_order_id));
+                    }
                 }
             }
         }
