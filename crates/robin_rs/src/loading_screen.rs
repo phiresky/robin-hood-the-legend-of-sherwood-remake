@@ -308,15 +308,31 @@ impl LoadingScreen {
         self.status_text = text;
     }
 
+    fn set_level_monotonic(&mut self, level: f32) {
+        if level < self.current_level {
+            tracing::warn!(
+                from = self.current_level,
+                to = level,
+                "Loading screen progress update would move backwards"
+            );
+            return;
+        }
+        self.current_level = level;
+    }
+
     /// Update progress to an absolute level and set the status string ID.
+    ///
+    /// Loading progress is display state for one active load sequence, so it
+    /// must be monotonic. Use [`initialize`](Self::initialize) to start a new
+    /// sequence at zero.
     pub fn update(&mut self, string_id: u32, level: f32) {
         self.string_id = string_id;
-        self.current_level = level;
+        self.set_level_monotonic(level);
     }
 
     /// Update progress to an absolute level (keeping current string).
     pub fn update_level(&mut self, level: f32) {
-        self.current_level = level;
+        self.set_level_monotonic(level);
     }
 
     /// Increment progress by a delta and set the status string ID.
@@ -648,7 +664,16 @@ impl LoadingScreenRenderer {
         if self.state.current_level < self.phase_ceiling {
             self.state.current_level = self.phase_ceiling;
         }
-        self.phase_ceiling = new_ceiling;
+        if new_ceiling < self.phase_ceiling {
+            tracing::warn!(
+                from = self.phase_ceiling,
+                to = new_ceiling,
+                text,
+                "Loading screen phase target would move backwards"
+            );
+        } else {
+            self.phase_ceiling = new_ceiling;
+        }
         tracing::info!(progress = self.state.progress(), "[loading] {text}");
         self.state.set_status_text(Some(text));
         self.refresh();
@@ -1021,6 +1046,22 @@ mod tests {
     }
 
     #[test]
+    fn loading_screen_absolute_updates_are_monotonic() {
+        let mut screen = LoadingScreen::default();
+        screen.initialize(800, 600, 10.0);
+        screen.update(42, 7.0);
+
+        screen.update(43, 3.0);
+        assert_eq!(screen.string_id, 43);
+        assert_eq!(screen.current_level, 7.0);
+        assert_eq!(screen.progress(), 0.7);
+
+        screen.update_level(-5.0);
+        assert_eq!(screen.current_level, 7.0);
+        assert_eq!(screen.progress(), 0.7);
+    }
+
+    #[test]
     fn loading_screen_increment_adds_delta() {
         let mut screen = LoadingScreen::default();
         screen.initialize(800, 600, 10.0);
@@ -1041,9 +1082,6 @@ mod tests {
 
         screen.update_level(15.0); // exceeds max
         assert_eq!(screen.progress(), 1.0);
-
-        screen.update_level(-5.0); // negative
-        assert_eq!(screen.progress(), 0.0);
     }
 
     #[test]
