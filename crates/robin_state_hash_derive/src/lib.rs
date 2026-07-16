@@ -10,158 +10,189 @@
 //! each field's `StateHash::state_hash`. For enums it hashes the
 //! discriminant first, then each variant's fields.
 //!
-//! `#[serde(skip)]` fields are also skipped from `StateHash` so the
-//! derived hash matches the serialized shape — important since
-//! `state_hash` is what the rollback checker uses to detect
-//! determinism bugs and rolled-back state must hash to the same value
-//! as live state.
+//! Fields omitted from serialization via `#[serde(skip)]` or
+//! `#[serde(skip_serializing)]` are represented by an explicit skipped-field
+//! marker in `StateHash` too. A field can also opt out of hashing without
+//! changing its Serde representation via `#[state_hash(skip)]`.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, Index, parse_macro_input, spanned::Spanned};
+use syn::{
+    Data, DataEnum, DeriveInput, Field, Fields, Index, Meta, Token, parse_macro_input,
+    punctuated::Punctuated, spanned::Spanned,
+};
 
-#[proc_macro_derive(StateHash)]
+#[proc_macro_derive(StateHash, attributes(state_hash))]
 pub fn derive_state_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
+    match expand_state_hash(&input) {
+        Ok(expanded) => TokenStream::from(expanded),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+fn expand_state_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let ident = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let body: TokenStream2 = match input.data {
-        Data::Struct(data) => struct_body(&data.fields),
-        Data::Enum(data) => {
-            let arms: TokenStream2 = data
-                .variants
-                .iter()
-                .enumerate()
-                .map(|(disc, variant)| {
-                    let variant_ident = &variant.ident;
-                    let disc = disc as u64;
-                    match &variant.fields {
-                        Fields::Unit => quote! {
-                            Self::#variant_ident => {
-                                ::core::hash::Hasher::write_u64(state, #disc);
-                            }
-                        },
-                        Fields::Named(fields) => {
-                            let bindings: Vec<_> = fields
-                                .named
-                                .iter()
-                                .map(|f| f.ident.as_ref().unwrap())
-                                .collect();
-                            let calls = fields.named.iter().map(|f| {
-                                let id = f.ident.as_ref().unwrap();
-                                hash_call(&f.ty, quote! { #id })
-                            });
-                            quote! {
-                                Self::#variant_ident { #(#bindings),* } => {
-                                    ::core::hash::Hasher::write_u64(state, #disc);
-                                    #(#calls)*
-                                }
-                            }
-                        }
-                        Fields::Unnamed(fields) => {
-                            let bindings: Vec<_> = fields
-                                .unnamed
-                                .iter()
-                                .enumerate()
-                                .map(|(i, f)| syn::Ident::new(&format!("__f{i}"), f.span()))
-                                .collect();
-                            let calls = bindings
-                                .iter()
-                                .zip(fields.unnamed.iter())
-                                .map(|(b, f)| hash_call(&f.ty, quote! { #b }));
-                            quote! {
-                                Self::#variant_ident( #(#bindings),* ) => {
-                                    ::core::hash::Hasher::write_u64(state, #disc);
-                                    #(#calls)*
-                                }
-                            }
-                        }
-                    }
-                })
-                .collect();
-            quote! {
-                match self {
-                    #arms
-                }
-            }
-        }
+    let body = match &input.data {
+        Data::Struct(data) => struct_body(&data.fields)?,
+        Data::Enum(data) => enum_body(data)?,
         Data::Union(_) => {
-            return syn::Error::new_spanned(ident, "StateHash cannot be derived for unions")
-                .to_compile_error()
-                .into();
+            return Err(syn::Error::new_spanned(
+                ident,
+                "StateHash cannot be derived for unions",
+            ));
         }
     };
 
-    let expanded = quote! {
+    Ok(quote! {
         #[automatically_derived]
         impl #impl_generics ::robin_util::state_hash::StateHash for #ident #ty_generics #where_clause {
             fn state_hash<__H: ::core::hash::Hasher>(&self, state: &mut __H) {
                 #body
             }
         }
-    };
-
-    TokenStream::from(expanded)
+    })
 }
 
-/// True if any of `attrs` is `#[serde(skip)]` (or `skip_serializing`).
-/// We skip those from the hash too, so the hash matches what the
-/// snapshot would carry.
-fn is_serde_skipped(attrs: &[syn::Attribute]) -> bool {
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        let mut skip = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip") || meta.path.is_ident("skip_serializing") {
-                skip = true;
+fn enum_body(data: &DataEnum) -> syn::Result<TokenStream2> {
+    let mut arms = Vec::with_capacity(data.variants.len());
+    for (disc, variant) in data.variants.iter().enumerate() {
+        let variant_ident = &variant.ident;
+        let disc = disc as u64;
+        let arm = match &variant.fields {
+            Fields::Unit => quote! {
+                Self::#variant_ident => {
+                    ::core::hash::Hasher::write_u64(state, #disc);
+                }
+            },
+            Fields::Named(fields) => {
+                let mut patterns = Vec::with_capacity(fields.named.len());
+                let mut calls = Vec::with_capacity(fields.named.len());
+                for field in &fields.named {
+                    let id = field
+                        .ident
+                        .as_ref()
+                        .expect("named field must have an identifier");
+                    if is_hash_skipped(field)? {
+                        patterns.push(quote! { #id: _ });
+                        calls.push(skipped_hash_call());
+                    } else {
+                        patterns.push(quote! { #id });
+                        calls.push(hash_call(quote! { #id }));
+                    }
+                }
+                quote! {
+                    Self::#variant_ident { #(#patterns),* } => {
+                        ::core::hash::Hasher::write_u64(state, #disc);
+                        #(#calls)*
+                    }
+                }
             }
-            Ok(())
-        });
-        if skip {
-            return true;
-        }
+            Fields::Unnamed(fields) => {
+                let mut patterns = Vec::with_capacity(fields.unnamed.len());
+                let mut calls = Vec::with_capacity(fields.unnamed.len());
+                for (index, field) in fields.unnamed.iter().enumerate() {
+                    if is_hash_skipped(field)? {
+                        patterns.push(quote! { _ });
+                        calls.push(skipped_hash_call());
+                    } else {
+                        let binding = syn::Ident::new(&format!("__f{index}"), field.span());
+                        patterns.push(quote! { #binding });
+                        calls.push(hash_call(quote! { #binding }));
+                    }
+                }
+                quote! {
+                    Self::#variant_ident( #(#patterns),* ) => {
+                        ::core::hash::Hasher::write_u64(state, #disc);
+                        #(#calls)*
+                    }
+                }
+            }
+        };
+        arms.push(arm);
     }
-    false
+
+    Ok(quote! {
+        match self {
+            #(#arms)*
+        }
+    })
 }
 
-fn struct_body(fields: &Fields) -> TokenStream2 {
+/// Whether this field is absent from the serialized snapshot or explicitly
+/// excluded with `#[state_hash(skip)]`.
+fn is_hash_skipped(field: &Field) -> syn::Result<bool> {
+    let mut skipped = false;
+    for attr in &field.attrs {
+        if attr.path().is_ident("serde") {
+            let metas = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+            skipped |= metas.iter().any(|meta| {
+                meta.path().is_ident("skip") || meta.path().is_ident("skip_serializing")
+            });
+        } else if attr.path().is_ident("state_hash") {
+            let metas = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+            for meta in metas {
+                if let Meta::Path(path) = &meta
+                    && path.is_ident("skip")
+                {
+                    skipped = true;
+                } else {
+                    return Err(syn::Error::new_spanned(
+                        meta,
+                        "unsupported StateHash field attribute; expected #[state_hash(skip)]",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(skipped)
+}
+
+fn struct_body(fields: &Fields) -> syn::Result<TokenStream2> {
+    let mut calls = Vec::with_capacity(fields.len());
     match fields {
-        Fields::Named(fs) => {
-            let calls = fs.named.iter().filter_map(|f| {
-                if is_serde_skipped(&f.attrs) {
-                    return None;
+        Fields::Named(fields) => {
+            for field in &fields.named {
+                if is_hash_skipped(field)? {
+                    calls.push(skipped_hash_call());
+                } else {
+                    let id = field
+                        .ident
+                        .as_ref()
+                        .expect("named field must have an identifier");
+                    calls.push(hash_call(quote! { self.#id }));
                 }
-                let id = f.ident.as_ref().unwrap();
-                Some(hash_call(&f.ty, quote! { self.#id }))
-            });
-            quote! { #(#calls)* }
+            }
         }
-        Fields::Unnamed(fs) => {
-            let calls = fs.unnamed.iter().enumerate().filter_map(|(i, f)| {
-                if is_serde_skipped(&f.attrs) {
-                    return None;
+        Fields::Unnamed(fields) => {
+            for (index, field) in fields.unnamed.iter().enumerate() {
+                if is_hash_skipped(field)? {
+                    calls.push(skipped_hash_call());
+                } else {
+                    let index = Index {
+                        index: index as u32,
+                        span: field.span(),
+                    };
+                    calls.push(hash_call(quote! { self.#index }));
                 }
-                let idx = Index {
-                    index: i as u32,
-                    span: f.span(),
-                };
-                Some(hash_call(&f.ty, quote! { self.#idx }))
-            });
-            quote! { #(#calls)* }
+            }
         }
-        Fields::Unit => quote! {},
+        Fields::Unit => {}
     }
+    Ok(quote! { #(#calls)* })
 }
 
-/// Emit a call that hashes one field. Just delegates to the trait —
-/// the float impls in `robin_util::state_hash` handle the to_bits
-/// dance, and the macro itself stays type-agnostic.
-fn hash_call(_ty: &syn::Type, accessor: TokenStream2) -> TokenStream2 {
+fn hash_call(accessor: TokenStream2) -> TokenStream2 {
     quote! {
         ::robin_util::state_hash::StateHash::state_hash(&#accessor, state);
+    }
+}
+
+fn skipped_hash_call() -> TokenStream2 {
+    quote! {
+        ::robin_util::state_hash::hash_skipped_field(state);
     }
 }
