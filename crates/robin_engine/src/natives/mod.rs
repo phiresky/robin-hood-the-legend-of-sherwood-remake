@@ -56,10 +56,11 @@ mod signatures;
 mod tests;
 
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
-pub use defs::{NativeFn, native_name};
+pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
-    NATIVE_SIGNATURES, NativeParamSig, NativeSignature, native_signature_by_index,
-    native_signature_by_name,
+    NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
+    NativeSignature, native_definition_by_index, native_definition_by_name,
+    native_signature_by_index, native_signature_by_name,
 };
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
