@@ -2054,8 +2054,6 @@ impl EngineInner {
     /// the target entity, since the script call needs `self.entities`
     /// via [`MissionScript::swap_engine_state`].  The function is a
     /// no-op (returns `true`) for:
-    ///  - Stimuli whose `StimulusType` has no AI event code (engine-
-    ///    internal types, meta markers — the `event_code = -2` path).
     ///  - Actors with no script instance or no `FilterAIEvent`
     ///    override (the base-class `FilterAIEvent` returns 1 / allow).
     ///  - Script VM errors — logged and treated as allow so a
@@ -2069,28 +2067,9 @@ impl EngineInner {
         handle: i32,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
-        let Some(code) = crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type) else {
-            // The original `StartThink` sets `event_code = -2` for
-            // unmapped types and still invokes `FilterAIEvent(source,
-            // -2)`.  No audited shipped script branches on -2, but a
-            // future script might — warn for scripted actors so anyone
-            // porting a modded script sees the divergence.
-            if self
-                .mission_script
-                .as_ref()
-                .is_some_and(|s| s.actor_has_function(handle, "FilterAIEvent"))
-            {
-                tracing::warn!(
-                    target: "filter_ai_event_divergence",
-                    handle,
-                    stimulus_type = ?stimulus.stimulus_type,
-                    "unmapped StimulusType; skipping FilterAIEvent(-2) call \
-                     — scripted actor may see divergent behavior if its \
-                     filter branches on code -2"
-                );
-            }
-            return true;
-        };
+        // Original: RHArtificialIntelligence::StartThink assigns -2 in the
+        // default switch arm and still calls FilterAIEvent for scripted NPCs.
+        let code = crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2);
 
         let source = match stimulus.info {
             crate::ai::StimulusInfo::Human(h) => crate::natives::GameHost::actor_handle(

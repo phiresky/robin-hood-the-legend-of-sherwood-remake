@@ -1828,6 +1828,37 @@ fn dead_pc_triggers_failure() {
 }
 
 #[test]
+fn non_playable_pc_does_not_prevent_default_loss() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+
+    let entity = Entity::Pc(crate::element::ActorPc {
+        element: crate::element::ElementData {
+            kind: crate::element::ElementKind::ActorPc,
+            active: true,
+            posture: crate::element::Posture::Upright,
+            ..Default::default()
+        },
+        actor: Default::default(),
+        human: Default::default(),
+        pc: crate::element::PcData {
+            playable: false,
+            life_points: 100,
+            ..Default::default()
+        },
+    });
+    engine.add_entity(entity);
+
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+
+    assert_eq!(result, GameCode::LevelFailed);
+}
+
+#[test]
 fn zoom_step_completes_after_8_steps() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();

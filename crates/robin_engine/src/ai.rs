@@ -976,11 +976,12 @@ impl AiState {
 
 /// Map a stimulus type to its AI event code for `FilterAIEvent`.
 ///
-/// Returns `Some(code)` for stimuli that `StartThink`'s big switch maps,
-/// `None` for unmapped types (Rust-only stimuli or meta markers). The
-/// mapping covers event codes 0–52. Unmapped stimuli bypass `FilterAIEvent`
-/// entirely — falling into the default arm, which a well-formed script's
-/// filter never branches on.
+/// Returns `Some(code)` for stimuli that `StartThink`'s big switch maps and
+/// `None` for types that the original passes to `FilterAIEvent` as `-2`.
+/// The mapping covers event codes 0–52.
+///
+/// Original: `RHArtificialIntelligence::StartThink` in
+/// `original-code/RHartificialintelligence.cpp`.
 pub fn stimulus_to_ai_event_code(st: StimulusType) -> Option<i32> {
     match st {
         // Perception events (0–14)
@@ -1040,9 +1041,8 @@ pub fn stimulus_to_ai_event_code(st: StimulusType) -> Option<i32> {
         StimulusType::EventDoorCombat => Some(50),
         StimulusType::EventGaloppLoopEnd => Some(51),
         StimulusType::EventSeesShadow => Some(52),
-        // Rust-only stimuli: the filter never fires for these — they
-        // fall into the unmapped/default path. `None` here means
-        // "unmapped — don't call FilterAIEvent".
+        // Original stimuli with no public AI event-code mapping. StartThink's
+        // default switch arm assigns -2 before calling FilterAIEvent.
         StimulusType::EventPcShotAtMe
         | StimulusType::EventArrowLaunched
         | StimulusType::EventStone

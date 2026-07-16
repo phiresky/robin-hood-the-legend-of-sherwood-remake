@@ -570,20 +570,20 @@ impl EngineInner {
             .map(|o| o.ignore_default_loose)
             .unwrap_or(false);
         if !ignore_default_loose {
-            // Check if any playable PC is alive and not guarded.
-            // If no PCs are playable (all dead/unconscious/guarded), the mission is lost.
+            // Original: RHEngine::PerformHourglass checks the PC's explicit
+            // IsPlayable() flag and guard state. Death paths are responsible
+            // for clearing playability; do not substitute an HP/posture test.
             if !self.pc_ids.is_empty() {
                 let any_playable_and_free = self.pc_ids.iter().any(|&pc_id| {
                     if let Some(Entity::Pc(pc)) = self.entities.get(pc_id) {
-                        let alive = pc.pc.life_points > 0 && !pc.human.unconscious;
                         let guarded = pc.pc.guard.is_some();
-                        alive && !guarded
+                        pc.pc.playable && !guarded
                     } else {
                         false
                     }
                 });
                 if !any_playable_and_free {
-                    tracing::info!("All PCs dead or guarded — mission lost");
+                    tracing::info!("No playable, unguarded PC remains; mission lost");
                     self.quit_mission();
                     return GameCode::LevelFailed;
                 }

@@ -11,8 +11,8 @@
 //!    source param, so `dispatch_filtered_stimulus(robin, code)` is
 //!    allowed (Robin's handle is non-zero) but
 //!    `filter_stimulus(…, {source=0}) == false` (blocked).
-//!  * Unmapped stimulus type: `filter_stimulus` is a no-op (returns
-//!    true) because `stimulus_to_ai_event_code` returns `None`.
+//!  * Unmapped stimulus type: `filter_stimulus` calls the script with the
+//!    original sentinel event code `-2`.
 //!  * Missing FilterAIEvent override: the base class's implicit
 //!    `return 1` must be honoured — `filter_stimulus` returns true
 //!    even though `call_actor_function` would otherwise return
@@ -285,24 +285,20 @@ fn filter_blocks_when_script_returns_zero_for_unknown_source() {
     assert!(!allowed, "source=0 → script returns 0 → block");
 }
 
-/// Unmapped stimulus types (engine-only: EventStop, EventEnemyNear,
-/// ForceBattleDecision, …) bypass `FilterAIEvent` entirely.  The
-/// underlying event code is `-2` for those and no well-formed script
-/// branches on `-2`; `stimulus_to_ai_event_code` returns `None` and
-/// the filter short-circuits to allow.
+/// Unmapped stimulus types still pass through `FilterAIEvent` with code -2,
+/// matching the default switch arm in the original `StartThink`.
 #[test]
-fn filter_short_circuits_for_unmapped_stimulus_type() {
+fn filter_runs_for_unmapped_stimulus_type() {
     let (mut engine, _, sensitive_handle, _) = build_engine();
-    // EventEnemyNear is Rust-only; no AI event code mapping.  If the
-    // filter actually ran, the script (which returns source) would
-    // block `source=0` cases — but we shouldn't reach the script at
-    // all for unmapped types.
+    // EventEnemyNear exists in the original but has no public AI event-code
+    // mapping. The test script returns its source parameter, so source=0
+    // proves the -2 path invoked the filter when it blocks the stimulus.
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventEnemyNear);
 
     let allowed = engine.filter_stimulus(&LevelAssets::new(), sensitive_handle, &stim);
     assert!(
-        allowed,
-        "unmapped stimulus type → skip filter → allow by default"
+        !allowed,
+        "unmapped stimulus type must run FilterAIEvent(-2)"
     );
 }
 

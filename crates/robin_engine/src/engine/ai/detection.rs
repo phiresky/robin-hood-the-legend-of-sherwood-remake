@@ -2286,6 +2286,17 @@ impl EngineInner {
                 }
             }
             if let Some(pc_handle) = near_pc {
+                let stimulus = crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventEnemyNear,
+                    pc_handle,
+                );
+                // Original: AttackingReactiontimeEnemyNearTest calls Think,
+                // whose StartThink gate runs FilterAIEvent before handling.
+                let script_handle = crate::natives::GameHost::actor_handle(npc_id);
+                if !self.filter_stimulus(assets, script_handle, &stimulus) {
+                    return;
+                }
+
                 let ai_global = &mut self.ai_global;
                 if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
                     let ctx = AiContext {
@@ -2345,17 +2356,6 @@ impl EngineInner {
                         all_soldier_handles: ai_global.all_soldier_handles.clone(),
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        // EventEnemyNear is a Rust-only proximity
-                        // stimulus with no event-code mapping, so
-                        // `FilterAIEvent` would never fire on it —
-                        // the inline dispatch here is equivalent to
-                        // a `dispatch_filtered_stimulus` call with
-                        // unmapped stimulus type, just without the
-                        // engine-borrow juggling.
-                        let stimulus = crate::ai::Stimulus::with_human(
-                            crate::ai::StimulusType::EventEnemyNear,
-                            pc_handle,
-                        );
                         // EventEnemyNear fires on an enemy soldier
                         // when a PC enters its proximity radius.
                         // We hold `&mut self.entities` via `s`
