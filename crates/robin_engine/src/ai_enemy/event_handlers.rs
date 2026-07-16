@@ -867,29 +867,24 @@ impl EnemyAi {
                     substate = ?self.base.current_substate,
                     "EventEnemyNear received"
                 );
-                // The original `AttackingReactiontimeEnemyNearTest`
-                // gates the *sender* on `IsCombatTrainer()` and a substate
-                // switch. The Rust 50×30 scan in
-                // `engine/ai.rs::detect_enemies_near_reactiontime`
-                // dispatches unconditionally and defers gating to here,
-                // so both gates live on the receiver: combat trainers
-                // ignore the event entirely; the APPROACH_TO_OBSERVE /
-                // OBSERVE substates only react within 100 frames of
-                // `frame_when_enemy_detected`.
-                if self.combat_trainer {
+                // Original: RHArtificialMalignity::ThinkUnexpectedEvent,
+                // EVENT_ENEMY_NEAR. The sender owns trainer/time gates; this
+                // arm assigns the stimulus human and enters swordfight.
+                let StimulusInfo::Human(enemy) = stimulus.info else {
+                    tracing::warn!(
+                        me = self.base.me,
+                        info = ?stimulus.info,
+                        "EventEnemyNear received without a human target"
+                    );
                     return false;
-                }
+                };
                 match self.base.current_substate {
-                    Substate::AttackingReactiontime | Substate::AttackingReactiontimeTurning => {
-                        self.i_am_in_trouble(self.base.primary_target);
-                        self.battle_decisions(global, ctx, tick, grid);
-                    }
-                    Substate::AttackingApproachToObserve | Substate::AttackingObserve => {
-                        if ctx.frame.wrapping_sub(self.base.frame_when_enemy_detected) >= 100 {
-                            return false;
-                        }
-                        self.i_am_in_trouble(self.base.primary_target);
-                        self.battle_decisions(global, ctx, tick, grid);
+                    Substate::AttackingReactiontimeTurning
+                    | Substate::AttackingReactiontime
+                    | Substate::AttackingApproachToObserve
+                    | Substate::AttackingObserve => {
+                        self.base.primary_target = enemy;
+                        self.begin_swordfight(ctx, tick);
                     }
                     _ => {}
                 }
@@ -2642,5 +2637,60 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultOnPost);
         assert_eq!(ai.base.interesting_object, 0);
+    }
+
+    #[test]
+    fn event_enemy_near_assigns_stimulus_target_and_begins_swordfight() {
+        for substate in [
+            Substate::AttackingReactiontimeTurning,
+            Substate::AttackingReactiontime,
+            Substate::AttackingApproachToObserve,
+            Substate::AttackingObserve,
+        ] {
+            let mut ai = EnemyAi::new(1);
+            ai.base.current_state = AiState::Attacking;
+            ai.base.current_substate = substate;
+            ai.base.primary_target = 12;
+            // The original trainer gate is exclusively on the sender.
+            ai.combat_trainer = true;
+
+            let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
+            ai.think_unexpected_event(
+                &stimulus,
+                &mut AiGlobalState::default(),
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert_eq!(ai.base.primary_target, 77, "substate {substate:?}");
+            assert_eq!(
+                ai.base.pending_enter_swordfight,
+                Some(EnterSwordfightRequest::Engage(77)),
+                "substate {substate:?}"
+            );
+            assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
+        }
+    }
+
+    #[test]
+    fn event_enemy_near_is_ignored_outside_original_substates() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingRunningToEnemy;
+        ai.base.primary_target = 12;
+
+        let stimulus = Stimulus::with_human(StimulusType::EventEnemyNear, 77);
+        ai.think_unexpected_event(
+            &stimulus,
+            &mut AiGlobalState::default(),
+            &AiContext::default(),
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.primary_target, 12);
+        assert_eq!(ai.base.pending_enter_swordfight, None);
+        assert_eq!(ai.base.current_substate, Substate::AttackingRunningToEnemy);
     }
 }

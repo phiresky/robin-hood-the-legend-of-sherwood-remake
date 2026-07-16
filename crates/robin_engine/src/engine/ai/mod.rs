@@ -876,13 +876,11 @@ impl EngineInner {
         let primary_target_handle = target_override
             .map(|id| id.index())
             .unwrap_or(ai.primary_target);
-        let target_id = if primary_target_handle != 0 {
-            Some(crate::element::EntityId::Pc(crate::entity_id::PcId(
-                primary_target_handle,
-            )))
-        } else {
-            None
-        };
+        let target_id = target_override.or_else(|| {
+            (primary_target_handle != 0)
+                .then(|| self.entity_id_for_index(primary_target_handle))
+                .flatten()
+        });
         let my_camp = soldier.soldier.cached_camp;
         let me_handle = ai.me;
         let me_pos = soldier.element.position_map();
@@ -3850,6 +3848,11 @@ impl EngineInner {
         // ── 2d. Unconscious money-fight KO snapshot. ─────────────
         let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
 
+        // Original: RHElementActorSoldier::Hourglass calls
+        // AttackingReactiontimeEnemyNearTest before RHElementActorNPC::Hourglass
+        // performs the soldier's detection work.
+        self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
+
         // ── 2e. Shared acoustic-detection pass. ──────────────────
         // The hearing branch of `refresh_detection` plus
         // `update_hearing` — runs for every NPC (civilians +
@@ -3860,7 +3863,6 @@ impl EngineInner {
         // ── 3. Per-enemy RefreshDetection loop. ──────────────────
         let (transitions, out_of_view_dispatches) = self.tick_enemy_ai_refresh_detection(
             assets,
-            &scratch,
             &pc_snapshots,
             &soldier_snapshots,
             &ko_money_fight_soldiers,

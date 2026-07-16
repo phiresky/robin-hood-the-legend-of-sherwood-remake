@@ -129,7 +129,152 @@ impl SoldierSightContext {
     }
 }
 
+fn attacking_reactiontime_enemy_near_enabled(
+    combat_trainer: bool,
+    substate: crate::ai::Substate,
+    frame: u32,
+    frame_when_enemy_detected: u32,
+) -> bool {
+    use crate::ai::Substate;
+
+    if combat_trainer {
+        return false;
+    }
+    match substate {
+        Substate::AttackingReactiontimeTurning | Substate::AttackingReactiontime => true,
+        Substate::AttackingApproachToObserve | Substate::AttackingObserve => {
+            frame.wrapping_sub(frame_when_enemy_detected) < 100
+        }
+        _ => false,
+    }
+}
+
+fn enemy_is_in_react_immediately_zone(
+    origin: MapPoint,
+    target: crate::ai::Position,
+    posture: crate::element::Posture,
+) -> bool {
+    posture.triggers_enemy_near()
+        && (target.x - origin.x).abs() <= 50.0
+        && (target.y - origin.y).abs() <= 30.0
+}
+
+fn enemies_near_from_them_list(
+    origin: MapPoint,
+    list_them: &[u32],
+    mut target_snapshot: impl FnMut(u32) -> Option<(crate::ai::Position, crate::element::Posture)>,
+) -> Vec<u32> {
+    list_them
+        .iter()
+        .copied()
+        .filter(|&target| {
+            target_snapshot(target).is_some_and(|(position, posture)| {
+                enemy_is_in_react_immediately_zone(origin, position, posture)
+            })
+        })
+        .collect()
+}
+
 impl EngineInner {
+    /// Original: `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest`.
+    ///
+    /// `RHElementActorSoldier::Hourglass` calls this before the NPC detection
+    /// pass. The gate is evaluated once, then the current `mlistThem` is
+    /// walked in order and each eligible nearby enemy is sent through Think.
+    pub(super) fn tick_attacking_reactiontime_enemy_near(
+        &mut self,
+        assets: &LevelAssets,
+        scratch: &SimScratch,
+    ) {
+        let frame = self.frame_counter;
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+
+        for npc_id in npc_ids {
+            let Some(Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
+                continue;
+            };
+            if !soldier.element.active {
+                continue;
+            }
+            let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
+                continue;
+            };
+            if !attacking_reactiontime_enemy_near_enabled(
+                enemy_ai.combat_trainer,
+                enemy_ai.base.current_substate,
+                frame,
+                enemy_ai.base.frame_when_enemy_detected,
+            ) {
+                continue;
+            }
+
+            let origin = soldier.element.position_map();
+            let targets = enemy_ai.list_them.clone();
+            let nearby_targets = enemies_near_from_them_list(origin, &targets, |target_handle| {
+                let target_view = scratch.ai_entity_views.get(&target_handle);
+                if target_view.is_none() {
+                    tracing::warn!(
+                        npc = npc_id.index(),
+                        target = target_handle,
+                        "EnemyNear: list_them target has no live AI entity view"
+                    );
+                }
+                target_view.map(|view| (view.position, view.posture))
+            });
+
+            for target_handle in nearby_targets {
+                let Some(target_id) = self.entity_id_for_index(target_handle) else {
+                    tracing::warn!(
+                        npc = npc_id.index(),
+                        target = target_handle,
+                        "EnemyNear: list_them target has no live entity"
+                    );
+                    continue;
+                };
+                if !matches!(
+                    target_id,
+                    EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_)
+                ) {
+                    tracing::warn!(
+                        npc = npc_id.index(),
+                        target = ?target_id,
+                        "EnemyNear: list_them target is not human"
+                    );
+                    continue;
+                }
+
+                let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+                let building_sector = self
+                    .entities
+                    .get(npc_id)
+                    .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
+                let Some(entity) = self.entities.get(npc_id) else {
+                    break;
+                };
+                let mut ctx = build_ai_context_from_entity(
+                    entity,
+                    frame,
+                    building_sector,
+                    self.weather.is_forest_level,
+                    self.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai_global.all_soldier_handles,
+                );
+                ctx.in_uninterruptible_command = in_uninterruptible_command;
+                let tick_data =
+                    self.build_npc_tick_data_for_target(npc_id, scratch, assets, Some(target_id));
+                let stimulus = crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventEnemyNear,
+                    target_handle,
+                );
+                self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+            }
+        }
+    }
+
     /// P2a — blip detection: reveal blipped soldiers/civilians/objects
     /// that any PC sees this frame, plus drive the Listen ability's
     /// one-shot reveal + FX-target Heard() callbacks.
@@ -748,15 +893,13 @@ impl EngineInner {
     /// For every Lacklandist NPC: lazy-populate detectables, run the
     /// per-target visibility pass, accumulate suspect sharpness, fire
     /// EVENT_HEAR / EVENT_SEES_SHADOW / EVENT_VIEW (deferred to the
-    /// post-detection drain via `pending_stimuli`), and run the
-    /// `EnemyNear` proximity check.  Returns the rising-edge `Detection`
-    /// transitions and the falling-edge OUTOFVIEW dispatch list for the
-    /// post-detection alert / pursuit phases (P4 / P4b) to consume.
+    /// post-detection drain via `pending_stimuli`). Returns the rising-edge
+    /// `Detection` transitions and the falling-edge OUTOFVIEW dispatch list
+    /// for the post-detection alert / pursuit phases (P4 / P4b) to consume.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
-        scratch: &SimScratch,
         pc_snapshots: &[PcSnapshot],
         soldier_snapshots: &[SoldierSnapshot],
         ko_money_fight_soldiers: &[(EntityId, Camp)],
@@ -777,15 +920,12 @@ impl EngineInner {
         // detection-speed parameters when scaling a PC's visual
         // detection speed in the per-target visibility pass below.
         let is_forest_level = self.weather.is_forest_level;
-        let sq_view_radius =
-            (self.standard_view_polygon_radius as f32) * (self.standard_view_polygon_radius as f32);
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
                 assets,
-                scratch,
                 pc_snapshots,
                 soldier_snapshots,
                 ko_money_fight_soldiers,
@@ -795,7 +935,6 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 is_forest_level,
-                sq_view_radius,
                 &mut transitions,
                 &mut out_of_view_dispatches,
             );
@@ -813,7 +952,6 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
-        scratch: &SimScratch,
         pc_snapshots: &[PcSnapshot],
         soldier_snapshots: &[SoldierSnapshot],
         ko_money_fight_soldiers: &[(EntityId, Camp)],
@@ -823,7 +961,6 @@ impl EngineInner {
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
-        sq_view_radius: f32,
         transitions: &mut Vec<Detection>,
         out_of_view_dispatches: &mut Vec<(EntityId, u32)>,
     ) {
@@ -2260,144 +2397,6 @@ impl EngineInner {
                 newly_alerted,
             });
         }
-
-        // ── EnemyNear proximity check ────────────────────────
-        // Check if any PC is within a 50×30 bounding box around the
-        // NPC.  Only specific postures trigger the event —
-        // hidden / disguised PCs are excluded.  The Think handler
-        // only acts during reactiontime/observe substates, but the
-        // proximity scan runs unconditionally.
-        {
-            let half_dx: f32 = 50.0;
-            let half_dy: f32 = 30.0;
-            let mut near_pc: Option<u32> = None;
-            for pc in pc_snapshots {
-                if pc.layer != layer {
-                    continue;
-                }
-                if !pc.posture.triggers_enemy_near() {
-                    continue;
-                }
-                let dx = (pc.position.x - eye.x).abs();
-                let dy = (pc.position.y - eye.y).abs();
-                if dx <= half_dx && dy <= half_dy {
-                    near_pc = Some(pc.id.index());
-                    break;
-                }
-            }
-            if let Some(pc_handle) = near_pc {
-                let stimulus = crate::ai::Stimulus::with_human(
-                    crate::ai::StimulusType::EventEnemyNear,
-                    pc_handle,
-                );
-                // Original: AttackingReactiontimeEnemyNearTest calls Think,
-                // whose StartThink gate runs FilterAIEvent before handling.
-                let script_handle = crate::natives::GameHost::actor_handle(npc_id);
-                if !self.filter_stimulus(assets, script_handle, &stimulus) {
-                    return;
-                }
-
-                let ai_global = &mut self.ai_global;
-                if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
-                    let ctx = AiContext {
-                        position: crate::ai::Position {
-                            x: s.element.position_map().x,
-                            y: s.element.position_map().y,
-                            sector: s.element.sector(),
-                            level: s.element.layer(),
-                        },
-                        frame: universal_frame,
-                        direction: s.element.direction() as u16,
-                        posture: s.element.posture,
-                        in_uninterruptible_command: false,
-                        in_building: viewer_building_sector.is_some(),
-                        building_sector: viewer_building_sector,
-                        camp: s.soldier.cached_camp,
-                        is_swordfighting: !s.human.opponents.is_empty(),
-                        enter_swordfight_pending: false,
-                        is_forest_level,
-                        move_box: *s.element.sprite.position_iface.get_move_box(),
-                        remaining_arrows: s.npc.number_of_arrows,
-                        sq_standard_view_radius: sq_view_radius,
-                        sq_self_view_radius: (s.npc.view_radius as f32)
-                            * (s.npc.view_radius as f32),
-                        elevation: s.element.position().z,
-                        self_is_beggar: false,
-                        self_is_child: false,
-                        self_is_soldier: true,
-                        self_is_rider: s.soldier.rider,
-                        self_action_state: s.actor.action_state,
-                        self_rank: crate::profiles::ProfileRank::None,
-                        self_pride: 0,
-                        self_is_dead: s.npc.life_points <= 0,
-                        self_detectable_friend_count: s
-                            .npc
-                            .detectable_lists
-                            .get(crate::element::DetectableType::Friend as usize)
-                            .map(|lst| lst.len() as u16)
-                            .unwrap_or(0),
-                        self_detectable_missed_friend_count: s
-                            .npc
-                            .detectable_lists
-                            .get(crate::element::DetectableType::MissedFriend as usize)
-                            .map(|lst| lst.len() as u16)
-                            .unwrap_or(0),
-                        self_forced_attentive: s
-                            .npc
-                            .ai_brain
-                            .enemy()
-                            .is_some_and(|e| e.forced_attentive),
-                        self_animation: s.actor.old_action,
-                        antagonist: None,
-                        entity_views: scratch.ai_entity_views.clone(),
-                        sight_obstacles: scratch.ai_sight_obstacles.clone(),
-                        fast_grid: self.fast_grid.clone(),
-                        hiking_paths: assets.hiking_paths.clone(),
-                        all_soldier_handles: ai_global.all_soldier_handles.clone(),
-                    };
-                    if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
-                        // EventEnemyNear fires on an enemy soldier
-                        // when a PC enters its proximity radius.
-                        // We hold `&mut self.entities` via `s`
-                        // here, so we can't call
-                        // `self.build_npc_tick_data` — seed the
-                        // tick data from the pc_snapshots cache
-                        // (already built for this detection tick)
-                        // which is sufficient for the proximity
-                        // handler: primary-target metadata for
-                        // the near PC so the AI can compute
-                        // distance / posture.
-                        let me_pos = s.element.position_map();
-                        let mut tick_data = AiPerTickData::stub();
-                        if let Some(pc) = pc_snapshots.iter().find(|p| p.id.index() == pc_handle) {
-                            let pos = crate::ai::Position {
-                                x: pc.position.x,
-                                y: pc.position.y,
-                                sector: crate::position_interface::SectorHandle::new(pc.sector_num),
-                                level: pc.layer,
-                            };
-                            tick_data.primary_target_position = Some(pos);
-                            tick_data.primary_target_posture = Some(pc.posture);
-                            tick_data.primary_target_animation = Some(pc.order_type);
-                            let dx = pos.x - me_pos.x;
-                            let dy = (pos.y - me_pos.y)
-                                * crate::position_interface::INVERSE_ASPECT_RATIO;
-                            let sq = (dx * dx + dy * dy) as i32;
-                            tick_data.enemy_sq_distances.push((pc_handle, sq));
-                            tick_data.min_sq_enemy_distance = sq;
-                        }
-                        tick_data.primary_target_is_pc = true;
-                        enemy_ai.think(
-                            &stimulus,
-                            ai_global,
-                            &ctx,
-                            &tick_data,
-                            Some(&self.fast_grid),
-                        );
-                    }
-                }
-            }
-        }
     }
 
     /// P3b — royalist detection pass.
@@ -3699,4 +3698,118 @@ struct ViewContext<'a> {
     golden_eye: bool,
     sight_obstacles: &'a crate::sight_obstacle::ObstacleList<'a>,
     fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::{Position, Substate};
+    use crate::element::Posture;
+
+    #[test]
+    fn enemy_near_sender_uses_original_trainer_substate_and_time_gates() {
+        for substate in [
+            Substate::AttackingReactiontimeTurning,
+            Substate::AttackingReactiontime,
+        ] {
+            assert!(attacking_reactiontime_enemy_near_enabled(
+                false, substate, 500, 0
+            ));
+            assert!(!attacking_reactiontime_enemy_near_enabled(
+                true, substate, 500, 0
+            ));
+        }
+
+        for substate in [
+            Substate::AttackingApproachToObserve,
+            Substate::AttackingObserve,
+        ] {
+            assert!(attacking_reactiontime_enemy_near_enabled(
+                false, substate, 199, 100
+            ));
+            assert!(!attacking_reactiontime_enemy_near_enabled(
+                false, substate, 200, 100
+            ));
+        }
+
+        assert!(!attacking_reactiontime_enemy_near_enabled(
+            false,
+            Substate::AttackingRunningToEnemy,
+            100,
+            100
+        ));
+    }
+
+    #[test]
+    fn enemy_near_sender_uses_original_box_and_postures() {
+        let origin = MapPoint::new(100.0, 200.0);
+        for posture in [
+            Posture::Upright,
+            Posture::Crouched,
+            Posture::CarryingCorpse,
+            Posture::HelpingToClimb,
+            Posture::CarryingOnShoulders,
+        ] {
+            assert!(enemy_is_in_react_immediately_zone(
+                origin,
+                Position {
+                    x: 150.0,
+                    y: 170.0,
+                    ..Position::default()
+                },
+                posture
+            ));
+        }
+
+        assert!(!enemy_is_in_react_immediately_zone(
+            origin,
+            Position {
+                x: 150.1,
+                y: 200.0,
+                ..Position::default()
+            },
+            Posture::Upright
+        ));
+        assert!(!enemy_is_in_react_immediately_zone(
+            origin,
+            Position {
+                x: 100.0,
+                y: 230.1,
+                ..Position::default()
+            },
+            Posture::Upright
+        ));
+        assert!(!enemy_is_in_react_immediately_zone(
+            origin,
+            Position {
+                x: 100.0,
+                y: 200.0,
+                ..Position::default()
+            },
+            Posture::Spy
+        ));
+    }
+
+    #[test]
+    fn enemy_near_sender_only_scans_list_them_and_preserves_order() {
+        let origin = MapPoint::new(100.0, 200.0);
+        let nearby = |x| Position {
+            x,
+            y: 200.0,
+            ..Position::default()
+        };
+        let list_them = [3, 5, 1, 4];
+
+        let selected = enemies_near_from_them_list(origin, &list_them, |handle| match handle {
+            1 => Some((nearby(110.0), Posture::Upright)),
+            // Handle 2 is nearby but deliberately absent from list_them.
+            2 => Some((nearby(105.0), Posture::Upright)),
+            3 => Some((nearby(151.0), Posture::Upright)),
+            4 => Some((nearby(105.0), Posture::Spy)),
+            5 => Some((nearby(95.0), Posture::Crouched)),
+            _ => None,
+        });
+
+        assert_eq!(selected, vec![5, 1]);
+    }
 }
