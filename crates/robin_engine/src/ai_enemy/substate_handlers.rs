@@ -1084,12 +1084,6 @@ impl EnemyAi {
                             self.return_to_duty(DutyFlags::empty(), ctx, tick);
                         }
                     }
-                    StimulusType::EventDone => {
-                        // No EVENT_DONE arm originally; conservative
-                        // fallback to return to duty so the soldier
-                        // doesn't wedge.
-                        self.return_to_duty(DutyFlags::empty(), ctx, tick);
-                    }
                     _ => {}
                 }
             }
@@ -5657,5 +5651,35 @@ impl EnemyAi {
             | Substate::AttackingRiderChargingPassing => {}
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrow_watching_ignores_event_done() {
+        // Original: RHArtificialMalignity::ThinkExpectedEvent handles only
+        // EVENT_TIMER and EVENT_MYTALK_1 for the just-watching substate.
+        for substate in [
+            Substate::SeekingArrowJustWatching,
+            Substate::SeekingArrowJustWatchingSidewards,
+        ] {
+            let mut ai = EnemyAi::new(1);
+            ai.set_state(AiState::Seeking, substate);
+            let mut global = AiGlobalState::default();
+
+            ai.think_expected_event(
+                &Stimulus::new(StimulusType::EventDone),
+                &mut global,
+                &AiContext::default(),
+                &AiPerTickData::stub(),
+                None,
+            );
+
+            assert_eq!(ai.base.current_state, AiState::Seeking);
+            assert_eq!(ai.base.current_substate, substate);
+        }
     }
 }
