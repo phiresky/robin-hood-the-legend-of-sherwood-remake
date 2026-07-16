@@ -112,7 +112,7 @@ extern "C" fn crash_handler(sig: std::ffi::c_int) {
         _ => b"\n[robin] fatal: unknown signal\n",
     };
     unsafe {
-        libc_sig::write(2, msg.as_ptr() as *const _, msg.len());
+        libc_sig::write(2, msg.as_ptr().cast(), msg.len());
         libc_sig::signal(sig, libc_sig::SIG_DFL);
         libc_sig::raise(sig);
     }
@@ -121,7 +121,7 @@ extern "C" fn crash_handler(sig: std::ffi::c_int) {
 #[cfg(all(not(target_arch = "wasm32"), unix))]
 #[allow(non_camel_case_types)]
 mod libc_sig {
-    use std::ffi::c_int;
+    use std::ffi::{c_int, c_void};
     pub const SIGSEGV: c_int = 11;
     pub const SIGABRT: c_int = 6;
     pub const SIGILL: c_int = 4;
@@ -130,7 +130,7 @@ mod libc_sig {
     unsafe extern "C" {
         pub unsafe fn signal(signum: c_int, handler: usize) -> usize;
         pub unsafe fn raise(sig: c_int) -> c_int;
-        pub unsafe fn write(fd: c_int, buf: *const u8, count: usize) -> isize;
+        pub unsafe fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
     }
 }
 
