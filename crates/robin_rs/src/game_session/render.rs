@@ -1411,22 +1411,18 @@ pub(super) fn render_frame(
 
     // ── Pixel-level fade (script opcode `FADE_TO_BLACK`) ──
     // Draw a full-screen black rect with alpha ramping up then
-    // back down, and tick the frame counter.  The GPU alpha-blend
+    // back down. The GPU alpha-blend
     // matches the channel × scale math closely enough for the
-    // ellipsis effect used by cutscenes.
-    if let Some(mut fade) = host.fade_to_black {
+    // ellipsis effect used by cutscenes. Advancement happens only
+    // after the live `present()`; this function is also used for
+    // throwaway screenshot and thumbnail renders.
+    if let Some(fade) = host.fade_to_black {
         let alpha = fade.current_alpha();
         if alpha > 0 {
             let sw = renderer.screen_width() as i32;
             let sh = renderer.screen_height() as i32;
             renderer.render_gpu_rect(0, 0, sw, sh, 0, 0, 0, alpha);
         }
-        fade.frames_remaining = fade.frames_remaining.saturating_sub(1);
-        host.fade_to_black = if fade.frames_remaining == 0 {
-            None
-        } else {
-            Some(fade)
-        };
     }
 
     // `renderer.present()` is called by the caller (`run_mission`) after

@@ -550,6 +550,16 @@ impl FadeToBlack {
         };
         ((num * 255) / self.speed).min(255) as u8
     }
+
+    /// Consume one frame after the live framebuffer has been presented.
+    ///
+    /// Returns whether another fade frame remains. Keeping this separate
+    /// from drawing prevents throwaway screenshot and thumbnail renders
+    /// from shortening the transition.
+    pub fn advance_presented_frame(&mut self) -> bool {
+        self.frames_remaining = self.frames_remaining.saturating_sub(1);
+        self.frames_remaining > 0
+    }
 }
 
 // ─── Level assets (immutable after load) ────────────────────────────

@@ -166,16 +166,15 @@ pub struct EngineInner {
     pub(crate) lock_engine: bool,
     /// Freeze all actors (script command). [Serialized]
     pub(crate) freeze_all: bool,
-    /// Stop-the-world freeze deadline. While `frame_counter < deadline`,
-    /// `perform_hourglass_inner` short-circuits past all game-logic and
-    /// only advances the frame counter, leaving the renderer to drain
-    /// the host-side fade ramp. The fade-to-black native calls `Flip()`
-    /// `2*speed` times in a tight loop with no engine update between
-    /// iterations — the game is genuinely frozen for the duration of the
-    /// fade.  `FadeToBlack` is the only blocking native in the script API
-    /// (verified across all 80 shipped `.scb` files; called once total,
-    /// in `H04_Lei_VL` `ProcessMessage(11)`). [Serialized]
-    pub(crate) frozen_until_frame: Option<u32>,
+    /// Presentation frames still to show while the simulation is frozen.
+    /// `FadeToBlack` calls `Flip()` `2*speed` times without calling
+    /// `PerformHourglass`; this count is deliberately independent of
+    /// `frame_counter` so the universal clock and every sim timer remain
+    /// fixed while the host presents the fade ramp. The command's trigger
+    /// tick presents the first frame, so this stores the remaining
+    /// `2*speed - 1` frames. [Serialized]
+    #[serde(default)]
+    pub(crate) fade_freeze_frames_remaining: u32,
 
     // ── Sequence / animation ─────────────────────────────────────
     /// Sequence playback speed multiplier. [Serialized]
@@ -565,7 +564,7 @@ impl EngineInner {
 
             lock_engine: false,
             freeze_all: false,
-            frozen_until_frame: None,
+            fade_freeze_frames_remaining: 0,
 
             speed: 1.0,
             speed_int: 0,

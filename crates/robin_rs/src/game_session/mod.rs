@@ -3982,6 +3982,9 @@ pub(crate) async fn run_mission(
             }
 
             render_ctx.renderer.present();
+            if let Some(mut fade) = host.fade_to_black {
+                host.fade_to_black = fade.advance_presented_frame().then_some(fade);
+            }
             post_render_engine_cleanup(&mut manager, &mut host, &assets);
         } // end if draw_result == 0 (skip render in fast-forward)
 

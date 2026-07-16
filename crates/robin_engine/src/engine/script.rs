@@ -2632,27 +2632,27 @@ impl EngineInner {
                     //   - `pending_side_effects.fade_to_black`: per-pixel
                     //     ramp drained by the host renderer (alpha-blend
                     //     overlay matching `current_alpha`).
-                    //   - `frozen_until_frame`: stop-the-world deadline
-                    //     read at the top of `perform_hourglass_inner`,
-                    //     which short-circuits past all game logic until
-                    //     `frame_counter` catches up. This is the only
+                    //   - `fade_freeze_frames_remaining`: presentation
+                    //     countdown read before the hourglass wrapper
+                    //     touches any game clock or timer. The trigger
+                    //     tick presents frame one, leaving `2*speed - 1`
+                    //     frozen presentation frames. This is the only
                     //     blocking native in the entire script API
                     //     (verified across all shipped `.scb` files;
                     //     called once total, in `H04_Lei_VL`
                     //     `ProcessMessage(11)`), so a per-engine freeze
-                    //     deadline beats a generic VM yield/resume infra.
+                    //     countdown beats generic VM yield/resume infra.
                     let s = speed.max(0) as u32;
+                    let total_frames = s.saturating_mul(2);
                     self.pending_side_effects.fade_to_black = Some(if s == 0 {
                         None
                     } else {
                         Some(crate::engine::types::FadeToBlack {
                             speed: s,
-                            frames_remaining: 2 * s,
+                            frames_remaining: total_frames,
                         })
                     });
-                    if s > 0 {
-                        self.frozen_until_frame = Some(self.frame_counter + 2 * s);
-                    }
+                    self.fade_freeze_frames_remaining = total_frames.saturating_sub(1);
                 }
                 EngineCommand::SetOutlineDisplay { display: show } => {
                     // Forward `MSG_SWITCH_MASKED_DISPLAY` when the

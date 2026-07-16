@@ -108,6 +108,85 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
 }
 
 #[test]
+fn fade_to_black_presents_without_advancing_simulation_timers() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.frame_counter = 25;
+
+    let mut campaign = Campaign::new();
+    campaign.set_value(CampaignValue::MissionLength, 7);
+    engine.campaign = Some(campaign);
+
+    engine
+        .sound_sim
+        .sources
+        .sources_push_some(crate::sound_source::SoundSource {
+            source_kind: crate::sound_source::SoundSourceKind::Delayed,
+            timer: 9,
+            active: true,
+            ..Default::default()
+        });
+
+    engine.apply_host_commands(
+        &assets,
+        vec![crate::natives::EngineCommand::FadeToBlack { speed: 3 }],
+    );
+
+    let fade = engine
+        .pending_side_effects
+        .fade_to_black
+        .take()
+        .flatten()
+        .expect("fade command should emit a host ramp");
+    assert_eq!(fade.frames_remaining, 6);
+    assert_eq!(engine.fade_freeze_frames_remaining, 5);
+
+    // The trigger tick presents the first of six frames. Each of the five
+    // subsequent hourglass calls represents one more presentation, but is
+    // not a simulation tick in the original game.
+    for expected_remaining in (0..5).rev() {
+        let side_effects = engine.perform_hourglass(&mut display, &assets, &mut dev);
+        assert_eq!(side_effects.code, GameCode::LevelInProgress);
+        assert!(!side_effects.skip_render);
+        assert_eq!(engine.fade_freeze_frames_remaining, expected_remaining);
+        assert_eq!(engine.frame_counter, 25);
+        assert_eq!(
+            engine
+                .campaign
+                .as_ref()
+                .unwrap()
+                .get_value(CampaignValue::MissionLength),
+            7
+        );
+        assert_eq!(engine.sound_sim.sources.get(0).unwrap().timer, 9);
+    }
+
+    // The next call is the first real simulation tick after the blocking
+    // fade and resumes every clock from exactly its pre-fade value.
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    assert_eq!(engine.frame_counter, 26);
+    assert_eq!(engine.sound_sim.sources.get(0).unwrap().timer, 8);
+}
+
+#[test]
+fn fade_to_black_host_countdown_advances_once_per_presented_frame() {
+    let mut fade = crate::engine::types::FadeToBlack {
+        speed: 2,
+        frames_remaining: 4,
+    };
+
+    for expected_remaining in [3, 2, 1] {
+        assert!(fade.advance_presented_frame());
+        assert_eq!(fade.frames_remaining, expected_remaining);
+    }
+    assert!(!fade.advance_presented_frame());
+    assert_eq!(fade.frames_remaining, 0);
+    assert!(!fade.advance_presented_frame());
+}
+
+#[test]
 fn enter_helping_climb_sequence_dispatches_stealth_transition() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();

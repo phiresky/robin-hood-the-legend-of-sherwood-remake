@@ -121,6 +121,22 @@ impl EngineInner {
         dev: &mut DevState,
     ) -> super::SideEffects {
         let _hourglass_timer = HourglassTimer::start();
+
+        // RHScript::FadeToBlack presents its ramp in a tight loop without
+        // calling PerformHourglass. Drain the corresponding presentation
+        // count before installing the sim RNG or touching any simulation,
+        // display-state, or sound timer. A frame-counter deadline cannot
+        // represent this: advancing that clock would mature every deadline
+        // that is supposed to remain frozen during the blocking native.
+        if self.fade_freeze_frames_remaining > 0 {
+            self.fade_freeze_frames_remaining -= 1;
+            let mut fx = std::mem::take(&mut self.pending_side_effects);
+            fx.code = GameCode::LevelInProgress;
+            // Fast-forward render skipping must not strand the host fade.
+            fx.skip_render = false;
+            return fx;
+        }
+
         // Move the real RNG into the thread-local so sim helpers can pull
         // from it without threading `&mut fastrand::Rng` through every
         // signature. A placeholder lives on the struct while the tick runs;
@@ -215,7 +231,12 @@ impl EngineInner {
 
         let mut fx = std::mem::take(&mut self.pending_side_effects);
         fx.code = code;
-        fx.skip_render = skip_render != 0;
+        // The trigger tick supplies the first FadeToBlack presentation.
+        // Force that render even when the camera state machine requested a
+        // fast-forward skip; the remaining presentations are forced by the
+        // early-return path above.
+        let starts_fade = matches!(fx.fade_to_black, Some(Some(_)));
+        fx.skip_render = !starts_fade && skip_render != 0;
         fx
     }
 
@@ -292,23 +313,6 @@ impl EngineInner {
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> GameCode {
-        // ── FadeToBlack stop-the-world freeze ────────────────────────
-        // The script-driven fade-to-black calls
-        // `Flip()` `2*speed` times in a tight loop with no engine update
-        // between iterations, so the game is frozen for the duration of
-        // the fade. While `frozen_until_frame > frame_counter`, skip all
-        // game logic and just bump the counter — the host renderer is
-        // still called by the outer game loop and drains the fade ramp
-        // per render frame. Once the deadline hits, clear the freeze
-        // and fall through to a normal tick.
-        if let Some(deadline) = self.frozen_until_frame {
-            if self.frame_counter < deadline {
-                self.advance_mission_clock();
-                return GameCode::LevelInProgress;
-            }
-            self.frozen_until_frame = None;
-        }
-
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`
