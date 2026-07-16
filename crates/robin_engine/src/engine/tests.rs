@@ -2179,6 +2179,54 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     entity
 }
 
+#[test]
+fn primary_target_tracking_precedes_view_refresh() {
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let soldier_pos = MapPoint::new(100.0, 100.0);
+    let target_pos = MapPoint::new(100.0, 200.0);
+
+    if let Some(Entity::Soldier(soldier)) = engine.get_entity_mut(soldier_id) {
+        soldier.element.active = true;
+        soldier.element.set_position_map(soldier_pos);
+        soldier.element.set_direction_instantly(4);
+        soldier.npc.direction_old = 4;
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test soldier has enemy AI");
+        ai.base.me = soldier_id.index();
+        ai.base.primary_target = pc_id.index();
+        ai.base.current_state = crate::ai::AiState::Attacking;
+        ai.base.current_substate = crate::ai::Substate::AttackingReactiontime;
+    }
+    if let Some(Entity::Pc(pc)) = engine.get_entity_mut(pc_id) {
+        pc.element.active = true;
+        pc.element.set_position_map(target_pos);
+    }
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let expected = crate::position_interface::vector_to_sector_0_to_15_iso(
+        target_pos.x - soldier_pos.x,
+        target_pos.y - soldier_pos.y,
+    );
+    let Entity::Soldier(soldier) = engine.get_entity(soldier_id).unwrap() else {
+        panic!("test soldier changed entity kind");
+    };
+    assert_eq!(soldier.element.direction(), expected);
+    assert_eq!(
+        soldier.npc.direction_old, expected,
+        "RefreshView must observe the combat tracking direction in the same frame"
+    );
+}
+
 fn pending_specific_blinks(engine: &EngineInner, npc_id: EntityId) -> Vec<EntityId> {
     engine
         .get_entity(npc_id)

@@ -5332,6 +5332,11 @@ impl EngineInner {
         // NPCs whose `inform_my_friends` flag was set by
         // `set_concussion_of_the_brain` broadcast DETECTABLE_BODY to
         // every ally during Hourglass.
+        // Original: RHElementActorSoldier::Hourglass re-snaps these combat
+        // substates toward mpPrimaryTarget before delegating to
+        // RHElementActorNPC::Hourglass and its RefreshDetection pass.
+        self.tick_soldier_track_primary_target();
+
         self.tick_inform_my_friends();
 
         // ── Deferred resurrection-broadcast + eye-status apply ──
@@ -5468,10 +5473,6 @@ impl EngineInner {
 
         // Per-frame soldier counter decrements (apple-smell).
         self.tick_apple_smell();
-
-        // Per-frame body-direction re-snap to `primary_target` for
-        // soldiers in reactiontime / bow substates.
-        self.tick_soldier_track_primary_target();
 
         // Per-frame PC life-point auto-heal (immortal bump +
         // Easy-mode slow regen).  Runs after the
