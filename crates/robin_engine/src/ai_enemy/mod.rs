@@ -1109,6 +1109,12 @@ impl EnemyAi {
 
     /// Reinitialize the Them list with all currently visible enemies.
     fn reinitialize_them_list(&mut self, _ctx: &AiContext, tick: &AiPerTickData) {
+        // Original: RHArtificialMalignity::ReinitializeThemList
+        // (`original-code/RHartificialmalignity.cpp:7015-7036`). The
+        // original deletes the old list and rebuilds it only from enemies
+        // whose current IsEnemySeen flag is set and who are not dead. It
+        // does not preserve mpPrimaryTarget when that target is no longer
+        // visible.
         // Rebuilds `list_them` to include every detectable enemy
         // currently `seen_now && !dead` — including unconscious
         // enemies.  The unconscious cleanup (`!is_able_to_fight`)
@@ -1125,21 +1131,6 @@ impl EnemyAi {
         // callers (e.g. `get_battle_overview` paths) see a stricter
         // list.
         //
-        // Carry the current `primary_target` across the rebuild even
-        // when neither half includes it.  The engine recomputes
-        // `seen_now` from cached `last_visibility` on closed-gate
-        // frames and can briefly report 0 visibility when the NPC's
-        // `direction` just snapped (via `Face`) — a single such
-        // frame used to fire EVENT_OUTOFVIEW during the 20-frame
-        // reaction-time pause, and the default-arm
-        // `reinitialize_them_list` would wipe `list_them`, so the
-        // reaction-time timer's `battle_decisions` hit the
-        // "no-enemies" fallback and the NPC never charged.  This
-        // re-inject is a Rust-only safeguard for observable parity
-        // (`number_of_enemies_i_can_see = list_them.size()` > 0 at
-        // BattleDecisions entry when the PC was just spotted and
-        // the NPC hasn't seen them leave yet).
-        let saved_primary = self.base.primary_target;
         self.list_them.clear();
         for &(handle, _) in &tick.enemy_sq_distances {
             self.list_them.push(handle);
@@ -1148,9 +1139,6 @@ impl EnemyAi {
             if !self.list_them.contains(&sleeping.handle) {
                 self.list_them.push(sleeping.handle);
             }
-        }
-        if saved_primary != 0 && !self.list_them.contains(&saved_primary) {
-            self.list_them.push(saved_primary);
         }
         tracing::trace!(
             me = self.base.me,
@@ -3468,6 +3456,37 @@ mod tests {
         assert_eq!(ai.base.current_state, AiState::Default);
         assert!(!ai.tower_guard);
         assert!(!ai.combat_trainer);
+    }
+
+    #[test]
+    fn reinitialize_them_list_does_not_preserve_unseen_primary_target() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.primary_target = 2;
+        ai.list_them = vec![2, 3];
+
+        ai.reinitialize_them_list(&AiContext::default(), &AiPerTickData::stub());
+
+        assert!(ai.list_them.is_empty());
+        assert_eq!(ai.base.primary_target, 2);
+    }
+
+    #[test]
+    fn reinitialize_them_list_rebuilds_from_visible_enemy_snapshots() {
+        let mut ai = EnemyAi::new(1);
+        ai.list_them = vec![99];
+        let mut tick = AiPerTickData::stub();
+        tick.enemy_sq_distances = vec![(2, 100), (3, 400)];
+        tick.unconscious_enemies = vec![SleepingEnemyInfo {
+            handle: 4,
+            position: Position::default(),
+            is_pc: true,
+            is_robin: false,
+            is_vip: false,
+        }];
+
+        ai.reinitialize_them_list(&AiContext::default(), &tick);
+
+        assert_eq!(ai.list_them, vec![2, 3, 4]);
     }
 
     #[test]
