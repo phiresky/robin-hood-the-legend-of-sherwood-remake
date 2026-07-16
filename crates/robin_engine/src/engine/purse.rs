@@ -14,9 +14,8 @@
 //!    transitions into its `ObjectBursting` animation and waits to be
 //!    picked up.
 //!
-//! 3. **Coin pickup**: PCs auto-pick coins in proximity (extension of
-//!    [`super::EngineInner::tick_bonus_auto_pickup`]).  When the picked-up
-//!    coin has a `source_purse`, the pickup routes through
+//! 3. **Coin pickup**: PCs explicitly seek and take coins.  When the
+//!    picked-up coin has a `source_purse`, the pickup routes through
 //!    [`EngineInner::take_purse`] which deactivates *every* still-active
 //!    sibling coin in one go and credits the cumulative ransom value.
 //!
@@ -386,11 +385,8 @@ impl EngineInner {
                 .saturating_sub(NUMBER_OF_COINS_IN_PURSE);
             purse.object.animation = Animation::ObjectBursting;
             // Burst does NOT mark the purse as taken — the takable
-            // flag only flips when the player actually clicks
-            // (`take_purse`).  The auto-pickup proximity filter must
-            // skip bursted purses explicitly (their value is in the
-            // child coins now); see `tick_bonus_auto_pickup` in
-            // `engine/combat.rs`.
+            // flag only flips when the player explicitly takes one of
+            // its child coins and the pickup routes through `take_purse`.
         }
 
         tracing::debug!(
@@ -641,9 +637,8 @@ mod tests {
         // animation row with freeze-when-terminated; the empty pouch
         // sprite stays as visible decoration until level unload.
         // Child handles drain off the list, but the purse element
-        // itself stays active.  The actual despawn path is
-        // `take_purse` (player clicks the purse) which is wired
-        // through the auto-pickup proximity in the bonus tick.
+        // itself stays active.  Explicitly taking a child coin routes
+        // through `take_purse` and clears the remaining children.
         let mut engine = EngineInner::new();
         let purse_id = spawn_landing_purse(
             &mut engine,

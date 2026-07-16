@@ -4306,9 +4306,9 @@ mod tests {
     }
 
     #[test]
-    fn pickup_dispatch_relic_bonus_returns_none() {
-        // Relics have `ElementBonus::is_takable() == false`; the
-        // auto-pickup proximity trigger handles the actual collection.
+    fn pickup_dispatch_relic_bonus_uses_explicit_take() {
+        // Original RHElementBonus::IsTakable delegates relics to the
+        // base NoAction-object path, which queues Seek -> Take.
         let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
         let id = spawn_bonus(
             &mut engine,
@@ -4316,7 +4316,10 @@ mod tests {
             true,
             Action::NoAction,
         );
-        assert_eq!(object_pickup_command(&engine, &assets, id, pc_id), None);
+        assert_eq!(
+            object_pickup_command(&engine, &assets, id, pc_id),
+            Some(Command::Take)
+        );
     }
 
     #[test]

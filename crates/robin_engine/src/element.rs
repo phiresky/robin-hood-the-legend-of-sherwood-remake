@@ -3550,7 +3550,7 @@ impl ElementBonus {
 
     /// Whether this bonus item can be picked up by a PC.
     pub fn is_takable(&self) -> bool {
-        !self.object.taken && self.element.active && !self.is_relic()
+        !self.object.taken && self.element.active
     }
 }
 

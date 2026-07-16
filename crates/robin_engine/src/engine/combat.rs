@@ -1312,152 +1312,13 @@ impl EngineInner {
         Some(result)
     }
 
-    /// Per-tick proximity check: auto-pickup bonus items when a PC walks
-    /// within pickup radius.
-    ///
-    /// Iterates all active bonus entities and checks distance to each
-    /// PC.  Dispatches per object type, including spawning the floating
-    /// counter titbit for money / ransom pickups.
-    pub(super) fn tick_bonus_auto_pickup(&mut self, assets: &LevelAssets) {
-        use crate::element::ObjectType;
-
-        /// Default pickup radius (pixels). We use a fixed value since
-        /// per-sprite radii aren't tracked.
-        const PICKUP_RADIUS: f32 = 20.0;
-        const PICKUP_RADIUS_SQ: f32 = PICKUP_RADIUS * PICKUP_RADIUS;
-
-        struct Pickup {
-            pc_id: EntityId,
-            bonus_id: EntityId,
-            obj_type: ObjectType,
-            assoc_action: crate::profiles::Action,
-            quantity: u16,
-            bx: f32,
-            by: f32,
-            blayer: u16,
-        }
-        let mut pickups: Vec<Pickup> = Vec::new();
-
-        let pc_positions: Vec<(EntityId, f32, f32, u16)> = self
-            .pc_ids
-            .iter()
-            .filter_map(|&pc_id| {
-                let e = self.get_entity(pc_id)?;
-                if e.is_dead() {
-                    return None;
-                }
-                if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
-                    return None;
-                }
-                let elem = e.element_data();
-                Some((
-                    pc_id,
-                    elem.position_map().x,
-                    elem.position_map().y,
-                    elem.layer(),
-                ))
-            })
-            .collect();
-
-        for (bonus_id, entity) in self.entities.objects() {
-            let bonus_id: EntityId = bonus_id.into();
-            // Match either a regular Bonus or a landed coin/purse
-            // projectile (post-burst).  Coins and purses are projectiles
-            // but the pickup switch dispatches by `ObjectType`.
-            let (bx, by, blayer, quantity, obj_type, assoc_action) = match entity {
-                Entity::Bonus(b) if b.element.active && !b.object.taken => (
-                    b.element.position_map().x,
-                    b.element.position_map().y,
-                    b.element.layer(),
-                    b.object.quantity,
-                    b.object.object_type,
-                    b.object.associated_action,
-                ),
-                Entity::Projectile(p)
-                    if p.element.active
-                        && !p.object.taken
-                        && !p.projectile.flying
-                        && matches!(p.object.object_type, ObjectType::Coin | ObjectType::Purse)
-                        // Bursted purses lost their value to their child
-                        // coins; the empty pouch sprite stays as
-                        // decoration but isn't separately pickable —
-                        // the take logic runs when the player picks up
-                        // any of the coins.
-                        && !(p.object.object_type == ObjectType::Purse
-                            && p.projectile.purse.burst) =>
-                {
-                    (
-                        p.element.position_map().x,
-                        p.element.position_map().y,
-                        p.element.layer(),
-                        p.object.quantity,
-                        p.object.object_type,
-                        p.object.associated_action,
-                    )
-                }
-                _ => continue,
-            };
-            if !bonus_auto_pickup_allowed(obj_type) {
-                continue;
-            }
-
-            for &(pc_id, px, py, pc_layer) in &pc_positions {
-                if pc_layer != blayer {
-                    continue;
-                }
-                let dx = px - bx;
-                let dy = py - by;
-                if dx * dx + dy * dy <= PICKUP_RADIUS_SQ {
-                    pickups.push(Pickup {
-                        pc_id,
-                        bonus_id,
-                        obj_type,
-                        assoc_action,
-                        quantity,
-                        bx,
-                        by,
-                        blayer,
-                    });
-                    break; // Only one PC picks up each bonus
-                }
-            }
-        }
-
-        for Pickup {
-            pc_id,
-            bonus_id,
-            obj_type,
-            assoc_action,
-            quantity,
-            bx,
-            by,
-            blayer,
-        } in pickups
-        {
-            self.apply_pc_take_object(
-                assets,
-                pc_id,
-                bonus_id,
-                obj_type,
-                assoc_action,
-                quantity,
-                bx,
-                by,
-                blayer,
-            );
-        }
-    }
-
     /// Apply the take-object completion for a PC picking up an object.
     /// Handles every `ObjectType` branch — amulet, purse, coin, ransom,
     /// relics, and the default ammo-bonus fall-through.
     ///
-    /// Called from two sites:
-    /// - [`Self::tick_bonus_auto_pickup`] for the per-tick proximity
-    ///   trigger (auto-pickup).
-    /// - The `Command::Take` DONE handler in [`super::tick`] for
-    ///   click-initiated pickups that finish the `Taking` animation
-    ///   before proximity fires.
+    /// Called by the `Command::Take` DONE handler in [`super::tick`],
+    /// after the explicit seek-and-take sequence finishes its `Taking`
+    /// animation.
     ///
     /// When the take is fully consumed the object is deactivated;
     /// otherwise it stays in world with `taken = true` set.  Returns
@@ -1680,13 +1541,6 @@ impl EngineInner {
     }
 }
 
-fn bonus_auto_pickup_allowed(obj_type: crate::element::ObjectType) -> bool {
-    // C++ arrow/bonus objects are picked through RHElementObject::MouseClicked,
-    // which queues Seek -> Take and only grants ammo after the Taking animation.
-    // Keep arrows out of Rust's proximity shortcut so they animate like scrolls.
-    obj_type != crate::element::ObjectType::BonusArrow
-}
-
 fn soldier_piercing_protection(
     profile_manager: &crate::profiles::ProfileManager,
     profile_index: crate::profiles::SoldierProfileIdx,
@@ -1720,21 +1574,8 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::M
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{
-        bonus_auto_pickup_allowed, soldier_piercing_protection, soldier_shield_dimensions,
-    };
-    use crate::element::ObjectType;
+    use super::{soldier_piercing_protection, soldier_shield_dimensions};
     use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
-
-    #[test]
-    fn arrow_bonus_is_not_auto_pickup() {
-        assert!(!bonus_auto_pickup_allowed(ObjectType::BonusArrow));
-    }
-
-    #[test]
-    fn non_arrow_bonus_keeps_existing_auto_pickup_path() {
-        assert!(bonus_auto_pickup_allowed(ObjectType::BonusPlants));
-    }
 
     #[test]
     fn stone_soldier_protection_requires_real_weapon_profile() {

@@ -1092,10 +1092,6 @@ impl EngineInner {
             self.remove_entity(id);
         }
 
-        // ── Bonus auto-pickup ─────────────────────────────────────
-        // Check if any PC walked within pickup radius of a bonus item.
-        self.tick_bonus_auto_pickup(assets);
-
         // ── PC selection outline fade ────────────────────────────
         // The hulk state-machine block runs during the per-element
         // refresh pass.
@@ -6677,8 +6673,7 @@ impl EngineInner {
         //
         // * PC takers route through `apply_pc_take_object` which
         //   covers amulet, purse, coin, ransom, relics, and the
-        //   default ammo-bonus fall-through.  The same helper drives
-        //   the per-tick proximity auto-pickup.
+        //   default ammo-bonus fall-through.
         //
         // * Net takers (PC or NPC) hit the shared net-release path.
         //
@@ -6734,8 +6729,7 @@ impl EngineInner {
                 }
                 Some(obj_type) if taker_is_pc => {
                     // Snapshot the object's position/layer/quantity/
-                    // associated-action so `apply_pc_take_object` gets
-                    // the same inputs the auto-pickup path passes.
+                    // associated-action before mutating the engine.
                     let Some(obj_entity) = self.get_entity(object) else {
                         continue;
                     };
@@ -8231,8 +8225,9 @@ mod soldier_take_drink_parity_tests {
     use super::*;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActorData, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementProjectile,
-        HumanData, NpcData, ObjectData, ObjectType, Posture, ProjectileData, SoldierData,
+        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind,
+        ElementProjectile, HumanData, NpcData, ObjectData, ObjectType, PcData, Posture,
+        ProjectileData, SoldierData,
     };
     use crate::sequence::SequenceElement;
 
@@ -8252,6 +8247,23 @@ mod soldier_take_drink_parity_tests {
             human: HumanData::default(),
             npc: NpcData::default(),
             soldier: SoldierData::default(),
+        })
+    }
+
+    fn make_pc_at(x: f32, y: f32) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position(WorldPoint3D { x, y, z: 0.0 });
+        element.set_position_map(crate::coordinates::MapPoint { x, y });
+        Entity::Pc(ActorPc {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData::default(),
         })
     }
 
@@ -8334,6 +8346,23 @@ mod soldier_take_drink_parity_tests {
 
         let actor = engine.get_entity(actor_id).unwrap();
         assert_eq!(actor.element_data().direction(), 1);
+    }
+
+    #[test]
+    fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
+        let mut engine = EngineInner::new();
+        let assets = LevelAssets::new();
+        engine.add_entity(make_pc_at(100.0, 100.0));
+        let bonus_id =
+            engine.add_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
+
+        let mut dev = DevState::default();
+        let mut display = HostDisplayState::default();
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+        let bonus = engine.get_entity(bonus_id).unwrap();
+        assert!(bonus.element_data().active);
+        assert!(!bonus.object_data().unwrap().taken);
     }
 }
 
