@@ -2,20 +2,22 @@
 //! `robin_assets::scb` parser. They were `#[cfg(any())]`-gated in-crate
 //! while the parser lived here; now they run as integration tests.
 
+mod support;
+
 use robin_assets::scb;
 use robin_engine::vm::{DecodeError, decode};
+use support::{data_directory, data_file};
 
 /// Every quad in every class of the shipped demo script should
 /// decode cleanly. If the demo uses an opcode value we haven't
 /// mapped, this fires.
+///
+/// Original provenance: `original-code/virtualmachine/SCSerialize.cpp:420-450`
+/// reads the shipped SCB header and indexes every serialized class.
 #[test]
+#[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see README.md"]
 fn decodes_every_quad_in_demo_script() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = std::path::PathBuf::from(manifest_dir)
-        .join("../../datadirs/demo/Data/Levels/Dem_Lei_MP.scb");
-    let Ok(path) = path.canonicalize() else {
-        return;
-    };
+    let path = data_file("Data/Levels/Dem_Lei_MP.scb");
     let scb = scb::parse_file(&path).unwrap();
     let mut decoded = 0;
     let mut unknown = std::collections::BTreeSet::new();
@@ -44,15 +46,13 @@ fn decodes_every_quad_in_demo_script() {
 
 /// Decode every quad in all 39 full-game .scb files. Verifies our
 /// opcode table covers the entire game, not just the demo.
+///
+/// Original provenance: `original-code/virtualmachine/SCSerialize.cpp:420-450`
+/// reads the shipped SCB header and indexes every serialized class.
 #[test]
+#[ignore = "requires full-game data via ROBINHOOD_DATA_DIR; see README.md"]
 fn decodes_every_quad_in_all_fullgame_scripts() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let levels_dir =
-        std::path::PathBuf::from(manifest_dir).join("../../datadirs/fullgame/Data/Levels");
-    let Ok(levels_dir) = levels_dir.canonicalize() else {
-        tracing::warn!("skipping: fullgame datadirs not present");
-        return;
-    };
+    let levels_dir = data_directory("Data/Levels");
 
     let allowed: std::collections::BTreeSet<u8> = [58, 107, 208, 229].into_iter().collect();
     let mut total_decoded = 0usize;
