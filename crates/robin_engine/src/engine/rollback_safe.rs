@@ -209,6 +209,20 @@ impl Engine {
     ///
     /// Returns `Err` only when mission data fails to ingest.
     pub fn new(args: EngineArgs) -> Result<Self, EngineError> {
+        Self::new_preserving_campaign(args).map_err(|(error, _campaign)| error)
+    }
+
+    /// Create a fully-initialised engine while preserving ownership of the
+    /// supplied campaign if mission ingestion fails.
+    ///
+    /// `EngineArgs` consumes its campaign. Callers which are themselves
+    /// ownership boundaries (notably mission bootstrap) must use this variant
+    /// so an initialization error cannot silently drop the one live campaign.
+    /// [`Engine::new`] remains the convenience wrapper for callers which do
+    /// not need to recover that value.
+    pub fn new_preserving_campaign(
+        args: EngineArgs,
+    ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let mut inner = EngineInner::new();
         // Seed the PRNG and apply engine-global cheat flags FIRST,
         // before any setup that might draw from the RNG or branch on
@@ -244,7 +258,7 @@ impl Engine {
         // spawns) so that beam-me sector validation and downstream
         // sector-handle resolution see the populated grid.
         let mut pending = PendingLevelData::default();
-        inner.with_sim_rng(|inner| {
+        if let Err(error) = inner.with_sim_rng(|inner| {
             inner.initialize_from_campaign(
                 assets,
                 &mut pending,
@@ -253,7 +267,10 @@ impl Engine {
                 bg_pixel_dims,
                 progress,
             )
-        })?;
+        }) {
+            let campaign = inner.take_campaign();
+            return Err((error, campaign));
+        }
         inner.populate_sector_gates_from_doors();
         inner.resolve_patch_mask_refs(&mut pending);
         // AI init runs HERE — after pathfinder + grid are fully
@@ -847,6 +864,73 @@ impl Deref for Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_construction_returns_the_same_campaign_allocation() {
+        let mut profiles = crate::profiles::ProfileManager::default();
+        profiles
+            .missions
+            .push(crate::profiles::MissionProfile::default());
+        profiles.soldiers.push(crate::profiles::SoldierProfile {
+            filename: "missing-construction-test-sprite".to_owned(),
+            profile_name: "missing-construction-test-profile".to_owned(),
+            ..crate::profiles::SoldierProfile::default()
+        });
+
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.missions.push(crate::mission::Mission {
+            profile_idx: Some(0),
+            ..crate::mission::Mission::default()
+        });
+        campaign.current_mission_idx = Some(0);
+        let missions_ptr = campaign.missions.as_ptr();
+
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(profiles);
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.soldiers.push(crate::level_data::RawSoldier {
+            position_x: 0,
+            position_y: 0,
+            direction: 0,
+            action: 0,
+            obstacle_index: 0,
+            sector: 0,
+            layer: 0,
+            material: 0,
+            profile_number: 0,
+            tower_guard: false,
+            company_number: 0,
+            drunk_level: 0,
+            money: 0,
+            subordinate_ids: Vec::new(),
+            path_id: 0,
+            alert_path_id: 0,
+            script_class: None,
+        });
+
+        let result = Engine::new_preserving_campaign(EngineArgs {
+            campaign,
+            level: LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims: (0.0, 0.0),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed: 0,
+            goldeneye: false,
+        });
+
+        let (error, returned) = match result {
+            Ok(_) => panic!("missing sprite must fail construction"),
+            Err(failure) => failure,
+        };
+        assert!(matches!(error, EngineError::ProfileSpriteLoadFailed { .. }));
+        assert_eq!(returned.missions.as_ptr(), missions_ptr);
+        assert_eq!(returned.current_mission_idx, Some(0));
+    }
 
     /// `Engine::restore` must transfer host-owned level fields from
     /// the live engine to the deserialised one when those fields live
