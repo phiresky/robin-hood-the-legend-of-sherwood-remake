@@ -1,0 +1,141 @@
+Version 10.1
+
+* Add Famicom presets and shaders
+
+* Added global options file as config/options.cfg
+
+* Add an option for darker and brighter HDR output
+
+* Remove MASK_DIFFUSION; diffusion is handled automatically
+
+Version 10.0
+
+* WCG mode gamut selection: BT.2020 and DCI
+
+* Steam Deck optimized presets
+
+* IPT option for gamut compression
+
+* Mipmap usage improvements, bezel optimizations
+
+* Bezel option cleanup
+
+* Final pass dithering
+
+* Noise models support subframes
+
+* Improved noise models, particularly for dithering
+
+* PC Engine presets use a hybrid digital pipeline
+
+* Fixes dither amount calculation
+
+* Fixes some timing issues related to PC Engine
+
+Version 9.0
+
+* HDR response is fixed
+
+* Bezel optimizations (parameter changes)
+
+* FHD-optimized presets
+
+* Fixes WCG display when HDR is enabled
+
+Version 8.0
+
+* N64 presets
+
+* Tone mapping improvements
+
+* HDR presets (beta)
+
+* Some parameter definitions are changed
+
+Version 7.0
+
+* 3DO presets
+
+* PSX presets
+
+* HDTV preset type introduced
+
+* Digital pipeline introduced
+
+* Changes some parameter definitions
+
+* Use floats in frame shader for better compatibility
+
+Version 6.2.1
+
+* Tweak generic timing to be more stable by using a division-based H-Freq
+
+Version 6.2
+
+* More realistic RF simulation
+
+* Add specialized Mega Drive presets
+
+* Add PC Engine presets
+
+* Filter parameter values were tweaked and tap counts optimized for accuracy
+
+* Framing was resized to optimize performance; oversampling applied by composite shader pipelines as needed
+
+* A compiling issue with certain Mega Drive/Genesis presets on Vulkan was fixed
+
+Version 6.1.1
+
+* Add generic presets, based on standard timing; may not be accurate.
+
+* Add Mega Drive presets
+
+* Add Neo Geo presets
+
+* Enable different output aspect ratios besides 16:9; smartly letterboxes and crops for ideal presentation
+
+* Add arcade bezels: flat is a rectangular border, tvstyle is in the shape of a 'bubble' tv viewport
+
+* Remove glow jitter parameter
+
+Version 6.1
+
+* Allow for color keyed JPEGs to be used for bezel
+
+Version 6.0
+
+* Completely new shader system, first version included with RetroArch
+
+Version 4.2
+
+* Adds more presets, mostly for monochrome monitors.
+
+Version 4.1
+
+* Fixes a bug with line doubler.
+
+* Adds Scanline Basic preset
+
+* Adjusts focus on various presets.
+
+Version 4.0
+
+* Adds support for multi-scan.  The following parameters have been
+  added: SCAN_TYPE, MAX_SCAN_RATE, LINE_DOUBLER, INT_OFF
+
+* The following parameters have been removed: ON_PIXELS, OFF_PIXELS,
+  HI_RES_THRES
+
+Version 3.1
+
+* Fixes a bug with color transformations.
+
+Version 3.0
+
+* New phosphor decay model (requires 3-pass setup).
+
+Version 2.0
+
+* Added support for shadow masks provided by hunterk.
+
+* Changed gamma model to simple 2.4 power law.
