@@ -3051,16 +3051,13 @@ impl EngineInner {
         struct FinalTol {
             tol: f32,
             directional: bool,
-            target_sector: Option<crate::position_interface::SectorHandle>,
             target_is_actor: bool,
-            /// Target's current `position_map`, sampled for this tick.
-            /// The live seek target is checked every frame; the path
-            /// waypoint can be stale after target movement or seek refresh.
-            target_pos: Option<MapPoint>,
-            /// Target's current-row hotspot offset for `USE_POINT` seeks.
-            /// `None` when the flag is clear or the target's sprite has no
-            /// per-row hotspot stored (falls back to plain position).
-            use_point_offset: Option<MapVec>,
+            /// Entity target resolved when the movement frame starts. Its
+            /// position, sector, and current-row hotspot are sampled again at
+            /// this actor's creation-order slot, after earlier actors have
+            /// committed their movement.
+            target_id: Option<EntityId>,
+            use_point: bool,
             /// Shield seeks compare actor position to the movement
             /// element's computed shield destination, not to the
             /// protected PC's live position.
@@ -3124,36 +3121,15 @@ impl EngineInner {
                         // emission.  Gating here keeps the FinalTol
                         // snapshot meaningful only for true seeks, so
                         // the downstream tolerance-arrival check can
-                        // rely on `target_pos` / `shield_destination`
-                        // being live.
+                        // rely on the creation-slot target observation /
+                        // `shield_destination` being live.
                         let directional =
                             flags.contains(crate::sequence::MoveFlags::DIRECTIONAL_TOLERANCE);
                         let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
                         let seek_shield = flags.contains(crate::sequence::MoveFlags::SEEK_SHIELD);
-                        let (target_sector, target_is_actor, target_pos, use_point_offset) =
+                        let (resolved_target_id, target_is_actor) =
                             match target_elem.and_then(|id| self.get_entity(id)) {
-                                Some(t) => {
-                                    let target_elem_data = t.element_data();
-                                    let target_pos = target_elem_data.position_map();
-                                    // Fall back to plain position when
-                                    // the hotspot is zero (no per-row
-                                    // point information).
-                                    let offset = if use_point {
-                                        target_elem_data
-                                            .sprite
-                                            .current_hotspot()
-                                            .filter(|p| p.x != 0.0 || p.y != 0.0)
-                                            .map(|p| MapVec::new(p.x, p.y))
-                                    } else {
-                                        None
-                                    };
-                                    (
-                                        target_elem_data.sector(),
-                                        t.actor_data().is_some(),
-                                        Some(target_pos),
-                                        offset,
-                                    )
-                                }
+                                Some(t) => (*target_elem, t.actor_data().is_some()),
                                 // SEEK without antagonist = seek-to-point
                                 // mode.  Skip the dist-vs-tolerance
                                 // check; arrival is detected by motion
@@ -3161,28 +3137,27 @@ impl EngineInner {
                                 // Falls through to the standard
                                 // `dist <= speed` final-waypoint
                                 // arrival when there is no post-seek
-                                // sequence.  Leaving target_pos None
+                                // sequence. Leaving target_id None
                                 // signals the consumer to skip the
                                 // entity-target seek-distance check.
                                 None => {
                                     if actor.post_seek_sequence.is_some() {
                                         point_seek_post_sectors[actor_id] = *sector;
                                     }
-                                    (None, false, None, None)
+                                    (None, false)
                                 }
                             };
                         // Skip the FinalTol snapshot entirely for
-                        // seek-to-point + non-shield (target_pos is
+                        // seek-to-point + non-shield (target_id is
                         // None and there's no shield destination), so
                         // the seek-arrival predicate doesn't fire.
-                        if target_pos.is_some() || seek_shield {
+                        if resolved_target_id.is_some() || seek_shield {
                             final_tolerances[actor_id] = FinalTol {
                                 tol: *tolerance,
                                 directional,
-                                target_sector,
                                 target_is_actor,
-                                target_pos,
-                                use_point_offset,
+                                target_id: resolved_target_id,
+                                use_point,
                                 shield_destination: seek_shield.then_some(*destination),
                                 last_seek_target_position: actor.last_seek_target_position,
                                 has_post_seek: actor.post_seek_sequence.is_some(),
@@ -3493,8 +3468,39 @@ impl EngineInner {
         // this per-frame execution record.
         let mut executed_pc_movement_actions: Vec<(EntityId, OrderType)> = Vec::new();
 
-        for (actor_id, entity) in self.entities.actors_mut() {
+        // Iterate a stable creation-order ID list instead of holding one
+        // mutable iterator borrow across the whole pass. This lets each actor
+        // sample its SEEK target directly from the entity table immediately
+        // before its own movement. Mutations by an earlier-created actor are
+        // therefore visible, while a later-created target still exposes its
+        // pre-movement state, matching RHEngine's virtual Hourglass loop.
+        let movement_actor_ids: Vec<_> = self.entities.actors().map(|(id, _)| id).collect();
+        for actor_id in movement_actor_ids {
             let entity_id = actor_id.into();
+            let ft = final_tolerances[actor_id];
+            let live_seek_target = ft.target_id.and_then(|target_id| {
+                self.entities.get(target_id).map(|target| {
+                    let target_data = target.element_data();
+                    let use_point_offset = if ft.use_point {
+                        target_data
+                            .sprite
+                            .current_hotspot()
+                            .filter(|p| p.x != 0.0 || p.y != 0.0)
+                            .map(|p| MapVec::new(p.x, p.y))
+                    } else {
+                        None
+                    };
+                    (
+                        target_data.position_map(),
+                        target_data.sector(),
+                        use_point_offset,
+                    )
+                })
+            });
+            let entity = self
+                .entities
+                .get_mut(entity_id)
+                .expect("movement actor ID collected from entity table must remain present");
             let is_pc = entity.is_pc();
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
@@ -3919,7 +3925,7 @@ impl EngineInner {
                 {
                     let (sdx, sdy) = ft
                         .shield_destination
-                        .or(ft.target_pos)
+                        .or(live_seek_target.map(|(position, _, _)| position))
                         .map(|p| (p.x - elem.position_map().x, p.y - elem.position_map().y))
                         .unwrap_or((dx, dy));
                     let dist_sq = sdx * sdx + sdy * sdy;
@@ -4421,7 +4427,8 @@ impl EngineInner {
             let tolerance_arrival = ft.tol > 0.0 && {
                 let self_sector = elem.sector();
                 // Require same sector.
-                if ft.target_sector.is_some() && self_sector != ft.target_sector {
+                let target_sector = live_seek_target.and_then(|(_, sector, _)| sector);
+                if target_sector.is_some() && self_sector != target_sector {
                     false
                 } else {
                     // Check the live seek target here, not the
@@ -4429,8 +4436,8 @@ impl EngineInner {
                     // for sword-strike seeks: the target can shift
                     // during the approach, and the PC must stop at
                     // the seek-distance from the target, not from the
-                    // stale path endpoint.  Either `shield_destination`
-                    // or `target_pos` is guaranteed to be `Some` by
+                    // stale path endpoint. Either `shield_destination` or a
+                    // live target observation is guaranteed to be present by
                     // the FinalTol pre-pass; the `expect` documents
                     // that invariant rather than papering over a
                     // missing target with the order's goal vector
@@ -4438,13 +4445,16 @@ impl EngineInner {
                     // waypoints).
                     let target = ft
                         .shield_destination
-                        .or(ft.target_pos)
-                        .expect("SEEK FinalTol must have shield_destination or target_pos");
+                        .or(live_seek_target.map(|(position, _, _)| position))
+                        .expect(
+                            "SEEK FinalTol must have shield_destination or a live target position",
+                        );
                     let (target_dx, target_dy) = (
                         target.x - elem.position_map().x,
                         target.y - elem.position_map().y,
                     );
-                    let (dx_use, dy_use) = if let Some(off) = ft.use_point_offset {
+                    let use_point_offset = live_seek_target.and_then(|(_, _, offset)| offset);
+                    let (dx_use, dy_use) = if let Some(off) = use_point_offset {
                         (target_dx + off.x, target_dy + off.y)
                     } else {
                         (target_dx, target_dy)
@@ -4567,7 +4577,7 @@ impl EngineInner {
                 )> = if !is_final_waypoint
                     && !tolerance_arrival
                     && ft.tol > 0.0
-                    && let Some(target_now) = ft.target_pos
+                    && let Some(target_now) = live_seek_target.map(|(position, _, _)| position)
                 {
                     let last = ft.last_seek_target_position;
                     let drifted = (target_now.x - last.x).abs() > 0.01

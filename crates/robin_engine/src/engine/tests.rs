@@ -3830,6 +3830,195 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
 }
 
 #[test]
+fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
+    use crate::element::{ActionState, Command, Posture};
+    use crate::movement::ActiveMovement;
+    use crate::order::{Order, OrderType};
+    use crate::position_interface::SectorHandle;
+    use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+    #[derive(Debug, PartialEq)]
+    struct Observation {
+        seeker_slot: u32,
+        target_slot: u32,
+        target_before_movement: MapPoint,
+        target_after_movement: MapPoint,
+        seeker_state: SequenceState,
+    }
+
+    fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
+        let action = OrderType::WalkingUpright;
+        let script = SpriteScript {
+            action_id: action as u16,
+            action_done: 0,
+            average_speed: 20.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 20,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![20],
+            offsets: vec![SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[action as usize] = 0;
+        let mut sprite = crate::sprite::Sprite::new(
+            std::sync::Arc::new(vec![script; 16]),
+            std::sync::Arc::new(conversion),
+        );
+
+        let element = engine
+            .get_entity_mut(entity_id)
+            .expect("movement fixture actor exists")
+            .element_data_mut();
+        let position = element.position_map();
+        let sector = element.sector();
+        sprite.position_iface.set_sector(sector);
+        sprite.position_iface.set_anti_collision_on(false);
+        sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_corners(
+                MapVec::new(-2.0, -2.0),
+                MapVec::new(2.0, 2.0),
+            ));
+        element.sprite = sprite;
+        element.set_position_map(position);
+    }
+
+    fn arm_movement(
+        engine: &mut EngineInner,
+        owner: EntityId,
+        destination: MapPoint,
+        seek_target: Option<EntityId>,
+    ) -> crate::sequence::SequenceId {
+        let mut element =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        element.orders.push_back(Order::test_new(
+            OrderType::WalkingUpright,
+            destination.x,
+            destination.y,
+        ));
+        let SequenceElementData::Movement {
+            destination: element_destination,
+            sector,
+            element: element_target,
+            flags,
+            tolerance,
+            ..
+        } = &mut element.data
+        else {
+            unreachable!("new_movement must create movement data")
+        };
+        *element_destination = destination;
+        *sector = SectorHandle::new(1);
+        *element_target = seek_target;
+        if seek_target.is_some() {
+            *flags = MoveFlags::SEEK;
+            *tolerance = 15.0;
+        }
+
+        let sequence_id = engine.sequence_manager.launch_element(element);
+        engine.sequence_manager.element_in_progress(sequence_id, 0);
+        let actor = engine
+            .get_entity_mut(owner)
+            .expect("movement owner exists")
+            .actor_data_mut()
+            .expect("movement owner is an actor");
+        actor.action_state = ActionState::Moving;
+        actor.active_movement = ActiveMovement::new(sequence_id, 0);
+        sequence_id
+    }
+
+    fn observe(seeker_before_target: bool) -> Observation {
+        let mut engine = EngineInner::new();
+        let target_before_movement = MapPoint::new(10.0, 0.0);
+        let target_destination = MapPoint::new(30.0, 0.0);
+
+        let mut seeker = make_test_pc(Posture::Upright);
+        seeker.element_data_mut().active = true;
+        seeker
+            .element_data_mut()
+            .set_position_map(MapPoint::new(0.0, 0.0));
+        seeker.element_data_mut().set_sector(SectorHandle::new(1));
+
+        let mut target = make_test_pc(Posture::Upright);
+        target.element_data_mut().active = true;
+        target
+            .element_data_mut()
+            .set_position_map(target_before_movement);
+        target.element_data_mut().set_sector(SectorHandle::new(1));
+
+        let (seeker_id, target_id) = if seeker_before_target {
+            let seeker_id = engine.add_entity(seeker);
+            let target_id = engine.add_entity(target);
+            (seeker_id, target_id)
+        } else {
+            let target_id = engine.add_entity(target);
+            let seeker_id = engine.add_entity(seeker);
+            (seeker_id, target_id)
+        };
+
+        bind_walking_sprite(&mut engine, seeker_id);
+        bind_walking_sprite(&mut engine, target_id);
+        arm_movement(&mut engine, target_id, target_destination, None);
+        let seeker_sequence = arm_movement(
+            &mut engine,
+            seeker_id,
+            MapPoint::new(100.0, 0.0),
+            Some(target_id),
+        );
+
+        // The original sprite pipeline reports MotionState::Start without
+        // advancing on a newly-seen order. Prime that start tick, then use
+        // the next production movement tick as the ordering observation.
+        let assets = LevelAssets::new();
+        engine.tick_entity_movement(&assets);
+        engine.tick_entity_movement(&assets);
+
+        Observation {
+            seeker_slot: seeker_id.index(),
+            target_slot: target_id.index(),
+            target_before_movement,
+            target_after_movement: engine
+                .get_entity(target_id)
+                .expect("target remains after movement")
+                .element_data()
+                .position_map(),
+            seeker_state: engine
+                .sequence_manager
+                .get_element(seeker_sequence, 0)
+                .expect("seeker movement element remains inspectable")
+                .state,
+        }
+    }
+
+    assert_eq!(
+        [observe(true), observe(false)],
+        [
+            Observation {
+                seeker_slot: 0,
+                target_slot: 1,
+                target_before_movement: MapPoint::new(10.0, 0.0),
+                // The target turns one sector toward +X on this frame, so
+                // the original 20-unit frame distance receives the 0.6 turn
+                // slowdown and commits a 12-unit step.
+                target_after_movement: MapPoint::new(22.0, 0.0),
+                seeker_state: SequenceState::Terminated,
+            },
+            Observation {
+                seeker_slot: 1,
+                target_slot: 0,
+                target_before_movement: MapPoint::new(10.0, 0.0),
+                target_after_movement: MapPoint::new(22.0, 0.0),
+                seeker_state: SequenceState::InProgress,
+            },
+        ],
+        "a seeker before its target observes the pre-move position, while a seeker after its target observes the committed post-move position"
+    );
+}
+
+#[test]
 fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
     use super::ai::npc_hourglass_frame_phase;
 
