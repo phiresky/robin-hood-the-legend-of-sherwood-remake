@@ -8,10 +8,11 @@ const TMP0: u16 = 0xC000;
 const TMP4: u16 = 0xC004;
 const TMP8: u16 = 0xC008;
 const TMP12: u16 = 0xC00C;
+const TMP16: u16 = 0xC010;
 
 /// Helper: build a program that pushes constants, calls a native, and returns the result.
 fn call_native_return(index: u32, args: &[i32]) -> Vec<crate::vm::Instruction> {
-    let temps = [TMP0, TMP4, TMP8, TMP12];
+    let temps = [TMP0, TMP4, TMP8, TMP12, TMP16];
     let temp_count = (args.len() + 1) as u16; // +1 for the return slot
     let ret_slot = temps[args.len()]; // first unused temp
 
@@ -52,6 +53,36 @@ fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCom
         .downcast_mut::<GameHost>()
         .expect("host is GameHost");
     (stop, std::mem::take(&mut host.deferred_commands))
+}
+
+#[test]
+fn send_message_native_queues_sequence_launch_payload() {
+    let (stop, commands) = run_native_deferred(NativeFn::SendMessage as u32, &[0, 1234]);
+    assert_eq!(stop, StopReason::ReturnedValue(0));
+    assert!(matches!(
+        commands.as_slice(),
+        [DeferredCommand::SendMessage {
+            actor: 0,
+            message: 1234,
+            arg1: 0,
+            arg2: 0,
+        }]
+    ));
+
+    let (stop, commands) = run_native_deferred(
+        NativeFn::SendMessageWithArguments as u32,
+        &[0, 2345, -11, 22],
+    );
+    assert_eq!(stop, StopReason::ReturnedValue(0));
+    assert!(matches!(
+        commands.as_slice(),
+        [DeferredCommand::SendMessage {
+            actor: 0,
+            message: 2345,
+            arg1: -11,
+            arg2: 22,
+        }]
+    ));
 }
 
 #[test]
@@ -769,6 +800,120 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
             ..Default::default()
         },
     })
+}
+
+fn persistent_property_test_host(with_campaign: bool) -> (GameHost, i32) {
+    use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
+
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(CharacterProfile {
+        actions: [Action::Bow, Action::Stone, Action::Apple],
+        action_max_ammo: [12, 6, 6],
+        ..Default::default()
+    });
+    let mut host = GameHost::new();
+    host.profile_manager = robin_util::static_arc::StaticArc::new(profiles);
+
+    let mut pc = native_test_pc(vec![true; 3], vec![false; 3]);
+    let pc_data = pc.pc_data_mut().expect("test entity must be a PC");
+    pc_data.profile_index = CharacterProfileIdx(0);
+    pc_data.current_action = Action::Bow;
+    pc_data.saved_action = Action::Bow;
+    host.entities = vec![Some(pc)];
+
+    if with_campaign {
+        let mut status = crate::pc_status::PcStatus::default();
+        status.set_ammo(Action::Bow, 2);
+        status.set_ammo(Action::Stone, 5);
+        host.campaign = Some(crate::campaign::Campaign {
+            characters: vec![crate::campaign::PcDescription {
+                character_profile_idx: Some(CharacterProfileIdx(0)),
+                status,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+    }
+
+    (host, GameHost::actor_handle_from_index(0))
+}
+
+fn call_set_persistent_property(host: &mut GameHost, actor: i32, prop: i32, amount: i32) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(prop);
+    stack.push_i32(amount);
+    <GameHost as HostFunctions>::call(host, NativeFn::SetPersistentProperty as u32, &mut stack)
+}
+
+fn call_get_persistent_property(host: &mut GameHost, actor: i32, prop: i32) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(prop);
+    <GameHost as HostFunctions>::call(host, NativeFn::GetPersistentProperty as u32, &mut stack)
+}
+
+#[test]
+fn set_persistent_property_updates_live_pc_ammo_without_campaign() {
+    use crate::element::PcAmmoData;
+    use crate::profiles::Action;
+
+    let (mut host, actor) = persistent_property_test_host(false);
+
+    assert_eq!(call_set_persistent_property(&mut host, actor, 0, 7), 1);
+    assert_eq!(call_set_persistent_property(&mut host, actor, 5, 4), 1);
+
+    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    assert_eq!(
+        pc.ammo,
+        PcAmmoData {
+            arrows: 7,
+            stones: 4,
+            ..Default::default()
+        }
+    );
+    assert_eq!(pc.disabled_actions, [false, false, true]);
+    assert_eq!(pc.current_action, Action::Bow);
+    assert_eq!(pc.saved_action, Action::Bow);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 0), 7);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 5), 4);
+}
+
+#[test]
+fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
+    use crate::element::PcAmmoData;
+    use crate::profiles::Action;
+
+    let (mut host, actor) = persistent_property_test_host(true);
+    {
+        let pc = host.entities[0].as_mut().unwrap().pc_data_mut().unwrap();
+        pc.ammo.arrows = 2;
+        pc.ammo.stones = 5;
+        pc.current_action = Action::Stone;
+        pc.saved_action = Action::Stone;
+    }
+
+    assert_eq!(call_set_persistent_property(&mut host, actor, 0, 6), 1);
+    assert_eq!(call_set_persistent_property(&mut host, actor, 5, 0), 1);
+
+    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    assert_eq!(
+        pc.ammo,
+        PcAmmoData {
+            arrows: 6,
+            ..Default::default()
+        }
+    );
+    assert_eq!(pc.disabled_actions, [false, true, true]);
+    assert_eq!(pc.current_action, Action::NoAction);
+    assert_eq!(pc.saved_action, Action::NoAction);
+
+    let campaign = host.campaign.as_ref().unwrap();
+    let status = &campaign.characters[0].status;
+    assert_eq!(status.get_ammo(Action::Bow), 6);
+    assert_eq!(status.get_ammo(Action::Stone), 0);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 0), 6);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 5), 0);
 }
 
 fn native_sees(host: &mut GameHost, npc_index: usize, target_index: usize) -> i32 {

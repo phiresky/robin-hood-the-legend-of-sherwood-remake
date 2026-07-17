@@ -1284,9 +1284,8 @@ impl EngineInner {
         // promotes one Move sequence element per unique actor this
         // tick — absorbing redundant re-fires that would otherwise
         // launch a fresh Move each frame and `InterruptCurrent` the
-        // in-flight one.  We skip the per-frame rate-limit the
-        // original used — Rust's A* is fast enough to resolve every
-        // pending actor in a single tick.
+        // in-flight one. A*-requiring elements enter the frame-paced
+        // path-request queue advanced by the following `Paths` phase.
         self.process_pending_ai_orders();
         self.drain_pending_move_requests();
 
@@ -1329,12 +1328,6 @@ impl EngineInner {
     /// `marrayElements`, which `SortForEngine` orders by creation order at
     /// `original-code/RHengine.cpp:7909-7944`, and removes dead elements inline.
     fn hourglass_phase_entities(&mut self, assets: &LevelAssets) -> bool {
-        // Pathfinding is synchronous now — Move sequence elements
-        // call `find_path` directly when their `InstructOwner` action
-        // dispatches (see the Move dispatch in this file).  The
-        // legacy async `ProcessPathRequests` drain had no remaining
-        // producers post-refactor and was deleted.
-
         // Snapshot pre-hourglass swordfight state so we can detect a
         // swordfight→non-swordfight transition across this tick and
         // raise the ignore-mouse-event bracket on the falling edge.
@@ -1407,14 +1400,18 @@ impl EngineInner {
         was_swordfighting
     }
 
-    /// Retry path requests left unresolved by an earlier tick before any
-    /// entity refresh observes their state.
+    /// Advance queued pathfinding and failed-path deadlines before any entity
+    /// refresh observes their state.
     ///
     /// Original provenance: `original-code/RHengine.cpp:3697-3702` calls
-    /// `ProcessPathRequests` before collision and entity hourglasses. Rust path
-    /// construction is synchronous in the sequence phase, so only failed-path
-    /// retry maintenance remains in this pre-entity phase.
+    /// `ProcessPathRequests` once before collision and entity hourglasses;
+    /// `original-code/RHpathfinder.cpp:710-765` returns at most one completed
+    /// request and begins at most one successor at that scheduling point.
     fn hourglass_phase_paths(&mut self, assets: &LevelAssets) {
+        // Rust computes A* synchronously, but the queue retains the original
+        // one-call latency and one-completion-per-frame observation order.
+        self.process_next_path_request(assets);
+
         // ── Failed-path retry ────────────────────────────────────
         // Move / Seek elements whose pathfind failed on a previous
         // tick stay in `InProgress` with empty orders for up to 100
@@ -1740,8 +1737,9 @@ impl EngineInner {
             // the same code path is reused by the failed-path retry
             // pass.
 
-            match self.try_dispatch_move_path(assets, owner, seq_id, elem_idx, dest, move_action) {
+            match self.try_dispatch_move_path(owner, seq_id, elem_idx, dest, move_action) {
                 MovePathOutcome::Success => {}
+                MovePathOutcome::Pending => {}
                 MovePathOutcome::ActorGone => {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }

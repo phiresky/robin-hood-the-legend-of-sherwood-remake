@@ -45,16 +45,16 @@ its pending list FIFO and calls `Go()` at
   original coarse `ProcessPathRequests -> element Hourglass ->
   SequenceManager::Hourglass -> post-process` order without crossing the
   profile-dependent batched-system lifecycle described below.
-- **Paths:** New Move/Seek paths are constructed synchronously when their
-  sequence element launches, so there is no async request queue to drain.
-  `Paths` handles only failed requests carried from an earlier tick. Seek
-  refresh and WAIT_TIMER maintenance now live in `Entities`, matching
+- **Paths:** Direct Move/Seek paths are constructed synchronously, while
+  A*-requiring moves enter a deterministic queue. `Paths` advances that queue
+  once per frame, returning at most one completed request and beginning at
+  most one successor before `Entities`, matching `RHEngine::ProcessPathRequests`.
+  Failed-request deadlines remain in the same phase. Seek refresh and
+  WAIT_TIMER maintenance live in `Entities`, matching
   `RHElementActor::Hourglass` provenance. The intervening original
   `CheckForCollision` had only a mobile-damage arm, explicitly marked dead in
   `original-code/RHengine.cpp:10790-10855` because shipped missions never
   return true from `IsMobile`; Rust therefore has no invented replacement.
-  This restores the coarse ordering but does not resolve PA-014's request-rate
-  timing difference.
 - **Entities:** `EngineInner::add_entity` appends and removal leaves a hole;
   `Entities::occupied_mut()` walks those slots in ascending order. Focused
   tests prove slots are not reused and serde save/load preserves both holes
@@ -136,9 +136,13 @@ or simplification.
 | PA-010 | EnemyNear scanned every PC unconditionally and ran generic trouble/battle decisions. | `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest` and `EVENT_ENEMY_NEAR`, `RHartificialmalignity.cpp`. | `15e5ffd6f` restores the trainer/substate/time gates, ordered `mlistThem` scan, exact box/postures, stimulus target assignment, and `BeginSwordfight`. |
 | PA-011 | `reinitialize_them_list` retained an unseen saved primary target. | `RHArtificialMalignity::ReinitializeThemList`, `RHartificialmalignity.cpp`. | `4350e5092` rebuilds the list solely from visible, living enemies. |
 | PA-012 | FadeToBlack frozen frames advanced the mission clock. | `RHScript::FadeToBlack`, `RHScript.cpp`. | `e3fb1efb0` makes the fade render-only while simulation, RNG, script, display, and sound timers remain frozen. |
+| PA-014 | Rust completed every pending A* path request synchronously in one tick. | `RHEngine::ProcessPathRequests`, `RHengine.cpp`, and `RHPathFinder::ProcessPathRequests`, `RHpathfinder.cpp`, expose one scheduling point and at most one ready result per frame. | `7786df3bf` restores the waiting/in-flight queue, original priority ordering, one-call latency, and one completed request per frame, with focused timing tests. |
 | PA-015 | Missing sound/exclamation durations fabricated 75-frame completions. | `RHSound::GetSampleLengthMs`, `RHsound.cpp`, returns zero when the sample cannot be resolved; completion follows the sound hourglass. | Missing duration metadata now warns and schedules the original zero-length result at the next deterministic simulation boundary, with focused completion-order tests. |
 | PA-016 | NPC tick phases ran in a materially different order. | `RHElementActorNPC::Hourglass`, `RHelementactornpc.cpp`, orders patrol, base human work, broadcasts/view/detection/ambush, busy/ladder, lock gate, periodic work, timers, then queued stimuli. | The Rust phases now follow that exact order once each, protected by an ordering trace test. Per-entity batching remains tracked by PA-013. |
 | PA-020 | Arrow-watching AI treated `EVENT_DONE` as a return-to-duty signal. | Arrow-watching substate cases in `RHartificialmalignity.cpp`. | `a8dcaaf01` removes the invented fallback and adds a focused regression. |
+| PA-024 | `SetPersistentProperty` dropped live PC ammo writes when no campaign existed. | `RHScript::SetPersistentProperty`, `RHScript.cpp`, updates the live PC for arrows and PC ammo properties. | `7029583d6` writes through the live PC capacity independently of campaign persistence and adds no-campaign regressions. |
+| PA-027 | Messenger processing, condolations, and self-stimuli were deferred to global tick tails. | `RHMessenger::ForwardMessage` and `RHSequenceElement::SendCondolationCard` dispatch synchronously and re-entrantly (`RHMessenger.cpp`, `RHsequenceelement.cpp`). | `6f7907eaf` restores recursive messenger ordering and synchronous condolence arbitration, protected by same-frame ordering tests. |
+| PA-028 | Script `SendMessage` bypassed the original sequence element and dispatched after the script call. | `RHScript::SendMessage`, `RHScript.cpp`, launches `RHCOMMAND_SEND_MESSAGE`; `RHSequenceElementSendMessage::Go`, `RHsequenceelement.cpp`, performs delivery. | `618df2081` restores sequence launch, priority/arbitration, deferred delivery, and exact callback-order tests. |
 | PA-029 | Rust ran mission `PostInitialize` at the end of the first engine tick before the original presentation boundary. | `RHGame::GameLoop`, `RHgame.cpp`, calls it after the first refresh and sound hourglass. | `cdcf5d0fe` restores an explicit host-driven post-refresh/sound stage and mirrors it in rollback replay, with exact ordering tests. |
 
 ## Open Findings
@@ -148,15 +152,11 @@ Priority reflects likely gameplay impact, not implementation effort.
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
 | PA-013 | High | unverified | Rust globally regroups per-entity Hourglass work into movement, animation, script, detection, combat, and ability passes. Original `RHEngine::PerformHourglass` calls each virtual `Element::Hourglass` in entity order before `RHSequenceManager::Hourglass` (`RHengine.cpp`). Cross-entity and same-frame callback ordering needs scenario tests. |
-| PA-014 | High | mismatch | Rust drains pending path/move work synchronously in one tick. Original `RHEngine::ProcessPathRequests` calls the pathfinder once and resolves at most one queued request per frame (`RHengine.cpp`). Decide whether the timing difference is an approved feature or restore the rate limit. |
 | PA-021 | Medium | incomplete | Script native `Sees` omits ambiance-adjusted view radius and the forest Royalist 180-degree rule. Original `RHScript::Sees` delegates to `RHElementActorNPC::IsDetecting` (`RHScript.cpp`, `RHelementactornpc.cpp`). |
 | PA-022 | Medium | incomplete | Cached door authorization checks only building type, active state, and villain lock. Original `FindDoorEnemyCouldBeBehind` calls `RHGate::IsActorAutorized`, which also checks building capacity and riders (`RHartificialmalignity.cpp`, `RHGate.cpp`). |
 | PA-023 | Medium | mismatch | `SetExperiences` writes the campaign description and persists into later missions. Original `RHScript::SetExperiences` changes only the live PC capacities (`RHScript.cpp`). |
-| PA-024 | Medium | incomplete | `SetPersistentProperty` drops live PC ammo writes when no campaign exists. Original `RHScript::SetPersistentProperty` updates the live actor for arrows and PC ammo properties (`RHScript.cpp`). This path must not silently return a fabricated failure. |
 | PA-025 | Medium | mismatch | Charly-to-officer logic substitutes 360-degree detection. Original calls normal `IsDetecting(mpAntagonist)` and therefore respects the view cone (`RHartificialmalignity.cpp`). |
 | PA-026 | Medium | mismatch | Shoulder-ceiling checks run for every `CarryingOnShoulders` posture. Original performs the check only while executing `WALKING_CARRYING_ON_SHOULDERS` (`RHelementactorpc.cpp`). |
-| PA-027 | Medium | unverified | Messenger processing, condolations, and self-stimuli are deferred to global tick phases. Original `ForwardMessage` and `SendCondolationCard` paths are synchronous and re-entrant (`RHMessenger.cpp`, `RHsequenceelement.cpp`). Add ordering tests before changing the architecture. |
-| PA-028 | Medium | unverified | Rust dispatches script `SendMessage` after the script call instead of launching the original `RHCOMMAND_SEND_MESSAGE` sequence element. Compare arbitration and same-frame callback order (`RHScript.cpp`, `RHsequenceelement.cpp`). |
 | PA-030 | Low | unverified | Collinear movement-line intersection fabricates impact parameter `t = 0.5`. Find and port the original earliest-overlap behavior or add geometry evidence and focused collision tests. |
 | PA-031 | Low | mismatch | Push handling falls back to radial movement for unexpected thrust kinds. Original push dispatch handles the three supported kinds and asserts otherwise (`RHelementactorhuman.cpp`). |
 
@@ -171,13 +171,13 @@ need their own review.
 | Mission notices, quit branches, script Hourglass and victory | `RHEngine::PerformHourglass`, `RHengine.cpp` | verified structurally |
 | Frame increment, lock gate, default loss | `RHEngine::PerformHourglass` | playable mismatch fixed; retain regression |
 | Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
-| Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | PA-014 |
+| Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
 | Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; test entity-order observations |
 | NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; per-entity batching remains PA-013 |
 | Arrows, purse/coins, wasps, nets, melee, abilities | per-type virtual Hourglass/Execute methods | verify spawn-frame inclusion and ordering per type |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
-| Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | PA-027 |
+| Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous ordering verified by PA-027 |
 | PostInitialize | mission loop in `RHgame.cpp` | host boundary verified by PA-029 |
 | RNG, rollback side effects, minimap/marks/camera | no single original phase | intentional architecture only where documented; audit gameplay state individually |
 
@@ -188,13 +188,13 @@ source-to-source pass is complete.
 
 | Subsystem | State | Required evidence |
 | --- | --- | --- |
-| Main tick and mission state | in progress | Resolve PA-013 and PA-014; retain the phase-ordering tests. |
+| Main tick and mission state | in progress | Resolve PA-013; retain the phase- and path-ordering tests. |
 | Item interaction / pickup | verified for explicit Take | Keep the no-proximity-pickup regression. Audit other interaction shortcuts. |
 | Enemy detection and state machine | in progress, high risk | Resolve PA-025 and continue state-by-state comparison. |
 | Melee and damage | queued, high risk | Review every remaining simplification against actor-human combat code. |
-| Movement, paths, doors, lifts | in progress, high risk | Resolve PA-014, PA-022, PA-030. |
-| Script natives and callbacks | in progress, high risk | Resolve PA-021, PA-023, PA-024, PA-028. |
-| Sequence manager and messages | queued, high risk | Same-frame and arbitration replay tests for PA-027/PA-028. |
+| Movement, paths, doors, lifts | in progress, high risk | Resolve PA-022 and PA-030; retain PA-014 timing tests. |
+| Script natives and callbacks | in progress, high risk | Resolve PA-021 and PA-023; retain PA-024/PA-028 regressions. |
+| Sequence manager and messages | in progress, high risk | Condolence and SendMessage ordering are verified; audit remaining sequence types. |
 | Projectiles and abilities | queued | Per-type Hourglass and spawn-frame comparison. |
 | Audio-driven AI state | in progress, high risk | Missing-duration parity is fixed; continue auditing completion callbacks. |
 | Save/campaign persistence | queued | Compare every persistent native and mission transition. |
