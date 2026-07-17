@@ -5495,11 +5495,6 @@ impl EngineInner {
         // `EngineInner::engine_postpone`.
         self.propagate_done_to_current_orders();
 
-        // ── Shouldered-carry ceiling check ─────────────────────
-        // If a PC carrying another PC on their shoulders walks
-        // under a low ceiling, force the shouldered PC off.
-        self.tick_shouldered_carry_ceiling(assets);
-
         // ── Carried entity position sync ───────────────────────
         // Keep bodies carried by Little John positioned on the carrier
         // and drive their sprite animation (BeingLifted/BeingCarried/
