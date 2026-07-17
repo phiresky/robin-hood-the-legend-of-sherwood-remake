@@ -649,7 +649,9 @@ impl Game {
                 exit_code: self.operation.get_current(),
             },
         );
-        *campaign = engine.take_campaign();
+        *campaign = engine
+            .take_campaign()
+            .expect("finalize_mission: engine campaign is missing after quit updates");
         self.process_operation(campaign, &assets.profile_manager, callbacks)
     }
 
