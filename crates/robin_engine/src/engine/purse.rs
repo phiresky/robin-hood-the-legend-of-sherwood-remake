@@ -58,7 +58,7 @@ impl EngineInner {
     ///   off the purse's `child_coins` list (the empty pouch stays alive
     ///   forever as decoration).
     pub(super) fn tick_purses_and_coins(&mut self, assets: &crate::engine::LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -335,9 +335,8 @@ impl EngineInner {
                 .get_entity(purse_id)
                 .map(|e| e.position_iface().get_sector())
                 .unwrap_or(None);
-            let target_pos: WorldPoint3D = self
-                .position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y)
-                .into();
+            let target_pos: WorldPoint3D =
+                self.position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y);
 
             let goal_grid_pt = crate::coordinates::MapPoint::new(goal_2d.x, goal_2d.y);
             let target_sector = match self.fast_grid.get_sector(goal_grid_pt, goal_grid_pt, layer) {

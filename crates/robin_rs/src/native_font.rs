@@ -328,7 +328,9 @@ impl NativeFont {
 
 /// Convert a `&[u8]` of little-endian u16 pixel data to `Vec<u16>`.
 fn bytes_to_u16(data: &[u8]) -> Vec<u16> {
-    data.chunks_exact(2)
+    data.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect()
 }

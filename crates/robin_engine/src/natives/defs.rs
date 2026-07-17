@@ -1,322 +1,56 @@
-//! Native function index enum and name lookup.
+//! Native function IDs generated from the declarative native registry.
 //!
-//! The host registers 265 native functions that the VM invokes via
-//! `NativeCall <index>`. `NativeFn`'s discriminants match that
-//! registration order so numeric indices decoded from the SCB bytecode
-//! can be converted straight into the strongly-typed enum.
+//! The original game registers exactly 265 functions. Their IDs are an ABI:
+//! shipped SCB bytecode encodes them directly in `NativeCall` instructions.
 
-/// Native function index enum. Discriminants match the native-function
-/// registration order (0–264).
-#[repr(u32)]
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    num_enum::TryFromPrimitive,
-    strum_macros::Display,
-    strum_macros::IntoStaticStr,
-)]
-#[allow(missing_docs)]
-pub enum NativeFn {
-    InitGlobal,
-    SetGlobal,
-    GetGlobal,
-    GetActorScript,
-    GetDoorScript,
-    GetPatchScript,
-    GetLocationScript,
-    GetSoundSourceScript,
-    GetBuildingScript,
-    GetWayScript,
-    GetActorIndex,
-    GetDoorIndex,
-    GetPatchIndex,
-    GetLocationIndex,
-    GetSoundSourceIndex,
-    GetBuildingIndex,
-    GetWayIndex,
-    StartDialog,
-    ScrollCameraTo,
-    ScrollCameraSlowlyTo,
-    JumpCameraTo,
-    SetZoomLevel,
-    DisplayMap,
-    DisplayConsole,
-    CustomizeMinimapDisplay,
-    DefineFlatTrajectoryZone,
-    AddShortBriefing,
-    DoneShortBriefing,
-    ChooseVictoryDefeatText,
-    ForceCheckVictory,
-    Start,
-    Thanx,
-    Then,
-    RecordScrollCameraTo,
-    RecordJumpCameraTo,
-    RecordSetZoom,
-    RecordDisplayMap,
-    RecordActionAvailable,
-    RecordCharacterAvailable,
-    RecordLockCameraOn,
-    RecordClearCameraLock,
-    RecordPlayDialog,
-    RecordMoveCameraTo,
-    RecordSendMessage,
-    RecordSendMessageWithArguments,
-    RecordMove,
-    RecordEnterGame,
-    RecordLeaveGame,
-    RecordTurnTo,
-    RecordPlayAnim,
-    RecordPlayAnimLoop,
-    RecordPlayAnimFreeze,
-    RecordLockAI,
-    RecordUnlockAI,
-    RecordLockUser,
-    RecordUnLockUser,
-    RecordTimer,
-    RecordSeekActor,
-    RecordStopSeek,
-    RecordAction,
-    RecordReplaceAnim,
-    RecordRestoreAnim,
-    RecordSpeakPC,
-    RecordTakeCorpse,
-    RecordMoveIntoBuilding,
-    RecordLeaveCorpse,
-    ResetAnim,
-    RecordStartMobileElement,
-    RecordStopMobileElement,
-    RecordSpeak,
-    RecordSeekActorMessage,
-    RecordSeekActorMessageWithArguments,
-    RecordActivateMobileElement,
-    RecordDeactivateMobileElement,
-    ThisActor,
-    GetNumberOfActorsInEngine,
-    IsActorAnimation,
-    IsActorObject,
-    IsActorCharacter,
-    IsActorPC,
-    IsActorNPC,
-    IsActorSoldier,
-    IsActorCivilian,
-    /// Kept so the enum discriminants stay aligned with shipped SCB
-    /// scripts.  Always returns 0 — there are no animal actors.
-    IsActorAnimal,
-    IsActorCart,
-    IsNull,
-    IsActorEqual,
-    IsActorDead,
-    IsActorKO,
-    IsActorTied,
-    IsActorHS,
-    GetActorPosture,
-    SetActorPosture,
-    GetActorDirection,
-    SetActorDirection,
-    GetActorLocation,
-    SetActorLocation,
-    IsInside,
-    IsInsideBuilding,
-    UnBlip,
-    GetMovementStyle,
-    GetCurrentAction,
-    InflictPain,
-    StopActor,
-    Sees,
-    EnableViewCone,
-    GetOutlineDisplay,
-    SetOutlineDisplay,
-    PrototypeFilterEvent,
-    SendMessage,
-    SendMessageWithArguments,
-    God,
-    Select,
-    Deactivate,
-    Activate,
-    SetActionAvailable,
-    IsActionAvailable,
-    SetPersistentProperty,
-    GetPersistentProperty,
-    IsAnyCivilianDead,
-    IsAnyEnemyDead,
-    GetOverallEnemyAlert,
-    GetOverallCivilianAlert,
-    SetAIAlertStatus,
-    GetAIAlertStatus,
-    SetAIState,
-    GetAIState,
-    SetAIAttitude,
-    GetAIAttitude,
-    SetAILevel,
-    StareActor,
-    StareLocation,
-    AssignPath,
-    AssignPost,
-    LockAI,
-    UnlockAI,
-    ForceBattleDecision,
-    MakeNoise,
-    Freeze,
-    FreezeAll,
-    SetPathWalkingStyle,
-    GetSoldierRank,
-    IsAnimationActive,
-    SetAnimationState,
-    IsPatchApplied,
-    ApplyPatch,
-    ResetPatch,
-    SuspendAllSoundSources,
-    ResumeAllSoundSources,
-    ActivateSoundSource,
-    DeactivateSoundSource,
-    DestroySoundSource,
-    CleanFromHisBuildingBeforeTeleport,
-    CleanFromScriptZoneBeforeTeleport,
-    AddToScriptZoneAfterTeleport,
-    SetCorpseExistsInBuilding,
-    PutActorInBuilding,
-    SetBuildingActive,
-    GetAnyActorInsideBuilding,
-    NoWhere,
-    GetDistance,
-    Rand,
-    PrintConsole,
-    GetSizeOfMissionTeam,
-    GetPCFromMissionTeam,
-    AddPCToMissionTeam,
-    RemovePCFromMissionTeam,
-    GetNumberOfObligatoryPCsInMissionTeam,
-    GetObligatoryPCFromMissionTeam,
-    IsPCObligatoryInMissionTeam,
-    IsMissionTeamValid,
-    GetLastPlayedMission,
-    GetNextPlayedMission,
-    IsMenToBlazonConversionMode,
-    GetNumberOfBeamMes,
-    MoveBeamMe,
-    SetCompanyNumber,
-    SetAlwaysAttentive,
-    WinBlazon,
-    LoseBlazon,
-    SetInvisible,
-    IsInvisible,
-    IsDoorLockedPC,
-    IsDoorUnlockable,
-    IsDoorLockedNPCCivilian,
-    IsDoorLockedNPCVillain,
-    SetDoorLockedPC,
-    SetDoorUnlockable,
-    SetDoorLockedNPCCivilian,
-    SetDoorLockedNPCVillain,
-    SetDoorSpecialAutorisation,
-    ActivateDoorMouseSector,
-    ThisScroll,
-    GetScrollStatus,
-    SetScrollStatus,
-    GetCustomCampaignValue,
-    SetCustomCampaignValue,
-    GetCustomNPCValue,
-    SetCustomNPCValue,
-    RegisterAsProductionSector,
-    AddProductionPoint,
-    GetActorForBeamMe,
-    DisplayPopupText,
-    RecordDisplayPopupText,
-    GetNumberOfActorsInSector,
-    GetActorInSector,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
-    HasPCAction,
-    HasAnyPCAction,
-    GetRobin,
-    RecordMoveNear,
-    ComputeLocationBetween,
-    DeclareAsCombatTrainer,
-    GetRelic,
-    GetNumberOfPCs,
-    GetPC,
-    AddAsSubordinate,
-    RemoveAllSubordinates,
-    SwitchToAlertPath,
-    IsActorRider,
-    IsUnblipped,
-    IsBlazonWon,
-    AddRepulsivePoint,
-    SetViewRadius,
-    RecordFreezeAll,
-    DeleteRepulsivePoint,
-    SetNPCEmoticon,
-    ConfiscateMoney,
-    AreAllPCsInside,
-    AreAllEnemiesInsideHS,
-    AddPCToGang,
-    AttachScrollToNPC,
-    AreAllBlazonsWon,
-    IsBonusItemPickedUp,
-    GetRansomMoney,
-    SetRansomMoney,
-    GetDifficultyLevel,
-    DisplaySherwoodReport,
-    IsActorActive,
-    AddFarmerToGang,
-    SetExperiences,
-    RecordUnBlip,
-    SetPatchAnimationActive,
-    GetNumberOfPCsAlive,
-    AreAllPCsAliveInside,
-    TransformHandleTargetToTakeTarget,
-    IsPCSelected,
-    GetNumberOfSelectedPCs,
-    GetSelectedPC,
-    PlayTrapJingle,
-    MakePCCrouched,
-    HasAnyPCActionWhoIsInThisLevelOrCouldMaybeComeFromSherwood,
-    LockPatch,
-    HasAnyActivePCAction,
-    GetPCType,
-    SelectActorPC,
-    HasAnyActionSelected,
-    GetActorActionState,
-    SetActorActionState,
-    SecretAgentsAreBackInSherwood,
-    FadeToBlack,
-    LinkTargetToFX,
-    ForbidNPCRemark,
+use super::signatures::native_registry;
 
-    // ── Spellforge / Lua-only natives (indices 265+) ──
-    //
-    // These are not referenced by any shipped `.scb` bytecode (which
-    // only registers 0..=264). They're added so the same `GameHost`
-    // dispatch table can serve the Lua scripting layer used by custom
-    // missions from rhmods.com. Keep their indices stable in case
-    // Lua-emitted bytecode ever wants to call them by index.
-    /// `Reveal(actor) -> int` — un-blip an actor (mark it visible).
-    Reveal,
-    /// `AddObjective(id, isMainObjective) -> int` — adds a mission
-    /// objective to the UI list.
-    AddObjective,
-    /// `CompleteObjective(id) -> int` — marks a previously-added
-    /// objective complete.
-    CompleteObjective,
-    /// `IsActorOutOfAction(actor) -> bool` — Spellforge's
-    /// `IsActorHS` (HS = "Hors Service", out of action) under the
-    /// English name. Functionally identical: dead || tied ||
-    /// unconscious.
-    IsActorOutOfAction,
-    /// `SetPatrolShouldRun(actor, shouldRun)` — toggle whether a
-    /// patrolling NPC walks or runs along its path.
-    SetPatrolShouldRun,
-    /// `SequenceReveal(actor) -> int` — sequence-recorded variant
-    /// of `Reveal`, queued as a sequence element.
-    SequenceReveal,
+/// Number of natives in the original game's fixed SCB namespace.
+pub const ORIGINAL_NATIVE_COUNT: u32 = 265;
+
+/// First ID reserved for Rust/Lua extensions.
+pub const RUST_EXTENSION_NATIVE_START: u32 = ORIGINAL_NATIVE_COUNT;
+
+macro_rules! define_native_fn {
+    (
+        original { $( $original:ident => $original_metadata:tt; )* }
+        rust_extensions {
+            $first_extension:ident => $first_extension_metadata:tt;
+            $( $extension:ident => $extension_metadata:tt; )*
+        }
+    ) => {
+        /// Native function ID. Original discriminants match the registration
+        /// order in `VMCoreCustom::InitializeStaticExtensions`; extensions use
+        /// the separate range beginning at [`RUST_EXTENSION_NATIVE_START`].
+        #[repr(u32)]
+        #[derive(
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            Hash,
+            num_enum::TryFromPrimitive,
+            strum_macros::Display,
+            strum_macros::IntoStaticStr,
+        )]
+        #[allow(missing_docs)]
+        pub enum NativeFn {
+            $( $original, )*
+            $first_extension = RUST_EXTENSION_NATIVE_START,
+            $( $extension, )*
+        }
+    };
 }
 
-/// Resolves a native function index to its name, or "unknown".
+// Original provenance: `original-code/GVMCoreCustom.cpp`,
+// `VMCoreCustom::InitializeStaticExtensions`, assigns functions 0..=264 in
+// this order. Signature provenance: `original-code/RHScriptAPI.scs`, the
+// corresponding `NativeFunction` declarations. Rust extensions are declared
+// separately below the fixed original namespace by the registry macro.
+native_registry!(define_native_fn);
+
+/// Resolves a native function index to its name, or `"unknown"`.
 pub fn native_name(index: u32) -> &'static str {
-    NativeFn::try_from(index).map_or("unknown", |f| f.into())
+    NativeFn::try_from(index).map_or("unknown", |native| native.into())
 }

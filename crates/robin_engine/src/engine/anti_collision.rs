@@ -803,12 +803,7 @@ pub fn gather_level_repulsive_lines(
         .into_iter()
         .map(|idx| {
             let g = &grid.level.lines[usize::from(idx)];
-            RepulsiveLine::new(
-                g.a.into(),
-                g.b.into(),
-                RADIUS_OBSTACLE_LINE,
-                ACTIONRADIUS_OBSTACLE,
-            )
+            RepulsiveLine::new(g.a, g.b, RADIUS_OBSTACLE_LINE, ACTIONRADIUS_OBSTACLE)
         })
         .collect()
 }
@@ -824,12 +819,9 @@ pub fn gather_level_repulsive_points(
     grid.get_level_repulsive_points(layer, box_future)
         .into_iter()
         .map(|p| {
-            let mut rp = RepulsivePoint::new(
-                p.position.into(),
-                RADIUS_OBSTACLE_LINE,
-                ACTIONRADIUS_OBSTACLE,
-            );
-            rp.set_action_field(p.limit_left.into(), p.limit_right.into());
+            let mut rp =
+                RepulsivePoint::new(p.position, RADIUS_OBSTACLE_LINE, ACTIONRADIUS_OBSTACLE);
+            rp.set_action_field(p.limit_left, p.limit_right);
             rp.is_concave = p.is_concave;
             rp
         })

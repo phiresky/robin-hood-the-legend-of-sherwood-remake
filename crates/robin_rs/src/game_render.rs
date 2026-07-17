@@ -2693,7 +2693,7 @@ fn fill_polygon_map(
         Ok(ix) => ix,
         Err(_) => return,
     };
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let p0 = map_to_screen(verts[tri[0]]);
         let p1 = map_to_screen(verts[tri[1]]);
         let p2 = map_to_screen(verts[tri[2]]);

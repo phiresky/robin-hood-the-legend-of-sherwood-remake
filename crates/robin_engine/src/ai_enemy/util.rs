@@ -874,14 +874,28 @@ fn estimate_damage(
         return 0;
     }
 
-    let attacker = match all_fighters.iter().find(|f| f.handle == cp.attacker) {
-        Some(a) => a,
-        None => return 0,
-    };
-    let target = match all_fighters.iter().find(|f| f.handle == cp.target) {
-        Some(t) => t,
-        None => return 0,
-    };
+    // Original: `RHArtificialMalignity::EvaluateCombatPosition` operates on
+    // live fighter pointers and dereferences both combatants' `mpSword`.
+    // A selected combat position without either fighter is corrupt input, not
+    // a harmless zero-damage position.
+    let attacker = all_fighters
+        .iter()
+        .find(|f| f.handle == cp.attacker)
+        .unwrap_or_else(|| {
+            panic!(
+                "combat position attacker {} is absent from the per-tick fighter view",
+                cp.attacker
+            )
+        });
+    let target = all_fighters
+        .iter()
+        .find(|f| f.handle == cp.target)
+        .unwrap_or_else(|| {
+            panic!(
+                "combat position target {} is absent from the per-tick fighter view",
+                cp.target
+            )
+        });
 
     // Vector from attacker to target.  `dy_iso` applies the isometric
     // Y-stretch for Euclidean distance math; `dy_raw` stays raw for the
@@ -900,12 +914,26 @@ fn estimate_damage(
 
     let mut overall_damage: i32 = 0;
 
-    // Iterate all 9 normal strikes if we have the weapon profiles.
-    // Falls back to a flat 10-damage estimate if profiles aren't loaded.
-    if let (Some(att_prof), Some(def_prof)) = (
-        profile_manager.get_hth_weapon(attacker.hth_weapon_id),
-        profile_manager.get_hth_weapon(target.hth_weapon_id),
-    ) {
+    // Original: `RHProfileManager.h::GetHandToHandProfile` asserts bounds and
+    // `RHelementactorhuman.h::GetStandardRangeSword` asserts `mpSword != 0`.
+    // Do not turn missing required weapon data into fabricated flat damage.
+    let att_prof = profile_manager
+        .get_hth_weapon(attacker.hth_weapon_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "fighter {} requires missing HtH weapon profile {}",
+                attacker.handle, attacker.hth_weapon_id
+            )
+        });
+    let def_prof = profile_manager
+        .get_hth_weapon(target.hth_weapon_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "fighter {} requires missing HtH weapon profile {}",
+                target.handle, target.hth_weapon_id
+            )
+        });
+    {
         let is_rank_soldier = attacker.rank == ProfileRank::Soldier && !attacker.is_pc;
         // `GetProtection` computes `me_to_him_direction = (him - me).sector_0_to_15()`
         // where `me` is the defender — i.e. (attacker - target), the sector
@@ -967,9 +995,6 @@ fn estimate_damage(
 
         // Average over all 9 strikes.
         overall_damage /= crate::weapons::NUM_NORMAL_SWORD_STRIKES as i32;
-    } else {
-        // Fallback when profiles aren't populated yet (engine init or tests).
-        overall_damage = 10;
     }
 
     // From-behind bonus/malus: gated on the *evaluator's* IQ (the
@@ -1265,5 +1290,56 @@ pub(super) fn resolve_seek_point_mut<'a>(
         1111 => personal1.as_mut(),
         2222 => personal2.as_mut(),
         _ => global.seek_points.get_mut(id as usize),
+    }
+}
+
+#[cfg(test)]
+mod required_combat_input_tests {
+    use super::*;
+
+    fn combat_position() -> CombatPosition {
+        CombatPosition {
+            attacker: 1,
+            target: 2,
+            attacker_position: Position::default(),
+            target_position: Position {
+                x: 10.0,
+                ..Position::default()
+            },
+            ..CombatPosition::default()
+        }
+    }
+
+    fn fighter(handle: HumanHandle) -> FighterSnapshot {
+        FighterSnapshot {
+            handle,
+            sword_range_maximal: 100,
+            hth_weapon_id: 1,
+            ..FighterSnapshot::default()
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "combat position target 2 is absent")]
+    fn damage_evaluation_rejects_a_missing_selected_target() {
+        let fighters = [fighter(1)];
+        estimate_damage(
+            &combat_position(),
+            &fighters,
+            &crate::profiles::ProfileManager::new(),
+            50,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
+    fn damage_evaluation_rejects_a_missing_required_weapon() {
+        let fighters = [fighter(1), fighter(2)];
+        estimate_damage(
+            &combat_position(),
+            &fighters,
+            &crate::profiles::ProfileManager::new(),
+            50,
+        );
     }
 }

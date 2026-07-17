@@ -231,8 +231,6 @@ impl<T: Clone> WidgetListbox<T> {
 
     // ── Item management ────────────────────────────────────────────
 
-    /// Recalculate how many items fit in the visible area.
-
     // ── Scrolling ──────────────────────────────────────────────────
 
     /// Scroll up by one item.

@@ -869,12 +869,6 @@ impl Sprite {
         snd
     }
 
-    /// Get total time (in ticks) for a sprite row.
-    ///
-    /// Sums the per-frame `wait_time` delays for the given row.  The
-    /// only live caller is [`Sprite::time_for_anim`], which wants the
-    /// per-row total.
-
     /// Current average speed from the script.
     pub fn current_average_speed(&self) -> f32 {
         self.current_scripts()[self.current_row as usize].average_speed
@@ -1476,8 +1470,6 @@ impl Sprite {
             }
         }
     }
-
-    /// Speed-modulated frame increment (only supports Default/BeginWithDone).
 
     // -- High-level animation methods --
 

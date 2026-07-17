@@ -9,6 +9,7 @@
 use super::*;
 use crate::coordinates::MapPoint;
 use crate::element::{Camp, Entity, EntityId};
+use serde::{Deserialize, Serialize};
 
 // ── Per-tick scratch types for `tick_enemy_ai`. ─────────────────────
 //
@@ -18,7 +19,7 @@ use crate::element::{Camp, Entity, EntityId};
 // now so the per-phase methods (extracted progressively in this module)
 // can share them without nesting type definitions.
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PcSnapshot {
     pub(super) id: EntityId,
     pub(super) position: MapPoint,
@@ -125,7 +126,7 @@ pub(super) struct PcSnapshot {
     pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SoldierSnapshot {
     pub(super) id: EntityId,
     pub(super) position: MapPoint,
@@ -205,6 +206,8 @@ pub(super) struct SoldierSnapshot {
     pub(super) alert_soldiers_point: crate::ai::Position,
     /// Ground-plane elevation (`element.position.z`).
     pub(super) elevation: u16,
+    /// Exact render-space ground Z used by visibility geometry.
+    pub(super) ground_z: f32,
     /// Soldier's patrol chief, if any.
     pub(super) patrol_chief: Option<EntityId>,
     /// Soldier's current antagonist handle.
@@ -245,6 +248,11 @@ pub(super) struct SoldierSnapshot {
     /// Whether the soldier's eyes are blind (EYES_CLOSED /
     /// EYES_DIE_OR_GET_UNCONSCIOUS).
     pub(super) eye_blind: bool,
+    /// Building containing this soldier, if any.
+    pub(super) building_sector: Option<crate::position_interface::SectorHandle>,
+    pub(super) is_rider: bool,
+    pub(super) passing_door: bool,
+    pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
 /// One detection-commit edge produced by the per-NPC detection-refresh
@@ -264,7 +272,7 @@ pub(super) struct Detection {
 /// kind needs (e.g. `able_to_help` for Friend, dead/unconscious flags
 /// for MissedFriend / Beggar, `is_true_or_false_beggar` for the
 /// Beggar cleanup-detectables predicate).
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct HumanTarget {
     pub(super) position: MapPoint,
     pub(super) layer: u16,
@@ -308,7 +316,7 @@ pub(super) struct HumanTarget {
 /// appear in an NPC's `DetectableType::Object` list (coins, ales,
 /// money bags, etc.).  Captures the data the object-visibility
 /// computation reads.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct ObjectTarget {
     pub(super) position: MapPoint,
     pub(super) layer: u16,
@@ -316,7 +324,54 @@ pub(super) struct ObjectTarget {
     pub(super) active: bool,
 }
 
+/// Immutable start-of-tick entity and combat view consumed by AI phases.
+///
+/// The original engine exposes stable live pointers throughout one actor's
+/// `RHElementActorNPC::RefreshDetection` call. Rust cannot keep those borrows
+/// while mutating an NPC, so this owns the equivalent values once and every
+/// detection/think consumer borrows this same view. Runtime phase execution
+/// remains ordered by `EngineInner::tick_enemy_ai`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct AiWorldView {
+    pub(super) pcs: Vec<PcSnapshot>,
+    pub(super) pc_forecasts: std::collections::HashMap<u32, crate::ai::ForecastedDestination>,
+    pub(super) primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32>,
+    pub(super) npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>>,
+    pub(super) soldiers: Vec<SoldierSnapshot>,
+    pub(super) ko_money_fight_soldiers: Vec<(EntityId, Camp)>,
+    pub(super) human_targets: std::collections::HashMap<EntityId, HumanTarget>,
+    pub(super) object_targets: std::collections::HashMap<EntityId, ObjectTarget>,
+}
+
 impl EngineInner {
+    /// Build the single immutable AI world view for this tick.
+    ///
+    /// Original provenance: `RHelementactorsoldier.cpp::Hourglass` performs
+    /// `AttackingReactiontimeEnemyNearTest` before delegating to
+    /// `RHElementActorNPC::Hourglass`; the latter runs `RefreshView` then
+    /// `RefreshDetection`. This method does not invoke detection or Think; the
+    /// orchestrator below retains that behavioral phase order when consuming
+    /// the captured view.
+    pub(super) fn tick_enemy_ai_build_world_view(&mut self, assets: &LevelAssets) -> AiWorldView {
+        let pcs = self.tick_enemy_ai_build_pc_snapshots(assets);
+        let pc_forecasts = self.tick_enemy_ai_build_pc_forecasts();
+        let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
+        let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
+        let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets);
+        let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
+        let (human_targets, object_targets) = self.tick_enemy_ai_build_human_object_targets();
+        AiWorldView {
+            pcs,
+            pc_forecasts,
+            primary_target_multiplicity,
+            npc_jump_lines,
+            soldiers,
+            ko_money_fight_soldiers,
+            human_targets,
+            object_targets,
+        }
+    }
+
     /// P1 — snapshot every alive PC for the per-tick detection pass.
     ///
     /// Computes the per-frame produced-noise volume plus the
@@ -368,18 +423,28 @@ impl EngineInner {
             let alive = !is_unconscious;
             // Look up the PC's HtH weapon profile for combat ranges and
             // fighting ability.
-            let character = assets.profile_manager.get_character(pc.pc.profile_index);
-            let hth_weapon_id = character.map(|c| c.hth_weapon_id).unwrap_or(0);
-            let fighting_ability = character.map(|c| c.fighting).unwrap_or(50);
+            // Original: `RHProfileManager.h::GetCharacterProfile` asserts the
+            // profile index and `RHelementactorpc.cpp::Initialize` immediately
+            // initializes weapons from it. A live PC cannot have a synthetic
+            // profile or weapon.
+            let character = assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PC {} requires missing character profile {}",
+                        pc_id.index(),
+                        u32::from(pc.pc.profile_index)
+                    )
+                });
+            let hth_weapon_id = character.hth_weapon_id;
+            let fighting_ability = character.fighting;
             // Per-PC detection-speed multipliers — scale the
             // visibility of this PC when an enemy NPC refreshes its
-            // detection.  Default to 100 (no scaling) when the
-            // profile is missing.
-            let detection_speed_in_forest = character
-                .map(|c| c.detection_speed_in_forest)
-                .unwrap_or(100);
-            let detection_speed_in_city =
-                character.map(|c| c.detection_speed_in_city).unwrap_or(100);
+            // detection. They come from the required character profile
+            // above; missing profile data is an initialization error.
+            let detection_speed_in_forest = character.detection_speed_in_forest;
+            let detection_speed_in_city = character.detection_speed_in_city;
             // Currently-running animation — front order of the PC's
             // current in-progress sequence element.  `Invalid` is the
             // enum default and behaves as "no animation running"
@@ -389,17 +454,21 @@ impl EngineInner {
                 .current_order_for_actor(pc_id)
                 .map(|(_, _, o)| o.order_type)
                 .unwrap_or(crate::order::OrderType::Invalid);
-            let (sword_range_default, sword_range_maximal, sword_range_uber) = assets
+            let weapon = assets
                 .profile_manager
                 .get_hth_weapon(hth_weapon_id)
-                .map(|w| {
-                    (
-                        w.distance[crate::weapons::WeaponDistance::Default as usize],
-                        w.distance[crate::weapons::WeaponDistance::Maximal as usize],
-                        w.distance[crate::weapons::WeaponDistance::Uber as usize],
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PC {} requires missing HtH weapon profile {}",
+                        pc_id.index(),
+                        hth_weapon_id
                     )
-                })
-                .unwrap_or((40, 50, 70));
+                });
+            let (sword_range_default, sword_range_maximal, sword_range_uber) = (
+                weapon.distance[crate::weapons::WeaponDistance::Default as usize],
+                weapon.distance[crate::weapons::WeaponDistance::Maximal as usize],
+                weapon.distance[crate::weapons::WeaponDistance::Uber as usize],
+            );
             // Honour check: a man of honour does not strike an
             // opponent in any of these animations.
             let in_recovery = !alive
@@ -452,7 +521,7 @@ impl EngineInner {
                 Posture::Dead | Posture::DeadBack | Posture::StuckUnderNet | Posture::Tied
             );
             let active =
-                !is_unconscious && !is_passing_door && !posture_inactive && !self.freeze_all;
+                !is_unconscious && !is_passing_door && !posture_inactive && !self.actors_frozen();
             let noise_volume = Self::pc_noise_volume(
                 order_type,
                 material,
@@ -482,7 +551,7 @@ impl EngineInner {
                 fighting_ability,
                 in_recovery,
                 hth_weapon_id,
-                is_vip: character.map(|c| c.vip).unwrap_or(false),
+                is_vip: character.vip,
                 is_robin: pc.pc.robin,
                 eye_z,
                 detection_z,
@@ -619,85 +688,41 @@ impl EngineInner {
                 continue;
             }
             let able_to_fight = !s.human.unconscious && s.element.active && s.npc.life_points > 0;
-            let (
-                rank,
-                company_number,
-                pride,
-                primary_target,
-                hth_weapon_id,
-                alert_status,
-                seek_flag_look_for_help,
-                left_combat_neighbour,
-                right_combat_neighbour,
-                shield_bearer_before_me,
-                shield_bearer_direction,
-                script_locked,
-                report_type,
-                report_seek_position,
-                report_seen_bodies,
-                report_charly,
-                alert_soldiers_point,
-                is_tower_guard,
-                patrol_chief,
-                antagonist,
-                ai_seek_position,
-            ) = if let Some(enemy_ai) = s.npc.ai_brain.enemy() {
-                (
-                    enemy_ai.soldier_profile_rank,
-                    enemy_ai.company_number,
-                    enemy_ai.soldier_profile_pride,
-                    enemy_ai.base.primary_target,
-                    enemy_ai.hth_weapon_id,
-                    enemy_ai.base.current_music_alert_status,
-                    enemy_ai
-                        .seek_flags
-                        .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER),
-                    enemy_ai.left_combat_neighbour,
-                    enemy_ai.right_combat_neighbour,
-                    enemy_ai.shield_bearer_before_me,
-                    enemy_ai.shield_bearer_direction,
-                    enemy_ai.base.script_locked,
-                    enemy_ai.base.my_reconnaissance_report.report_type,
-                    enemy_ai.base.my_reconnaissance_report.seek_position,
-                    enemy_ai.base.my_reconnaissance_report.seen_bodies.clone(),
-                    enemy_ai.base.my_reconnaissance_report.charly,
-                    enemy_ai.base.alert_soldiers_point,
-                    enemy_ai.tower_guard,
-                    enemy_ai.base.patrol_chief,
-                    enemy_ai.base.antagonist,
-                    enemy_ai.base.seek_position,
+            // Original: every `RHElementActorSoldier` owns
+            // `RHArtificialMalignity`; its Hourglass calls soldier-only AI
+            // methods unconditionally. A live soldier without EnemyAi is an
+            // invalid partially-initialized entity.
+            let enemy_ai = s.npc.ai_brain.enemy().unwrap_or_else(|| {
+                panic!(
+                    "active soldier {} has no EnemyAi brain",
+                    EntityId::from(npc_id).index()
                 )
-            } else {
-                (
-                    crate::profiles::ProfileRank::Soldier,
-                    0u16,
-                    0u16,
-                    0u32,
-                    0u32,
-                    crate::ai::AlertLevel::Green,
-                    false,
-                    0u32,
-                    0u32,
-                    0u32,
-                    0u16,
-                    false,
-                    crate::ai::ReportType::Nothing,
-                    crate::ai::Position::default(),
-                    Vec::new(),
-                    0u32,
-                    crate::ai::Position::default(),
-                    false,
-                    None,
-                    0u32,
-                    crate::ai::Position::default(),
-                )
-            };
-            let (current_task_priority, minimal_task_priority) = s
-                .npc
-                .ai_brain
-                .enemy()
-                .map(|e| (e.current_task_priority, e.minimal_task_priority))
-                .unwrap_or((0, 0));
+            });
+            let rank = enemy_ai.soldier_profile_rank;
+            let company_number = enemy_ai.company_number;
+            let pride = enemy_ai.soldier_profile_pride;
+            let primary_target = enemy_ai.base.primary_target;
+            let hth_weapon_id = enemy_ai.hth_weapon_id;
+            let alert_status = enemy_ai.base.current_music_alert_status;
+            let seek_flag_look_for_help = enemy_ai
+                .seek_flags
+                .contains(crate::ai_enemy::SeekFlags::LOOK_FOR_HELP_AFTER);
+            let left_combat_neighbour = enemy_ai.left_combat_neighbour;
+            let right_combat_neighbour = enemy_ai.right_combat_neighbour;
+            let shield_bearer_before_me = enemy_ai.shield_bearer_before_me;
+            let shield_bearer_direction = enemy_ai.shield_bearer_direction;
+            let script_locked = enemy_ai.base.script_locked;
+            let report_type = enemy_ai.base.my_reconnaissance_report.report_type;
+            let report_seek_position = enemy_ai.base.my_reconnaissance_report.seek_position;
+            let report_seen_bodies = enemy_ai.base.my_reconnaissance_report.seen_bodies.clone();
+            let report_charly = enemy_ai.base.my_reconnaissance_report.charly;
+            let alert_soldiers_point = enemy_ai.base.alert_soldiers_point;
+            let is_tower_guard = enemy_ai.tower_guard;
+            let patrol_chief = enemy_ai.base.patrol_chief;
+            let antagonist = enemy_ai.base.antagonist;
+            let ai_seek_position = enemy_ai.base.seek_position;
+            let current_task_priority = enemy_ai.current_task_priority;
+            let minimal_task_priority = enemy_ai.minimal_task_priority;
             // Snapshot the body-detectable list — corpses this
             // soldier has not yet reacted to.  See
             // `near_officer_who_is_informed_about_this_body`.
@@ -715,12 +740,22 @@ impl EngineInner {
             };
             // Soldier weapon profile lookup for combat ranges and
             // formation flag.
+            // Original: `RHProfileManager.h::GetSoldierProfile` and
+            // `GetHandToHandProfile` assert bounds. Preserve that invariant
+            // instead of substituting generic rank/fighting/ranges.
             let soldier_profile = assets
                 .profile_manager
-                .get_soldier(s.soldier.soldier_profile_index);
-            let has_formation = soldier_profile.map(|p| p.formation).unwrap_or(false);
+                .get_soldier(s.soldier.soldier_profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "soldier {} requires missing soldier profile {}",
+                        EntityId::from(npc_id).index(),
+                        u32::from(s.soldier.soldier_profile_index)
+                    )
+                });
+            let has_formation = soldier_profile.formation;
             let fighting_ability = {
-                let base = soldier_profile.map(|p| p.fighting).unwrap_or(50);
+                let base = soldier_profile.fighting;
                 if s.soldier.cached_camp == Camp::Lacklandists {
                     let diff = crate::player_profile::DifficultyLevel::current();
                     diff.modify_capacity(
@@ -738,8 +773,22 @@ impl EngineInner {
             // a non-zero normal-shoot range.  Soldiers whose profile
             // points at an empty bow entry (e.g. shield bearers) fall
             // through to false.
-            let bow_profile =
-                soldier_profile.and_then(|p| assets.profile_manager.get_bow(p.shooting_weapon_id));
+            let bow_profile = if soldier_profile.shooting_weapon_id == 0 {
+                None
+            } else {
+                Some(
+                    assets
+                        .profile_manager
+                        .get_bow(soldier_profile.shooting_weapon_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "soldier {} requires missing bow profile {}",
+                                EntityId::from(npc_id).index(),
+                                soldier_profile.shooting_weapon_id
+                            )
+                        }),
+                )
+            };
             let is_archer_unit = bow_profile
                 .map(|bow| bow.normal_shoot.range > 0)
                 .unwrap_or(false);
@@ -752,16 +801,21 @@ impl EngineInner {
                     }
                 })
                 .unwrap_or(0);
-            let hth_profile = assets.profile_manager.get_hth_weapon(hth_weapon_id);
-            let (sword_range_default, sword_range_maximal, sword_range_uber) = hth_profile
-                .map(|w| {
-                    (
-                        w.distance[crate::weapons::WeaponDistance::Default as usize],
-                        w.distance[crate::weapons::WeaponDistance::Maximal as usize],
-                        w.distance[crate::weapons::WeaponDistance::Uber as usize],
+            let hth_profile = assets
+                .profile_manager
+                .get_hth_weapon(hth_weapon_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "soldier {} requires missing HtH weapon profile {}",
+                        EntityId::from(npc_id).index(),
+                        hth_weapon_id
                     )
-                })
-                .unwrap_or((40, 50, 70));
+                });
+            let (sword_range_default, sword_range_maximal, sword_range_uber) = (
+                hth_profile.distance[crate::weapons::WeaponDistance::Default as usize],
+                hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
+                hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
+            );
             // Shield-bearer check: both the HtH weapon must be a
             // shield AND the sprite must have the WAITING_SHIELD
             // animation row.  We exercise the sprite's `has_animation`
@@ -769,18 +823,14 @@ impl EngineInner {
             // soldiers whose sprite lacks the WAITING_SHIELD row no
             // longer falsely qualify just because their HtH weapon
             // flag is set.
-            let weapon_is_shield = hth_profile.map(|w| w.shield).unwrap_or(false);
+            let weapon_is_shield = hth_profile.shield;
             let has_shield_anim = s
                 .element
                 .sprite
                 .has_animation(crate::order::OrderType::WaitingShield);
             let is_shield_bearer = weapon_is_shield && has_shield_anim;
-            let seek_position = s
-                .npc
-                .ai_brain
-                .base()
-                .map(|ai| MapPoint::new(ai.seek_position.x, ai.seek_position.y))
-                .unwrap_or_else(|| s.element.position_map());
+            let seek_position =
+                MapPoint::new(enemy_ai.base.seek_position.x, enemy_ai.base.seek_position.y);
             // Honour check.
             let in_recovery = !able_to_fight
                 || matches!(
@@ -874,7 +924,7 @@ impl EngineInner {
                 right_combat_neighbour,
                 in_recovery,
                 hth_weapon_id,
-                is_vip: soldier_profile.map(|p| p.vip).unwrap_or(false),
+                is_vip: soldier_profile.vip,
                 is_tower_guard,
                 seek_position,
                 shield_bearer_before_me,
@@ -889,9 +939,10 @@ impl EngineInner {
                 report_charly,
                 alert_soldiers_point,
                 elevation: s.element.position().z as u16,
+                ground_z: s.element.position().z,
                 patrol_chief,
                 antagonist,
-                duty_flag: soldier_profile.map(|p| p.duty).unwrap_or(false),
+                duty_flag: soldier_profile.duty,
                 in_building,
                 forecast_destination,
                 detectable_bodies,
@@ -902,6 +953,10 @@ impl EngineInner {
                 view_radius: s.npc.view_radius,
                 real_half_aperture: s.npc.real_half_aperture,
                 eye_blind: s.npc.eye_status.is_blind(),
+                building_sector: self.entity_building_sector(s.element.sector()),
+                is_rider: s.soldier.rider,
+                passing_door: s.actor.active_door_pass.is_some(),
+                obstacle_idx: s.element.obstacle_index(),
             });
         }
 
@@ -1047,16 +1102,20 @@ impl EngineInner {
             let position = entity.element_data().position_map();
             let layer = entity.element_data().layer();
             let posture = entity.element_data().posture;
-            let action_state = entity
-                .actor_data()
-                .map(|a| a.action_state)
-                .unwrap_or(crate::element::ActionState::Waiting);
-            let unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            // These IDs came from a human-typed detectable list. Original
+            // `RefreshDetection` statically casts each entry to
+            // `RHElementActorHuman*`; a non-human entry is corrupt data, not
+            // a waiting/conscious human.
+            let actor = entity.actor_data().unwrap_or_else(|| {
+                panic!("human detectable target {} has no actor data", id.index())
+            });
+            let human = entity.human_data().unwrap_or_else(|| {
+                panic!("human detectable target {} has no human data", id.index())
+            });
+            let action_state = actor.action_state;
+            let unconscious = human.unconscious;
             let active = entity.element_data().active;
-            let passing_door = entity
-                .actor_data()
-                .map(|a| a.active_door_pass.is_some())
-                .unwrap_or(false);
+            let passing_door = actor.active_door_pass.is_some();
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             // HumanTarget's `eye_z` is consumed as the *detection*
             // point Z by `VisibilityQuery::target_eye_z` (the target
@@ -1131,10 +1190,14 @@ impl EngineInner {
             let position = entity.element_data().position_map();
             let layer = entity.element_data().layer();
             let active = entity.element_data().active;
+            // Original `RefreshDetection` casts DETECTABLE_OBJECT entries to
+            // `RHElementObject*` before reading `BelongsToBeggar`.
             let belongs_to_beggar = entity
                 .object_data()
-                .map(|o| o.belongs_to_beggar)
-                .unwrap_or(false);
+                .unwrap_or_else(|| {
+                    panic!("object detectable target {} has no object data", id.index())
+                })
+                .belongs_to_beggar;
             object_targets.insert(
                 id,
                 ObjectTarget {

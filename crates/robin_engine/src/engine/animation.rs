@@ -2702,7 +2702,7 @@ impl EngineInner {
         &mut self,
         assets: &crate::engine::types::LevelAssets,
     ) -> (Vec<EntityId>, Vec<EntityId>, AnimCompletionOutcomes) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return (Vec::new(), Vec::new(), AnimCompletionOutcomes::default());
         }
 
@@ -2921,7 +2921,7 @@ impl EngineInner {
                 if let Some((seq_id, elem_idx)) = order_seq_elem {
                     if matches!(
                         cur_command,
-                        Some(Command::Move | Command::Seek | Command::PassDoor)
+                        Some(Command::Move | Command::MoveOk | Command::Seek | Command::PassDoor)
                     ) && is_sword_movement_nonanimation(anim_type)
                     {
                         // Movement elements are owned by

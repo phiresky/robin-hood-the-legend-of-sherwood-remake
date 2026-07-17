@@ -13,6 +13,8 @@ impl EngineInner {
     /// Also populates PC/NPC snapshot state used by misc native functions.
     pub(super) fn refresh_game_host_entity_state(&mut self) {
         // Collect data first, then write to host (avoids borrow issues).
+        let ambiance = self.weather.ambiance;
+        let is_forest_level = self.weather.is_forest_level;
         let mut entity_active_map: Vec<(i32, bool)> = Vec::with_capacity(self.entities.len());
         let mut pc_handles = Vec::with_capacity(self.pc_ids.len());
         let mut robin_handle: i32 = 0;
@@ -137,17 +139,17 @@ impl EngineInner {
         game_host.overall_enemy_alert = overall_enemy_alert;
         game_host.overall_civilian_alert = overall_civilian_alert;
         game_host.sound_source_alive = sound_source_alive;
+        game_host.ambiance = ambiance;
+        game_host.is_forest_level = is_forest_level;
     }
 
     /// Populate PC authorisation bits in GameHost from spawned PC entities.
     pub(super) fn refresh_game_host_pc_auth_bits(&mut self) {
         let mut bits: Vec<(i32, u16)> = Vec::new();
-        let mut pc_bit_idx = 0u16;
-        for (id, _) in self.entities.pcs() {
+        for (pc_bit_idx, (id, _)) in self.entities.pcs().enumerate() {
             let handle = crate::natives::GameHost::actor_handle(id);
             let bit = 1u16 << pc_bit_idx;
             bits.push((handle, bit));
-            pc_bit_idx += 1;
         }
         if let Some(ref mut script) = self.mission_script
             && let Some(game_host) = script.game_host_mut()
@@ -249,9 +251,14 @@ impl EngineInner {
 
         let mut engine_commands = Vec::new();
         // Deferred commands that must run AFTER `self.mission_script` is put
-        // back (e.g. `ProcessPatchEffects`, which looks patches up via
-        // `self.mission_script`).  Populated inside the host block below.
+        // back (currently `ProcessPatchEffects`, which looks patches up via
+        // `self.mission_script`). Populated inside the host block below.
         let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
+        // RHScript::SendMessage launches a standalone RHCOMMAND_SEND_MESSAGE
+        // sequence element. Keep requests in native-call order and launch
+        // them once the mission script is installed again so their immediate
+        // ProcessMessage callback can re-enter the script system this frame.
+        let mut script_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
 
         if let Some(game_host) = script.game_host_mut() {
             // ── Entity active state → real entities ──
@@ -403,17 +410,12 @@ impl EngineInner {
             // `post_script` and processed after the script is put back.
             for cmd in game_host.deferred_commands.drain(..) {
                 match cmd {
-                    cmd @ crate::natives::DeferredCommand::SendMessage { .. } => {
-                        // `SendMessage(actor, code, arg1, arg2)` should
-                        // dispatch `ProcessMessage` on the target.  We
-                        // shortcut the sequence-element round-trip and
-                        // dispatch through the existing ProcessMessage path:
-                        // `actor == 0` → global StartUp `ProcessMessage`;
-                        // otherwise the per-actor script's `ProcessMessage`.
-                        // Defer to post_script because dispatch needs
-                        // `self.mission_script` to be back in place.
-                        post_script.push(cmd);
-                    }
+                    crate::natives::DeferredCommand::SendMessage {
+                        actor,
+                        message,
+                        arg1,
+                        arg2,
+                    } => script_messages.push((actor, message, arg1, arg2)),
                     crate::natives::DeferredCommand::SelectPC { actor, select } => {
                         // Scripted scene: targets the LOCAL seat.
                         if actor == 0 {
@@ -439,7 +441,7 @@ impl EngineInner {
                         }
                     }
                     crate::natives::DeferredCommand::FreezeAll { freeze } => {
-                        self.freeze_all = freeze;
+                        self.set_actors_frozen(freeze);
                     }
                     crate::natives::DeferredCommand::HandleDeath { actor } => {
                         if let Some(id) = self.entity_id_for_actor_handle(actor) {
@@ -719,11 +721,6 @@ impl EngineInner {
         // commands that read `self.mission_script`.
         self.mission_script = Some(script);
 
-        // Collect SendMessage commands into the shape
-        // `dispatch_sequence_messages` expects so we issue a single swap
-        // around the whole batch.
-        let mut per_actor_msgs: Vec<(i32, i32, i32, i32)> = Vec::new();
-        let mut engine_msgs: Vec<(i32, i32, i32)> = Vec::new();
         for cmd in post_script {
             match cmd {
                 crate::natives::DeferredCommand::ProcessPatchEffects {
@@ -732,30 +729,112 @@ impl EngineInner {
                 } => {
                     self.process_patch_effects(assets, patch_index, effects);
                 }
-                crate::natives::DeferredCommand::SendMessage {
-                    actor,
-                    message,
-                    arg1,
-                    arg2,
-                } => {
-                    if actor == 0 {
-                        engine_msgs.push((message, arg1, arg2));
-                    } else {
-                        per_actor_msgs.push((actor, message, arg1, arg2));
-                    }
-                }
-                _ => unreachable!(
-                    "only ProcessPatchEffects and SendMessage are deferred post-script"
-                ),
+                _ => unreachable!("only ProcessPatchEffects is deferred post-script"),
             }
         }
-        if !per_actor_msgs.is_empty() || !engine_msgs.is_empty() {
-            self.dispatch_sequence_messages(assets, &per_actor_msgs, &engine_msgs);
+
+        for (actor, message, arg1, arg2) in script_messages {
+            self.launch_script_send_message(assets, actor, message, arg1, arg2);
         }
 
         if !engine_commands.is_empty() {
             self.apply_host_commands(assets, engine_commands);
         }
+    }
+
+    /// Launch and synchronously execute the one-element sequence created by
+    /// `RHScript::SendMessage[WithArguments]`.
+    ///
+    /// The original route is `LaunchSequenceElement` →
+    /// `RegisterSequenceElementToGo` → `ExecutedImmediately`. The last
+    /// step calls `ExecuteImmediately` directly, so an owner-bound message
+    /// deliberately bypasses `Instruct` priority contention and leaves the
+    /// actor's current sequence untouched. `ProcessMessage` runs before the
+    /// SendMessage element changes from `Todo` to `Terminated`.
+    fn launch_script_send_message(
+        &mut self,
+        assets: &LevelAssets,
+        actor: i32,
+        message: i32,
+        arg1: i32,
+        arg2: i32,
+    ) {
+        let owner = if actor == 0 {
+            None
+        } else {
+            let Some(owner) = self.entity_id_for_actor_handle(actor) else {
+                tracing::warn!(
+                    actor,
+                    message,
+                    "SendMessage target disappeared before sequence launch"
+                );
+                return;
+            };
+            Some(owner)
+        };
+
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::SendMessage,
+            owner,
+        );
+        element.set_property(
+            crate::sequence::Field::Message,
+            crate::sequence::FieldValue::Integer(message as u32),
+        );
+        element.set_property(
+            crate::sequence::Field::MessageArgument,
+            crate::sequence::FieldValue::Integer(arg1 as u32),
+        );
+        element.set_property(
+            crate::sequence::Field::MessageExtendedArgument,
+            crate::sequence::FieldValue::Integer(arg2 as u32),
+        );
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(element);
+
+        // Use LaunchSequence rather than the owned LaunchElement/Instruct
+        // wrapper. RHCOMMAND_SEND_MESSAGE is in ExecutedImmediately(), so
+        // the original never arbitrates it against the actor's current
+        // element.
+        let sequence_id = self.launch_sequence(sequence);
+        let action = self
+            .sequence_manager
+            .take_pending_immediate_action_for(sequence_id, 0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "SendMessage sequence {:?} did not register its immediate action",
+                    sequence_id
+                )
+            });
+
+        match action {
+            crate::sequence::SequenceAction::ExecuteImmediateOwner {
+                owner: action_owner,
+                sequence_id: action_sequence_id,
+                element_index: 0,
+            } => {
+                assert_eq!(Some(action_owner), owner);
+                assert_eq!(action_sequence_id, sequence_id);
+                self.dispatch_sequence_messages(assets, &[(actor, message, arg1, arg2)], &[]);
+            }
+            crate::sequence::SequenceAction::ExecuteImmediateEngine {
+                sequence_id: action_sequence_id,
+                element_index: 0,
+            } => {
+                assert!(owner.is_none());
+                assert_eq!(action_sequence_id, sequence_id);
+                self.dispatch_sequence_messages(assets, &[], &[(message, arg1, arg2)]);
+            }
+            other => panic!(
+                "SendMessage sequence {:?} registered unexpected action {:?}",
+                sequence_id, other
+            ),
+        }
+
+        // RHEngine/RHElementActor set RHSEQ_TERMINATED only after
+        // ProcessMessage returns.
+        self.sequence_manager.element_terminated(sequence_id, 0);
     }
 
     /// Load a mission script from the level directory.
@@ -2652,7 +2731,7 @@ impl EngineInner {
                             frames_remaining: total_frames,
                         })
                     });
-                    self.fade_freeze_frames_remaining = total_frames.saturating_sub(1);
+                    self.set_fade_freeze_frames_remaining(total_frames.saturating_sub(1));
                 }
                 EngineCommand::SetOutlineDisplay { display: show } => {
                     // Forward `MSG_SWITCH_MASKED_DISPLAY` when the
@@ -3201,15 +3280,127 @@ impl EngineInner {
     }
 }
 
+#[cfg(test)]
+mod script_context_tests {
+    use super::*;
+    use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+
+    fn empty_mission_script() -> MissionScript {
+        let startup = ClassEntry {
+            source_file: "script_context_test.scs".into(),
+            class_name: "StartUp".into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: Vec::new(),
+            quads: Vec::new(),
+        };
+        MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("minimal StartUp script must load")
+    }
+
+    #[test]
+    fn external_this_actor_success_restores_callback_and_parked_state() {
+        let mut engine = EngineInner::new();
+        let mut script = empty_mission_script();
+        script.game_host.script_this = 41;
+        script.game_host.entities.push(None);
+        engine.mission_script = Some(script);
+
+        let result =
+            engine.call_external_native_with_this(&LevelAssets::new(), "ThisActor", &[], Some(99));
+
+        assert_eq!(result, Ok(99));
+        assert!(engine.entities.is_empty());
+        let host = engine
+            .mission_script
+            .as_ref()
+            .expect("script remains installed")
+            .game_host()
+            .expect("mission script always owns its game host");
+        assert_eq!(host.script_this, 41);
+        assert_eq!(host.entities.len(), 1);
+    }
+
+    fn fail_inside_script_context(
+        script: &mut MissionScript,
+        entities: &mut crate::entities::Entities,
+        ai_global: &mut crate::ai::AiGlobalState,
+        fast_grid: &mut crate::fast_find_grid::FastFindGrid,
+        campaign: &mut Option<crate::campaign::Campaign>,
+        mission_stat: &mut crate::mission_stat::MissionStat,
+    ) -> Result<(), &'static str> {
+        let mut context = script.script_context(
+            entities,
+            ai_global,
+            fast_grid,
+            campaign,
+            mission_stat,
+            Some(99),
+        );
+        assert_eq!(context.game_host_mut().script_this, 99);
+        Err("simulated native error")
+    }
+
+    #[test]
+    fn script_context_error_restores_callback_and_engine_ownership() {
+        let mut script = empty_mission_script();
+        script.game_host.script_this = 41;
+        script.game_host.entities.push(None);
+        let mut engine = EngineInner::new();
+
+        let result = fail_inside_script_context(
+            &mut script,
+            &mut engine.entities,
+            &mut engine.ai_global,
+            &mut engine.fast_grid,
+            &mut engine.campaign,
+            &mut engine.mission_stat,
+        );
+
+        assert_eq!(result, Err("simulated native error"));
+        assert!(engine.entities.is_empty());
+        assert_eq!(script.game_host.script_this, 41);
+        assert_eq!(script.game_host.entities.len(), 1);
+    }
+
+    #[test]
+    fn external_native_early_returns_without_touching_callback_state() {
+        let mut engine = EngineInner::new();
+        let mut script = empty_mission_script();
+        script.game_host.script_this = 41;
+        script.game_host.entities.push(None);
+        engine.mission_script = Some(script);
+
+        let result = engine.call_external_native_with_this(
+            &LevelAssets::new(),
+            "NotAnOriginalNative",
+            &[],
+            Some(99),
+        );
+
+        assert_eq!(result, Err("unknown native: NotAnOriginalNative".into()));
+        assert!(engine.entities.is_empty());
+        let host = &engine
+            .mission_script
+            .as_ref()
+            .expect("script remains installed")
+            .game_host;
+        assert_eq!(host.script_this, 41);
+        assert_eq!(host.entities.len(), 1);
+    }
+}
+
 /// Schedule a finish for a freshly-activated source if its kind is
 /// `Single` or `Volatile` — the two kinds that terminate on their own.
 /// `Looped` never ends; `Delayed` runs its own sim-side re-roll in
 /// `perform_hourglass` and isn't scheduled here.
 ///
-/// Falls back to [`super::SOURCE_DEFAULT_FRAMES`] when the host hasn't
-/// populated an entry for this sample id (e.g. missing WAV on disk).
-/// Logs a warning so the gap is visible without silently drifting the
-/// rollback hash.
+/// A missing duration means the original cache lookup would return a
+/// zero-length sample and complete it in the sound hourglass. Schedule
+/// that same zero-length result and warn rather than inventing a duration.
 fn schedule_source_finish(
     kind: &crate::sound_source::SoundSourceKind,
     sample_id: u32,
@@ -3225,9 +3416,9 @@ fn schedule_source_finish(
                 tracing::warn!(
                     sample_id,
                     "sound source missing from source_durations table; \
-                     falling back to SOURCE_DEFAULT_FRAMES"
+                     scheduling zero-length completion"
                 );
-                super::SOURCE_DEFAULT_FRAMES
+                0
             });
             playing_sources.push(crate::sound::PlayingSource {
                 source_index: source_index as u32,
@@ -3235,6 +3426,56 @@ fn schedule_source_finish(
             });
         }
         SoundSourceKind::Looped | SoundSourceKind::Delayed => {}
+    }
+}
+
+#[cfg(test)]
+mod sound_completion_tests {
+    use super::*;
+    use crate::sound::PlayingSource;
+    use crate::sound_source::SoundSourceKind;
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    #[test]
+    fn source_finish_uses_exact_metadata_duration() {
+        let durations = Arc::new(BTreeMap::from([(0x1234, 9)]));
+        let mut playing = Vec::<PlayingSource>::new();
+
+        schedule_source_finish(
+            &SoundSourceKind::Single,
+            0x1234,
+            4,
+            100,
+            &durations,
+            &mut playing,
+        );
+
+        assert_eq!(playing.len(), 1);
+        assert_eq!(playing[0].source_index, 4);
+        assert_eq!(playing[0].finish_frame, 109);
+    }
+
+    #[test]
+    fn missing_source_duration_schedules_zero_length_completion() {
+        let durations = Arc::new(BTreeMap::new());
+        let mut playing = Vec::<PlayingSource>::new();
+
+        schedule_source_finish(
+            &SoundSourceKind::Volatile,
+            0x5678,
+            7,
+            100,
+            &durations,
+            &mut playing,
+        );
+
+        assert_eq!(playing.len(), 1);
+        assert_eq!(playing[0].source_index, 7);
+        assert_eq!(
+            playing[0].finish_frame, 100,
+            "missing samples complete at the next drain, never after a fabricated 75 frames"
+        );
     }
 }
 
@@ -3335,51 +3576,35 @@ impl EngineInner {
             return Err("no mission script loaded (no mission running)".into());
         }
 
-        // Mirror the in-script dispatch dance.
+        // Mirror the in-script dispatch transaction. ScriptContext owns the
+        // restoration bracket, so errors or future early returns cannot leave
+        // engine state parked on GameHost.
         self.refresh_game_host_entity_state();
         let script = self
             .mission_script
             .as_mut()
             .expect("mission_script presence checked above");
-        script.swap_engine_state(
-            &mut self.entities,
-            &mut self.ai_global,
-            &mut self.fast_grid,
-            &mut self.campaign,
-            &mut self.mission_stat,
-        );
 
         let return_value = {
-            let game_host = script
-                .game_host_mut()
-                .expect("mission script always has a GameHost installed");
-            let saved_this = if let Some(t) = this_actor {
-                let prev = game_host.script_this;
-                game_host.script_this = t;
-                Some(prev)
-            } else {
-                None
-            };
+            let mut context = script.script_context(
+                &mut self.entities,
+                &mut self.ai_global,
+                &mut self.fast_grid,
+                &mut self.campaign,
+                &mut self.mission_stat,
+                this_actor,
+            );
+            let game_host = context.game_host_mut();
             let mut stack = NativeStack::default();
             for &a in args {
                 stack.push_i32(a);
             }
-            let ret = <crate::natives::GameHost as crate::interp::HostFunctions>::call(
+
+            <crate::natives::GameHost as crate::interp::HostFunctions>::call(
                 game_host, index, &mut stack,
-            );
-            if let Some(prev) = saved_this {
-                game_host.script_this = prev;
-            }
-            ret
+            )
         };
 
-        script.swap_engine_state(
-            &mut self.entities,
-            &mut self.ai_global,
-            &mut self.fast_grid,
-            &mut self.campaign,
-            &mut self.mission_stat,
-        );
         self.sync_game_host_post_script(assets);
 
         Ok(return_value)

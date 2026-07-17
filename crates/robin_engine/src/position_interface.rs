@@ -1110,7 +1110,6 @@ impl PositionInterface {
 
     // Tolerance
     #[inline]
-
     pub fn set_tolerance(&mut self, t: f32, directional: bool) {
         self.tolerance = t;
         self.directional_tolerance = directional;
@@ -1368,7 +1367,6 @@ impl PositionInterface {
         self.deviated
     }
     #[inline]
-
     pub fn reset_box_blocked(&mut self) {
         self.box_blocked.reset();
         self.blocked_count = 0;

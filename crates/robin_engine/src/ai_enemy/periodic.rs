@@ -232,9 +232,7 @@ impl EnemyAi {
             // Default arm — reset every slot to Far
             // exactly once when leaving the seekpoint substates.
             if !self.ambush_point_array_reset {
-                for slot in &mut self.ambush_point_status {
-                    *slot = AmbushPointStatus::Far;
-                }
+                self.ambush_point_status.fill(AmbushPointStatus::Far);
                 self.ambush_point_array_reset = true;
             }
             return;

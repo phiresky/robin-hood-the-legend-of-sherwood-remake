@@ -16,6 +16,7 @@ use std::io::Read;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::binary_reader::Reader;
 use robin_engine::sbfile::SbFile;
 
 // ---------------------------------------------------------------------------
@@ -179,13 +180,6 @@ fn compress_sixteen_bzip(_data: &[u8]) -> Result<Vec<u8>> {
     anyhow::bail!("bzip2 encoding is not available in wasm builds")
 }
 
-pub(crate) fn read_tag(file: &mut SbFile) -> Result<[u8; 4]> {
-    let mut tag = [0u8; 4];
-    file.serialize_bytes(&mut tag)
-        .map_err(|e| anyhow!("read_tag: error {e}"))?;
-    Ok(tag)
-}
-
 /// Check whether a buffer starts with a JPEG XL magic signature
 /// (either the naked codestream marker `0xFF 0x0A` or the ISOBMFF
 /// container `JXL ` box header).
@@ -200,8 +194,6 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
     }
     false
 }
-
-/// Skip `n` bytes forward from the current position (SEEK_CUR).
 
 /// Seek to an absolute byte position (SEEK_SET).
 pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
@@ -388,17 +380,13 @@ impl Picture {
     /// the shipping `dd.raw` path without needing an `SbFile` cursor type.
     pub fn load_sixteen_from_bytes(bytes: &[u8]) -> Result<Self> {
         use std::io::Read;
-        if bytes.len() < 12 {
-            bail!("Sixteen blob shorter than header (12 bytes)");
-        }
-        let x_size = u16::from_le_bytes([bytes[0], bytes[1]]);
-        let y_size = u16::from_le_bytes([bytes[2], bytes[3]]);
-        let packing_raw = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let packed_size = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let mut reader = Reader::new(bytes);
+        let x_size = reader.u16("Sixteen frame width")?;
+        let y_size = reader.u16("Sixteen frame height")?;
+        let packing_raw = reader.u32("Sixteen frame packing")?;
+        let packed_size = reader.u32("Sixteen frame packed size")? as usize;
         let packing = SixteenPacking::from_u32(packing_raw)?;
-        let payload = bytes
-            .get(12..12 + packed_size)
-            .ok_or_else(|| anyhow!("Sixteen payload truncated"))?;
+        let payload = reader.take(packed_size, "Sixteen frame payload")?;
         let expected = x_size as usize * y_size as usize * 2;
         let data = match packing {
             SixteenPacking::None => payload.to_vec(),
@@ -952,7 +940,9 @@ impl Picture {
         let pitch_words = (self.pitch as usize) / 2;
         let old_words: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let mut new_words = vec![0u16; new_w * new_h];
@@ -1002,7 +992,6 @@ impl Picture {
     /// `x_delta = oldW / newW` is integer-divide-then-cast — when
     /// upsampling (`new > old`) the block collapses to 1×1, i.e.
     /// nearest-neighbour. Only "nice" when downsampling.
-
     fn resize_nice_rgb16(&mut self, new_size: (u16, u16)) -> bool {
         let (new_w, new_h) = (new_size.0 as usize, new_size.1 as usize);
         if new_w == 0 || new_h == 0 {
@@ -1013,7 +1002,9 @@ impl Picture {
         let pitch_words = (self.pitch as usize) / 2;
         let old_words: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let mut new_words = vec![0u16; new_w * new_h];
@@ -1069,7 +1060,9 @@ impl Picture {
         let pitch_words = (self.pitch as usize) / 2;
         let old_words: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let mut new_words = vec![0u16; new_w * new_h];
@@ -1173,7 +1166,7 @@ mod tests {
         let h: u16 = 4;
         let mut data = vec![0u8; (w as usize) * (h as usize) * 2];
         let key: u16 = 0x07C0;
-        for px in data.chunks_exact_mut(2) {
+        for px in data.as_chunks_mut::<2>().0 {
             px.copy_from_slice(&key.to_le_bytes());
         }
         let pic = Picture {

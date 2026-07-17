@@ -1149,14 +1149,6 @@ pub enum ListboxFontSlot {
     SelectedAlt = 5,
 }
 
-/// Decode the active font slot from a listbox item-flags word.
-/// `SELECTED` is intentionally aliased to the focused slot in both
-/// the primary and alternate paths, so this function never returns
-/// the `*Selected` slots — they are preserved here as enum variants
-/// for callers that want to populate the table by structural slot.
-
-/// Decode the alignment subfield of a listbox item-flags word.
-
 impl RendererListbox {
     /// Calculate how many items can be displayed: bbox height divided
     /// by the default-font line height.

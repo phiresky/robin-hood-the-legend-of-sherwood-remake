@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::picture::{read_bytes, read_u16, read_u32};
+use crate::binary_reader::{Reader, checked_range};
 use robin_engine::sbfile::SbFile;
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ impl Default for PackedSprite {
 // BankSpriteIndex — file format struct from robinhood.dic
 // ---------------------------------------------------------------------------
 
-/// On-disk index entry for a sprite in the bank file (pack 2, 12 bytes).
+/// On-disk index entry for a sprite in the bank file (pack 2, 14 bytes).
 #[derive(Debug, Clone, Copy)]
 pub struct BankSpriteIndex {
     pub width: u16,
@@ -123,19 +123,48 @@ pub struct BankSpriteIndex {
 }
 
 impl BankSpriteIndex {
-    /// Read from a byte slice (little-endian, 12 bytes).
-    pub fn from_le_bytes(data: &[u8]) -> Self {
-        assert!(data.len() >= 12);
-        Self {
-            width: u16::from_le_bytes([data[0], data[1]]),
-            height: u16::from_le_bytes([data[2], data[3]]),
-            position: u32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-            size: u32::from_le_bytes([data[8], data[9], data[10], data[11]]),
-            dictionary: u16::from_le_bytes([data[12], data[13]]),
-        }
+    /// Read one complete little-endian on-disk index record.
+    pub fn from_le_bytes(data: &[u8]) -> Result<Self> {
+        let mut reader = Reader::new(data);
+        Ok(Self {
+            width: reader.u16("sprite index width")?,
+            height: reader.u16("sprite index height")?,
+            position: reader.u32("sprite index bank position")?,
+            size: reader.u32("sprite index packed size")?,
+            dictionary: reader.u16("sprite index dictionary")?,
+        })
     }
 
     pub const PACKED_SIZE: usize = 14; // 2+2+4+4+2
+}
+
+fn packed_data_for_index(
+    bank_words: &[u16],
+    index: &BankSpriteIndex,
+    sprite_index: usize,
+) -> Result<Option<Vec<u16>>> {
+    if !index.position.is_multiple_of(2) || !index.size.is_multiple_of(2) {
+        return Err(anyhow!(
+            "sprite index record {sprite_index}: bank byte range {}..+{} is not 16-bit aligned",
+            index.position,
+            index.size
+        ));
+    }
+    if index.size == 0 {
+        return Ok(None);
+    }
+
+    let word_offset = usize::try_from(index.position / 2)
+        .context("sprite bank word offset does not fit usize")?;
+    let word_count =
+        usize::try_from(index.size / 2).context("sprite bank word count does not fit usize")?;
+    let range = checked_range(
+        word_offset,
+        word_count,
+        bank_words.len(),
+        format!("sprite index record {sprite_index} bank range"),
+    )?;
+    Ok(Some(bank_words[range].to_vec()))
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +355,6 @@ impl FrameHolder {
     pub fn dictionaries(&self) -> &[FrameDictionary] {
         &self.dictionaries
     }
-
-    /// Mutable slice of the day dictionaries.  Used by the CHROMA cheat
-    /// to hue-shift palette entries in place.
 
     pub fn num_sprites(&self) -> usize {
         self.sprites.len()
@@ -612,7 +638,9 @@ impl FrameHolder {
         // because the iterator's per-u16 function-call overhead dominates.
         // bytemuck::cast_slice assumes LE host byte order, which matches
         // the only targets we ship (x86_64 / arm64).
-        let bank_words: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&bks_bytes).to_vec();
+        let bank_words: Vec<u16> = bytemuck::try_cast_slice::<u8, u16>(&bks_bytes)
+            .map_err(|error| anyhow!("sprite bank must contain aligned 16-bit words: {error}"))?
+            .to_vec();
         drop(bks_bytes); // free the raw byte buffer
         progress(ProgressUpdate::Tick(1.0));
 
@@ -620,25 +648,44 @@ impl FrameHolder {
             "Parsing sprite dictionaries...",
             0.92,
         ));
-        // Open the dictionary/index file
-        let mut file = SbFile::open(&dic_path, 0)
-            .map_err(|e| anyhow!("open sprite index '{dic_path}': error {e}"))?;
+        let dic_bytes = SbFile::read_all(&dic_path)
+            .map_err(|e| anyhow!("read sprite index '{dic_path}': error {e}"))?;
+        self.load_sprite_index_bytes(&dic_bytes, &bank_words, progress)?;
 
-        // Read signature
-        self.signature = read_u32(&mut file)?;
+        tracing::info!(
+            "Sprite bank loaded: {} dictionaries, {} sprites",
+            self.dictionaries.len(),
+            self.sprites.len()
+        );
 
-        // Read dictionaries
-        let num_dicts = read_u16(&mut file)? as usize;
+        Ok(())
+    }
+
+    fn load_sprite_index_bytes(
+        &mut self,
+        bytes: &[u8],
+        bank_words: &[u16],
+        progress: &mut dyn FnMut(ProgressUpdate),
+    ) -> Result<()> {
+        let mut reader = Reader::new(bytes);
+
+        // Original provenance: `original-code/RHframeholder.cpp`,
+        // `RHFrameHolder::InitializeSpriteBank`, reads the signature,
+        // dictionary table, then packed `BankSpriteIndex` records in this order.
+        self.signature = reader.u32("sprite index signature")?;
+
+        let num_dicts = reader.u16("sprite index dictionary count")? as usize;
+        reader.validate_count(num_dicts, 2, "sprite index dictionary count", 4)?;
         tracing::info!("Reading {num_dicts} dictionaries");
 
         let mut dict_conversion: HashMap<u16, u16> = HashMap::new();
 
         for i in 0..num_dicts {
-            let num_entries = read_u16(&mut file)?;
+            let num_entries = reader.u16(format!("dictionary {i} entry count"))?;
             // Each entry is 4 u16 pixels = 8 bytes.
-            let byte_count = num_entries as usize * 8;
-            let raw_bytes = read_bytes(&mut file, byte_count)?;
-            let data: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&raw_bytes).to_vec();
+            let byte_count = usize::from(num_entries) * 8;
+            let raw_bytes = reader.take(byte_count, format!("dictionary {i} pixels"))?;
+            let data: Vec<u16> = bytemuck::cast_slice::<u8, u16>(raw_bytes).to_vec();
             let dict = FrameDictionary::from_raw(num_entries, data);
             let real_index = self.add_dictionary(dict);
             dict_conversion.insert(i as u16, real_index);
@@ -647,34 +694,35 @@ impl FrameHolder {
         dict_conversion.insert(0xFFFF, UNMAPPED_DICT);
 
         progress(ProgressUpdate::Tick(1.0));
-
         progress(ProgressUpdate::Phase("Unpacking sprite table...", 1.0));
+
         // Read sprite entries
-        let num_sprites = read_u32(&mut file)? as usize;
+        let num_sprites =
+            reader.count_u32("sprite index sprite count", BankSpriteIndex::PACKED_SIZE)?;
         tracing::info!("Reading {num_sprites} sprites");
 
         self.sprites.clear();
         self.sprites.reserve(num_sprites);
 
-        // Bulk-read all sprite-index records at once: per-record read_bytes
-        // was 20k syscalls for a fullgame bank (1.6s in debug).
-        let all_indices = read_bytes(&mut file, num_sprites * BankSpriteIndex::PACKED_SIZE)?;
-        for chunk in all_indices.chunks_exact(BankSpriteIndex::PACKED_SIZE) {
-            let idx = BankSpriteIndex::from_le_bytes(chunk);
+        for sprite_index in 0..num_sprites {
+            let bytes = reader.take(
+                BankSpriteIndex::PACKED_SIZE,
+                format!("sprite index record {sprite_index}"),
+            )?;
+            let idx = BankSpriteIndex::from_le_bytes(bytes)
+                .with_context(|| format!("sprite index record {sprite_index}"))?;
 
-            let dict_index = *dict_conversion
+            let dict_index = dict_conversion
                 .get(&idx.dictionary)
-                .unwrap_or(&UNMAPPED_DICT);
+                .copied()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "sprite index record {sprite_index}: dictionary {} is not defined",
+                        idx.dictionary
+                    )
+                })?;
 
-            let word_offset = (idx.position / 2) as usize;
-            let word_count = (idx.size / 2) as usize;
-
-            // Eagerly load packed data from the bank
-            let packed_data = if word_count > 0 && word_offset + word_count <= bank_words.len() {
-                Some(bank_words[word_offset..word_offset + word_count].to_vec())
-            } else {
-                None
-            };
+            let packed_data = packed_data_for_index(bank_words, &idx, sprite_index)?;
 
             self.sprites.push(PackedSprite {
                 width: idx.width,
@@ -685,12 +733,6 @@ impl FrameHolder {
                 dictionary_index: dict_index,
             });
         }
-
-        tracing::info!(
-            "Sprite bank loaded: {} dictionaries, {} sprites",
-            self.dictionaries.len(),
-            self.sprites.len()
-        );
 
         Ok(())
     }
@@ -1351,7 +1393,6 @@ pub fn unpack_rgb565(color: u16) -> (u16, u16, u16) {
 /// 6-bit green channel is therefore discarded before scaling — a
 /// deliberate quirk of the original asm code that we preserve for
 /// pixel-exact parity.
-
 /// Blend pixels toward a fog color at the given intensity.
 ///
 /// Uses the same 5-bit green mask (`0x07C0`) as [`apply_color_scale_16`].
@@ -1407,6 +1448,71 @@ fn crc32_hash(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sprite_index_bytes(position: u32, size: u32, dictionary: u16) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&position.to_le_bytes());
+        bytes.extend_from_slice(&size.to_le_bytes());
+        bytes.extend_from_slice(&dictionary.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn sprite_index_requires_the_full_fourteen_byte_header() {
+        let error = BankSpriteIndex::from_le_bytes(&[0; 13]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("sprite index dictionary at byte 12")
+        );
+    }
+
+    #[test]
+    fn truncated_sprite_table_is_rejected_before_reserving_entries() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 13]);
+
+        let mut holder = FrameHolder::new();
+        let error = holder
+            .load_sprite_index_bytes(&bytes, &[], &mut |_| {})
+            .unwrap_err();
+        assert!(error.to_string().contains("sprite index sprite count"));
+        assert!(error.to_string().contains("only 13 remain"));
+    }
+
+    #[test]
+    fn sprite_bank_range_must_fit_the_backing_bank() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&sprite_index_bytes(2, 4, UNMAPPED_DICT));
+
+        let mut holder = FrameHolder::new();
+        let error = holder
+            .load_sprite_index_bytes(&bytes, &[0x1111, 0x2222], &mut |_| {})
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("sprite index record 0 bank range")
+        );
+        assert!(error.to_string().contains("exceeds buffer length 2"));
+    }
+
+    #[test]
+    fn sprite_bank_range_must_be_word_aligned() {
+        let index =
+            BankSpriteIndex::from_le_bytes(&sprite_index_bytes(1, 2, UNMAPPED_DICT)).unwrap();
+        let error = packed_data_for_index(&[0x1111], &index, 7).unwrap_err();
+        assert!(error.to_string().contains("sprite index record 7"));
+        assert!(error.to_string().contains("not 16-bit aligned"));
+    }
 
     #[test]
     fn test_sprite_variant_values() {

@@ -260,7 +260,6 @@ impl EngineInner {
 
             if !forced_reset {
                 self.invalidate_paths_and_kill_crushed(
-                    assets,
                     ctx.pathfinder_layer,
                     ctx.pathfinder_sector,
                     &appeared,
@@ -299,7 +298,6 @@ impl EngineInner {
     /// `AppearedObstacle` payload).
     fn invalidate_paths_and_kill_crushed(
         &mut self,
-        assets: &LevelAssets,
         layer: u16,
         sector: u16,
         appeared: &[crate::pathfinder::AppearedObstacle],
@@ -363,7 +361,9 @@ impl EngineInner {
                     }
                     if !matches!(
                         elem.command,
-                        crate::element::Command::Move | crate::element::Command::Seek
+                        crate::element::Command::Move
+                            | crate::element::Command::MoveOk
+                            | crate::element::Command::Seek
                     ) {
                         return None;
                     }
@@ -375,9 +375,10 @@ impl EngineInner {
                             destination,
                             element: seek_target,
                             action,
+                            flags,
                             ..
                         } => {
-                            let pt = if elem.command == crate::element::Command::Seek {
+                            let pt = if flags.contains(crate::sequence::MoveFlags::SEEK) {
                                 let tgt = (*seek_target)?;
                                 let te = self.get_entity(tgt)?;
                                 te.element_data().position_map()
@@ -403,8 +404,9 @@ impl EngineInner {
                 {
                     actor.active_movement.clear();
                 }
-                match self.try_dispatch_move_path(assets, id, seq_id, elem_idx, dest, action) {
+                match self.try_dispatch_move_path(id, seq_id, elem_idx, dest, action) {
                     MovePathOutcome::Success => {}
+                    MovePathOutcome::Pending => {}
                     MovePathOutcome::ActorGone => {
                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                     }

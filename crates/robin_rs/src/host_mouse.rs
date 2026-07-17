@@ -373,46 +373,46 @@ pub fn choose_mouse_pointer_for_no_action(
                 if st.is_motion() && st.is_area() {
                     // Reset trajectory for motion area navigation.
                     host.valid_trajectory = false;
-                    if st.is_lift() {
-                        if let Some(lt) = sector.lift_type {
-                            match lt {
-                                // Wall → climbing cursor (if PC can climb).
-                                engine_sector::LiftType::Wall => {
-                                    // Gated on every selected PC
-                                    // having the contextual Climb
-                                    // action.  Without it the cursor
-                                    // falls through to CANTGOTHERE
-                                    // (or shift-variant).
-                                    if engine.all_selected_pcs_can_climb(assets) {
-                                        return RHMOUSE_CLIMBING;
+                    if st.is_lift()
+                        && let Some(lt) = sector.lift_type
+                    {
+                        match lt {
+                            // Wall → climbing cursor (if PC can climb).
+                            engine_sector::LiftType::Wall => {
+                                // Gated on every selected PC
+                                // having the contextual Climb
+                                // action.  Without it the cursor
+                                // falls through to CANTGOTHERE
+                                // (or shift-variant).
+                                if engine.all_selected_pcs_can_climb(assets) {
+                                    return RHMOUSE_CLIMBING;
+                                } else {
+                                    return if shift_held {
+                                        RHMOUSE_CANTGOTHERE_OUTLINE
                                     } else {
-                                        return if shift_held {
-                                            RHMOUSE_CANTGOTHERE_OUTLINE
-                                        } else {
-                                            RHMOUSE_CANTGOTHERE
-                                        };
-                                    }
-                                }
-                                // Stairs → default (intentional bug,
-                                // see "STAIRS CURSOR BUG" in the
-                                // original game).
-                                engine_sector::LiftType::Stairs => {
-                                    return if is_swordfighting {
-                                        if shift_held {
-                                            RHMOUSE_DEFAULT_OUTLINE
-                                        } else {
-                                            RHMOUSE_SWORDFIGHT_YES
-                                        }
-                                    } else if shift_held {
-                                        RHMOUSE_DEFAULT_OUTLINE
-                                    } else {
-                                        RHMOUSE_DEFAULT
+                                        RHMOUSE_CANTGOTHERE
                                     };
                                 }
-                                // Other lifts → climbing.
-                                _ => {
-                                    return RHMOUSE_CLIMBING;
-                                }
+                            }
+                            // Stairs → default (intentional bug,
+                            // see "STAIRS CURSOR BUG" in the
+                            // original game).
+                            engine_sector::LiftType::Stairs => {
+                                return if is_swordfighting {
+                                    if shift_held {
+                                        RHMOUSE_DEFAULT_OUTLINE
+                                    } else {
+                                        RHMOUSE_SWORDFIGHT_YES
+                                    }
+                                } else if shift_held {
+                                    RHMOUSE_DEFAULT_OUTLINE
+                                } else {
+                                    RHMOUSE_DEFAULT
+                                };
+                            }
+                            // Other lifts → climbing.
+                            _ => {
+                                return RHMOUSE_CLIMBING;
                             }
                         }
                     }

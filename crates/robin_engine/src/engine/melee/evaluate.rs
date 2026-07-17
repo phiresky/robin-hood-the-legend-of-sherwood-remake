@@ -163,7 +163,7 @@ impl EngineInner {
             let opp_jump_line = human.opponent_jump_lines.first().copied().flatten();
 
             // Selected PC short-circuits.
-            if entity.is_pc() && self.selected_pc_ids().iter().any(|&id| id == entity_id) {
+            if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
                 return false;
             }
             // Combat trainer stays put.
@@ -932,7 +932,7 @@ impl EngineInner {
         let entity_id = entity_id.into();
         let entity = self.get_entity(entity_id)?;
 
-        if entity.is_pc() && self.selected_pc_ids().iter().any(|&id| id == entity_id) {
+        if entity.is_pc() && self.selected_pc_ids().contains(&entity_id) {
             return None;
         }
         if entity.is_soldier() {
@@ -1095,8 +1095,8 @@ impl EngineInner {
                     Some(e) => e,
                     None => continue,
                 };
-                let is_selected_pc = victim.kind().is_pc()
-                    && self.selected_pc_ids().iter().any(|&id| id == victim_id);
+                let is_selected_pc =
+                    victim.kind().is_pc() && self.selected_pc_ids().contains(&victim_id);
                 let is_npc_soldier = matches!(victim, Entity::Soldier(_));
                 let npc_substate = if let Entity::Soldier(s) = victim {
                     Some(s.npc.ai_substate())

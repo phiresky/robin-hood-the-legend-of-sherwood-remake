@@ -133,7 +133,9 @@ impl HeightField {
         );
 
         let grayscale: Vec<u8> = rgb_data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|px| {
                 let (r, g, b) = (px[0] as u32, px[1] as u32, px[2] as u32);
                 ((r * 39 + g * 50 + b * 11) / 100) as u8
@@ -430,7 +432,9 @@ pub fn format_version_string(major: u16, minor: u16, release_name: &str) -> Stri
 
 /// Convert little-endian u8 pixel data to u16 words.
 fn bytes_to_u16_pixels(data: &[u8]) -> Vec<u16> {
-    data.chunks_exact(2)
+    data.as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect()
 }

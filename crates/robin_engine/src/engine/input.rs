@@ -2555,14 +2555,11 @@ impl EngineInner {
                         point
                     }
                     Some(e) => e.element_data().position(),
-                    None => self
-                        .fast_grid
-                        .convert_2d_to_3d(
-                            mouse_map,
-                            SIGHTOBSTACLE_MOUSE,
-                            self.sight_obstacles(assets),
-                        )
-                        .into(),
+                    None => self.fast_grid.convert_2d_to_3d(
+                        mouse_map,
+                        SIGHTOBSTACLE_MOUSE,
+                        self.sight_obstacles(assets),
+                    ),
                 };
                 self.turn_selected_pcs_in_bow_aim(assets, target_3d);
             }
@@ -2580,13 +2577,11 @@ impl EngineInner {
                 let target_3d = focused
                     .and_then(|id| self.get_entity(id).map(|e| e.element_data().position()))
                     .unwrap_or_else(|| {
-                        self.fast_grid
-                            .convert_2d_to_3d(
-                                mouse_map,
-                                SIGHTOBSTACLE_PROJECTION_AREA,
-                                self.sight_obstacles(assets),
-                            )
-                            .into()
+                        self.fast_grid.convert_2d_to_3d(
+                            mouse_map,
+                            SIGHTOBSTACLE_PROJECTION_AREA,
+                            self.sight_obstacles(assets),
+                        )
                     });
                 let ground_pt = GroundPoint {
                     x: target_3d.x,

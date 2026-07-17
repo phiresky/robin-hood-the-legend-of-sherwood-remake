@@ -7,9 +7,6 @@ use crate::messenger::{Message, MessageType, SimpleMessage};
 impl EngineInner {
     // ─── Script/director camera ─────────────────────────────────
 
-    /// Read-only view of the shared script/director camera.
-    /// Local player viewport projection lives in `robin_rs::Host`.
-
     /// Record the loaded background's pixel dimensions.
     ///
     /// Called by level loading after the `.map` picture is decoded so

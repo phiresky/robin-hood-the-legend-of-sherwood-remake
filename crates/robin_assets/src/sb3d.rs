@@ -150,9 +150,6 @@ impl Plane3D {
         self.v = self.b.sub(self.o);
     }
 
-    /// Install the U/V-frame directly, bypassing the A/B-point path used
-    /// by `compute_vectors`.
-
     pub fn compute_normal(&mut self) {
         self.n.x = self.u.y * self.v.z - self.v.y * self.u.z;
         self.n.y = self.u.z * self.v.x - self.v.z * self.u.x;
@@ -233,8 +230,6 @@ impl Default for BBox3D {
 }
 
 impl BBox3D {
-    /// Install `point` as the max corner.
-
     pub fn expand(&mut self, p: Vec3) {
         if self.x_min > p.x {
             self.x_min = p.x;

@@ -2902,31 +2902,31 @@ impl FastFindGrid {
 
         let dx = destination.x - origin.x;
         let dy = destination.y - origin.y;
+        let movement_len_sq = dx * dx + dy * dy;
+
+        let point_ratio = |point: geo::Coord<f32>| {
+            if movement_len_sq == 0.0 {
+                0.0
+            } else {
+                (((point.x - origin.x) * dx + (point.y - origin.y) * dy) / movement_len_sq)
+                    .clamp(0.0, 1.0)
+            }
+        };
 
         self.visit_active_motion_line_indices(layer, &bbox, |idx| {
             let line = &self.level.lines[usize::from(idx)];
-            if !line.intersects_segment(seg) {
-                return true;
-            }
-            // Compute parametric t along the trajectory segment.
-            // Using the standard 2D segment intersection formula:
-            //   t = ((q - p) × s) / (r × s)
-            // where p=origin, r=dest-origin, q=line.a, s=line.b-line.a
-            let qx = line.a.x - origin.x;
-            let qy = line.a.y - origin.y;
-            let sx = line.b.x - line.a.x;
-            let sy = line.b.y - line.a.y;
-
-            let r_cross_s = dx * sy - dy * sx;
-            if r_cross_s.abs() < 1e-9 {
-                // Parallel — use t=0.5 as approximation for collinear overlap.
-                let t = 0.5;
-                min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
-                return true;
-            }
-
-            let t = (qx * sy - qy * sx) / r_cross_s;
-            let t = t.clamp(0.0, 1.0);
+            let t = match geo2d::segment_intersection(seg, line.segment()) {
+                geo2d::Intersection2D::None => return true,
+                geo2d::Intersection2D::Point(point) => point_ratio(point),
+                geo2d::Intersection2D::Segment(overlap) => {
+                    // `SBGeoSegment2D::operator^` returns POINT for a single
+                    // shared endpoint and SEGMENT for a positive-length
+                    // collinear overlap. `RHFastFindGrid::IsReachable` treats
+                    // both as collisions, so the impact-producing port uses
+                    // the overlap endpoint reached first by the movement.
+                    point_ratio(overlap.start).min(point_ratio(overlap.end))
+                }
+            };
             min_t = Some(min_t.map_or(t, |prev: f32| prev.min(t)));
             true
         });
@@ -3614,6 +3614,39 @@ mod tests {
         grid.size_map(8, 8);
         grid.allocate_layers(layers);
         grid
+    }
+
+    fn horizontal_motion_line_impact_ratio(line_a_x: f32, line_b_x: f32) -> Option<f32> {
+        let mut grid = make_empty_grid(1);
+        grid.add_line(
+            GridLine::new(
+                MapPoint::new(line_a_x, 96.0),
+                MapPoint::new(line_b_x, 96.0),
+                true,
+            ),
+            0,
+        );
+        grid.impact_intersection_ratio(MapPoint::new(32.0, 96.0), MapPoint::new(160.0, 96.0), 0)
+    }
+
+    #[test]
+    fn movement_line_endpoint_contact_impacts_at_destination() {
+        assert_eq!(horizontal_motion_line_impact_ratio(160.0, 224.0), Some(1.0));
+    }
+
+    #[test]
+    fn movement_line_partial_overlap_impacts_at_overlap_start() {
+        assert_eq!(horizontal_motion_line_impact_ratio(64.0, 224.0), Some(0.25));
+    }
+
+    #[test]
+    fn movement_line_full_overlap_impacts_at_origin() {
+        assert_eq!(horizontal_motion_line_impact_ratio(0.0, 256.0), Some(0.0));
+    }
+
+    #[test]
+    fn movement_line_reversed_partial_overlap_keeps_earliest_impact() {
+        assert_eq!(horizontal_motion_line_impact_ratio(224.0, 64.0), Some(0.25));
     }
 
     fn square_sector(

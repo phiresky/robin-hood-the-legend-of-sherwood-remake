@@ -25,8 +25,13 @@ use robin_assets::frame_holder::{FrameHolder, SHADOW_KEY, SpriteVariant};
 use crate::font::TrueTypeFont;
 use crate::gfx_types::{BlendMode, Color, Rect};
 use crate::gpu_upscale::GpuUpscale;
+use crate::presentation::{
+    PresentationFrameId, ZoomPresentation, ZoomPresentationState, ZoomPresentationUnavailable,
+    ZoomPresentationUpdate,
+};
 use crate::ui::AlphaMask;
 use crate::window::{GpuContext, SharedSurface};
+use crate::zoom_hud::ZoomTooltipTracker;
 
 // ---------------------------------------------------------------------
 // Constants — preserved from the SDL backend.
@@ -278,6 +283,10 @@ pub struct Renderer {
     /// the engine frame counter so temporal shader effects follow simulation
     /// frames instead of swapchain presents.
     shader_frame_count: Option<usize>,
+    /// Update-owned zoom HUD data. Kept beside the frame queue so throwaway
+    /// screenshot and thumbnail passes share the live frame's immutable
+    /// presentation instead of advancing hover state during drawing.
+    zoom_presentation: ZoomPresentationState,
     /// Shared swapchain surface — renderer acquires the next frame's
     /// texture from this in `present()`. On Android the native surface
     /// can be replaced under this shared handle after resume.
@@ -1087,6 +1096,7 @@ impl Renderer {
             shader_preset: String::new(),
             gpu_upscale: upscale,
             shader_frame_count: None,
+            zoom_presentation: ZoomPresentationState::default(),
             surface,
             surface_config,
             render_target_texture,
@@ -1154,6 +1164,23 @@ impl Renderer {
 
     pub fn set_shader_frame_count(&mut self, frame_count: Option<usize>) {
         self.shader_frame_count = frame_count;
+    }
+
+    pub(crate) fn update_zoom_presentation(
+        &mut self,
+        frame_id: PresentationFrameId,
+        input: ZoomPresentationUpdate,
+        tooltip_tracker: &mut ZoomTooltipTracker,
+    ) {
+        self.zoom_presentation
+            .update(frame_id, input, tooltip_tracker);
+    }
+
+    pub(crate) fn zoom_presentation(
+        &self,
+        frame_id: PresentationFrameId,
+    ) -> Result<&ZoomPresentation, ZoomPresentationUnavailable> {
+        self.zoom_presentation.presentation(frame_id)
     }
 
     pub fn is_gpu_phase(&self) -> bool {
@@ -3344,7 +3371,7 @@ impl Renderer {
 
         // ARGB8888 LE = [B, G, R, A] in memory → [R, G, B, A] for wgpu.
         let mut rgba = Vec::with_capacity(argb.len());
-        for px in argb.chunks_exact(4) {
+        for px in argb.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
         }
         let (_tex, view) = upload_rgba_texture(&self.gpu, &rgba, w, h, "tt scratch");
