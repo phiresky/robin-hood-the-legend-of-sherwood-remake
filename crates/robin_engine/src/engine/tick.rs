@@ -393,14 +393,12 @@ impl EngineInner {
         // PostInitialize can call randomising natives.  It used to run
         // under perform_hourglass's RNG installation, so preserve that
         // deterministic stream while moving only the scheduling boundary.
-        #[allow(clippy::disallowed_methods)]
-        let placeholder = fastrand::Rng::with_seed(0);
-        crate::sim_rng::install(std::mem::replace(&mut self.rng, placeholder));
+        self.rng.enter_scope();
 
         self.run_post_initialize_if_needed(assets);
         self.drain_pending_immediate_actions_sync(display, assets);
 
-        self.rng = crate::sim_rng::uninstall();
+        self.rng.leave_scope();
 
         let mut fx = std::mem::take(&mut self.pending_side_effects);
         fx.code = GameCode::LevelInProgress;
