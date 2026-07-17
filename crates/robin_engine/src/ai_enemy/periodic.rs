@@ -42,12 +42,7 @@ impl EnemyAi {
         }
 
         // Restart stalled timers for swordfight/observe.
-        if !self.base.timer_is_running
-            && !self
-                .base
-                .locks_flag_field
-                .contains(crate::ai::AiLockFlags::FREEZE)
-        {
+        if !self.base.timer_is_running && !global.freeze {
             match self.base.current_substate {
                 Substate::AttackingSwordfight | Substate::AttackingObserve => {
                     self.base.launch_timer(10, ctx.frame);

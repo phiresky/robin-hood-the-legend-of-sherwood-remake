@@ -4034,6 +4034,452 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
 }
 
 #[test]
+fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
+    use crate::ai::{AiLockFlags, AiState, StimulusInfo, StimulusType, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{
+        Camp, Detectable, DetectableType, ElementBonus, ElementData, ElementKind, Entity,
+    };
+    use crate::element_kinds::ObjectType;
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    engine.frame_counter = 2;
+
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let first_visible_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let lost_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let last_visible_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let body_id = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+    let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
+        element: ElementData {
+            kind: ElementKind::ObjectBonus,
+            active: true,
+            ..ElementData::default()
+        },
+        object: crate::element::ObjectData {
+            object_type: ObjectType::Coin,
+            ..crate::element::ObjectData::default()
+        },
+    }));
+    let friend_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("locked detection observer exists")
+    else {
+        panic!("locked detection observer changed kind")
+    };
+    observer.element.active = true;
+    observer
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    observer.element.set_position_map(MapPoint::new(0.0, 0.0));
+    observer.element.set_direction_instantly(4);
+    observer.npc.life_points = 100;
+    observer.npc.view_direction = [1.0, 0.0];
+    observer.npc.view_radius = 300;
+    observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    observer.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    for (id, x, life_points) in [
+        (first_visible_id, 55.0, 100),
+        (lost_id, -200.0, 100),
+        (last_visible_id, 80.0, 100),
+        (body_id, 100.0, 0),
+    ] {
+        let Entity::Pc(pc) = engine
+            .get_entity_mut(id)
+            .expect("locked detection PC exists")
+        else {
+            panic!("locked detection PC changed kind")
+        };
+        pc.element.active = true;
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(x, 0.0));
+        pc.pc.life_points = life_points;
+    }
+
+    let Entity::Bonus(object) = engine
+        .get_entity_mut(object_id)
+        .expect("locked detection object exists")
+    else {
+        panic!("locked detection object changed kind")
+    };
+    object
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(100.0, 0.0, 0.0));
+    object.element.set_position_map(MapPoint::new(100.0, 0.0));
+
+    let Entity::Soldier(friend) = engine
+        .get_entity_mut(friend_id)
+        .expect("locked observer's friend exists")
+    else {
+        panic!("locked observer's friend changed kind")
+    };
+    friend.element.active = true;
+    friend
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(-20.0, 20.0, 0.0));
+    friend.element.set_position_map(MapPoint::new(-20.0, 20.0));
+    friend.npc.life_points = 100;
+    friend.npc.eye_status = crate::element::EyeStatus::Closed;
+
+    // RunningUpright produces the production 70-volume TAPTAPTAP used by
+    // RefreshDetection's acoustic pass. With observer slot 1 and frame 2,
+    // its three-frame hearing cadence is open.
+    let mut movement = SequenceElement::new_movement(
+        1,
+        crate::element::Command::Move,
+        Some(first_visible_id),
+        OrderType::RunningUpright,
+    );
+    movement
+        .orders
+        .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
+    let movement_sequence = engine.sequence_manager.launch_element(movement);
+    engine
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("locked detection observer exists after fixture")
+    else {
+        panic!("locked detection observer changed kind after fixture")
+    };
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("locked detection observer has enemy AI");
+    ai.base.me = observer_id.index();
+    ai.base.current_state = AiState::Default;
+    ai.base.current_substate = Substate::DefaultOnPost;
+    ai.current_task_priority = task_priority::NONE;
+    ai.base.locks_flag_field = AiLockFlags::FREEZE;
+
+    observer.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    observer.npc.detectable_lists[DetectableType::Body as usize].clear();
+    observer.npc.detectable_lists[DetectableType::Object as usize].clear();
+    observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+    observer.npc.detection_suspects[DetectableType::Body as usize] = 999;
+    observer.npc.detection_suspects[DetectableType::Object as usize] = 999;
+    for (target_id, seen_last_frame) in [
+        (first_visible_id, false),
+        (lost_id, true),
+        (last_visible_id, false),
+    ] {
+        observer.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+            element: Some(target_id),
+            detectable_type: DetectableType::Enemy,
+            seen_last_frame,
+            ..Detectable::default()
+        });
+    }
+    observer.npc.detectable_lists[DetectableType::Body as usize].push(Detectable {
+        element: Some(body_id),
+        detectable_type: DetectableType::Body,
+        // Keep this oracle's shadow prefix confined to the Enemy bucket.
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    });
+    observer.npc.detectable_lists[DetectableType::Object as usize].push(Detectable {
+        element: Some(object_id),
+        detectable_type: DetectableType::Object,
+        ..Detectable::default()
+    });
+
+    crate::sim_rng::with_seed(0xA013_0B22, || engine.tick_enemy_ai(&assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("locked detection observer remains an NPC");
+    assert_eq!(
+        observer.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .map(|det| (
+                det.heard_last_frame,
+                det.shadow_seen_last_frame,
+                det.seen_last_frame,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (true, true, true),
+            (false, false, false),
+            (false, true, true)
+        ],
+        "AI lock must not suppress acoustic, predetection, or optical latch updates"
+    );
+    assert_eq!(
+        observer.detection_suspects[DetectableType::Enemy as usize],
+        0,
+        "locked Enemy detection must still commit and reset suspects"
+    );
+    assert!(
+        observer.detectable_lists[DetectableType::Body as usize].is_empty(),
+        "locked non-Enemy buckets must still commit one-shot detectables"
+    );
+    assert!(
+        observer.detectable_lists[DetectableType::Object as usize].is_empty(),
+        "locked Object detection must still commit its one-shot detectable"
+    );
+
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("locked detection observer retains enemy AI");
+    assert_eq!(
+        (ai.base.current_state, ai.base.current_substate),
+        (AiState::Default, Substate::DefaultOnPost)
+    );
+    assert!(ai.base.pending_stimuli.is_empty());
+    assert_eq!(ai.base.last_stimulus_actor, Some(body_id.index()));
+    assert_eq!(
+        ai.base
+            .stimulus_queue
+            .iter()
+            .map(|stimulus| stimulus.stimulus_type)
+            .collect::<Vec<_>>(),
+        vec![
+            StimulusType::EventHear,
+            StimulusType::EventSeesShadow,
+            StimulusType::EventSeesShadow,
+            StimulusType::EventView,
+            StimulusType::EventOutOfView,
+            StimulusType::EventView,
+            StimulusType::EventSeesBody,
+            StimulusType::EventSeesObject,
+        ],
+        "StartThink must retain the complete HEAR then optical FIFO under AI lock"
+    );
+    assert!(matches!(
+        ai.base.stimulus_queue[0].info,
+        StimulusInfo::Noise(_)
+    ));
+    assert_eq!(
+        ai.base
+            .stimulus_queue
+            .iter()
+            .filter_map(|stimulus| match stimulus.info {
+                StimulusInfo::Human(target) => Some(target),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            first_visible_id.index(),
+            lost_id.index(),
+            last_visible_id.index(),
+            body_id.index(),
+        ]
+    );
+    assert_eq!(
+        ai.base
+            .stimulus_queue
+            .last()
+            .expect("Object event closes the retained detection FIFO")
+            .info,
+        StimulusInfo::Object(object_id.index()),
+        "EVENT_SEES_OBJECT must retain an object payload, not impersonate a human"
+    );
+    assert_eq!(
+        engine
+            .get_entity(friend_id)
+            .and_then(Entity::npc_data)
+            .expect("locked observer's friend remains an NPC")
+            .ai_state(),
+        AiState::Default,
+        "a retained VIEW must not leak through the later out-of-band ally alert"
+    );
+    assert!(
+        !engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("locked detection observer remains an NPC")
+            .alerted,
+        "AILOCK_FREEZE must retain VIEW without pre-alerting its observer"
+    );
+
+    // Static RHArtificialIntelligence::mbFreeze is a separate mode: the
+    // next RefreshDetection still scans and commits its latch, but StartThink
+    // discards the resulting VIEW instead of retaining it.
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("static-freeze detection observer exists")
+    else {
+        panic!("static-freeze detection observer changed kind")
+    };
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("static-freeze detection observer retains enemy AI");
+    ai.base.locks_flag_field = AiLockFlags::empty();
+    ai.base.stimulus_queue.clear();
+    observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+    observer.npc.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame = false;
+    observer.npc.detectable_lists[DetectableType::Enemy as usize][0].shadow_seen_last_frame = true;
+
+    engine.ai_global.freeze = true;
+    crate::sim_rng::with_seed(0xA013_0B24, || engine.tick_enemy_ai(&assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("static-freeze detection observer remains an NPC");
+    assert!(
+        observer.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame,
+        "static AI freeze must not suppress RefreshDetection latch commits"
+    );
+    let ai = observer
+        .ai_brain
+        .enemy()
+        .expect("static-freeze detection observer retains enemy AI");
+    assert!(
+        ai.base.stimulus_queue.is_empty(),
+        "static AI freeze must discard detection stimuli"
+    );
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert!(!observer.alerted);
+}
+
+#[test]
+fn retained_detection_view_rebuilds_the_live_enemy_scan_on_replay() {
+    use crate::ai::{AiLockFlags, AiState, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
+
+    let mut engine = EngineInner::new();
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let rising_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let already_seen_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("queued replay observer exists")
+    else {
+        panic!("queued replay observer changed kind")
+    };
+    observer.element.active = true;
+    observer
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    observer.element.set_position_map(MapPoint::new(0.0, 0.0));
+    observer.element.set_direction_instantly(4);
+    observer.npc.life_points = 100;
+    observer.npc.view_direction = [1.0, 0.0];
+    observer.npc.view_radius = 300;
+    observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    observer.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    for (id, x) in [(rising_id, 80.0), (already_seen_id, 120.0)] {
+        let Entity::Pc(pc) = engine.get_entity_mut(id).expect("queued replay PC exists") else {
+            panic!("queued replay PC changed kind")
+        };
+        pc.element.active = true;
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(x, 0.0));
+        pc.pc.life_points = 100;
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("queued replay observer exists after fixture")
+    else {
+        panic!("queued replay observer changed kind after fixture")
+    };
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("queued replay observer has enemy AI");
+    ai.base.me = observer_id.index();
+    ai.base.current_state = AiState::Default;
+    ai.base.current_substate = Substate::DefaultOnPost;
+    ai.current_task_priority = task_priority::NONE;
+    ai.base.locks_flag_field = AiLockFlags::BUSY;
+    ai.list_them.clear();
+
+    observer.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+    for (target_id, seen_last_frame) in [(rising_id, false), (already_seen_id, true)] {
+        observer.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+            element: Some(target_id),
+            detectable_type: DetectableType::Enemy,
+            seen_last_frame,
+            shadow_seen_last_frame: true,
+            ..Detectable::default()
+        });
+    }
+
+    crate::sim_rng::with_seed(0xA013_0B23, || engine.tick_enemy_ai(&assets));
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("queued replay observer retains enemy AI");
+    assert_eq!(ai.base.stimulus_queue.len(), 1);
+    assert_eq!(ai.base.current_state, AiState::Default);
+
+    engine
+        .get_entity_mut(observer_id)
+        .and_then(Entity::ai_controller_mut)
+        .expect("queued replay observer retains controller")
+        .locks_flag_field = AiLockFlags::empty();
+    engine.tick_ai_queued_stimuli(&assets);
+
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("queued replay observer retains enemy AI after replay");
+    assert!(ai.base.stimulus_queue.is_empty());
+    assert_eq!(ai.base.current_state, AiState::Attacking);
+    assert_eq!(ai.base.primary_target, rising_id.index());
+    assert_eq!(
+        ai.list_them,
+        vec![rising_id.index(), already_seen_id.index()],
+        "retained VIEW replay must rebuild all currently latched enemies, not seed only its payload"
+    );
+    assert!(
+        engine
+            .get_entity(observer_id)
+            .and_then(Entity::npc_data)
+            .expect("queued replay observer remains an NPC after replay")
+            .alerted,
+        "accepted retained VIEW must set the persistent alert marker at dispatch time"
+    );
+}
+
+#[test]
 fn npc_out_of_view_precedes_same_slot_body_fifo() {
     use crate::ai::{AiState, Position, Substate};
     use crate::ai_enemy::task_priority;

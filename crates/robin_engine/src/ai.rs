@@ -4532,6 +4532,12 @@ pub struct AiController {
     /// dispatched to this AI on the next think cycle.
     pub pending_stimuli: Vec<Stimulus>,
 
+    /// Accepted `EVENT_VIEW` reached `EventViewStandardProcedure` and the
+    /// engine must mirror that handler-side alert onto `NpcData::alerted`.
+    /// This explicit one-shot avoids inferring acceptance from the handler's
+    /// legacy bool or from an AI state that a script filter may have changed.
+    pub pending_mark_alerted: bool,
+
     /// Cross-NPC actions produced by phalanx coordination, to be drained
     /// by the engine after each think(). See [`CrossNpcAction`].
     pub pending_cross_npc_actions: Vec<CrossNpcAction>,
@@ -5002,6 +5008,7 @@ impl Default for AiController {
             stuck_counter: 0,
             pending_orders: Vec::new(),
             pending_stimuli: Vec::new(),
+            pending_mark_alerted: false,
             pending_cross_npc_actions: Vec::new(),
             pending_self_stimuli: Vec::new(),
             has_script_filter_override: false,

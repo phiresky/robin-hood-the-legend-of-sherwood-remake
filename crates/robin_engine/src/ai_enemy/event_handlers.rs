@@ -1763,6 +1763,7 @@ impl EnemyAi {
             return;
         }
 
+        self.base.pending_mark_alerted = true;
         self.base.frame_when_enemy_detected = ctx.frame;
         // Only meaningful for archers, who use the flag to switch to
         // bow-down posture.

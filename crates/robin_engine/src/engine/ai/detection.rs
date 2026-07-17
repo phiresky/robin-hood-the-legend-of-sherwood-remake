@@ -3,7 +3,7 @@
 //! dispatch or queue their resulting stimuli at the matching per-NPC creation
 //! boundary.
 
-use super::snapshots::{AiWorldView, Detection, HumanTarget, ObjectTarget};
+use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
@@ -43,7 +43,7 @@ struct RoyalistDetectionResult {
     tick_data: AiPerTickData,
 }
 
-fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
+pub(super) fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
     let Some(eye) = entity.compute_eyes_point(None) else {
         let position = entity.element_data().position();
         let position_map = entity.element_data().position_map();
@@ -68,7 +68,6 @@ struct SoldierSightContext {
     eye_status: crate::element::EyeStatus,
     current_state: crate::ai::AiState,
     current_substate: crate::ai::Substate,
-    ai_locked: bool,
     view_forward: (f32, f32),
     real_half_aperture: f32,
     posture: crate::element::Posture,
@@ -121,7 +120,6 @@ impl SoldierSightContext {
             eye_status: soldier.npc.eye_status,
             current_state: soldier.npc.ai_state(),
             current_substate,
-            ai_locked: ai.base.ai_is_locked(),
             view_forward: (view_direction[0], view_direction[1]),
             real_half_aperture: soldier.npc.real_half_aperture,
             posture: soldier.element.posture,
@@ -1017,18 +1015,14 @@ impl EngineInner {
     /// Original:
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
-    /// Hourglass. Returns the rising/falling edges for later phases.
+    /// Hourglass.
     // TODO(parity): Script-driven mutation of an Enemy list between FIFO Think
-    // calls remains outside the frozen final-scan aggregate. The Lacklandist
-    // branch still skips its scan while AI-locked; original RefreshDetection
-    // scans and lets StartThink retain/refuse the resulting stimulus instead.
+    // calls remains outside the frozen final-scan aggregate.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
         world: &AiWorldView,
-    ) -> Vec<Detection> {
-        let mut transitions: Vec<Detection> = Vec::new();
-
+    ) {
         let universal_frame = self.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
         // Forest-level flag — selects between forest and city
@@ -1046,7 +1040,6 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 is_forest_level,
-                &mut transitions,
             );
             let royalist_result = if self
                 .entities
@@ -1157,8 +1150,6 @@ impl EngineInner {
                 enemy_detection_tick_data,
             );
         }
-
-        transitions
     }
 
     /// P3 inner — per-NPC body of [`Self::tick_enemy_ai_refresh_detection`].
@@ -1174,7 +1165,6 @@ impl EngineInner {
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
-        transitions: &mut Vec<Detection>,
     ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
         use crate::element::{ActionState, Posture};
@@ -1191,9 +1181,6 @@ impl EngineInner {
             let entity = self.entities.get(npc_id)?;
             SoldierSightContext::from_viewer(entity, Camp::Lacklandists)?
         };
-        if viewer.ai_locked {
-            return None;
-        }
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
         let dir = viewer.dir;
@@ -1270,9 +1257,7 @@ impl EngineInner {
         // -- Mutating pass: update detectable list + suspects --
         // `&self.sight_obstacles` and `self.entities.get_mut(...)`
         // are disjoint fields on `self`, so the split borrow is
-        // valid.  We scope the mut access so we can push to
-        // `transitions` afterwards without conflict.
-        let mut commit: Option<(EntityId, MapPoint, bool)> = None;
+        // valid.
         let mut think_tick_data: Option<AiPerTickData> = None;
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         {
@@ -2468,20 +2453,6 @@ impl EngineInner {
             // we still run the falling-edge check so NPCs react to
             // lost sight the instant it happens.
             let committed = threshold_hit || instant_hit;
-            let newly_alerted = soldier.npc.ai_state() != AiState::Attacking;
-            // Keep Rust's existing best-target transition record for the
-            // later presentation/ally-alert phase. Behavioral EVENT_VIEW
-            // dispatch below follows original detectable-list order instead.
-            let selected_rising_commit = committed.then_some(best_target).flatten().and_then(
-                |(target_id, target_pos, _)| {
-                    soldier.npc.detectable_lists[enemy_idx]
-                        .iter()
-                        .find(|det| det.element == Some(target_id))
-                        .is_some_and(|det| det.seen_now && !det.seen_last_frame)
-                        .then_some((target_id, target_pos))
-                },
-            );
-            let mut queued_rising_view = false;
             for det in soldier.npc.detectable_lists[enemy_idx].iter_mut() {
                 let was_seen = det.seen_last_frame;
                 let is_seen = det.seen_now;
@@ -2513,7 +2484,6 @@ impl EngineInner {
                         crate::ai::StimulusType::EventView,
                         target_id.index(),
                     ));
-                    queued_rising_view = true;
                 }
                 if falling_edge && let Some(target_id) = det.element {
                     enemy_stimuli.push(crate::ai::Stimulus::with_human(
@@ -2539,35 +2509,6 @@ impl EngineInner {
                 );
             }
 
-            if queued_rising_view {
-                soldier.npc.alerted = true;
-                if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
-                    enemy_ai.set_alert_status(crate::ai::AlertLevel::Red);
-                } else if let Some(ai) = soldier.npc.ai_brain.base_mut() {
-                    ai.set_alert_status(crate::ai::AlertLevel::Red);
-                }
-            }
-
-            if let Some((target_id, target_pos)) = selected_rising_commit {
-                tracing::trace!(
-                    npc = ?npc_id,
-                    target = ?target_id,
-                    ai_current_state = ?soldier.npc.ai_brain.base().map(|a| a.current_state),
-                    ai_current_substate = ?soldier.npc.ai_brain.base().map(|a| a.current_substate),
-                    newly_alerted,
-                    "detection commit check"
-                );
-                if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
-                    enemy_ai.base.seek_position = crate::ai::Position {
-                        x: target_pos.x,
-                        y: target_pos.y,
-                        sector: None,
-                        level: 0,
-                    };
-                }
-                commit = Some((target_id, target_pos, newly_alerted));
-            }
-
             // The detection-built tick input is assembled before the latch
             // walk to avoid conflicting AI/list borrows. Refresh its latch
             // snapshot now so every queued Think observes the final state
@@ -2583,14 +2524,6 @@ impl EngineInner {
             }
         }
 
-        if let Some((target_id, target_pos, newly_alerted)) = commit {
-            transitions.push(Detection {
-                enemy: npc_id,
-                target: target_id,
-                target_pos,
-                newly_alerted,
-            });
-        }
         match (enemy_stimuli.is_empty(), think_tick_data) {
             (false, Some(tick_data)) => Some((enemy_stimuli, tick_data)),
             (true, _) => None,
@@ -2935,10 +2868,6 @@ impl EngineInner {
                 }
             }
 
-            if !reveal_targets.is_empty() {
-                soldier.npc.alerted = true;
-            }
-
             // Preserve the final RefreshDetection scan products for every
             // stimulus in this contiguous Enemy block. Volatile target and
             // combat inputs are rebuilt separately at each Think boundary.
@@ -3084,9 +3013,6 @@ impl EngineInner {
             };
             viewer
         };
-        if viewer.ai_locked {
-            return;
-        }
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
         let dir = viewer.dir;
@@ -3789,10 +3715,9 @@ impl EngineInner {
             && let Some(ai) = soldier.npc.ai_brain.base_mut()
         {
             for target_id in rising_dispatches {
-                let stimulus = crate::ai::Stimulus::with_human(
-                    crate::ai::StimulusType::EventSeesObject,
-                    target_id.index(),
-                );
+                let mut stimulus =
+                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventSeesObject);
+                stimulus.info = crate::ai::StimulusInfo::Object(target_id.index());
                 ai.pending_stimuli.push(stimulus);
                 tracing::trace!(
                     npc = ?npc_id,

@@ -248,7 +248,7 @@ impl FriendlyAi {
             .register_log_line(LogLineType::Event, stimulus_type as u16);
 
         // Pre-think checks
-        if !self.start_think(stimulus, ctx) {
+        if !self.start_think(stimulus, ctx, global.freeze) {
             self.end_think(global, ctx, tick, grid, doors);
             return true;
         }
@@ -342,7 +342,12 @@ impl FriendlyAi {
     // Think sub-methods
     // -----------------------------------------------------------------------
 
-    fn start_think(&mut self, stimulus: &Stimulus, ctx: &AiContext) -> bool {
+    fn start_think(
+        &mut self,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+        static_ai_frozen: bool,
+    ) -> bool {
         // Civilian pre-think pipeline.  Civilians normally never
         // hit `EventWasp` / `EventNet`, but the gates live on the
         // base class so any scripted `SetSubstate` could reach them;
@@ -365,8 +370,9 @@ impl FriendlyAi {
             self.base.set_alert_status(AlertLevel::Green);
         }
 
-        // Freeze gate.
-        if self.base.locks_flag_field.contains(AiLockFlags::FREEZE) {
+        // Static AI freeze discards stimuli after the engine-side script
+        // filter. It is not the per-NPC AILOCK_FREEZE retention bit.
+        if static_ai_frozen {
             self.base.register_log_line(LogLineType::EventRefused, 1);
             return false;
         }
@@ -388,9 +394,9 @@ impl FriendlyAi {
             return false;
         }
 
-        // Non-FREEZE AI locks (BUSY, BEGGAR) — queue for later.
-        let non_freeze = self.base.locks_flag_field - AiLockFlags::FREEZE;
-        if !non_freeze.is_empty() {
+        // Every non-script AILOCK flag retains stimuli. Original's separate
+        // static `mbFreeze` discard gate is not the per-NPC AILOCK_FREEZE bit.
+        if !self.base.locks_flag_field.is_empty() {
             self.base.stimulus_queue.push(*stimulus);
             self.base.register_log_line(LogLineType::EventRefused, 3);
             return false;
@@ -2151,6 +2157,25 @@ mod tests {
         assert_eq!(ai.base.me, 99);
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.beggar_dont_talk_counter, 0);
+    }
+
+    #[test]
+    fn civilian_start_think_distinguishes_static_and_ailock_freeze() {
+        let ctx = AiContext::default();
+        let stimulus = Stimulus::new(StimulusType::EventTimer);
+
+        let mut static_frozen = FriendlyAi::new(1);
+        assert!(!static_frozen.start_think(&stimulus, &ctx, true));
+        assert!(static_frozen.base.stimulus_queue.is_empty());
+
+        let mut ai_locked = FriendlyAi::new(2);
+        ai_locked.base.locks_flag_field = AiLockFlags::FREEZE;
+        assert!(!ai_locked.start_think(&stimulus, &ctx, false));
+        assert_eq!(ai_locked.base.stimulus_queue.len(), 1);
+        assert_eq!(
+            ai_locked.base.stimulus_queue[0].stimulus_type,
+            StimulusType::EventTimer
+        );
     }
 
     #[test]

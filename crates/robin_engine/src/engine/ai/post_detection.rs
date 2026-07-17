@@ -1,8 +1,6 @@
-//! Post-detection orchestration phases for `tick_enemy_ai`:
-//! P4 (alert allies / log), P6 (pursuit / approach / combat-stance), P6c
-//! (drain pending swordfight requests), P6d (replay deferred stimuli).
+//! Post-detection orchestration phases for `tick_enemy_ai`: normal timers,
+//! pending swordfight requests, and replay of deferred stimuli.
 
-use super::snapshots::Detection;
 use super::*;
 
 /// Final scan aggregate attached to the contiguous Enemy stimulus block queued
@@ -85,69 +83,9 @@ fn take_enemy_detection_tick_data(
     override_data.matched += 1;
     Some(override_data.tick_data.clone())
 }
-use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
 
 impl EngineInner {
-    /// P4 — fire `HeyFolksLookThere` + log on every fresh detection
-    /// transition.  Alerts nearby idle soldiers when an NPC spots the
-    /// PC.
-    pub(super) fn tick_enemy_ai_alert_allies(&mut self, transitions: &[Detection]) {
-        const VIEW_LOOK_THERE_RADIUS: f32 = 100.0;
-        let alert_calls: Vec<(EntityId, MapPoint)> = transitions
-            .iter()
-            .filter(|d| d.newly_alerted)
-            .map(|d| (d.enemy, d.target_pos))
-            .collect();
-        for det in transitions {
-            if det.newly_alerted {
-                tracing::info!(
-                    enemy = ?det.enemy,
-                    target = ?det.target,
-                    "Enemy AI: spotted PC, transitioning to Attacking"
-                );
-            }
-        }
-        for (enemy, pos) in alert_calls {
-            self.hey_folks_look_there(enemy, pos, VIEW_LOOK_THERE_RADIUS);
-        }
-    }
-
-    /// Finalize newly committed detections by revealing blipped NPCs.
-    pub(super) fn tick_enemy_ai_commit_detection_transitions(
-        &mut self,
-        transitions: Vec<Detection>,
-    ) {
-        // Newly committed detections — reveal blipped enemies who
-        // just saw the player.
-        //
-        // This block previously also called `reconsider_enemy_approach`
-        // for every fresh detection, which immediately pushed the NPC
-        // into `AttackingRunningToEnemy` and bypassed the reaction-time
-        // pause that `event_view_standard_procedure` just set up
-        // (`AttackingReactiontimeTurning` + `LaunchTimer(20)`).
-        // `event_view_standard_procedure` does NOT call
-        // `reconsider_enemy_approach` after detection — it lets the
-        // state machine advance through the
-        // `AttackingReactiontimeTurning` → `AttackingReactiontime` →
-        // `BattleDecisions` chain on the later `EVENT_TIMER` phase.
-        //
-        // The facing snap and focus are already handled inside
-        // `event_view_standard_procedure` (via `face_entity` +
-        // `pending_focus`).
-        for det in transitions {
-            if let Some(entity) = self.entities.get_mut(det.enemy)
-                && entity.element_data().blipped
-            {
-                tracing::debug!(
-                    entity = det.enemy.index(),
-                    "reveal_blip: NPC revealed on detection commit"
-                );
-                entity.reveal_blip();
-            }
-        }
-    }
-
     /// Normal-timer phase from `RHElementActorNPC::Hourglass`.
     ///
     /// Runs after `The16thFrame` and before the macro timer. For every
@@ -155,7 +93,7 @@ impl EngineInner {
     /// `Think(EVENT_TIMER)`. Soldiers that enter swordfight receive the
     /// original post-dispatch combat-stance and civilian-panic effects.
     pub(crate) fn tick_ai_normal_timers(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() {
             return;
         }
 
@@ -540,11 +478,10 @@ impl EngineInner {
     /// script-locked. This is the final unlocked phase of
     /// `RHElementActorNPC::Hourglass`, after both timer kinds.
     pub(crate) fn tick_ai_queued_stimuli(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() {
             return;
         }
 
-        let scratch = self.build_sim_scratch(assets);
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             loop {
@@ -566,6 +503,10 @@ impl EngineInner {
                     ai.stimulus_queue.remove(0)
                 };
 
+                // Every retained Think is a fresh synchronous boundary. An
+                // earlier replay may mutate positions, latches, or targets
+                // consumed by the next retained stimulus.
+                let scratch = self.build_sim_scratch(assets);
                 let in_uninterruptible_command = self.is_very_very_busy(npc_id);
                 let ctx = {
                     let Some(entity) = self.entities.get(npc_id) else {
@@ -594,6 +535,7 @@ impl EngineInner {
                         if matches!(
                             stimulus.stimulus_type,
                             crate::ai::StimulusType::EventView
+                                | crate::ai::StimulusType::EventOutOfView
                                 | crate::ai::StimulusType::EventSeesBeggar
                                 | crate::ai::StimulusType::EventEnemyNear
                         ) =>
@@ -602,11 +544,99 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                let tick_data =
+                let mut tick_data =
                     self.build_npc_tick_data_for_target(npc_id, &scratch, assets, target_override);
+                if matches!(
+                    stimulus.stimulus_type,
+                    crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
+                ) {
+                    self.overlay_live_enemy_detection_scan_for_replay(
+                        npc_id,
+                        &scratch,
+                        &mut tick_data,
+                    );
+                }
                 self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
             }
         }
+    }
+
+    /// Rebuild the Enemy-list products that original queued VIEW/OUTOFVIEW
+    /// handlers read through `ReinitializeThemList` when a retained stimulus
+    /// is finally replayed. Retained queues store only stimuli, so carrying
+    /// the old scan aggregate would be both lossy and stale; the original
+    /// re-walks the live detectable list at replay time as well.
+    fn overlay_live_enemy_detection_scan_for_replay(
+        &self,
+        npc_id: EntityId,
+        scratch: &SimScratch,
+        tick_data: &mut crate::ai::AiPerTickData,
+    ) {
+        let (observer_position, visible_targets) = {
+            let Some(entity @ Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
+                return;
+            };
+            let enemy_idx = crate::element::DetectableType::Enemy as usize;
+            (
+                super::detection::human_eye_point_for_visibility(entity).0,
+                soldier.npc.detectable_lists[enemy_idx]
+                    .iter()
+                    .filter(|detectable| detectable.seen_last_frame)
+                    .map(|detectable| {
+                        detectable.element.unwrap_or_else(|| {
+                            panic!(
+                                "latched Enemy detectable for NPC {} has no target during queued replay",
+                                npc_id.index()
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+
+        tick_data.enemy_sq_distances.clear();
+        tick_data.min_sq_enemy_distance = i32::MAX;
+        tick_data.personally_visible_enemies = 0;
+        tick_data.unconscious_enemies.clear();
+        tick_data.seen_last_frame_enemies.clear();
+
+        for target_id in visible_targets {
+            let target = scratch
+                .ai_entity_views
+                .get(&target_id.index())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "latched Enemy target {} for NPC {} is absent from queued replay views",
+                        target_id.index(),
+                        npc_id.index()
+                    )
+                });
+            tick_data.seen_last_frame_enemies.push(target_id.index());
+
+            if target.is_unconscious {
+                if !target.is_carried {
+                    tick_data
+                        .unconscious_enemies
+                        .push(crate::ai::SleepingEnemyInfo {
+                            handle: target_id.index(),
+                            position: target.position,
+                            is_pc: target.is_pc,
+                            is_robin: target.is_robin,
+                            is_vip: target.is_vip,
+                        });
+                }
+                continue;
+            }
+            let dx = target.position.x - observer_position.x;
+            let dy = (target.position.y - observer_position.y)
+                * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let sq_distance = (dx * dx + dy * dy) as i32;
+            tick_data
+                .enemy_sq_distances
+                .push((target_id.index(), sq_distance));
+            tick_data.min_sq_enemy_distance = tick_data.min_sq_enemy_distance.min(sq_distance);
+        }
+        tick_data.personally_visible_enemies = tick_data.enemy_sq_distances.len() as u16;
     }
 }
 
