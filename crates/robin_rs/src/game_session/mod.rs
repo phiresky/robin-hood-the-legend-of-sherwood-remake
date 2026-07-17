@@ -2,6 +2,7 @@
 
 mod dispatch;
 mod input_handlers;
+mod interactive;
 mod modal_state;
 mod mouse_input;
 mod multiplayer;
@@ -14,6 +15,10 @@ mod tick;
 use dispatch::apply_local_viewport_scroll;
 pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
+use interactive::{
+    InteractiveFrontend, MissionAudio, MissionHud, MissionInput, MissionPresentation,
+    MissionResources, MissionUi,
+};
 use modal_state::{
     ActiveModal, ActiveModalOutcome, drain_pending_console_display, drain_pending_debriefings,
     drain_pending_dialogues, drain_pending_popup_scroll, drain_pending_sherwood_stat,
@@ -66,7 +71,6 @@ use tick::{
 use crate::Host;
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::campaign::Campaign;
-use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{
     CornerButton, CornerButtonEnable, CornerButtonSprites, CornerHudLayout, CornerTooltipTracker,
 };
@@ -92,7 +96,6 @@ use crate::main_entry::{
     execute_app_effects, perform_pending_save_load, required_mission_id, resolve_loading_pak,
 };
 use crate::main_menu::custom_missions::CustomMissionLaunch;
-use crate::menu::CampaignMapState;
 use crate::multiplayer::lobby::current_epoch_ms;
 use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
 use crate::player_profile::PlayerProfileManager;
@@ -997,7 +1000,7 @@ pub(crate) async fn run_mission(
     // See `load_level_and_sprite_bank` for the full sequence.
     let screen_w = window.width as f32;
     let screen_h = window.height as f32;
-    let (mut engine, mut assets, mut dev, pre_decoded_bg, pre_decoded_mm, engine_rng_seed) =
+    let (mut engine, mut assets, dev, pre_decoded_bg, pre_decoded_mm, engine_rng_seed) =
         load_level_and_sprite_bank(
             Some(&mut *window),
             &mut loading_screen,
@@ -1135,9 +1138,9 @@ pub(crate) async fn run_mission(
     // `load_mission_sprites` for the per-resource breakdown.
     let MissionSprites {
         mut cursor_renderer,
-        mut selection_mark_renderer,
+        selection_mark_renderer,
         mouse_trail_renderer,
-        mut titbit_renderer,
+        titbit_renderer,
         portrait_cache,
     } = load_mission_sprites(
         &mut engine,
@@ -1155,14 +1158,14 @@ pub(crate) async fn run_mission(
     let sample_loader = sdl_audio::create_sample_loader(std::path::PathBuf::from(
         &game.global_options.sound_directory,
     ));
-    let mut sound_rng = fastrand::Rng::new();
+    let sound_rng = fastrand::Rng::new();
 
     // ── Input, camera center, mouse grab ──
     // Builds ThreadedInput + InputTranslator, loads key bindings from
     // the player profile, pushes the DisplayMap accelerator into the
     // engine minimap, centers the camera on the first PC, and grabs
     // the mouse for edge-scrolling.  See `setup_input_and_camera`.
-    let (mut threaded_input, mut input_translator) = setup_input_and_camera(
+    let (threaded_input, input_translator) = setup_input_and_camera(
         &mut engine,
         &mut host,
         &assets,
@@ -1177,7 +1180,7 @@ pub(crate) async fn run_mission(
     // Loads DEFAULT.RES, menu button sprites and TTF fonts once per mission
     // so the pause menu (and any mid-mission dialogue / debriefing popups)
     // can render without reloading.
-    let mut menu_resources = IngameMenuResources::new(&mut renderer, host.shipping.as_deref());
+    let menu_resources = IngameMenuResources::new(&mut renderer, host.shipping.as_deref());
     if menu_resources.is_none() {
         tracing::error!(
             "In-game menu resources unavailable — pause actions require a successful reload"
@@ -1187,6 +1190,7 @@ pub(crate) async fn run_mission(
     // Restart is disabled when the current mission is Sherwood,
     // since there is no in-mission save to restart from.
     let restart_allowed = location != MissionLocation::Sherwood;
+    let mission_ui = MissionUi::new(restart_allowed);
 
     // ── Lost Leicester gate ──
     // Quit immediately when ARES == 0 on Sherwood entry: the
@@ -1344,29 +1348,24 @@ pub(crate) async fn run_mission(
         }
     }
 
-    // State for the Sherwood campaign-map overlay.  Built lazily the
-    // first time the overlay is raised so the CampaignMapState reflects
-    // the live campaign at that instant.
-    let mut sherwood_campaign_map = CampaignMapState::new();
-
     // Sherwood HUD button state.  Tracks the widget enable mask for
     // DisplayCampaignMap / GoToExit / StartMission / QuitMission.
     // Starts in the pre-commit state (only DisplayCampaignMap live)
     // and flips to post-commit once the player picks a mission via
     // the overlay.
-    let mut sherwood_enable = SherwoodButtonEnable::pre_commit();
+    let sherwood_enable = SherwoodButtonEnable::pre_commit();
     // Button sprites from DEFAULT.RES.  Loaded once per mission;
     // missing sprites just don't render.
     let sherwood_sprites = SherwoodButtonSprites::load(&mut cursor_res, &mut renderer);
-    let mut sherwood_layout =
+    let sherwood_layout =
         SherwoodHudLayout::for_resolution(window.width, window.height, &sherwood_sprites);
 
     // Zoom HUD buttons (ZoomUp / ZoomDown).  Layout tracks window
     // size just like the Sherwood HUD; enable state is re-derived
     // from engine queries each frame.
     let zoom_sprites = ZoomButtonSprites::load(&mut cursor_res, &mut renderer);
-    let mut zoom_layout = ZoomHudLayout::for_resolution(window.width, window.height, &zoom_sprites);
-    let mut zoom_tooltip = ZoomTooltipTracker::new();
+    let zoom_layout = ZoomHudLayout::for_resolution(window.width, window.height, &zoom_sprites);
+    let zoom_tooltip = ZoomTooltipTracker::new();
 
     // Top-of-panel HUD buttons (Clock / Sight / QuickStart).
     // Non-Sherwood missions only.  Sprites load once per mission;
@@ -1375,31 +1374,21 @@ pub(crate) async fn run_mission(
     // arithmetic) so nested menus that change resolution don't need
     // to plumb a layout ref.
     let corner_sprites = CornerButtonSprites::load(&mut cursor_res, &mut renderer);
-    // Initial layout placeholder; re-assigned at the top of every frame
-    // before use, so any value here is overwritten before it's read.
-    let mut corner_layout;
-    let mut corner_tooltip = CornerTooltipTracker::new();
+    let corner_tooltip = CornerTooltipTracker::new();
     let stature_sprites = StatureSprites::load(&mut cursor_res, &mut renderer);
-    let mut stature_layout;
 
-    // Pause menu state
-    let mut pause_menu: Option<PauseMenu> = None;
-    let mut active_modal: Option<ActiveModal> = None;
-    // In-game cheat / debug console overlay (toggled via `~`).  Lives
-    // for the whole mission so command history persists across opens.
-    let mut console_overlay = ConsoleOverlay::new();
     // Hover-idle tracker for the Sherwood requirements-bar tooltip.
-    let mut requirements_tooltip = RequirementsTooltipTracker::new();
+    let requirements_tooltip = RequirementsTooltipTracker::new();
     // Same pipeline for the blazon-bar slots.
-    let mut blazon_tooltip = BlazonTooltipTracker::new();
+    let blazon_tooltip = BlazonTooltipTracker::new();
     // Stature arrow (up / down) and Sherwood-HUD tooltip timers.
-    let mut stature_tooltip = StatureTooltipTracker::new();
-    let mut sherwood_tooltip = SherwoodTooltipTracker::new();
+    let stature_tooltip = StatureTooltipTracker::new();
+    let sherwood_tooltip = SherwoodTooltipTracker::new();
     // PC portrait action-button tooltip timer — each of the three
     // per-PC action buttons gets a localized tooltip after 75 idle
     // ticks.
-    let mut pc_action_tooltip = PcActionTooltipTracker::new();
-    let mut last_cursor_id: i32 = crate::resource_ids::RHMOUSE_DEFAULT;
+    let pc_action_tooltip = PcActionTooltipTracker::new();
+    let last_cursor_id: i32 = crate::resource_ids::RHMOUSE_DEFAULT;
 
     // ── Replay recording / playback + rollback + rewind ──
     // Record-by-default; `--record <path>` overrides the destination,
@@ -1437,12 +1426,12 @@ pub(crate) async fn run_mission(
     // as a separate binding — use `manager.engine`, `manager.sim_frame`,
     // and `manager.pending_inputs` (or the methods on `manager`) for
     // the rest of `run_mission`.
-    let mut manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
+    let manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
     // Multiplayer: peer state hashes received from the host (only the
     // server broadcasts).  Each entry is `(frame → host_hash)`; the
     // client compares its locally-computed hash at the same sampling
     // point.  Drained as frames are reached.
-    let mut runtime = TimelineRuntime::new(
+    let runtime = TimelineRuntime::new(
         replay,
         FrameContract::Graphical,
         host.net.is_some(),
@@ -1459,9 +1448,7 @@ pub(crate) async fn run_mission(
     // the HUD / cursor / input stay fully interactive while the sim is
     // frozen.  Also toggled by the in-game step-debug keys: `.` and `,`
     // enable it (and step one frame forward/back), Enter clears it.
-    let mut manual_pause = runtime.initially_paused();
-    let mut step_forward_repeat_at_ms: Option<u32> = None;
-    let mut step_back_repeat_at_ms: Option<u32> = None;
+    let manual_pause = runtime.initially_paused();
 
     // Track the ambience-derived shadow key so host-side sprite caches
     // (selection marks + titbits) can be rebound when
@@ -1472,7 +1459,142 @@ pub(crate) async fn run_mission(
     // `night_color` deviates from the last rebind. Cheap (two u16
     // comparisons per frame) and dormant until something actually
     // mutates the ambience.
-    let mut last_shadow_color = manager.engine.weather().night_color;
+    let last_shadow_color = manager.engine.weather().night_color;
+
+    // The graphical driver now has the same common runtime owner as the
+    // headless driver. Native process resources live beside it in focused
+    // frontend owners; callbacks and the event pump intentionally remain
+    // outside both ownership trees.
+    let corner_layout = CornerHudLayout::for_resolution(
+        renderer.screen_width() as u32,
+        renderer.screen_height() as u32,
+        &corner_sprites,
+    );
+    let stature_layout = StatureHudLayout::for_resolution(
+        renderer.screen_width() as u32,
+        renderer.screen_height() as u32,
+        &stature_sprites,
+    );
+    let mut mission = MissionRuntime::new(
+        MissionWorld::new(host, game, manager, assets, dev),
+        runtime,
+        MissionControl::new(manual_pause, last_shadow_color),
+    );
+    let mut frontend = InteractiveFrontend {
+        input: MissionInput::new(threaded_input, input_translator),
+        audio: MissionAudio::new(audio_backend, sample_loader, sound_rng),
+        resources: MissionResources {
+            text: text_res,
+            cursor: cursor_res,
+            level_descriptors,
+            hud_fonts,
+            short_briefing_strings,
+            menu: menu_resources,
+        },
+        ui: mission_ui,
+        hud: MissionHud {
+            sherwood_enable,
+            sherwood_sprites,
+            sherwood_layout,
+            zoom_sprites,
+            zoom_layout,
+            zoom_tooltip,
+            corner_sprites,
+            corner_layout,
+            corner_tooltip,
+            stature_sprites,
+            stature_layout,
+            requirements_tooltip,
+            blazon_tooltip,
+            stature_tooltip,
+            sherwood_tooltip,
+            pc_action_tooltip,
+            last_cursor_id,
+        },
+        presentation: MissionPresentation {
+            renderer,
+            sprites: MissionSprites {
+                cursor_renderer,
+                selection_mark_renderer,
+                mouse_trail_renderer,
+                titbit_renderer,
+                portrait_cache,
+            },
+        },
+    };
+
+    // Preserve the existing statement order while migrating ownership. These
+    // are disjoint borrows from the two mission-lifetime roots, not secondary
+    // state copies.
+    let MissionRuntime {
+        world,
+        timeline: runtime,
+        control,
+    } = &mut mission;
+    let MissionWorld {
+        host,
+        game,
+        manager,
+        assets,
+        dev,
+    } = world;
+    let MissionControl {
+        manual_pause,
+        step_forward_repeat_at_ms,
+        step_back_repeat_at_ms,
+        last_shadow_color,
+    } = control;
+    let MissionInput {
+        threaded: threaded_input,
+        translator: input_translator,
+    } = &mut frontend.input;
+    let MissionAudio {
+        backend: audio_backend,
+        sample_loader,
+        sound_rng,
+    } = &mut frontend.audio;
+    let MissionResources {
+        text: text_res,
+        cursor: cursor_res,
+        level_descriptors,
+        hud_fonts,
+        short_briefing_strings,
+        menu: menu_resources,
+    } = &mut frontend.resources;
+    let MissionUi {
+        pause_menu,
+        active_modal,
+        console_overlay,
+        campaign_map: sherwood_campaign_map,
+        restart_allowed,
+    } = &mut frontend.ui;
+    let MissionHud {
+        sherwood_enable,
+        sherwood_sprites,
+        sherwood_layout,
+        zoom_sprites,
+        zoom_layout,
+        zoom_tooltip,
+        corner_sprites,
+        corner_layout,
+        corner_tooltip,
+        stature_sprites,
+        stature_layout,
+        requirements_tooltip,
+        blazon_tooltip,
+        stature_tooltip,
+        sherwood_tooltip,
+        pc_action_tooltip,
+        last_cursor_id,
+    } = &mut frontend.hud;
+    let MissionPresentation { renderer, sprites } = &mut frontend.presentation;
+    let MissionSprites {
+        cursor_renderer,
+        selection_mark_renderer,
+        mouse_trail_renderer,
+        titbit_renderer,
+        portrait_cache,
+    } = sprites;
 
     // One-shot tooling path: render the pristine mission after Initialize
     // and camera setup, but before the first simulation hourglass or
@@ -1490,17 +1612,17 @@ pub(crate) async fn run_mission(
             tracing::info!("Mission-start map: revealed all blipped NPCs");
         }
         host.draw_order = manager.engine.compute_display_order();
-        corner_layout = CornerHudLayout::for_resolution(
+        *corner_layout = CornerHudLayout::for_resolution(
             renderer.screen_width() as u32,
             renderer.screen_height() as u32,
             &corner_sprites,
         );
-        stature_layout = StatureHudLayout::for_resolution(
+        *stature_layout = StatureHudLayout::for_resolution(
             renderer.screen_width() as u32,
             renderer.screen_height() as u32,
             &stature_sprites,
         );
-        pre_render_engine_setup(&mut manager, &mut host, assets.as_ref(), &mut renderer);
+        pre_render_engine_setup(manager, host, assets.as_ref(), renderer);
 
         // A map export is not an interactive screenshot. Keep the cursor out
         // of the top-left map pixel while retaining the normal render path for
@@ -1509,18 +1631,18 @@ pub(crate) async fn run_mission(
         let display_snapshot = host.engine_display.clone();
         let capture_result = {
             let mut render_ctx = RenderContext {
-                renderer: &mut renderer,
-                cursor_renderer: &mut cursor_renderer,
-                selection_mark_renderer: &mut selection_mark_renderer,
-                titbit_renderer: &mut titbit_renderer,
-                console_overlay: &mut console_overlay,
-                zoom_tooltip: &mut zoom_tooltip,
-                corner_tooltip: &mut corner_tooltip,
-                requirements_tooltip: &mut requirements_tooltip,
-                blazon_tooltip: &mut blazon_tooltip,
-                stature_tooltip: &mut stature_tooltip,
-                sherwood_tooltip: &mut sherwood_tooltip,
-                pc_action_tooltip: &mut pc_action_tooltip,
+                renderer: renderer,
+                cursor_renderer: cursor_renderer,
+                selection_mark_renderer: selection_mark_renderer,
+                titbit_renderer: titbit_renderer,
+                console_overlay: console_overlay,
+                zoom_tooltip: zoom_tooltip,
+                corner_tooltip: corner_tooltip,
+                requirements_tooltip: requirements_tooltip,
+                blazon_tooltip: blazon_tooltip,
+                stature_tooltip: stature_tooltip,
+                sherwood_tooltip: sherwood_tooltip,
+                pc_action_tooltip: pc_action_tooltip,
                 mouse_trail_renderer: mouse_trail_renderer.as_ref(),
                 portrait_cache: &portrait_cache,
                 menu_resources: menu_resources.as_ref(),
@@ -1537,7 +1659,7 @@ pub(crate) async fn run_mission(
                 threaded_input: &threaded_input,
                 game: &game,
                 pause_menu: pause_menu.as_ref(),
-                sherwood_enable,
+                sherwood_enable: *sherwood_enable,
                 shift_held: false,
                 rewind_active: false,
                 display_info_elapsed_secs: 0,
@@ -1545,7 +1667,7 @@ pub(crate) async fn run_mission(
             capture_wide_map_to_path(
                 &manager.engine,
                 &display_snapshot,
-                &mut host,
+                host,
                 &assets,
                 &dev,
                 &mut render_ctx,
@@ -1569,18 +1691,17 @@ pub(crate) async fn run_mission(
     }
 
     loop {
-        let frame_start = crate::window::process_uptime_ms();
-        let mut frame_cmds = FrameCommands::new();
+        let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
         let mut modal_rendered_this_frame = false;
         if let Some(start_at) = runtime.mp_start_gate {
             if current_epoch_ms() >= start_at {
                 runtime.mp_start_gate = None;
                 if !runtime.start_paused {
-                    manual_pause = false;
+                    *manual_pause = false;
                 }
                 tracing::info!("multiplayer: synchronized lobby start gate opened");
             } else {
-                manual_pause = true;
+                *manual_pause = true;
             }
         }
 
@@ -1591,7 +1712,7 @@ pub(crate) async fn run_mission(
         //   state with the late input woven in.  `drain_net_inputs`
         //   replaces the live rollback state when that fires.
         // - Inputs scheduled for `sim_frame` come back in the return
-        //   value; we apply them and append to `frame_cmds`.
+        //   value; we apply them and append to `frame.commands`.
         // - Authoritative state hashes from the host land in
         //   `runtime.peer_hashes`, drained below alongside the per-25-frame
         //   sampling tick.
@@ -1602,8 +1723,8 @@ pub(crate) async fn run_mission(
             net.publish_frame(manager.sim_frame);
         }
         let net_drain = drain_net_inputs(
-            &mut host,
-            &mut manager,
+            host,
+            manager,
             assets.as_ref(),
             &mut runtime.rewind_buffer,
             &mut runtime.peer_hashes,
@@ -1620,7 +1741,7 @@ pub(crate) async fn run_mission(
         if let Some((_frame, start_epoch_ms)) = net_drain.begin_sim {
             runtime.mp_waiting_for_begin_sim = false;
             runtime.mp_start_gate = Some(start_epoch_ms);
-            manual_pause = true;
+            *manual_pause = true;
         }
         if runtime.mp_waiting_for_initial_snapshot && net_drain.received_initial_snapshot {
             runtime.mp_waiting_for_initial_snapshot = false;
@@ -1629,7 +1750,7 @@ pub(crate) async fn run_mission(
             );
         }
         if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
-            manual_pause = true;
+            *manual_pause = true;
         }
         if host.net.is_some()
             && host.local_seat != engine_player_command::PlayerId::HOST
@@ -1685,7 +1806,7 @@ pub(crate) async fn run_mission(
                 &net_inputs,
             );
             for inp in net_inputs {
-                frame_cmds.commands.push(inp);
+                frame.commands.commands.push(inp);
             }
         }
 
@@ -1694,12 +1815,12 @@ pub(crate) async fn run_mission(
         // flow, etc.) take effect without needing every call site to
         // plumb a mutable layout ref.  Cheap — just a few rect
         // arithmetic operations.
-        corner_layout = CornerHudLayout::for_resolution(
+        *corner_layout = CornerHudLayout::for_resolution(
             renderer.screen_width() as u32,
             renderer.screen_height() as u32,
             &corner_sprites,
         );
-        stature_layout = StatureHudLayout::for_resolution(
+        *stature_layout = StatureHudLayout::for_resolution(
             renderer.screen_width() as u32,
             renderer.screen_height() as u32,
             &stature_sprites,
@@ -1727,24 +1848,28 @@ pub(crate) async fn run_mission(
         // block further down so the existing
         // `!rewind_active && !consumed_buffered` gating stays in
         // one place.
-        let recorder_hash_this_frame =
-            runtime.begin_frame(frame_start, manager.sim_frame, &manager.engine, &assets);
+        frame.recorder_hash = runtime.begin_frame(
+            frame.started_at_ms,
+            manager.sim_frame,
+            &manager.engine,
+            &assets,
+        );
 
         match handle_sherwood_campaign_map_overlay(
-            &mut game,
-            &mut manager,
-            &mut host,
-            &mut frame_cmds,
+            game,
+            manager,
+            host,
+            &mut frame.commands,
             &assets,
             campaign_ref,
             &mut *window,
-            &mut renderer,
-            &mut cursor_res,
-            &mut cursor_renderer,
-            &mut text_res,
-            &mut sherwood_campaign_map,
-            &mut menu_resources,
-            &mut sherwood_enable,
+            renderer,
+            cursor_res,
+            cursor_renderer,
+            text_res,
+            sherwood_campaign_map,
+            menu_resources,
+            sherwood_enable,
         )
         .await?
         {
@@ -1769,7 +1894,7 @@ pub(crate) async fn run_mission(
         // gets first chance at the raw input.
         let modal_input_active = active_modal.is_some() || modal_state_pending(&host);
         if modal_input_active && pause_menu.is_some() {
-            pause_menu = None;
+            *pause_menu = None;
             pause_closed_this_frame = true;
             renderer.clear_frozen_scene();
             threaded_input.reset_input_state();
@@ -1787,7 +1912,7 @@ pub(crate) async fn run_mission(
         threaded_input.feed_sdl_events(&events);
 
         let rewind_active = handle_hold_to_rewind(
-            &mut manager,
+            manager,
             assets.as_ref(),
             &threaded_input,
             &mut runtime.rewind_buffer,
@@ -1800,11 +1925,11 @@ pub(crate) async fn run_mission(
         // during replay/rewind — see input_suppressed comment below.
         if runtime.replay_player.is_none() && !rewind_active {
             handle_gamepad_events(
-                &mut host,
-                &mut manager,
+                host,
+                manager,
                 &assets,
-                &mut threaded_input,
-                &mut frame_cmds,
+                threaded_input,
+                &mut frame.commands,
                 &events,
                 &mut window.active_gamepad,
             );
@@ -1839,7 +1964,7 @@ pub(crate) async fn run_mission(
                 threaded_input.set_clipping(robin_engine::coordinates::ScreenBBox::from_coords(
                     0.0, 0.0, w, h,
                 ));
-                input_translator = InputTranslator::new(w, h);
+                *input_translator = InputTranslator::new(w, h);
                 // Reflect the active key profile into the freshly-
                 // built translator.  Without this the resized
                 // translator would fall back to its built-in defaults.
@@ -1854,20 +1979,20 @@ pub(crate) async fn run_mission(
                         corner_size: host.minimap_corner_size,
                     };
                     dispatch_local_command(
-                        &mut host,
+                        host,
                         &mut manager.engine,
-                        &mut frame_cmds,
+                        &mut frame.commands,
                         &assets,
                         &cmd,
                     );
                 }
                 // Reposition the Sherwood HUD buttons alongside the
                 // other resolution-dependent layouts.
-                sherwood_layout =
+                *sherwood_layout =
                     SherwoodHudLayout::for_resolution(new_w, new_h, &sherwood_sprites);
-                zoom_layout = ZoomHudLayout::for_resolution(new_w, new_h, &zoom_sprites);
-                corner_layout = CornerHudLayout::for_resolution(new_w, new_h, &corner_sprites);
-                stature_layout = StatureHudLayout::for_resolution(new_w, new_h, &stature_sprites);
+                *zoom_layout = ZoomHudLayout::for_resolution(new_w, new_h, &zoom_sprites);
+                *corner_layout = CornerHudLayout::for_resolution(new_w, new_h, &corner_sprites);
+                *stature_layout = StatureHudLayout::for_resolution(new_w, new_h, &stature_sprites);
             }
         }
 
@@ -1881,21 +2006,21 @@ pub(crate) async fn run_mission(
         }
 
         match handle_sherwood_hud_buttons(
-            &mut game,
-            &mut manager,
-            &mut host,
-            &mut frame_cmds,
+            game,
+            manager,
+            host,
+            &mut frame.commands,
             &assets,
             callbacks,
             campaign_ref,
             &mut *window,
-            &mut renderer,
-            &mut cursor_res,
-            &mut cursor_renderer,
+            renderer,
+            cursor_res,
+            cursor_renderer,
             &menu_resources,
             &events,
             &sherwood_layout,
-            &mut sherwood_enable,
+            sherwood_enable,
             args.headless,
         )
         .await
@@ -1955,11 +2080,11 @@ pub(crate) async fn run_mission(
                         };
                         dispatch_corner_button_left_click(
                             btn,
-                            &mut manager,
-                            &mut game,
-                            &mut host,
+                            manager,
+                            game,
+                            host,
                             &assets,
-                            &mut frame_cmds,
+                            &mut frame.commands,
                         );
                     }
                     GameEvent::MouseDown(mx, my, 3 /* right */, _) => {
@@ -1968,10 +2093,10 @@ pub(crate) async fn run_mission(
                         };
                         dispatch_corner_button_right_click(
                             btn,
-                            &mut manager,
-                            &mut host,
+                            manager,
+                            host,
                             &assets,
-                            &mut frame_cmds,
+                            &mut frame.commands,
                         );
                     }
                     _ => {}
@@ -1994,9 +2119,9 @@ pub(crate) async fn run_mission(
                 {
                     let cmd = btn.as_command();
                     dispatch_local_command(
-                        &mut host,
+                        host,
                         &mut manager.engine,
-                        &mut frame_cmds,
+                        &mut frame.commands,
                         &assets,
                         &cmd,
                     );
@@ -2044,13 +2169,17 @@ pub(crate) async fn run_mission(
                 return false;
             }
             if hit {
-                *repeat_at_ms = Some(frame_start.saturating_add(STEP_REPEAT_INITIAL_DELAY_MS));
+                *repeat_at_ms = Some(
+                    frame
+                        .started_at_ms
+                        .saturating_add(STEP_REPEAT_INITIAL_DELAY_MS),
+                );
                 return true;
             }
             if let Some(next_ms) = *repeat_at_ms
-                && frame_start >= next_ms
+                && frame.started_at_ms >= next_ms
             {
-                *repeat_at_ms = Some(frame_start.saturating_add(STEP_REPEAT_INTERVAL_MS));
+                *repeat_at_ms = Some(frame.started_at_ms.saturating_add(STEP_REPEAT_INTERVAL_MS));
                 return true;
             }
             false
@@ -2058,12 +2187,12 @@ pub(crate) async fn run_mission(
         let step_forward_pressed = repeat_step_key(
             step_forward_held,
             step_forward_hit,
-            &mut step_forward_repeat_at_ms,
+            step_forward_repeat_at_ms,
         );
         let step_back_pressed = repeat_step_key(
             step_back_comma_held,
             step_back_comma_hit,
-            &mut step_back_repeat_at_ms,
+            step_back_repeat_at_ms,
         ) || step_backspace_held;
         let step_unpause_pressed = input_translator.was_key_released(KeyCode::Enter, keys);
         // Suppress these shortcuts when any modal input sink has focus
@@ -2073,10 +2202,10 @@ pub(crate) async fn run_mission(
             console_overlay.is_visible() || pause_menu.is_some() || modal_input_active;
         if !step_keys_gated {
             if step_forward_pressed || step_back_pressed {
-                manual_pause = true;
+                *manual_pause = true;
             }
             if step_unpause_pressed {
-                manual_pause = false;
+                *manual_pause = false;
             }
         }
         let step_forward_pressed = step_forward_pressed && !step_keys_gated;
@@ -2124,14 +2253,14 @@ pub(crate) async fn run_mission(
         host.input.is_alt = alt_held;
 
         handle_console_overlay_events(
-            &mut console_overlay,
+            console_overlay,
             &mut manager.engine,
             &assets,
-            &mut host,
-            &mut dev,
+            host,
+            dev,
             &events,
             &kb_actions,
-            &mut input_translator,
+            input_translator,
         );
 
         // ── View-only input (scroll / zoom): always allowed ──
@@ -2157,16 +2286,16 @@ pub(crate) async fn run_mission(
                     }
                     match action {
                         GameAction::ScrollUp => {
-                            apply_local_viewport_scroll(&mut host, ScrollDirection::Up);
+                            apply_local_viewport_scroll(host, ScrollDirection::Up);
                         }
                         GameAction::ScrollDown => {
-                            apply_local_viewport_scroll(&mut host, ScrollDirection::Down);
+                            apply_local_viewport_scroll(host, ScrollDirection::Down);
                         }
                         GameAction::ScrollLeft => {
-                            apply_local_viewport_scroll(&mut host, ScrollDirection::Left);
+                            apply_local_viewport_scroll(host, ScrollDirection::Left);
                         }
                         GameAction::ScrollRight => {
-                            apply_local_viewport_scroll(&mut host, ScrollDirection::Right);
+                            apply_local_viewport_scroll(host, ScrollDirection::Right);
                         }
                         GameAction::ZoomIn => {
                             let mp = threaded_input.position();
@@ -2217,9 +2346,9 @@ pub(crate) async fn run_mission(
             if minimap_toggle_pressed && !console_overlay.is_visible() && pause_menu.is_none() {
                 let cmd = PlayerCommand::MinimapToggle;
                 dispatch_local_command(
-                    &mut host,
+                    host,
                     &mut manager.engine,
-                    &mut frame_cmds,
+                    &mut frame.commands,
                     &assets,
                     &cmd,
                 );
@@ -2245,7 +2374,7 @@ pub(crate) async fn run_mission(
                     }
                     GameAction::DisplayMenu => {
                         if pause_menu.is_some() {
-                            pause_menu = None;
+                            *pause_menu = None;
                             pause_closed_this_frame = true;
                             renderer.clear_frozen_scene();
                             threaded_input.reset_input_state();
@@ -2266,22 +2395,20 @@ pub(crate) async fn run_mission(
                             // doesn't count wall-clock spent in the
                             // pause menu.
                             callbacks.suspend_play_time();
-                            if let Some(ref resources) = menu_resources {
-                                pause_menu = Some(PauseMenu::new(resources, restart_allowed));
+                            if let Some(resources) = menu_resources.as_ref() {
+                                *pause_menu = Some(PauseMenu::new(resources, *restart_allowed));
                             } else {
                                 // Retry the resource load in case a transient renderer state
                                 // prevented mission-start initialization. A pause menu still
                                 // requires the real resources after this retry.
-                                let fallback = IngameMenuResources::new(
-                                    &mut renderer,
-                                    host.shipping.as_deref(),
-                                );
+                                let fallback =
+                                    IngameMenuResources::new(renderer, host.shipping.as_deref());
                                 let res = required_menu_resources(
                                     &fallback,
                                     "opening the pause menu after resource reload",
                                 );
-                                pause_menu = Some(PauseMenu::new(res, restart_allowed));
-                                menu_resources = fallback;
+                                *pause_menu = Some(PauseMenu::new(res, *restart_allowed));
+                                *menu_resources = fallback;
                             }
                             if pause_menu.is_some() {
                                 // Freeze the current screen so the
@@ -2332,9 +2459,9 @@ pub(crate) async fn run_mission(
                             GameAction::SelectAll => {
                                 let cmd = PlayerCommand::SelectAllPcs;
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2342,9 +2469,9 @@ pub(crate) async fn run_mission(
                             GameAction::UnselectAll => {
                                 let cmd = PlayerCommand::UnselectAllPcs;
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2358,9 +2485,9 @@ pub(crate) async fn run_mission(
                                         action_index: *index as u32,
                                     };
                                     dispatch_local_command(
-                                        &mut host,
+                                        host,
                                         &mut manager.engine,
-                                        &mut frame_cmds,
+                                        &mut frame.commands,
                                         &assets,
                                         &cmd,
                                     );
@@ -2383,9 +2510,9 @@ pub(crate) async fn run_mission(
                                     }
                                 };
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2448,9 +2575,9 @@ pub(crate) async fn run_mission(
                                 let pre = manager.engine.retrieve_stature(None);
                                 let cmd = PlayerCommand::CrouchDown;
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2464,9 +2591,9 @@ pub(crate) async fn run_mission(
                                 let pre = manager.engine.retrieve_stature(None);
                                 let cmd = PlayerCommand::StandUp;
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2479,9 +2606,9 @@ pub(crate) async fn run_mission(
                                 // ctrl-release can restore the action.
                                 let cmd = PlayerCommand::KeyControl;
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2493,9 +2620,9 @@ pub(crate) async fn run_mission(
                                 // `cfg(target_os = "macos")`.
                                 let cmd = PlayerCommand::KeyReleaseControl;
                                 dispatch_local_command(
-                                    &mut host,
+                                    host,
                                     &mut manager.engine,
-                                    &mut frame_cmds,
+                                    &mut frame.commands,
                                     &assets,
                                     &cmd,
                                 );
@@ -2541,9 +2668,9 @@ pub(crate) async fn run_mission(
                                                 ),
                                             };
                                             dispatch_local_command(
-                                                &mut host,
+                                                host,
                                                 &mut manager.engine,
-                                                &mut frame_cmds,
+                                                &mut frame.commands,
                                                 &assets,
                                                 &cmd,
                                             );
@@ -2580,11 +2707,11 @@ pub(crate) async fn run_mission(
                                 if !game.is_sherwood {
                                     dispatch_corner_button_left_click(
                                         CornerButton::Clock,
-                                        &mut manager,
-                                        &mut game,
-                                        &mut host,
+                                        manager,
+                                        game,
+                                        host,
                                         &assets,
-                                        &mut frame_cmds,
+                                        &mut frame.commands,
                                     );
                                 }
                             }
@@ -2608,27 +2735,27 @@ pub(crate) async fn run_mission(
             }
 
             match handle_pause_menu_events(
-                &mut pause_menu,
+                pause_menu,
                 &mut pause_closed_this_frame,
-                &mut host,
-                &mut manager,
-                &mut game,
+                host,
+                manager,
+                game,
                 &assets,
                 callbacks,
                 campaign_ref,
                 &mut *window,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
+                renderer,
+                cursor_res,
+                cursor_renderer,
                 &menu_resources,
-                &mut audio_backend,
+                audio_backend,
                 &*sample_loader,
-                &mut threaded_input,
-                &mut input_translator,
-                &mut sherwood_layout,
-                &mut zoom_layout,
+                threaded_input,
+                input_translator,
+                sherwood_layout,
+                zoom_layout,
                 &zoom_sprites,
-                &mut frame_cmds,
+                &mut frame.commands,
                 &events,
             )
             .await
@@ -2638,7 +2765,7 @@ pub(crate) async fn run_mission(
                     execute_app_effects(
                         &mut callbacks.app_effects,
                         &mut host.sound,
-                        &mut threaded_input,
+                        threaded_input,
                         audio_backend
                             .as_mut()
                             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
@@ -2649,12 +2776,12 @@ pub(crate) async fn run_mission(
             }
 
             handle_mouse_input(
-                &mut manager,
-                &mut host,
+                manager,
+                host,
                 &assets,
                 &renderer,
                 &portrait_cache,
-                &mut frame_cmds,
+                &mut frame.commands,
                 &events,
                 pause_menu.as_ref(),
                 pause_closed_this_frame,
@@ -2677,9 +2804,9 @@ pub(crate) async fn run_mission(
             profiles,
             &host,
             &mut *window,
-            &mut renderer,
-            &mut cursor_res,
-            &mut cursor_renderer,
+            renderer,
+            cursor_res,
+            cursor_renderer,
             &menu_resources,
         )
         .await;
@@ -2701,34 +2828,34 @@ pub(crate) async fn run_mission(
             && !args.headless
             && !modal_rendered_this_frame
         {
-            pre_render_engine_setup(&mut manager, &mut host, assets.as_ref(), &mut renderer);
+            pre_render_engine_setup(manager, host, assets.as_ref(), renderer);
             update_mouse_and_cursor(
-                &mut manager,
-                &mut host,
+                manager,
+                host,
                 &assets,
                 &dev,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
+                renderer,
+                cursor_res,
+                cursor_renderer,
                 &threaded_input,
                 &portrait_cache,
                 shift_held,
-                &mut last_cursor_id,
+                last_cursor_id,
             );
             let display_snapshot = host.engine_display.clone();
             let mut render_ctx = RenderContext {
-                renderer: &mut renderer,
-                cursor_renderer: &mut cursor_renderer,
-                selection_mark_renderer: &mut selection_mark_renderer,
-                titbit_renderer: &mut titbit_renderer,
-                console_overlay: &mut console_overlay,
-                zoom_tooltip: &mut zoom_tooltip,
-                corner_tooltip: &mut corner_tooltip,
-                requirements_tooltip: &mut requirements_tooltip,
-                blazon_tooltip: &mut blazon_tooltip,
-                stature_tooltip: &mut stature_tooltip,
-                sherwood_tooltip: &mut sherwood_tooltip,
-                pc_action_tooltip: &mut pc_action_tooltip,
+                renderer: renderer,
+                cursor_renderer: cursor_renderer,
+                selection_mark_renderer: selection_mark_renderer,
+                titbit_renderer: titbit_renderer,
+                console_overlay: console_overlay,
+                zoom_tooltip: zoom_tooltip,
+                corner_tooltip: corner_tooltip,
+                requirements_tooltip: requirements_tooltip,
+                blazon_tooltip: blazon_tooltip,
+                stature_tooltip: stature_tooltip,
+                sherwood_tooltip: sherwood_tooltip,
+                pc_action_tooltip: pc_action_tooltip,
                 mouse_trail_renderer: mouse_trail_renderer.as_ref(),
                 portrait_cache: &portrait_cache,
                 menu_resources: menu_resources.as_ref(),
@@ -2745,7 +2872,7 @@ pub(crate) async fn run_mission(
                 threaded_input: &threaded_input,
                 game: &game,
                 pause_menu: pause_menu.as_ref(),
-                sherwood_enable,
+                sherwood_enable: *sherwood_enable,
                 shift_held,
                 rewind_active,
                 display_info_elapsed_secs:
@@ -2757,7 +2884,7 @@ pub(crate) async fn run_mission(
             capture_save_thumbnail(
                 &manager.engine,
                 &display_snapshot,
-                &mut host,
+                host,
                 &assets,
                 &dev,
                 &mut render_ctx,
@@ -2772,7 +2899,7 @@ pub(crate) async fn run_mission(
             execute_app_effects(
                 &mut callbacks.app_effects,
                 &mut host.sound,
-                &mut threaded_input,
+                threaded_input,
                 audio_backend
                     .as_mut()
                     .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
@@ -2781,8 +2908,8 @@ pub(crate) async fn run_mission(
             // Flush any pending save before returning (e.g. the
             // quit-time continue save).
             let save_load_processed = perform_pending_save_load(
-                &mut host,
-                &mut game,
+                host,
+                game,
                 callbacks,
                 &mut manager.engine,
                 assets.as_ref(),
@@ -2800,8 +2927,8 @@ pub(crate) async fn run_mission(
             return Ok(exit_code);
         }
         let save_load_processed = perform_pending_save_load(
-            &mut host,
-            &mut game,
+            host,
+            game,
             callbacks,
             &mut manager.engine,
             assets.as_ref(),
@@ -2888,8 +3015,8 @@ pub(crate) async fn run_mission(
                 net.publish_frame(manager.sim_frame);
             }
             let pre_tick_net_drain = drain_net_inputs(
-                &mut host,
-                &mut manager,
+                host,
+                manager,
                 assets.as_ref(),
                 &mut runtime.rewind_buffer,
                 &mut runtime.peer_hashes,
@@ -2906,7 +3033,7 @@ pub(crate) async fn run_mission(
             if let Some((_frame, start_epoch_ms)) = pre_tick_net_drain.begin_sim {
                 runtime.mp_waiting_for_begin_sim = false;
                 runtime.mp_start_gate = Some(start_epoch_ms);
-                manual_pause = true;
+                *manual_pause = true;
             }
             if runtime.mp_waiting_for_initial_snapshot
                 && pre_tick_net_drain.received_initial_snapshot
@@ -2917,7 +3044,7 @@ pub(crate) async fn run_mission(
                 );
             }
             if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
-                manual_pause = true;
+                *manual_pause = true;
             }
             if host.net.is_some()
                 && host.local_seat != engine_player_command::PlayerId::HOST
@@ -2972,7 +3099,7 @@ pub(crate) async fn run_mission(
                     &assets,
                     &pre_tick_net_drain.inputs,
                 );
-                frame_cmds.commands.extend(pre_tick_net_drain.inputs);
+                frame.commands.commands.extend(pre_tick_net_drain.inputs);
             }
         }
 
@@ -3047,11 +3174,8 @@ pub(crate) async fn run_mission(
             runtime.peer_hashes.retain(|&f, _| f > manager.sim_frame);
         }
 
-        let mut paused = pause_menu.is_some() || manual_pause || mp_clock_pause || modal_pause;
+        let mut paused = pause_menu.is_some() || *manual_pause || mp_clock_pause || modal_pause;
 
-        let mut replay_modal_dismissals: std::collections::VecDeque<
-            engine_player_command::PlayerCommand,
-        > = std::collections::VecDeque::new();
         if let Some(ref mut player) = runtime.replay_player
             && !paused
         {
@@ -3060,7 +3184,7 @@ pub(crate) async fn run_mission(
                     tracing::info!("Replay finished after {} frames", player.current_frame());
                     runtime.replay_finished_logged = true;
                 }
-                manual_pause = true;
+                *manual_pause = true;
                 paused = true;
             } else {
                 runtime.replay_finished_logged = false;
@@ -3073,7 +3197,7 @@ pub(crate) async fn run_mission(
                 for cmd in replay_cmds {
                     match cmd.command {
                         engine_player_command::PlayerCommand::ModalDismiss { .. } => {
-                            replay_modal_dismissals.push_back(cmd.command.clone());
+                            frame.replay_modal_dismissals.push_back(cmd.command.clone());
                         }
                         _ => sim_cmds.push(cmd.clone()),
                     }
@@ -3091,8 +3215,8 @@ pub(crate) async fn run_mission(
                 // its snapshots.  Recording is still a no-op (the recorder
                 // gate below short-circuits when `runtime.replay_recorder` is None,
                 // which it always is in replay mode).
-                frame_cmds = FrameCommands::new();
-                frame_cmds.commands = sim_cmds;
+                frame.commands = FrameCommands::new();
+                frame.commands.commands = sim_cmds;
             }
         }
 
@@ -3116,7 +3240,7 @@ pub(crate) async fn run_mission(
             && runtime.replay_player.is_none()
             && manager.sim_frame < runtime.rewind_buffer.next_record_frame()
         {
-            if frame_cmds.commands.is_empty() {
+            if frame.commands.commands.is_empty() {
                 if let Some(recorded) = runtime.rewind_buffer.commands_for(manager.sim_frame) {
                     let recorded: Vec<PlayerInput> = recorded.to_vec();
                     manager.engine.apply_commands(
@@ -3125,7 +3249,7 @@ pub(crate) async fn run_mission(
                         &assets,
                         &recorded,
                     );
-                    frame_cmds.commands = recorded;
+                    frame.commands.commands = recorded;
                     consumed_buffered = true;
                     tracing::trace!("Auto-replay → frame {}", manager.sim_frame);
                 }
@@ -3157,9 +3281,9 @@ pub(crate) async fn run_mission(
                 entity_id: Some(id),
             };
             dispatch_local_command(
-                &mut host,
+                host,
                 &mut manager.engine,
-                &mut frame_cmds,
+                &mut frame.commands,
                 &assets,
                 &cmd,
             );
@@ -3182,9 +3306,9 @@ pub(crate) async fn run_mission(
             if host.time_no_mouse_move != 0 || bow_armed {
                 let cmd = PlayerCommand::PerformOrientation { mouse_map };
                 dispatch_local_command(
-                    &mut host,
+                    host,
                     &mut manager.engine,
-                    &mut frame_cmds,
+                    &mut frame.commands,
                     &assets,
                     &cmd,
                 );
@@ -3198,11 +3322,11 @@ pub(crate) async fn run_mission(
         // rewinding (no tick is running) and while consuming buffered
         // commands (they were already written to disk on the original
         // pass). The hash itself was computed at the top of the
-        // frame into `recorder_hash_this_frame` — writing it here
+        // frame into `frame.recorder_hash` — writing it here
         // keeps the gating in one place.
         runtime.record_commands(
-            recorder_hash_this_frame,
-            &frame_cmds.commands,
+            frame.recorder_hash,
+            &frame.commands.commands,
             !rewind_active && !consumed_buffered,
         );
 
@@ -3218,11 +3342,11 @@ pub(crate) async fn run_mission(
         } else {
             let mut display = std::mem::take(&mut host.engine_display);
             let result = game.run_engine_tick(
-                &mut host,
+                host,
                 &mut display,
                 assets.as_ref(),
                 &mut manager.engine,
-                &mut dev,
+                dev,
                 false,
                 paused,
             );
@@ -3240,7 +3364,7 @@ pub(crate) async fn run_mission(
         // or the mission isn't loaded yet (each handler returns an
         // `Err` that's relayed back).
         let net = host.net.take();
-        crate::http_server::drain_global(&mut manager, &mut host, &assets, net.as_ref());
+        crate::http_server::drain_global(manager, host, &assets, net.as_ref());
         host.net = net;
 
         // ── Rollback check + rewind buffer commit ──
@@ -3250,10 +3374,12 @@ pub(crate) async fn run_mission(
         // log — the slot is already populated and would duplicate.
         if !paused && !rewind_active {
             if let Some(ref mut checker) = runtime.rollback_checker {
-                checker.end_frame(&mut host, frame_cmds.commands.clone(), &manager.engine);
+                checker.end_frame(host, frame.commands.commands.clone(), &manager.engine);
             }
             if !consumed_buffered {
-                runtime.rewind_buffer.end_frame(frame_cmds.commands.clone());
+                runtime
+                    .rewind_buffer
+                    .end_frame(frame.commands.commands.clone());
             }
             manager.sim_frame += 1;
             if let Some(net) = host.net.as_ref()
@@ -3271,16 +3397,16 @@ pub(crate) async fn run_mission(
         // refuse if a modal dialog is queued so the user doesn't step
         // past it.
         drain_steps(
-            &mut manager,
-            &mut host,
+            manager,
+            host,
             assets.as_ref(),
-            &mut dev,
-            &mut game,
+            dev,
+            game,
             &mut runtime.rewind_buffer,
             &mut runtime.rollback_checker,
             &mut runtime.replay_player,
-            &mut manual_pause,
-            &mut active_modal,
+            manual_pause,
+            active_modal,
         );
 
         // Publish replay-playback status for the script-RPC `state`
@@ -3291,7 +3417,7 @@ pub(crate) async fn run_mission(
             crate::http_server::ReplayStatus {
                 frame: p.current_frame(),
                 total: p.total_frames(),
-                paused: manual_pause,
+                paused: *manual_pause,
             }
         }));
 
@@ -3332,20 +3458,20 @@ pub(crate) async fn run_mission(
             }
             let mut display = std::mem::take(&mut host.engine_display);
             game.run_engine_tick(
-                &mut host,
+                host,
                 &mut display,
                 assets.as_ref(),
                 &mut manager.engine,
-                &mut dev,
+                dev,
                 false,
                 false,
             );
             crate::sim_timeline::run_post_initialize_stage(
-                &mut host,
+                host,
                 &mut display,
                 &assets,
                 &mut manager.engine,
-                &mut dev,
+                dev,
             );
             host.engine_display = display;
             runtime.rewind_buffer.end_frame(step_frame_cmds);
@@ -3399,16 +3525,16 @@ pub(crate) async fn run_mission(
         // `weather.ambiance` post-load, so this is dormant until a
         // future weather/scripting feature wires a trigger.
         let current_shadow_color = manager.engine.weather().night_color;
-        if current_shadow_color != last_shadow_color {
+        if current_shadow_color != *last_shadow_color {
             tracing::info!(
                 "Ambience shadow-key changed {:#06x} → {:#06x}; rebinding sprite caches",
                 last_shadow_color,
                 current_shadow_color,
             );
             host.frame_holder_mut().apply_arno_law(current_shadow_color);
-            selection_mark_renderer.load(&mut cursor_res, &renderer, current_shadow_color);
+            selection_mark_renderer.load(cursor_res, &renderer, current_shadow_color);
             titbit_renderer.load(
-                &mut cursor_res,
+                cursor_res,
                 &window.gpu,
                 current_shadow_color,
                 renderer.scale_mode(),
@@ -3416,7 +3542,7 @@ pub(crate) async fn run_mission(
             // Frame counts don't change on a shadow-key rebind — same
             // resource rows reloaded with a different shadow colour —
             // so the engine's `titbit_row_frame_counts` stays valid.
-            last_shadow_color = current_shadow_color;
+            *last_shadow_color = current_shadow_color;
         }
 
         // ── Expand DisplayAll cheats ──
@@ -3461,44 +3587,44 @@ pub(crate) async fn run_mission(
 
         if args.headless {
             drain_pending_dialogues(
-                &mut host,
+                host,
                 &mut *window,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
-                &mut audio_backend,
-                &mut text_res,
+                renderer,
+                cursor_res,
+                cursor_renderer,
+                audio_backend,
+                text_res,
                 &game,
                 &level_descriptors,
-                &mut menu_resources,
+                menu_resources,
                 &mut runtime.replay_recorder,
-                &mut replay_modal_dismissals,
+                &mut frame.replay_modal_dismissals,
                 true,
             )
             .await;
         } else {
             if active_modal.is_none()
                 && let Some(batch) = start_active_dialogue_batch(
-                    &mut host,
-                    &mut text_res,
+                    host,
+                    text_res,
                     &game,
                     &level_descriptors,
-                    &mut replay_modal_dismissals,
+                    &mut frame.replay_modal_dismissals,
                 )
             {
-                active_modal = Some(ActiveModal::Dialogue(Box::new(batch)));
+                *active_modal = Some(ActiveModal::Dialogue(Box::new(batch)));
             }
             if active_modal.is_some() {
                 let outcome = tick_active_modal(
-                    &mut active_modal,
-                    &mut host,
+                    active_modal,
+                    host,
                     &mut *window,
-                    &mut renderer,
-                    &mut cursor_res,
-                    &mut cursor_renderer,
-                    &mut audio_backend,
-                    &sample_loader,
-                    &mut menu_resources,
+                    renderer,
+                    cursor_res,
+                    cursor_renderer,
+                    audio_backend,
+                    sample_loader,
+                    menu_resources,
                     &mut runtime.replay_recorder,
                 );
                 debug_assert_eq!(outcome, ActiveModalOutcome::None);
@@ -3508,72 +3634,72 @@ pub(crate) async fn run_mission(
 
         if !modal_rendered_this_frame && args.headless {
             drain_pending_popup_scroll(
-                &mut host,
+                host,
                 &mut *window,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
-                &mut audio_backend,
-                &sample_loader,
-                &mut text_res,
+                renderer,
+                cursor_res,
+                cursor_renderer,
+                audio_backend,
+                sample_loader,
+                text_res,
                 &level_descriptors,
-                &mut menu_resources,
+                menu_resources,
                 &mut runtime.replay_recorder,
-                &mut replay_modal_dismissals,
+                &mut frame.replay_modal_dismissals,
                 manager.engine.frame_counter(),
             )
             .await;
             drain_pending_sherwood_stat(
-                &mut host,
+                host,
                 &mut *window,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
+                renderer,
+                cursor_res,
+                cursor_renderer,
                 &manager.engine,
                 profiles,
-                &mut audio_backend,
-                &sample_loader,
-                &mut menu_resources,
+                audio_backend,
+                sample_loader,
+                menu_resources,
                 &mut runtime.replay_recorder,
-                &mut replay_modal_dismissals,
+                &mut frame.replay_modal_dismissals,
             )
             .await;
         } else if !modal_rendered_this_frame {
             if active_modal.is_none()
                 && let Some(batch) = start_active_popup_scroll_batch(
-                    &mut host,
-                    &mut renderer,
-                    &mut text_res,
+                    host,
+                    renderer,
+                    text_res,
                     &level_descriptors,
-                    &mut menu_resources,
-                    &mut replay_modal_dismissals,
+                    menu_resources,
+                    &mut frame.replay_modal_dismissals,
                     manager.engine.frame_counter(),
                 )
             {
-                active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
+                *active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
             }
             if active_modal.is_none()
                 && let Some(batch) = start_active_sherwood_report(
-                    &mut host,
+                    host,
                     &manager.engine,
                     profiles,
-                    &mut menu_resources,
-                    &mut replay_modal_dismissals,
+                    menu_resources,
+                    &mut frame.replay_modal_dismissals,
                 )
             {
-                active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
+                *active_modal = Some(ActiveModal::PopupScroll(Box::new(batch)));
             }
             if active_modal.is_some() {
                 let outcome = tick_active_modal(
-                    &mut active_modal,
-                    &mut host,
+                    active_modal,
+                    host,
                     &mut *window,
-                    &mut renderer,
-                    &mut cursor_res,
-                    &mut cursor_renderer,
-                    &mut audio_backend,
-                    &sample_loader,
-                    &mut menu_resources,
+                    renderer,
+                    cursor_res,
+                    cursor_renderer,
+                    audio_backend,
+                    sample_loader,
+                    menu_resources,
                     &mut runtime.replay_recorder,
                 );
                 debug_assert_eq!(outcome, ActiveModalOutcome::None);
@@ -3583,41 +3709,41 @@ pub(crate) async fn run_mission(
 
         if !modal_rendered_this_frame && args.headless {
             drain_pending_debriefings(
-                &mut host,
+                host,
                 &mut *window,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
-                &mut text_res,
+                renderer,
+                cursor_res,
+                cursor_renderer,
+                text_res,
                 &level_descriptors,
                 &menu_resources,
                 &mut runtime.replay_recorder,
-                &mut replay_modal_dismissals,
+                &mut frame.replay_modal_dismissals,
             )
             .await;
         } else if !modal_rendered_this_frame {
             if active_modal.is_none()
                 && let Some(batch) = start_active_debriefing_batch(
-                    &mut host,
-                    &mut text_res,
+                    host,
+                    text_res,
                     &level_descriptors,
                     &menu_resources,
-                    &mut replay_modal_dismissals,
+                    &mut frame.replay_modal_dismissals,
                 )
             {
-                active_modal = Some(ActiveModal::Debriefing(Box::new(batch)));
+                *active_modal = Some(ActiveModal::Debriefing(Box::new(batch)));
             }
             if active_modal.is_some() {
                 let outcome = tick_active_modal(
-                    &mut active_modal,
-                    &mut host,
+                    active_modal,
+                    host,
                     &mut *window,
-                    &mut renderer,
-                    &mut cursor_res,
-                    &mut cursor_renderer,
-                    &mut audio_backend,
-                    &sample_loader,
-                    &mut menu_resources,
+                    renderer,
+                    cursor_res,
+                    cursor_renderer,
+                    audio_backend,
+                    sample_loader,
+                    menu_resources,
                     &mut runtime.replay_recorder,
                 );
                 debug_assert_eq!(outcome, ActiveModalOutcome::None);
@@ -3625,7 +3751,7 @@ pub(crate) async fn run_mission(
             }
         }
 
-        drain_pending_console_display(&mut host, &mut console_overlay);
+        drain_pending_console_display(host, console_overlay);
 
         // First-time mission-won "leave mission now" banner
         // Blocks the main loop briefly to
@@ -3641,25 +3767,26 @@ pub(crate) async fn run_mission(
                 if args.headless {
                     let cmd = PlayerCommand::QuitMissionRequested;
                     dispatch_local_command(
-                        &mut host,
+                        host,
                         &mut manager.engine,
-                        &mut frame_cmds,
+                        &mut frame.commands,
                         &assets,
                         &cmd,
                     );
-                    frame_cmds.push(cmd);
+                    frame.commands.push(cmd);
                 } else if let Some(resources) = menu_resources.as_ref() {
                     let kind = engine_player_command::ModalKind::MissionState {
                         kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
                     };
-                    let replay_result = pop_matching_dismissal(&mut replay_modal_dismissals, &kind);
+                    let replay_result =
+                        pop_matching_dismissal(&mut frame.replay_modal_dismissals, &kind);
                     let message = resources.menu_text.get(MT_MSG_LEAVE_MISSION_NOW);
                     let message_str = if message.is_empty() {
                         "You may leave the mission now.".to_string()
                     } else {
                         message
                     };
-                    active_modal = Some(ActiveModal::MissionState {
+                    *active_modal = Some(ActiveModal::MissionState {
                         kind,
                         state: MissionStatePopupState::new(
                             &renderer,
@@ -3675,15 +3802,15 @@ pub(crate) async fn run_mission(
 
             if active_modal.is_some() {
                 let outcome = tick_active_modal(
-                    &mut active_modal,
-                    &mut host,
+                    active_modal,
+                    host,
                     &mut *window,
-                    &mut renderer,
-                    &mut cursor_res,
-                    &mut cursor_renderer,
-                    &mut audio_backend,
-                    &sample_loader,
-                    &mut menu_resources,
+                    renderer,
+                    cursor_res,
+                    cursor_renderer,
+                    audio_backend,
+                    sample_loader,
+                    menu_resources,
                     &mut runtime.replay_recorder,
                 );
                 modal_rendered_this_frame = true;
@@ -3696,9 +3823,9 @@ pub(crate) async fn run_mission(
                     // `LevelSucceeded`.
                     let cmd = PlayerCommand::QuitMissionRequested;
                     dispatch_local_command(
-                        &mut host,
+                        host,
                         &mut manager.engine,
-                        &mut frame_cmds,
+                        &mut frame.commands,
                         &assets,
                         &cmd,
                     );
@@ -3761,9 +3888,9 @@ pub(crate) async fn run_mission(
             // displays correct stats.  The engine internally
             // takes/restores its owned campaign.
             dispatch_local_command(
-                &mut host,
+                host,
                 &mut manager.engine,
-                &mut frame_cmds,
+                &mut frame.commands,
                 &assets,
                 &PlayerCommand::ApplyQuitMissionUpdates { exit_code },
             );
@@ -3781,7 +3908,7 @@ pub(crate) async fn run_mission(
                     kind: engine_player_command::MissionStateModalKind::EndState { won },
                 };
                 let mission_state_result = match pop_matching_dismissal(
-                    &mut replay_modal_dismissals,
+                    &mut frame.replay_modal_dismissals,
                     &mission_state_kind,
                 ) {
                     Some(
@@ -3796,14 +3923,11 @@ pub(crate) async fn run_mission(
                         engine_player_command::DialogResult::Aborted
                     }
                     None => {
-                        let cursor = Some(default_modal_cursor(
-                            &mut cursor_renderer,
-                            &mut cursor_res,
-                            &mut renderer,
-                        ));
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let confirmed = crate::ingame_menu::show_mission_state_popup(
                             &mut *window,
-                            &mut renderer,
+                            renderer,
                             resources,
                             cursor,
                             popup_title,
@@ -3883,7 +4007,7 @@ pub(crate) async fn run_mission(
                 // front so the modal can short-circuit a no-snapshot
                 // Restart click to "skip body, show stat".
                 let restart_snapshot_exists =
-                    restart_allowed && callbacks.save_manager.has_restart_save();
+                    *restart_allowed && callbacks.save_manager.has_restart_save();
                 let campaign = manager
                     .engine
                     .campaign()
@@ -3898,28 +4022,25 @@ pub(crate) async fn run_mission(
                 // `show_debriefing` with the page text the player
                 // was viewing when they clicked Load.
                 let post_load_outcome = if let Some(result) =
-                    pop_matching_dismissal(&mut replay_modal_dismissals, &debriefing_kind)
+                    pop_matching_dismissal(&mut frame.replay_modal_dismissals, &debriefing_kind)
                 {
                     final_debriefing_outcome_from_replay(result)
                 } else {
                     let mut current_body = debriefing_body.clone();
                     let mut start_at_stat = false;
                     loop {
-                        let cursor = Some(default_modal_cursor(
-                            &mut cursor_renderer,
-                            &mut cursor_res,
-                            &mut renderer,
-                        ));
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let outcome = crate::ingame_menu::show_debriefing(
                             &mut *window,
-                            &mut renderer,
+                            renderer,
                             resources,
                             cursor,
                             &current_body,
                             Some(manager.engine.mission_stat()),
                             mission_length,
                             won,
-                            restart_allowed,
+                            *restart_allowed,
                             quick_load_key,
                             restart_snapshot_exists,
                             start_at_stat,
@@ -3935,13 +4056,13 @@ pub(crate) async fn run_mission(
                                 // synthetic outcome below; otherwise we
                                 // re-show the same page (body or stat).
                                 let cursor = Some(default_modal_cursor(
-                                    &mut cursor_renderer,
-                                    &mut cursor_res,
-                                    &mut renderer,
+                                    cursor_renderer,
+                                    cursor_res,
+                                    renderer,
                                 ));
                                 let picker_outcome = crate::ingame_menu::show_save_load(
                                     &mut *window,
-                                    &mut renderer,
+                                    renderer,
                                     resources,
                                     cursor,
                                     &mut callbacks.save_manager,
@@ -4050,16 +4171,16 @@ pub(crate) async fn run_mission(
         // `ModalDismiss` entries to the same frame as the engine tick
         // that queued them.
         runtime.finish_recording(
-            std::iter::empty::<PlayerInput>(),
+            std::mem::take(&mut frame.modal_dismissals),
             !rewind_active && !consumed_buffered,
         );
         // Warn if any recorded dismissals went unused — this should not
         // happen for a clean replay; if it does, the replay commands
         // have drifted out of sync with the engine's modal output.
-        if !replay_modal_dismissals.is_empty() {
+        if !frame.replay_modal_dismissals.is_empty() {
             tracing::warn!(
                 "Replay: {} recorded ModalDismiss command(s) unused this frame",
-                replay_modal_dismissals.len()
+                frame.replay_modal_dismissals.len()
             );
         }
 
@@ -4071,7 +4192,7 @@ pub(crate) async fn run_mission(
         execute_app_effects(
             &mut callbacks.app_effects,
             &mut host.sound,
-            &mut threaded_input,
+            threaded_input,
             audio_backend
                 .as_mut()
                 .map(|b| b as &mut dyn crate::sound::AudioBackend),
@@ -4081,13 +4202,7 @@ pub(crate) async fn run_mission(
         // Combat/alert music transitions + sim-emitted sound drains.
         // See `tick_audio` for the breakdown.
         if let Some(backend) = audio_backend.as_mut() {
-            tick_audio(
-                &mut manager,
-                &mut host,
-                backend,
-                &*sample_loader,
-                &mut sound_rng,
-            );
+            tick_audio(manager, host, backend, &*sample_loader, sound_rng);
         }
 
         runtime.begin_presentation();
@@ -4108,34 +4223,34 @@ pub(crate) async fn run_mission(
         };
 
         if draw_result == 0 {
-            pre_render_engine_setup(&mut manager, &mut host, assets.as_ref(), &mut renderer);
+            pre_render_engine_setup(manager, host, assets.as_ref(), renderer);
             update_mouse_and_cursor(
-                &mut manager,
-                &mut host,
+                manager,
+                host,
                 &assets,
                 &dev,
-                &mut renderer,
-                &mut cursor_res,
-                &mut cursor_renderer,
+                renderer,
+                cursor_res,
+                cursor_renderer,
                 &threaded_input,
                 &portrait_cache,
                 shift_held,
-                &mut last_cursor_id,
+                last_cursor_id,
             );
 
             let mut render_ctx = RenderContext {
-                renderer: &mut renderer,
-                cursor_renderer: &mut cursor_renderer,
-                selection_mark_renderer: &mut selection_mark_renderer,
-                titbit_renderer: &mut titbit_renderer,
-                console_overlay: &mut console_overlay,
-                zoom_tooltip: &mut zoom_tooltip,
-                corner_tooltip: &mut corner_tooltip,
-                requirements_tooltip: &mut requirements_tooltip,
-                blazon_tooltip: &mut blazon_tooltip,
-                stature_tooltip: &mut stature_tooltip,
-                sherwood_tooltip: &mut sherwood_tooltip,
-                pc_action_tooltip: &mut pc_action_tooltip,
+                renderer: renderer,
+                cursor_renderer: cursor_renderer,
+                selection_mark_renderer: selection_mark_renderer,
+                titbit_renderer: titbit_renderer,
+                console_overlay: console_overlay,
+                zoom_tooltip: zoom_tooltip,
+                corner_tooltip: corner_tooltip,
+                requirements_tooltip: requirements_tooltip,
+                blazon_tooltip: blazon_tooltip,
+                stature_tooltip: stature_tooltip,
+                sherwood_tooltip: sherwood_tooltip,
+                pc_action_tooltip: pc_action_tooltip,
                 mouse_trail_renderer: mouse_trail_renderer.as_ref(),
                 portrait_cache: &portrait_cache,
                 menu_resources: menu_resources.as_ref(),
@@ -4152,7 +4267,7 @@ pub(crate) async fn run_mission(
                 threaded_input: &threaded_input,
                 game: &game,
                 pause_menu: pause_menu.as_ref(),
-                sherwood_enable,
+                sherwood_enable: *sherwood_enable,
                 shift_held,
                 rewind_active,
                 display_info_elapsed_secs:
@@ -4171,7 +4286,7 @@ pub(crate) async fn run_mission(
             drain_screenshots(
                 &manager.engine,
                 &display_snapshot,
-                &mut host,
+                host,
                 &assets,
                 &dev,
                 &mut render_ctx,
@@ -4183,7 +4298,7 @@ pub(crate) async fn run_mission(
                 if !drain_wide_print_screen(
                     &manager.engine,
                     &display_snapshot,
-                    &mut host,
+                    host,
                     &assets,
                     &dev,
                     &mut render_ctx,
@@ -4196,7 +4311,7 @@ pub(crate) async fn run_mission(
             render_frame(
                 &manager.engine,
                 &display_snapshot,
-                &mut host,
+                host,
                 &assets,
                 &dev,
                 &mut render_ctx,
@@ -4215,7 +4330,7 @@ pub(crate) async fn run_mission(
             if let Some(mut fade) = host.fade_to_black {
                 host.fade_to_black = fade.advance_presented_frame().then_some(fade);
             }
-            post_render_engine_cleanup(&mut manager, &mut host, &assets);
+            post_render_engine_cleanup(manager, host, &assets);
         } // end if draw_result == 0 (skip render in fast-forward)
 
         // Transient-message countdown: the render pass drew the
@@ -4239,11 +4354,11 @@ pub(crate) async fn run_mission(
         // become observable on the next frame, matching the original.
         let mut display = std::mem::take(&mut host.engine_display);
         let post_initialized = crate::sim_timeline::run_post_initialize_stage(
-            &mut host,
+            host,
             &mut display,
             &assets,
             &mut manager.engine,
-            &mut dev,
+            dev,
         );
         host.engine_display = display;
         if post_initialized
@@ -4263,7 +4378,7 @@ pub(crate) async fn run_mission(
         // in-game fast-forward engine flag uses a 1 ms floor instead so
         // other host timers don't starve.
         let frame_end_ms = crate::window::process_uptime_ms();
-        let elapsed = frame_end_ms.saturating_sub(frame_start);
+        let elapsed = frame_end_ms.saturating_sub(frame.started_at_ms);
         let target = if args.fast_forward || args.headless {
             0
         } else if manager.engine.is_fast_forward() {
