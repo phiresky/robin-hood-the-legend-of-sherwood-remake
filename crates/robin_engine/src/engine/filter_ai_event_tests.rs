@@ -348,6 +348,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
         crate::natives::GameHost::actor_handle_index(sensitive_handle).expect("valid test handle");
     let sensitive_entity_id = EntityId::Pc(crate::entity_id::PcId(sensitive_idx as u32));
     let before_state = engine
+        .world
         .entities
         .get(sensitive_entity_id)
         .and_then(|e| e.ai_controller())
@@ -369,6 +370,7 @@ fn dispatch_returns_false_when_filter_blocks_and_skips_think() {
 
     // State should be unchanged (think() never ran).
     let after_state = engine
+        .world
         .entities
         .get(sensitive_entity_id)
         .and_then(|e| e.ai_controller())

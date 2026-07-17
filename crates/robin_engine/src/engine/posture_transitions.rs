@@ -222,7 +222,7 @@ impl EngineInner {
             layer,
             &move_box,
             half_diag,
-            &self.fast_grid,
+            &self.world.fast_grid,
         );
 
         // Rewrite the walking-order targets on the Move element with
@@ -567,7 +567,13 @@ impl EngineInner {
             );
             return;
         };
-        let Some(line) = self.fast_grid.level.jump_lines.get(usize::from(line_id)) else {
+        let Some(line) = self
+            .world
+            .fast_grid
+            .level
+            .jump_lines
+            .get(usize::from(line_id))
+        else {
             tracing::warn!(
                 ?seq_id,
                 elem_idx,
@@ -628,7 +634,7 @@ impl EngineInner {
         // unconditionally, so passing the current move box here is
         // the correct source even though the conceptual lookup is
         // for `posture_after_transition`.
-        if !self.fast_grid.is_reachable_thick(
+        if !self.world.fast_grid.is_reachable_thick(
             pt_source.to_geo().into(),
             pt_new_goal.to_geo().into(),
             layer,
@@ -686,7 +692,7 @@ impl EngineInner {
                 );
                 break;
             }
-            if self.fast_grid.is_reachable_thick(
+            if self.world.fast_grid.is_reachable_thick(
                 src_pt.to_geo().into(),
                 pt_new_goal.to_geo().into(),
                 layer,

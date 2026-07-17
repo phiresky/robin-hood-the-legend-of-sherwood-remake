@@ -12,7 +12,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStru
 
 use super::{
     EngineInner,
-    state::{AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl},
+    state::{
+        AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl, WorldState,
+    },
 };
 
 /// The compatibility snapshot shape present before the logical Engine split.
@@ -90,8 +92,8 @@ impl Serialize for EngineInner {
         snapshot.serialize_field("simulation_gates", &self.control.simulation_gates)?;
         snapshot.serialize_field("speed", &self.control.speed)?;
         snapshot.serialize_field("speed_int", &self.control.speed_int)?;
-        snapshot.serialize_field("weather", &self.weather)?;
-        snapshot.serialize_field("shield", &self.shield)?;
+        snapshot.serialize_field("weather", &self.world.weather)?;
+        snapshot.serialize_field("shield", &self.world.shield)?;
         snapshot.serialize_field("script_globals", &self.script_globals)?;
         snapshot.serialize_field("cheat_used_flags", &self.mission_domain.cheat_used_flags)?;
         snapshot.serialize_field(
@@ -102,13 +104,13 @@ impl Serialize for EngineInner {
         snapshot.serialize_field("chorus_timer", &self.control.chorus_timer)?;
         snapshot.serialize_field("force_check", &self.mission_domain.force_check)?;
         snapshot.serialize_field("messenger", &self.messenger)?;
-        snapshot.serialize_field("fast_grid", &self.fast_grid)?;
-        snapshot.serialize_field("pathfinder", &self.pathfinder)?;
+        snapshot.serialize_field("fast_grid", &self.world.fast_grid)?;
+        snapshot.serialize_field("pathfinder", &self.world.pathfinder)?;
         snapshot.serialize_field("short_briefings", &self.mission_domain.short_briefings)?;
         snapshot.serialize_field("mission_stat", &self.mission_domain.mission_stat)?;
         snapshot.serialize_field("ground_mark", &self.feedback.ground_mark)?;
-        snapshot.serialize_field("entities", &self.entities)?;
-        snapshot.serialize_field("pc_ids", &self.pc_ids)?;
+        snapshot.serialize_field("entities", &self.world.entities)?;
+        snapshot.serialize_field("pc_ids", &self.world.pc_ids)?;
         snapshot.serialize_field("titbit_manager", &self.feedback.titbit_manager)?;
         snapshot.serialize_field("seats", &self.players.seats)?;
         snapshot.serialize_field("cutscene_camera", &self.feedback.cutscene_camera)?;
@@ -139,11 +141,14 @@ impl Serialize for EngineInner {
             &self.pending_concussion_side_effects,
         )?;
         snapshot.serialize_field("mission_script", &self.mission_script)?;
-        snapshot.serialize_field("script_zone_data", &self.script_zone_data)?;
-        snapshot.serialize_field("dynamic_sight_obstacles", &self.dynamic_sight_obstacles)?;
+        snapshot.serialize_field("script_zone_data", &self.world.script_zones)?;
+        snapshot.serialize_field(
+            "dynamic_sight_obstacles",
+            &self.world.dynamic_sight_obstacles,
+        )?;
         snapshot.serialize_field(
             "static_sight_obstacle_active",
-            &self.static_sight_obstacle_active,
+            &self.world.static_sight_obstacle_active,
         )?;
         snapshot.serialize_field("campaign", &self.mission_domain.campaign)?;
         snapshot.end()
@@ -180,15 +185,20 @@ impl<'de> Deserialize<'de> for EngineInner {
                 global: snapshot.ai_global,
                 standard_view_polygon_radius: snapshot.standard_view_polygon_radius,
             },
-            weather: snapshot.weather,
-            shield: snapshot.shield,
+            world: WorldState {
+                entities: snapshot.entities,
+                pc_ids: snapshot.pc_ids,
+                fast_grid: snapshot.fast_grid,
+                pathfinder: snapshot.pathfinder,
+                weather: snapshot.weather,
+                shield: snapshot.shield,
+                script_zones: snapshot.script_zone_data,
+                dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
+                static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
+            },
             script_globals: snapshot.script_globals,
             next_order_id: snapshot.next_order_id,
             messenger: snapshot.messenger,
-            fast_grid: snapshot.fast_grid,
-            pathfinder: snapshot.pathfinder,
-            entities: snapshot.entities,
-            pc_ids: snapshot.pc_ids,
             players: PlayerRuntime {
                 seats: snapshot.seats,
                 macro_store: snapshot.macro_store,
@@ -215,9 +225,6 @@ impl<'de> Deserialize<'de> for EngineInner {
             pending_hades_kills: snapshot.pending_hades_kills,
             pending_concussion_side_effects: snapshot.pending_concussion_side_effects,
             mission_script: snapshot.mission_script,
-            script_zone_data: snapshot.script_zone_data,
-            dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
-            static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
         })
     }
 }

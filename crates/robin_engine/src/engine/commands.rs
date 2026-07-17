@@ -489,7 +489,7 @@ impl EngineInner {
             ClearShootList { pc_id } => {
                 // Drop the queued shoot list — pending
                 // `Command::ShootBow` elements in `elements_to_go`.
-                let resolver = Self::priority_resolver(&self.entities);
+                let resolver = Self::priority_resolver(&self.world.entities);
                 self.sequence_manager.stop_pending_elements_matching(
                     *pc_id,
                     Command::ShootBow,
@@ -521,8 +521,8 @@ impl EngineInner {
                 // Stash the focused PC as the shield protectee and
                 // flip `is_protected = false` so the next click resolves
                 // the danger point.  No sequence is launched.
-                self.shield.protected_pc = Some(*protected_pc);
-                self.shield.is_protected = false;
+                self.world.shield.protected_pc = Some(*protected_pc);
+                self.world.shield.is_protected = false;
             }
             RaiseShieldWithDanger {
                 actor,
@@ -1313,6 +1313,7 @@ impl EngineInner {
                 }
             }
             None => self
+                .world
                 .pc_ids
                 .iter()
                 .copied()
@@ -1719,7 +1720,7 @@ impl EngineInner {
                 self.abort_quick_action(id, slot);
             }
             None => {
-                let pcs = self.pc_ids.clone();
+                let pcs = self.world.pc_ids.clone();
                 for id in pcs {
                     self.abort_quick_action(id, slot);
                 }
@@ -1767,7 +1768,8 @@ impl EngineInner {
         let tgt_pos = target_entity.position_iface().map_position();
         let tgt_layer = target_entity.element_data().layer();
         let mut box_at_target = move_box.translated(tgt_pos);
-        self.fast_grid
+        self.world
+            .fast_grid
             .find_authorized_position(&mut box_at_target, tgt_layer)
     }
 
@@ -2430,8 +2432,8 @@ impl EngineInner {
 
         // Table swordfight check
         if let Some(aggressor_line_idx) = crate::engine::melee::is_table_swordfight_needed(
-            &self.entities,
-            &self.fast_grid,
+            &self.world.entities,
+            &self.world.fast_grid,
             &assets.profile_manager,
             pc_id,
             target_id,
@@ -2500,7 +2502,7 @@ impl EngineInner {
             // PC authorisation for the gate A*.  Seek/melee routing
             // never sets the leave-map flag, so `allow_leave_map = false`.
             let pc_auth = self.get_entity(pc_id).map(|e| e.actor_auth_info());
-            let level = self.fast_grid.level.clone();
+            let level = self.world.fast_grid.level.clone();
             let gate_path = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
                 host.and_then(|h| {
@@ -2528,7 +2530,7 @@ impl EngineInner {
             // succeeded so the fallback branches below can also use a
             // line-arrival on it.
             let swordfight_line = crate::engine::melee::table_swordfight_jump_line(
-                &self.fast_grid,
+                &self.world.fast_grid,
                 i16::from(pcs),
                 i16::from(ts),
                 target_pos,
@@ -2542,7 +2544,12 @@ impl EngineInner {
                 && !path.is_empty()
             {
                 let (goal_shape, arrival_layer) = if let Some(aggr_idx) = swordfight_line_idx
-                    && let Some(jl) = self.fast_grid.level.jump_lines.get(usize::from(aggr_idx))
+                    && let Some(jl) = self
+                        .world
+                        .fast_grid
+                        .level
+                        .jump_lines
+                        .get(usize::from(aggr_idx))
                 {
                     let mid = jl.get_middle_point();
                     (
@@ -2603,7 +2610,12 @@ impl EngineInner {
                 );
             }
             if let Some(aggr_idx) = swordfight_line_idx
-                && let Some(jl) = self.fast_grid.level.jump_lines.get(usize::from(aggr_idx))
+                && let Some(jl) = self
+                    .world
+                    .fast_grid
+                    .level
+                    .jump_lines
+                    .get(usize::from(aggr_idx))
             {
                 let mid = jl.get_middle_point();
                 let arrival_layer = jl.layer;
@@ -2675,6 +2687,7 @@ impl EngineInner {
         action_style: crate::order::OrderType,
     ) {
         let (aggressor_line, victim_line_idx) = match self
+            .world
             .fast_grid
             .level
             .jump_lines
@@ -2683,9 +2696,14 @@ impl EngineInner {
             Some(l) => (l.clone(), l.associated_line_index),
             None => return,
         };
-        let Some(victim_line) = victim_line_idx
-            .and_then(|idx| self.fast_grid.level.jump_lines.get(idx as usize).cloned())
-        else {
+        let Some(victim_line) = victim_line_idx.and_then(|idx| {
+            self.world
+                .fast_grid
+                .level
+                .jump_lines
+                .get(idx as usize)
+                .cloned()
+        }) else {
             return;
         };
 
@@ -2879,6 +2897,7 @@ impl EngineInner {
         if move_box.is_somewhere() {
             let mut box_at_target = move_box.translated(target_pos);
             if self
+                .world
                 .fast_grid
                 .find_authorized_position(&mut box_at_target, layer)
             {
@@ -2944,13 +2963,13 @@ impl EngineInner {
     ) {
         use crate::order::OrderType;
 
-        self.shield.is_protected = true;
-        self.shield.protected_pc = Some(protected_pc);
+        self.world.shield.is_protected = true;
+        self.world.shield.protected_pc = Some(protected_pc);
 
         // Stamp the new danger point on the acting PC so
         // `sync_danger_point_titbits` refreshes the `DangerPoint`
         // titbit next tick.
-        if let Some(entity) = self.entities.get_mut(actor)
+        if let Some(entity) = self.world.entities.get_mut(actor)
             && let Some(actor_data) = entity.actor_data_mut()
         {
             actor_data.shield_face_point = Some(danger_point);
@@ -3015,13 +3034,13 @@ impl EngineInner {
         protectee: Option<EntityId>,
     ) {
         if protectee.is_none()
-            && let Some(me) = self.entities.get_mut(protector_id)
+            && let Some(me) = self.world.entities.get_mut(protector_id)
             && let Some(pc) = me.pc_data_mut()
         {
             pc.shield_danger_point = crate::coordinates::WorldPoint3D::default();
         }
 
-        if let Some(me) = self.entities.get_mut(protector_id)
+        if let Some(me) = self.world.entities.get_mut(protector_id)
             && let Some(pc) = me.pc_data_mut()
         {
             pc.shield_protected = protectee;

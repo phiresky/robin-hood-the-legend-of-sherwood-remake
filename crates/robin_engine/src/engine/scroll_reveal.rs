@@ -453,7 +453,7 @@ impl EngineInner {
             kind: crate::element::ElementKind::ObjectBonus,
             // Default `blipped` flag is `!IsForestLevel()` — same
             // treatment as the mission-stream bonus path.
-            blipped: !self.weather.is_forest_level,
+            blipped: !self.world.weather.is_forest_level,
             sprite,
             ..Default::default()
         };

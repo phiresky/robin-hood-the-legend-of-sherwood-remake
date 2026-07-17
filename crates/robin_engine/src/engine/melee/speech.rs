@@ -126,7 +126,7 @@ impl EngineInner {
                         actor_id: entity_id,
                     },
                 );
-                if let Some(entity) = self.entities.get_mut(entity_id)
+                if let Some(entity) = self.world.entities.get_mut(entity_id)
                     && let Some(npc) = entity.npc_data_mut()
                     && let Some(base) = npc.ai_brain.base_mut()
                     && (base.current_remark != crate::ai::Remark::TheSoundOfSilence
@@ -382,7 +382,7 @@ impl EngineInner {
             HERO_SELECT => TIME_FORBID_HERO_SELECT,
             _ => HERO_EXPRESSION_DEFAULT_FORBID,
         };
-        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
+        if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
             pc.pc.forbidden_expressions.push((expression, forbid_timer));
         }
         self.control.chorus_timer = DEFAULT_ANTI_CHORUS_TIMER;
@@ -390,7 +390,7 @@ impl EngineInner {
 
     /// Per-frame refresh of all PCs' forbidden expression list counters.
     pub(super) fn tick_refresh_hero_mouth(&mut self) {
-        for (_, pc) in self.entities.pcs_mut() {
+        for (_, pc) in self.world.entities.pcs_mut() {
             pc.pc.forbidden_expressions.retain_mut(|(_, timer)| {
                 *timer = timer.saturating_sub(1);
                 *timer > 0
@@ -421,7 +421,7 @@ impl EngineInner {
             (std::num::NonZeroU32, OrderType, Command),
         > = {
             let mut m = std::collections::HashMap::new();
-            for &pc_id in &self.pc_ids {
+            for &pc_id in &self.world.pc_ids {
                 if let Some((seq_id, elem_idx, o)) =
                     self.sequence_manager.current_order_for_actor(pc_id)
                 {
@@ -436,7 +436,7 @@ impl EngineInner {
             m
         };
 
-        for (id, pc) in self.entities.pcs_mut() {
+        for (id, pc) in self.world.entities.pcs_mut() {
             let (cur_id, cur_ot, cur_command) = match cur_orders.get(&id.into()) {
                 Some((id, ot, command)) => (id.get(), Some(*ot), Some(*command)),
                 None => (0, None, None),
@@ -521,7 +521,7 @@ impl EngineInner {
         entity_id: EntityId,
         stimulus: crate::ai::Stimulus,
     ) {
-        let Some(Entity::Soldier(s)) = self.entities.get_mut(entity_id) else {
+        let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id) else {
             return;
         };
         if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -539,7 +539,7 @@ impl EngineInner {
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
     pub(crate) fn tick_tiredness(&mut self, assets: &LevelAssets) {
         let frame = self.control.frame_counter;
-        for (id, entity) in self.entities.humans_mut() {
+        for (id, entity) in self.world.entities.humans_mut() {
             let idx = id.index();
             // Spread the work — only every 64 frames per entity
             if (frame & 63) != (idx & 31) {

@@ -69,8 +69,8 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn tick_wasp_nests(&mut self, assets: &LevelAssets) {
         let mut slot = 0;
-        while slot < self.entities.len() {
-            if let Some(id) = self.entities.id_at_legacy_slot(slot as u32) {
+        while slot < self.world.entities.len() {
+            if let Some(id) = self.world.entities.id_at_legacy_slot(slot as u32) {
                 self.tick_wasp_nest_or_wasp(assets, id);
             }
             slot += 1;
@@ -150,7 +150,7 @@ impl EngineInner {
             return;
         }
 
-        if let Some(Entity::Projectile(nest)) = self.entities.get_mut(nest_id) {
+        if let Some(Entity::Projectile(nest)) = self.world.entities.get_mut(nest_id) {
             nest.object.animation = Animation::ObjectBursting;
             nest.projectile.flying = false;
             nest.projectile.wasp.burst = true;
@@ -199,7 +199,7 @@ impl EngineInner {
                 // 0..3 jitter.
                 let jitter =
                     crate::sim_rng::u32(crate::sim_rng::RngSite::WaspDirectionTimer, 0..3) as u16;
-                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+                if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                     p.projectile.wasp.timeout = DIRECTION_CHANGE_TIMEOUT + jitter;
                 }
             } else {
@@ -234,7 +234,7 @@ impl EngineInner {
                 self.kill_wasp(wasp_id);
                 return;
             }
-        } else if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+        } else if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
             p.projectile.wasp.timeout -= 1;
         }
 
@@ -245,7 +245,7 @@ impl EngineInner {
             Some(Entity::Projectile(p)) => (p.projectile.wasp.stinging, p.projectile.wasp.movement),
             _ => return,
         };
-        if !stinging_now && let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+        if !stinging_now && let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
             let mut pos = p.element.position();
             pos.x += movement.x;
             pos.y += movement.y;
@@ -288,7 +288,7 @@ impl EngineInner {
                         0..STINGING_MAX_TIMEOUT as u32,
                     ) as u16
                         + 1;
-                    if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+                    if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                         p.projectile.wasp.stinging = true;
                         p.projectile.wasp.timeout = delay;
                     }
@@ -324,7 +324,7 @@ impl EngineInner {
             let dist2 = dx * dx + dy * dy + dz * dz;
             if self.get_entity(victim_id).is_none() || dist2 >= forget * forget {
                 self.clear_wasp_victim_flag(victim_id);
-                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+                if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                     p.projectile.wasp.victim = None;
                 }
             }
@@ -334,10 +334,10 @@ impl EngineInner {
         // No victim — pick one.
         let new_victim = self.wasp_choose_victim(assets, wasp_id);
         if let Some(vid) = new_victim {
-            if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+            if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                 p.projectile.wasp.victim = Some(vid);
             }
-            if let Some(v) = self.entities.get_mut(vid)
+            if let Some(v) = self.world.entities.get_mut(vid)
                 && let Some(npc) = v.npc_data_mut()
             {
                 npc.wasp_victim = true;
@@ -371,6 +371,7 @@ impl EngineInner {
         let mut vip_remarks: Vec<EntityId> = Vec::new();
 
         let soldier_ids: Vec<EntityId> = self
+            .world
             .entities
             .soldier_ids()
             .collect::<Vec<_>>()
@@ -437,7 +438,7 @@ impl EngineInner {
 
         // VIPs say `VipWaspsNo` instead of being targeted.
         for vid in vip_remarks {
-            if let Some(entity) = self.entities.get_mut(vid)
+            if let Some(entity) = self.world.entities.get_mut(vid)
                 && let Some(base) = entity.ai_controller_mut()
             {
                 base.say(crate::ai::Remark::VipWaspsNo);
@@ -500,7 +501,7 @@ impl EngineInner {
             let norm = (mv.x * mv.x + mv.y * mv.y + mv.z * mv.z).sqrt();
             if norm == 0.0 {
                 // Degenerate roll: zero movement and bail.
-                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+                if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                     p.projectile.wasp.movement = WorldVec3D {
                         x: 0.0,
                         y: 0.0,
@@ -597,7 +598,7 @@ impl EngineInner {
                 )
             };
             if clear {
-                if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
+                if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(wasp_id) {
                     p.projectile.wasp.movement = mv;
                 }
                 return;
@@ -635,7 +636,7 @@ impl EngineInner {
 
     /// Decrement a nest's `flying_wasp_count`.
     fn wasp_killed(&mut self, nest_id: EntityId) {
-        if let Some(Entity::Projectile(nest)) = self.entities.get_mut(nest_id)
+        if let Some(Entity::Projectile(nest)) = self.world.entities.get_mut(nest_id)
             && nest.projectile.wasp.flying_wasp_count > 0
         {
             nest.projectile.wasp.flying_wasp_count -= 1;
@@ -644,7 +645,7 @@ impl EngineInner {
 
     /// Clear a soldier's `wasp_victim` flag.
     fn clear_wasp_victim_flag(&mut self, victim_id: EntityId) {
-        if let Some(entity) = self.entities.get_mut(victim_id)
+        if let Some(entity) = self.world.entities.get_mut(victim_id)
             && let Some(npc) = entity.npc_data_mut()
         {
             npc.wasp_victim = false;
@@ -751,6 +752,7 @@ mod tests {
             assert!(!nest.projectile.flying);
 
             let wasp_count = engine
+                .world
                 .entities
                 .projectiles()
                 .filter(|(_, p)| {
@@ -774,6 +776,7 @@ mod tests {
             live_pass.tick_wasp_nests(&assets);
 
             let parent_wasps: Vec<_> = parent_only
+                .world
                 .entities
                 .projectiles()
                 .filter(|(_, projectile)| projectile.object.object_type == ObjectType::Wasp)
@@ -834,6 +837,7 @@ mod tests {
             // Force-kill every wasp (mirrors what the per-wasp AI does
             // once each sting fires or each retry budget is exhausted).
             let wasp_ids: Vec<EntityId> = engine
+                .world
                 .entities
                 .projectiles()
                 .filter_map(|(id, projectile)| {
@@ -899,6 +903,7 @@ mod tests {
 
             // At least one wasp should point back at that soldier.
             let targeting = engine
+                .world
                 .entities
                 .projectiles()
                 .filter(|(_, p)| {

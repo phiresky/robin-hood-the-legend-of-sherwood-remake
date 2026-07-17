@@ -693,14 +693,15 @@ impl EngineInner {
     /// `false` when any of the required data is missing (no mission
     /// script, entity, sector mapping, etc.).
     pub fn is_jumpable(&self, jump_line_idx: u32, pc_entity: EntityId, test_posture: bool) -> bool {
-        let Some(entity) = self.entities.get(pc_entity) else {
+        let Some(entity) = self.world.entities.get(pc_entity) else {
             return false;
         };
         let Some(sector_num) = entity.element_data().sector() else {
             return false;
         };
         let Some(&pc_sector_grid_idx) =
-            self.fast_grid
+            self.world
+                .fast_grid
                 .level
                 .sector_number_map
                 .get(&crate::sector::SectorNumber::new(
@@ -719,7 +720,7 @@ impl EngineInner {
         };
         let pc_auth = entity.actor_auth_info();
         is_jumpable(
-            &self.fast_grid,
+            &self.world.fast_grid,
             doors,
             jump_line_idx,
             pc_sector_grid_idx as u32,
@@ -738,10 +739,11 @@ impl EngineInner {
         test_posture: bool,
         preferred_destination_sector: Option<u16>,
     ) -> Option<u32> {
-        let entity = self.entities.get(pc_entity)?;
+        let entity = self.world.entities.get(pc_entity)?;
         let sector_num = entity.element_data().sector()?;
         let &pc_sector_grid_idx =
-            self.fast_grid
+            self.world
+                .fast_grid
                 .level
                 .sector_number_map
                 .get(&crate::sector::SectorNumber::new(
@@ -754,7 +756,7 @@ impl EngineInner {
             .map(|gh| gh.doors.as_slice())?;
         let pc_auth = entity.actor_auth_info();
         get_nearest_jumpable_jump_line(
-            &self.fast_grid,
+            &self.world.fast_grid,
             doors,
             pc_sector_grid_idx as u32,
             candidate_sector_grid_idx,
@@ -813,15 +815,17 @@ impl EngineInner {
         };
 
         // Clone the jump lines so we can call build_jump_steps without
-        // borrowing self.fast_grid while we need &mut self.entities.
+        // borrowing self.world.fast_grid while we need &mut self.world.entities.
         let (src_line, dst_line) = {
             let src = self
+                .world
                 .fast_grid
                 .level
                 .jump_lines
                 .get(usize::from(src_id))
                 .cloned();
             let dst = self
+                .world
                 .fast_grid
                 .level
                 .jump_lines
@@ -837,11 +841,11 @@ impl EngineInner {
         // the destination line's `sector_index`.
         let dest_forces_crouched = dst_line
             .sector_index
-            .and_then(|idx| self.fast_grid.level.sectors.get(usize::from(idx)))
+            .and_then(|idx| self.world.fast_grid.level.sectors.get(usize::from(idx)))
             .map(|s| s.force_crouched)
             .unwrap_or(false);
 
-        let dest_sector = jump_line_sector_number(&self.fast_grid, &dst_line);
+        let dest_sector = jump_line_sector_number(&self.world.fast_grid, &dst_line);
         let dest_layer = dst_line.layer;
         let dest_projection_point = dst_line.get_middle_point();
 
@@ -850,7 +854,7 @@ impl EngineInner {
         let jump_height = dst_line.z_a - src_line.z_a;
 
         let (pt_source, posture_before, is_swordfighting) = {
-            let Some(entity) = self.entities.get(owner) else {
+            let Some(entity) = self.world.entities.get(owner) else {
                 return false;
             };
             let elem_data = entity.element_data();
@@ -910,7 +914,7 @@ impl EngineInner {
         };
 
         // Install on the actor and reset any stale flight state.
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.clear_path();
@@ -947,7 +951,7 @@ impl EngineInner {
         // Entities whose current step has reached its `max_frames`
         // cap — we force-advance them after the loop (can't call
         // advance_jump_step inline due to the mutable borrow on
-        // `self.entities`).  Each trajectory segment pops after
+        // `self.world.entities`).  Each trajectory segment pops after
         // `TIME_FLYSEGMENT` frames regardless of the sprite
         // animation's natural length.
         let mut force_advance: Vec<EntityId> = Vec::new();
@@ -962,12 +966,12 @@ impl EngineInner {
         // need an `MSG_DISABLE_ALL_ACTIONS_TEMP` message dispatched
         // after the entity loop closes.
         let mut pending_init_messages: Vec<EntityId> = Vec::new();
-        // Disjoint-borrow trick: we need `&mut self.entities` for the
+        // Disjoint-borrow trick: we need `&mut self.world.entities` for the
         // loop AND `&mut self.next_order_id` for the new step's order
         // tag. Splitting them through a local re-borrow.
         let next_order_id = &mut self.next_order_id;
         let sequence_manager = &self.sequence_manager;
-        for (entity_id, entity) in self.entities.actors_mut() {
+        for (entity_id, entity) in self.world.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };
@@ -1091,7 +1095,7 @@ impl EngineInner {
                 Some(projection_point),
                 "jump landing",
             );
-            if let Some(entity) = self.entities.get_mut(entity_id) {
+            if let Some(entity) = self.world.entities.get_mut(entity_id) {
                 entity.position_iface_mut().settle_current_position();
             }
         }
@@ -1099,7 +1103,7 @@ impl EngineInner {
         // Drain pending_jump_done — terminate sequence elements for
         // jumps that finished this tick.
         let mut to_terminate: Vec<(SequenceId, usize)> = Vec::new();
-        for (_, entity) in self.entities.actors_mut() {
+        for (_, entity) in self.world.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };
@@ -1119,7 +1123,7 @@ impl EngineInner {
     /// posture transition, and clears `current` so the next tick pops
     /// the next step.
     pub(super) fn advance_jump_step(&mut self, entity_id: EntityId) {
-        let Some(entity) = self.entities.get_mut(entity_id) else {
+        let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
 

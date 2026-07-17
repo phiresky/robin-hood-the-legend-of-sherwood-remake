@@ -93,7 +93,7 @@ impl EngineInner {
 
         // Periodic combat state dump (every 64 frames)
         if self.control.frame_counter.is_multiple_of(64) {
-            for (entity_id, entity) in self.entities.humans() {
+            for (entity_id, entity) in self.world.entities.humans() {
                 let Some(human) = entity.human_data() else {
                     continue;
                 };
@@ -141,7 +141,7 @@ impl EngineInner {
         let mut terminate_low_parry: Vec<(crate::sequence::SequenceId, usize, EntityId)> =
             Vec::new();
 
-        for (entity_id, entity) in self.entities.humans_mut() {
+        for (entity_id, entity) in self.world.entities.humans_mut() {
             let is_parrying = entity
                 .actor_data()
                 .map(|a| {
@@ -238,7 +238,7 @@ impl EngineInner {
 
         for (seq_id, elem_idx, owner) in terminate_low_parry {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
-            if let Some(entity) = self.entities.get_mut(owner)
+            if let Some(entity) = self.world.entities.get_mut(owner)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.action_state = ActionState::WaitingSword;
@@ -339,7 +339,7 @@ impl EngineInner {
         // The follow-up decision path mutates engine state, so keep this
         // first pass read-only and stage typed ids.
         let mut smalltalk_candidates = Vec::new();
-        for (entity_id, entity) in self.entities.humans() {
+        for (entity_id, entity) in self.world.entities.humans() {
             let (has_initiative, opponents_empty, principal_id, action_ok, observing) = {
                 if entity.is_dead() {
                     continue;
@@ -386,6 +386,7 @@ impl EngineInner {
 
             // Verify mutual principal opponents
             let is_mutual = self
+                .world
                 .entities
                 .get(principal_id)
                 .and_then(|e| e.human_data())
@@ -478,12 +479,12 @@ impl EngineInner {
                 .and_then(|e| e.human_data())
                 .and_then(|h| h.opponents.first().copied());
             if let Some(pid) = principal_id {
-                let dir = direction_to(&self.entities, actor_id, pid);
-                if let Some(entity) = self.entities.get_mut(actor_id) {
+                let dir = direction_to(&self.world.entities, actor_id, pid);
+                if let Some(entity) = self.world.entities.get_mut(actor_id) {
                     entity.element_data_mut().set_direction_instantly(dir);
                 }
             }
-            if let Some(entity) = self.entities.get_mut(actor_id)
+            if let Some(entity) = self.world.entities.get_mut(actor_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.last_motion_was_step_back_in_combat = true;
@@ -540,8 +541,8 @@ impl EngineInner {
             };
 
             // Face the target and set yellow outline for smalltalk
-            let dir = direction_to(&self.entities, attacker_id, target_id);
-            if let Some(entity) = self.entities.get_mut(attacker_id) {
+            let dir = direction_to(&self.world.entities, attacker_id, target_id);
+            if let Some(entity) = self.world.entities.get_mut(attacker_id) {
                 entity.element_data_mut().set_direction_instantly(dir);
                 entity.element_data_mut().current_outline =
                     crate::element::OutlineColorName::Striking;
@@ -580,7 +581,7 @@ impl EngineInner {
         if !is_principal {
             return;
         }
-        if let Some(target) = self.entities.get_mut(target_id)
+        if let Some(target) = self.world.entities.get_mut(target_id)
             && let Some(human) = target.human_data_mut()
         {
             human.smalltalk_hint = if is_left {
@@ -608,7 +609,7 @@ impl EngineInner {
             crate::element::SmalltalkHint::None => return false,
         };
 
-        if let Some(entity) = self.entities.get_mut(entity_id)
+        if let Some(entity) = self.world.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_hint = crate::element::SmalltalkHint::None;
@@ -672,7 +673,7 @@ impl EngineInner {
             return;
         }
 
-        let direction = direction_to(&self.entities, attacker_id, target_id);
+        let direction = direction_to(&self.world.entities, attacker_id, target_id);
         if let Some(entity) = self.get_entity_mut(attacker_id) {
             entity.element_data_mut().set_direction_instantly(direction);
         }
@@ -780,28 +781,28 @@ impl EngineInner {
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
-        let distance = entity_distance(&self.entities, attacker_id, victim_id);
+        let distance = entity_distance(&self.world.entities, attacker_id, victim_id);
         let in_range = profile_idx
             .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
         let obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.dynamic_sight_obstacles,
-            static_active: &self.static_sight_obstacle_active,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         };
 
         if in_range
             && is_possible_sword_strike_victim_id(
-                &self.entities,
+                &self.world.entities,
                 attacker_id,
                 victim_id,
                 &assets.profile_manager,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 obstacles,
             )
         {
-            let direction = direction_to(&self.entities, attacker_id, victim_id);
+            let direction = direction_to(&self.world.entities, attacker_id, victim_id);
             if let Some(entity) = self.get_entity_mut(attacker_id) {
                 entity.element_data_mut().set_direction_instantly(direction);
             }
@@ -828,7 +829,7 @@ impl EngineInner {
         strike: SwordStrike,
         profile_idx: Option<u32>,
     ) {
-        let pending_swordfights = if let Some(entity) = self.entities.get_mut(actor_id)
+        let pending_swordfights = if let Some(entity) = self.world.entities.get_mut(actor_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.sweep_state = None;
@@ -894,6 +895,7 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn tick_melee_strikes(&mut self, assets: &LevelAssets) {
         let actor_ids: Vec<EntityId> = self
+            .world
             .entities
             .actors()
             .map(|(actor_id, _)| actor_id.into())
@@ -925,7 +927,7 @@ impl EngineInner {
         let mut completed: Vec<CompletedStrike> = Vec::new();
 
         // Phase 1: advance timers and collect hits
-        for (entity_id, entity) in self.entities.actors_mut() {
+        for (entity_id, entity) in self.world.entities.actors_mut() {
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
             let Some(active_melee) = entity
@@ -1123,10 +1125,11 @@ impl EngineInner {
                 if !all_victims.contains(&hit.victim_id) {
                     let obstacles = crate::sight_obstacle::ObstacleList {
                         static_obstacles: assets.static_sight_obstacles.as_slice(),
-                        dynamic_obstacles: &self.dynamic_sight_obstacles,
-                        static_active: &self.static_sight_obstacle_active,
+                        dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                        static_active: &self.world.static_sight_obstacle_active,
                     };
-                    let distance = entity_distance(&self.entities, hit.attacker_id, hit.victim_id);
+                    let distance =
+                        entity_distance(&self.world.entities, hit.attacker_id, hit.victim_id);
                     let in_range = hit
                         .attacker_profile_idx
                         .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -1134,11 +1137,11 @@ impl EngineInner {
                         .unwrap_or(false);
                     if in_range
                         && is_possible_sword_strike_victim_id(
-                            &self.entities,
+                            &self.world.entities,
                             hit.attacker_id,
                             hit.victim_id,
                             &assets.profile_manager,
-                            &self.fast_grid,
+                            &self.world.fast_grid,
                             obstacles,
                         )
                     {
@@ -1169,10 +1172,11 @@ impl EngineInner {
                 if !all_victims.contains(&hit.victim_id) {
                     let obstacles = crate::sight_obstacle::ObstacleList {
                         static_obstacles: assets.static_sight_obstacles.as_slice(),
-                        dynamic_obstacles: &self.dynamic_sight_obstacles,
-                        static_active: &self.static_sight_obstacle_active,
+                        dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                        static_active: &self.world.static_sight_obstacle_active,
                     };
-                    let distance = entity_distance(&self.entities, hit.attacker_id, hit.victim_id);
+                    let distance =
+                        entity_distance(&self.world.entities, hit.attacker_id, hit.victim_id);
                     let in_range = hit
                         .attacker_profile_idx
                         .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
@@ -1180,11 +1184,11 @@ impl EngineInner {
                         .unwrap_or(false);
                     if in_range
                         && is_possible_sword_strike_victim_id(
-                            &self.entities,
+                            &self.world.entities,
                             hit.attacker_id,
                             hit.victim_id,
                             &assets.profile_manager,
-                            &self.fast_grid,
+                            &self.world.fast_grid,
                             obstacles,
                         )
                     {
@@ -1202,7 +1206,7 @@ impl EngineInner {
                         );
                     }
                 }
-                if let Some(entity) = self.entities.get_mut(hit.attacker_id)
+                if let Some(entity) = self.world.entities.get_mut(hit.attacker_id)
                     && let Some(actor) = entity.actor_data_mut()
                 {
                     actor.pending_push_swordfight = all_victims;
@@ -1321,7 +1325,7 @@ impl EngineInner {
             strike_kind,
         };
 
-        if let Some(entity) = self.entities.get_mut(attacker_id)
+        if let Some(entity) = self.world.entities.get_mut(attacker_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.sweep_state = Some(sweep);
@@ -1352,7 +1356,7 @@ impl EngineInner {
         }
         let mut sweeps: Vec<ActiveSweep> = Vec::new();
 
-        for (entity_id, entity) in self.entities.actors() {
+        for (entity_id, entity) in self.world.entities.actors() {
             let actor = match entity.actor_data() {
                 Some(a) => a,
                 None => continue,
@@ -1396,7 +1400,7 @@ impl EngineInner {
                     | crate::profiles::WeaponThrustKind::TrueHalfCircle
             ) {
                 let new_dir = angle_to_sector(active.sweep.current_angle);
-                if let Some(entity) = self.entities.get_mut(active.attacker_id) {
+                if let Some(entity) = self.world.entities.get_mut(active.attacker_id) {
                     let elem = entity.element_data_mut();
                     elem.set_direction_instantly(new_dir as i16);
                     elem.sprite.force_action_direction(
@@ -1414,15 +1418,15 @@ impl EngineInner {
             for (i, &victim_id) in active.sweep.pending_victims.iter().enumerate() {
                 let obstacles = crate::sight_obstacle::ObstacleList {
                     static_obstacles: assets.static_sight_obstacles.as_slice(),
-                    dynamic_obstacles: &self.dynamic_sight_obstacles,
-                    static_active: &self.static_sight_obstacle_active,
+                    dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                    static_active: &self.world.static_sight_obstacle_active,
                 };
                 if !is_possible_sword_strike_victim_id(
-                    &self.entities,
+                    &self.world.entities,
                     active.attacker_id,
                     victim_id,
                     &assets.profile_manager,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     obstacles,
                 ) {
                     hit_indices.push(i);
@@ -1499,7 +1503,7 @@ impl EngineInner {
 
         // Phase 3: write back updated sweep states
         for active in sweeps {
-            if let Some(entity) = self.entities.get_mut(active.attacker_id)
+            if let Some(entity) = self.world.entities.get_mut(active.attacker_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 let rotation_complete = sweep_rotation_complete(&active.sweep);
@@ -1543,7 +1547,7 @@ impl EngineInner {
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
         let mut refresh_script_sectors = false;
 
-        for (entity_id, entity) in self.entities.actors_mut() {
+        for (entity_id, entity) in self.world.entities.actors_mut() {
             // Read flight state without holding a mutable borrow.
             let flight_info = entity.actor_data().and_then(|a| a.active_flight);
 
@@ -1724,9 +1728,10 @@ impl EngineInner {
         // (soldiers / civilians) then PCs.  Animals live in a
         // separate list and are excluded.
         let candidate_ids: Vec<EntityId> = self
+            .world
             .entities
             .npc_ids()
-            .chain(self.pc_ids.iter().copied())
+            .chain(self.world.pc_ids.iter().copied())
             .collect();
         let mut victims: Vec<EntityId> = Vec::new();
         for candidate_id in candidate_ids {
@@ -1760,7 +1765,7 @@ impl EngineInner {
             if !candidate.is_active() {
                 continue;
             }
-            if is_in_building_sector(elem.sector(), &self.fast_grid) {
+            if is_in_building_sector(elem.sector(), &self.world.fast_grid) {
                 continue;
             }
 
@@ -1840,7 +1845,7 @@ impl EngineInner {
         let normal = self.get_roll_normal(assets, entity_id);
         let new_dest = normal.and_then(|n| self.find_roll_point(entity_id, n, true));
 
-        if let Some(entity) = self.entities.get_mut(entity_id) {
+        if let Some(entity) = self.world.entities.get_mut(entity_id) {
             let pos = entity.element_data().position_map();
             // Compute the new facing up front — we may need to update
             // the entity's direction before re-borrowing actor data.
@@ -1917,16 +1922,16 @@ impl EngineInner {
         // a RiderCharging action need to be initialized.
         {
             // Disjoint-field obstacle list so we can keep `entities` mutably
-            // borrowed below without locking out `self.dynamic_sight_obstacles`
-            // / `self.static_sight_obstacle_active` (which `sight_obstacles`
+            // borrowed below without locking out `self.world.dynamic_sight_obstacles`
+            // / `self.world.static_sight_obstacle_active` (which `sight_obstacles`
             // would do via a whole-`self` immutable borrow).
             let obstacles = crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                static_active: &self.static_sight_obstacle_active,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
             };
             let mut pending_charge_inits = Vec::new();
-            for (attacker_id, entity) in self.entities.actors() {
+            for (attacker_id, entity) in self.world.entities.actors() {
                 let actor = match entity.actor_data() {
                     Some(a) => a,
                     None => continue,
@@ -1992,18 +1997,18 @@ impl EngineInner {
 
                 // Collect potential victims inside the initial polygon.
                 let mut pending_victims = Vec::new();
-                for (victim_id, victim) in self.entities.humans() {
+                for (victim_id, victim) in self.world.entities.humans() {
                     let victim_id: EntityId = victim_id.into();
                     if victim_id == attacker_id {
                         continue;
                     }
                     if !is_possible_sword_strike_victim(
-                        &self.entities,
+                        &self.world.entities,
                         attacker_id,
                         victim,
                         victim_id,
                         &assets.profile_manager,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                         obstacles,
                     ) {
                         continue;
@@ -2066,7 +2071,7 @@ impl EngineInner {
         let mut hits: Vec<ChargeHit> = Vec::new();
         let mut finished_charges: Vec<EntityId> = Vec::new();
 
-        for (attacker_id, entity) in self.entities.actors_mut() {
+        for (attacker_id, entity) in self.world.entities.actors_mut() {
             let (elem_pos, _elem_layer, attacker_profile_idx) = {
                 let elem = entity.element_data();
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
@@ -2099,7 +2104,7 @@ impl EngineInner {
 
             // Collect all pending victims for deferred position checking.
             // We can't look up victim positions here (borrow conflict with
-            // self.entities iter_mut), so we defer to phase 3.
+            // self.world.entities iter_mut), so we defer to phase 3.
             let forward = charge.forward;
             let sidewards = charge.sidewards;
             let current_frame = charge.current_frame;
@@ -2126,22 +2131,22 @@ impl EngineInner {
         }
 
         // Phase 3: Check victim positions and apply damage.
-        // (Deferred to avoid borrow conflicts with self.entities.)
+        // (Deferred to avoid borrow conflicts with self.world.entities.)
         for hit in &hits {
             let obstacles = crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                static_active: &self.static_sight_obstacle_active,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
             };
             if !is_possible_sword_strike_victim_id(
-                &self.entities,
+                &self.world.entities,
                 hit.attacker_id,
                 hit.victim_id,
                 &assets.profile_manager,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 obstacles,
             ) {
-                if let Some(attacker) = self.entities[hit.attacker_id].as_mut()
+                if let Some(attacker) = self.world.entities[hit.attacker_id].as_mut()
                     && let Some(actor) = attacker.actor_data_mut()
                     && let Some(charge) = actor.active_rider_charge.as_mut()
                 {
@@ -2195,7 +2200,7 @@ impl EngineInner {
 
             if point_in_quad(victim_pos.x, victim_pos.y, hz[0], hz[1], hz[2], hz[3]) {
                 // Hit! Remove victim from pending list and apply damage.
-                if let Some(attacker) = self.entities[hit.attacker_id].as_mut()
+                if let Some(attacker) = self.world.entities[hit.attacker_id].as_mut()
                     && let Some(actor) = attacker.actor_data_mut()
                     && let Some(charge) = actor.active_rider_charge.as_mut()
                 {
@@ -2223,7 +2228,7 @@ impl EngineInner {
 
         // Phase 4: Clean up finished charges.
         for entity_id in finished_charges {
-            if let Some(entity) = self.entities[entity_id].as_mut()
+            if let Some(entity) = self.world.entities[entity_id].as_mut()
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_rider_charge = None;
@@ -2259,7 +2264,7 @@ impl EngineInner {
         // Collecting flagged-npcs first so we can query the sequence
         // manager and then mutate the AI without aliasing `self`.
         let mut flagged: Vec<EntityId> = Vec::new();
-        for (npc_id, soldier) in self.entities.soldiers() {
+        for (npc_id, soldier) in self.world.entities.soldiers() {
             if let crate::element::AiBrain::Enemy(ref ai) = soldier.npc.ai_brain
                 && ai.pending_special_strike
             {
@@ -2272,7 +2277,7 @@ impl EngineInner {
                 .has_live_element_for_actor_matching(npc_id, |cmd| {
                     cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
                 });
-            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id)
+            if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id)
                 && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
             {
                 ai.reconcile_special_strike(has_active, current_frame);
@@ -2300,10 +2305,10 @@ impl EngineInner {
         // Tired-soldier `SwordstrikeTired` elements collected here and
         // launched after the npc-iter loop ends — `launch_element` needs
         // `&mut self` and we still hold an immutable borrow on
-        // `self.entities`.
+        // `self.world.entities`.
         let mut pending_tired: Vec<EntityId> = Vec::new();
 
-        for (npc_id, soldier) in self.entities.soldiers() {
+        for (npc_id, soldier) in self.world.entities.soldiers() {
             // Must be in swordfight substate and alive.
             //
             // This is a stuck-state detector: if a soldier has
@@ -2491,7 +2496,8 @@ impl EngineInner {
         }
 
         for mut attack in attacks {
-            let distance = entity_distance(&self.entities, attack.soldier_id, attack.target_id);
+            let distance =
+                entity_distance(&self.world.entities, attack.soldier_id, attack.target_id);
 
             // Check melee range using weapon profile
             let in_range = assets
@@ -2587,10 +2593,11 @@ impl EngineInner {
             let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
             let obstacles = crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                static_active: &self.static_sight_obstacle_active,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
             };
             let nearby: Vec<crate::combat::NearbyVictim> = self
+                .world
                 .entities
                 .humans()
                 .filter_map(|(eid, e)| {
@@ -2598,12 +2605,12 @@ impl EngineInner {
                         return None;
                     }
                     if !is_possible_sword_strike_victim(
-                        &self.entities,
+                        &self.world.entities,
                         attack.soldier_id,
                         e,
                         eid,
                         &assets.profile_manager,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                         obstacles,
                     ) {
                         return None;
@@ -2697,7 +2704,7 @@ impl EngineInner {
 
             let wait_time: u32 = if target_is_pc {
                 // Start the striking-outline hulk with width 2.
-                if let Some(entity) = self.entities.get_mut(attack.soldier_id) {
+                if let Some(entity) = self.world.entities.get_mut(attack.soldier_id) {
                     if let Some(human) = entity.human_data_mut() {
                         human.start_hulk(true, 1.0);
                     }
@@ -2722,7 +2729,7 @@ impl EngineInner {
                 attack.soldier_id,
                 crate::sequence::SequencePriority::Preference,
             );
-            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(attack.soldier_id)
+            if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(attack.soldier_id)
                 && let crate::element::AiBrain::Enemy(ref mut ai) = soldier.npc.ai_brain
             {
                 ai.begin_special_strike();
@@ -2733,7 +2740,8 @@ impl EngineInner {
             if matches!(
                 strike,
                 SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
-            ) && let Some(Entity::Soldier(soldier)) = self.entities.get_mut(attack.soldier_id)
+            ) && let Some(Entity::Soldier(soldier)) =
+                self.world.entities.get_mut(attack.soldier_id)
             {
                 let is_vip = assets
                     .profile_manager
@@ -2780,7 +2788,7 @@ impl EngineInner {
             // Write back boredom state. The next-strike gate is set when
             // `reconcile_special_strike` observes that this sequence has
             // finished — equivalent to firing EventDone and a 20-frame timer.
-            if let Some(Entity::Soldier(soldier)) = self.entities.get_mut(attack.soldier_id) {
+            if let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(attack.soldier_id) {
                 soldier.human.sword_strike_boredom = attack.boredom;
             }
 
@@ -2800,14 +2808,14 @@ impl EngineInner {
         let mut pending_fit_again: Vec<EntityId> = Vec::new();
         // Standup / BeingStunnedSword chains discovered during the
         // entity-iter loop are launched after the loop ends to avoid
-        // borrowing `self.entities` and `self` simultaneously.
+        // borrowing `self.world.entities` and `self` simultaneously.
         let mut pending_recover: Vec<crate::sequence::SequenceElement> = Vec::new();
         // Disjoint-borrow: pull the id counter out as a `&mut u32` so
         // the inner loop can stamp fresh ids via
         // `crate::order::alloc_order_id` while still holding
-        // `self.entities.humans_mut()`.
+        // `self.world.entities.humans_mut()`.
         let next_order_id = &mut self.next_order_id;
-        for (entity_id, entity) in self.entities.humans_mut() {
+        for (entity_id, entity) in self.world.entities.humans_mut() {
             if entity.is_dead() {
                 continue;
             }
@@ -2829,7 +2837,7 @@ impl EngineInner {
 
             let ctx = concussion_ctx_full(
                 entity,
-                self.weather.is_forest_level,
+                self.world.weather.is_forest_level,
                 self.mission_domain.campaign.as_ref(),
             );
 

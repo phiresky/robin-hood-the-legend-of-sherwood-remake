@@ -529,7 +529,7 @@ impl EngineInner {
         use crate::shadow_polygon::ALPHA_DAY;
 
         let mut result = Vec::new();
-        for (_, entity) in self.entities.npcs() {
+        for (_, entity) in self.world.entities.npcs() {
             if !entity.is_active() || entity.is_dead() {
                 continue;
             }
@@ -642,12 +642,12 @@ impl EngineInner {
         // Two-pass: first fill position.y for every entity, then resolve
         // the ref offset for carried/attached ones (which need the base
         // values computed first).
-        let mut depths: HashMap<EntityId, f32> = HashMap::with_capacity(self.entities.len());
-        for (id, e) in self.entities.occupied() {
+        let mut depths: HashMap<EntityId, f32> = HashMap::with_capacity(self.world.entities.len());
+        for (id, e) in self.world.entities.occupied() {
             depths.insert(id, e.element_data().position().y);
         }
 
-        for (id, entity) in self.entities.occupied() {
+        for (id, entity) in self.world.entities.occupied() {
             let sprite = &entity.element_data().sprite;
             let Some(ref_id) = sprite.display_order_ref else {
                 continue;
@@ -676,7 +676,7 @@ impl EngineInner {
         let mut animations: Vec<EntityId> = Vec::new();
         let mut non_animations: Vec<EntityId> = Vec::new();
 
-        for (id, entity) in self.entities.occupied() {
+        for (id, entity) in self.world.entities.occupied() {
             // Scrolls whose current status is neither Visible nor
             // Opened are filtered out entirely — Invisible / Taken
             // scrolls don't render, and dropping them from the draw
@@ -699,7 +699,7 @@ impl EngineInner {
             }
         }
 
-        let entities = &self.entities;
+        let entities = &self.world.entities;
 
         // Sort non-animations by (depth, creation order). EntityId is
         // a monotonic slot index that's never reused, so it doubles as
@@ -843,13 +843,13 @@ impl EngineInner {
     // Returns every live entity; callers filter on `is_active()` /
     // `custom_minimap_dot`.
     pub fn sort_for_minimap(&self) -> Vec<EntityId> {
-        let mut ids: Vec<EntityId> = self.entities.occupied().map(|(id, _)| id).collect();
+        let mut ids: Vec<EntityId> = self.world.entities.occupied().map(|(id, _)| id).collect();
 
         ids.sort_by(|&a, &b| {
-            let ea = self.entities[a]
+            let ea = self.world.entities[a]
                 .as_ref()
                 .expect("entity present in sort input");
-            let eb = self.entities[b]
+            let eb = self.world.entities[b]
                 .as_ref()
                 .expect("entity present in sort input");
 
@@ -866,7 +866,7 @@ impl EngineInner {
                     let depth_of = |e: &Entity| -> f32 {
                         let sprite = &e.element_data().sprite;
                         if let Some(ref_id) = sprite.display_order_ref
-                            && let Some(ref_entity) = self.entities.get(ref_id)
+                            && let Some(ref_entity) = self.world.entities.get(ref_id)
                         {
                             let base = ref_entity.element_data().position().y;
                             if sprite.behind_display_order_ref {

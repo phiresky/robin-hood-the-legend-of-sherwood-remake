@@ -2719,7 +2719,7 @@ impl EngineInner {
         // motion Start and is one of the always-non-interruptable
         // families (see `anim_forces_non_interruptable_on_start`).
         // Applied after the entity loop so we don't double-borrow
-        // `self.sequence_manager` while iterating `self.entities`.
+        // `self.sequence_manager` while iterating `self.world.entities`.
         let mut non_interruptable_lifts: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
         let mut completion_outcomes = AnimCompletionOutcomes::default();
 
@@ -2739,10 +2739,12 @@ impl EngineInner {
                     .collect()
             })
             .unwrap_or_default();
-        let mut frames_from_now_till_action_done = EntitySlots::filled(self.entities.len(), None);
-        let mut active_entity_flags = EntitySlots::filled(self.entities.len(), false);
-        let mut door_pass_crenel_transition_dirs = EntitySlots::filled(self.entities.len(), None);
-        for (entity_id, entity) in self.entities.occupied() {
+        let mut frames_from_now_till_action_done =
+            EntitySlots::filled(self.world.entities.len(), None);
+        let mut active_entity_flags = EntitySlots::filled(self.world.entities.len(), false);
+        let mut door_pass_crenel_transition_dirs =
+            EntitySlots::filled(self.world.entities.len(), None);
+        for (entity_id, entity) in self.world.entities.occupied() {
             let sprite = &entity.element_data().sprite;
             frames_from_now_till_action_done[entity_id] =
                 safe_frames_from_now_till_action_done(sprite);
@@ -2761,11 +2763,12 @@ impl EngineInner {
                     .and_then(|host| host.doors.get(usize::from(dp.door_index)))
                     .map(|door| door.sector_in)?;
                 let direction = self
+                    .world
                     .fast_grid
                     .level
                     .sector_number_map
                     .get(&crate::sector::SectorNumber::new(i16::from(sector_in)))
-                    .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                    .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                     .and_then(|sector| {
                         if sector.lift_type == Some(crate::sector::LiftType::Wall) {
                             Some(sector.lift_direction)
@@ -2785,7 +2788,7 @@ impl EngineInner {
         // Processed after the entity loop to avoid borrowing conflicts.
         let mut completed_patch_transitions: Vec<crate::patch::PatchIndex> = Vec::new();
 
-        for (entity_id, entity) in self.entities.occupied_mut() {
+        for (entity_id, entity) in self.world.entities.occupied_mut() {
             if !entity.is_active() {
                 continue;
             }
@@ -2841,7 +2844,7 @@ impl EngineInner {
                 // order.
                 //
                 // Disjoint-borrow: `self.sequence_manager` is a field of
-                // `self` distinct from `self.entities`, so the compiler
+                // `self` distinct from `self.world.entities`, so the compiler
                 // accepts holding `&self.sequence_manager` while iterating
                 // mutable occupied entity slots.
                 let order_snapshot = self.sequence_manager.current_order_for_actor(entity_id);
@@ -3672,7 +3675,7 @@ impl EngineInner {
         // isn't interleaved with mutable entity iteration.
         let mut triggers: Vec<(u32, crate::coordinates::MapPoint, Option<Material>)> = Vec::new();
 
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.world.entities.occupied_mut() {
             if !entity.is_active() {
                 continue;
             }

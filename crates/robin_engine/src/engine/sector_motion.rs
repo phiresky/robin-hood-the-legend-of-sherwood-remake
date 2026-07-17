@@ -85,9 +85,16 @@ impl EngineInner {
             None => 0.0,
             Some(handle) => {
                 let sn = crate::sector::SectorNumber::new(handle.get() as i16);
-                let grid_idx = self.fast_grid.level.sector_number_map.get(&sn).copied();
+                let grid_idx = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&sn)
+                    .copied();
                 let is_motion = grid_idx.is_some_and(|gi| {
-                    self.fast_grid
+                    self.world
+                        .fast_grid
                         .level
                         .sectors
                         .get(gi)

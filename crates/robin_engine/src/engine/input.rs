@@ -169,7 +169,7 @@ impl EngineInner {
             bank_id,
             lx,
             ly,
-            self.weather.night_color,
+            self.world.weather.night_color,
             blue_pixels_are_in,
         )
     }
@@ -236,7 +236,7 @@ impl EngineInner {
             Entity::Bonus(b) => {
                 // Relics are not focusable on the Sherwood HQ
                 // (forest) level.
-                if b.is_relic() && self.weather.is_forest_level {
+                if b.is_relic() && self.world.weather.is_forest_level {
                     return false;
                 }
                 // Blazons never show USE.
@@ -821,7 +821,7 @@ impl EngineInner {
                 // Tie up. Requires the TIE contextual action.
                 // Royalist NPCs on Merry Man Forest levels can't be tied.
                 let is_merry_man_forest =
-                    camp == Camp::Royalists && self.weather.is_forest_level && !is_rider;
+                    camp == Camp::Royalists && self.world.weather.is_forest_level && !is_rider;
                 if is_unconscious
                     && !is_dead
                     && !is_tied
@@ -1020,6 +1020,7 @@ impl EngineInner {
     ) -> Option<EntityId> {
         let selected_pc = self.players.seats[0].selection.first().copied();
         for nid in self
+            .world
             .entities
             .npc_ids()
             .collect::<Vec<_>>()
@@ -1043,7 +1044,7 @@ impl EngineInner {
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
         let selected_pc = self.players.seats[0].selection.first().copied();
-        for &pid in self.pc_ids.iter().rev() {
+        for &pid in self.world.pc_ids.iter().rev() {
             if let Some(e) = self.get_entity(pid)
                 && self.is_entity_focusable(assets, pid, e, mouse_map, focus, selected_pc)
             {
@@ -1071,10 +1072,16 @@ impl EngineInner {
         let layer = elem.layer();
         // Look up PC's current sector in the grid.
         let pos = elem.position_map();
-        let hit = self.fast_grid.get_sector(pos, pos, layer);
+        let hit = self.world.fast_grid.get_sector(pos, pos, layer);
         match hit {
             crate::fast_find_grid::SectorHit::Found { sector_idx, .. } => {
-                if let Some(sector) = self.fast_grid.level.sectors.get(usize::from(sector_idx)) {
+                if let Some(sector) = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(sector_idx))
+                {
                     let st = sector.sector_type;
                     if st.is_building() {
                         return true;
@@ -1101,10 +1108,10 @@ impl EngineInner {
             .and_then(|&id| self.get_entity(id))
             .map(|e| e.element_data().position_map())
             .unwrap_or(mouse_map);
-        let hit = self.fast_grid.get_sector_screen(mouse_map, reference);
+        let hit = self.world.fast_grid.get_sector_screen(mouse_map, reference);
         match hit.sector_idx {
             Some(idx) => {
-                if let Some(sector) = self.fast_grid.level.sectors.get(usize::from(idx)) {
+                if let Some(sector) = self.world.fast_grid.level.sectors.get(usize::from(idx)) {
                     let st = sector.sector_type;
                     if st.is_door() {
                         return false;
@@ -1133,7 +1140,8 @@ impl EngineInner {
             return false;
         };
         let Some(&sector_idx) =
-            self.fast_grid
+            self.world
+                .fast_grid
                 .level
                 .sector_number_map
                 .get(&crate::sector::SectorNumber::new(
@@ -1142,7 +1150,7 @@ impl EngineInner {
         else {
             return false;
         };
-        let Some(sector) = self.fast_grid.level.sectors.get(sector_idx) else {
+        let Some(sector) = self.world.fast_grid.level.sectors.get(sector_idx) else {
             return false;
         };
         if sector.sector_type.is_building() {
@@ -1530,7 +1538,7 @@ impl EngineInner {
         // against `pTarget->GetPosition()`; the later shot trajectory
         // still aims at FX target center.
         let target_pos = target.element_data().position();
-        let forest = self.weather.is_forest_level;
+        let forest = self.world.weather.is_forest_level;
         self.can_shoot_with_bow_at_point(assets, pc_id, target_pos, forest)
     }
 
@@ -1757,7 +1765,7 @@ impl EngineInner {
     /// returning the ghost-arc points that the host renderer draws on
     /// top of the sector.
     pub fn compute_jump_preview(&self, jump_line_idx: u32) -> TrajectoryPreview {
-        let lines = &self.fast_grid.level.jump_lines;
+        let lines = &self.world.fast_grid.level.jump_lines;
         let line = match lines.get(jump_line_idx as usize) {
             Some(l) => l,
             None => return TrajectoryPreview::Invalid,
@@ -1822,7 +1830,7 @@ impl EngineInner {
         pc_id: crate::element::EntityId,
         mouse_map: MapPoint,
     ) -> TrajectoryPreview {
-        let target_3d = self.fast_grid.convert_2d_to_3d(
+        let target_3d = self.world.fast_grid.convert_2d_to_3d(
             mouse_map,
             crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             self.sight_obstacles(assets),
@@ -1850,6 +1858,7 @@ impl EngineInner {
             && let Some(last) = points.last()
         {
             let resolution = self
+                .world
                 .fast_grid
                 .resolve_projectile_landing(last.position.to_map(), self.sight_obstacles(assets));
             if resolution.sector.is_none() || resolution.blocked_by_motion_obstacle {
@@ -2058,13 +2067,13 @@ impl EngineInner {
             return TrajectoryPreview::Invalid;
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid: &self.fast_grid,
+            fast_find_grid: &self.world.fast_grid,
             layer,
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
         let bow_fx_forest_magic_preview = selected_action == crate::profiles::Action::Bow
-            && self.weather.is_forest_level
+            && self.world.weather.is_forest_level
             && target_entity
                 .and_then(|id| self.get_entity(id))
                 .is_some_and(|target| target.is_fx_target());
@@ -2191,7 +2200,7 @@ impl EngineInner {
         //                  obstacles so the cursor lands on the
         //                  upper-floor surface, not z=0 ground.
         let ground_3d = || {
-            let p3d = self.fast_grid.convert_2d_to_3d(
+            let p3d = self.world.fast_grid.convert_2d_to_3d(
                 crate::coordinates::MapPoint::new(target_pos.x, target_pos.y),
                 crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
                 self.sight_obstacles(assets),
@@ -2558,7 +2567,7 @@ impl EngineInner {
                         point
                     }
                     Some(e) => e.element_data().position(),
-                    None => self.fast_grid.convert_2d_to_3d(
+                    None => self.world.fast_grid.convert_2d_to_3d(
                         mouse_map,
                         SIGHTOBSTACLE_MOUSE,
                         self.sight_obstacles(assets),
@@ -2580,7 +2589,7 @@ impl EngineInner {
                 let target_3d = focused
                     .and_then(|id| self.get_entity(id).map(|e| e.element_data().position()))
                     .unwrap_or_else(|| {
-                        self.fast_grid.convert_2d_to_3d(
+                        self.world.fast_grid.convert_2d_to_3d(
                             mouse_map,
                             SIGHTOBSTACLE_PROJECTION_AREA,
                             self.sight_obstacles(assets),
@@ -2637,7 +2646,7 @@ impl EngineInner {
 
         for pc_id in ids {
             // Read-only gates first so we can consult `self` without
-            // holding a mutable borrow of `self.entities`.
+            // holding a mutable borrow of `self.world.entities`.
             let Some(entity) = self.get_entity(pc_id) else {
                 continue;
             };
@@ -2685,7 +2694,7 @@ impl EngineInner {
             // so keep this order or upward/long aim can be evaluated
             // from the previous direction.
             if (dx != 0.0 || dy != 0.0)
-                && let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id)
+                && let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id)
             {
                 pc.element
                     .set_direction_goal(vector_to_sector_0_to_15_iso(dx, dy));
@@ -2745,7 +2754,7 @@ impl EngineInner {
             ) {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(pc_id) else {
+            let Some(entity) = self.world.entities.get_mut(pc_id) else {
                 continue;
             };
             let Entity::Pc(pc) = entity else {
@@ -2773,7 +2782,7 @@ impl EngineInner {
 
         let ids = self.players.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id) else {
+            let Some(entity) = self.world.entities.get_mut(pc_id) else {
                 continue;
             };
             let Entity::Pc(pc) = entity else {
@@ -2822,7 +2831,7 @@ impl EngineInner {
 
         let ids = self.players.seats[0].selection.clone();
         for pc_id in ids {
-            let Some(entity) = self.entities.get_mut(pc_id) else {
+            let Some(entity) = self.world.entities.get_mut(pc_id) else {
                 continue;
             };
             let Entity::Pc(pc) = entity else {

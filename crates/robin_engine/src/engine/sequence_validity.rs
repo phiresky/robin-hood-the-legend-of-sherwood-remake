@@ -424,13 +424,18 @@ impl EngineInner {
                 else {
                     return false;
                 };
-                let Some(src_line) = self.fast_grid.level.jump_lines.get(usize::from(src_idx))
+                let Some(src_line) = self
+                    .world
+                    .fast_grid
+                    .level
+                    .jump_lines
+                    .get(usize::from(src_idx))
                 else {
                     return false;
                 };
                 let jump_height = src_line
                     .associated_line_index
-                    .and_then(|i| self.fast_grid.level.jump_lines.get(i as usize))
+                    .and_then(|i| self.world.fast_grid.level.jump_lines.get(i as usize))
                     .map(|dst| dst.z_a - src_line.z_a)
                     .unwrap_or(0.0);
                 if actor.element_data().posture != Posture::OnShoulders
@@ -990,7 +995,7 @@ impl EngineInner {
         }
         let mut pending: Vec<Pending> = Vec::new();
 
-        for (entity_id, entity) in self.entities.pcs() {
+        for (entity_id, entity) in self.world.entities.pcs() {
             if entity.element.posture.is_dead() {
                 continue;
             }
@@ -1198,7 +1203,7 @@ impl EngineInner {
             None,
         );
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid: &self.fast_grid,
+            fast_find_grid: &self.world.fast_grid,
             layer: actor.element_data().layer(),
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
@@ -1214,6 +1219,7 @@ impl EngineInner {
             return false;
         };
         let resolution = self
+            .world
             .fast_grid
             .resolve_projectile_landing(landing.position.to_map(), self.sight_obstacles(assets));
         resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle

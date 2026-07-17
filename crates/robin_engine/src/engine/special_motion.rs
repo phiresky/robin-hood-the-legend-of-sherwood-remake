@@ -138,7 +138,7 @@ impl EngineInner {
 
         self.apply_door_pass_continue_state(entity_id, action);
 
-        if let Some(entity) = self.entities.get_mut(entity_id) {
+        if let Some(entity) = self.world.entities.get_mut(entity_id) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = match action {
                     OrderType::WalkingWithSword => crate::element::ActionState::MovingSword,

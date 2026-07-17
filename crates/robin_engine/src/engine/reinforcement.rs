@@ -258,6 +258,7 @@ impl EngineInner {
                     );
             let candidate = pin + MapVec::new(dx, dy);
             if self
+                .world
                 .fast_grid
                 .is_reachable_thick(pin, candidate, door_snap.layer_in, hd)
             {
@@ -318,7 +319,7 @@ impl EngineInner {
                 e.is_human(),
             )
         });
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // For DETECTABLE_ENEMY, only push if the NPC's camp/rank
             // arm accepts the target.  Other arms unconditionally push.

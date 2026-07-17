@@ -885,7 +885,7 @@ impl EngineInner {
                         .unwrap_or_default();
                     let any_pc_remains = occupants.iter().any(|&h| {
                         self.entity_id_for_actor_handle(h)
-                            .and_then(|id| self.entities.get(id))
+                            .and_then(|id| self.world.entities.get(id))
                             .is_some_and(|e| e.is_pc())
                     });
                     if !any_pc_remains {
@@ -893,7 +893,7 @@ impl EngineInner {
                             let Some(occ_id) = self.entity_id_for_actor_handle(occ_h) else {
                                 continue;
                             };
-                            let Some(occ) = self.entities.get_mut(occ_id) else {
+                            let Some(occ) = self.world.entities.get_mut(occ_id) else {
                                 continue;
                             };
                             let elem = occ.element_data_mut();
@@ -915,12 +915,14 @@ impl EngineInner {
             } else if gs.map(|s| s.sector_type.is_lift()).unwrap_or(false) {
                 // Leaving a lift — clear occupancy direction.
                 if let Some(grid_idx) = self
+                    .world
                     .fast_grid
                     .level
                     .sector_number_map
                     .get(&crate::sector::SectorNumber::new(cur_sector_num as i16))
                     .copied()
                     && self
+                        .world
                         .fast_grid
                         .level
                         .sectors
@@ -929,7 +931,7 @@ impl EngineInner {
                         .map(|lt| lt.is_wall_or_ladder())
                         .unwrap_or(false)
                 {
-                    let st = self.fast_grid.lift_state_mut(grid_idx as u32);
+                    let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
                     st.occupants = st.occupants.saturating_sub(1);
                     if st.occupants == 0 {
                         st.occupied_upwards = false;
@@ -1086,7 +1088,7 @@ impl EngineInner {
                     let Some(occ_id) = self.entity_id_for_actor_handle(occ_h) else {
                         continue;
                     };
-                    let Some(occ) = self.entities.get_mut(occ_id) else {
+                    let Some(occ) = self.world.entities.get_mut(occ_id) else {
                         continue;
                     };
                     let Some(hd) = occ.human_data() else { continue };
@@ -1378,11 +1380,12 @@ impl EngineInner {
         &self,
         sector_number: crate::sector::SectorNumber,
     ) -> Option<&crate::fast_find_grid::GridSector> {
-        self.fast_grid
+        self.world
+            .fast_grid
             .level
             .sector_number_map
             .get(&sector_number)
-            .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+            .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
     }
 
     /// Check whether a sector forces crouched movement.

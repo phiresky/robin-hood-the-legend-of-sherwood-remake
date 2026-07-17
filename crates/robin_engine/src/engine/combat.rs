@@ -44,9 +44,10 @@ impl EngineInner {
             pos.to_map()
         };
         let resolution = self
+            .world
             .fast_grid
             .resolve_projectile_landing(landing_map, self.sight_obstacles(assets));
-        if let Some(entity) = self.entities.get_mut(projectile_id) {
+        if let Some(entity) = self.world.entities.get_mut(projectile_id) {
             let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 resolution.obstacle_index,
                 assets.static_sight_obstacles.as_slice(),
@@ -231,7 +232,7 @@ impl EngineInner {
         shooter_id: EntityId,
     ) -> Vec<EntityId> {
         let mut detached = Vec::new();
-        for (actor_id, entity) in self.entities.actors_mut() {
+        for (actor_id, entity) in self.world.entities.actors_mut() {
             let actor_id: EntityId = actor_id.into();
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
@@ -268,7 +269,7 @@ impl EngineInner {
         if self.actors_frozen() {
             return spawned_projectiles;
         }
-        let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
+        let events = bow_shot::tick_bow_shots(&mut self.world.entities, &mut self.sequence_manager);
         for result in events.fired {
             let Some(shooter_entity) = self.get_entity(result.shooter) else {
                 tracing::warn!(
@@ -483,12 +484,13 @@ impl EngineInner {
             // When a PC shoots an FX target in a forest level the
             // arrow gets magic-bullet mode, bypassing obstacle collision so
             // it can pass through trees to reach the target.
-            let magic_bullet = target_is_fx_target && shooter_is_pc && self.weather.is_forest_level;
+            let magic_bullet =
+                target_is_fx_target && shooter_is_pc && self.world.weather.is_forest_level;
 
             // ── Compute ballistic trajectory ─────────────────────
             let obstacle_list = self.sight_obstacles(assets);
             let obstacle_check = bow_shot::TrajectoryObstacleCheck {
-                fast_find_grid: &self.fast_grid,
+                fast_find_grid: &self.world.fast_grid,
                 layer,
                 sight_obstacles: obstacle_list,
                 water_zones: Some(&assets.water_zones),
@@ -584,7 +586,7 @@ impl EngineInner {
     /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
     /// or a successful piercing-protection roll).
     fn start_arrow_ricochet(&mut self, arrow_id: EntityId) {
-        let Some(entity) = self.entities.get_mut(arrow_id) else {
+        let Some(entity) = self.world.entities.get_mut(arrow_id) else {
             return;
         };
         let Entity::Projectile(proj) = entity else {
@@ -858,7 +860,7 @@ impl EngineInner {
     /// `pending_refill_bow_ammo` restocks).
     fn decrement_bow_ammo(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
         // Soldier branch — saturating sub on the live NPC field.
-        if let Some(Entity::Soldier(s)) = self.entities.get_mut(shooter_id) {
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(shooter_id) {
             s.npc.number_of_arrows = s.npc.number_of_arrows.saturating_sub(1);
             tracing::debug!(
                 shooter = ?shooter_id,
@@ -1033,7 +1035,7 @@ impl EngineInner {
             None => return,
         };
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
-            fast_find_grid: &self.fast_grid,
+            fast_find_grid: &self.world.fast_grid,
             layer,
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
@@ -1203,7 +1205,7 @@ impl EngineInner {
         let threshold =
             crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
         let ransom_ok = ransom >= threshold;
-        let pcs: Vec<EntityId> = self.entities.pcs().map(|(id, _)| id.into()).collect();
+        let pcs: Vec<EntityId> = self.world.entities.pcs().map(|(id, _)| id.into()).collect();
         for pc_id in pcs {
             // Only PCs that have the Purse action in their profile
             // participate in the gate — Robin/Stuteley don't have Purse
@@ -1486,7 +1488,7 @@ impl EngineInner {
                     Some(result) => {
                         // Partial pickup — write the residual quantity
                         // back to the world bonus and leave it active.
-                        match self.entities.get_mut(bonus_id) {
+                        match self.world.entities.get_mut(bonus_id) {
                             Some(Entity::Bonus(b)) => {
                                 b.object.quantity = result.remainder;
                             }
@@ -1509,7 +1511,7 @@ impl EngineInner {
             // those (active already false), but it still flips
             // `taken` for non-purse projectile pickups (e.g. loose
             // coins or non-burst purses).
-            match self.entities.get_mut(bonus_id) {
+            match self.world.entities.get_mut(bonus_id) {
                 Some(Entity::Bonus(bonus)) => {
                     bonus.object.taken = true;
                     if remove {
@@ -1574,6 +1576,7 @@ impl EngineInner {
         let hand_xy = crate::coordinates::MapPoint::new(hand.x, hand.y);
         let mut bbox = move_box.translated(hand_xy);
         if self
+            .world
             .fast_grid
             .find_authorized_position_toward(&mut bbox, hand_xy, layer)
         {
@@ -1873,11 +1876,14 @@ impl EngineInner {
         self.update_shield_obstacles(assets);
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.dynamic_sight_obstacles,
-            static_active: &self.static_sight_obstacle_active,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         };
-        let results =
-            bow_shot::tick_existing_projectile(&mut self.entities, sight_obstacles, projectile_id);
+        let results = bow_shot::tick_existing_projectile(
+            &mut self.world.entities,
+            sight_obstacles,
+            projectile_id,
+        );
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -1888,10 +1894,10 @@ impl EngineInner {
         self.update_shield_obstacles(assets);
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.dynamic_sight_obstacles,
-            static_active: &self.static_sight_obstacle_active,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         };
-        let results = bow_shot::tick_arrow(&mut self.entities, sight_obstacles, arrow_id);
+        let results = bow_shot::tick_arrow(&mut self.world.entities, sight_obstacles, arrow_id);
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -2053,7 +2059,7 @@ impl EngineInner {
                                 // flying and skip the sound / despawn
                                 // sections below.
                                 if let Some(Entity::Projectile(p)) =
-                                    self.entities.get_mut(result.arrow)
+                                    self.world.entities.get_mut(result.arrow)
                                 {
                                     p.projectile.flying = true;
                                 }
@@ -2194,7 +2200,7 @@ impl EngineInner {
         projectile: EntityId,
         old_pos: crate::coordinates::WorldPoint3D,
     ) {
-        let Some(Entity::Projectile(p)) = self.entities.get_mut(projectile) else {
+        let Some(Entity::Projectile(p)) = self.world.entities.get_mut(projectile) else {
             tracing::warn!(
                 ?projectile,
                 "projectile human-hit rewind skipped: projectile entity missing"
@@ -2327,7 +2333,7 @@ impl EngineInner {
     /// Set the 1500-frame apple-smell counter on a soldier.  Titbit
     /// creation is driven event-free by `sync_apple_smell_titbits`.
     fn set_soldier_apple_smell(&mut self, victim: EntityId) {
-        if let Some(Entity::Soldier(s)) = self.entities.get_mut(victim) {
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim) {
             s.soldier.apple_smell = APPLE_SMELL_DURATION;
         }
     }
@@ -2336,7 +2342,7 @@ impl EngineInner {
     /// The associated titbit is auto-removed by
     /// `sync_apple_smell_titbits` once the counter reaches 0.
     pub(super) fn tick_apple_smell(&mut self) {
-        for (_, s) in self.entities.soldiers_mut() {
+        for (_, s) in self.world.entities.soldiers_mut() {
             if s.soldier.apple_smell > 0 {
                 s.soldier.apple_smell -= 1;
             }
@@ -2352,10 +2358,10 @@ impl EngineInner {
     /// tracking a moving PC between Think stimuli.
     pub(super) fn tick_soldier_track_primary_target(&mut self) {
         use crate::ai::Substate;
-        let soldier_ids: Vec<_> = self.entities.soldier_ids().collect();
+        let soldier_ids: Vec<_> = self.world.entities.soldier_ids().collect();
         for npc_id in soldier_ids {
             let target_handle = {
-                let Some(Entity::Soldier(s)) = self.entities.get(npc_id) else {
+                let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 let Some(ai) = s.npc.ai_brain.base() else {
@@ -2387,7 +2393,7 @@ impl EngineInner {
             let dx = target_pos.x - my_pos.x;
             let dy = target_pos.y - my_pos.y;
             let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 s.element.set_direction_instantly(sector);
             }
         }
@@ -2580,7 +2586,7 @@ impl EngineInner {
         // doesn't need a stored flag because the side-effects fire in
         // the same tick the landing is detected.
         let is_water = matches!(material, crate::sound_cache::Material::Water);
-        if !is_water && let Some(Entity::Projectile(p)) = self.entities.get_mut(arrow) {
+        if !is_water && let Some(Entity::Projectile(p)) = self.world.entities.get_mut(arrow) {
             p.projectile.disappear = true;
         }
 
@@ -2700,13 +2706,13 @@ impl EngineInner {
         };
 
         // Remove previous frame's dynamic shield obstacles.
-        self.dynamic_sight_obstacles.clear();
+        self.world.dynamic_sight_obstacles.clear();
 
         let mut clear_obstacles = Vec::new();
         let mut set_obstacles = Vec::new();
         let mut dynamic_sight_obstacles = Vec::new();
 
-        for (id, entity) in self.entities.humans() {
+        for (id, entity) in self.world.entities.humans() {
             let id: EntityId = id.into();
             if !entity.is_active() || entity.is_dead() {
                 continue;
@@ -2770,7 +2776,7 @@ impl EngineInner {
             set_obstacles.push((id, obstacle));
         }
 
-        self.dynamic_sight_obstacles = dynamic_sight_obstacles;
+        self.world.dynamic_sight_obstacles = dynamic_sight_obstacles;
 
         for id in clear_obstacles {
             if let Some(actor) = self.get_entity_mut(id).and_then(|e| e.actor_data_mut()) {
@@ -2885,7 +2891,7 @@ impl EngineInner {
             return;
         }
         let results = crate::abilities::tick_ability(
-            &mut self.entities,
+            &mut self.world.entities,
             &self.sequence_manager,
             &mut self.next_order_id,
             actor_id,
@@ -2981,7 +2987,7 @@ impl EngineInner {
                         match target_box {
                             Some(b) => {
                                 let mut bbox = b.translated(carrier_pos);
-                                if self.fast_grid.find_authorized_position_toward(
+                                if self.world.fast_grid.find_authorized_position_toward(
                                     &mut bbox,
                                     carrier_pos,
                                     carrier_layer,
@@ -3138,6 +3144,7 @@ impl EngineInner {
                                 Some(b) => {
                                     let mut bbox = b.translated(helper_pos);
                                     if self
+                                        .world
                                         .fast_grid
                                         .find_authorized_position(&mut bbox, helper_layer)
                                     {
@@ -3416,7 +3423,7 @@ impl EngineInner {
                         z: 0.0,
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
-                        fast_find_grid: &self.fast_grid,
+                        fast_find_grid: &self.world.fast_grid,
                         layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
@@ -3468,7 +3475,7 @@ impl EngineInner {
                         z: 0.0,
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
-                        fast_find_grid: &self.fast_grid,
+                        fast_find_grid: &self.world.fast_grid,
                         layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
@@ -3520,7 +3527,7 @@ impl EngineInner {
                         z: 0.0,
                     };
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
-                        fast_find_grid: &self.fast_grid,
+                        fast_find_grid: &self.world.fast_grid,
                         layer,
                         sight_obstacles: self.sight_obstacles(assets),
                         water_zones: Some(&assets.water_zones),
@@ -3834,7 +3841,7 @@ impl EngineInner {
             // Find the shouldered victim — the human whose `carrier`
             // back-pointer references this carrier.  We track the
             // relationship from the victim side only.
-            let victim_id = self.entities.humans().find_map(|(victim_id, v)| {
+            let victim_id = self.world.entities.humans().find_map(|(victim_id, v)| {
                 let victim_id: EntityId = victim_id.into();
                 let hd = v.human_data()?;
                 if hd.carrier == Some(carrier_id) {

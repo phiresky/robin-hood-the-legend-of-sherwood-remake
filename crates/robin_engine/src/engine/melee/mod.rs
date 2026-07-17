@@ -465,7 +465,7 @@ impl EngineInner {
         match self.get_entity(id) {
             Some(entity) => concussion_ctx_full(
                 entity,
-                self.weather.is_forest_level,
+                self.world.weather.is_forest_level,
                 self.mission_domain.campaign.as_ref(),
             ),
             None => ConcussionContext::default(),
@@ -605,7 +605,7 @@ impl EngineInner {
         let is_pc = entity.kind().is_pc();
         let invulnerable = entity.human_data().map(|h| h.invulnerable).unwrap_or(false);
         let max_lp = get_max_life_points(entity);
-        let is_sherwood_pc = self.weather.is_forest_level && is_pc;
+        let is_sherwood_pc = self.world.weather.is_forest_level && is_pc;
         let before = get_life_points(entity);
 
         // Already-dead skip: bypass without invoking the helper so
@@ -709,12 +709,12 @@ impl EngineInner {
             return;
         }
         let waker_camp = waker.camp();
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == waker_id {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             if entity.camp() == waker_camp {
@@ -2212,7 +2212,7 @@ mod tests {
             .unwrap()
             .element_data()
             .position_map();
-        if let Some(entity) = engine.entities.get_mut(flyer)
+        if let Some(entity) = engine.world.entities.get_mut(flyer)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_flight = Some(ActiveFlight {
@@ -2726,7 +2726,7 @@ mod tests {
             .unwrap()
             .element_data()
             .position_map();
-        if let Some(entity) = engine.entities.get_mut(flyer)
+        if let Some(entity) = engine.world.entities.get_mut(flyer)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_flight = Some(ActiveFlight {

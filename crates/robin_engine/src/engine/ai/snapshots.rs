@@ -4,7 +4,7 @@
 //! the top of the AI tick.  The orchestrator passes references to the
 //! resulting Vec/Map into the per-NPC inner loops in [`super::detection`]
 //! and [`super::post_detection`] so those passes can iterate the
-//! snapshots without re-borrowing `self.entities`.
+//! snapshots without re-borrowing `self.world.entities`.
 
 use super::*;
 use crate::coordinates::MapPoint;
@@ -385,9 +385,9 @@ impl EngineInner {
     ) -> Vec<PcSnapshot> {
         use crate::element::Posture;
 
-        let mut pc_snapshots: Vec<PcSnapshot> = Vec::with_capacity(self.pc_ids.len());
-        for &pc_id in &self.pc_ids {
-            let Some(Entity::Pc(pc)) = self.entities.get(pc_id) else {
+        let mut pc_snapshots: Vec<PcSnapshot> = Vec::with_capacity(self.world.pc_ids.len());
+        for &pc_id in &self.world.pc_ids {
+            let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                 continue;
             };
             // `is_able_to_fight` requires alive, but unconscious PCs are
@@ -575,7 +575,7 @@ impl EngineInner {
         // can pick it up.  Stored on the human element so it carries
         // across frames.
         for snap in &pc_snapshots {
-            if let Some(Entity::Pc(pc)) = self.entities.get_mut(snap.id) {
+            if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(snap.id) {
                 pc.actor.last_noise_volume = snap.noise_volume;
             }
         }
@@ -596,15 +596,15 @@ impl EngineInner {
             .and_then(|s| s.game_host())
             .map(|h| h.doors.as_slice())
             .unwrap_or(&[]);
-        let mut forecasts = std::collections::HashMap::with_capacity(self.pc_ids.len());
-        forecasts.extend(self.pc_ids.iter().filter_map(|&pc_id| {
-            let entity = self.entities.get(pc_id)?;
+        let mut forecasts = std::collections::HashMap::with_capacity(self.world.pc_ids.len());
+        forecasts.extend(self.world.pc_ids.iter().filter_map(|&pc_id| {
+            let entity = self.world.entities.get(pc_id)?;
             let input = extract_forecast_input(entity)?;
             let forecast = crate::ai::forecast_destination_for_ia(
                 &input,
                 doors,
-                &self.fast_grid.level.sectors,
-                &self.fast_grid.level.sector_number_map,
+                &self.world.fast_grid.level.sectors,
+                &self.world.fast_grid.level.sector_number_map,
             );
             Some((pc_id.index(), forecast))
         }));
@@ -630,7 +630,7 @@ impl EngineInner {
     ) -> std::collections::BTreeMap<EntityId, u32> {
         let mut primary_target_multiplicity: std::collections::BTreeMap<EntityId, u32> =
             std::collections::BTreeMap::new();
-        for (_, s) in self.entities.soldiers() {
+        for (_, s) in self.world.entities.soldiers() {
             if let Some(ai) = s.npc.ai_brain.base()
                 && ai.primary_target != 0
                 && ai.current_substate.is_any_swordfight()
@@ -651,14 +651,14 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> std::collections::HashMap<EntityId, Option<u32>> {
         let mut npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>> =
-            std::collections::HashMap::with_capacity(self.entities.soldiers().count());
-        for (npc_id, s) in self.entities.soldiers() {
+            std::collections::HashMap::with_capacity(self.world.entities.soldiers().count());
+        for (npc_id, s) in self.world.entities.soldiers() {
             if let Some(ai) = s.npc.ai_brain.enemy()
                 && ai.base.primary_target != 0
             {
                 let jl = crate::engine::melee::is_table_swordfight_needed(
-                    &self.entities,
-                    &self.fast_grid,
+                    &self.world.entities,
+                    &self.world.fast_grid,
                     &assets.profile_manager,
                     npc_id,
                     EntityId::Pc(crate::entity_id::PcId(ai.base.primary_target)),
@@ -673,7 +673,7 @@ impl EngineInner {
     ///
     /// `battle_decisions` iterates all fighters to build the us-list;
     /// the snapshot lets each per-NPC inner loop walk this immutable
-    /// Vec instead of re-borrowing `self.entities`.  Also derives
+    /// Vec instead of re-borrowing `self.world.entities`.  Also derives
     /// `archer_behind_me` from the reverse of `shield_bearer_before_me`
     /// links and writes it back onto each soldier's stored `EnemyAi`
     /// so direct self-reads stay consistent with the snapshot view.
@@ -682,8 +682,8 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> Vec<SoldierSnapshot> {
         let mut soldier_snapshots: Vec<SoldierSnapshot> =
-            Vec::with_capacity(self.entities.soldiers().count());
-        for (npc_id, s) in self.entities.soldiers() {
+            Vec::with_capacity(self.world.entities.soldiers().count());
+        for (npc_id, s) in self.world.entities.soldiers() {
             if !s.element.active || s.human.unconscious {
                 continue;
             }
@@ -878,8 +878,8 @@ impl EngineInner {
                 crate::ai::forecast_destination_for_ia(
                     &input,
                     doors,
-                    &self.fast_grid.level.sectors,
-                    &self.fast_grid.level.sector_number_map,
+                    &self.world.fast_grid.level.sectors,
+                    &self.world.fast_grid.level.sector_number_map,
                 )
                 .position
             };
@@ -983,7 +983,7 @@ impl EngineInner {
             // (outside snapshots) stay fresh.
             for snap in &soldier_snapshots {
                 let npc_id = snap.id;
-                if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                     && let Some(enemy_ai) = s.npc.ai_brain.enemy_mut()
                 {
                     enemy_ai.archer_behind_me = snap.archer_behind_me;
@@ -1000,8 +1000,8 @@ impl EngineInner {
     /// we keep this side-list separate.
     pub(super) fn tick_enemy_ai_build_ko_money_fight_soldiers(&self) -> Vec<(EntityId, Camp)> {
         let mut ko_money_fight_soldiers: Vec<(EntityId, Camp)> =
-            Vec::with_capacity(self.entities.soldiers().count());
-        for (npc_id, s) in self.entities.soldiers() {
+            Vec::with_capacity(self.world.entities.soldiers().count());
+        for (npc_id, s) in self.world.entities.soldiers() {
             if !s.element.active {
                 continue;
             }
@@ -1028,7 +1028,7 @@ impl EngineInner {
     /// Snapshot every potential human + object target referenced by one
     /// NPC's per-type detectable lists at that NPC's creation-order boundary.
     /// The resulting maps let the body / friend / missed-friend / beggar /
-    /// object passes run without re-borrowing `self.entities` for each lookup.
+    /// object passes run without re-borrowing `self.world.entities` for each lookup.
     ///
     /// Captures the targets the per-type detection-refresh loop
     /// dereferences from each detectable list.  Hashing by
@@ -1053,7 +1053,7 @@ impl EngineInner {
     ) {
         use crate::element::DetectableType;
 
-        let entity = self.entities.get(npc_id).unwrap_or_else(|| {
+        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
             panic!(
                 "NPC {} disappeared before its live detection target snapshot",
                 npc_id.index()
@@ -1088,7 +1088,7 @@ impl EngineInner {
         let mut human_targets: std::collections::HashMap<EntityId, HumanTarget> =
             std::collections::HashMap::with_capacity(human_ids.len());
         for id in human_ids {
-            let Some(entity) = self.entities.get(id) else {
+            let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
             let position = entity.element_data().position_map();
@@ -1176,7 +1176,7 @@ impl EngineInner {
         let mut object_targets: std::collections::HashMap<EntityId, ObjectTarget> =
             std::collections::HashMap::with_capacity(object_ids.len());
         for id in object_ids {
-            let Some(entity) = self.entities.get(id) else {
+            let Some(entity) = self.world.entities.get(id) else {
                 continue;
             };
             let position = entity.element_data().position_map();

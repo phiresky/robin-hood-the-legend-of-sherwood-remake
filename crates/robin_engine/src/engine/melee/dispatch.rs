@@ -49,11 +49,11 @@ impl EngineInner {
 
         if strike == SwordStrike::A {
             if can_enter_swordfight_with(
-                &self.entities,
+                &self.world.entities,
                 owner,
                 target,
                 &assets.profile_manager,
-                &self.fast_grid,
+                &self.world.fast_grid,
             ) {
                 self.set_as_new_principal_opponent(assets, owner, target);
                 self.set_as_new_principal_opponent(assets, target, owner);
@@ -64,7 +64,7 @@ impl EngineInner {
         }
 
         // Face the target
-        let dir = direction_to(&self.entities, owner, target);
+        let dir = direction_to(&self.world.entities, owner, target);
         let anim = strike_to_animation(strike);
         // Read target position for the animation order
         let (tx, ty) = self
@@ -77,7 +77,7 @@ impl EngineInner {
             })
             .unwrap_or((0.0, 0.0));
 
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             entity.element_data_mut().set_direction_instantly(dir);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.active_melee = ActiveMelee::new(target, strike, Some(seq_id), elem_idx);
@@ -100,7 +100,7 @@ impl EngineInner {
         order.compute_direction = false;
         let order_id = order.order_id;
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_melee.order_id = Some(order_id);
@@ -146,7 +146,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         {
-            let Some(entity) = self.entities.get_mut(owner) else {
+            let Some(entity) = self.world.entities.get_mut(owner) else {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return;
             };
@@ -192,7 +192,7 @@ impl EngineInner {
             .map(|e| e.element_data().position_map());
 
         let queue_raise = {
-            let Some(entity) = self.entities.get_mut(owner) else {
+            let Some(entity) = self.world.entities.get_mut(owner) else {
                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                 return;
             };
@@ -297,7 +297,8 @@ impl EngineInner {
             return TableFightMove::Ok;
         }
 
-        let table_count = number_of_table_swordfight_opponents(&self.entities, opp, owner_sector);
+        let table_count =
+            number_of_table_swordfight_opponents(&self.world.entities, opp, owner_sector);
         // No existing fighters from our side → no slotting needed; the
         // caller's pre-move (`apply_table_swordfight`) already placed us.
         if table_count == 0 {
@@ -307,13 +308,13 @@ impl EngineInner {
             return TableFightMove::Abort;
         }
 
-        let jump_line = match self.fast_grid.level.jump_lines.get(jl_idx as usize) {
+        let jump_line = match self.world.fast_grid.level.jump_lines.get(jl_idx as usize) {
             Some(jl) => jl.clone(),
             None => return TableFightMove::Abort,
         };
 
         let Some(new_pos) = find_position_for_table_swordfight(
-            &self.entities,
+            &self.world.entities,
             owner_pos,
             owner_sector,
             owner,
@@ -331,7 +332,7 @@ impl EngineInner {
             return TableFightMove::Ok;
         }
 
-        if !self.fast_grid.is_straight_movement_authorized(
+        if !self.world.fast_grid.is_straight_movement_authorized(
             owner_pos,
             new_pos,
             owner_layer,
@@ -382,7 +383,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let queue_lower = if let Some(entity) = self.entities.get_mut(owner)
+        let queue_lower = if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Queue lowering-sword animation if in sword state.
@@ -421,7 +422,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let Some(entity) = self.entities.get(owner) else {
+        let Some(entity) = self.world.entities.get(owner) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -480,7 +481,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        let Some(entity) = self.entities.get(owner) else {
+        let Some(entity) = self.world.entities.get(owner) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -538,7 +539,8 @@ impl EngineInner {
             .map(|e| match &e.data {
                 crate::sequence::SequenceElementData::Interaction { antagonist } => {
                     let pt = antagonist.and_then(|id| {
-                        self.entities
+                        self.world
+                            .entities
                             .get(id)
                             .map(|e| e.element_data().position_map())
                     });
@@ -579,7 +581,7 @@ impl EngineInner {
         // `sync_danger_point_titbits`).
         if let Some(pt3d) = danger_pt3d
             && (pt3d.x != 0.0 || pt3d.y != 0.0 || pt3d.z != 0.0)
-            && let Some(entity) = self.entities.get_mut(owner)
+            && let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(pc) = entity.pc_data_mut()
         {
             pc.shield_danger_point = pt3d;
@@ -662,7 +664,7 @@ impl EngineInner {
         }
 
         let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             // Face toward danger point if available.  Sets the
             // direction *goal*; the per-tick `turn()` (in the
             // order-driven animation handler) interpolates toward it
@@ -721,7 +723,7 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) {
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::HoldingShield;
                 actor.clear_path();
@@ -748,7 +750,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
             && actor.action_state.is_shield()
         {
@@ -792,7 +794,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let mut started = false;
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             // Requires the actor to currently be holding the shield.
@@ -906,6 +908,7 @@ impl EngineInner {
                 // Spy and Tree postures grant arrow invulnerability.
                 if command == Command::ReceiveArrowDamage {
                     let posture = self
+                        .world
                         .entities
                         .get(victim_id)
                         .map(|e| e.element_data().posture)

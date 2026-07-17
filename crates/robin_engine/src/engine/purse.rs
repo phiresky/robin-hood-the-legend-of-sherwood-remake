@@ -60,8 +60,8 @@ impl EngineInner {
     #[cfg(test)]
     pub(super) fn tick_purses_and_coins(&mut self, assets: &crate::engine::LevelAssets) {
         let mut slot = 0;
-        while slot < self.entities.len() {
-            if let Some(id) = self.entities.id_at_legacy_slot(slot as u32) {
+        while slot < self.world.entities.len() {
+            if let Some(id) = self.world.entities.id_at_legacy_slot(slot as u32) {
                 self.tick_purse_or_coin(assets, id);
             }
             slot += 1;
@@ -91,7 +91,7 @@ impl EngineInner {
             CoinLanded { pos: WorldPoint3D, layer: u16 },
         }
         let impact = {
-            let Some(Entity::Projectile(proj)) = self.entities.get_mut(id) else {
+            let Some(Entity::Projectile(proj)) = self.world.entities.get_mut(id) else {
                 return;
             };
             if !proj.element.active {
@@ -124,7 +124,7 @@ impl EngineInner {
 
         // ── Phase 2: handle impacts ────────────────────────────────
         //
-        // The mutable-borrow on `self.entities` is released; we can now
+        // The mutable-borrow on `self.world.entities` is released; we can now
         // call back into `&mut self` for noise broadcasts, detectable
         // dispatch, and child-coin spawning.
         if let Some(kind) = impact {
@@ -179,7 +179,7 @@ impl EngineInner {
                         .unwrap_or(false)
                 })
                 .collect();
-            if let Some(Entity::Projectile(purse)) = self.entities.get_mut(id) {
+            if let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(id) {
                 purse.projectile.purse.child_coins = alive;
             }
         }
@@ -222,6 +222,7 @@ impl EngineInner {
         };
         let mut box_at_pos = shooter_move_box.translated(MapPoint::new(impact_pos.x, impact_pos.y));
         if self
+            .world
             .fast_grid
             .find_authorized_position(&mut box_at_pos, layer)
         {
@@ -265,7 +266,7 @@ impl EngineInner {
         let material = assets
             .material_sectors
             .material_at_with_obstacle(landing_obstacle, impact_map);
-        if let Some(Entity::Projectile(p)) = self.entities.get_mut(purse_id) {
+        if let Some(Entity::Projectile(p)) = self.world.entities.get_mut(purse_id) {
             p.element.set_material(material);
         }
 
@@ -323,7 +324,7 @@ impl EngineInner {
                     x: source_pos.x + scatter_x,
                     y: source_pos.y + scatter_y,
                 };
-                if self.fast_grid.is_straight_movement_authorized(
+                if self.world.fast_grid.is_straight_movement_authorized(
                     MapPoint::new(corrected_2d.x, corrected_2d.y),
                     candidate,
                     layer,
@@ -348,12 +349,17 @@ impl EngineInner {
                 self.position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y);
 
             let goal_grid_pt = crate::coordinates::MapPoint::new(goal_2d.x, goal_2d.y);
-            let target_sector = match self.fast_grid.get_sector(goal_grid_pt, goal_grid_pt, layer) {
-                SectorHit::Found { sector_number, .. } => u16::try_from(sector_number.get())
-                    .ok()
-                    .and_then(crate::position_interface::SectorHandle::new),
-                SectorHit::Blocked | SectorHit::None => None,
-            };
+            let target_sector =
+                match self
+                    .world
+                    .fast_grid
+                    .get_sector(goal_grid_pt, goal_grid_pt, layer)
+                {
+                    SectorHit::Found { sector_number, .. } => u16::try_from(sector_number.get())
+                        .ok()
+                        .and_then(crate::position_interface::SectorHandle::new),
+                    SectorHit::Blocked | SectorHit::None => None,
+                };
             let coin = bow_shot::spawn_coin(
                 Some(purse_id),
                 source_pos,
@@ -379,7 +385,7 @@ impl EngineInner {
         // `ObjectBursting` animation row and becomes non-pickable; the
         // element itself stays alive (the empty purse sprite remains
         // as decoration).
-        if let Some(Entity::Projectile(purse)) = self.entities.get_mut(purse_id) {
+        if let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(purse_id) {
             debug_assert!(
                 purse.projectile.purse.number_of_coins >= NUMBER_OF_COINS_IN_PURSE,
                 "purse {purse_id:?} should hold ≥ {NUMBER_OF_COINS_IN_PURSE} coins at burst time, \
@@ -414,7 +420,7 @@ impl EngineInner {
     /// `EventSeesObject` fires.  `layer` is the layer the trajectory
     /// finished at (used as fallback when no goal layer was recorded).
     fn coin_landed(&mut self, coin_id: EntityId, impact_pos: WorldPoint3D, layer: u16) {
-        if let Some(Entity::Projectile(coin)) = self.entities.get_mut(coin_id) {
+        if let Some(Entity::Projectile(coin)) = self.world.entities.get_mut(coin_id) {
             // Snap to the resolved goal stored at spawn.  Falls back to
             // the trajectory-end layer when the scatter-time
             // accessibility search couldn't pin a goal sector (no
@@ -463,7 +469,7 @@ impl EngineInner {
     /// case 0 is returned and no state changes.
     pub(super) fn take_purse(&mut self, purse_id: EntityId) -> u32 {
         // Snapshot the child handles up front so we can deactivate them
-        // without holding nested borrows on `self.entities`.
+        // without holding nested borrows on `self.world.entities`.
         let children: Vec<EntityId> = match self.get_entity(purse_id) {
             Some(Entity::Projectile(p))
                 if p.object.object_type == crate::element::ObjectType::Purse =>
@@ -474,7 +480,7 @@ impl EngineInner {
         };
         let mut collected: u32 = 0;
         for cid in children {
-            if let Some(Entity::Projectile(c)) = self.entities.get_mut(cid)
+            if let Some(Entity::Projectile(c)) = self.world.entities.get_mut(cid)
                 && c.element.active
                 && !c.object.taken
             {
@@ -483,7 +489,7 @@ impl EngineInner {
                 c.element.active = false;
             }
         }
-        if let Some(Entity::Projectile(purse)) = self.entities.get_mut(purse_id) {
+        if let Some(Entity::Projectile(purse)) = self.world.entities.get_mut(purse_id) {
             purse.projectile.purse.child_coins.clear();
             // Flip the bonus taken flag so future click-forwarding from
             // a stray coin skips the purse path.
@@ -716,7 +722,7 @@ mod tests {
 
         // Deactivate every child coin (simulating pickup-and-removal).
         for &cid in &coin_ids {
-            if let Some(Entity::Projectile(c)) = engine.entities.get_mut(cid) {
+            if let Some(Entity::Projectile(c)) = engine.world.entities.get_mut(cid) {
                 c.element.active = false;
             }
         }

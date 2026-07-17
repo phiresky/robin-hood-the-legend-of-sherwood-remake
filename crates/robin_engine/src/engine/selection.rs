@@ -63,12 +63,12 @@ impl EngineInner {
             let pos = pc.element.position_map();
             let layer = pc.element.layer();
             let pt = crate::coordinates::MapPoint::new(pos.x, pos.y);
-            let hit = self.fast_grid.get_sector(pt, pt, layer);
+            let hit = self.world.fast_grid.get_sector(pt, pt, layer);
             matches!(
                 hit,
                 crate::fast_find_grid::SectorHit::Found { sector_idx, .. }
                     if self
-                        .fast_grid
+                        .world.fast_grid
                         .level
                         .sectors
                         .get(usize::from(sector_idx))
@@ -202,7 +202,7 @@ impl EngineInner {
     /// everyone else preserves `pc_ids` order.
     pub(crate) fn select_all_pcs(&mut self, assets: &LevelAssets, seat: usize) {
         self.players.seats[seat].selection.clear();
-        let pc_ids: Vec<EntityId> = self.pc_ids.clone();
+        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for &pc_id in &pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
                 continue;
@@ -311,7 +311,7 @@ impl EngineInner {
         let profiles = assets.profile_manager.clone();
 
         let mut best: Option<(EntityId, u16)> = None;
-        for &pc_id in &self.pc_ids {
+        for &pc_id in &self.world.pc_ids {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
                 continue;
             };
@@ -369,7 +369,7 @@ impl EngineInner {
         //   wait
         // The hero-speak fires *before* the life write — keep that order so
         // any speech queueing observes the pre-write state.
-        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
+        if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
             pc.human.concussion_of_the_brain = 0;
             pc.human.unconscious = false;
             pc.element.set_posture(crate::element::Posture::Upright);
@@ -380,7 +380,7 @@ impl EngineInner {
         // Route the life write through `combat::set_life_points` so the
         // clamp + invulnerable + sherwood guards live in one place, even for
         // the heal path. The widget side relies on the per-frame HUD refresh.
-        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
+        if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
             crate::combat::set_life_points(
                 &mut pc.pc.life_points,
                 50,
@@ -453,7 +453,8 @@ impl EngineInner {
     /// is cleared on display and set on hide (e.g. on `DisableCharacter`
     /// outside Sherwood and on the reinforcement spawn for the dead PC).
     pub fn displayed_pc_ids(&self) -> Vec<EntityId> {
-        self.pc_ids
+        self.world
+            .pc_ids
             .iter()
             .copied()
             .filter(|&id| self.is_pc_interface_displayed(id))
@@ -646,8 +647,8 @@ impl EngineInner {
                 }
             Action::Shield | Action::BigShield => {
                 // Reset shield protection for the fresh activation.
-                self.shield.is_protected = true;
-                self.shield.protected_pc = None;
+                self.world.shield.is_protected = true;
+                self.world.shield.protected_pc = None;
             }
             _ => {}
         }
@@ -695,13 +696,14 @@ impl EngineInner {
             let Some(sector_handle) = entity.element_data().sector() else {
                 return false;
             };
-            self.fast_grid
+            self.world
+                .fast_grid
                 .level
                 .sector_number_map
                 .get(&crate::sector::SectorNumber::new(
                     u16::from(sector_handle) as i16
                 ))
-                .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                 .map(|gs| gs.sector_type.is_building())
                 .unwrap_or(false)
         };
@@ -1019,7 +1021,7 @@ impl EngineInner {
             self.players.seats[seat].selection.clear();
         }
 
-        let pc_ids: Vec<EntityId> = self.pc_ids.clone();
+        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         let mut newly_selected: Vec<EntityId> = Vec::new();
         for &pc_id in &pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
@@ -1073,7 +1075,7 @@ impl EngineInner {
             crate::coordinates::ScreenPoint::new(p1.x.max(p2.x), p1.y.max(p2.y)),
         );
 
-        let pc_ids: Vec<EntityId> = self.pc_ids.clone();
+        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for &pc_id in &pc_ids {
             if !self.players.seats[seat].selection.contains(&pc_id) {
                 continue;
@@ -1154,7 +1156,7 @@ impl EngineInner {
     ///   to `hulk_direction` (true = fade out, false = fade in).
     /// - When `running_hulk` reaches 0 → reset direction/speed defaults.
     pub(crate) fn refresh_pc_selection_hulk(&mut self) {
-        let pc_ids: Vec<EntityId> = self.pc_ids.clone();
+        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids {
             let is_drawn_as_selected = self.players.seats[0].selection.contains(&pc_id);
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
@@ -1206,7 +1208,7 @@ impl EngineInner {
         if self.mission_domain.campaign.is_none() {
             return;
         }
-        for &pc_id in &self.pc_ids {
+        for &pc_id in &self.world.pc_ids {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
                 continue;
             };
@@ -1253,13 +1255,13 @@ impl EngineInner {
     /// keyboard shortcuts (1-5), and [`Self::select_by_portrait_index`] all
     /// use the priority-sorted order.
     pub(crate) fn sort_pc_ids_by_priority(&mut self, assets: &LevelAssets) {
-        let entities = &self.entities;
-        self.pc_ids.sort_by(|&a, &b| {
+        let entities = &self.world.entities;
+        self.world.pc_ids.sort_by(|&a, &b| {
             let pri_a = Self::pc_priority_static(entities, &assets.profile_manager, a);
             let pri_b = Self::pc_priority_static(entities, &assets.profile_manager, b);
             pri_b.cmp(&pri_a) // descending
         });
-        tracing::debug!("Sorted pc_ids by priority: {:?}", self.pc_ids);
+        tracing::debug!("Sorted pc_ids by priority: {:?}", self.world.pc_ids);
     }
 
     /// Look up the profile priority for a PC entity without &self.
@@ -1285,7 +1287,7 @@ impl EngineInner {
     /// sprite at the current position) is rendered in
     /// `crates/robin_rs/src/game_render.rs::render_entities_gpu`.
     pub fn tick_pc_teleport_fades(&mut self) {
-        let pc_ids: Vec<EntityId> = self.pc_ids.clone();
+        let pc_ids: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
                 continue;
