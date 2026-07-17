@@ -4164,6 +4164,134 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
 }
 
 #[test]
+fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
+    use crate::ai::{AiState, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
+
+    fn observe(far_first: bool) -> (Vec<u32>, Vec<bool>, Vec<u32>) {
+        let mut engine = EngineInner::new();
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..ElementData::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+        // A learned-through disguise remains in the Enemy bucket and must
+        // emit ordinary EVENT_VIEW, never EVENT_SEES_BEGGAR.
+        let far_pc_id = engine.add_entity(make_test_pc(crate::element::Posture::SimulatingBeggar));
+        let near_pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(soldier_id)
+            .expect("multi-view soldier exists")
+        else {
+            panic!("multi-view observer changed kind")
+        };
+        soldier.element.active = true;
+        soldier
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+        soldier.element.set_position_map(MapPoint::new(0.0, 0.0));
+        soldier.element.set_direction_instantly(4);
+        soldier.npc.life_points = 100;
+        soldier.npc.view_direction = [1.0, 0.0];
+        soldier.npc.view_radius = 300;
+        soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        soldier.npc.eye_status = crate::element::EyeStatus::Stare;
+
+        for (pc_id, x) in [(far_pc_id, 120.0), (near_pc_id, 80.0)] {
+            let Entity::Pc(pc) = engine.get_entity_mut(pc_id).expect("multi-view PC exists") else {
+                panic!("multi-view target changed kind")
+            };
+            pc.element.active = true;
+            pc.element
+                .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+            pc.element.set_position_map(MapPoint::new(x, 0.0));
+            pc.pc.life_points = 100;
+        }
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .get_mut(0)
+            .expect("fixture installs the PC character profile");
+        profile.detection_speed_in_city = 100;
+        profile.detection_speed_in_forest = 100;
+
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(soldier_id)
+            .expect("multi-view soldier exists before detection")
+        else {
+            panic!("multi-view observer changed kind")
+        };
+        let ai = soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("multi-view soldier has enemy AI");
+        ai.base.me = soldier_id.index();
+        ai.base.current_state = AiState::Default;
+        ai.base.current_substate = Substate::DefaultOnPost;
+        ai.current_task_priority = task_priority::NONE;
+        ai.base.got_the_beggar_trick = true;
+        ai.list_them.clear();
+
+        let ordered_targets = if far_first {
+            [far_pc_id, near_pc_id]
+        } else {
+            [near_pc_id, far_pc_id]
+        };
+        let expected_order: Vec<u32> = ordered_targets.iter().map(|id| id.index()).collect();
+        soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+        soldier.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+        for target_id in ordered_targets {
+            soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+                element: Some(target_id),
+                detectable_type: DetectableType::Enemy,
+                shadow_seen_last_frame: true,
+                ..Detectable::default()
+            });
+        }
+
+        crate::sim_rng::with_seed(0xA013_0B1E, || engine.tick_enemy_ai(&assets));
+
+        let soldier = engine
+            .get_entity(soldier_id)
+            .and_then(Entity::npc_data)
+            .expect("multi-view soldier remains an NPC");
+        let latches = soldier.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .map(|det| det.seen_last_frame)
+            .collect();
+        let ai = engine
+            .get_entity(soldier_id)
+            .and_then(Entity::enemy_ai)
+            .expect("multi-view soldier retains enemy AI");
+        assert_eq!(ai.base.current_state, AiState::Attacking);
+        assert_eq!(ai.base.current_substate, Substate::AttackingReactiontime);
+        assert_eq!(
+            ai.base.primary_target, expected_order[0],
+            "the first detectable's VIEW must win even when a later target is nearer"
+        );
+        (ai.list_them.clone(), latches, expected_order)
+    }
+
+    let (far_then_near, far_then_near_latches, far_then_near_expected) = observe(true);
+    let (near_then_far, near_then_far_latches, near_then_far_expected) = observe(false);
+
+    assert_eq!(far_then_near_latches, vec![true, true]);
+    assert_eq!(near_then_far_latches, vec![true, true]);
+    assert_eq!(far_then_near, far_then_near_expected);
+    assert_eq!(near_then_far, near_then_far_expected);
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {

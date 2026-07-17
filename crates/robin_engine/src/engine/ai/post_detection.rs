@@ -8,7 +8,8 @@ use super::*;
 /// Full-fidelity detection input attached to the contiguous Enemy stimulus
 /// block queued by `RefreshDetection`. The absolute queue start preserves FIFO
 /// order while every VIEW / OUTOFVIEW entry shares the final detection-built
-/// tactical snapshot, matching the original post-scan Think drain.
+/// aggregate. Target-specific primary fields remain a documented parity gap at
+/// the producer until the per-stimulus input is split from this common data.
 pub(super) struct PendingEnemyDetectionTickData {
     pub(super) queue_start: usize,
     pub(super) stimuli: Vec<crate::ai::Stimulus>,
@@ -430,9 +431,9 @@ impl EngineInner {
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
             };
-            // The Enemy VIEW / OUTOFVIEW block carries the full input assembled
-            // by the detection scan. Every other deferred stimulus uses the
-            // live, narrower fallback builder.
+            // The Enemy VIEW / OUTOFVIEW block carries the shared aggregate
+            // assembled by the detection scan. Every other deferred stimulus
+            // uses the live, narrower fallback builder.
             let tick_data = take_enemy_detection_tick_data(
                 queue_index,
                 &stimulus,

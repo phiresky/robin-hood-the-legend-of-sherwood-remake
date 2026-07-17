@@ -1012,11 +1012,11 @@ impl EngineInner {
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): Royalist detection remains a later global phase; every
+    // TODO(parity): Royalist detection remains a later global phase. Every
     // stimulus in one NPC's FIFO shares the same boundary scratch instead of
-    // rebuilding context after each preceding Think mutation; and the Enemy
-    // commit still emits only the selected best target's EVENT_VIEW rather
-    // than one rising VIEW for every visible detectable.
+    // rebuilding context after each preceding Think mutation, and VIEW entries
+    // still need their target-specific primary forecast/animation fields
+    // rebound on top of the shared final-detection aggregate.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
@@ -1236,7 +1236,6 @@ impl EngineInner {
         // `transitions` afterwards without conflict.
         let mut commit: Option<(EntityId, MapPoint, bool)> = None;
         let mut think_tick_data: Option<AiPerTickData> = None;
-        let mut think_stimulus: Option<crate::ai::Stimulus> = None;
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         {
             // Build the obstacle view from individual disjoint
@@ -2403,134 +2402,6 @@ impl EngineInner {
             if threshold_hit || instant_hit {
                 // Reset suspects on commit.
                 *suspects = 0;
-
-                if let Some((target_id, target_pos, _)) = best_target {
-                    // ── Beggar detection routing ──────────────
-                    // When the detected PC is disguised as a
-                    // beggar, fire `EVENT_SEES_BEGGAR` instead of
-                    // `EVENT_VIEW` — but only if the NPC's IQ
-                    // >= CHECK_BEGGAR_MIN_IQ (30). Low-IQ soldiers
-                    // ignore beggars entirely.
-                    let target_posture = pc_snapshots
-                        .iter()
-                        .find(|pc| pc.id == target_id)
-                        .map(|pc| pc.posture)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "committed detection target {} is absent from the per-tick PC view",
-                                target_id.index()
-                            )
-                        });
-
-                    let suppress_beggar_view = if target_posture == Posture::SimulatingBeggar {
-                        // Original: `RHartificialmalignity.cpp::GetIQ` reads
-                        // `uwIntelligence` and applies the enemy-IQ difficulty
-                        // modifier. Fighting ability is a different capacity.
-                        let intelligence = assets
-                            .profile_manager
-                            .get_soldier(soldier.soldier.soldier_profile_index)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "detecting soldier {} requires missing soldier profile {}",
-                                    npc_id.index(),
-                                    u32::from(soldier.soldier.soldier_profile_index)
-                                )
-                            })
-                            .intelligence;
-                        let npc_iq = crate::player_profile::DifficultyLevel::current()
-                            .modify_capacity(
-                                intelligence,
-                                crate::player_profile::difficulty_params::EASY_ENEMY_IQ,
-                                crate::player_profile::difficulty_params::HARD_ENEMY_IQ,
-                                100,
-                            ) as i32;
-                        npc_iq < crate::stealth::CHECK_BEGGAR_MIN_IQ
-                    } else {
-                        false
-                    };
-
-                    // Only dispatch EVENT_VIEW on the rising edge of
-                    // `seen_last_frame` for THIS detectable.  Without
-                    // this gate, EVENT_VIEW re-fires every commit
-                    // tick while the target stays visible, producing
-                    // spurious state transitions.  MUST fall through
-                    // to the latch-toggle block below so falling-edge
-                    // detection still runs when we bypass dispatch —
-                    // using `continue` here would skip the toggle.
-                    //
-                    // Rising-edge semantics: `seen_last_frame == false`
-                    // at this point means the target was either never
-                    // visible before or lost visibility at least one
-                    // tick ago (the falling-edge arm clears the latch
-                    // on any `!seen_now && seen_last_frame` commit or
-                    // non-commit frame).  So a target re-detected
-                    // after one tick of invisibility does fire
-                    // EVENT_VIEW again — the `unwrap_or(true)` below
-                    // also covers first-ever detection where the
-                    // detectable entry was just inserted.
-                    let rising_edge = soldier.npc.detectable_lists[enemy_idx]
-                        .iter()
-                        .find(|d| d.element == Some(target_id))
-                        .map(|d| !d.seen_last_frame)
-                        .unwrap_or(true);
-
-                    let newly_alerted = soldier.npc.ai_state() != AiState::Attacking;
-                    tracing::trace!(
-                        npc = ?npc_id,
-                        target = ?target_id,
-                        ai_current_state = ?soldier.npc.ai_brain.base().map(|a| a.current_state),
-                        ai_current_substate = ?soldier.npc.ai_brain.base().map(|a| a.current_substate),
-                        newly_alerted,
-                        rising_edge,
-                        "detection commit check"
-                    );
-                    if rising_edge && !suppress_beggar_view {
-                        soldier.npc.alerted = true;
-
-                        // Dispatch through the Think state machine
-                        // instead of setting state directly.  For
-                        // beggar targets, fire EventSeesBeggar so
-                        // the AI enters the approach-and-identify
-                        // substate chain instead of immediately
-                        // attacking.
-                        let stimulus_type = if target_posture == Posture::SimulatingBeggar {
-                            crate::ai::StimulusType::EventSeesBeggar
-                        } else {
-                            crate::ai::StimulusType::EventView
-                        };
-
-                        if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
-                            let stimulus =
-                                crate::ai::Stimulus::with_human(stimulus_type, target_id.index());
-                            enemy_ai.base.seek_position = crate::ai::Position {
-                                x: target_pos.x,
-                                y: target_pos.y,
-                                sector: None,
-                                level: 0,
-                            };
-                            // Retain until the soldier borrow is released.
-                            // The outer per-NPC coordinator appends it after
-                            // any predetection shadow stimulus, scans the
-                            // remaining detectable buckets, then flushes the
-                            // complete FIFO against a live boundary view.
-                            think_stimulus = Some(stimulus);
-                        }
-
-                        // Always set music alert to Red on a fresh
-                        // detection — the alert manager bumps it.
-                        // Route via the soldier-side wrapper so the
-                        // view field is updated too (Red is
-                        // unaffected by the forced-attentive
-                        // override but we go through the same path
-                        // for consistency).
-                        if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
-                            enemy_ai.set_alert_status(crate::ai::AlertLevel::Red);
-                        } else if let Some(ai) = soldier.npc.ai_brain.base_mut() {
-                            ai.set_alert_status(crate::ai::AlertLevel::Red);
-                        }
-                        commit = Some((target_id, target_pos, newly_alerted));
-                    }
-                }
             } else if !any_seen_now
                 && *suspects > 0
                 && universal_frame.is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
@@ -2551,38 +2422,60 @@ impl EngineInner {
             }
 
             // Walk every detectable and edge-detect `seen_last_frame`.
-            //   - Rising edge (detected && !latched) fires EVENT_VIEW
-            //     (handled above for `best_target`; here we only
-            //     toggle the latch so the question-mark emoticon
-            //     accumulator stops climbing once the commit has
-            //     fired).
+            //   - Rising edge (detected && !latched) fires EVENT_VIEW for
+            //     every Enemy detectable in list order.
             //   - Falling edge (!detected && latched) fires
             //     EVENT_OUTOFVIEW and clears the latch.
             // On commit frames both edges run; on non-commit frames
             // we still run the falling-edge check so NPCs react to
             // lost sight the instant it happens.
             let committed = threshold_hit || instant_hit;
+            let newly_alerted = soldier.npc.ai_state() != AiState::Attacking;
+            // Keep Rust's existing best-target transition record for the
+            // later presentation/ally-alert phase. Behavioral EVENT_VIEW
+            // dispatch below follows original detectable-list order instead.
+            let selected_rising_commit = committed.then_some(best_target).flatten().and_then(
+                |(target_id, target_pos, _)| {
+                    soldier.npc.detectable_lists[enemy_idx]
+                        .iter()
+                        .find(|det| det.element == Some(target_id))
+                        .is_some_and(|det| det.seen_now && !det.seen_last_frame)
+                        .then_some((target_id, target_pos))
+                },
+            );
+            let mut queued_rising_view = false;
             for det in soldier.npc.detectable_lists[enemy_idx].iter_mut() {
                 let was_seen = det.seen_last_frame;
                 let is_seen = det.seen_now;
                 let falling_edge = !is_seen && was_seen;
                 // HandleDetection's second pass intersperses rising VIEW and
-                // falling OUTOFVIEW by detectable-list order. The current
-                // port still selects one best rising VIEW, so insert that one
-                // at its target's exact position among every falling edge.
-                if committed
-                    && is_seen
-                    && !was_seen
-                    && let Some(target_id) = det.element
-                    && think_stimulus.as_ref().is_some_and(|stimulus| {
-                        matches!(stimulus.info, crate::ai::StimulusInfo::Human(handle) if handle == target_id.index())
-                    })
-                {
-                    enemy_stimuli.push(
-                        think_stimulus
-                            .take()
-                            .expect("matching Enemy VIEW stimulus disappeared"),
-                    );
+                // falling OUTOFVIEW by detectable-list order.
+                if committed && is_seen && !was_seen {
+                    let target_id = det.element.unwrap_or_else(|| {
+                        panic!(
+                            "rising Enemy detectable for NPC {} has no target",
+                            npc_id.index()
+                        )
+                    });
+                    let _target = pc_snapshots
+                        .iter()
+                        .find(|pc| pc.id == target_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "rising detection target {} is absent from the per-tick PC view",
+                                target_id.index()
+                            )
+                        });
+
+                    // Enemy-bucket detection always emits EVENT_VIEW. A
+                    // disguised PC that has not been seen through has zero
+                    // visibility earlier in the scan; EVENT_SEES_BEGGAR is
+                    // exclusive to the separate Beggar detectable bucket.
+                    enemy_stimuli.push(crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventView,
+                        target_id.index(),
+                    ));
+                    queued_rising_view = true;
                 }
                 if falling_edge && let Some(target_id) = det.element {
                     enemy_stimuli.push(crate::ai::Stimulus::with_human(
@@ -2607,10 +2500,49 @@ impl EngineInner {
                     "latch update"
                 );
             }
-            assert!(
-                think_stimulus.is_none(),
-                "selected Enemy VIEW stimulus did not match its detectable-list entry"
-            );
+
+            if queued_rising_view {
+                soldier.npc.alerted = true;
+                if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
+                    enemy_ai.set_alert_status(crate::ai::AlertLevel::Red);
+                } else if let Some(ai) = soldier.npc.ai_brain.base_mut() {
+                    ai.set_alert_status(crate::ai::AlertLevel::Red);
+                }
+            }
+
+            if let Some((target_id, target_pos)) = selected_rising_commit {
+                tracing::trace!(
+                    npc = ?npc_id,
+                    target = ?target_id,
+                    ai_current_state = ?soldier.npc.ai_brain.base().map(|a| a.current_state),
+                    ai_current_substate = ?soldier.npc.ai_brain.base().map(|a| a.current_substate),
+                    newly_alerted,
+                    "detection commit check"
+                );
+                if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
+                    enemy_ai.base.seek_position = crate::ai::Position {
+                        x: target_pos.x,
+                        y: target_pos.y,
+                        sector: None,
+                        level: 0,
+                    };
+                }
+                commit = Some((target_id, target_pos, newly_alerted));
+            }
+
+            // The detection-built tick input is assembled before the latch
+            // walk to avoid conflicting AI/list borrows. Refresh its latch
+            // snapshot now so every queued Think observes the final state
+            // produced by HandleDetection, including every rising VIEW.
+            if let Some(tick_data) = think_tick_data.as_mut() {
+                tick_data.seen_last_frame_enemies.clear();
+                tick_data.seen_last_frame_enemies.extend(
+                    soldier.npc.detectable_lists[enemy_idx]
+                        .iter()
+                        .filter(|det| det.seen_last_frame)
+                        .filter_map(|det| det.element.map(EntityId::index)),
+                );
+            }
         }
 
         if let Some((target_id, target_pos, newly_alerted)) = commit {

@@ -1213,7 +1213,12 @@ impl EnemyAi {
                                 | Substate::AttackingOverviewLookRight
                                 | Substate::AttackingTooProudToAttackOverview => {
                                     // Just track the extra enemy.
-                                    self.list_them.push(enemy);
+                                    // Original mlistThem is SBListUnique: the
+                                    // preceding VIEW may already have rebuilt
+                                    // this target into the final visible set.
+                                    if !self.list_them.contains(&enemy) {
+                                        self.list_them.push(enemy);
+                                    }
                                 }
 
                                 Substate::AttackingArcherWaitOnArcheryPath
