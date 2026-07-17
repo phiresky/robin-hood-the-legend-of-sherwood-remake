@@ -1019,6 +1019,32 @@ pub(super) type LoadedLevelAndSpriteBank = (
     u64,
 );
 
+fn initial_rng_seed(
+    args: &crate::main_entry::CliArgs,
+    multiplayer_seed: Option<u64>,
+) -> Result<u64, String> {
+    if let Some(data) = args.replay_data.as_ref() {
+        crate::replay_format::validate_replay_data(data)
+            .map_err(|e| format!("failed to validate requested replay data: {e}"))?;
+        Ok(data.header.rng_seed)
+    } else if let Some(spec) = args.replay.as_deref() {
+        crate::replay_format::load_replay_spec(spec)
+            .map(|data| data.header.rng_seed)
+            .map_err(|e| format!("failed to load requested replay `{spec}`: {e}"))
+    } else {
+        Ok(multiplayer_seed.unwrap_or(0))
+    }
+}
+
+fn construct_with_initial_rng_seed<T>(
+    args: &crate::main_entry::CliArgs,
+    multiplayer_seed: Option<u64>,
+    construct: impl FnOnce(u64) -> Result<T, String>,
+) -> Result<(T, u64), String> {
+    let rng_seed = initial_rng_seed(args, multiplayer_seed)?;
+    construct(rng_seed).map(|value| (value, rng_seed))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn load_level_and_sprite_bank(
     mut event_pump: Option<&mut crate::window::GameWindow>,
@@ -1229,24 +1255,6 @@ pub(super) fn load_level_and_sprite_bank(
     // header seed (so the recording's recorded actions reproduce its
     // recorded state) > the multiplayer-negotiated `mp_mission_seed`
     // > the hardcoded single-player default of 0.
-    // PARITY TODO: a requested replay whose header cannot be decoded must
-    // abort before Engine construction. Falling back after that error invents
-    // a seed and can silently replay a different timeline.
-    let rng_seed = if let Some(data) = args.replay_data.as_ref() {
-        data.header.rng_seed
-    } else if let Some(spec) = args.replay.as_deref() {
-        match crate::replay_format::load_replay_spec(spec) {
-            Ok(data) => data.header.rng_seed,
-            Err(e) => {
-                tracing::warn!(
-                    "could not preload replay header to extract seed ({e}); falling back to mp_mission_seed / 0"
-                );
-                host.mp_mission_seed.unwrap_or(0)
-            }
-        }
-    } else {
-        host.mp_mission_seed.unwrap_or(0)
-    };
     let goldeneye_initial = args.goldeneye || args.global_options.golden_eye;
     if let Some(mm) = minimap_widget {
         host.engine_display.setup_minimap_widget(
@@ -1258,26 +1266,27 @@ pub(super) fn load_level_and_sprite_bank(
         );
     }
 
-    let engine = {
-        let mut progress = |delta: f32| {
-            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-        };
-        Engine::new(engine_api::EngineArgs {
-            campaign,
-            level: engine_api::LevelLoadArgs {
-                assets: &mut assets,
-                level_directory: &level_directory,
-                progress: &mut progress,
-                loaded,
-                bg_pixel_dims,
-            },
-            ground_mark_sprite,
-            titbit_row_frame_counts,
-            rng_seed,
-            goldeneye: goldeneye_initial,
-        })
-        .map_err(|e| format!("Level init failed: {e}"))?
-    };
+    let (engine, rng_seed) =
+        construct_with_initial_rng_seed(args, host.mp_mission_seed, |rng_seed| {
+            let mut progress = |delta: f32| {
+                tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
+            };
+            Engine::new(engine_api::EngineArgs {
+                campaign,
+                level: engine_api::LevelLoadArgs {
+                    assets: &mut assets,
+                    level_directory: &level_directory,
+                    progress: &mut progress,
+                    loaded,
+                    bg_pixel_dims,
+                },
+                ground_mark_sprite,
+                titbit_row_frame_counts,
+                rng_seed,
+                goldeneye: goldeneye_initial,
+            })
+            .map_err(|e| format!("Level init failed: {e}"))
+        })?;
     if rng_seed != 0 {
         tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
     }
@@ -1480,4 +1489,110 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<SdlMixe
         host.sound.set_mode(SoundMode::Menu, backend);
     }
     audio_backend
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::replay::{ReplayData, ReplayFile, ReplayHeader};
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+    use std::io::Write;
+
+    fn replay_data(seed: u64) -> ReplayData {
+        ReplayFile {
+            header: ReplayHeader {
+                mission_id: "Dem_Lei_MP".into(),
+                rng_seed: seed,
+                version: 2,
+                total_frames: 0,
+                campaign: None,
+            },
+            frames: BTreeMap::new(),
+            hashes: BTreeMap::new(),
+        }
+        .into()
+    }
+
+    fn replay_file(contents: &str) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file.flush().unwrap();
+        file
+    }
+
+    fn assert_engine_construction_not_reached(args: &crate::main_entry::CliArgs) -> String {
+        let constructed = Cell::new(false);
+        let result = construct_with_initial_rng_seed(args, Some(0xfeed), |seed| {
+            constructed.set(true);
+            Ok(seed)
+        });
+        assert!(!constructed.get());
+        result.unwrap_err()
+    }
+
+    #[test]
+    fn missing_requested_replay_fails_before_engine_construction() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.rhrec.jsonl");
+        let args = crate::main_entry::CliArgs {
+            replay: Some(missing.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let error = assert_engine_construction_not_reached(&args);
+
+        assert!(error.contains("failed to load requested replay"));
+        assert!(error.contains("io:"));
+    }
+
+    #[test]
+    fn malformed_replay_header_fails_before_engine_construction() {
+        let file = replay_file("not a replay header\n");
+        let args = crate::main_entry::CliArgs {
+            replay: Some(file.path().to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let error = assert_engine_construction_not_reached(&args);
+
+        assert!(error.contains("jsonl decode failed: bad header:"));
+    }
+
+    #[test]
+    fn unsupported_replay_version_fails_before_engine_construction() {
+        let file = replay_file(
+            r#"{"mission_id":"Dem_Lei_MP","rng_seed":42,"version":999,"total_frames":0,"campaign":null}
+"#,
+        );
+        let args = crate::main_entry::CliArgs {
+            replay: Some(file.path().to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+
+        let error = assert_engine_construction_not_reached(&args);
+
+        assert!(error.contains("unsupported replay schema version 999"));
+    }
+
+    #[test]
+    fn explicit_replay_data_reaches_engine_construction_with_header_seed() {
+        let args = crate::main_entry::CliArgs {
+            replay: Some("this path must not be loaded".into()),
+            replay_data: Some(replay_data(0xdead_beef)),
+            ..Default::default()
+        };
+        let constructed = Cell::new(false);
+
+        let (constructed_seed, rng_seed) =
+            construct_with_initial_rng_seed(&args, Some(0xfeed), |seed| {
+                constructed.set(true);
+                Ok(seed)
+            })
+            .unwrap();
+
+        assert!(constructed.get());
+        assert_eq!(constructed_seed, 0xdead_beef);
+        assert_eq!(rng_seed, 0xdead_beef);
+    }
 }

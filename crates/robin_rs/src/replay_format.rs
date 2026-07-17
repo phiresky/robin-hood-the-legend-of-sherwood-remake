@@ -42,6 +42,13 @@ pub const COMPACT_PREFIX: &str = "rhrec-";
 /// the extra CPU cost is invisible compared to a mission run.
 const ZSTD_LEVEL: i32 = 19;
 
+/// Replay schema versions accepted by the current engine reader.
+///
+/// Keep this in sync with `REPLAY_SCHEMA_VERSION` and the documented
+/// compatibility fallback in `robin_engine::replay`.
+const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 2;
+
 /// Error from compact-format encode / decode.
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
@@ -61,6 +68,10 @@ pub enum FormatError {
     Io(#[from] std::io::Error),
     #[error("jsonl decode failed: {0}")]
     Jsonl(String),
+    #[error(
+        "unsupported replay schema version {version}; supported versions are {MIN_SUPPORTED_SCHEMA_VERSION}..={MAX_SUPPORTED_SCHEMA_VERSION}"
+    )]
+    UnsupportedVersion { version: u32 },
 }
 
 /// Encode an in-memory [`ReplayData`] as a `rhrec-{hash}-{base64}`
@@ -86,7 +97,24 @@ pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
     let zbytes = BASE64.decode(payload.as_bytes())?;
     let bytes = zstd::decode_all(&zbytes[..]).map_err(FormatError::Zstd)?;
     let file: ReplayFile = bitcode::deserialize(&bytes)?;
-    Ok((hash.to_string(), file.into()))
+    let data = file.into();
+    validate_replay_data(&data)?;
+    Ok((hash.to_string(), data))
+}
+
+/// Reject replay schemas that this build cannot interpret reliably.
+///
+/// `ReplayData::from_reader` intentionally handles the v1 input shape as
+/// well as the current v2 shape, but serde alone cannot reject a newer
+/// header whose payload happens to deserialize into today's structs.
+pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
+    if !(MIN_SUPPORTED_SCHEMA_VERSION..=MAX_SUPPORTED_SCHEMA_VERSION).contains(&data.header.version)
+    {
+        return Err(FormatError::UnsupportedVersion {
+            version: data.header.version,
+        });
+    }
+    Ok(())
 }
 
 /// Load a replay from either the compact inline format, a file
@@ -114,7 +142,9 @@ pub fn load_replay_spec(spec: &str) -> Result<ReplayData, FormatError> {
         warn_on_mismatch(&hash);
         Ok(data)
     } else {
-        ReplayData::from_file(spec).map_err(FormatError::Jsonl)
+        let data = ReplayData::from_file(spec).map_err(FormatError::Jsonl)?;
+        validate_replay_data(&data)?;
+        Ok(data)
     }
 }
 
