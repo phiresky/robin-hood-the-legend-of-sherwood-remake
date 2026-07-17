@@ -414,7 +414,7 @@ impl EngineInner {
     ///   `engine/tick.rs` calls [`EngineInner::unapply_net_effect`] +
     ///   despawns the net.
     pub(crate) fn tick_nets(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 

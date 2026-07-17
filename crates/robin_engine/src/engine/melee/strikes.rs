@@ -38,7 +38,7 @@ impl EngineInner {
     ///
     /// Also ticks concussion healing for all humans.
     pub(crate) fn tick_melee_combat(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 

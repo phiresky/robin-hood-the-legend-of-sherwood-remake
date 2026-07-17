@@ -6195,6 +6195,11 @@ impl HostFunctions for GameHost {
                         );
                         return 0;
                     }
+                    // RHScript::SendMessage builds RHCOMMAND_SEND_MESSAGE and
+                    // calls LaunchSequenceElement. EngineInner owns the
+                    // sequence manager, so carry the launch request across
+                    // the VM boundary instead of directly dispatching the
+                    // target callback here.
                     self.deferred_commands.push(DeferredCommand::SendMessage {
                         actor,
                         message: msg,
@@ -6215,6 +6220,8 @@ impl HostFunctions for GameHost {
                         );
                         return 0;
                     }
+                    // See SendMessage above: this is a sequence-element
+                    // launch request, not a post-call ProcessMessage request.
                     self.deferred_commands.push(DeferredCommand::SendMessage {
                         actor,
                         message: msg,

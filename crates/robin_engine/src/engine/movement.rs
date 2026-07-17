@@ -2915,7 +2915,7 @@ impl EngineInner {
         &mut self,
         assets: &crate::engine::LevelAssets,
     ) -> (Vec<EntityId>, Vec<EntityId>) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return (Vec::new(), Vec::new());
         }
 
