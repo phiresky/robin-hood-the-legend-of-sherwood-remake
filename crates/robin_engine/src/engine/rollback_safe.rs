@@ -185,19 +185,6 @@ impl Engine {
     /// and save/load restore after decoding an `Engine`.
     pub fn attach_level_assets(&mut self, assets: &LevelAssets) {
         self.inner.attach_level_assets(assets);
-        if let Some(script) = self.inner.mission_script.as_mut() {
-            // `StaticArc` payloads deserialize as explicitly detached: they
-            // are level attachments, not snapshot state. Rebind both payloads
-            // before any script-native call can observe the GameHost.
-            script
-                .game_host
-                .profile_manager
-                .attach(assets.profile_manager.clone());
-            script
-                .game_host
-                .hiking_paths
-                .attach(assets.hiking_paths.clone());
-        }
     }
 
     /// Create a fully-initialised engine for mission play.
@@ -494,6 +481,7 @@ impl Engine {
             Option<(
                 &mut crate::natives::GameHost,
                 &mut crate::natives::ScriptState,
+                &crate::natives::AttachedScriptBindings,
             )>,
         ) -> R,
     ) -> R {
@@ -501,7 +489,7 @@ impl Engine {
             f(inner
                 .mission_script
                 .as_mut()
-                .map(|script| (&mut script.game_host, &mut script.state)))
+                .map(|script| (&mut script.game_host, &mut script.state, &script.bindings)))
         })
     }
 
@@ -790,8 +778,7 @@ impl Engine {
             new_ms
                 .manager
                 .attach_program(prev_ms.manager.program.clone());
-            new_ms.game_host.profile_manager = prev_ms.game_host.profile_manager.clone();
-            new_ms.game_host.hiking_paths = prev_ms.game_host.hiking_paths.clone();
+            new_ms.bindings = prev_ms.bindings.clone();
         }
 
         // Rebuild `SequenceManager` lookup indices after replacing the

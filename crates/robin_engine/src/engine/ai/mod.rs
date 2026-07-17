@@ -845,7 +845,6 @@ impl EngineInner {
             ai_entity_views: std::sync::Arc::new(build_entity_views(self)),
             ai_sight_obstacles: self.build_ai_sight_obstacles(assets),
         };
-        crate::natives::set_script_sight_obstacles(scratch.ai_sight_obstacles.clone());
         scratch
     }
 

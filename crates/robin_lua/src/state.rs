@@ -163,8 +163,26 @@ impl MissionLuaState {
         script_state: &mut ScriptState,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
-        self.lua
-            .set_app_data(HostPtr::new(host as *mut _, script_state as *mut _));
+        self.with_host_state_and_bindings(
+            host,
+            script_state,
+            robin_engine::natives::AttachedScriptBindings::empty_ref(),
+            f,
+        )
+    }
+
+    pub fn with_host_state_and_bindings<R>(
+        &self,
+        host: &mut GameHost,
+        script_state: &mut ScriptState,
+        bindings: &robin_engine::natives::AttachedScriptBindings,
+        f: impl FnOnce(&Lua) -> mlua::Result<R>,
+    ) -> mlua::Result<R> {
+        self.lua.set_app_data(HostPtr::new(
+            host as *mut _,
+            script_state as *mut _,
+            bindings as *const _,
+        ));
         let result = f(&self.lua);
         // Always remove, even on Err, so the next call starts
         // clean. `remove_app_data` returns `Option<T>` — discard.

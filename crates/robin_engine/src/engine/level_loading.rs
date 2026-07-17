@@ -632,16 +632,15 @@ impl EngineInner {
         if let Some(ref so) = loaded.mission.script_objects {
             assets.script_location_count = so.points.len() + so.lines.len() + so.sectors.len();
             assets.script_point_count = so.points.len();
-            assets.script_location_positions.clear();
-            assets.script_location_layers.clear();
-            assets.script_location_sectors.clear();
+            std::sync::Arc::make_mut(&mut assets.script_location_positions).clear();
+            std::sync::Arc::make_mut(&mut assets.script_location_layers).clear();
+            std::sync::Arc::make_mut(&mut assets.script_location_sectors).clear();
             // Points come first in the combined index.
             for pt in &so.points {
-                assets
-                    .script_location_positions
+                std::sync::Arc::make_mut(&mut assets.script_location_positions)
                     .push((pt.x as f32, pt.y as f32));
-                assets.script_location_layers.push(pt.layer);
-                assets.script_location_sectors.push(pt.sector);
+                std::sync::Arc::make_mut(&mut assets.script_location_layers).push(pt.layer);
+                std::sync::Arc::make_mut(&mut assets.script_location_sectors).push(pt.sector);
             }
             // Lines slot into the middle of the index space; midpoint is the
             // natural representative position.  Empty in shipped data — see
@@ -649,9 +648,9 @@ impl EngineInner {
             for line in &so.lines {
                 let mx = (line.x1 as f32 + line.x2 as f32) * 0.5;
                 let my = (line.y1 as f32 + line.y2 as f32) * 0.5;
-                assets.script_location_positions.push((mx, my));
-                assets.script_location_layers.push(line.layer);
-                assets.script_location_sectors.push(line.sector);
+                std::sync::Arc::make_mut(&mut assets.script_location_positions).push((mx, my));
+                std::sync::Arc::make_mut(&mut assets.script_location_layers).push(line.layer);
+                std::sync::Arc::make_mut(&mut assets.script_location_sectors).push(line.sector);
             }
             // Sectors follow; use polygon centroid as their position.
             for sec in &so.sectors {
@@ -663,14 +662,14 @@ impl EngineInner {
                     let sum_y: f32 = sec.polygon.points.iter().map(|p| p.1 as f32).sum();
                     (sum_x / n, sum_y / n)
                 };
-                assets.script_location_positions.push((cx, cy));
-                assets.script_location_layers.push(sec.layer);
-                assets.script_location_sectors.push(sec.sector_ref);
+                std::sync::Arc::make_mut(&mut assets.script_location_positions).push((cx, cy));
+                std::sync::Arc::make_mut(&mut assets.script_location_layers).push(sec.layer);
+                std::sync::Arc::make_mut(&mut assets.script_location_sectors).push(sec.sector_ref);
             }
 
             // Register script zone sectors on the fast-find grid so we can
             // do point-in-polygon occupant checks during gameplay.
-            assets.script_zone_grid_indices.clear();
+            std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).clear();
             self.script_zone_data.clear();
             for sec in &so.sectors {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
@@ -743,7 +742,7 @@ impl EngineInner {
                     },
                     sec.layer,
                 );
-                assets.script_zone_grid_indices.push(grid_idx);
+                std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).push(grid_idx);
                 let zone_idx = self.script_zone_data.len();
                 self.script_zone_data.push(script_data);
 
@@ -1432,7 +1431,7 @@ impl EngineInner {
 
             // Store the mapping for later GameHost population.
             // Will be transferred in populate_game_host_from_level below.
-            assets.patch_entity_handles = patch_entity_handles;
+            assets.patch_entity_handles = std::sync::Arc::new(patch_entity_handles);
 
             tracing::info!("Spawned {} patch FX entities", loaded.proto.patches.len(),);
         }
@@ -5493,12 +5492,11 @@ impl EngineInner {
 
         // ── Patch animation entities ──
         // Transfer the entity handle mapping computed during entity spawning.
-        game_host.patch_animation_entities = assets.patch_entity_handles.clone();
         tracing::info!(
             "GameHost: populated {} patches from level data ({} with FX entities)",
             game_host.patches.len(),
-            game_host
-                .patch_animation_entities
+            assets
+                .patch_entity_handles
                 .iter()
                 .filter(|h| h.is_some())
                 .count(),

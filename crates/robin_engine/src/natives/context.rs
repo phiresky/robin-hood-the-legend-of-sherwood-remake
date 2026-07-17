@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use super::{GameHost, ScriptState};
+use super::{AttachedScriptBindings, GameHost, ScriptBindings, ScriptState};
 use crate::element::EntityId;
 
 /// Short-lived native dispatcher assembled for one VM resume.
@@ -11,6 +11,7 @@ use crate::element::EntityId;
 pub struct NativeContext<'a> {
     pub(crate) game_host: &'a mut GameHost,
     pub(crate) script_state: &'a mut ScriptState,
+    pub(crate) bindings: ScriptBindings<'a>,
 }
 
 impl<'a> NativeContext<'a> {
@@ -18,7 +19,24 @@ impl<'a> NativeContext<'a> {
         Self {
             game_host,
             script_state,
+            bindings: ScriptBindings::empty(),
         }
+    }
+
+    pub fn with_bindings(
+        game_host: &'a mut GameHost,
+        script_state: &'a mut ScriptState,
+        bindings: &'a AttachedScriptBindings,
+    ) -> Self {
+        Self {
+            game_host,
+            script_state,
+            bindings: bindings.view(),
+        }
+    }
+
+    pub fn bindings(&self) -> ScriptBindings<'_> {
+        self.bindings
     }
 
     pub fn script_state(&self) -> &ScriptState {

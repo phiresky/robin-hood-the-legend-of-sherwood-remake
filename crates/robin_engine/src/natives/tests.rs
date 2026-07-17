@@ -47,6 +47,31 @@ fn call_host_native(host: &mut GameHost, native: NativeFn, stack: &mut NativeSta
         .expect_return("non-nested native test")
 }
 
+fn call_bound_host_native(
+    host: &mut GameHost,
+    bindings: &AttachedScriptBindings,
+    native: NativeFn,
+    stack: &mut NativeStack,
+) -> i32 {
+    let mut state = ScriptState::default();
+    let mut context = NativeContext::with_bindings(host, &mut state, bindings);
+    <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
+        .expect_return("non-nested native test")
+}
+
+struct BoundGameHost {
+    host: GameHost,
+    state: ScriptState,
+    bindings: AttachedScriptBindings,
+}
+
+impl HostFunctions for BoundGameHost {
+    fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        NativeContext::with_bindings(&mut self.host, &mut self.state, &self.bindings)
+            .call(index, stack)
+    }
+}
+
 /// Run a native and return the queued deferred commands for inspection.
 fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCommand>) {
     let prog = call_native_return(index, args);
@@ -388,10 +413,13 @@ fn nowhere_returns_zero() {
 
 #[test]
 fn get_distance_with_positions() {
-    let mut host = GameHost::new();
-    host.script_location_count = 2;
-    host.script_point_count = 2;
-    host.location_positions = vec![(0.0, 0.0), (30.0, 40.0)];
+    let host = GameHost::new();
+    let bindings = AttachedScriptBindings {
+        script_location_count: 2,
+        script_point_count: 2,
+        location_positions: std::sync::Arc::new(vec![(0.0, 0.0), (30.0, 40.0)]),
+        ..Default::default()
+    };
     let prog = call_native_return(
         160,
         &[
@@ -399,7 +427,11 @@ fn get_distance_with_positions() {
             GameHost::location_handle_from_index(1),
         ],
     );
-    let mut vm = Vm::new().with_host(Box::new(host));
+    let mut vm = Vm::new().with_host(Box::new(BoundGameHost {
+        host,
+        state: ScriptState::default(),
+        bindings,
+    }));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(50)); // sqrt(30²+40²)=50
 }
 
@@ -492,8 +524,11 @@ fn actors_in_sector() {
     // `script_point_count < loc <= script_location_count`), so seed
     // counts so loc=2 is a valid sector handle.
     let mut host = GameHost::new();
-    host.script_point_count = 1;
-    host.script_location_count = 2;
+    let bindings = AttachedScriptBindings {
+        script_point_count: 1,
+        script_location_count: 2,
+        ..Default::default()
+    };
     let loc = GameHost::location_handle_from_index(1);
     host.zone_occupants.insert(
         loc,
@@ -505,13 +540,20 @@ fn actors_in_sector() {
     );
 
     let prog = call_native_return(204, &[loc]);
-    let mut vm = Vm::new().with_host(Box::new(host));
+    let mut vm = Vm::new().with_host(Box::new(BoundGameHost {
+        host,
+        state: ScriptState::default(),
+        bindings,
+    }));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(3));
 
     // Re-add occupants since vm takes ownership
     let mut host2 = GameHost::new();
-    host2.script_point_count = 1;
-    host2.script_location_count = 2;
+    let bindings2 = AttachedScriptBindings {
+        script_point_count: 1,
+        script_location_count: 2,
+        ..Default::default()
+    };
     host2.zone_occupants.insert(
         loc,
         vec![
@@ -521,7 +563,11 @@ fn actors_in_sector() {
         ],
     );
     let prog2 = call_native_return(205, &[loc, 1]);
-    let mut vm2 = Vm::new().with_host(Box::new(host2));
+    let mut vm2 = Vm::new().with_host(Box::new(BoundGameHost {
+        host: host2,
+        state: ScriptState::default(),
+        bindings: bindings2,
+    }));
     assert_eq!(
         vm2.run(&prog2),
         StopReason::ReturnedValue(GameHost::actor_handle_from_index(4))
@@ -530,12 +576,15 @@ fn actors_in_sector() {
 
 #[test]
 fn compute_location_between() {
-    let mut host = GameHost::new();
-    host.script_location_count = 2;
-    host.script_point_count = 2;
-    host.location_positions = vec![(0.0, 0.0), (100.0, 200.0)];
-    host.location_layers = vec![0, 0];
-    host.location_sectors = vec![0, 0];
+    let host = GameHost::new();
+    let bindings = AttachedScriptBindings {
+        script_location_count: 2,
+        script_point_count: 2,
+        location_positions: std::sync::Arc::new(vec![(0.0, 0.0), (100.0, 200.0)]),
+        location_layers: std::sync::Arc::new(vec![0, 0]),
+        location_sectors: std::sync::Arc::new(vec![0, 0]),
+        ..Default::default()
+    };
     let lambda_bits = 0.5f32.to_bits() as i32;
     let prog = call_native_return(
         213,
@@ -545,7 +594,11 @@ fn compute_location_between() {
             lambda_bits,
         ],
     );
-    let mut vm = Vm::new().with_host(Box::new(host));
+    let mut vm = Vm::new().with_host(Box::new(BoundGameHost {
+        host,
+        state: ScriptState::default(),
+        bindings,
+    }));
     // Should return a handle >= 3 (first computed location)
     match vm.run(&prog) {
         StopReason::ReturnedValue(handle) => {
@@ -677,34 +730,33 @@ fn npc_value_nonexistent_actor_returns_minus_one() {
 fn compute_border_point_cardinal_directions() {
     use crate::coordinates::MapBBox;
 
-    let mut host = GameHost::new();
-    host.map_bbox = MapBBox::from_coords(0.0, 0.0, 1000.0, 800.0);
+    let map_bbox = MapBBox::from_coords(0.0, 0.0, 1000.0, 800.0);
     let inside = (400.0, 300.0);
 
     // Direction 0 = facing north (-y). Actor enters from the south
     // edge walking north, so border is on y=800 and outside is below.
-    let (border, outside) = host.compute_border_point(inside, 0);
+    let (border, outside) = compute_border_point_bbox(map_bbox, inside, 0);
     assert!((border.0 - 400.0).abs() < 0.1);
     assert!((border.1 - 800.0).abs() < 0.1);
     assert!(outside.1 > 800.0);
 
     // Direction 8 = facing south (+y). Border on y=0 (top edge),
     // outside above the map.
-    let (border, outside) = host.compute_border_point(inside, 8);
+    let (border, outside) = compute_border_point_bbox(map_bbox, inside, 8);
     assert!((border.0 - 400.0).abs() < 0.1);
     assert!((border.1 - 0.0).abs() < 0.1);
     assert!(outside.1 < 0.0);
 
     // Direction 4 = facing east (+x). Border on x=0 (left edge),
     // outside to the left.
-    let (border, outside) = host.compute_border_point(inside, 4);
+    let (border, outside) = compute_border_point_bbox(map_bbox, inside, 4);
     assert!((border.0 - 0.0).abs() < 0.1);
     assert!((border.1 - 300.0).abs() < 0.1);
     assert!(outside.0 < 0.0);
 
     // Direction 12 = facing west (-x). Border on x=1000, outside to
     // the right.
-    let (border, outside) = host.compute_border_point(inside, 12);
+    let (border, outside) = compute_border_point_bbox(map_bbox, inside, 12);
     assert!((border.0 - 1000.0).abs() < 0.1);
     assert!((border.1 - 300.0).abs() < 0.1);
     assert!(outside.0 > 1000.0);
@@ -803,7 +855,7 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
     })
 }
 
-fn persistent_property_test_host(with_campaign: bool) -> (GameHost, i32) {
+fn persistent_property_test_host(with_campaign: bool) -> (GameHost, AttachedScriptBindings, i32) {
     use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
 
     let mut profiles = crate::profiles::ProfileManager::new();
@@ -813,7 +865,10 @@ fn persistent_property_test_host(with_campaign: bool) -> (GameHost, i32) {
         ..Default::default()
     });
     let mut host = GameHost::new();
-    host.profile_manager = robin_util::static_arc::StaticArc::new(profiles);
+    let bindings = AttachedScriptBindings {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..Default::default()
+    };
 
     let mut pc = native_test_pc(vec![true; 3], vec![false; 3]);
     let pc_data = pc.pc_data_mut().expect("test entity must be a PC");
@@ -836,22 +891,33 @@ fn persistent_property_test_host(with_campaign: bool) -> (GameHost, i32) {
         });
     }
 
-    (host, GameHost::actor_handle_from_index(0))
+    (host, bindings, GameHost::actor_handle_from_index(0))
 }
 
-fn call_set_persistent_property(host: &mut GameHost, actor: i32, prop: i32, amount: i32) -> i32 {
+fn call_set_persistent_property(
+    host: &mut GameHost,
+    bindings: &AttachedScriptBindings,
+    actor: i32,
+    prop: i32,
+    amount: i32,
+) -> i32 {
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
     stack.push_i32(prop);
     stack.push_i32(amount);
-    call_host_native(host, NativeFn::SetPersistentProperty, &mut stack)
+    call_bound_host_native(host, bindings, NativeFn::SetPersistentProperty, &mut stack)
 }
 
-fn call_get_persistent_property(host: &mut GameHost, actor: i32, prop: i32) -> i32 {
+fn call_get_persistent_property(
+    host: &mut GameHost,
+    bindings: &AttachedScriptBindings,
+    actor: i32,
+    prop: i32,
+) -> i32 {
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
     stack.push_i32(prop);
-    call_host_native(host, NativeFn::GetPersistentProperty, &mut stack)
+    call_bound_host_native(host, bindings, NativeFn::GetPersistentProperty, &mut stack)
 }
 
 #[test]
@@ -859,10 +925,16 @@ fn set_persistent_property_updates_live_pc_ammo_without_campaign() {
     use crate::element::PcAmmoData;
     use crate::profiles::Action;
 
-    let (mut host, actor) = persistent_property_test_host(false);
+    let (mut host, bindings, actor) = persistent_property_test_host(false);
 
-    assert_eq!(call_set_persistent_property(&mut host, actor, 0, 7), 1);
-    assert_eq!(call_set_persistent_property(&mut host, actor, 5, 4), 1);
+    assert_eq!(
+        call_set_persistent_property(&mut host, &bindings, actor, 0, 7),
+        1
+    );
+    assert_eq!(
+        call_set_persistent_property(&mut host, &bindings, actor, 5, 4),
+        1
+    );
 
     let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
     assert_eq!(
@@ -876,8 +948,14 @@ fn set_persistent_property_updates_live_pc_ammo_without_campaign() {
     assert_eq!(pc.disabled_actions, [false, false, true]);
     assert_eq!(pc.current_action, Action::Bow);
     assert_eq!(pc.saved_action, Action::Bow);
-    assert_eq!(call_get_persistent_property(&mut host, actor, 0), 7);
-    assert_eq!(call_get_persistent_property(&mut host, actor, 5), 4);
+    assert_eq!(
+        call_get_persistent_property(&mut host, &bindings, actor, 0),
+        7
+    );
+    assert_eq!(
+        call_get_persistent_property(&mut host, &bindings, actor, 5),
+        4
+    );
 }
 
 #[test]
@@ -885,7 +963,7 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     use crate::element::PcAmmoData;
     use crate::profiles::Action;
 
-    let (mut host, actor) = persistent_property_test_host(true);
+    let (mut host, bindings, actor) = persistent_property_test_host(true);
     {
         let pc = host.entities[0].as_mut().unwrap().pc_data_mut().unwrap();
         pc.ammo.arrows = 2;
@@ -894,8 +972,14 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
         pc.saved_action = Action::Stone;
     }
 
-    assert_eq!(call_set_persistent_property(&mut host, actor, 0, 6), 1);
-    assert_eq!(call_set_persistent_property(&mut host, actor, 5, 0), 1);
+    assert_eq!(
+        call_set_persistent_property(&mut host, &bindings, actor, 0, 6),
+        1
+    );
+    assert_eq!(
+        call_set_persistent_property(&mut host, &bindings, actor, 5, 0),
+        1
+    );
 
     let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
     assert_eq!(
@@ -913,8 +997,14 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     let status = &campaign.characters[0].status;
     assert_eq!(status.get_ammo(Action::Bow), 6);
     assert_eq!(status.get_ammo(Action::Stone), 0);
-    assert_eq!(call_get_persistent_property(&mut host, actor, 0), 6);
-    assert_eq!(call_get_persistent_property(&mut host, actor, 5), 0);
+    assert_eq!(
+        call_get_persistent_property(&mut host, &bindings, actor, 0),
+        6
+    );
+    assert_eq!(
+        call_get_persistent_property(&mut host, &bindings, actor, 5),
+        0
+    );
 }
 
 fn native_sees(host: &mut GameHost, npc_index: usize, target_index: usize) -> i32 {

@@ -12,6 +12,12 @@ impl EngineInner {
     /// Called before script execution so IsAnimationActive reads live state.
     /// Also populates PC/NPC snapshot state used by misc native functions.
     pub(super) fn refresh_game_host_entity_state(&mut self) {
+        if let Some(script) = self.mission_script.as_mut() {
+            script.bindings.sight_obstacles.dynamic_obstacles =
+                std::sync::Arc::new(self.dynamic_sight_obstacles.clone());
+            script.bindings.sight_obstacles.static_active =
+                std::sync::Arc::new(self.static_sight_obstacle_active.clone());
+        }
         // Collect data first, then write to host (avoids borrow issues).
         let ambiance = self.weather.ambiance;
         let is_forest_level = self.weather.is_forest_level;
@@ -160,82 +166,35 @@ impl EngineInner {
         }
     }
 
-    /// Copy level-static data (script location table, counts, map bbox,
-    /// source count) into `GameHost` once at script init.  These fields
-    /// never change during mission play — they're built at load and
-    /// frozen thereafter, so we avoid re-cloning the location Vecs on
-    /// every script call.
-    pub(super) fn install_script_static_data_into_game_host(&mut self, assets: &LevelAssets) {
+    /// Attach immutable level data to the script-native dispatcher.
+    ///
+    /// The dispatcher borrows this object for each VM resume. It is not part
+    /// of simulation state and is reattached after save/snapshot decode.
+    pub(super) fn attach_script_bindings(&mut self, assets: &LevelAssets) {
         let Some(ref mut script) = self.mission_script else {
             return;
         };
-        let Some(game_host) = script.game_host_mut() else {
-            return;
-        };
-        // Profile manager is immutable for the mission lifetime — install
-        // once and let it ride through every campaign swap-in/swap-out.
-        // (Previously natives read profiles off the swapped-in `Campaign`,
-        // but the field is now an explicit parameter passed alongside.)
-        game_host.profile_manager = assets.profile_manager.clone().into();
-        crate::natives::set_script_sight_obstacles(crate::sight_obstacle::SharedSightObstacles {
-            static_obstacles: assets.static_sight_obstacles.clone(),
-            dynamic_obstacles: std::sync::Arc::new(self.dynamic_sight_obstacles.clone()),
-            static_active: std::sync::Arc::new(self.static_sight_obstacle_active.clone()),
+        script.attach_bindings(crate::natives::AttachedScriptBindings {
+            profile_manager: assets.profile_manager.clone(),
+            hiking_paths: assets.hiking_paths.clone(),
+            level_grid: assets.level_grid.clone(),
+            sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
+                static_obstacles: assets.static_sight_obstacles.clone(),
+                dynamic_obstacles: std::sync::Arc::new(self.dynamic_sight_obstacles.clone()),
+                static_active: std::sync::Arc::new(self.static_sight_obstacle_active.clone()),
+            },
+            script_location_count: assets.script_location_count,
+            script_point_count: assets.script_point_count,
+            script_building_count: assets.script_building_count,
+            script_hiking_path_count: assets.script_hiking_path_count,
+            location_positions: assets.script_location_positions.clone(),
+            location_layers: assets.script_location_layers.clone(),
+            location_sectors: assets.script_location_sectors.clone(),
+            script_zone_grid_indices: assets.script_zone_grid_indices.clone(),
+            patch_animation_entities: assets.patch_entity_handles.clone(),
+            lua_names: assets.script_names.clone(),
         });
-        game_host.script_location_count = assets.script_location_count;
-        game_host.script_point_count = assets.script_point_count;
-        game_host
-            .location_positions
-            .clone_from(&assets.script_location_positions);
-        game_host
-            .location_layers
-            .clone_from(&assets.script_location_layers);
-        game_host
-            .location_sectors
-            .clone_from(&assets.script_location_sectors);
-        game_host.script_building_count = assets.script_building_count;
-        game_host.script_hiking_path_count = assets.script_hiking_path_count;
-        game_host.hiking_paths = assets.hiking_paths.clone().into();
-        game_host.sound_source_count = self.feedback.sound_sim.sources.num_sources();
-        // Map bounding box, needed by RecordEnterGame / RecordLeaveGame
-        // to compute map-edge spawn/exit points.
-        game_host.map_bbox = self.fast_grid.level.map_bbox;
-        // Sector type/lift/door snapshot — needed by record-time
-        // `append_move_to_sequence` to handle the building / ladder /
-        // door-goal branches without holding a back-reference to
-        // FastFindGrid.
-        game_host.sector_kinds.clear();
-        for gs in &self.fast_grid.level.sectors {
-            let key = u16::from(gs.sector_number);
-            game_host.sector_kinds.insert(
-                key,
-                crate::natives::SectorKindInfo {
-                    is_building: gs.sector_type.is_building(),
-                    is_ladder_lift: gs.lift_type == Some(crate::sector::LiftType::Ladder),
-                    lift_type: gs.lift_type,
-                    is_door: gs.sector_type.is_door(),
-                },
-            );
-        }
-        // Zone-polygon geometry — lets the IsInside native recompute
-        // per call without touching the engine's grid (the
-        // "works after teleports" path).  Index here matches `zone_idx`
-        // in `script_zone_data` and the per-zone ordering of
-        // `assets.script_zone_grid_indices`.
-        game_host.script_zone_polygons.clear();
-        game_host
-            .script_zone_polygons
-            .reserve(assets.script_zone_grid_indices.len());
-        for &grid_idx in &assets.script_zone_grid_indices {
-            let gs = &self.fast_grid.level.sectors[grid_idx as usize];
-            game_host
-                .script_zone_polygons
-                .push(crate::natives::ScriptZonePolygon {
-                    layer: gs.layer,
-                    bounding_box: gs.bounding_box,
-                    points: gs.points.clone(),
-                });
-        }
+        script.game_host.sound_source_count = self.feedback.sound_sim.sources.num_sources();
     }
 
     /// Apply changes from GameHost back to the engine after a script call.
@@ -902,7 +861,7 @@ impl EngineInner {
         hiking_paths: &[crate::level_data::RawHikingPath],
     ) {
         self.refresh_game_host_entity_state();
-        self.install_script_static_data_into_game_host(assets);
+        self.attach_script_bindings(assets);
 
         // Collect per-actor script classes before swapping entities into GameHost.
         // Each actor with a script_class gets IActorScript::Initialize()
@@ -1059,6 +1018,7 @@ impl EngineInner {
             let startup_result = MissionScript::with_game_host_attached(
                 &mut script.game_host,
                 &mut script.state,
+                &script.bindings,
                 &mut script.instance,
                 |instance, host| {
                     instance.push_param(seed);
@@ -1450,6 +1410,7 @@ impl EngineInner {
             MissionScript::with_game_host_attached(
                 &mut script.game_host,
                 &mut script.state,
+                &script.bindings,
                 &mut zone_inst,
                 |zone_inst, host| {
                     if zone_inst.has_function(&script.manager, "Initialize") {
@@ -2028,6 +1989,7 @@ impl EngineInner {
                     let result = MissionScript::with_game_host_attached(
                         &mut script.game_host,
                         &mut script.state,
+                        &script.bindings,
                         &mut script.instance,
                         |instance, host| {
                             instance.push_param(msg);
@@ -3335,6 +3297,12 @@ mod script_context_tests {
             });
         script.state.sequence_recorder.sequence_id = 3;
         script.state.sequence_recorder.recording = Some(crate::sequence::RecordingSession::new());
+        let location_positions = std::sync::Arc::new(vec![(12.0, 34.0)]);
+        script.attach_bindings(crate::natives::AttachedScriptBindings {
+            script_location_count: 1,
+            location_positions: location_positions.clone(),
+            ..Default::default()
+        });
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
@@ -3344,10 +3312,21 @@ mod script_context_tests {
         assert!(value["game_host"].get("globals").is_none());
         assert!(value["game_host"].get("computed_locations").is_none());
         assert!(value["game_host"].get("recording").is_none());
+        assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
             serde_json::from_str(&json).expect("deserialize v2 MissionScript");
+        assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
+        decoded.attach_bindings(crate::natives::AttachedScriptBindings {
+            script_location_count: 1,
+            location_positions: location_positions.clone(),
+            ..Default::default()
+        });
+        assert!(std::sync::Arc::ptr_eq(
+            &decoded.bindings.location_positions,
+            &location_positions
+        ));
         assert_eq!(decoded.state.globals.get(&7), Some(&91));
         assert_eq!(decoded.state.computed_locations.len(), 1);
         assert!(decoded.state.sequence_recorder.recording.is_some());

@@ -546,8 +546,8 @@ impl EngineInner {
                     });
                 script.attach_program(std::sync::Arc::clone(program));
             }
-            script.game_host.profile_manager = assets.profile_manager.clone().into();
         }
+        self.attach_script_bindings(assets);
         for (id, entity) in self.entities.occupied_mut() {
             entity
                 .sprite_mut()

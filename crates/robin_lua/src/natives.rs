@@ -37,7 +37,8 @@ use std::cell::Cell;
 use mlua::{Function, Lua, Table, Value};
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{
-    GameHost, NATIVE_REGISTRY, NativeContext, NativeFn, NativeSignature, ScriptState,
+    AttachedScriptBindings, GameHost, NATIVE_REGISTRY, NativeContext, NativeFn, NativeSignature,
+    ScriptState,
 };
 
 use crate::state::MissionLuaState;
@@ -52,6 +53,7 @@ use crate::state::MissionLuaState;
 pub(crate) struct HostPtr {
     host: Cell<*mut GameHost>,
     script_state: Cell<*mut ScriptState>,
+    bindings: Cell<*const AttachedScriptBindings>,
 }
 
 // SAFETY: `HostPtr` is only accessed from the thread that called
@@ -60,10 +62,15 @@ pub(crate) struct HostPtr {
 unsafe impl Send for HostPtr {}
 
 impl HostPtr {
-    pub(crate) fn new(host: *mut GameHost, script_state: *mut ScriptState) -> Self {
+    pub(crate) fn new(
+        host: *mut GameHost,
+        script_state: *mut ScriptState,
+        bindings: *const AttachedScriptBindings,
+    ) -> Self {
         Self {
             host: Cell::new(host),
             script_state: Cell::new(script_state),
+            bindings: Cell::new(bindings),
         }
     }
 
@@ -93,6 +100,15 @@ impl HostPtr {
         assert!(
             !ptr.is_null(),
             "robin_lua: native invoked with no ScriptState attached; wrap the call site in MissionLuaState::with_host"
+        );
+        ptr
+    }
+
+    fn bindings_ptr(&self) -> *const AttachedScriptBindings {
+        let ptr = self.bindings.get();
+        assert!(
+            !ptr.is_null(),
+            "robin_lua: native invoked with no ScriptBindings attached"
         );
         ptr
     }
@@ -385,7 +401,8 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
         // which is the only place this shim runs.
         let host: &mut GameHost = unsafe { &mut *host_ptr.host_ptr() };
         let script_state: &mut ScriptState = unsafe { &mut *host_ptr.script_state_ptr() };
-        let mut native_context = NativeContext::new(host, script_state);
+        let bindings: &AttachedScriptBindings = unsafe { &*host_ptr.bindings_ptr() };
+        let mut native_context = NativeContext::with_bindings(host, script_state, bindings);
         let mut stack = NativeStack::default();
         // Push in argument order — the engine's `pop_i32()` pulls
         // them off in *reverse*, so the last arg ends up on top of
@@ -503,40 +520,40 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
     let get_actor = lua.create_function(|lua, name: String| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        Ok(host.lua_actor_names.get(&name).copied().unwrap_or(0))
+        let names = unsafe { &*bindings_ptr(lua)? };
+        Ok(names.lua_names.actors.get(&name).copied().unwrap_or(0))
     })?;
     globals.set("GetActor", get_actor)?;
 
     let get_item = lua.create_function(|lua, name: String| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        Ok(host.lua_item_names.get(&name).copied().unwrap_or(0))
+        let names = unsafe { &*bindings_ptr(lua)? };
+        Ok(names.lua_names.items.get(&name).copied().unwrap_or(0))
     })?;
     globals.set("GetItem", get_item)?;
 
     let get_location = lua.create_function(|lua, name: String| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        Ok(host.lua_location_names.get(&name).copied().unwrap_or(0))
+        let names = unsafe { &*bindings_ptr(lua)? };
+        Ok(names.lua_names.locations.get(&name).copied().unwrap_or(0))
     })?;
     globals.set("GetLocation", get_location)?;
 
     let get_patrol = lua.create_function(|lua, name: String| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        Ok(host.lua_patrol_names.get(&name).copied().unwrap_or(0))
+        let names = unsafe { &*bindings_ptr(lua)? };
+        Ok(names.lua_names.patrols.get(&name).copied().unwrap_or(0))
     })?;
     globals.set("GetPatrol", get_patrol)?;
 
     let get_scroll = lua.create_function(|lua, name: String| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        Ok(host.lua_scroll_names.get(&name).copied().unwrap_or(0))
+        let names = unsafe { &*bindings_ptr(lua)? };
+        Ok(names.lua_names.scrolls.get(&name).copied().unwrap_or(0))
     })?;
     globals.set("GetScroll", get_scroll)?;
 
@@ -544,11 +561,11 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
     let get_actor_name = lua.create_function(|lua, handle: i32| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
+        let names = unsafe { &*bindings_ptr(lua)? };
         // Linear scan — Spellforge's DLL does the same. The maps
         // are mission-scoped (low hundreds of entries), so this
         // doesn't merit a reverse index.
-        for (name, h) in &host.lua_actor_names {
+        for (name, h) in &names.lua_names.actors {
             if *h == handle {
                 return Ok(name.clone());
             }
@@ -566,9 +583,9 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
     let get_all_actors = lua.create_function(|lua, ()| {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
-        let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
-        let t = lua.create_table_with_capacity(0, host.lua_actor_names.len())?;
-        for (name, handle) in &host.lua_actor_names {
+        let names = unsafe { &*bindings_ptr(lua)? };
+        let t = lua.create_table_with_capacity(0, names.lua_names.actors.len())?;
+        for (name, handle) in &names.lua_names.actors {
             t.set(name.clone(), *handle)?;
         }
         Ok(t)
@@ -604,7 +621,8 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
         // duration of the surrounding `with_host` scope.
         let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
         let script_state: &mut ScriptState = unsafe { &mut *script_state_ptr(lua)? };
-        let mut native_context = NativeContext::new(host, script_state);
+        let bindings: &AttachedScriptBindings = unsafe { &*bindings_ptr(lua)? };
+        let mut native_context = NativeContext::with_bindings(host, script_state, bindings);
         let mut stack = NativeStack::default();
         // RecordSendMessage(actor, message) pops `message` first
         // (top of stack), then `actor`. So push actor, then
@@ -645,6 +663,15 @@ fn script_state_ptr(lua: &Lua) -> mlua::Result<*mut ScriptState> {
         )
     })?;
     Ok(ptr.script_state_ptr())
+}
+
+fn bindings_ptr(lua: &Lua) -> mlua::Result<*const AttachedScriptBindings> {
+    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "robin_lua: native invoked with no ScriptBindings attached".to_owned(),
+        )
+    })?;
+    Ok(ptr.bindings_ptr())
 }
 
 // Canonical Lua enumeration is declared by

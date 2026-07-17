@@ -947,6 +947,7 @@ impl EngineInner {
             && source_sector != goal_sector
         {
             let path = {
+                let level = self.fast_grid.level.clone();
                 let game_host = self.mission_script.as_ref().and_then(|s| s.game_host());
                 game_host.and_then(|h| {
                     crate::gate::find_path_gates(
@@ -958,9 +959,11 @@ impl EngineInner {
                         Some(&auth),
                         false,
                         &|sector| {
-                            h.sector_kinds
-                                .get(&u16::from(sector))
-                                .and_then(|k| k.lift_type)
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
                         },
                     )
                 })

@@ -1420,6 +1420,7 @@ impl EngineInner {
             // PC authorisation for the gate A*.  Click-to-move never
             // sets `MoveFlags::MAP`, so `allow_leave_map = false` here.
             let pc_auth = self.get_entity(*pc_id).map(|e| e.actor_auth_info());
+            let level = self.fast_grid.level.clone();
             let door_goal_info = door_goal.and_then(|door_idx| {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
                 host.and_then(|h| {
@@ -1431,9 +1432,11 @@ impl EngineInner {
                         pc_auth.as_ref(),
                         false,
                         &|sector| {
-                            h.sector_kinds
-                                .get(&u16::from(sector))
-                                .and_then(|k| k.lift_type)
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
                         },
                     )
                     .map(|(path, pt, sector, layer)| (door_idx, path, pt, sector, layer))
@@ -1453,6 +1456,7 @@ impl EngineInner {
                     tracing::warn!("skipping gate path without resolved goal sector");
                     continue;
                 };
+                let level = self.fast_grid.level.clone();
                 let game_host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
                 game_host.and_then(|h| {
                     crate::gate::find_path_gates(
@@ -1464,9 +1468,11 @@ impl EngineInner {
                         pc_auth.as_ref(),
                         false,
                         &|sector| {
-                            h.sector_kinds
-                                .get(&u16::from(sector))
-                                .and_then(|k| k.lift_type)
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
                         },
                     )
                 })

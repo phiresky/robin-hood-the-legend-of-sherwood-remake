@@ -134,14 +134,15 @@ impl EngineInner {
         &mut self,
         patch_index: crate::patch::PatchIndex,
     ) -> Option<PatchContext> {
-        let game_host = self.mission_script.as_mut()?.game_host_mut()?;
-        let patch = game_host.patches.get(usize::from(patch_index))?;
-
-        let animation_entity_handle = game_host
+        let script = self.mission_script.as_mut()?;
+        let animation_entity_handle = script
+            .bindings
             .patch_animation_entities
             .get(usize::from(patch_index))
             .copied()
             .flatten();
+        let game_host = script.game_host_mut()?;
+        let patch = game_host.patches.get(usize::from(patch_index))?;
 
         Some(PatchContext {
             door_indices: patch.door_indices.clone(),

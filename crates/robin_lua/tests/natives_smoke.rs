@@ -71,10 +71,14 @@ fn spellforge_alias_opens_recording() {
 fn get_actor_name_lookup() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
-    host.lua_actor_names.insert("RobinHood".to_owned(), 7);
+    let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
+    std::sync::Arc::make_mut(&mut bindings.lua_names)
+        .actors
+        .insert("RobinHood".to_owned(), 7);
+    let mut script_state = robin_engine::natives::ScriptState::default();
 
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host_state_and_bindings(&mut host, &mut script_state, &bindings, |lua: &Lua| {
             let hit: i32 = lua.load("return GetActor('RobinHood')").eval()?;
             assert_eq!(hit, 7);
             let miss: i32 = lua.load("return GetActor('Nobody')").eval()?;
@@ -94,11 +98,14 @@ fn get_actor_name_lookup() {
 fn get_all_actors_dumps_table() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
-    host.lua_actor_names.insert("Alice".to_owned(), 1);
-    host.lua_actor_names.insert("Bob".to_owned(), 2);
+    let mut bindings = robin_engine::natives::AttachedScriptBindings::default();
+    let names = std::sync::Arc::make_mut(&mut bindings.lua_names);
+    names.actors.insert("Alice".to_owned(), 1);
+    names.actors.insert("Bob".to_owned(), 2);
+    let mut script_state = robin_engine::natives::ScriptState::default();
 
     state
-        .with_host(&mut host, |lua: &Lua| {
+        .with_host_state_and_bindings(&mut host, &mut script_state, &bindings, |lua: &Lua| {
             let alice: i32 = lua.load("return GetAllActors().Alice").eval()?;
             let bob: i32 = lua.load("return GetAllActors().Bob").eval()?;
             assert_eq!(alice, 1);

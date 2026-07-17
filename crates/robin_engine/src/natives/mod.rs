@@ -49,6 +49,7 @@
 //!   - 252: MakePCCrouched, 259/260: GetActorActionState/SetActorActionState
 //!   - 264: ForbidNPCRemark — suppress NPC remark categories
 
+mod bindings;
 mod commands;
 mod context;
 mod defs;
@@ -57,6 +58,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
 pub use context::NativeContext;
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
@@ -83,24 +85,6 @@ use crate::order::OrderType;
 use crate::patch::Patch;
 use crate::profiles::Action;
 use crate::sequence::{Field, FieldValue, MoveFlags, RecordingSession, Sequence, SequenceElement};
-use robin_util::static_arc::StaticArc;
-
-thread_local! {
-    static SCRIPT_SIGHT_OBSTACLES: std::cell::RefCell<crate::sight_obstacle::SharedSightObstacles> =
-        std::cell::RefCell::new(crate::sight_obstacle::SharedSightObstacles::default());
-}
-
-pub(crate) fn set_script_sight_obstacles(
-    sight_obstacles: crate::sight_obstacle::SharedSightObstacles,
-) {
-    SCRIPT_SIGHT_OBSTACLES.with(|cell| {
-        *cell.borrow_mut() = sight_obstacles;
-    });
-}
-
-fn script_sight_obstacles() -> crate::sight_obstacle::SharedSightObstacles {
-    SCRIPT_SIGHT_OBSTACLES.with(|cell| cell.borrow().clone())
-}
 
 /// Convert a raw script-supplied animation ordinal to an
 /// [`OrderType`].  Script-authored data should always be a valid
@@ -133,21 +117,6 @@ const SCRIPT_HANDLE_LOCATION_TAG: i32 = 0x4000_0000;
 const SCRIPT_HANDLE_SOUND_SOURCE_TAG: i32 = 0x5000_0000;
 const SCRIPT_HANDLE_BUILDING_TAG: i32 = 0x6000_0000;
 const SCRIPT_HANDLE_WAY_TAG: i32 = 0x7000_0000;
-
-/// Geometry snapshot for a single script zone, captured at level load.
-/// Lets the [`IsInside`] native recompute occupancy via the same
-/// polygon point-in-test that runs at the script-call site — needed
-/// for teleport-correctness in the same script tick, since
-/// `zone_occupants` only updates on explicit Add/CleanFromScriptZone
-/// natives or on the next per-frame `tick_zone_occupants` pass.
-#[derive(
-    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
-)]
-pub struct ScriptZonePolygon {
-    pub layer: u16,
-    pub bounding_box: MapBBox,
-    pub points: Vec<crate::coordinates::MapPoint>,
-}
 
 /// A host-function implementation that handles the global-variable
 /// trio and logs all other calls as unimplemented stubs.
@@ -193,14 +162,6 @@ pub struct GameHost {
     pub fast_grid: crate::fast_find_grid::FastFindGrid,
     /// Campaign state, swapped in from EngineInner before script execution.
     pub campaign: Option<crate::campaign::Campaign>,
-    /// Profile manager (immutable for the mission's lifetime).  Installed
-    /// once at level load by
-    /// [`EngineInner::install_script_static_data_into_game_host`] from
-    /// `LevelAssets::profile_manager`; previously read off
-    /// `Campaign::profiles`.  Lives on the host directly so the campaign
-    /// swap-out doesn't make profile data inaccessible to natives.
-    pub profile_manager: StaticArc<crate::profiles::ProfileManager>,
-
     /// Per-mission debriefing stats, swapped in from EngineInner.  Script
     /// natives that mutate campaign RANSOM/SCORE values credit this so
     /// the side effects of campaign value updates match the in-mission
@@ -210,19 +171,6 @@ pub struct GameHost {
     /// Handle of the entity whose script is currently running.
     pub script_this: i32,
 
-    /// Number of script locations in the level (swapped in from EngineInner).
-    pub script_location_count: usize,
-    /// Number of script-point locations; points come first in the
-    /// `location_*` arrays, sectors follow. Location payload indices in
-    /// `0..script_point_count` are points — used as a point/sector
-    /// discriminator guard in natives like `RecordScrollCameraTo`.
-    pub script_point_count: usize,
-    /// Number of script buildings in the level (swapped in from EngineInner).
-    pub script_building_count: usize,
-    /// Number of script hiking paths in the level (swapped in from EngineInner).
-    pub script_hiking_path_count: usize,
-    /// Mission hiking paths, installed with other level-static script data.
-    pub hiking_paths: StaticArc<Vec<crate::level_data::RawHikingPath>>,
     /// Number of sound sources (swapped in from EngineInner).
     pub sound_source_count: usize,
     /// Per-sound-source liveness flag (index = script index); `false`
@@ -232,15 +180,6 @@ pub struct GameHost {
     /// indices with the "already been destroyed" error.
     pub sound_source_alive: Vec<bool>,
 
-    /// Position (x, y) for each script location index.
-    /// Populated by the engine when loading a level.
-    pub location_positions: Vec<(f32, f32)>,
-    /// Layer (floor) for each static script location handle, parallel to
-    /// `location_positions` (only covers indices `< script_location_count`).
-    pub location_layers: Vec<u16>,
-    /// Sector number for each static script location handle, parallel to
-    /// `location_positions`.
-    pub location_sectors: Vec<u16>,
     /// Production sector registrations: (type, location_handle, speed).
     /// Populated by RegisterAsProductionSector; consumed by the engine.
     pub production_registrations: Vec<(i32, i32, i32)>,
@@ -304,13 +243,6 @@ pub struct GameHost {
     pub actor_building: BTreeMap<i32, i32>,
     /// Script zone occupants. Key = location handle, value = actor handles.
     pub zone_occupants: BTreeMap<i32, Vec<i32>>,
-    /// Geometry for each script zone (layer + polygon).  Index is
-    /// `zone_idx = location_payload_index - script_point_count`.
-    /// Populated at level load by
-    /// [`crate::engine::EngineInner::install_script_static_data_into_game_host`]
-    /// and consulted by the [`IsInside`] native to recompute the
-    /// "really inside" geometric test ("works also after teleports").
-    pub script_zone_polygons: Vec<ScriptZonePolygon>,
     /// PC auth bits per actor handle (for door special authorisation).
     pub pc_auth_bits: BTreeMap<i32, u16>,
 
@@ -342,18 +274,6 @@ pub struct GameHost {
     /// — only Spellforge mods touch it).
     pub pending_objective_changes: Vec<ObjectiveChange>,
 
-    /// Name → entity handle maps populated when a Spellforge-format
-    /// `.rhm` is loaded (the extended format prefixes each entity with
-    /// a string identifier). Backs the Lua-only `GetActor("name")`,
-    /// `GetItem`, `GetLocation`, `GetPatrol`, `GetScroll` natives, and
-    /// the reverse `GetActorName(handle)` lookup. Empty for vanilla
-    /// `.rhm` files.
-    pub lua_actor_names: BTreeMap<String, i32>,
-    pub lua_item_names: BTreeMap<String, i32>,
-    pub lua_location_names: BTreeMap<String, i32>,
-    pub lua_patrol_names: BTreeMap<String, i32>,
-    pub lua_scroll_names: BTreeMap<String, i32>,
-
     /// Building active state. Index = building index.
     pub building_active: Vec<bool>,
     /// Building → gate (door) handles. Index = building index.
@@ -371,28 +291,10 @@ pub struct GameHost {
     /// `BLINK_TIMEOUT` (50) ticks.
     pub blink_expire_frame: u32,
 
-    /// Patch → animation FX entity handle. Index = patch index.
-    /// Populated by the engine when loading a level.
-    pub patch_animation_entities: Vec<Option<i32>>,
-
     /// EngineInner frame counter, copied in before each script call so
     /// natives can compute absolute-frame timestamps (e.g. emoticon
     /// expiration).
     pub frame_counter: u32,
-
-    /// Map bounding box in world coordinates. Used by RecordEnterGame /
-    /// RecordLeaveGame to compute map-edge spawn and exit points via
-    /// `compute_border_point`. Populated by the engine from
-    /// `FastFindGrid::map_bbox` before script execution.
-    pub map_bbox: MapBBox,
-
-    /// Per-sector type/lift snapshot needed by the record-time
-    /// `append_move_to_sequence` to drive the building / ladder-lift
-    /// branches without holding a reference to `FastFindGrid`.
-    /// Populated from `FastFindGrid::level::sectors` by the engine's
-    /// `install_script_static_data_into_game_host`.
-    /// Key: sector number (`u16`).
-    pub sector_kinds: BTreeMap<u16, SectorKindInfo>,
 
     /// Recursion depth of the nested-script-call stack.  Each actor
     /// script normally has its own VMCore (giving an implicit per-core
@@ -417,26 +319,6 @@ pub const MAX_NESTED_CALL_DEPTH: u8 = 4;
 /// the runtime `EngineInner::sector_is_building` / `is_ladder_lift`
 /// helpers expose, but keyed off `GameHost`-owned data so the natives
 /// layer doesn't need a back-reference to the engine.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct SectorKindInfo {
-    /// True for building sectors.
-    pub is_building: bool,
-    /// True for lift sectors with the LADDER lift type.
-    pub is_ladder_lift: bool,
-    /// Lift type for lift sectors.
-    pub lift_type: Option<crate::sector::LiftType>,
-    /// True for door sectors.
-    pub is_door: bool,
-}
-
 impl GameHost {
     pub fn new() -> Self {
         Self {
@@ -452,21 +334,12 @@ impl GameHost {
             is_forest_level: false,
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             campaign: None,
-            profile_manager: StaticArc::new(crate::profiles::ProfileManager::new()),
             mission_stat: crate::mission_stat::MissionStat::default(),
             commands: Vec::new(),
             outline_display: false,
             script_this: 0,
-            script_location_count: 0,
-            script_point_count: 0,
-            script_building_count: 0,
-            script_hiking_path_count: 0,
-            hiking_paths: StaticArc::new(Vec::new()),
             sound_source_count: 0,
             sound_source_alive: Vec::new(),
-            location_positions: Vec::new(),
-            location_layers: Vec::new(),
-            location_sectors: Vec::new(),
             production_registrations: Vec::new(),
             production_points: Vec::new(),
             completed_sequences: Vec::new(),
@@ -484,7 +357,6 @@ impl GameHost {
             arrow_reserves: Vec::new(),
             actor_building: BTreeMap::new(),
             zone_occupants: BTreeMap::new(),
-            script_zone_polygons: Vec::new(),
             pc_auth_bits: BTreeMap::new(),
             pc_handles: Vec::new(),
             selected_pc_handles: Vec::new(),
@@ -496,20 +368,12 @@ impl GameHost {
             overall_civilian_alert: 0,
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
-            lua_actor_names: BTreeMap::new(),
-            lua_item_names: BTreeMap::new(),
-            lua_location_names: BTreeMap::new(),
-            lua_patrol_names: BTreeMap::new(),
-            lua_scroll_names: BTreeMap::new(),
             building_active: Vec::new(),
             building_gates: Vec::new(),
             men_to_blazon_conversion_mode: false,
             blinking_blazons: 0,
             blink_expire_frame: u32::MAX,
-            patch_animation_entities: Vec::new(),
             frame_counter: 0,
-            map_bbox: MapBBox::new(),
-            sector_kinds: BTreeMap::new(),
             nested_call_depth: 0,
         }
     }
@@ -643,24 +507,6 @@ impl GameHost {
             .is_some_and(|e| e.is_actor() || e.is_fx_target())
     }
 
-    /// True iff `handle` resolves to a PC whose profile carries a
-    /// `LittleJohnCarry` or `FarmerCarry` action — i.e. the PC can
-    /// `TakeCorpse` / `LeaveCorpse`.
-    fn is_pc_carrier(&self, handle: i32) -> bool {
-        let Some(entity) = self.get_entity(handle) else {
-            return false;
-        };
-        let Some(pc) = entity.pc_data() else {
-            return false;
-        };
-        if self.campaign.is_none() {
-            return false;
-        }
-        self.profile_manager
-            .get_character(pc.profile_index)
-            .is_some_and(|cp| cp.can_carry())
-    }
-
     fn actor_action_distance(&self, actor: i32, animation: OrderType) -> Option<f32> {
         let Some(entity) = self.get_entity(actor) else {
             tracing::warn!(
@@ -692,6 +538,24 @@ impl GameHost {
 }
 
 impl NativeContext<'_> {
+    /// True iff `handle` resolves to a PC whose profile carries a corpse
+    /// carrying action.
+    fn is_pc_carrier(&self, handle: i32) -> bool {
+        let Some(entity) = self.get_entity(handle) else {
+            return false;
+        };
+        let Some(pc) = entity.pc_data() else {
+            return false;
+        };
+        if self.campaign.is_none() {
+            return false;
+        }
+        self.bindings
+            .profile_manager
+            .get_character(pc.profile_index)
+            .is_some_and(|profile| profile.can_carry())
+    }
+
     // ── Recording helpers ───────────────────────────────────────
 
     /// Get the current recording command level, or 1 if not recording.
@@ -742,19 +606,22 @@ impl NativeContext<'_> {
         self.record_element(elem);
     }
 
-    /// Look up the sector kind cache populated by the engine at level
-    /// load.  Returns `None` only for unknown sector numbers (caller
-    /// should treat as "neither building nor ladder").
-    fn sector_kind(&self, sector: u16) -> Option<SectorKindInfo> {
-        self.sector_kinds.get(&sector).copied()
+    fn sector_kind(&self, sector: u16) -> Option<&crate::fast_find_grid::GridSector> {
+        self.bindings
+            .level_grid
+            .sectors
+            .iter()
+            .find(|candidate| u16::from(candidate.sector_number) == sector)
     }
 
     fn sector_is_building(&self, sector: u16) -> bool {
-        self.sector_kind(sector).is_some_and(|k| k.is_building)
+        self.sector_kind(sector)
+            .is_some_and(|kind| kind.sector_type.is_building())
     }
 
     fn sector_is_ladder_lift(&self, sector: u16) -> bool {
-        self.sector_kind(sector).is_some_and(|k| k.is_ladder_lift)
+        self.sector_kind(sector)
+            .is_some_and(|kind| kind.lift_type == Some(crate::sector::LiftType::Ladder))
     }
 
     fn sector_lift_type(
@@ -762,11 +629,12 @@ impl NativeContext<'_> {
         sector: crate::sector::SectorNumber,
     ) -> Option<crate::sector::LiftType> {
         self.sector_kind(u16::from(sector))
-            .and_then(|k| k.lift_type)
+            .and_then(|kind| kind.lift_type)
     }
 
     fn sector_is_door(&self, sector: u16) -> bool {
-        self.sector_kind(sector).is_some_and(|k| k.is_door)
+        self.sector_kind(sector)
+            .is_some_and(|kind| kind.sector_type.is_door())
     }
 
     fn door_index_for_goal_sector(
@@ -1467,11 +1335,11 @@ impl NativeContext<'_> {
     /// Used by RecordEnterGame / RecordLeaveGame to pick spawn / exit
     /// points at the map border based on the actor's facing direction.
     ///
-    /// `inside` is assumed to be strictly inside `self.map_bbox`;
+    /// `inside` is assumed to be strictly inside the level map bounds;
     /// panics if no edge is reached (shouldn't happen for a valid
     /// inside point and non-zero direction vector).
     fn compute_border_point(&self, inside: (f32, f32), direction: i16) -> ((f32, f32), (f32, f32)) {
-        compute_border_point_bbox(self.map_bbox, inside, direction)
+        compute_border_point_bbox(self.bindings.map_bbox(), inside, direction)
     }
 }
 
@@ -1637,7 +1505,7 @@ impl NativeContext<'_> {
         // the blink latch; handle it here so the blazon bar picks it
         // up on the next frame).
         let mut tactical_overflow: Option<u32> = None;
-        let profile_manager = self.profile_manager.clone();
+        let profile_manager = self.bindings.profile_manager.clone();
         if let Some(campaign) = self.campaign.as_mut() {
             campaign.add_value(crate::campaign::CampaignValue::Blazon, quantity);
 
@@ -1970,6 +1838,7 @@ impl NativeContext<'_> {
                         // `set_persistent_property` uses on the write
                         // path so the read/write stay symmetric.
                         if !self
+                            .bindings
                             .profile_manager
                             .get_character(e.pc.profile_index)
                             .is_some_and(|p| p.has_action(Action::Bow))
@@ -2288,6 +2157,7 @@ impl NativeContext<'_> {
             // intent (and the early-out site) is visible.
             if prop == 0
                 && !self
+                    .bindings
                     .profile_manager
                     .get_character(profile_index)
                     .is_some_and(|p| p.has_action(Action::Bow))
@@ -2306,7 +2176,7 @@ impl NativeContext<'_> {
                 .and_then(|mgr| mgr.get_active())
                 .map(|p| p.difficulty)
                 .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
-            let Some(profile) = self.profile_manager.get_character(profile_index) else {
+            let Some(profile) = self.bindings.profile_manager.get_character(profile_index) else {
                 tracing::warn!(
                     ?profile_index,
                     "Script Error: SetPersistentProperty PC actor has no character profile"
@@ -2388,14 +2258,15 @@ impl NativeContext<'_> {
     }
 
     fn soldier_has_bow_profile(&self, profile_index: crate::profiles::SoldierProfileIdx) -> bool {
-        let Some(profile) = self.profile_manager.get_soldier(profile_index) else {
+        let Some(profile) = self.bindings.profile_manager.get_soldier(profile_index) else {
             tracing::warn!(
                 ?profile_index,
                 "soldier_has_bow_profile: missing soldier profile"
             );
             return false;
         };
-        self.profile_manager
+        self.bindings
+            .profile_manager
             .get_bow(profile.shooting_weapon_id)
             .is_some()
     }
@@ -2479,19 +2350,6 @@ impl GameHost {
         Self::handle_has_tag(handle, tag).then_some((handle & SCRIPT_HANDLE_INDEX_MASK) as usize)
     }
 
-    /// Whether `loc` is a script-sector handle (as opposed to a
-    /// script-point handle or unrelated entity handle). Script location
-    /// payload indices are laid out as `[points..., sectors...]`, so a
-    /// sector handle satisfies `script_point_count <= idx < script_location_count`.
-    /// Used as the script-sector type guard by
-    /// `GetNumberOfActorsInSector` / `GetActorInSector` etc.
-    fn is_script_sector_handle(&self, loc: i32) -> bool {
-        let Some(idx) = Self::typed_handle_to_index(loc, SCRIPT_HANDLE_LOCATION_TAG) else {
-            return false;
-        };
-        idx >= self.script_point_count && idx < self.script_location_count
-    }
-
     fn get_door(&self, handle: i32) -> Option<&Door> {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_DOOR_TAG)
             .and_then(|idx| self.doors.get(idx))
@@ -2511,25 +2369,28 @@ impl GameHost {
         Self::typed_handle_to_index(handle, SCRIPT_HANDLE_PATCH_TAG)
             .and_then(|idx| self.patches.get_mut(idx))
     }
-
-    /// Resolve an actor handle to a character profile index.
-    /// Tries the engine PC profile map first, then treats the handle
-    /// as a raw profile index (for campaign-only contexts like Sherwood).
-    fn resolve_profile(&self, actor: i32) -> Option<crate::profiles::CharacterProfileIdx> {
-        self.pc_profile_map.get(&actor).copied().or_else(|| {
-            // Fallback: treat as raw profile index (pre-engine convention)
-            self.campaign.as_ref()?;
-            let idx = crate::profiles::CharacterProfileIdx(actor as u32);
-            if self.profile_manager.get_character(idx).is_some() {
-                Some(idx)
-            } else {
-                None
-            }
-        })
-    }
 }
 
 impl NativeContext<'_> {
+    fn is_script_sector_handle(&self, loc: i32) -> bool {
+        let Some(idx) = GameHost::typed_handle_to_index(loc, SCRIPT_HANDLE_LOCATION_TAG) else {
+            return false;
+        };
+        idx >= self.bindings.script_point_count && idx < self.bindings.script_location_count
+    }
+
+    fn resolve_profile(&self, actor: i32) -> Option<crate::profiles::CharacterProfileIdx> {
+        self.pc_profile_map.get(&actor).copied().or_else(|| {
+            self.campaign.as_ref()?;
+            let idx = crate::profiles::CharacterProfileIdx(actor as u32);
+            self.bindings
+                .profile_manager
+                .get_character(idx)
+                .is_some()
+                .then_some(idx)
+        })
+    }
+
     /// True iff `handle` refers to a script *point* (as opposed to a
     /// sector).  Used to reject non-point locations in `GetDistance`,
     /// `ComputeLocationBetween`, camera natives, etc.  Static script
@@ -2541,13 +2402,14 @@ impl NativeContext<'_> {
         let Some(idx) = GameHost::location_index(handle) else {
             return false;
         };
-        if idx < self.script_point_count {
+        if idx < self.bindings.script_point_count {
             return true;
         }
         // Computed locations live past `script_location_count` and are
         // always points.
-        idx >= self.script_location_count
-            && (idx - self.script_location_count) < self.script_state.computed_locations.len()
+        idx >= self.bindings.script_location_count
+            && (idx - self.bindings.script_location_count)
+                < self.script_state.computed_locations.len()
     }
 
     /// Resolve a location handle to its (x, y) position.
@@ -2555,10 +2417,10 @@ impl NativeContext<'_> {
     /// Handles beyond that are dynamically computed by script natives.
     fn resolve_location_pos(&self, handle: i32) -> Option<(f32, f32)> {
         let idx = GameHost::location_index(handle)?;
-        if idx < self.script_location_count {
-            self.location_positions.get(idx).copied()
+        if idx < self.bindings.script_location_count {
+            self.bindings.location_positions.get(idx).copied()
         } else {
-            let computed_idx = idx - self.script_location_count;
+            let computed_idx = idx - self.bindings.script_location_count;
             self.script_state
                 .computed_locations
                 .get(computed_idx)
@@ -2577,13 +2439,13 @@ impl NativeContext<'_> {
     /// the `SetActorLocation` sector refresh.
     fn resolve_location_layer_sector(&self, handle: i32) -> Option<(u16, u16)> {
         let idx = GameHost::location_index(handle)?;
-        if idx < self.script_location_count {
+        if idx < self.bindings.script_location_count {
             return Some((
-                *self.location_layers.get(idx)?,
-                *self.location_sectors.get(idx)?,
+                *self.bindings.location_layers.get(idx)?,
+                *self.bindings.location_sectors.get(idx)?,
             ));
         }
-        let computed_idx = idx - self.script_location_count;
+        let computed_idx = idx - self.bindings.script_location_count;
         self.script_state
             .computed_locations
             .get(computed_idx)?
@@ -2606,7 +2468,7 @@ impl NativeContext<'_> {
                 layer_sector,
             });
         GameHost::location_handle_from_index(
-            self.script_location_count + self.script_state.computed_locations.len() - 1,
+            self.bindings.script_location_count + self.script_state.computed_locations.len() - 1,
         )
     }
 
@@ -3215,7 +3077,7 @@ impl NativeContext<'_> {
                     let Some(campaign) = self.campaign.as_ref() else {
                         return 0;
                     };
-                    let profiles = &self.profile_manager;
+                    let profiles = &self.bindings.profile_manager;
 
                     for handle in &self.pc_handles {
                         let Some(&profile_idx) = self.pc_profile_map.get(handle) else {
@@ -3291,7 +3153,7 @@ impl NativeContext<'_> {
                 // established (script calling before a mission is
                 // chosen) so SCB doesn't see a spurious "team valid".
                 IsMissionTeamValid => {
-                    let profiles = self.profile_manager.clone();
+                    let profiles = self.bindings.profile_manager.clone();
                     self.campaign.as_ref().map_or(0, |c| {
                         if c.next_mission_idx.is_some() {
                             c.is_mission_team_valid(&profiles) as i32
@@ -3316,7 +3178,7 @@ impl NativeContext<'_> {
                     // campaign's max, so a spent/lost blazon can flip
                     // it back to false even if its mission is still
                     // marked done.
-                    let profiles = self.profile_manager.clone();
+                    let profiles = self.bindings.profile_manager.clone();
                     self.campaign.as_ref().map_or(0, |campaign| {
                         let current = campaign.get_value(crate::campaign::CampaignValue::Blazon);
                         let max = campaign.get_max_number_of_blazons(&profiles) as i32;
@@ -3334,7 +3196,7 @@ impl NativeContext<'_> {
                         .last_mission_idx
                         .and_then(|idx| campaign.missions.get(idx))
                         .and_then(|m| m.profile_idx)
-                        .and_then(|pi| self.profile_manager.missions.get(pi as usize))
+                        .and_then(|pi| self.bindings.profile_manager.missions.get(pi as usize))
                         .map_or(0, |mp| mp.id as i32)
                 }),
                 GetNextPlayedMission => self.campaign.as_ref().map_or(0, |campaign| {
@@ -3342,7 +3204,7 @@ impl NativeContext<'_> {
                         .next_mission_idx
                         .and_then(|idx| campaign.missions.get(idx))
                         .and_then(|m| m.profile_idx)
-                        .and_then(|pi| self.profile_manager.missions.get(pi as usize))
+                        .and_then(|pi| self.bindings.profile_manager.missions.get(pi as usize))
                         .map_or(0, |mp| mp.id as i32)
                 }),
 
@@ -3388,7 +3250,7 @@ impl NativeContext<'_> {
                 ),
                 GetLocationScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.script_location_count,
+                    self.bindings.script_location_count,
                     "location",
                     SCRIPT_HANDLE_LOCATION_TAG,
                 ),
@@ -3427,13 +3289,13 @@ impl NativeContext<'_> {
                 }
                 GetBuildingScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.script_building_count,
+                    self.bindings.script_building_count,
                     "building",
                     SCRIPT_HANDLE_BUILDING_TAG,
                 ),
                 GetWayScript => Self::script_index_to_handle(
                     stack.pop_i32(),
-                    self.script_hiking_path_count,
+                    self.bindings.script_hiking_path_count,
                     "way",
                     SCRIPT_HANDLE_WAY_TAG,
                 ),
@@ -5608,9 +5470,10 @@ impl NativeContext<'_> {
                     // next-frame tick, so we recompute here when we
                     // have polygon geometry installed.
                     let zone_idx = Self::location_index(loc)
-                        .and_then(|idx| idx.checked_sub(self.script_point_count));
+                        .and_then(|idx| idx.checked_sub(self.bindings.script_point_count));
                     if let Some(zi) = zone_idx
-                        && let Some(zone) = self.script_zone_polygons.get(zi)
+                        && let Some(&grid_idx) = self.bindings.script_zone_grid_indices.get(zi)
+                        && let Some(zone) = self.bindings.level_grid.sectors.get(grid_idx as usize)
                         && let Some(entity) = self.get_entity(actor)
                     {
                         let ed = entity.element_data();
@@ -6043,8 +5906,7 @@ impl NativeContext<'_> {
                     let target_in_same_building =
                         viewer_in_building && tgt_building_sector == viewer_building_sector;
 
-                    let sight_obstacles = script_sight_obstacles();
-                    let sight_obstacle_list = sight_obstacles.list();
+                    let sight_obstacle_list = self.bindings.sight_obstacles.list();
                     let target_obstacle = target_entity
                         .element_data()
                         .obstacle_index()
@@ -6321,7 +6183,8 @@ impl NativeContext<'_> {
                         return 0;
                     };
                     self.campaign.as_ref().expect("campaign required");
-                    self.profile_manager
+                    self.bindings
+                        .profile_manager
                         .get_character(profile_idx)
                         .map_or(0, |cp| {
                             let has = cp.actions.contains(&action)
@@ -6343,7 +6206,7 @@ impl NativeContext<'_> {
                     // Iterate the spawned-PC array (not the
                     // campaign-wide gang list).  `pc_handles` is
                     // populated from the engine each script tick.
-                    let profiles = &self.profile_manager;
+                    let profiles = &self.bindings.profile_manager;
                     for handle in &self.pc_handles {
                         let Some(&profile_idx) = self.pc_profile_map.get(handle) else {
                             continue;
@@ -6388,7 +6251,7 @@ impl NativeContext<'_> {
                         })
                         .collect();
 
-                    let profiles = &self.profile_manager;
+                    let profiles = &self.bindings.profile_manager;
                     for pi in &playable_profiles {
                         let Some(cp) = profiles.get_character(*pi) else {
                             continue;
@@ -6680,7 +6543,7 @@ impl NativeContext<'_> {
                     //   way == idx → adopt path
                     let way = stack.pop_i32();
                     let actor = stack.pop_i32();
-                    let hiking_paths = self.hiking_paths.clone();
+                    let hiking_paths = self.bindings.hiking_paths.clone();
                     if let Some(entity) = self.get_entity_mut(actor) {
                         let data = entity.element_data();
                         let p = data.position_map();
@@ -6909,7 +6772,8 @@ impl NativeContext<'_> {
                     let actor = stack.pop_i32();
                     self.get_entity(actor).map_or(0, |e| {
                         if let Some(soldier) = e.soldier_data() {
-                            self.profile_manager
+                            self.bindings
+                                .profile_manager
                                 .get_soldier(soldier.soldier_profile_index)
                                 .map_or(0, |p| p.rank as i32)
                         } else {
@@ -6928,7 +6792,7 @@ impl NativeContext<'_> {
                     //       return_to_duty();
                     //   }
                     let actor = stack.pop_i32();
-                    let hiking_paths = self.hiking_paths.clone();
+                    let hiking_paths = self.bindings.hiking_paths.clone();
 
                     let Some(entity) = self.get_entity(actor) else {
                         tracing::error!(
@@ -7361,9 +7225,13 @@ impl NativeContext<'_> {
                     // The patch's animation is an FX entity
                     // referenced by handle; flip its active flag.
                     let idx = Self::patch_index(patch_h);
-                    if let Some(animation_h) =
-                        idx.and_then(|i| self.patch_animation_entities.get(i).copied().flatten())
-                    {
+                    if let Some(animation_h) = idx.and_then(|i| {
+                        self.bindings
+                            .patch_animation_entities
+                            .get(i)
+                            .copied()
+                            .flatten()
+                    }) {
                         self.entity_active.insert(animation_h, active != 0);
                     }
                     // If no animation entity is mapped, this is a no-op (patch has no animation)
@@ -7915,7 +7783,7 @@ impl NativeContext<'_> {
                 }
                 GetNumberOfObligatoryPCsInMissionTeam => {
                     self.campaign.as_ref().map_or(0, |campaign| {
-                        let profiles = &self.profile_manager;
+                        let profiles = &self.bindings.profile_manager;
                         campaign
                             .next_mission_idx
                             .and_then(|mi| campaign.missions.get(mi))
@@ -7930,7 +7798,7 @@ impl NativeContext<'_> {
                     // index) for the indexed required-character
                     // slot.  Resolve via the inverse of
                     // `pc_profile_map`.
-                    let profile_manager = self.profile_manager.clone();
+                    let profile_manager = self.bindings.profile_manager.clone();
                     let required_profile: Option<u32> = self.campaign.as_ref().and_then(|c| {
                         c.next_mission_idx
                             .and_then(|mi| c.missions.get(mi))
@@ -7961,7 +7829,7 @@ impl NativeContext<'_> {
                     let actor = stack.pop_i32();
                     let profile_idx = self.resolve_profile(actor);
                     self.campaign.as_ref().map_or(0, |campaign| {
-                        let profiles = &self.profile_manager;
+                        let profiles = &self.bindings.profile_manager;
                         let Some(pi) = profile_idx else { return 0 };
                         let is_required = campaign
                             .next_mission_idx
@@ -7985,7 +7853,7 @@ impl NativeContext<'_> {
                 // --- beam-me / spawning ---
                 GetNumberOfBeamMes => {
                     self.campaign.as_ref().map_or(5, |campaign| {
-                        let profiles = &self.profile_manager;
+                        let profiles = &self.bindings.profile_manager;
                         // Only valid from the Sherwood HQ mission.
                         let current_loc = campaign
                             .current_mission_idx
@@ -8113,7 +7981,7 @@ impl NativeContext<'_> {
                 AddPCToGang => {
                     let actor = stack.pop_i32();
                     let profile_idx = self.resolve_profile(actor);
-                    let profiles = self.profile_manager.clone();
+                    let profiles = self.bindings.profile_manager.clone();
                     if let Some(campaign) = self.campaign.as_mut() {
                         if let Some(pi) = profile_idx {
                             if let Some(char_idx) = campaign.get_character_by_profile(pi) {
@@ -8158,7 +8026,7 @@ impl NativeContext<'_> {
                     let bow_exp = stack.pop_i32();
                     let sword_exp = stack.pop_i32();
                     let farmer_type = stack.pop_i32();
-                    let profiles = self.profile_manager.clone();
+                    let profiles = self.bindings.profile_manager.clone();
                     if let Some(campaign) = self.campaign.as_mut() {
                         // 1-indexed script → 0-indexed profile.
                         let char_idx = campaign
@@ -8247,7 +8115,7 @@ impl NativeContext<'_> {
                     self.campaign.as_ref().expect("campaign required");
                     let profile_idx = self.resolve_profile(actor);
                     profile_idx
-                        .and_then(|pi| self.profile_manager.get_character(pi))
+                        .and_then(|pi| self.bindings.profile_manager.get_character(pi))
                         .map_or(-1, |cp| {
                             match cp.filename.as_str() {
                                 "RobinTown" | "RobinHood" => 0, // PC_TYPE_ROBIN
@@ -8522,9 +8390,5 @@ impl GameHost {
             let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
             (matches_endpoint || matches_click_sector).then_some(crate::gate::DoorIndex(idx as u32))
         })
-    }
-
-    fn compute_border_point(&self, inside: (f32, f32), direction: i16) -> ((f32, f32), (f32, f32)) {
-        compute_border_point_bbox(self.map_bbox, inside, direction)
     }
 }

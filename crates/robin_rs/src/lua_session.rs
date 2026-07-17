@@ -295,29 +295,48 @@ impl LuaSession {
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LuaSessionError> {
-        let result = self.state.with_host_and_state(host, script_state, |lua| {
-            let globals = lua.globals();
-            let v: mlua::Value = globals.get(event_name)?;
-            let Some(func) = (match &v {
-                mlua::Value::Function(f) => Some(f.clone()),
-                _ => None,
-            }) else {
-                tracing::debug!(
-                    "LuaSession[{}]: no global function `{event_name}`",
-                    self.mission_basename
-                );
-                return Ok(None);
-            };
-            // Variadic call — `mlua::Variadic` lets us pass a
-            // slice without knowing arity statically. Convert i32
-            // args once.
-            let mut variadic: mlua::Variadic<mlua::Value> = mlua::Variadic::new();
-            for a in args {
-                variadic.push(mlua::Value::Integer((*a).into()));
-            }
-            let ret: mlua::MultiValue = func.call(variadic)?;
-            Ok(ret.into_iter().next())
-        });
+        self.run_event_with_bindings(
+            host,
+            script_state,
+            robin_engine::natives::AttachedScriptBindings::empty_ref(),
+            event_name,
+            args,
+        )
+    }
+
+    fn run_event_with_bindings(
+        &self,
+        host: &mut GameHost,
+        script_state: &mut ScriptState,
+        bindings: &robin_engine::natives::AttachedScriptBindings,
+        event_name: &str,
+        args: &[i32],
+    ) -> Result<i32, LuaSessionError> {
+        let result = self
+            .state
+            .with_host_state_and_bindings(host, script_state, bindings, |lua| {
+                let globals = lua.globals();
+                let v: mlua::Value = globals.get(event_name)?;
+                let Some(func) = (match &v {
+                    mlua::Value::Function(f) => Some(f.clone()),
+                    _ => None,
+                }) else {
+                    tracing::debug!(
+                        "LuaSession[{}]: no global function `{event_name}`",
+                        self.mission_basename
+                    );
+                    return Ok(None);
+                };
+                // Variadic call — `mlua::Variadic` lets us pass a
+                // slice without knowing arity statically. Convert i32
+                // args once.
+                let mut variadic: mlua::Variadic<mlua::Value> = mlua::Variadic::new();
+                for a in args {
+                    variadic.push(mlua::Value::Integer((*a).into()));
+                }
+                let ret: mlua::MultiValue = func.call(variadic)?;
+                Ok(ret.into_iter().next())
+            });
 
         let returned = result.map_err(|source| LuaSessionError::Event {
             mission: self.mission_basename.clone(),
@@ -356,10 +375,14 @@ impl LuaSession {
     /// with both mission and event context.
     pub fn run_required_startup_events(
         &self,
-        native_parts: Option<(&mut GameHost, &mut ScriptState)>,
+        native_parts: Option<(
+            &mut GameHost,
+            &mut ScriptState,
+            &robin_engine::natives::AttachedScriptBindings,
+        )>,
         initialization_seed: i32,
     ) -> Result<(), SpellforgeSessionError> {
-        let Some((host, script_state)) = native_parts else {
+        let Some((host, script_state, bindings)) = native_parts else {
             return Err(SpellforgeSessionError::MissingGameHost {
                 mission: self.mission_basename.clone(),
                 event: "Initialize",
@@ -369,7 +392,7 @@ impl LuaSession {
             ("Initialize", std::slice::from_ref(&initialization_seed)),
             ("PostInitialize", &[][..]),
         ] {
-            self.run_event(host, script_state, event, args)
+            self.run_event_with_bindings(host, script_state, bindings, event, args)
                 .map_err(|source| SpellforgeSessionError::RequiredEvent {
                     mission: self.mission_basename.clone(),
                     event,
@@ -689,10 +712,11 @@ mod tests {
         );
         let mut host = GameHost::new();
         let mut script_state = ScriptState::default();
+        let bindings = robin_engine::natives::AttachedScriptBindings::default();
 
         let err = robin_engine::sim_rng::with_seed(7, || {
             session
-                .run_required_startup_events(Some((&mut host, &mut script_state)), 123)
+                .run_required_startup_events(Some((&mut host, &mut script_state, &bindings)), 123)
                 .unwrap_err()
         });
         assert!(matches!(
@@ -738,9 +762,10 @@ mod tests {
         );
         let mut host = GameHost::new();
         let mut script_state = ScriptState::default();
+        let bindings = robin_engine::natives::AttachedScriptBindings::default();
         robin_engine::sim_rng::with_seed(0x5eed, || {
             session
-                .run_required_startup_events(Some((&mut host, &mut script_state)), 0)
+                .run_required_startup_events(Some((&mut host, &mut script_state, &bindings)), 0)
                 .unwrap();
         });
         let startup_roll: i64 = session.state.lua().globals().get("startup_roll").unwrap();

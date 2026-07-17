@@ -723,6 +723,10 @@ pub struct LevelAssets {
     pub mission_script_programs: std::sync::Arc<
         std::collections::BTreeMap<String, std::sync::Arc<crate::script_manager::ScriptProgram>>,
     >,
+    /// Spellforge name tables used by Lua-only native lookups. Vanilla
+    /// missions leave this empty; like the other script bindings it is
+    /// reattached rather than serialized with simulation state.
+    pub script_names: std::sync::Arc<crate::natives::ScriptNameBindings>,
     /// Host-provided per-pixel sprite hit-test callback. `None` before
     /// the host wires it up; engine code that wants per-pixel sprite
     /// pick behaviour falls back to bbox-only when missing.
@@ -762,13 +766,10 @@ pub struct LevelAssets {
     pub sound_source_required_ids: std::collections::BTreeSet<u32>,
     /// Patch index → FX entity actor handle, or `None` when the patch
     /// has no animation).  Populated during level load when each patch's
-    /// FX entity is spawned; consumed once by
-    /// [`populate_game_host_from_level`] to fill
-    /// `GameHost::patch_animation_entities`.  Level-scoped static data —
-    /// never mutated after load.
-    ///
-    /// [`populate_game_host_from_level`]: super::EngineInner::populate_game_host_from_level
-    pub patch_entity_handles: Vec<Option<i32>>,
+    /// FX entity is spawned; borrowed by script natives through the
+    /// mission's transient `ScriptBindings`. Level-scoped static data — never
+    /// mutated after load.
+    pub patch_entity_handles: std::sync::Arc<Vec<Option<i32>>>,
     /// Scroll entities in creation order.  Indexed by the `u16` scroll
     /// IDs stored in each beggar's [`CivilianData::beggar_scroll_sets`]
     /// — the `RevealScrolls` flow resolves an ID to its scroll entity
@@ -809,7 +810,7 @@ pub struct LevelAssets {
 
     // ── Script-indexed level data ─────────────────────────────────
     // Level-load-only collections that scripts index by script handle.
-    // Read during script init (copied into GameHost) and during engine
+    // Borrowed by script natives through `ScriptBindings` and read by engine
     // methods that resolve script location handles to world positions.
     /// Number of script objects (locations) in the level.
     pub script_location_count: usize,
@@ -820,14 +821,14 @@ pub struct LevelAssets {
     /// Positions of script locations (points then sectors), indexed by
     /// script location index. Points use their (x, y);
     /// sectors use their polygon centroid. Populated from `RawScriptObjects`.
-    pub script_location_positions: Vec<(f32, f32)>,
+    pub script_location_positions: std::sync::Arc<Vec<(f32, f32)>>,
     /// Layer (floor) for each script location, parallel to
     /// `script_location_positions`. The layer is the destination
     /// level the script's location resolves to.
-    pub script_location_layers: Vec<u16>,
+    pub script_location_layers: std::sync::Arc<Vec<u16>>,
     /// Sector number for each script location, parallel to
     /// `script_location_positions`.
-    pub script_location_sectors: Vec<u16>,
+    pub script_location_sectors: std::sync::Arc<Vec<u16>>,
     /// Number of buildings available to scripts.
     pub script_building_count: usize,
     /// Number of hiking paths available to scripts.
@@ -835,7 +836,7 @@ pub struct LevelAssets {
     /// Indices into `fast_grid.level.sectors` for script zone sectors.
     /// Used for per-frame occupant checking (enter/exit dispatch).
     /// Populated from `RawScriptSector` data.
-    pub script_zone_grid_indices: Vec<u32>,
+    pub script_zone_grid_indices: std::sync::Arc<Vec<u32>>,
 }
 
 /// Sample duration in sim frames (40 ms each), keyed by
@@ -865,6 +866,7 @@ impl LevelAssets {
             profile_manager: std::sync::Arc::new(crate::profiles::ProfileManager::new()),
             bank_signature: 0,
             mission_script_programs: std::sync::Arc::new(std::collections::BTreeMap::new()),
+            script_names: std::sync::Arc::new(crate::natives::ScriptNameBindings::default()),
             pixel_opacity: None,
             peasant_firstnames: Vec::new(),
             peasant_surnames: Vec::new(),
@@ -872,7 +874,7 @@ impl LevelAssets {
             exclamation_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             source_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
             sound_source_required_ids: std::collections::BTreeSet::new(),
-            patch_entity_handles: Vec::new(),
+            patch_entity_handles: std::sync::Arc::new(Vec::new()),
             scroll_entity_ids: Vec::new(),
             all_soldier_entity_ids: Vec::new(),
             soldier_subordinate_ids: Vec::new(),
@@ -881,12 +883,12 @@ impl LevelAssets {
             static_sight_obstacles: std::sync::Arc::new(Vec::new()),
             script_location_count: 0,
             script_point_count: 0,
-            script_location_positions: Vec::new(),
-            script_location_layers: Vec::new(),
-            script_location_sectors: Vec::new(),
+            script_location_positions: std::sync::Arc::new(Vec::new()),
+            script_location_layers: std::sync::Arc::new(Vec::new()),
+            script_location_sectors: std::sync::Arc::new(Vec::new()),
             script_building_count: 0,
             script_hiking_path_count: 0,
-            script_zone_grid_indices: Vec::new(),
+            script_zone_grid_indices: std::sync::Arc::new(Vec::new()),
         }
     }
 
@@ -1013,6 +1015,11 @@ pub struct MissionScript {
     /// from `game_host`, which is only the transitional adapter for canonical
     /// engine state that has not yet moved to borrowed native capabilities.
     pub state: ScriptState,
+    /// Immutable level-native capabilities. Snapshot decode intentionally
+    /// leaves this detached; [`Engine::attach_level_assets`] restores it
+    /// before the VM can resume.
+    #[state_hash(skip)]
+    pub(crate) bindings: crate::natives::AttachedScriptBindings,
     /// Concrete script-native state. VMs borrow this through their
     /// transient trait-object host field only while a script call is
     /// executing, so snapshots keep the real state instead of losing it
@@ -1242,6 +1249,7 @@ impl<'de> Deserialize<'de> for MissionScript {
             script_name: snapshot.script_name,
             manager: snapshot.manager,
             state,
+            bindings: crate::natives::AttachedScriptBindings::default(),
             game_host: snapshot.game_host.current,
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
@@ -1396,6 +1404,7 @@ impl MissionScript {
             script_name,
             manager,
             state: ScriptState::default(),
+            bindings: crate::natives::AttachedScriptBindings::default(),
             game_host: GameHost::new(),
             instance,
             actor_instances: BTreeMap::new(),
@@ -1415,13 +1424,18 @@ impl MissionScript {
         self.manager.attach_program(program);
     }
 
+    pub(crate) fn attach_bindings(&mut self, bindings: crate::natives::AttachedScriptBindings) {
+        self.bindings = bindings;
+    }
+
     pub(crate) fn with_game_host_attached<R>(
         game_host: &mut GameHost,
         state: &mut ScriptState,
+        bindings: &crate::natives::AttachedScriptBindings,
         inst: &mut ScriptInstance,
         f: impl FnOnce(&mut ScriptInstance, &mut NativeContext<'_>) -> R,
     ) -> R {
-        let mut context = NativeContext::new(game_host, state);
+        let mut context = NativeContext::with_bindings(game_host, state, bindings);
         f(inst, &mut context)
     }
 
@@ -1476,6 +1490,7 @@ impl MissionScript {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             &mut inst,
             |inst, host| {
                 if inst.has_function(&self.manager, "Initialize") {
@@ -1632,7 +1647,11 @@ impl MissionScript {
                     .actor_instances
                     .get_mut(&handle)
                     .expect("actor instance vanished mid-run");
-                let mut context = NativeContext::new(&mut self.game_host, &mut self.state);
+                let mut context = NativeContext::with_bindings(
+                    &mut self.game_host,
+                    &mut self.state,
+                    &self.bindings,
+                );
                 actor_inst.resume_run_with_host(
                     &mut self.manager,
                     10_000_000,
@@ -1755,6 +1774,7 @@ impl MissionScript {
         let result = Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             zone_inst,
             |zone_inst, host| {
                 for &p in params {
@@ -1800,6 +1820,7 @@ impl MissionScript {
         let result = Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             target_inst,
             |target_inst, host| {
                 for &p in params {
@@ -1850,6 +1871,7 @@ impl MissionScript {
         let result = Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             scroll_inst,
             |scroll_inst, host| {
                 for &p in params {
@@ -1901,6 +1923,7 @@ impl MissionScript {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             &mut inst,
             |inst, host| {
                 if inst.has_function(&self.manager, "Initialize") {
@@ -1965,6 +1988,7 @@ impl MissionScript {
         let result = Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             wp_inst,
             |wp_inst, host| {
                 for &p in params {
@@ -2037,6 +2061,7 @@ impl MissionScript {
         ScriptContext::new(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             entities,
             ai_global,
             fast_grid,
@@ -2051,6 +2076,7 @@ impl MissionScript {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             &mut self.instance,
             |instance, host| {
                 instance.push_param(game_seconds as i32);
@@ -2068,6 +2094,7 @@ impl MissionScript {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             &mut self.instance,
             |instance, host| {
                 instance.push_param(game_seconds as i32);
@@ -2085,6 +2112,7 @@ impl MissionScript {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
+            &self.bindings,
             &mut self.instance,
             |instance, host| {
                 instance.push_param(if abandoned { 1 } else { 0 });
@@ -2102,6 +2130,7 @@ impl MissionScript {
             Self::with_game_host_attached(
                 &mut self.game_host,
                 &mut self.state,
+                &self.bindings,
                 &mut self.instance,
                 |instance, host| {
                     instance
@@ -2148,6 +2177,7 @@ impl MissionScript {
 pub(crate) struct ScriptContext<'a> {
     game_host: &'a mut GameHost,
     script_state: &'a mut ScriptState,
+    bindings: &'a crate::natives::AttachedScriptBindings,
     entities: &'a mut crate::entities::Entities,
     ai_global: &'a mut crate::ai::AiGlobalState,
     fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
@@ -2161,6 +2191,7 @@ impl<'a> ScriptContext<'a> {
     fn new(
         game_host: &'a mut GameHost,
         script_state: &'a mut ScriptState,
+        bindings: &'a crate::natives::AttachedScriptBindings,
         entities: &'a mut crate::entities::Entities,
         ai_global: &'a mut crate::ai::AiGlobalState,
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
@@ -2180,6 +2211,7 @@ impl<'a> ScriptContext<'a> {
         Self {
             game_host,
             script_state,
+            bindings,
             entities,
             ai_global,
             fast_grid,
@@ -2196,7 +2228,7 @@ impl<'a> ScriptContext<'a> {
     }
 
     pub(crate) fn native_context_mut(&mut self) -> NativeContext<'_> {
-        NativeContext::new(self.game_host, self.script_state)
+        NativeContext::with_bindings(self.game_host, self.script_state, self.bindings)
     }
 }
 
@@ -2238,9 +2270,11 @@ mod campaign_ownership_tests {
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
         let mut script_state = ScriptState::default();
+        let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
             host,
             &mut script_state,
+            &bindings,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,
@@ -2350,9 +2384,11 @@ mod campaign_ownership_tests {
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
         let mut script_state = ScriptState::default();
+        let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
             &mut host,
             &mut script_state,
+            &bindings,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,

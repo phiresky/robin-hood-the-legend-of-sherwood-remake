@@ -2500,6 +2500,7 @@ impl EngineInner {
             // PC authorisation for the gate A*.  Seek/melee routing
             // never sets the leave-map flag, so `allow_leave_map = false`.
             let pc_auth = self.get_entity(pc_id).map(|e| e.actor_auth_info());
+            let level = self.fast_grid.level.clone();
             let gate_path = {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
                 host.and_then(|h| {
@@ -2512,9 +2513,11 @@ impl EngineInner {
                         pc_auth.as_ref(),
                         false,
                         &|sector| {
-                            h.sector_kinds
-                                .get(&u16::from(sector))
-                                .and_then(|k| k.lift_type)
+                            level
+                                .sectors
+                                .iter()
+                                .find(|candidate| candidate.sector_number == sector)
+                                .and_then(|candidate| candidate.lift_type)
                         },
                     )
                 })
