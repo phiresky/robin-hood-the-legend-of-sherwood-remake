@@ -13,6 +13,8 @@ impl EngineInner {
     /// Also populates PC/NPC snapshot state used by misc native functions.
     pub(super) fn refresh_game_host_entity_state(&mut self) {
         // Collect data first, then write to host (avoids borrow issues).
+        let ambiance = self.weather.ambiance;
+        let is_forest_level = self.weather.is_forest_level;
         let mut entity_active_map: Vec<(i32, bool)> = Vec::with_capacity(self.entities.len());
         let mut pc_handles = Vec::with_capacity(self.pc_ids.len());
         let mut robin_handle: i32 = 0;
@@ -137,6 +139,8 @@ impl EngineInner {
         game_host.overall_enemy_alert = overall_enemy_alert;
         game_host.overall_civilian_alert = overall_civilian_alert;
         game_host.sound_source_alive = sound_source_alive;
+        game_host.ambiance = ambiance;
+        game_host.is_forest_level = is_forest_level;
     }
 
     /// Populate PC authorisation bits in GameHost from spawned PC entities.

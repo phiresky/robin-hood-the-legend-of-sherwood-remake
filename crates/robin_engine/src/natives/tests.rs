@@ -771,6 +771,119 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
     })
 }
 
+fn native_sees(host: &mut GameHost, npc_index: usize, target_index: usize) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(GameHost::actor_handle_from_index(npc_index));
+    stack.push_i32(GameHost::actor_handle_from_index(target_index));
+    <GameHost as HostFunctions>::call(host, NativeFn::Sees as u32, &mut stack)
+}
+
+fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> GameHost {
+    let mut npc = native_test_soldier();
+    npc.element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::ZERO);
+    npc.element_data_mut().set_direction_instantly(4);
+    npc.element_data_mut().posture = Posture::Upright;
+    let npc_data = npc.npc_data_mut().expect("test soldier has NPC data");
+    npc_data.view_radius = 400;
+    npc_data.eye_status = crate::element::EyeStatus::LookForward;
+    npc_data.view_direction = [1.0, 0.0];
+    npc_data.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    let Entity::Soldier(soldier) = &mut npc else {
+        unreachable!("native_test_soldier must return a soldier")
+    };
+    soldier.soldier.cached_camp = camp;
+
+    let mut pc = native_test_pc(Vec::new(), Vec::new());
+    pc.element_data_mut().set_position_map(target);
+    pc.element_data_mut().posture = Posture::Upright;
+
+    let mut host = GameHost::new();
+    host.entities = vec![Some(npc), Some(pc)];
+    host
+}
+
+#[test]
+fn sees_uses_forest_royalist_180_degree_rule() {
+    // A target due south is outside an east-facing 0.5-radian cone but
+    // inside the flat forward 180-degree half-plane (dot product == 0).
+    let mut host = native_sees_host(
+        crate::coordinates::MapPoint::new(0.0, 100.0),
+        Camp::Royalists,
+    );
+
+    assert_eq!(native_sees(&mut host, 0, 1), 0);
+
+    host.is_forest_level = true;
+    assert_eq!(native_sees(&mut host, 0, 1), 1);
+
+    let Entity::Soldier(soldier) = host.entities[0].as_mut().unwrap() else {
+        unreachable!("observer must remain a soldier")
+    };
+    soldier.soldier.cached_camp = Camp::Lacklandists;
+    assert_eq!(native_sees(&mut host, 0, 1), 0);
+}
+
+#[test]
+fn sees_uses_ambiance_adjusted_view_radius() {
+    // With a 500-unit raw radius, a target 450 units ahead is visible in
+    // day ambiance. At night the nearby light sector drives the original
+    // ComputeViewRadius blend to the 400-unit day shadow-polygon radius,
+    // making that same target invisible. This exercises native Sees all the
+    // way through the shared compute_view_radius + compute_visibility path.
+    let mut host = native_sees_host(
+        crate::coordinates::MapPoint::new(450.0, 0.0),
+        Camp::Lacklandists,
+    );
+    host.entities[0]
+        .as_mut()
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .view_radius = 500;
+
+    let level = std::sync::Arc::make_mut(&mut host.fast_grid.level);
+    level.sectors.push(crate::fast_find_grid::GridSector {
+        points: vec![
+            crate::coordinates::MapPoint::new(240.0, -10.0),
+            crate::coordinates::MapPoint::new(260.0, -10.0),
+            crate::coordinates::MapPoint::new(260.0, 10.0),
+            crate::coordinates::MapPoint::new(240.0, 10.0),
+        ],
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type: crate::sector::SectorType::SHADOW,
+        layer: 0,
+        sector_number: crate::sector::SectorNumber::new(1),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+    level.shadow_data.insert(
+        0,
+        crate::sector::ShadowData {
+            barycentre_2d: crate::coordinates::MapPoint::new(250.0, 0.0),
+            barycentre_3d_x: 250.0,
+            barycentre_3d_y: 0.0,
+            barycentre_3d_z: 45.0,
+            radius: 10.0,
+        },
+    );
+
+    assert_eq!(host.ambiance, crate::engine::Ambiance::Day);
+    assert_eq!(native_sees(&mut host, 0, 1), 1);
+
+    host.ambiance = crate::engine::Ambiance::Night;
+    assert_eq!(native_sees(&mut host, 0, 1), 0);
+}
+
 fn set_experiences_test_host() -> (GameHost, i32) {
     let actor = GameHost::actor_handle_from_index(0);
     let profile_idx = crate::profiles::CharacterProfileIdx(0);
