@@ -283,7 +283,7 @@ impl EngineInner {
         assets: &crate::engine::LevelAssets,
         id: crate::element::EntityId,
     ) {
-        let Some(entity) = self.entities.get(id) else {
+        let Some(entity) = self.world.entities.get(id) else {
             return;
         };
         let object_type = match entity {
@@ -306,7 +306,7 @@ impl EngineInner {
         let position_iface = entity.element_data().sprite.position_iface.clone();
         let mut sprite = prototype.clone();
         sprite.position_iface = position_iface;
-        if let Some(entity) = self.entities.get_mut(id) {
+        if let Some(entity) = self.world.entities.get_mut(id) {
             entity.element_data_mut().sprite = sprite;
         }
     }
@@ -395,7 +395,7 @@ impl EngineInner {
             "BONUS_FourLeavedClover",
             "BONUS Trefle",
             bank_signature,
-            Some(self.weather.ambiance.to_sprite_ambiance()),
+            Some(self.world.weather.ambiance.to_sprite_ambiance()),
         ) {
             tracing::error!("Failed to preload scroll-amulet sprite: {e}");
         }
@@ -449,7 +449,7 @@ impl EngineInner {
                 &filename,
                 &profile_name,
                 bank_signature,
-                Some(self.weather.ambiance.to_sprite_ambiance()),
+                Some(self.world.weather.ambiance.to_sprite_ambiance()),
             ) {
                 tracing::warn!(
                     "Failed to preload reinforcement sprite '{filename}' / '{profile_name}': {e}",
@@ -570,7 +570,7 @@ impl EngineInner {
             if ms.points.len() < 2 {
                 continue;
             }
-            self.fast_grid.add_sector_lines_for_sound(
+            self.world.fast_grid.add_sector_lines_for_sound(
                 0, // layer 0
                 &ms.points, true, // material polygons are always active in shipped levels
             );
@@ -598,7 +598,7 @@ impl EngineInner {
         }
 
         // Apply mission header
-        self.weather.ambiance = Ambiance::from_raw(loaded.mission.header.ambiance);
+        self.world.weather.ambiance = Ambiance::from_raw(loaded.mission.header.ambiance);
         // Install the initial view-polygon radius from the ambiance:
         // DAY / ATTACK / CUSTOM_1..4 → 400, FOG / NIGHT → 300.  Without
         // this seed, Fog/Night missions whose StartUp script does not
@@ -607,7 +607,8 @@ impl EngineInner {
         // vision path, detecting PCs from further away than in the
         // original game.  Script opcodes (engine/script.rs
         // `SetViewRadius`) can still overwrite this.
-        self.ai.standard_view_polygon_radius = self.weather.ambiance.default_view_polygon_radius();
+        self.ai.standard_view_polygon_radius =
+            self.world.weather.ambiance.default_view_polygon_radius();
         self.mission_domain.state.map_name = loaded.mission.header.map_filename.clone();
         assets.script_hiking_path_count = loaded.mission.hiking_paths.len();
 
@@ -671,7 +672,7 @@ impl EngineInner {
             // Register script zone sectors on the fast-find grid so we can
             // do point-in-polygon occupant checks during gameplay.
             std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).clear();
-            self.script_zone_data.clear();
+            self.world.script_zones.clear();
             for sec in &so.sectors {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
                 // avoid integer-aligned vertices confusing point-in-polygon
@@ -722,7 +723,7 @@ impl EngineInner {
                     );
                 }
 
-                let grid_idx = self.fast_grid.add_sector(
+                let grid_idx = self.world.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
                         bounding_box: bbox,
@@ -744,15 +745,15 @@ impl EngineInner {
                     sec.layer,
                 );
                 std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).push(grid_idx);
-                let zone_idx = self.script_zone_data.len();
-                self.script_zone_data.push(script_data);
+                let zone_idx = self.world.script_zones.len();
+                self.world.script_zones.push(script_data);
 
                 // Each polygon edge becomes a `LINE_SCRIPT | LINE_CROSS`
                 // line carrying a back-pointer to the owning script zone
                 // so the actor zone-crossing dispatch in `engine::script`
                 // can fire on cross.
                 if let Ok(zone_idx_u16) = u16::try_from(zone_idx) {
-                    self.fast_grid.add_sector_lines_for_script(
+                    self.world.fast_grid.add_sector_lines_for_script(
                         grid_idx,
                         sec.layer,
                         zone_idx_u16,
@@ -833,11 +834,12 @@ impl EngineInner {
                 // Resolve the referenced sector through `sector_number_map`
                 // so we can read its layer.
                 let sector_layer = self
+                    .world
                     .fast_grid
                     .level
                     .sector_number_map
                     .get(&crate::sector::SectorNumber::new(raw.sector_ref as i16))
-                    .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                    .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                     .map(|gs| gs.layer)
                     .unwrap_or(0);
                 let mut index_first_shooting: Option<crate::sector::ArcheryPointIdx> = None;
@@ -879,11 +881,12 @@ impl EngineInner {
                         // sector through `sector_number_map` to get the
                         // right layer.
                         let point_layer = self
+                            .world
                             .fast_grid
                             .level
                             .sector_number_map
                             .get(&crate::sector::SectorNumber::new(rp.sector as i16))
-                            .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                            .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                             .map(|gs| gs.layer)
                             .unwrap_or(sector_layer);
                         crate::ai::PointArchery {
@@ -1101,8 +1104,8 @@ impl EngineInner {
             })
             .collect();
         let n = static_obstacles.len();
-        self.dynamic_sight_obstacles.clear();
-        self.static_sight_obstacle_active = vec![true; n];
+        self.world.dynamic_sight_obstacles.clear();
+        self.world.static_sight_obstacle_active = vec![true; n];
         assets.static_sight_obstacles = std::sync::Arc::new(static_obstacles);
         tracing::info!("Loaded {} sight obstacles for AI line-of-sight", n);
         progress(1.0);
@@ -1115,7 +1118,7 @@ impl EngineInner {
             use crate::sound_source::{SoundSource, SoundSourceKind};
             use std::collections::BTreeSet;
 
-            let ambiance_mask = self.weather.ambiance.to_bitmask();
+            let ambiance_mask = self.world.weather.ambiance.to_bitmask();
             let mut required_ids = BTreeSet::new();
 
             for raw in &loaded.proto.sound_sources {
@@ -1235,7 +1238,10 @@ impl EngineInner {
         if let Some(ref motion_data) = pending.motion_data
             && !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
-                .preload_half_diagonals_from_proto(&mut self.fast_grid, &motion_data.graph_bytes)
+                .preload_half_diagonals_from_proto(
+                    &mut self.world.fast_grid,
+                    &motion_data.graph_bytes,
+                )
         {
             tracing::error!(
                 "Failed to pre-load pathfinder half-diagonals (soldier move_boxes will fall back): {e}"
@@ -1273,12 +1279,13 @@ impl EngineInner {
 
         // Set forest_level from proto misc — must happen before entity
         // spawning uses it to decide CHARACTER vs CHARACTER_BLIPPED.
-        self.weather.is_forest_level = loaded.proto.misc.as_ref().is_some_and(|m| m.forest_level);
+        self.world.weather.is_forest_level =
+            loaded.proto.misc.as_ref().is_some_and(|m| m.forest_level);
 
         // Character sprite loading parameters
         let char_base_dir = "Data/Characters";
         let bank_signature = assets.bank_signature;
-        let frame_kind = if self.weather.is_forest_level {
+        let frame_kind = if self.world.weather.is_forest_level {
             crate::sprite_script::FrameKind::Character
         } else {
             crate::sprite_script::FrameKind::CharacterBlipped
@@ -1312,7 +1319,7 @@ impl EngineInner {
         // chunk, so patch FX entities appear first in the element array.
         {
             let anim_base_dir = "Data/Animations";
-            let sprite_ambiance = Some(self.weather.ambiance.to_sprite_ambiance());
+            let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
             let bank_signature = assets.bank_signature;
             let mut patch_entity_handles: Vec<Option<i32>> = Vec::new();
 
@@ -1442,7 +1449,7 @@ impl EngineInner {
         // Spawn proto-level FX animations (water, flags, decorations, etc.)
         {
             let anim_base_dir = "Data/Animations";
-            let sprite_ambiance = Some(self.weather.ambiance.to_sprite_ambiance());
+            let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
             let bank_signature = assets.bank_signature;
 
             for raw in &loaded.proto.animations {
@@ -1557,7 +1564,7 @@ impl EngineInner {
                     &profile.filename,
                     &profile.profile_name,
                     bank_signature,
-                    Some(self.weather.ambiance.to_sprite_ambiance()),
+                    Some(self.world.weather.ambiance.to_sprite_ambiance()),
                 ) {
                     tracing::error!(
                         "Failed to load sprite for civilian profile {}: {e}",
@@ -1589,7 +1596,7 @@ impl EngineInner {
 
             // Civilians hardcode pathfinder index 0 and take the move box
             // from the grid's slot 0.
-            let civ_half_diag = self.fast_grid.try_move_box_half_diagonal(0);
+            let civ_half_diag = self.world.fast_grid.try_move_box_half_diagonal(0);
             sprite.position_iface.configure_for_actor(
                 0,
                 civ_half_diag,
@@ -1618,7 +1625,7 @@ impl EngineInner {
                     kind: crate::element::ElementKind::ActorCivilian,
                     // Civilians are also blipped on non-forest levels,
                     // same as soldiers.
-                    blipped: !self.weather.is_forest_level,
+                    blipped: !self.world.weather.is_forest_level,
                     posture: crate::element::Posture::Upright,
                     sprite,
                     ..Default::default()
@@ -1667,7 +1674,7 @@ impl EngineInner {
                     &profile.filename,
                     &profile.profile_name,
                     bank_signature,
-                    Some(self.weather.ambiance.to_sprite_ambiance()),
+                    Some(self.world.weather.ambiance.to_sprite_ambiance()),
                 ) {
                     tracing::error!(
                         "Failed to load sprite for rescue PC profile {}: {e}",
@@ -1695,7 +1702,8 @@ impl EngineInner {
             let (pc_pathfinder_idx, pc_half_diag) = match char_profile {
                 Some(profile) => (
                     profile.pathfinder_index,
-                    self.fast_grid
+                    self.world
+                        .fast_grid
                         .try_move_box_half_diagonal(profile.pathfinder_index as usize),
                 ),
                 None => (0, None),
@@ -1709,11 +1717,12 @@ impl EngineInner {
             // The sector must be both motion and area; warn instead of
             // asserting so a corrupt mission file still loads.
             let sector_motion_area = self
+                .world
                 .fast_grid
                 .level
                 .sector_number_map
                 .get(&crate::sector::SectorNumber::new(raw.sector as i16))
-                .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                 .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
                 .unwrap_or(false);
             if !sector_motion_area {
@@ -1900,7 +1909,7 @@ impl EngineInner {
                         &profile.filename,
                         &profile.profile_name,
                         bank_signature,
-                        Some(self.weather.ambiance.to_sprite_ambiance()),
+                        Some(self.world.weather.ambiance.to_sprite_ambiance()),
                     )
                     .map_err(|e| EngineError::ProfileSpriteLoadFailed {
                         kind: "soldier",
@@ -1993,12 +2002,13 @@ impl EngineInner {
             // soldier profile right after `LoadFrameInfo`.
             let soldier_pathfinder_idx = soldier_profile.map(|p| p.pathfinder_index).unwrap_or(0);
             let soldier_half_diag = self
+                .world
                 .fast_grid
                 .try_move_box_half_diagonal(soldier_pathfinder_idx as usize);
             if soldier_half_diag.is_none() {
                 tracing::warn!(
                     pf_idx = soldier_pathfinder_idx,
-                    table_len = self.fast_grid.level.move_box_half_diagonals.len(),
+                    table_len = self.world.fast_grid.level.move_box_half_diagonals.len(),
                     profile = raw.profile_number,
                     "BUG: soldier spawn: half-diag table empty → move_box falls back to \
                      (-1,-1,1,1); pathfinder proto loads after spawn_soldier and baked \
@@ -2036,7 +2046,7 @@ impl EngineInner {
                     // Non-forest levels start soldiers as blipped shadows that
                     // get revealed by proximity detection (SeesBlip) or the
                     // Listen ability.
-                    blipped: !self.weather.is_forest_level,
+                    blipped: !self.world.weather.is_forest_level,
                     // Default posture is Upright.  Without an explicit
                     // initializer posture defaults to `Undefined`, which
                     // stranded freshly-spawned soldiers because the
@@ -2080,7 +2090,7 @@ impl EngineInner {
             // `ai.base.me` and `owner_entity_id` so trace logs, filter-event
             // dispatch, and any `self.me`/`self.owner_entity_id` reads see
             // the real id instead of 0.
-            if let Some(e) = self.entities.get_mut(eid)
+            if let Some(e) = self.world.entities.get_mut(eid)
                 && let Some(ai) = e.ai_controller_mut()
             {
                 ai.me = eid.index();
@@ -2118,7 +2128,7 @@ impl EngineInner {
         // `Data/Animations/<ambiance>/`), then `ForceAnimation(action,
         // direction)` is applied.
         let anim_base_dir = "Data/Animations";
-        let sprite_ambiance = Some(self.weather.ambiance.to_sprite_ambiance());
+        let sprite_ambiance = Some(self.world.weather.ambiance.to_sprite_ambiance());
         for raw in &loaded.mission.targets {
             let mut sprite = crate::sprite::Sprite::default();
 
@@ -2368,7 +2378,7 @@ impl EngineInner {
                 sprite_file,
                 profile_name,
                 bank_signature,
-                Some(self.weather.ambiance.to_sprite_ambiance()),
+                Some(self.world.weather.ambiance.to_sprite_ambiance()),
             ) {
                 tracing::error!(
                     "Failed to load bonus sprite '{sprite_file}' profile '{profile_name}': {e}",
@@ -2407,7 +2417,7 @@ impl EngineInner {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ObjectBonus,
                     // Bonuses are blipped on non-forest levels.
-                    blipped: !self.weather.is_forest_level,
+                    blipped: !self.world.weather.is_forest_level,
                     sprite,
                     ..Default::default()
                 },
@@ -2456,7 +2466,7 @@ impl EngineInner {
                 "BONUS_Parchment",
                 "BONUS Parchemin",
                 bank_signature,
-                Some(self.weather.ambiance.to_sprite_ambiance()),
+                Some(self.world.weather.ambiance.to_sprite_ambiance()),
             ) {
                 tracing::error!("Failed to load scroll sprite: {e}");
             } else {
@@ -2550,7 +2560,7 @@ impl EngineInner {
         // ── Spawn PCs at beam-me points ─────────────────────────────
         // We split this into two phases to satisfy the borrow checker:
         // Phase A computes assignments from campaign data (borrows self.mission_domain.campaign),
-        // Phase B creates entities (borrows assets.sprite_scriptor, self.entities).
+        // Phase B creates entities (borrows assets.sprite_scriptor, self.world.entities).
         // (char_idx, profile_idx, beam_me_idx, pre-shuffle Sherwood placement roll)
         let pc_spawn_plan: Vec<(
             usize,
@@ -2937,7 +2947,7 @@ impl EngineInner {
                 // stored `character_profile_idx`.
                 {
                     use crate::character_kind::CharacterKind;
-                    let want_town = !self.weather.is_forest_level;
+                    let want_town = !self.world.weather.is_forest_level;
                     let current_kind = profiles
                         .get_character(profile_idx)
                         .and_then(|p| CharacterKind::from_profile(&p.filename, &p.profile_name));
@@ -2980,7 +2990,7 @@ impl EngineInner {
                     &profile.filename,
                     &profile.profile_name,
                     bank_signature,
-                    Some(self.weather.ambiance.to_sprite_ambiance()),
+                    Some(self.world.weather.ambiance.to_sprite_ambiance()),
                 ) {
                     tracing::error!(
                         "Failed to load sprite for PC '{}' (profile {}): {e}",
@@ -3034,6 +3044,7 @@ impl EngineInner {
                 // anti-collision has a valid bbox on the very first tick.
                 let pc_pathfinder_idx = profile.pathfinder_index;
                 let pc_half_diag = self
+                    .world
                     .fast_grid
                     .try_move_box_half_diagonal(pc_pathfinder_idx as usize);
                 sprite.position_iface.configure_for_actor(
@@ -3046,22 +3057,23 @@ impl EngineInner {
                 // corrupt mission file still loads (the existing
                 // motion/area lookup will collapse the beam-me into the
                 // fallback path downstream).
-                if beam_me.layer > self.fast_grid.level.special_layer {
+                if beam_me.layer > self.world.fast_grid.level.special_layer {
                     tracing::warn!(
                         "Beam-me {} at ({},{}) lies on out-of-range layer {} (special_layer={})",
                         bm_idx,
                         beam_me.position.x,
                         beam_me.position.y,
                         beam_me.layer,
-                        self.fast_grid.level.special_layer,
+                        self.world.fast_grid.level.special_layer,
                     );
                 }
                 let sector_motion_area = self
+                    .world
                     .fast_grid
                     .level
                     .sector_number_map
                     .get(&crate::sector::SectorNumber::new(beam_me.sector as i16))
-                    .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                    .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                     .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
                     .unwrap_or(false);
                 if !sector_motion_area {
@@ -3239,7 +3251,7 @@ impl EngineInner {
                 }
             } else {
                 // No PC for this beam-me — push None to keep script indices aligned.
-                self.entities.push(None);
+                self.world.entities.push(None);
             }
         }
         tracing::info!("Spawned {} PCs at beam-me positions", pc_count);
@@ -3257,7 +3269,12 @@ impl EngineInner {
         // returns a posture-appropriate idle order.  This is invoked
         // whenever an actor has no current order — in practice at the
         // first Execute tick after spawn.
-        let actor_ids_snapshot: Vec<_> = self.entities.actors().map(|(id, _)| id.into()).collect();
+        let actor_ids_snapshot: Vec<_> = self
+            .world
+            .entities
+            .actors()
+            .map(|(id, _)| id.into())
+            .collect();
         for actor_id in actor_ids_snapshot {
             self.ensure_wait_element(actor_id);
         }
@@ -3267,11 +3284,11 @@ impl EngineInner {
         // tenants) are loaded from other code paths.
 
         // Set night color based on ambiance — pack via draw_manager.
-        let (r, g, b) = self.weather.ambiance.night_color_rgb();
+        let (r, g, b) = self.world.weather.ambiance.night_color_rgb();
         let _ = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
         // EngineInner format is always RGB565. Host can derive 15-bit packing
         // at render time if its display needs it.
-        self.weather.night_color = robin_util::color::rgb565(r, g, b);
+        self.world.weather.night_color = robin_util::color::rgb565(r, g, b);
 
         tracing::info!(
             "EngineInner: initialized from mission '{}' / proto '{}' — \
@@ -3319,8 +3336,8 @@ impl EngineInner {
         if let Some(ref tactic) = loaded.mission.tactic_data
             && !tactic.reinforcement_points.is_empty()
         {
-            let map_bbox = self.fast_grid.level.map_bbox;
-            let special_layer = self.fast_grid.level.special_layer;
+            let map_bbox = self.world.fast_grid.level.map_bbox;
+            let special_layer = self.world.fast_grid.level.special_layer;
             // The out-of-map sector is sentinel #-1.
             let sector_out_of_map = crate::sector::SectorNumber::new(-1);
             let mut installed = 0usize;
@@ -3333,11 +3350,12 @@ impl EngineInner {
                     // corrupt mission file, while still flagging the
                     // issue loudly.
                     let sector_ok = self
+                        .world
                         .fast_grid
                         .level
                         .sector_number_map
                         .get(&crate::sector::SectorNumber::new(raw.sector as i16))
-                        .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                        .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                         .map(|gs| gs.sector_type.is_motion() && gs.sector_type.is_area())
                         .unwrap_or(false);
                     if !sector_ok {
@@ -3431,8 +3449,8 @@ impl EngineInner {
         //
         // `lift_layer()` is `special_layer - 1`; skip the whole pass when
         // the grid hasn't been sized yet (empty fixtures, tests).
-        let lift_layer = if self.fast_grid.level.special_layer > 0 {
-            self.fast_grid.lift_layer()
+        let lift_layer = if self.world.fast_grid.level.special_layer > 0 {
+            self.world.fast_grid.lift_layer()
         } else {
             0
         };
@@ -3462,10 +3480,11 @@ impl EngineInner {
         for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
             let first_door = building_first_door_info.get(bld_idx).copied();
             for &elem_idx in &tenants.tenant_element_indices {
-                let Some(entity_id) = self.entities.id_at_legacy_slot(u32::from(elem_idx)) else {
+                let Some(entity_id) = self.world.entities.id_at_legacy_slot(u32::from(elem_idx))
+                else {
                     continue;
                 };
-                let Some(entity) = self.entities.get_mut(entity_id) else {
+                let Some(entity) = self.world.entities.get_mut(entity_id) else {
                     continue;
                 };
                 // Only humans participate in InitOccupant; warn and skip
@@ -3606,7 +3625,7 @@ impl EngineInner {
         {
             return SpriteVariant::Day;
         }
-        match self.weather.ambiance {
+        match self.world.weather.ambiance {
             Ambiance::Fog => SpriteVariant::Fog,
             Ambiance::Night => SpriteVariant::Night,
             _ => SpriteVariant::Day,
@@ -3651,6 +3670,7 @@ impl EngineInner {
         let elem = entity.element_data();
         if elem.layer() != 0xFFFF
             && self
+                .world
                 .fast_grid
                 .is_in_shadow_sector(elem.position_map(), elem.layer())
         {
@@ -3753,8 +3773,9 @@ impl EngineInner {
         // Size the grid from map dimensions.
         let grid_w = level_w / 64;
         let grid_h = level_h / 64;
-        self.fast_grid.size_map(grid_w, grid_h);
-        self.fast_grid
+        self.world.fast_grid.size_map(grid_w, grid_h);
+        self.world
+            .fast_grid
             .allocate_layers(motion_data.layers.len() as u16);
 
         // Register the already-loaded sight obstacles with the grid so
@@ -3762,7 +3783,7 @@ impl EngineInner {
         // 3D raycast scan to overlapping obstacles.
         // Snapshot (idx, layer, box_ground) before mutating fast_grid —
         // `self.sight_obstacles(assets)` borrows engine immutably while
-        // `add_obstacle_index` needs `&mut self.fast_grid`.
+        // `add_obstacle_index` needs `&mut self.world.fast_grid`.
         let obstacle_metadata: Vec<(u32, u16, crate::coordinates::GroundBBox)> = self
             .sight_obstacles(assets)
             .iter_indexed()
@@ -3770,7 +3791,9 @@ impl EngineInner {
             .collect();
         for (obs_idx, layer, box_ground) in obstacle_metadata {
             if let Some(idx) = crate::sight_obstacle::SightObstacleIndex::new(obs_idx) {
-                self.fast_grid.add_obstacle_index(idx, layer, &box_ground);
+                self.world
+                    .fast_grid
+                    .add_obstacle_index(idx, layer, &box_ground);
             }
         }
 
@@ -3782,7 +3805,7 @@ impl EngineInner {
         let mut added = 0usize;
         for raw in raw_masks {
             if let Some(mask) = crate::mask::RuntimeMask::from_raw(&raw) {
-                self.fast_grid.add_mask(mask);
+                self.world.fast_grid.add_mask(mask);
                 added += 1;
             }
         }
@@ -3826,11 +3849,11 @@ impl EngineInner {
                 left,
                 right,
             );
-            if (raw.layer as usize) >= self.fast_grid.level.layers.len() {
+            if (raw.layer as usize) >= self.world.fast_grid.level.layers.len() {
                 elev_skipped_layer += 1;
                 continue;
             }
-            self.fast_grid.add_line(line, raw.layer);
+            self.world.fast_grid.add_line(line, raw.layer);
             elev_added += 1;
         }
         if !elev_raw.is_empty() {
@@ -3862,7 +3885,7 @@ impl EngineInner {
                     );
                     line.initialize_motion_normal(true);
                     line.set_repulsive(true);
-                    self.fast_grid.add_line(line, layer_idx as u16);
+                    self.world.fast_grid.add_line(line, layer_idx as u16);
                 }
                 // Emit cone-limited repulsive points at inward corners
                 // of the motion area.  `det(v1, v2) < 0` marks an
@@ -3884,15 +3907,17 @@ impl EngineInner {
                             let is_concave =
                                 crate::geo2d::cross(limit_left.to_geo(), limit_right.to_geo())
                                     < 0.0;
-                            self.fast_grid.level_mut().level_repulsive_points.push(
-                                crate::fast_find_grid::LevelRepulsivePoint {
+                            self.world
+                                .fast_grid
+                                .level_mut()
+                                .level_repulsive_points
+                                .push(crate::fast_find_grid::LevelRepulsivePoint {
                                     position: MapPoint::new(bx as f32, by as f32),
                                     layer: layer_idx as u16,
                                     limit_left,
                                     limit_right,
                                     is_concave,
-                                },
-                            );
+                                });
                         }
                     }
                 }
@@ -3932,7 +3957,7 @@ impl EngineInner {
                         );
                         line.initialize_motion_normal(false);
                         line.set_repulsive(true);
-                        let line_idx = self.fast_grid.add_line(line, layer_idx as u16);
+                        let line_idx = self.world.fast_grid.add_line(line, layer_idx as u16);
                         line_indices.push(line_idx);
                         let p = MapPoint::new(x1 as f32, y1 as f32);
                         bbox.expand_point(p);
@@ -3956,15 +3981,17 @@ impl EngineInner {
                                 let is_concave =
                                     crate::geo2d::cross(limit_left.to_geo(), limit_right.to_geo())
                                         < 0.0;
-                                self.fast_grid.level_mut().level_repulsive_points.push(
-                                    crate::fast_find_grid::LevelRepulsivePoint {
+                                self.world
+                                    .fast_grid
+                                    .level_mut()
+                                    .level_repulsive_points
+                                    .push(crate::fast_find_grid::LevelRepulsivePoint {
                                         position: MapPoint::new(ox as f32, oy as f32),
                                         layer: layer_idx as u16,
                                         limit_left,
                                         limit_right,
                                         is_concave,
-                                    },
-                                );
+                                    });
                             }
                         }
                     }
@@ -4008,7 +4035,7 @@ impl EngineInner {
         // ── Part 2: Pathfinder graph ──
         if !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
-                .load_from_proto_stream(&mut self.fast_grid, &motion_data.graph_bytes)
+                .load_from_proto_stream(&mut self.world.fast_grid, &motion_data.graph_bytes)
         {
             tracing::error!("Failed to load pathfinder graph: {e}");
         }
@@ -4019,7 +4046,8 @@ impl EngineInner {
         // ── Part 4: Initialize pathfinder obstacle states ──
         // Must happen after graph is loaded, not during engine.initialize() which
         // runs before load_background_map processes the motion data.
-        self.pathfinder
+        self.world
+            .pathfinder
             .initialize_from_graph(assets.pathfinder_graph.as_ref());
 
         // ── Part 5: Register sectors in grid blocks ──
@@ -4054,7 +4082,7 @@ impl EngineInner {
                         bbox.expand_point(p);
                     }
 
-                    self.fast_grid.add_sector(
+                    self.world.fast_grid.add_sector(
                         crate::fast_find_grid::GridSector {
                             points: pts,
                             bounding_box: bbox,
@@ -4091,7 +4119,7 @@ impl EngineInner {
                             obs_bbox.expand_point(p);
                         }
 
-                        self.fast_grid.add_sector(
+                        self.world.fast_grid.add_sector(
                             crate::fast_find_grid::GridSector {
                                 points: obs_pts,
                                 bounding_box: obs_bbox,
@@ -4135,11 +4163,12 @@ impl EngineInner {
             // CHUNK_MOTION and is the only clickable lift geometry.
             for lift in lifts {
                 let sn = crate::sector::SectorNumber::new(lift.motion_area_index as i16);
-                let Some(&lift_grid_idx) = self.fast_grid.level.sector_number_map.get(&sn) else {
+                let Some(&lift_grid_idx) = self.world.fast_grid.level.sector_number_map.get(&sn)
+                else {
                     continue;
                 };
                 {
-                    let level = self.fast_grid.level_mut();
+                    let level = self.world.fast_grid.level_mut();
                     if let Some(gs) = level.sectors.get_mut(lift_grid_idx) {
                         // The motion loader must already have marked the
                         // area as a lift.  Panic so malformed level data
@@ -4192,7 +4221,7 @@ impl EngineInner {
             // call sees the correct values.  Here we just walk the stashed
             // list and register the matching empty grid sectors — the
             // `debug_assert_eq!` catches any drift between the two passes.
-            let building_lift_layer = self.fast_grid.lift_layer();
+            let building_lift_layer = self.world.fast_grid.lift_layer();
             let allocated = std::mem::take(&mut pending.building_sector_numbers);
             for (bld_idx, sn) in allocated.iter().copied().enumerate() {
                 let sn_wrapped = crate::sector::SectorNumber::new(sn);
@@ -4203,7 +4232,7 @@ impl EngineInner {
                      `initialize_motion_from_level_data` must agree on the \
                      area/obstacle count"
                 );
-                self.fast_grid.add_sector(
+                self.world.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: Vec::new(),
                         bounding_box: crate::coordinates::MapBBox::new(),
@@ -4235,7 +4264,7 @@ impl EngineInner {
             // clear are dropped.  `is_in_shadow_sector` queries these to
             // suppress the fog/night sprite variant when an actor stands
             // inside a torch-lit polygon.
-            let ambiance_mask = self.weather.ambiance.to_bitmask();
+            let ambiance_mask = self.world.weather.ambiance.to_bitmask();
             let raw_light_sectors = std::mem::take(&mut pending.light_sectors);
             let mut light_added = 0usize;
             let mut light_skipped_ambience = 0usize;
@@ -4246,7 +4275,7 @@ impl EngineInner {
                     light_skipped_ambience += 1;
                     continue;
                 }
-                if (raw.layer as usize) >= self.fast_grid.level.layers.len() {
+                if (raw.layer as usize) >= self.world.fast_grid.level.layers.len() {
                     light_skipped_layer += 1;
                     continue;
                 }
@@ -4264,7 +4293,7 @@ impl EngineInner {
                 for &p in &pts {
                     bbox.expand_point(p);
                 }
-                self.fast_grid.add_sector(
+                self.world.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector {
                         points: pts,
                         bounding_box: bbox,
@@ -4312,13 +4341,14 @@ impl EngineInner {
             // an `Option<ShadowData>`.  Consumed by the night/fog branch
             // of `ai_vision::compute_view_radius`.
             let is_night_or_fog = matches!(
-                self.weather.ambiance,
+                self.world.weather.ambiance,
                 crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
             );
             if is_night_or_fog && light_added > 0 {
                 // Snapshot (idx, points, layer) without holding the
                 // immutable borrow during the obstacle lookup pass.
                 let shadow_inputs: Vec<(u32, Vec<MapPoint>, u16)> = self
+                    .world
                     .fast_grid
                     .level
                     .sectors
@@ -4357,20 +4387,21 @@ impl EngineInner {
                     }
                     shadow.initialize_3d(found_top_plane.as_ref());
 
-                    self.fast_grid
+                    self.world
+                        .fast_grid
                         .level_mut()
                         .shadow_data
                         .insert(sector_idx, shadow);
                 }
                 tracing::debug!(
                     "Initialized shadow centroid data for {} sectors (NIGHT/FOG ambience)",
-                    self.fast_grid.level.shadow_data.len(),
+                    self.world.fast_grid.level.shadow_data.len(),
                 );
             }
 
             tracing::info!(
                 "Registered {} grid sectors ({} motion areas + obstacles, {} area-only)",
-                self.fast_grid.level.sectors.len(),
+                self.world.fast_grid.level.sectors.len(),
                 i16::from(sector_number),
                 area_flat_idx,
             );
@@ -4379,7 +4410,7 @@ impl EngineInner {
         tracing::info!(
             "Motion initialized: {} layers, {} grid lines, {} path nodes, {} path links, {} pf sectors",
             motion_data.layers.len(),
-            self.fast_grid.level.lines.len(),
+            self.world.fast_grid.level.lines.len(),
             assets.pathfinder_graph.nodes.len(),
             assets.pathfinder_graph.static_data.links.len(),
             assets.pathfinder_graph.static_data.sector_conversion.len(),
@@ -4431,7 +4462,8 @@ impl EngineInner {
         let zone_sector: Vec<Option<u32>> = jump_zones
             .iter()
             .map(|z| {
-                self.fast_grid
+                self.world
+                    .fast_grid
                     .level
                     .sector_number_map
                     .get(&crate::sector::SectorNumber::new(z.sector as i16))
@@ -4524,7 +4556,7 @@ impl EngineInner {
             jl2.helper_needed = jh2 < Self::JUMP_HEIGHT_HELPER_THRESHOLD && either_zone_helper;
 
             // Push both lines and cross-link their associated indices.
-            let idx1 = self.fast_grid.level.jump_lines.len() as u32;
+            let idx1 = self.world.fast_grid.level.jump_lines.len() as u32;
             let idx2 = idx1 + 1;
             jl1.associated_line_index = Some(idx2);
             jl2.associated_line_index = Some(idx1);
@@ -4544,7 +4576,7 @@ impl EngineInner {
             let jl1_helper_needed = jl1.helper_needed;
             let jl2_helper_needed = jl2.helper_needed;
             {
-                let level = self.fast_grid.level_mut();
+                let level = self.world.fast_grid.level_mut();
                 level.jump_lines.push(jl1);
                 level.jump_lines.push(jl2);
 
@@ -4567,12 +4599,14 @@ impl EngineInner {
             // table uses (sector_out / sector_in are sector numbers, not
             // grid-flat indices).
             let sector_num_out = self
+                .world
                 .fast_grid
                 .level
                 .sectors
                 .get(sec2 as usize)
                 .map(|s| s.sector_number);
             let sector_num_in = self
+                .world
                 .fast_grid
                 .level
                 .sectors
@@ -4633,7 +4667,7 @@ impl EngineInner {
             tracing::debug!(
                 "Loaded {} jump line pair(s) into fast grid ({} jump lines total)",
                 loaded_pairs,
-                self.fast_grid.level.jump_lines.len(),
+                self.world.fast_grid.level.jump_lines.len(),
             );
         }
 
@@ -4688,7 +4722,7 @@ impl EngineInner {
                 underlying_sector: zone_sector[zi]
                     .and_then(crate::fast_find_grid::SectorIndex::new),
             };
-            self.fast_grid.add_sector(gs, zone.layer);
+            self.world.fast_grid.add_sector(gs, zone.layer);
             registered += 1;
         }
         if registered > 0 {
@@ -4767,6 +4801,7 @@ impl EngineInner {
             };
             for mref in old_refs {
                 let resolved = self
+                    .world
                     .fast_grid
                     .level
                     .layers
@@ -4782,6 +4817,7 @@ impl EngineInner {
             }
             for mref in new_refs {
                 let resolved = self
+                    .world
                     .fast_grid
                     .level
                     .layers
@@ -4799,7 +4835,7 @@ impl EngineInner {
             // dormant.  `initially_active` in the proto doesn't affect
             // masks — the flip happens via `PatchEffect::SwapObjects`.
             for &idx in &patch.new_mask_indices {
-                self.fast_grid.set_mask_active(idx, false);
+                self.world.fast_grid.set_mask_active(idx, false);
             }
         }
         if missing_old > 0 || missing_new > 0 {
@@ -4828,7 +4864,7 @@ impl EngineInner {
             return;
         }
 
-        // Snapshot door endpoints so we can borrow `self.fast_grid` mutably
+        // Snapshot door endpoints so we can borrow `self.world.fast_grid` mutably
         // without also holding a reference into the script host.
         let endpoints: Vec<(u32, crate::sector::SectorNumber)> = {
             let game_host = self
@@ -4849,12 +4885,18 @@ impl EngineInner {
         let mut missing = 0u32;
         let mut missing_values: std::collections::BTreeSet<i16> = std::collections::BTreeSet::new();
         for (door_idx, sector_number) in &endpoints {
-            let Some(&grid_idx) = self.fast_grid.level.sector_number_map.get(sector_number) else {
+            let Some(&grid_idx) = self
+                .world
+                .fast_grid
+                .level
+                .sector_number_map
+                .get(sector_number)
+            else {
                 missing += 1;
                 missing_values.insert(i16::from(*sector_number));
                 continue;
             };
-            let level = self.fast_grid.level_mut();
+            let level = self.world.fast_grid.level_mut();
             if let Some(gs) = level.sectors.get_mut(grid_idx)
                 && gs.sector_type.is_motion()
                 && gs.sector_type.is_area()
@@ -5084,7 +5126,7 @@ impl EngineInner {
             // `special_layer` from the bump — keeping the door reachable
             // from the higher of the two real layers without accidentally
             // landing it on the out-of-map layer.
-            let special_layer = self.fast_grid.level.special_layer;
+            let special_layer = self.world.fast_grid.level.special_layer;
             let mut door_sectors_registered = 0u32;
             for (door_idx, door) in game_host.doors.iter().enumerate() {
                 if door.click_polygon.is_empty() {
@@ -5104,7 +5146,7 @@ impl EngineInner {
                 }
 
                 let door_active = door.active;
-                let idx = self.fast_grid.add_sector(
+                let idx = self.world.fast_grid.add_sector(
                     crate::fast_find_grid::GridSector { points: pts,
                     bounding_box: bbox,
                     sector_type: SectorType::DOOR | SectorType::MOUSE,
@@ -5123,7 +5165,7 @@ impl EngineInner {
                 },
                     layer,
                 );
-                self.fast_grid.set_sector_active(idx, door_active);
+                self.world.fast_grid.set_sector_active(idx, door_active);
                 door_sectors_registered += 1;
             }
             tracing::info!(
@@ -5141,7 +5183,7 @@ impl EngineInner {
         // DetermineMovementAnimation. Populate the Rust cache after the
         // GameHost door table is fully loaded; an earlier motion-sector pass
         // may run before these doors exist.
-        for gs in &mut self.fast_grid.level_mut().sectors {
+        for gs in &mut self.world.fast_grid.level_mut().sectors {
             if gs.sector_type.is_lift() || gs.lift_type.is_some() {
                 gs.low_exit_point = None;
                 gs.high_exit_point = None;
@@ -5152,11 +5194,16 @@ impl EngineInner {
         let mut lift_endpoints_partial = 0usize;
         for (door_idx, door) in game_host.doors.iter().enumerate() {
             for sector_number in [door.sector_out, door.sector_in] {
-                let Some(&grid_idx) = self.fast_grid.level.sector_number_map.get(&sector_number)
+                let Some(&grid_idx) = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&sector_number)
                 else {
                     continue;
                 };
-                let Some(gs) = self.fast_grid.level_mut().sectors.get_mut(grid_idx) else {
+                let Some(gs) = self.world.fast_grid.level_mut().sectors.get_mut(grid_idx) else {
                     continue;
                 };
                 if !(gs.sector_type.is_lift() || gs.lift_type.is_some()) {
@@ -5181,7 +5228,7 @@ impl EngineInner {
                 }
             }
         }
-        for gs in &self.fast_grid.level.sectors {
+        for gs in &self.world.fast_grid.level.sectors {
             if !(gs.sector_type.is_lift() || gs.lift_type.is_some()) {
                 continue;
             }
@@ -5288,7 +5335,7 @@ impl EngineInner {
 
             // Old sectors: active = true (visible before patch fires)
             if let Some(idx) = register_sector(
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &raw.old_mouse_sector,
                 mouse_patch,
                 true,
@@ -5297,7 +5344,7 @@ impl EngineInner {
                 old_sector_indices.push(idx);
             }
             if let Some(idx) = register_sector(
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &raw.old_masking_sector,
                 mouse_motion,
                 true,
@@ -5307,7 +5354,7 @@ impl EngineInner {
             }
             // New sectors: active = false (hidden until patch fires)
             if let Some(idx) = register_sector(
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &raw.new_mouse_sector,
                 mouse_patch,
                 false,
@@ -5316,7 +5363,7 @@ impl EngineInner {
                 new_sector_indices.push(idx);
             }
             if let Some(idx) = register_sector(
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &raw.new_masking_sector,
                 mouse_motion,
                 false,
@@ -5343,7 +5390,7 @@ impl EngineInner {
             // Register the apply polygon as a cross-sector + build its
             // LINE_PATCH boundary lines carrying this patch's index.
             let apply_sector_idx = register_sector(
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &raw.apply_sector,
                 cross_patch_apply,
                 true,
@@ -5352,7 +5399,7 @@ impl EngineInner {
             if let Some(idx) = apply_sector_idx
                 && let Some(patch_index) = crate::patch::PatchIndex::new(patch_idx as u32)
             {
-                self.fast_grid.add_sector_lines_for_patch(
+                self.world.fast_grid.add_sector_lines_for_patch(
                     idx,
                     patch_layer,
                     patch_index,
@@ -5362,14 +5409,14 @@ impl EngineInner {
 
             // Register the no-apply polygon identically, minus the APPLY bit.
             if let Some(idx) = register_sector(
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &raw.no_apply_sector,
                 cross_patch,
                 true,
                 patch_layer,
             ) && let Some(patch_index) = crate::patch::PatchIndex::new(patch_idx as u32)
             {
-                self.fast_grid.add_sector_lines_for_patch(
+                self.world.fast_grid.add_sector_lines_for_patch(
                     idx,
                     patch_layer,
                     patch_index,
@@ -5549,7 +5596,7 @@ impl EngineInner {
             Vec<crate::sector_production::Occupant>,
         > = std::collections::HashMap::new();
 
-        for (zone_idx, zone) in self.script_zone_data.iter().enumerate() {
+        for (zone_idx, zone) in self.world.script_zones.iter().enumerate() {
             let prod_type = zone.production_sector_type;
             if prod_type == crate::sector_production::Type::Unknown
                 || prod_type == crate::sector_production::Type::Relic
@@ -5565,7 +5612,7 @@ impl EngineInner {
             let captured = per_sector_occupants.entry(prod_type).or_default();
 
             for &elem_idx in &zone.occupant_indices {
-                let slot = self.entities.get(elem_idx);
+                let slot = self.world.entities.get(elem_idx);
                 let Some(entity) = slot else { continue };
                 let crate::element::Entity::Pc(pc) = entity else {
                     continue;
@@ -5617,7 +5664,7 @@ impl EngineInner {
 
         // Now that engine reads are done, write into the campaign sectors:
         // amount harvest (from entities) + occupants (from zones above).
-        let entities_snapshot = &self.entities;
+        let entities_snapshot = &self.world.entities;
         let Some(campaign) = self.mission_domain.campaign.as_mut() else {
             return;
         };
@@ -5691,7 +5738,7 @@ impl EngineInner {
         let points_count = assets
             .script_location_positions
             .len()
-            .saturating_sub(self.script_zone_data.len());
+            .saturating_sub(self.world.script_zones.len());
 
         struct SectorPlan {
             prod_type: PT,
@@ -5710,7 +5757,7 @@ impl EngineInner {
         // Build a zone-type → (layer, sector) map for attaching sectors.
         let mut zone_location: std::collections::HashMap<PT, (u16, u16)> =
             std::collections::HashMap::new();
-        for (zone_idx, zone) in self.script_zone_data.iter().enumerate() {
+        for (zone_idx, zone) in self.world.script_zones.iter().enumerate() {
             let pt = zone.production_sector_type;
             if pt == PT::Unknown {
                 continue;
@@ -5879,7 +5926,7 @@ impl EngineInner {
                         sprite_file,
                         profile_name,
                         bank_signature,
-                        Some(self.weather.ambiance.to_sprite_ambiance()),
+                        Some(self.world.weather.ambiance.to_sprite_ambiance()),
                     ) {
                         tracing::error!(
                             "Sherwood production bonus sprite '{sprite_file}' / '{profile_name}' failed: {e}"
@@ -5943,7 +5990,7 @@ impl EngineInner {
                         sprite_file,
                         profile_name,
                         bank_signature,
-                        Some(self.weather.ambiance.to_sprite_ambiance()),
+                        Some(self.world.weather.ambiance.to_sprite_ambiance()),
                     ) {
                         tracing::error!(
                             "Sherwood relic sprite '{sprite_file}' / '{profile_name}' failed: {e}"
@@ -6001,6 +6048,7 @@ impl EngineInner {
                 };
 
                 let Some(pc_id) = self
+                    .world
                     .entities
                     .pcs()
                     .find_map(|(id, pc)| (pc.pc.profile_index == profile_idx).then_some(id))
@@ -6024,7 +6072,8 @@ impl EngineInner {
                 // material from the SECTOR_SOUND polygons at the current
                 // map position (or `default_material` when none contain
                 // the point).
-                if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
+                if let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get_mut(entity_id)
+                {
                     pc.element
                         .set_position_map(MapPoint::new(occupant.x, occupant.y));
                     pc.element.set_layer(layer);
@@ -6043,7 +6092,8 @@ impl EngineInner {
                     Some(occupant.obstacle)
                 };
                 self.set_obstacle_and_material(assets, entity_id, occupant_obstacle_opt);
-                if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
+                if let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get_mut(entity_id)
+                {
                     pc.element.update_grid_cell();
                 }
 
@@ -6079,7 +6129,9 @@ impl EngineInner {
                 }
                 if plan.heal_gain > 0 {
                     let amount = plan.heal_gain.min(i16::MAX as u16) as i16;
-                    if let Some(crate::element::Entity::Pc(pc)) = self.entities.get_mut(entity_id) {
+                    if let Some(crate::element::Entity::Pc(pc)) =
+                        self.world.entities.get_mut(entity_id)
+                    {
                         crate::pc_status::heal(&mut pc.pc.life_points, amount, false);
                     }
                     if let Some(campaign) = self.mission_domain.campaign.as_mut()

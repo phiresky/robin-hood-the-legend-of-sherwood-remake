@@ -28,7 +28,7 @@ impl EngineInner {
         target: bool,
         fast_variant: bool,
     ) {
-        let (will_be_attentive, has_officer_anim) = match self.entities.get(entity_id) {
+        let (will_be_attentive, has_officer_anim) = match self.world.entities.get(entity_id) {
             Some(Entity::Soldier(s)) => (
                 s.npc
                     .ai_brain
@@ -56,7 +56,7 @@ impl EngineInner {
 
         self.launch_element(SequenceElement::new(1, command, Some(entity_id)));
 
-        if let Some(Entity::Soldier(s)) = self.entities.get_mut(entity_id)
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(entity_id)
             && let Some(enemy) = s.npc.ai_brain.enemy_mut()
         {
             enemy.will_be_attentive = target;
@@ -102,7 +102,7 @@ impl EngineInner {
         // Gate on the posture the actor will hold when the sequence completes.
         let posture_upright_after = posture_after_transition == Posture::Upright;
         let (currently_attentive, idle) = {
-            let Some(entity) = self.entities.get(owner) else {
+            let Some(entity) = self.world.entities.get(owner) else {
                 return false;
             };
             let cur = entity.enemy_ai().is_some_and(|e| e.attentive);
@@ -143,7 +143,7 @@ impl EngineInner {
             self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
             true
         } else {
-            if let Some(entity) = self.entities.get_mut(owner)
+            if let Some(entity) = self.world.entities.get_mut(owner)
                 && let Some(enemy) = entity.enemy_ai_mut()
             {
                 enemy.attentive = target_attentive;
@@ -168,7 +168,7 @@ impl EngineInner {
         seq_id: SequenceId,
         elem_idx: usize,
     ) {
-        let Some(entity) = self.entities.get(owner) else {
+        let Some(entity) = self.world.entities.get(owner) else {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
             return;
         };
@@ -224,7 +224,7 @@ impl EngineInner {
         // sequence element so `current_order_for_actor` picks it up.
         // Each cycle's completion hook (`WaspStruggleCycle`) decides
         // whether to re-push the next cycle or terminate the element.
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             if entity.actor_data().is_some() {
                 entity.position_iface_mut().set_direction(
                     crate::position_interface::Direction::from_raw(new_goal as i32),
@@ -322,11 +322,11 @@ impl EngineInner {
         // is needed here.
 
         // Snapshot the owner's posture for the `is_very_very_busy` check
-        // below without holding a mutable borrow on `self.entities` — so
+        // below without holding a mutable borrow on `self.world.entities` — so
         // the Impossible arm can read `self.sequence_manager` without a
         // split-borrow conflict, and the final state mutation below can
         // use a fresh `get_mut`.
-        if !self.entities.get(owner).is_some() {
+        if !self.world.entities.get(owner).is_some() {
             return;
         }
 
@@ -336,7 +336,7 @@ impl EngineInner {
         // below (those gate the per-owner stimulus dispatch, which is
         // NPC-only — the PC has no `ai_controller` for
         // `fire_self_stimulus` to land on).
-        if self.entities.get(owner).is_some_and(|e| e.is_pc()) {
+        if self.world.entities.get(owner).is_some_and(|e| e.is_pc()) {
             self.send_condolation_card_pc(owner, command, seq_id, elem_idx, assets);
         }
 
@@ -345,7 +345,7 @@ impl EngineInner {
         // halt-method guard, so it fires whether or not `from_halt`
         // is set.
         if matches!(command, Command::ReceiveWaspSting)
-            && let Some(entity) = self.entities.get_mut(owner)
+            && let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(npc) = entity.npc_data_mut()
         {
             npc.wasp_victim = false;
@@ -371,11 +371,11 @@ impl EngineInner {
                 )
             })
             .unwrap_or(false);
-        if map_flag_terminated && let Some(entity) = self.entities.get_mut(owner) {
+        if map_flag_terminated && let Some(entity) = self.world.entities.get_mut(owner) {
             let pos = entity.element_data().position_map();
-            let inside_map = self.fast_grid.is_inside_grid_point(pos);
+            let inside_map = self.world.fast_grid.is_inside_grid_point(pos);
             // Re-borrow mutably (the read above released the borrow).
-            if let Some(entity) = self.entities.get_mut(owner) {
+            if let Some(entity) = self.world.entities.get_mut(owner) {
                 let ed = entity.element_data_mut();
                 ed.active = inside_map;
                 ed.in_honolulu = !inside_map;
@@ -418,7 +418,7 @@ impl EngineInner {
                         // handles the symmetric unlock when the busy
                         // state clears.
                         if self.is_very_very_busy(owner)
-                            && let Some(ent) = self.entities.get_mut(owner)
+                            && let Some(ent) = self.world.entities.get_mut(owner)
                             && let Some(ai) = ent.ai_controller_mut()
                             && !ai.was_busy
                         {
@@ -514,7 +514,7 @@ impl EngineInner {
         };
 
         if let Some(st) = stimulus
-            && let Some(entity) = self.entities.get_mut(owner)
+            && let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()
         {
             tracing::trace!(
@@ -574,7 +574,7 @@ impl EngineInner {
                 self.actor_wait(victim_id);
 
                 // Release the AILOCK_FREEZE acquired in `begin_strangle`.
-                if let Some(victim) = self.entities.get_mut(victim_id) {
+                if let Some(victim) = self.world.entities.get_mut(victim_id) {
                     if let Some(ai) = victim.ai_controller_mut() {
                         ai.non_script_unlock(crate::ai::AiLockFlags::FREEZE);
                     }
@@ -594,7 +594,7 @@ impl EngineInner {
 
                 // Reset the victim's gaze (cosmetic; dead-on-corpse on
                 // the kill path, observable on abort).
-                if let Some(victim) = self.entities.get_mut(victim_id)
+                if let Some(victim) = self.world.entities.get_mut(victim_id)
                     && let Some(npc) = victim.npc_data_mut()
                 {
                     crate::ai_vision::set_view_status(npc, crate::element::EyeStatus::LookForward);
@@ -612,13 +612,14 @@ impl EngineInner {
                 // carried's posture isn't yet `Carried`), drop the
                 // partially-grabbed corpse instantly.
                 let (carried_id, posture_is_carried) = {
-                    let Some(carrier) = self.entities.get(owner) else {
+                    let Some(carrier) = self.world.entities.get(owner) else {
                         return;
                     };
                     let Some(carried_id) = carrier.pc_data().and_then(|pc| pc.carried) else {
                         return;
                     };
                     let posture_is_carried = self
+                        .world
                         .entities
                         .get(carried_id)
                         .map(|e| e.element_data().posture == crate::element::Posture::Carried)
@@ -637,7 +638,7 @@ impl EngineInner {
                 // `active_ability` so a stale Carry slot can't drive a
                 // bogus `CarryDone` after the element is gone.
                 self.force_drop_carried_corpse_instant(owner);
-                if let Some(carrier) = self.entities.get_mut(owner)
+                if let Some(carrier) = self.world.entities.get_mut(owner)
                     && let Some(actor) = carrier.actor_data_mut()
                     && actor.active_ability.kind == Some(crate::movement::AbilityKind::Carry)
                 {
@@ -757,6 +758,7 @@ impl EngineInner {
                 let offset = MapVec::new(dx * magnitude, dy * magnitude);
                 let cand = center + offset;
                 if self
+                    .world
                     .fast_grid
                     .is_straight_movement_authorized(center, cand, out_layer, &move_box)
                 {
@@ -848,6 +850,7 @@ impl EngineInner {
         adversary: Option<EntityId>,
     ) {
         let kind = self
+            .world
             .entities
             .get(actor_id)
             .map(|e| (e.is_pc(), e.is_soldier()));
@@ -899,6 +902,7 @@ impl EngineInner {
         use crate::sequence::{Field, FieldValue, MoveFlags, Sequence, SequenceElementData};
 
         let is_robin = self
+            .world
             .entities
             .get(pc_id)
             .and_then(|e| e.pc_data())
@@ -918,6 +922,7 @@ impl EngineInner {
         // `enemy_to_attack.is_some() && (is_robin || !enemy_is_vip)`.
         if let Some(enemy_id) = enemy_to_attack {
             let enemy_is_vip = self
+                .world
                 .entities
                 .get(enemy_id)
                 .map(door_combat_enemy_is_vip)
@@ -947,7 +952,7 @@ impl EngineInner {
             && source_sector != goal_sector
         {
             let path = {
-                let level = self.fast_grid.level.clone();
+                let level = self.world.fast_grid.level.clone();
                 let game_host = self.mission_script.as_ref().and_then(|s| s.game_host());
                 game_host.and_then(|h| {
                     crate::gate::find_path_gates(

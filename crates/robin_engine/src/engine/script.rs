@@ -50,6 +50,7 @@ impl EngineInner {
                     panic!("legacy script save references missing NPC actor {actor_handle}")
                 });
             let npc = self
+                .world
                 .entities
                 .get_mut(entity_id)
                 .and_then(|entity| entity.npc_data_mut())
@@ -69,13 +70,13 @@ impl EngineInner {
     pub(super) fn refresh_game_host_entity_state(&mut self) {
         if let Some(script) = self.mission_script.as_mut() {
             script.bindings.sight_obstacles.dynamic_obstacles =
-                std::sync::Arc::new(self.dynamic_sight_obstacles.clone());
+                std::sync::Arc::new(self.world.dynamic_sight_obstacles.clone());
             script.bindings.sight_obstacles.static_active =
-                std::sync::Arc::new(self.static_sight_obstacle_active.clone());
+                std::sync::Arc::new(self.world.static_sight_obstacle_active.clone());
         }
         // Collect data first, then write to host (avoids borrow issues).
-        let ambiance = self.weather.ambiance;
-        let is_forest_level = self.weather.is_forest_level;
+        let ambiance = self.world.weather.ambiance;
+        let is_forest_level = self.world.weather.is_forest_level;
 
         // Sound-source liveness snapshot — destroyed slots must be
         // distinguishable from valid indices so `GetSoundSourceScript`
@@ -98,14 +99,14 @@ impl EngineInner {
         // `GetCurrentAction` that must return the animation enum value
         // for the current frame.
         let mut current_animations: Vec<(i32, crate::order::OrderType)> =
-            Vec::with_capacity(self.entities.len());
-        for (entity_id, _) in self.entities.actors() {
+            Vec::with_capacity(self.world.entities.len());
+        for (entity_id, _) in self.world.entities.actors() {
             let handle = crate::natives::GameHost::actor_handle(entity_id);
             if let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(entity_id) {
                 current_animations.push((handle, order.order_type));
             }
         }
-        for (entity_id, entity) in self.entities.objects() {
+        for (entity_id, entity) in self.world.entities.objects() {
             let handle = crate::natives::GameHost::actor_handle(entity_id);
             if let Some(obj) = entity.object_data() {
                 current_animations.push((handle, obj.animation));
@@ -147,8 +148,8 @@ impl EngineInner {
             level_grid: assets.level_grid.clone(),
             sight_obstacles: crate::sight_obstacle::SharedSightObstacles {
                 static_obstacles: assets.static_sight_obstacles.clone(),
-                dynamic_obstacles: std::sync::Arc::new(self.dynamic_sight_obstacles.clone()),
-                static_active: std::sync::Arc::new(self.static_sight_obstacle_active.clone()),
+                dynamic_obstacles: std::sync::Arc::new(self.world.dynamic_sight_obstacles.clone()),
+                static_active: std::sync::Arc::new(self.world.static_sight_obstacle_active.clone()),
             },
             script_location_count: assets.script_location_count,
             script_point_count: assets.script_point_count,
@@ -409,7 +410,7 @@ impl EngineInner {
                         // takes `is_still_unconscious` and short-circuits
                         // otherwise.  Read the live human-data flag now.
                         if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.entities.get(id)
+                            && let Some(entity) = self.world.entities.get(id)
                         {
                             let still_unconscious =
                                 entity.human_data().is_some_and(|h| h.unconscious);
@@ -456,7 +457,7 @@ impl EngineInner {
                                 .is_some_and(|elem| {
                                     elem.command == crate::element::Command::LockAi
                                 });
-                            if let Some(entity) = self.entities.get_mut(owner)
+                            if let Some(entity) = self.world.entities.get_mut(owner)
                                 && let Some(ai) = entity.ai_controller_mut()
                             {
                                 ai.script_lock(send_back, from_lockai_command);
@@ -473,7 +474,7 @@ impl EngineInner {
                     crate::natives::DeferredCommand::ResetSpriteFrame { actor } => {
                         // Rewind the actor's sprite to frame 0 of its current row.
                         if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.entities.get_mut(id)
+                            && let Some(entity) = self.world.entities.get_mut(id)
                         {
                             entity.sprite_mut().reset_sprite_frame(false);
                         }
@@ -531,7 +532,7 @@ impl EngineInner {
                             // tick observes the "lose consciousness" event
                             // before the detect-me broadcast lands on
                             // friends — ordering matters here.
-                            if let Some(entity) = self.entities.get_mut(id)
+                            if let Some(entity) = self.world.entities.get_mut(id)
                                 && let Some(ai) = entity.ai_controller_mut()
                             {
                                 ai.pending_stimuli.push(crate::ai::Stimulus::new(
@@ -541,7 +542,7 @@ impl EngineInner {
                             // Only NPCs broadcast their body — guard via
                             // `is_npc()` to avoid touching a PC or non-actor
                             // slot.
-                            if let Some(entity) = self.entities.get(id)
+                            if let Some(entity) = self.world.entities.get(id)
                                 && entity.is_npc()
                             {
                                 self.broadcast_body_detectable(id);
@@ -554,7 +555,7 @@ impl EngineInner {
                         // walks every other NPC and clears the resurrected
                         // NPC from their `DETECTABLE_BODY` list.
                         if let Some(id) = self.entity_id_for_actor_handle(actor)
-                            && let Some(entity) = self.entities.get(id)
+                            && let Some(entity) = self.world.entities.get(id)
                             && entity.is_npc()
                         {
                             self.broadcast_resurrection(id);
@@ -574,7 +575,7 @@ impl EngineInner {
                         let Some(id) = self.entity_id_for_actor_handle(actor) else {
                             continue;
                         };
-                        let Some(entity) = self.entities.get(id) else {
+                        let Some(entity) = self.world.entities.get(id) else {
                             continue;
                         };
                         let phase = if let crate::element::Entity::Pc(pc) = entity {
@@ -824,6 +825,7 @@ impl EngineInner {
         // Each actor with a script_class gets IActorScript::Initialize()
         // called during loading (before StartUp::Initialize).
         let per_actor_scripts: Vec<(i32, String)> = self
+            .world
             .entities
             .actors()
             .filter_map(|(entity_id, entity)| {
@@ -843,6 +845,7 @@ impl EngineInner {
         // Each target carries its own VM and `Initialize()` runs
         // during `InitializeFromMissionStream`.
         let per_target_scripts: Vec<(i32, String)> = self
+            .world
             .entities
             .targets()
             .filter_map(|(entity_id, target)| {
@@ -860,6 +863,7 @@ impl EngineInner {
         // `InitializeFromMissionStream` and walk the list calling
         // `IScrollScript::Initialize()`.
         let per_scroll_scripts: Vec<(i32, String)> = self
+            .world
             .entities
             .scrolls()
             .filter_map(|(entity_id, scroll)| {
@@ -878,9 +882,9 @@ impl EngineInner {
                 game_host.frame_counter = self.control.frame_counter;
             }
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -997,9 +1001,9 @@ impl EngineInner {
                 Err(e) => tracing::warn!("Script StartUp::Initialize failed: {e}"),
             }
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -1022,7 +1026,7 @@ impl EngineInner {
                 let Some(id) = self.entity_id_for_actor_handle(handle) else {
                     continue;
                 };
-                if let Some(entity) = self.entities.get_mut(id)
+                if let Some(entity) = self.world.entities.get_mut(id)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
                     ai.has_script_filter_override = true;
@@ -1051,9 +1055,9 @@ impl EngineInner {
                 game_host.frame_counter = self.control.frame_counter;
             }
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -1061,9 +1065,9 @@ impl EngineInner {
                 tracing::warn!("Script Finalize failed: {e}");
             }
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -1087,7 +1091,7 @@ impl EngineInner {
         // Current animation = front order of the actor's current
         // in-progress sequence element.
         let mut changes = Vec::new();
-        for (entity_id, entity) in self.entities.actors() {
+        for (entity_id, entity) in self.world.entities.actors() {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -1106,10 +1110,10 @@ impl EngineInner {
             }
         }
         // Apply old_action updates in a second pass (the peek loop
-        // above only reads self.entities to avoid conflicting with the
+        // above only reads self.world.entities to avoid conflicting with the
         // sequence_manager borrow).
         for &(entity_id, new_anim, _) in &changes {
-            if let Some(entity) = self.entities.get_mut(entity_id)
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.old_action = new_anim;
@@ -1134,9 +1138,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1150,9 +1154,9 @@ impl EngineInner {
         }
 
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1183,7 +1187,7 @@ impl EngineInner {
         // (it gets swapped into the script manager below), so the list
         // of ready-to-fire scrolls is captured first.
         let mut ready: Vec<i32> = Vec::new();
-        for (id, s) in self.entities.scrolls_mut() {
+        for (id, s) in self.world.entities.scrolls_mut() {
             if !s.element.active {
                 continue;
             }
@@ -1210,9 +1214,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1227,9 +1231,9 @@ impl EngineInner {
         }
 
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1294,17 +1298,17 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
         let result = script.call_scroll_function(handle, "IsTaken", &[pc_handle]);
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1340,7 +1344,7 @@ impl EngineInner {
         };
 
         let mut init_count = 0u32;
-        for (zone_idx, zone_data) in self.script_zone_data.iter().enumerate() {
+        for (zone_idx, zone_data) in self.world.script_zones.iter().enumerate() {
             let class_name = match &zone_data.script_class_name {
                 Some(name) => name.clone(),
                 None => continue,
@@ -1426,7 +1430,7 @@ impl EngineInner {
         if assets.script_zone_grid_indices.is_empty() {
             return entries;
         }
-        for (actor_id, entity) in self.entities.actors() {
+        for (actor_id, entity) in self.world.entities.actors() {
             let entity_id = actor_id.into();
             let ed = entity.element_data();
             // `in_honolulu` stands in for the `IsInside(GetBoxMap())`
@@ -1445,13 +1449,14 @@ impl EngineInner {
                 // into apex sectors — once converted, the SECTOR_SCRIPT
                 // flag is dropped so the engine stops scanning them.
                 if self
-                    .script_zone_data
+                    .world
+                    .script_zones
                     .get(zone_idx)
                     .is_some_and(|z| z.transformed_to_apex)
                 {
                     continue;
                 }
-                let gs = &self.fast_grid.level.sectors[grid_idx as usize];
+                let gs = &self.world.fast_grid.level.sectors[grid_idx as usize];
                 if gs.layer == layer && gs.contains_point(pos) {
                     entries.push((zone_idx, entity_id, handle));
                 }
@@ -1466,7 +1471,7 @@ impl EngineInner {
         let primary_len = entries.len();
         for i in 0..primary_len {
             let (zone_idx, eidx, _) = entries[i];
-            let Some(entity) = self.entities.get(eidx) else {
+            let Some(entity) = self.world.entities.get(eidx) else {
                 continue;
             };
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
@@ -1493,8 +1498,8 @@ impl EngineInner {
         entries: &[(usize, crate::entity_id::EntityId, i32)],
     ) {
         for &(zone_idx, entity_idx, _) in entries {
-            self.script_zone_data[zone_idx].enter(entity_idx);
-            let pt = self.script_zone_data[zone_idx].production_sector_type;
+            self.world.script_zones[zone_idx].enter(entity_idx);
+            let pt = self.world.script_zones[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
             }
@@ -1507,7 +1512,7 @@ impl EngineInner {
     /// path, where occupant lists must be wiped before re-scanning
     /// against teleported positions.
     pub(crate) fn empty_all_script_sectors(&mut self) {
-        for zone in &mut self.script_zone_data {
+        for zone in &mut self.world.script_zones {
             zone.remove_all_occupants();
         }
     }
@@ -1555,9 +1560,9 @@ impl EngineInner {
             None => return,
         };
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1569,9 +1574,9 @@ impl EngineInner {
         }
 
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1601,7 +1606,7 @@ impl EngineInner {
         let mut enter_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
         let mut exit_events: Vec<(usize, crate::entity_id::EntityId, i32)> = Vec::new();
 
-        for (actor_id, entity) in self.entities.actors() {
+        for (actor_id, entity) in self.world.entities.actors() {
             let eidx = actor_id.into();
             let ed = entity.element_data();
             let active = ed.active && !ed.in_honolulu;
@@ -1611,11 +1616,11 @@ impl EngineInner {
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
-                if self.script_zone_data[zone_idx].transformed_to_apex {
+                if self.world.script_zones[zone_idx].transformed_to_apex {
                     continue;
                 }
-                let gs = &self.fast_grid.level.sectors[grid_idx as usize];
-                let was_inside = self.script_zone_data[zone_idx].is_inside(eidx);
+                let gs = &self.world.fast_grid.level.sectors[grid_idx as usize];
+                let was_inside = self.world.script_zones[zone_idx].is_inside(eidx);
                 let is_inside = active && gs.layer == layer && gs.contains_point(pos);
 
                 if is_inside && !was_inside {
@@ -1635,13 +1640,13 @@ impl EngineInner {
         let primary_enter_len = enter_events.len();
         for i in 0..primary_enter_len {
             let (zone_idx, eidx, _) = enter_events[i];
-            let Some(entity) = self.entities.get(eidx) else {
+            let Some(entity) = self.world.entities.get(eidx) else {
                 continue;
             };
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
                 continue;
             };
-            if self.script_zone_data[zone_idx].is_inside(carried_id) {
+            if self.world.script_zones[zone_idx].is_inside(carried_id) {
                 continue;
             }
             if enter_events
@@ -1656,13 +1661,13 @@ impl EngineInner {
         let primary_exit_len = exit_events.len();
         for i in 0..primary_exit_len {
             let (zone_idx, eidx, _) = exit_events[i];
-            let Some(entity) = self.entities.get(eidx) else {
+            let Some(entity) = self.world.entities.get(eidx) else {
                 continue;
             };
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
                 continue;
             };
-            if !self.script_zone_data[zone_idx].is_inside(carried_id) {
+            if !self.world.script_zones[zone_idx].is_inside(carried_id) {
                 continue;
             }
             if exit_events
@@ -1681,15 +1686,15 @@ impl EngineInner {
 
         // Phase 2: Update occupant lists and apply production work icons.
         for &(zone_idx, entity_idx, _) in &enter_events {
-            self.script_zone_data[zone_idx].enter(entity_idx);
-            let pt = self.script_zone_data[zone_idx].production_sector_type;
+            self.world.script_zones[zone_idx].enter(entity_idx);
+            let pt = self.world.script_zones[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
             }
         }
         for &(zone_idx, entity_idx, _) in &exit_events {
-            self.script_zone_data[zone_idx].leave(entity_idx);
-            let pt = self.script_zone_data[zone_idx].production_sector_type;
+            self.world.script_zones[zone_idx].leave(entity_idx);
+            let pt = self.world.script_zones[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, false);
             }
@@ -1699,9 +1704,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1718,9 +1723,9 @@ impl EngineInner {
         }
 
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -1742,7 +1747,7 @@ impl EngineInner {
         let points_count = assets
             .script_location_positions
             .len()
-            .saturating_sub(self.script_zone_data.len());
+            .saturating_sub(self.world.script_zones.len());
 
         let Some(ref mut script) = self.mission_script else {
             return;
@@ -1775,11 +1780,11 @@ impl EngineInner {
                 continue;
             }
             let zone_idx = loc_idx - points_count;
-            if zone_idx >= self.script_zone_data.len() {
+            if zone_idx >= self.world.script_zones.len() {
                 tracing::warn!("RegisterAsProductionSector: zone {zone_idx} out of range");
                 continue;
             }
-            self.script_zone_data[zone_idx].production_sector_type = prod_type_enum;
+            self.world.script_zones[zone_idx].production_sector_type = prod_type_enum;
 
             // Attach to the campaign's SectorProduction so its `speed` is set.
             if let Some(campaign) = self.mission_domain.campaign.as_mut()
@@ -1842,7 +1847,7 @@ impl EngineInner {
         use crate::element::WorkIcon;
         use crate::sector_production::Type as PT;
 
-        let Some(entity) = self.entities.get_mut(entity_id) else {
+        let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
         let crate::engine::Entity::Pc(pc) = entity else {
@@ -1921,9 +1926,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         if let Some(ref mut script) = self.mission_script {
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -1967,9 +1972,9 @@ impl EngineInner {
             }
 
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -2004,9 +2009,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         if let Some(ref mut script) = self.mission_script {
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -2016,9 +2021,9 @@ impl EngineInner {
                 }
             }
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -2058,7 +2063,7 @@ impl EngineInner {
     /// ```
     ///
     /// Callers must invoke this *before* acquiring a `&mut` borrow on
-    /// the target entity, since the script call needs `self.entities`
+    /// the target entity, since the script call needs `self.world.entities`
     /// via [`MissionScript::swap_engine_state`].  The function is a
     /// no-op (returns `true`) for:
     ///  - Actors with no script instance or no `FilterAIEvent`
@@ -2102,17 +2107,17 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().expect("checked above");
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
         let result = script.call_actor_function(handle, "FilterAIEvent", &[source, code]);
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -2171,18 +2176,24 @@ impl EngineInner {
             .and_then(|ms| ms.game_host())
             .map(|gh| gh.doors.as_slice());
         let ai_global = &mut self.ai.global;
-        let Some(entity) = self.entities.get_mut(entity_id) else {
+        let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return false;
         };
         if let Some(enemy_ai) = entity.enemy_ai_mut() {
-            enemy_ai.think(stimulus, ai_global, ctx, tick_data, Some(&self.fast_grid))
+            enemy_ai.think(
+                stimulus,
+                ai_global,
+                ctx,
+                tick_data,
+                Some(&self.world.fast_grid),
+            )
         } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
             friendly_ai.think(
                 stimulus,
                 ai_global,
                 ctx,
                 tick_data,
-                Some(&self.fast_grid),
+                Some(&self.world.fast_grid),
                 doors_ptr,
             )
         } else {
@@ -2210,7 +2221,7 @@ impl EngineInner {
 
         // Collect state changes: (npc_handle, source_handle, state_change_code).
         let mut notifications: Vec<(i32, i32, i32)> = Vec::new();
-        for (id, entity) in self.entities.npcs_mut() {
+        for (id, entity) in self.world.entities.npcs_mut() {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -2245,9 +2256,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -2258,9 +2269,9 @@ impl EngineInner {
         }
 
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -2310,7 +2321,7 @@ impl EngineInner {
         )?;
 
         // Set mission-specific engine state from the profile
-        self.weather.is_forest_level = location == MissionLocation::Sherwood;
+        self.world.weather.is_forest_level = location == MissionLocation::Sherwood;
 
         Ok(())
     }
@@ -2571,7 +2582,7 @@ impl EngineInner {
                     let points_count = assets
                         .script_location_positions
                         .len()
-                        .saturating_sub(self.script_zone_data.len());
+                        .saturating_sub(self.world.script_zones.len());
                     let Some(loc_idx) = crate::natives::GameHost::location_index(location_handle)
                     else {
                         tracing::warn!(
@@ -2586,7 +2597,7 @@ impl EngineInner {
                         continue;
                     } else {
                         let zone_idx = loc_idx - points_count;
-                        if let Some(zone) = self.script_zone_data.get_mut(zone_idx) {
+                        if let Some(zone) = self.world.script_zones.get_mut(zone_idx) {
                             if zone.script_associated {
                                 tracing::warn!(
                                     "DefineFlatTrajectoryZone(loc={location_handle}): \
@@ -2602,7 +2613,7 @@ impl EngineInner {
                                 if let Some(&grid_idx) =
                                     assets.script_zone_grid_indices.get(zone_idx)
                                 {
-                                    self.fast_grid.or_sector_type_overlay(
+                                    self.world.fast_grid.or_sector_type_overlay(
                                         grid_idx,
                                         crate::sector::SectorType::APEX,
                                     );
@@ -2708,7 +2719,7 @@ impl EngineInner {
                         tracing::warn!("SetActorLocation: invalid actor handle {actor_handle}");
                         continue;
                     };
-                    let Some(entity) = self.entities.get_mut(id) else {
+                    let Some(entity) = self.world.entities.get_mut(id) else {
                         tracing::warn!("SetActorLocation: actor {actor_handle} missing entity");
                         continue;
                     };
@@ -2756,7 +2767,7 @@ impl EngineInner {
                     // `display_order_ref` so a teleported actor that
                     // had been carried/attached doesn't keep its prior
                     // z-sort anchor.
-                    let Some(entity) = self.entities.get_mut(id) else {
+                    let Some(entity) = self.world.entities.get_mut(id) else {
                         continue;
                     };
                     let sprite = entity.sprite_mut();
@@ -2785,7 +2796,7 @@ impl EngineInner {
                             new_obstacle_handle,
                             assets.static_sight_obstacles.as_slice(),
                         );
-                        if let Some(entity) = self.entities.get_mut(id) {
+                        if let Some(entity) = self.world.entities.get_mut(id) {
                             let ed = entity.element_data_mut();
                             ed.set_obstacle_index(new_obstacle_handle, plane);
                             if let Some(mat) = new_material {
@@ -2815,7 +2826,7 @@ impl EngineInner {
                         let elev = self
                             .position_to_point_3d(assets, handle, layer, probe_x, probe_y)
                             .z;
-                        if let Some(entity) = self.entities.get_mut(id) {
+                        if let Some(entity) = self.world.entities.get_mut(id) {
                             // `set_position` writes the 3D point and
                             // calls `recompute_from_3d`, which rederives
                             // `position_map` / sprite / move_box from
@@ -3000,6 +3011,7 @@ impl EngineInner {
                     };
                     let target = door_idx as u32;
                     let sector_idx = self
+                        .world
                         .fast_grid
                         .level
                         .sectors
@@ -3007,7 +3019,7 @@ impl EngineInner {
                         .position(|s| s.door_index == Some(target))
                         .map(|i| i as u32);
                     if let Some(idx) = sector_idx {
-                        self.fast_grid.set_sector_active(idx, active);
+                        self.world.fast_grid.set_sector_active(idx, active);
                     } else {
                         tracing::warn!(
                             "ActivateDoorMouseSector: no grid sector registered for door {door_handle}"
@@ -3082,7 +3094,7 @@ impl EngineInner {
                 .and_then(crate::natives::GameHost::door_index)
                 .and_then(|di| game_host.doors.get(di))
                 .map(|d| d.point_in);
-            let sn = self.fast_grid.level.sectors.iter().find_map(|gs| {
+            let sn = self.world.fast_grid.level.sectors.iter().find_map(|gs| {
                 if gs.building_index == crate::sector::BuildingIdx::new(bld_idx as u16) {
                     Some(gs.sector_number)
                 } else {
@@ -3105,11 +3117,11 @@ impl EngineInner {
             return;
         };
 
-        let special_layer = self.fast_grid.level.special_layer;
+        let special_layer = self.world.fast_grid.level.special_layer;
 
         let is_pc;
         let carried_handle: Option<i32>;
-        if let Some(entity) = self.entities.get_mut(actor_id) {
+        if let Some(entity) = self.world.entities.get_mut(actor_id) {
             let elem = entity.element_data_mut();
             elem.hidden_in_building = true;
             elem.set_layer(special_layer);
@@ -3161,7 +3173,7 @@ impl EngineInner {
                 && carried_h != 0
             {
                 if let Some(carried_id) = self.entity_id_for_actor_handle(carried_h)
-                    && let Some(carried_entity) = self.entities.get_mut(carried_id)
+                    && let Some(carried_entity) = self.world.entities.get_mut(carried_id)
                 {
                     let elem = carried_entity.element_data_mut();
                     elem.hidden_in_building = true;
@@ -3202,7 +3214,7 @@ impl EngineInner {
                 let Some(occ_id) = self.entity_id_for_actor_handle(occ_h) else {
                     continue;
                 };
-                let Some(occ) = self.entities.get_mut(occ_id) else {
+                let Some(occ) = self.world.entities.get_mut(occ_id) else {
                     continue;
                 };
                 let Some(hd) = occ.human_data() else { continue };
@@ -3438,7 +3450,7 @@ mod script_context_tests {
             engine.call_external_native_with_this(&LevelAssets::new(), "ThisActor", &[], Some(99));
 
         assert_eq!(result, Ok(99));
-        assert!(engine.entities.is_empty());
+        assert!(engine.world.entities.is_empty());
         let host = engine
             .mission_script
             .as_ref()
@@ -3478,15 +3490,15 @@ mod script_context_tests {
 
         let result = fail_inside_script_context(
             &mut script,
-            &mut engine.entities,
+            &mut engine.world.entities,
             &mut engine.ai.global,
-            &mut engine.fast_grid,
+            &mut engine.world.fast_grid,
             &mut engine.mission_domain.campaign,
             &mut engine.mission_domain.mission_stat,
         );
 
         assert_eq!(result, Err("simulated native error"));
-        assert!(engine.entities.is_empty());
+        assert!(engine.world.entities.is_empty());
         assert_eq!(script.game_host.script_this, 41);
         assert_eq!(script.game_host.entities.len(), 1);
     }
@@ -3507,7 +3519,7 @@ mod script_context_tests {
         );
 
         assert_eq!(result, Err("unknown native: NotAnOriginalNative".into()));
-        assert!(engine.entities.is_empty());
+        assert!(engine.world.entities.is_empty());
         let host = &engine
             .mission_script
             .as_ref()
@@ -3712,9 +3724,9 @@ impl EngineInner {
 
         let return_value = {
             let mut context = script.script_context(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
                 this_actor,

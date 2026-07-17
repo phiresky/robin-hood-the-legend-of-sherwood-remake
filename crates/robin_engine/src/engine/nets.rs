@@ -99,6 +99,7 @@ impl EngineInner {
         // 3D position with a Y-stretched isometric square-norm is used
         // for the proximity test.
         let candidates: Vec<EntityId> = self
+            .world
             .entities
             .humans()
             .filter_map(|(id, e)| if e.is_active() { Some(id.into()) } else { None })
@@ -157,7 +158,7 @@ impl EngineInner {
                 // VIP soldiers play the VipNetNo remark on the crumple
                 // path; this only fires for VIPs, not riders/Stuteley.
                 if is_soldier_vip
-                    && let Some(entity) = self.entities.get_mut(actor_id)
+                    && let Some(entity) = self.world.entities.get_mut(actor_id)
                     && let Some(npc) = entity.npc_data_mut()
                     && let Some(base) = npc.ai_brain.base_mut()
                 {
@@ -215,7 +216,7 @@ impl EngineInner {
             // Eager counter bump — posture is left alone;
             // `EngineInner::apply_net` snaps it to StuckUnderNet next
             // frame when the ReceiveNet element dispatches.
-            if let Some(entity) = self.entities.get_mut(victim_id)
+            if let Some(entity) = self.world.entities.get_mut(victim_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 crate::combat::increment_stuck_under_net(human);
@@ -239,7 +240,7 @@ impl EngineInner {
             // net visually covers them. The display-order pipeline is
             // sprite-driven and only needs the reference + flag set
             // once per capture.
-            if let Some(entity) = self.entities.get_mut(victim_id) {
+            if let Some(entity) = self.world.entities.get_mut(victim_id) {
                 let sprite = &mut entity.element_data_mut().sprite;
                 sprite.display_order_ref = Some(net_id);
                 sprite.behind_display_order_ref = true;
@@ -332,7 +333,7 @@ impl EngineInner {
 
             // Clear the "behind net" sprite reference so the victim
             // goes back to normal Y-sorting.
-            if let Some(entity) = self.entities.get_mut(victim_id) {
+            if let Some(entity) = self.world.entities.get_mut(victim_id) {
                 let sprite = &mut entity.element_data_mut().sprite;
                 sprite.display_order_ref = None;
                 sprite.behind_display_order_ref = false;
@@ -371,16 +372,16 @@ impl EngineInner {
     fn delete_body_detectable_for_all_npc(&mut self, body_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
             if friend_id == body_id {
                 continue;
             }
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(friend_id)
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 s.npc.detectable_lists[det_idx].retain(|d| d.element != Some(body_id));
-            } else if let Some(Entity::Civilian(c)) = self.entities.get_mut(friend_id)
+            } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(friend_id)
                 && det_idx < c.npc.detectable_lists.len()
             {
                 c.npc.detectable_lists[det_idx].retain(|d| d.element != Some(body_id));
@@ -423,7 +424,7 @@ impl EngineInner {
         // (descending-near-landing, just-landed) and stamp the
         // in-flight animation transitions on it directly.
         let (apply, just_landed) = {
-            let Some(Entity::Net(net)) = self.entities.get_mut(net_id) else {
+            let Some(Entity::Net(net)) = self.world.entities.get_mut(net_id) else {
                 return;
             };
             if !net.element.active {
@@ -583,7 +584,8 @@ impl EngineInner {
                     .static_sight_obstacles
                     .get(idx)
                     .or_else(|| {
-                        self.dynamic_sight_obstacles
+                        self.world
+                            .dynamic_sight_obstacles
                             .get(idx - assets.static_sight_obstacles.len())
                     })
                     .map(|o| o.compute_top_z(landing_xy.0, landing_xy.1) + 0.001)
@@ -751,7 +753,8 @@ impl EngineInner {
                 .static_sight_obstacles
                 .get(idx)
                 .or_else(|| {
-                    self.dynamic_sight_obstacles
+                    self.world
+                        .dynamic_sight_obstacles
                         .get(idx - assets.static_sight_obstacles.len())
                 })
                 .map(top_plane_normal_z)
@@ -781,7 +784,8 @@ impl EngineInner {
                     .static_sight_obstacles
                     .get(idx)
                     .or_else(|| {
-                        self.dynamic_sight_obstacles
+                        self.world
+                            .dynamic_sight_obstacles
                             .get(idx - assets.static_sight_obstacles.len())
                     })
                     .map(|o| o.compute_top_z(test_x, test_y))
@@ -847,7 +851,7 @@ impl EngineInner {
             }
         }
         let base = assets.static_sight_obstacles.len();
-        for (i, o) in self.dynamic_sight_obstacles.iter().enumerate() {
+        for (i, o) in self.world.dynamic_sight_obstacles.iter().enumerate() {
             if obstacle_bbox_contains(o, landing.x, landing.y) {
                 return Some(base + i);
             }
@@ -867,7 +871,7 @@ impl EngineInner {
         layer: u16,
     ) -> bool {
         let obstacles = self.sight_obstacles(assets);
-        self.fast_grid.is_reachable_3d(
+        self.world.fast_grid.is_reachable_3d(
             origin,
             destination,
             layer,
@@ -1326,7 +1330,7 @@ mod tests {
         ));
         // Seed the net with an already-captured victim so the
         // crumple guard sees a non-empty list.
-        if let Some(Entity::Net(n)) = engine.entities.get_mut(net_id) {
+        if let Some(Entity::Net(n)) = engine.world.entities.get_mut(net_id) {
             n.net.victims.push(existing_id);
         }
 
@@ -1446,7 +1450,7 @@ mod tests {
         // this unit test, so set the posture by hand to simulate the
         // post-dispatch state.
         engine.apply_net_falling_effect(&assets, net_id);
-        if let Some(entity) = engine.entities.get_mut(victim_id) {
+        if let Some(entity) = engine.world.entities.get_mut(victim_id) {
             entity.set_posture_stuck_under_net_for_human();
         }
         assert_eq!(

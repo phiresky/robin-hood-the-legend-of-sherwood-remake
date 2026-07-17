@@ -59,7 +59,7 @@ impl EngineInner {
         {
             return;
         }
-        let Some(entity) = self.entities.get(entity_id) else {
+        let Some(entity) = self.world.entities.get(entity_id) else {
             return;
         };
         let epos = entity
@@ -117,7 +117,7 @@ impl EngineInner {
             return;
         }
         let handle = ElementHandle(entity_id.index());
-        let Some(entity) = self.entities.get(entity_id) else {
+        let Some(entity) = self.world.entities.get(entity_id) else {
             return;
         };
         let elem = entity.element_data();
@@ -162,7 +162,7 @@ impl EngineInner {
         {
             return;
         }
-        let Some(entity) = self.entities.get(entity_id) else {
+        let Some(entity) = self.world.entities.get(entity_id) else {
             return;
         };
         let epos = entity
@@ -210,14 +210,14 @@ impl EngineInner {
             })
             .unwrap_or(false);
 
-        if let Some(entity) = self.entities.get_mut(entity_id)
+        if let Some(entity) = self.world.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = false;
         }
         if let Some(pid) = principal_id
             && is_mutual
-            && let Some(entity) = self.entities.get_mut(pid)
+            && let Some(entity) = self.world.entities.get_mut(pid)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = true;
@@ -253,10 +253,11 @@ impl EngineInner {
                 }
                 continue; // Particle effects (smoke, dust) with no supplier
             }
-            let Some(entity_id) = self.entities.id_at_legacy_slot(t.element_supplier.0) else {
+            let Some(entity_id) = self.world.entities.id_at_legacy_slot(t.element_supplier.0)
+            else {
                 continue;
             };
-            let Some(entity) = self.entities.get(entity_id) else {
+            let Some(entity) = self.world.entities.get(entity_id) else {
                 continue;
             };
             let elem = entity.element_data();
@@ -405,13 +406,14 @@ impl EngineInner {
 
         // Pre-compute NPC IDs to avoid conflicts with point_building_sector.
         let all_ids: Vec<EntityId> = self
+            .world
             .entities
             .npc_ids()
-            .chain(self.pc_ids.iter().copied())
+            .chain(self.world.pc_ids.iter().copied())
             .collect();
 
         for npc_id in all_ids {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 continue;
             };
 
@@ -690,9 +692,9 @@ impl EngineInner {
         use crate::ai::Substate;
 
         // Only soldiers can enter the apple-sauce substate.
-        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<EntityId> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            let Some(Entity::Soldier(s)) = self.entities.get(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
                 continue;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -723,8 +725,8 @@ impl EngineInner {
             return;
         }
 
-        for &pc_id in &self.pc_ids {
-            let Some(Entity::Pc(pc)) = self.entities.get(pc_id) else {
+        for &pc_id in &self.world.pc_ids {
+            let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                 continue;
             };
             if !pc.element.active || pc.pc.life_points <= 0 {
@@ -801,7 +803,7 @@ impl EngineInner {
         }
 
         let mut states: Vec<AppleState> = Vec::new();
-        for (npc_id, s) in self.entities.soldiers() {
+        for (npc_id, s) in self.world.entities.soldiers() {
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
                 continue;
             }
@@ -884,7 +886,7 @@ impl EngineInner {
             .unwrap_or_default();
 
         let mut states: Vec<SpeakState> = Vec::new();
-        for (npc_id, entity) in self.entities.npcs() {
+        for (npc_id, entity) in self.world.entities.npcs() {
             let (pos, layer, active) = match entity {
                 Entity::Soldier(s) => (
                     s.element.position_map(),
@@ -966,8 +968,8 @@ impl EngineInner {
         }
 
         let mut states: Vec<DangerState> = Vec::new();
-        for &pc_id in &self.pc_ids {
-            let Some(Entity::Pc(pc)) = self.entities.get(pc_id) else {
+        for &pc_id in &self.world.pc_ids {
+            let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                 continue;
             };
             if !pc.element.active || pc.pc.life_points <= 0 || pc.human.unconscious {
@@ -1043,8 +1045,8 @@ impl EngineInner {
         }
 
         let mut states: Vec<WorkState> = Vec::new();
-        for &pc_id in &self.pc_ids {
-            let Some(Entity::Pc(pc)) = self.entities.get(pc_id) else {
+        for &pc_id in &self.world.pc_ids {
+            let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                 continue;
             };
             if !pc.element.active || pc.pc.life_points <= 0 {

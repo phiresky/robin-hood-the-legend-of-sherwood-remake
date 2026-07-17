@@ -58,6 +58,8 @@ pub enum SnapshotRestoreError {
         snapshot_len: usize,
         level_len: usize,
     },
+    #[error("snapshot world invariant failed: {detail}")]
+    WorldInvariantViolation { detail: String },
 }
 
 /// Cross-crate owner of the simulation engine.
@@ -261,7 +263,7 @@ impl Engine {
         // see real `map_bbox` + motion lines and patrol paths validate
         // correctly.
         inner.initialize(assets);
-        assets.level_grid = inner.fast_grid.level.clone();
+        assets.level_grid = inner.world.fast_grid.level.clone();
 
         // Mission script StartUp::Initialize — `hiking_paths` was
         // just populated by the level loader.
@@ -290,6 +292,7 @@ impl Engine {
                 inner.dispatch_startup_message(assets, 1001, 0, 0);
             });
         }
+        inner.world.validate_level_attachments(assets);
         Ok(Self { inner })
     }
 
@@ -767,8 +770,9 @@ impl Engine {
         // reinstates it alongside the rest of the level assets.
 
         inner
+            .world
             .fast_grid
-            .attach_level_grid(prev.fast_grid.level.clone());
+            .attach_level_grid(prev.world.fast_grid.level.clone());
 
         // Re-attach the script bytecode Arc to the deserialised mission
         // script. The concrete GameHost is now serialised on
@@ -794,21 +798,21 @@ impl Engine {
     }
 
     fn validate_snapshot_compatibility(&self, saved: &Engine) -> Result<(), SnapshotRestoreError> {
-        let level = &self.inner.fast_grid.level;
+        let level = &self.inner.world.fast_grid.level;
         let lengths = [
             (
                 SnapshotGridComponent::Lines,
-                saved.inner.fast_grid.line_active.len(),
+                saved.inner.world.fast_grid.line_active.len(),
                 level.lines.len(),
             ),
             (
                 SnapshotGridComponent::Sectors,
-                saved.inner.fast_grid.sector_active.len(),
+                saved.inner.world.fast_grid.sector_active.len(),
                 level.sectors.len(),
             ),
             (
                 SnapshotGridComponent::Masks,
-                saved.inner.fast_grid.mask_active.len(),
+                saved.inner.world.fast_grid.mask_active.len(),
                 level.masks.len(),
             ),
         ];
@@ -826,6 +830,11 @@ impl Engine {
                 });
             }
         }
+        saved
+            .inner
+            .world
+            .validate_snapshot_compatibility(&self.inner.world)
+            .map_err(|detail| SnapshotRestoreError::WorldInvariantViolation { detail })?;
         Ok(())
     }
 }
@@ -893,7 +902,7 @@ mod tests {
         let mut live = Engine { inner: live_inner };
 
         let mut malformed_inner = EngineInner::new();
-        malformed_inner.fast_grid.line_active.push(true);
+        malformed_inner.world.fast_grid.line_active.push(true);
         let malformed = Engine {
             inner: malformed_inner,
         };
@@ -913,5 +922,32 @@ mod tests {
             crate::coordinates::MapSize::new(1234.0, 5678.0),
             "validation must happen before replacing the live engine"
         );
+    }
+
+    #[test]
+    fn try_restore_rejects_world_parallel_mismatch_before_mutating_live_engine() {
+        let mut live = Engine {
+            inner: EngineInner::new(),
+        };
+        let mut malformed_inner = EngineInner::new();
+        malformed_inner
+            .world
+            .script_zones
+            .push(crate::sector::ScriptSectorData::new());
+        let malformed = Engine {
+            inner: malformed_inner,
+        };
+
+        let mut display = crate::engine::HostDisplayState::default();
+        let error = live.try_restore(&mut display, malformed).unwrap_err();
+        assert_eq!(
+            error,
+            SnapshotRestoreError::WorldInvariantViolation {
+                detail:
+                    "snapshot script-zone runtime length 1 does not match loaded world length 0"
+                        .to_owned(),
+            }
+        );
+        assert!(live.inner.world.script_zones.is_empty());
     }
 }

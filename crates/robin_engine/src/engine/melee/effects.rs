@@ -113,11 +113,12 @@ impl EngineInner {
     /// method is O(1) — no runtime door-list scan.
     pub(super) fn find_lift_low_entry(&self, lift_sector: u16) -> Option<(f32, f32, u16)> {
         let grid_idx = *self
+            .world
             .fast_grid
             .level
             .sector_number_map
             .get(&crate::sector::SectorNumber::new(lift_sector as i16))?;
-        let gs = self.fast_grid.level.sectors.get(grid_idx)?;
+        let gs = self.world.fast_grid.level.sectors.get(grid_idx)?;
         let door_idx = gs.lowest_door_index?;
         let game_host = self.mission_script.as_ref()?.game_host()?;
         let door = game_host.doors.get(door_idx as usize)?;
@@ -173,13 +174,14 @@ impl EngineInner {
             .and_then(|a| a.active_lift);
         if let Some(lift) = active_lift {
             if let Some(grid_idx) = self
+                .world
                 .fast_grid
                 .level
                 .sector_number_map
                 .get(&crate::sector::SectorNumber::new(lift.sector_number as i16))
                 .copied()
             {
-                let st = self.fast_grid.lift_state_mut(grid_idx as u32);
+                let st = self.world.fast_grid.lift_state_mut(grid_idx as u32);
                 st.occupants = st.occupants.saturating_sub(1);
                 if st.occupants == 0 {
                     st.occupied_upwards = false;
@@ -189,7 +191,7 @@ impl EngineInner {
             }
             // Clear the marker so the actor isn't credited with an
             // occupancy slot they no longer hold.
-            if let Some(entity) = self.entities.get_mut(victim_id)
+            if let Some(entity) = self.world.entities.get_mut(victim_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_lift = None;
@@ -204,7 +206,7 @@ impl EngineInner {
         // ActiveFlight is independent of animation state and is set
         // unconditionally so the victim is carried to the ladder's low
         // entry point.
-        if let Some(entity) = self.entities.get_mut(victim_id)
+        if let Some(entity) = self.world.entities.get_mut(victim_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             {
@@ -303,7 +305,7 @@ impl EngineInner {
 
         // Side-state cleanup: clear carrier/carried pointers and
         // unfreeze the carried actor before the order insertion.
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             match posture {
                 Posture::OnShoulders => {
                     if let Some(human) = entity.human_data_mut() {
@@ -455,7 +457,7 @@ impl EngineInner {
         };
 
         // Side-state cleanup before queuing the animation.
-        if let Some(entity) = self.entities.get_mut(victim_id) {
+        if let Some(entity) = self.world.entities.get_mut(victim_id) {
             match posture {
                 Posture::OnShoulders => {
                     if let Some(human) = entity.human_data_mut() {
@@ -698,7 +700,7 @@ impl EngineInner {
             let flight_sector =
                 crate::position_interface::vector_to_sector_0_to_15(flight_x, flight_y);
             let facing = (flight_sector + 8) % 16;
-            if let Some(entity) = self.entities.get_mut(victim_id) {
+            if let Some(entity) = self.world.entities.get_mut(victim_id) {
                 entity.element_data_mut().set_direction_instantly(facing);
             }
         }
@@ -725,7 +727,7 @@ impl EngineInner {
                 )
             };
             let authorized = |pt_try: crate::coordinates::MapPoint| {
-                self.fast_grid.is_straight_movement_authorized(
+                self.world.fast_grid.is_straight_movement_authorized(
                     pt_start,
                     pt_try,
                     victim_layer,
@@ -764,13 +766,14 @@ impl EngineInner {
             if let Some(pt) = chosen {
                 let inside_polygon = victim_sector
                     .and_then(|s| {
-                        self.fast_grid
+                        self.world
+                            .fast_grid
                             .level
                             .sector_number_map
                             .get(&crate::sector::SectorNumber::new(u16::from(s) as i16))
                             .copied()
                     })
-                    .and_then(|idx| self.fast_grid.level.sectors.get(idx))
+                    .and_then(|idx| self.world.fast_grid.level.sectors.get(idx))
                     .map(|gs| gs.contains_point(pt))
                     // Without a known sector, trust the
                     // `is_straight_movement_authorized` result.
@@ -844,7 +847,7 @@ impl EngineInner {
             let inc_x = total_dx / flight_frames as f32;
             let inc_y = total_dy / flight_frames as f32;
             let inc_z = total_dz / flight_frames as f32;
-            if let Some(entity) = self.entities.get_mut(victim_id)
+            if let Some(entity) = self.world.entities.get_mut(victim_id)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 actor.active_flight = Some(crate::element::ActiveFlight {
@@ -917,7 +920,7 @@ impl EngineInner {
             // DeadBack/Lying landing transition. `DyingUpright` likewise
             // owns the dead rider's posture transition on animation Start.
             if is_dead {
-                let is_pc = if let Some(entity) = self.entities.get_mut(victim_id) {
+                let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
                     if let Some(actor) = entity.actor_data_mut() {
                         if actor.action_state.is_sword()
                             || actor.action_state == ActionState::Menacing
@@ -965,7 +968,7 @@ impl EngineInner {
         } else {
             // No falling animation (already lying/dead/carried).
             if is_dead {
-                let is_pc = if let Some(entity) = self.entities.get_mut(victim_id) {
+                let is_pc = if let Some(entity) = self.world.entities.get_mut(victim_id) {
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.active_melee.clear();
                         actor.clear_path();
@@ -991,7 +994,7 @@ impl EngineInner {
                 self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, true);
             }
             if let Some(posture) = translated_push_posture(false, is_dead, is_unconscious)
-                && let Some(entity) = self.entities.get_mut(victim_id)
+                && let Some(entity) = self.world.entities.get_mut(victim_id)
             {
                 entity.set_posture(posture);
             }
@@ -1131,6 +1134,7 @@ impl EngineInner {
         );
         let pt_start = pos;
         if !self
+            .world
             .fast_grid
             .find_authorized_position_straight(&mut dest_box, pt_start, layer)
         {
@@ -1162,7 +1166,7 @@ impl EngineInner {
         // on MotionState::Start to install `active_flight` toward the
         // destination (Order doesn't carry the dest separately from
         // `active_flight`'s per-frame increments).
-        if let Some(entity) = self.entities.get_mut(entity_id)
+        if let Some(entity) = self.world.entities.get_mut(entity_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.pending_roll = Some(dest);
@@ -1225,8 +1229,8 @@ impl EngineInner {
 
         let obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.dynamic_sight_obstacles,
-            static_active: &self.static_sight_obstacle_active,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         };
 
         match kind {
@@ -1263,7 +1267,7 @@ impl EngineInner {
                     }
                 };
                 collect_arc_victims(
-                    &self.entities,
+                    &self.world.entities,
                     attacker_id,
                     attacker_pos,
                     min_dist,
@@ -1271,7 +1275,7 @@ impl EngineInner {
                     begin_sector,
                     end_sector,
                     &assets.profile_manager,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     obstacles,
                 )
             }
@@ -1283,7 +1287,7 @@ impl EngineInner {
                     .map(|e| e.position_iface().get_elevation())
                     .unwrap_or(0.0);
                 collect_push_victims(
-                    &self.entities,
+                    &self.world.entities,
                     &PushStrikeParams {
                         attacker_id,
                         attacker_pos,
@@ -1295,7 +1299,7 @@ impl EngineInner {
                         half_width,
                     },
                     &assets.profile_manager,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     obstacles,
                 )
             }
@@ -1322,7 +1326,7 @@ impl EngineInner {
                     }
                 };
                 collect_arc_victims(
-                    &self.entities,
+                    &self.world.entities,
                     attacker_id,
                     attacker_pos,
                     min_dist,
@@ -1330,7 +1334,7 @@ impl EngineInner {
                     begin_sector,
                     end_sector,
                     &assets.profile_manager,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     obstacles,
                 )
             }
@@ -1341,19 +1345,19 @@ impl EngineInner {
                 // circle-strike victim collection).
                 if warn_ai {
                     collect_circle_warn_victims(
-                        &self.entities,
+                        &self.world.entities,
                         attacker_id,
                         attacker_pos,
                         attacker_dir,
                         max_dist,
                         thrust.rotation_angle,
                         &assets.profile_manager,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                         obstacles,
                     )
                 } else {
                     collect_arc_victims(
-                        &self.entities,
+                        &self.world.entities,
                         attacker_id,
                         attacker_pos,
                         min_dist,
@@ -1361,7 +1365,7 @@ impl EngineInner {
                         0,
                         15,
                         &assets.profile_manager,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                         obstacles,
                     )
                 }

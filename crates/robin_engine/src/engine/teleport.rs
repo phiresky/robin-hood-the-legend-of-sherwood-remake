@@ -122,8 +122,12 @@ impl EngineInner {
         };
         let bbox_at_new = move_box.translated(new_pos);
 
-        let authorized = self.fast_grid.is_position_authorized(&bbox_at_new, layer)
+        let authorized = self
+            .world
+            .fast_grid
+            .is_position_authorized(&bbox_at_new, layer)
             && self
+                .world
                 .fast_grid
                 .is_reachable_thin(current_pos, new_pos, layer);
 

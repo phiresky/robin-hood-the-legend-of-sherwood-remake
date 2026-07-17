@@ -69,7 +69,7 @@ impl crate::engine::EngineInner {
                 .map(|p| target_pos + MapVec::new(p.x, p.y))
                 .unwrap_or(target_pos);
             let mut target_box = owner_move_box.translated(current_point);
-            if self.fast_grid.find_authorized_position_toward(
+            if self.world.fast_grid.find_authorized_position_toward(
                 &mut target_box,
                 target_pos,
                 target_layer,
@@ -155,10 +155,11 @@ impl crate::engine::EngineInner {
         }
 
         let mut target_box = owner_move_box.translated(destination);
-        if self
-            .fast_grid
-            .find_authorized_position_toward(&mut target_box, target_pos, target_layer)
-        {
+        if self.world.fast_grid.find_authorized_position_toward(
+            &mut target_box,
+            target_pos,
+            target_layer,
+        ) {
             Some(ResolvedEntitySeek {
                 destination: target_box.center(),
                 tolerance,
@@ -199,7 +200,7 @@ impl crate::engine::EngineInner {
 
         let mut refreshes: Vec<Refresh> = Vec::new();
 
-        for (owner_id, entity) in self.entities.actors() {
+        for (owner_id, entity) in self.world.entities.actors() {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -265,7 +266,7 @@ impl crate::engine::EngineInner {
 
         // Decrement `seek_refresh_wait` for every actor with an active
         // seek, regardless of whether it triggered.
-        for (_, entity) in self.entities.actors_mut() {
+        for (_, entity) in self.world.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
             };
@@ -364,7 +365,7 @@ impl crate::engine::EngineInner {
         // `try_dispatch_move_path` will overwrite both when the new
         // element dispatches, but stamp them here too so a dispatch
         // failure still leaves coherent state.
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.last_seek_target_position = new_target_pos;
@@ -518,7 +519,7 @@ impl crate::engine::EngineInner {
         };
 
         let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
-        let level = self.fast_grid.level.clone();
+        let level = self.world.fast_grid.level.clone();
         let gate_path = {
             let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
             host.and_then(|h| {

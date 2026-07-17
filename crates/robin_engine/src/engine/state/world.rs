@@ -1,0 +1,279 @@
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    element::{Entity, EntityId},
+    engine::{LevelAssets, ShieldState, WeatherState},
+    entities::Entities,
+    fast_find_grid::FastFindGrid,
+    pathfinder::PathFinder,
+    sector::ScriptSectorData,
+    sight_obstacle::SightObstacle,
+};
+
+/// Authoritative entity storage and the spatial state indexed alongside it.
+///
+/// The parallel collections remain stored in their original order. Validation
+/// checks their relationships at attachment/snapshot boundaries; it never
+/// rebuilds or reorders them from entity or level scans.
+#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct WorldState {
+    pub(crate) entities: Entities,
+    pub(crate) pc_ids: Vec<EntityId>,
+    pub(crate) fast_grid: FastFindGrid,
+    pub(crate) pathfinder: PathFinder,
+    pub(crate) weather: WeatherState,
+    pub(crate) shield: ShieldState,
+    pub(crate) script_zones: Vec<ScriptSectorData>,
+    pub(crate) dynamic_sight_obstacles: Vec<SightObstacle>,
+    pub(crate) static_sight_obstacle_active: Vec<bool>,
+}
+
+impl WorldState {
+    pub(crate) fn new() -> Self {
+        Self {
+            entities: Entities::new(),
+            pc_ids: Vec::new(),
+            fast_grid: FastFindGrid::default(),
+            pathfinder: PathFinder::default(),
+            weather: WeatherState::new(),
+            shield: ShieldState::default(),
+            script_zones: Vec::new(),
+            dynamic_sight_obstacles: Vec::new(),
+            static_sight_obstacle_active: Vec::new(),
+        }
+    }
+
+    /// Reattach immutable level topology and sprite runtimes after decoding.
+    ///
+    /// All indexed relationships are validated before the engine can tick.
+    /// Missing sprite runtimes and topology mismatches are invariant failures,
+    /// not opportunities to fabricate empty/default data.
+    pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
+        self.fast_grid.attach_level_grid(assets.level_grid.clone());
+        self.validate_level_attachments(assets);
+
+        for (id, entity) in self.entities.occupied_mut() {
+            entity
+                .sprite_mut()
+                .attach_runtime_from_cache(&assets.sprite_scriptor)
+                .unwrap_or_else(|err| {
+                    let idx = id.index();
+                    panic!("failed to attach sprite runtime for entity {idx}: {err}")
+                });
+        }
+    }
+
+    pub(crate) fn validate_level_attachments(&self, assets: &LevelAssets) {
+        self.validate_pc_index();
+
+        assert_eq!(
+            self.script_zones.len(),
+            assets.script_zone_grid_indices.len(),
+            "script-zone runtime length {} does not match level zone-index length {}",
+            self.script_zones.len(),
+            assets.script_zone_grid_indices.len(),
+        );
+        for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
+            assert!(
+                (grid_idx as usize) < assets.level_grid.sectors.len(),
+                "script zone {zone_idx} references grid sector {grid_idx}, but the level has {} sectors",
+                assets.level_grid.sectors.len(),
+            );
+        }
+
+        assert_eq!(
+            self.static_sight_obstacle_active.len(),
+            assets.static_sight_obstacles.len(),
+            "static sight-obstacle runtime length {} does not match level obstacle length {}",
+            self.static_sight_obstacle_active.len(),
+            assets.static_sight_obstacles.len(),
+        );
+
+        self.validate_pathfinder_states(assets);
+        self.validate_fast_grid_indices();
+    }
+
+    pub(crate) fn validate_pc_index(&self) {
+        if let Err(detail) = self.validate_pc_index_inner() {
+            panic!("{detail}");
+        }
+    }
+
+    /// Validate decoded state against the already-loaded world without
+    /// mutating either side. The caller can therefore reject a corrupt save
+    /// before replacing the live engine.
+    pub(crate) fn validate_snapshot_compatibility(&self, loaded: &Self) -> Result<(), String> {
+        self.validate_pc_index_inner()?;
+
+        if self.script_zones.len() != loaded.script_zones.len() {
+            return Err(format!(
+                "snapshot script-zone runtime length {} does not match loaded world length {}",
+                self.script_zones.len(),
+                loaded.script_zones.len(),
+            ));
+        }
+        if self.static_sight_obstacle_active.len() != loaded.static_sight_obstacle_active.len() {
+            return Err(format!(
+                "snapshot static sight-obstacle runtime length {} does not match loaded world length {}",
+                self.static_sight_obstacle_active.len(),
+                loaded.static_sight_obstacle_active.len(),
+            ));
+        }
+        if self.pathfinder.states.len() != loaded.pathfinder.states.len() {
+            return Err(format!(
+                "snapshot pathfinder state layer count {} does not match loaded world count {}",
+                self.pathfinder.states.len(),
+                loaded.pathfinder.states.len(),
+            ));
+        }
+        for (layer_idx, (snapshot, level)) in self
+            .pathfinder
+            .states
+            .iter()
+            .zip(&loaded.pathfinder.states)
+            .enumerate()
+        {
+            if snapshot.len() != level.len() {
+                return Err(format!(
+                    "snapshot pathfinder state area count for layer {layer_idx} is {} but loaded world has {}",
+                    snapshot.len(),
+                    level.len(),
+                ));
+            }
+        }
+
+        self.validate_fast_grid_indices_against(loaded.fast_grid.level.sectors.len())
+    }
+
+    fn validate_pc_index_inner(&self) -> Result<(), String> {
+        let mut seen = std::collections::HashSet::with_capacity(self.pc_ids.len());
+        for &id in &self.pc_ids {
+            if !seen.insert(id) {
+                return Err(format!("pc_ids contains duplicate entity {id}"));
+            }
+            if !matches!(self.entities.get(id), Some(Entity::Pc(_))) {
+                return Err(format!("pc_ids references missing or non-PC entity {id}"));
+            }
+        }
+
+        let entity_pc_count = self.entities.pcs().count();
+        if self.pc_ids.len() != entity_pc_count {
+            return Err(format!(
+                "pc_ids contains {} entries but entity storage contains {entity_pc_count} PCs",
+                self.pc_ids.len(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_pathfinder_states(&self, assets: &LevelAssets) {
+        assert_eq!(
+            self.pathfinder.states.len(),
+            assets.pathfinder_graph.states.len(),
+            "pathfinder state layer count {} does not match level graph layer count {}",
+            self.pathfinder.states.len(),
+            assets.pathfinder_graph.states.len(),
+        );
+        for (layer_idx, (runtime, level)) in self
+            .pathfinder
+            .states
+            .iter()
+            .zip(&assets.pathfinder_graph.states)
+            .enumerate()
+        {
+            assert_eq!(
+                runtime.len(),
+                level.len(),
+                "pathfinder state area count for layer {layer_idx} is {} but level graph has {}",
+                runtime.len(),
+                level.len(),
+            );
+        }
+    }
+
+    fn validate_fast_grid_indices(&self) {
+        if let Err(detail) =
+            self.validate_fast_grid_indices_against(self.fast_grid.level.sectors.len())
+        {
+            panic!("{detail}");
+        }
+    }
+
+    fn validate_fast_grid_indices_against(&self, sector_count: usize) -> Result<(), String> {
+        for &sector_idx in self.fast_grid.lift_state.keys() {
+            if (sector_idx as usize) >= sector_count {
+                return Err(format!(
+                    "fast-grid lift runtime references sector {sector_idx}, but the level has {sector_count} sectors"
+                ));
+            }
+        }
+        for &sector_idx in self.fast_grid.sector_type_overlay.keys() {
+            if (sector_idx as usize) >= sector_count {
+                return Err(format!(
+                    "fast-grid sector-type overlay references sector {sector_idx}, but the level has {sector_count} sectors"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_world_accepts_empty_level_attachments() {
+        WorldState::new().validate_level_attachments(&LevelAssets::new());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "script-zone runtime length 1 does not match level zone-index length 0"
+    )]
+    fn script_zone_parallel_length_mismatch_fails_loudly() {
+        let mut world = WorldState::new();
+        world.script_zones.push(ScriptSectorData::new());
+        world.validate_level_attachments(&LevelAssets::new());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "static sight-obstacle runtime length 1 does not match level obstacle length 0"
+    )]
+    fn static_obstacle_parallel_length_mismatch_fails_loudly() {
+        let mut world = WorldState::new();
+        world.static_sight_obstacle_active.push(true);
+        world.validate_level_attachments(&LevelAssets::new());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "pathfinder state layer count 1 does not match level graph layer count 0"
+    )]
+    fn pathfinder_parallel_length_mismatch_fails_loudly() {
+        let mut world = WorldState::new();
+        world.pathfinder.states.push(Vec::new());
+        world.validate_level_attachments(&LevelAssets::new());
+    }
+
+    #[test]
+    #[should_panic(expected = "pc_ids references missing or non-PC entity")]
+    fn missing_pc_index_target_fails_loudly() {
+        let mut world = WorldState::new();
+        world.pc_ids.push(EntityId::Pc(crate::entity_id::PcId(0)));
+        world.validate_level_attachments(&LevelAssets::new());
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "script zone 0 references grid sector 0, but the level has 0 sectors"
+    )]
+    fn out_of_bounds_script_zone_index_fails_loudly() {
+        let mut world = WorldState::new();
+        world.script_zones.push(ScriptSectorData::new());
+        let mut assets = LevelAssets::new();
+        assets.script_zone_grid_indices = std::sync::Arc::new(vec![0]);
+        world.validate_level_attachments(&assets);
+    }
+}

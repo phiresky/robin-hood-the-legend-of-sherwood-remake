@@ -176,7 +176,7 @@ fn give_money_to_beggar(
     // When the space between civilian and beggar is clear, toss to the
     // midpoint so the coin lands in the PC's lap; otherwise drop it at
     // the civilian's own feet.
-    let los_clear = engine.fast_grid.is_straight_movement_authorized(
+    let los_clear = engine.world.fast_grid.is_straight_movement_authorized(
         MapPoint::new(npc_pos_2d.x, npc_pos_2d.y),
         beggar_pos_2d,
         layer,
@@ -240,7 +240,7 @@ impl EngineInner {
     /// ([`can_give_money_to_beggar`]) passes. Called each tick while
     /// `beggar_id` wears the `SimulatingBeggar` disguise.
     fn bid_for_money(&mut self, assets: &crate::engine::LevelAssets, beggar_id: EntityId) {
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if can_give_money_to_beggar(self, npc_id, beggar_id) {
                 give_money_to_beggar(self, assets, npc_id, beggar_id);
@@ -255,7 +255,7 @@ impl EngineInner {
     /// standing in place with `action_state == Waiting`), invoke
     /// [`EngineInner::bid_for_money`].
     pub(crate) fn tick_beggar_bids(&mut self, assets: &crate::engine::LevelAssets) {
-        let pc_ids = self.pc_ids.clone();
+        let pc_ids = self.world.pc_ids.clone();
         for pc_id in pc_ids {
             let is_beggar = self
                 .get_entity(pc_id)
@@ -285,7 +285,7 @@ impl EngineInner {
         };
         let pc_pos = pc.element_data().position_map();
 
-        for (_, entity) in self.entities.objects_mut() {
+        for (_, entity) in self.world.entities.objects_mut() {
             let pos = entity.element_data().position_map();
             let dist = (pc_pos.x - pos.x).abs().max((pc_pos.y - pos.y).abs());
             if dist >= NEAR_COINS_RADIUS {

@@ -219,7 +219,7 @@ impl EngineInner {
                 // Sum quantities of still-active BONUS_BLAZON pickups
                 // left on the map.
                 let mut pending_blazons: i32 = 0;
-                for (_, bonus) in self.entities.bonuses() {
+                for (_, bonus) in self.world.entities.bonuses() {
                     if bonus.element.active && bonus.object.object_type == ObjectType::BonusBlazon {
                         pending_blazons += bonus.object.quantity as i32;
                     }
@@ -502,6 +502,7 @@ impl EngineInner {
             // are intentionally excluded.
             Highlander => {
                 let ids: Vec<_> = self
+                    .world
                     .entities
                     .fighter_ids_for_camp(crate::element::Camp::Royalists)
                     .collect();
@@ -516,6 +517,7 @@ impl EngineInner {
             }
             Highlander2 => {
                 let ids: Vec<_> = self
+                    .world
                     .entities
                     .fighter_ids_for_camp(crate::element::Camp::Lacklandists)
                     .collect();
@@ -534,7 +536,12 @@ impl EngineInner {
                 // Prints "Nuking ..." before walking every soldier,
                 // launches a damage(1000, 1000) sequence per victim,
                 // then prints "Nuked N soldiers".
-                let victims: Vec<_> = self.entities.soldiers().map(|(id, _)| id.into()).collect();
+                let victims: Vec<_> = self
+                    .world
+                    .entities
+                    .soldiers()
+                    .map(|(id, _)| id.into())
+                    .collect();
                 let count = victims.len();
                 for id in victims {
                     self.launch_damage(id, 1000, 1000);
@@ -547,6 +554,7 @@ impl EngineInner {
                 // which drops them back to conscious via the normal
                 // threshold transition in `set_concussion`.
                 let ids: Vec<EntityId> = self
+                    .world
                     .entities
                     .npcs()
                     .filter_map(|(id, e)| {
@@ -575,6 +583,7 @@ impl EngineInner {
                 // target's own invulnerable / tied / carried state via
                 // `concussion_ctx_for`.
                 let ids: Vec<_> = self
+                    .world
                     .entities
                     .soldier_ids_for_camp(Camp::Lacklandists)
                     .collect();
@@ -730,7 +739,7 @@ impl EngineInner {
                             .to_string(),
                     );
                 };
-                let ids: Vec<EntityId> = self.entities.npc_ids().collect::<Vec<_>>();
+                let ids: Vec<EntityId> = self.world.entities.npc_ids().collect::<Vec<_>>();
                 for id in ids {
                     if id == keep {
                         continue;
@@ -763,8 +772,12 @@ impl EngineInner {
             RoterAlarm => {
                 // Sets attentive mode on every soldier — silent cheat,
                 // emits no console output.
-                let soldier_ids: Vec<EntityId> =
-                    self.entities.soldiers().map(|(id, _)| id.into()).collect();
+                let soldier_ids: Vec<EntityId> = self
+                    .world
+                    .entities
+                    .soldiers()
+                    .map(|(id, _)| id.into())
+                    .collect();
                 for id in soldier_ids {
                     self.set_soldier_attentive_mode(id, true, false);
                 }
@@ -775,7 +788,7 @@ impl EngineInner {
                 // hp=100, concussion=0, *not* the reverse.  Swapping
                 // the two would change a death roll into a concussion
                 // roll.
-                let pcs = self.pc_ids.clone();
+                let pcs = self.world.pc_ids.clone();
                 for id in pcs {
                     self.launch_damage(id, 100, 0);
                 }
@@ -882,6 +895,7 @@ impl EngineInner {
                 // `enable_pc_action` so a PC who had run out of a given
                 // action can fire again immediately.
                 let pcs: Vec<_> = self
+                    .world
                     .pc_ids
                     .iter()
                     .filter_map(|&id| {
@@ -1047,10 +1061,10 @@ impl EngineInner {
                 // interface-displayed state.  Hex pointers are
                 // meaningless in the Rust runtime, so we print the
                 // stable `EntityId` instead.
-                if self.pc_ids.is_empty() {
+                if self.world.pc_ids.is_empty() {
                     return ConsoleResponse::Ok("No PCs in the mission.".to_string());
                 }
-                for &id in &self.pc_ids.clone() {
+                for &id in &self.world.pc_ids.clone() {
                     let displayed = self
                         .get_entity(id)
                         .and_then(|e| e.pc_data())
@@ -1191,7 +1205,7 @@ impl EngineInner {
             }
             let before = out.len();
             'matched: for profile_idx in matching_profiles {
-                for &pc_id in &self.pc_ids {
+                for &pc_id in &self.world.pc_ids {
                     if let Some(pc) = self.get_entity(pc_id).and_then(|e| e.pc_data())
                         && pc.profile_index == profile_idx
                     {

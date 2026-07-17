@@ -198,26 +198,26 @@ impl EngineInner {
 
         // Toggle grid sectors
         for &idx in &ctx.old_sector_indices {
-            self.fast_grid.set_sector_active(idx, !applied);
+            self.world.fast_grid.set_sector_active(idx, !applied);
         }
         for &idx in &ctx.new_sector_indices {
-            self.fast_grid.set_sector_active(idx, applied);
+            self.world.fast_grid.set_sector_active(idx, applied);
         }
 
         // Toggle grid lines
         for &idx in &ctx.old_line_indices {
-            self.fast_grid.set_line_active(idx, !applied);
+            self.world.fast_grid.set_line_active(idx, !applied);
         }
         for &idx in &ctx.new_line_indices {
-            self.fast_grid.set_line_active(idx, applied);
+            self.world.fast_grid.set_line_active(idx, applied);
         }
 
         // Toggle sprite-occlusion masks.
         for &idx in &ctx.old_mask_indices {
-            self.fast_grid.set_mask_active(idx, !applied);
+            self.world.fast_grid.set_mask_active(idx, !applied);
         }
         for &idx in &ctx.new_mask_indices {
-            self.fast_grid.set_mask_active(idx, applied);
+            self.world.fast_grid.set_mask_active(idx, applied);
         }
 
         // Pathfinder obstacle state change.  The stream-deserialised
@@ -233,6 +233,7 @@ impl EngineInner {
         //     1000-damage sequence element.
         if ctx.use_changing_obstacles {
             let area = self
+                .world
                 .pathfinder
                 .try_convert_sector(assets.pathfinder_graph.as_ref(), ctx.pathfinder_sector)
                 .unwrap_or_else(|| {
@@ -244,7 +245,7 @@ impl EngineInner {
                 });
             let mut appeared = Vec::new();
             let mut line_toggles = Vec::new();
-            self.pathfinder.toggle_obstacle_state(
+            self.world.pathfinder.toggle_obstacle_state(
                 assets.pathfinder_graph.as_ref(),
                 ctx.pathfinder_layer as usize,
                 area as usize,
@@ -256,7 +257,7 @@ impl EngineInner {
             // Apply grid-line toggles from motion-obstacle activation
             // changes.
             for (line_idx, active) in line_toggles {
-                self.fast_grid.set_line_active(line_idx, active);
+                self.world.fast_grid.set_line_active(line_idx, active);
             }
 
             if !forced_reset {
@@ -312,6 +313,7 @@ impl EngineInner {
         // So the move-box check only gates the `crushed` computation,
         // not target inclusion.
         let targets: Vec<(EntityId, bool)> = self
+            .world
             .entities
             .actors()
             .filter_map(|(id, entity)| {
@@ -466,7 +468,7 @@ impl EngineInner {
             tracing::warn!(handle, "patch_effects: invalid animation entity handle");
             return;
         };
-        if let Some(entity) = self.entities.get_mut(entity_id) {
+        if let Some(entity) = self.world.entities.get_mut(entity_id) {
             entity.element_data_mut().active = true;
             {
                 let sprite = entity.sprite_mut();
@@ -506,7 +508,7 @@ impl EngineInner {
             tracing::warn!(handle, "patch_effects: invalid animation entity handle");
             return;
         };
-        if let Some(entity) = self.entities.get_mut(entity_id) {
+        if let Some(entity) = self.world.entities.get_mut(entity_id) {
             entity.element_data_mut().active = false;
         }
 
@@ -590,7 +592,7 @@ impl EngineInner {
             bank_id,
             dst_x,
             dst_y,
-            shadow_color: self.weather.night_color,
+            shadow_color: self.world.weather.night_color,
         })
     }
 }

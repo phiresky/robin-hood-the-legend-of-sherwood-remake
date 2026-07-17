@@ -78,7 +78,6 @@ pub use types::*;
 
 use crate::ai::AiGlobalState;
 use crate::element::{Entity, EntityId};
-use crate::entities::Entities;
 use crate::fast_find_grid::FastFindGrid;
 use crate::markers::GroundMark;
 use crate::messenger::{Message, MessageType, Messenger, SimpleMessage};
@@ -89,7 +88,9 @@ use crate::profiles::MissionType;
 use crate::sequence::SequenceManager;
 use crate::short_briefings::ShortBriefings;
 use simulation_gate::SimulationGateState;
-use state::{AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl};
+use state::{
+    AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl, WorldState,
+};
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -166,13 +167,8 @@ pub struct EngineInner {
     /// Deterministic global AI state and mission-configured vision defaults.
     pub(crate) ai: AiRuntime,
 
-    // ── Weather ──────────────────────────────────────────────────
-    /// Weather and environmental state. [Serialized — affects AI]
-    pub(crate) weather: WeatherState,
-
-    // ── Shield ───────────────────────────────────────────────────
-    /// Shield protection state. [Serialized]
-    pub(crate) shield: ShieldState,
+    /// Authoritative entities and the spatial state indexed alongside them.
+    pub(crate) world: WorldState,
 
     // ── Script globals ───────────────────────────────────────────
     /// Script global variables array. [Serialized]
@@ -192,15 +188,6 @@ pub struct EngineInner {
     /// [`EngineInner::request_pc_info_overlay`]) rather than pushing raw
     /// messages; sim-side code still uses this queue directly.
     pub(crate) messenger: Messenger,
-    /// Spatial acceleration grid for the game world. [Serialized]
-    pub(crate) fast_grid: FastFindGrid,
-    /// A* waypoint pathfinder. [Serialized]
-    pub(crate) pathfinder: PathFinder,
-    // ── Entity storage ────────────────────────────────────────────
-    /// All entities indexed by EntityId.
-    pub(crate) entities: Entities,
-    /// Indices of player characters.
-    pub(crate) pc_ids: Vec<EntityId>,
     /// Deterministic per-player selection, input-mode, and macro state.
     pub(crate) players: PlayerRuntime,
 
@@ -297,32 +284,6 @@ pub struct EngineInner {
     /// [`crate::script_manager::ScriptManager::attach_program`] with the
     /// bytecode loaded from the level's `.scb`.
     pub(crate) mission_script: Option<MissionScript>,
-
-    // Script-indexed static data (location positions, counts, zone grid
-    // indices) lives on `LevelAssets` — level-load-only, read during
-    // script init / native dispatch, never mutated at tick time.
-    /// Per-zone script data (occupant tracking, class name).
-    /// Parallel to `script_zone_grid_indices` — index *i* here corresponds
-    /// to `script_zone_grid_indices[i]`.
-    pub(crate) script_zone_data: Vec<crate::sector::ScriptSectorData>,
-
-    /// 3D sight obstacles loaded from the level (walls, fences, etc).
-    /// Used by `ai_vision::compute_visibility` for line-of-sight checks
-    /// against `SIGHTOBSTACLE_OPAQUE`.  Stored as a flat Vec on the
-    /// engine with linear-scan + bounding-box rejection (rather than
-    /// indexed by the spatial grid).
-    /// Per-frame dynamic sight obstacles (currently just shields).
-    /// Rebuilt each tick by `update_shield_obstacles`; flat global
-    /// indexing puts dynamic obstacles AFTER the static ones (which
-    /// live in `LevelAssets::static_sight_obstacles`).
-    pub(crate) dynamic_sight_obstacles: Vec<crate::sight_obstacle::SightObstacle>,
-
-    /// Per-static-obstacle runtime active flag, parallel to
-    /// `LevelAssets::static_sight_obstacles`. Toggled by
-    /// `PatchEffect::SwapObjects`. Lives on the engine (not the
-    /// assets) because it's mutable per-tick state that participates
-    /// in rollback hashing.
-    pub(crate) static_sight_obstacle_active: Vec<bool>,
     // (Deferred bg-blits live on `pending_side_effects.bg_blits` now;
     // load-once index tables live on `LevelAssets::{source_durations,
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
@@ -504,7 +465,7 @@ impl EngineInner {
     }
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
-        self.fast_grid.attach_level_grid(assets.level_grid.clone());
+        self.world.attach_level_assets(assets);
         if let Some(script) = self.mission_script.as_mut() {
             if !script.script_name.is_empty() {
                 let program = assets
@@ -521,15 +482,6 @@ impl EngineInner {
         }
         self.attach_script_bindings(assets);
         self.migrate_legacy_script_custom_values();
-        for (id, entity) in self.entities.occupied_mut() {
-            entity
-                .sprite_mut()
-                .attach_runtime_from_cache(&assets.sprite_scriptor)
-                .unwrap_or_else(|err| {
-                    let idx = id.index();
-                    panic!("failed to attach sprite runtime for entity {idx}: {err}")
-                });
-        }
     }
 
     /// Create a new engine instance.
@@ -553,24 +505,17 @@ impl EngineInner {
             // replay/match seed before level setup draws.
             control: SimulationControl::new(0),
             ai: AiRuntime::new(),
-
-            weather: WeatherState::new(),
-
-            shield: ShieldState::default(),
+            world: WorldState::new(),
 
             script_globals: Vec::new(),
 
             next_order_id: 1,
 
             messenger: Messenger::new(),
-            fast_grid: FastFindGrid::default(),
-            pathfinder: PathFinder::default(),
             pending_move_requests: Vec::new(),
             pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
 
-            entities: Entities::new(),
-            pc_ids: Vec::new(),
             players: PlayerRuntime::new(),
             feedback: FeedbackRuntime::new(),
             timer_elements: Vec::new(),
@@ -584,10 +529,6 @@ impl EngineInner {
             pending_concussion_side_effects: Vec::new(),
 
             mission_script: None,
-
-            script_zone_data: Vec::new(),
-            dynamic_sight_obstacles: Vec::new(),
-            static_sight_obstacle_active: Vec::new(),
         }
     }
 
@@ -633,7 +574,8 @@ impl EngineInner {
 
         // Pathfinder obstacle states now that the graph is loaded.
         if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
-            self.pathfinder
+            self.world
+                .pathfinder
                 .initialize_from_graph(assets.pathfinder_graph.as_ref());
         }
 
@@ -663,8 +605,8 @@ impl EngineInner {
     ///   bad mission file still boots while yelling in the logs.
     /// * Move-box colliding with an obstacle is a non-fatal warn.
     fn validate_actor_placement(&self) {
-        let special_layer = self.fast_grid.level.special_layer;
-        for (_, entity) in self.entities.actors() {
+        let special_layer = self.world.fast_grid.level.special_layer;
+        for (_, entity) in self.world.entities.actors() {
             let elem = entity.element_data();
             let layer = elem.layer();
             if layer == 0xFFFF {
@@ -683,7 +625,7 @@ impl EngineInner {
                 continue;
             }
             let move_box = elem.sprite.position_iface.get_move_box_map();
-            if !self.fast_grid.is_position_authorized(move_box, layer) {
+            if !self.world.fast_grid.is_position_authorized(move_box, layer) {
                 tracing::warn!(
                     "Actor at ({:.1},{:.1}) lies inside an obstacle on layer {}",
                     pos.x,
@@ -702,7 +644,7 @@ impl EngineInner {
     /// scroll starts on a random frame of its fluttering animation
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
-        for (_, scroll) in self.entities.scrolls_mut() {
+        for (_, scroll) in self.world.entities.scrolls_mut() {
             // Original: `RHElementScroll::Initialize` in
             // `original-code/RHElementScroll.cpp:153-171` calls
             // `ForceRandomSpriteFrame` after script initialization.
@@ -892,7 +834,7 @@ impl EngineInner {
         const SCORE_SOLDIER_TIED_AND_UNCONSCIOUS: i32 = 70;
 
         let mut score = 0;
-        for (_, s) in self.entities.soldiers() {
+        for (_, s) in self.world.entities.soldiers() {
             if s.camp() == Camp::Lacklandists
                 && s.life_points() > 0
                 && (s.is_tied() || s.is_unconscious())
@@ -914,7 +856,7 @@ impl EngineInner {
 
         let mut living = 0u32;
         let mut dead = 0u32;
-        for (_, s) in self.entities.soldiers() {
+        for (_, s) in self.world.entities.soldiers() {
             if s.camp() == Camp::Lacklandists {
                 if s.life_points() > 0 {
                     living += 1;
@@ -951,6 +893,7 @@ impl EngineInner {
         campaign: &crate::campaign::Campaign,
     ) {
         let coma_pc_ids: Vec<EntityId> = self
+            .world
             .pc_ids
             .iter()
             .copied()
@@ -1145,7 +1088,7 @@ impl EngineInner {
 
     /// Add an entity to the world. Returns its EntityId.
     pub(crate) fn add_entity(&mut self, mut entity: Entity) -> EntityId {
-        let id = entity_id_for_occupied_slot(self.entities.len() as u32, &entity);
+        let id = entity_id_for_occupied_slot(self.world.entities.len() as u32, &entity);
 
         // Initialise outline colours based on entity kind.  For
         // soldiers, route the VIP flag (cached on `EnemyAi.is_vip` from
@@ -1176,7 +1119,7 @@ impl EngineInner {
         // are derived from the entity store.
         match &entity {
             Entity::Pc(_) => {
-                self.pc_ids.push(id);
+                self.world.pc_ids.push(id);
             }
             Entity::Soldier(_) => {}
             Entity::Civilian(_) => {}
@@ -1185,19 +1128,19 @@ impl EngineInner {
             Entity::Bonus(_) => {}
         }
 
-        self.entities.push(Some(entity));
+        self.world.entities.push(Some(entity));
         id
     }
 
     /// Get a reference to an entity by ID.
     pub fn get_entity<I: Into<EntityId>>(&self, id: I) -> Option<&Entity> {
-        self.entities.get(id)
+        self.world.entities.get(id)
     }
 
     /// Resolve a legacy raw entity-table index to the typed ID variant for
     /// the entity currently stored in that slot.
     pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
-        self.entities.id_at_legacy_slot(index)
+        self.world.entities.id_at_legacy_slot(index)
     }
 
     /// Resolve a script actor handle to the typed ID variant for the entity
@@ -1296,7 +1239,7 @@ impl EngineInner {
     /// sequence element is handed to an actor.
     fn resolve_element_priority(&self, elem: &mut crate::sequence::SequenceElement) {
         if elem.priority == crate::sequence::SequencePriority::NotYetSet {
-            let resolver = Self::priority_resolver(&self.entities);
+            let resolver = Self::priority_resolver(&self.world.entities);
             elem.priority = resolver(elem);
         }
     }
@@ -1361,7 +1304,7 @@ impl EngineInner {
         // Unfreeze actor on any incoming command, so a
         // `FreezeExecution`'d actor can be resumed by dispatching
         // a new element (e.g. scripted Wait on a held PC).
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = false;
@@ -1456,7 +1399,7 @@ impl EngineInner {
         use crate::sequence::SequenceState;
 
         // Unfreeze actor on any incoming command.
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = false;
@@ -1484,7 +1427,7 @@ impl EngineInner {
             .launch_single_order_sequence_unchecked(owner, command);
         let elem_idx = 0;
         if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
-            let resolver = Self::priority_resolver(&self.entities);
+            let resolver = Self::priority_resolver(&self.world.entities);
             if elem.priority == crate::sequence::SequencePriority::NotYetSet {
                 elem.priority = resolver(elem);
             }
@@ -1538,7 +1481,7 @@ impl EngineInner {
                 // transitions to InProgress.  Read by
                 // `non_interruptable_guard` to gate the PASS_DOOR+MOVE
                 // IMPOSSIBLE fast-fail.
-                if let Some(entity) = self.entities.get_mut(owner)
+                if let Some(entity) = self.world.entities.get_mut(owner)
                     && let Some(actor) = entity.actor_data_mut()
                 {
                     actor.sequence_element_started = true;
@@ -1661,7 +1604,7 @@ impl EngineInner {
         if let Some(elem) = self.sequence_manager.get_element_mut(new_seq, new_idx)
             && elem.priority == SequencePriority::NotYetSet
         {
-            let resolver = Self::priority_resolver(&self.entities);
+            let resolver = Self::priority_resolver(&self.world.entities);
             elem.priority = resolver(elem);
         }
 
@@ -1707,7 +1650,7 @@ impl EngineInner {
     pub(crate) fn actor_freeze_execution(&mut self, owner: EntityId) {
         use crate::sequence::CascadeFlags;
 
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = true;
@@ -1747,7 +1690,7 @@ impl EngineInner {
     ) -> crate::sequence::SequenceId {
         // Resolve priorities for every element up-front so subsequent
         // stop/decide checks don't have to re-run the resolver.
-        let resolver = Self::priority_resolver(&self.entities);
+        let resolver = Self::priority_resolver(&self.world.entities);
         for elem in seq.elements.iter_mut() {
             if elem.priority == crate::sequence::SequencePriority::NotYetSet {
                 elem.priority = resolver(elem);
@@ -1839,7 +1782,7 @@ impl EngineInner {
         // before the arbitration / dispatch logic runs.  Without this
         // clear, a freeze imposed via paths other than `DropDone`
         // (which clears it inline) would persist past the next Instruct.
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.execution_frozen = false;
@@ -2104,6 +2047,7 @@ impl EngineInner {
     /// instead of installing the cross-element link.
     pub(super) fn propagate_done_to_current_orders(&mut self) {
         let done_actors: Vec<crate::element::EntityId> = self
+            .world
             .entities
             .actors()
             .filter_map(|(entity_id, entity)| {
@@ -2131,7 +2075,7 @@ impl EngineInner {
         // Reset every sprite's transient last_motion_state so the next
         // tick starts clean, regardless of whether the slot was an
         // actor or had an order to mark.
-        for (_, entity) in self.entities.occupied_mut() {
+        for (_, entity) in self.world.entities.occupied_mut() {
             entity.element_data_mut().sprite.last_motion_state = None;
         }
     }
@@ -2273,7 +2217,7 @@ impl EngineInner {
     /// MaybeCancelPathRequest cleanup we need before a state
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
-        self.pathfinder.cancel_requests_for(owner);
+        self.world.pathfinder.cancel_requests_for(owner);
         self.pending_path_requests.retain_not_owned_by(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
@@ -2282,7 +2226,7 @@ impl EngineInner {
         // failed-path retries — otherwise the entry would stay in the
         // queue until the element resumes or times out.
         self.failed_path_requests.retain(|r| r.owner != owner);
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_movement.clear();
@@ -2318,9 +2262,9 @@ impl EngineInner {
             .get_entity(owner)
             .map(|e| e.element_data().position_map())
             .unwrap_or_default();
-        let pathfinder = &mut self.pathfinder;
+        let pathfinder = &mut self.world.pathfinder;
         let next_order_id = &mut self.next_order_id;
-        let resolver = Self::priority_resolver(&self.entities);
+        let resolver = Self::priority_resolver(&self.world.entities);
         self.sequence_manager.stop_movement_for_owner(
             owner,
             owner_pos,
@@ -2395,10 +2339,10 @@ impl EngineInner {
         if self.actors_frozen() {
             return;
         }
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let busy = self.is_very_very_busy(npc_id);
-            if let Some(entity) = self.entities.get_mut(npc_id)
+            if let Some(entity) = self.world.entities.get_mut(npc_id)
                 && let Some(ai) = entity.ai_controller_mut()
             {
                 if !ai.was_busy && busy {
@@ -2514,14 +2458,14 @@ impl EngineInner {
 
     /// Iterate over all live entities (skipping `None` slots).
     pub fn entities_iter(&self) -> impl Iterator<Item = &Entity> + '_ {
-        self.entities.occupied().map(|(_, entity)| entity)
+        self.world.entities.occupied().map(|(_, entity)| entity)
     }
 
     /// Active entity positions for debug overlays.
     pub fn active_entity_positions(
         &self,
     ) -> impl Iterator<Item = (EntityId, crate::coordinates::MapPoint)> + '_ {
-        self.entities.occupied().filter_map(|(id, entity)| {
+        self.world.entities.occupied().filter_map(|(id, entity)| {
             entity
                 .is_active()
                 .then_some((id, entity.element_data().position_map()))
@@ -2530,12 +2474,12 @@ impl EngineInner {
 
     /// All player characters (portrait order).
     pub fn pc_ids(&self) -> &[EntityId] {
-        &self.pc_ids
+        &self.world.pc_ids
     }
 
     /// All NPCs (soldiers + civilians).
     pub fn npc_ids(&self) -> Vec<EntityId> {
-        self.entities.npc_ids().collect()
+        self.world.entities.npc_ids().collect()
     }
 
     /// Currently selected PC ids for the [`PlayerId::HOST`] seat.
@@ -2674,7 +2618,8 @@ impl EngineInner {
 
     /// Background animation entity ids.
     pub fn bg_animation_ids(&self) -> Vec<EntityId> {
-        self.entities
+        self.world
+            .entities
             .fxs()
             .filter_map(|(id, fx)| (fx.element.position().z == 0.0).then_some(id.into()))
             .collect()
@@ -2682,7 +2627,8 @@ impl EngineInner {
 
     /// Patch FX entity ids.
     pub fn patch_fx_ids(&self) -> Vec<EntityId> {
-        self.entities
+        self.world
+            .entities
             .fxs()
             .filter_map(|(id, fx)| fx.fx.patch_index.is_some().then_some(id.into()))
             .collect()
@@ -2776,13 +2722,13 @@ impl EngineInner {
     /// Called once all PCs have successfully launched their slot-`slot`
     /// macros — see `apply_start_macro` which drives the call.
     pub(crate) fn do_tetris_macro(&mut self, display: &mut HostDisplayState, slot: u8) {
-        let pcs = self.pc_ids.clone();
+        let pcs = self.world.pc_ids.clone();
         for pc in pcs {
             if let Some(state) = self.players.macro_store.get_mut(pc) {
                 state.do_tetris(slot as usize);
             }
         }
-        display.rearm_macro_tetris(&self.pc_ids, &self.players.macro_store, slot as usize);
+        display.rearm_macro_tetris(&self.world.pc_ids, &self.players.macro_store, slot as usize);
     }
 
     /// Enable or disable the `--goldeneye` cheat (NPCs can't see the player).
@@ -2799,22 +2745,22 @@ impl EngineInner {
 
     /// Weather / ambiance state (night colour, rain, fog, …).
     pub fn weather(&self) -> &WeatherState {
-        &self.weather
+        &self.world.weather
     }
 
     /// Shield protection state (for the "Immortality" cheat).
     pub fn shield(&self) -> &ShieldState {
-        &self.shield
+        &self.world.shield
     }
 
     /// Spatial acceleration grid (sectors, masks, jump lines, doors).
     pub fn fast_grid(&self) -> &FastFindGrid {
-        &self.fast_grid
+        &self.world.fast_grid
     }
 
     /// A* waypoint pathfinder.
     pub fn pathfinder(&self) -> &PathFinder {
-        &self.pathfinder
+        &self.world.pathfinder
     }
 
     /// Committed path waypoints for an actor's active movement, if any.
@@ -2873,8 +2819,8 @@ impl EngineInner {
     ) -> crate::sight_obstacle::ObstacleList<'a> {
         crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.dynamic_sight_obstacles,
-            static_active: &self.static_sight_obstacle_active,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         }
     }
 
@@ -2882,7 +2828,11 @@ impl EngineInner {
     /// Out-of-range indices (including dynamic obstacles) silently no-op
     /// — dynamic obstacles are always implicitly active.
     pub(crate) fn set_sight_obstacle_active(&mut self, idx: u32, active: bool) {
-        if let Some(slot) = self.static_sight_obstacle_active.get_mut(idx as usize) {
+        if let Some(slot) = self
+            .world
+            .static_sight_obstacle_active
+            .get_mut(idx as usize)
+        {
             *slot = active;
         }
     }
@@ -3222,6 +3172,7 @@ impl EngineInner {
     /// and the sprite can remain on the last movement frame.
     pub(crate) fn ensure_wait_elements_for_idle_actors(&mut self) {
         let actor_ids: Vec<EntityId> = self
+            .world
             .entities
             .actors()
             .filter_map(|(id, entity)| entity.is_active().then_some(id.into()))
@@ -3251,7 +3202,7 @@ impl EngineInner {
     /// Reveal all blipped entities — backs the console `UNBLIP`
     /// command, which iterates every NPC and reveals it.
     pub(crate) fn reveal_all_blips(&mut self) {
-        for (_, entity) in self.entities.npcs_mut() {
+        for (_, entity) in self.world.entities.npcs_mut() {
             if entity.element_data().blipped {
                 entity.reveal_blip();
             }
@@ -3260,15 +3211,15 @@ impl EngineInner {
 
     /// Get a mutable reference to an entity by ID.
     pub(crate) fn get_entity_mut<I: Into<EntityId>>(&mut self, id: I) -> Option<&mut Entity> {
-        self.entities.get_mut(id)
+        self.world.entities.get_mut(id)
     }
 
     /// Remove an entity. Leaves a None hole (IDs are stable).
     pub(crate) fn remove_entity<I: Into<EntityId>>(&mut self, id: I) {
         let id = id.into();
-        self.entities.remove(id);
+        self.world.entities.remove(id);
         // Remove from index lists
-        self.pc_ids.retain(|&i| i != id);
+        self.world.pc_ids.retain(|&i| i != id);
         self.players.seats[0].selection.retain(|&i| i != id);
         // Any pending path request for this actor is cancelled when
         // the element tears down.  Entity removal implies all its
@@ -3282,7 +3233,7 @@ impl EngineInner {
 
     /// Number of live entities.
     pub fn entity_count(&self) -> usize {
-        self.entities.occupied().count()
+        self.world.entities.occupied().count()
     }
 
     /// Remove a PC entity from the engine by its character profile index.
@@ -3304,7 +3255,7 @@ impl EngineInner {
         &mut self,
         profile_idx: crate::profiles::CharacterProfileIdx,
     ) -> bool {
-        let Some(pc_id) = self.pc_ids.iter().copied().find(|&id| {
+        let Some(pc_id) = self.world.pc_ids.iter().copied().find(|&id| {
             matches!(
                 self.get_entity(id),
                 Some(Entity::Pc(pc)) if pc.pc.profile_index == profile_idx,
@@ -3548,17 +3499,17 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
         let result = script.post_initialize();
         script.swap_engine_state(
-            &mut self.entities,
+            &mut self.world.entities,
             &mut self.ai.global,
-            &mut self.fast_grid,
+            &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
@@ -3792,7 +3743,7 @@ impl EngineInner {
         // whose PC has had its portrait hidden or been made unplayable.
         self.players.seats[0]
             .selection
-            .retain(|&id| match self.entities.get(id) {
+            .retain(|&id| match self.world.entities.get(id) {
                 Some(crate::element::Entity::Pc(pc)) => {
                     !pc.pc.interface_hidden && pc.pc.playable && pc.pc.life_points > 0
                 }
@@ -3889,7 +3840,7 @@ impl EngineInner {
     /// renderer is a host-side `&EngineInner` pass, so the clear runs
     /// here.
     pub(crate) fn clear_npc_double_status_bar_flags(&mut self) {
-        let ids = self.entities.npc_ids().collect::<Vec<_>>();
+        let ids = self.world.entities.npc_ids().collect::<Vec<_>>();
         for id in ids {
             if let Some(e) = self.get_entity_mut(id)
                 && let Some(npc) = e.npc_data_mut()
@@ -4001,7 +3952,7 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     let mut profiles = (*assets.profile_manager).clone();
     let mut needs_hth_weapon = false;
 
-    for (_, pc) in engine.entities.pcs() {
+    for (_, pc) in engine.world.entities.pcs() {
         if !pc.element.active || pc.pc.life_points <= 0 {
             continue;
         }
@@ -4015,7 +3966,7 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
         needs_hth_weapon = true;
     }
 
-    for (soldier_id, soldier) in engine.entities.soldiers_mut() {
+    for (soldier_id, soldier) in engine.world.entities.soldiers_mut() {
         if !soldier.element.active || soldier.human.unconscious {
             continue;
         }

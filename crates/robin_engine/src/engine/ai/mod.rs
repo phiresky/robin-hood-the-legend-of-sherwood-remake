@@ -49,7 +49,7 @@ struct PotentialDetectable {
 /// pass.
 fn build_potential_detectables(engine: &EngineInner) -> Vec<PotentialDetectable> {
     let mut out = Vec::new();
-    for (id, entity) in engine.entities.humans() {
+    for (id, entity) in engine.world.entities.humans() {
         if !entity.element_data().active {
             continue;
         }
@@ -718,7 +718,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     // Net radius: 10 when crumpled, else 40.
     let mut nets_by_victim: std::collections::HashMap<u32, Vec<ai_entity_view::NetCoverInfo>> =
         std::collections::HashMap::new();
-    for (net_id, net) in engine.entities.nets() {
+    for (net_id, net) in engine.world.entities.nets() {
         if !net.element.active {
             continue;
         }
@@ -741,8 +741,8 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         }
     }
 
-    let mut map = AiEntityViewMap::with_capacity(engine.entities.len());
-    for (entity_id, entity) in engine.entities.occupied() {
+    let mut map = AiEntityViewMap::with_capacity(engine.world.entities.len());
+    for (entity_id, entity) in engine.world.entities.occupied() {
         let elem = entity.element_data();
         match entity {
             Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => {}
@@ -784,7 +784,7 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
         if let Entity::Pc(pc) = entity
             && pc.element.posture == crate::element::Posture::OnShoulders
             && let Some(carrier_id) = pc.human.carrier
-            && let Some(carrier) = engine.entities.get(carrier_id)
+            && let Some(carrier) = engine.world.entities.get(carrier_id)
         {
             let cp = carrier.element_data().position_map();
             view.position.x = cp.x;
@@ -814,14 +814,14 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
             let forecast = crate::ai::forecast_destination_for_ia(
                 &input,
                 doors_ref,
-                &engine.fast_grid.level.sectors,
-                &engine.fast_grid.level.sector_number_map,
+                &engine.world.fast_grid.level.sectors,
+                &engine.world.fast_grid.level.sector_number_map,
             );
             view.forecasted_destination = forecast.position;
         }
 
         // AI handle == entity slot index (see `FighterSnapshot.handle =
-        // target_id.index()` elsewhere, and `self.entities.get_mut(target as
+        // target_id.index()` elsewhere, and `self.world.entities.get_mut(target as
         // usize)` for `CrossNpcAction` handlers).
         map.insert(entity_id.index(), view);
     }
@@ -835,8 +835,8 @@ impl EngineInner {
     ) -> crate::sight_obstacle::SharedSightObstacles {
         crate::sight_obstacle::SharedSightObstacles {
             static_obstacles: assets.static_sight_obstacles.clone(),
-            dynamic_obstacles: std::sync::Arc::new(self.dynamic_sight_obstacles.clone()),
-            static_active: std::sync::Arc::new(self.static_sight_obstacle_active.clone()),
+            dynamic_obstacles: std::sync::Arc::new(self.world.dynamic_sight_obstacles.clone()),
+            static_active: std::sync::Arc::new(self.world.static_sight_obstacle_active.clone()),
         }
     }
 
@@ -904,7 +904,7 @@ impl EngineInner {
         // Pull the minimum we need from the NPC: its position, camp,
         // primary target handle, and the `couldnt_reachpoint` flag
         // (drives avenger-on-roof computation).
-        let Some(entity) = self.entities.get(npc_id) else {
+        let Some(entity) = self.world.entities.get(npc_id) else {
             return AiPerTickData::stub();
         };
         let Entity::Soldier(soldier) = entity else {
@@ -960,14 +960,14 @@ impl EngineInner {
             // scans the other soldiers; the helper handles the
             // empty-target case.
             tick.friend_swap_candidates =
-                build_friend_swap_candidates(&self.entities, npc_id, my_camp);
+                build_friend_swap_candidates(&self.world.entities, npc_id, my_camp);
             return tick;
         };
 
         // Primary target metadata (position, posture, animation,
         // carrier) from the live entity store.
         let target_meta =
-            lookup_primary_target_metadata(&self.entities, &self.sequence_manager, target_id);
+            lookup_primary_target_metadata(&self.world.entities, &self.sequence_manager, target_id);
 
         if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
             tick.primary_target_position = Some(pos);
@@ -988,7 +988,8 @@ impl EngineInner {
         }
 
         // primary_target_is_pc: look up the target's entity variant.
-        tick.primary_target_is_pc = matches!(self.entities.get(target_id), Some(Entity::Pc(_)));
+        tick.primary_target_is_pc =
+            matches!(self.world.entities.get(target_id), Some(Entity::Pc(_)));
 
         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
             let my_company = enemy_ai.company_number;
@@ -1084,7 +1085,7 @@ impl EngineInner {
                     continue;
                 }
                 let attacker_id = EntityId::Soldier(SoldierId(attacker));
-                let Some(Entity::Soldier(s)) = self.entities.get(attacker_id) else {
+                let Some(Entity::Soldier(s)) = self.world.entities.get(attacker_id) else {
                     continue;
                 };
                 if s.soldier.cached_camp != my_camp
@@ -1110,7 +1111,8 @@ impl EngineInner {
         }
 
         // Friend-swap candidates for ReconsiderEnemyApproach.
-        tick.friend_swap_candidates = build_friend_swap_candidates(&self.entities, npc_id, my_camp);
+        tick.friend_swap_candidates =
+            build_friend_swap_candidates(&self.world.entities, npc_id, my_camp);
 
         // Stashed-exit-door snapshot for the AlertSoldiers indoor
         // branch and the merry-man flee path.  Always populated
@@ -1139,7 +1141,7 @@ impl EngineInner {
                 .map(|h| h.doors.as_slice())
                 .unwrap_or(&[]);
             tick.avenger_on_roof_wait_position = precompute_avenger_on_roof_wait_position(
-                &self.entities,
+                &self.world.entities,
                 doors_slice,
                 npc_id,
                 target_id,
@@ -1159,7 +1161,7 @@ impl EngineInner {
         // Snapshot the ticking NPC (the brawler / self) once so each
         // officer's `is_detecting_cone` cache below evaluates
         // "officer is detecting brawler" against a single target.
-        let me_brawler = self.entities.get(npc_id).and_then(|e| match e {
+        let me_brawler = self.world.entities.get(npc_id).and_then(|e| match e {
             Entity::Soldier(s) => Some(s),
             _ => None,
         });
@@ -1175,8 +1177,8 @@ impl EngineInner {
         let obstacles = obstacles_owned.list();
 
         let mut camp_soldiers =
-            Vec::with_capacity(self.entities.soldiers().count().saturating_sub(1));
-        for (other_id, s) in self.entities.soldiers() {
+            Vec::with_capacity(self.world.entities.soldiers().count().saturating_sub(1));
+        for (other_id, s) in self.world.entities.soldiers() {
             if other_id == npc_id {
                 continue;
             }
@@ -1218,8 +1220,8 @@ impl EngineInner {
                 crate::ai::forecast_destination_for_ia(
                     &input,
                     doors,
-                    &self.fast_grid.level.sectors,
-                    &self.fast_grid.level.sector_number_map,
+                    &self.world.fast_grid.level.sectors,
+                    &self.world.fast_grid.level.sector_number_map,
                 )
                 .position
             };
@@ -1266,7 +1268,7 @@ impl EngineInner {
                         me_pos,
                         me_layer,
                         obstacles,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                     )
                 }
                 _ => false,
@@ -1330,7 +1332,7 @@ impl EngineInner {
         use crate::ai_enemy::FighterSnapshot;
         use crate::element::Posture;
 
-        let Some(Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
+        let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
             return Vec::new();
         };
         let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
@@ -1348,7 +1350,7 @@ impl EngineInner {
         // soldiers, and `FillListWithAllNearFighters` inserts self before it
         // applies `IsAbleToFight` to the remaining registry entries.
         let build_soldier = |handle: u32, require_able: bool| -> Option<FighterSnapshot> {
-            let s = self.entities.get_soldier(SoldierId(handle))?;
+            let s = self.world.entities.get_soldier(SoldierId(handle))?;
             let is_able_to_fight = s.is_able_to_fight();
             if require_able && !is_able_to_fight {
                 return None;
@@ -1501,7 +1503,7 @@ impl EngineInner {
 
         // Build an enemy PC snapshot for `handle`.
         let build_pc = |handle: u32| -> Option<FighterSnapshot> {
-            let pc = self.entities.get_pc(PcId(handle))?;
+            let pc = self.world.entities.get_pc(PcId(handle))?;
             if !pc.element.active || pc.pc.life_points <= 0 {
                 return None;
             }
@@ -1605,7 +1607,7 @@ impl EngineInner {
             })
         };
 
-        let mut out: Vec<FighterSnapshot> = Vec::with_capacity(1 + self.pc_ids.len() + 4);
+        let mut out: Vec<FighterSnapshot> = Vec::with_capacity(1 + self.world.pc_ids.len() + 4);
 
         // Self entry first — no radius filter (the AI is at distance 0).
         out.push(build_soldier(me_handle, false).unwrap_or_else(|| {
@@ -1616,7 +1618,7 @@ impl EngineInner {
         // camp fighter registries when rebuilding the us/them lists;
         // using the persisted per-AI lists here made combat-position
         // cleanup blind to same-camp fighters and allowed dogpiles.
-        for (other_id, s) in self.entities.soldiers() {
+        for (other_id, s) in self.world.entities.soldiers() {
             if other_id.index() == me_handle {
                 continue;
             }
@@ -1636,8 +1638,8 @@ impl EngineInner {
 
         // PCs are royalist fighters from the enemy AI's perspective.
         if my_camp != Camp::Royalists {
-            for &pc_id in &self.pc_ids {
-                let Some(Entity::Pc(pc)) = self.entities.get(pc_id) else {
+            for &pc_id in &self.world.pc_ids {
+                let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) else {
                     continue;
                 };
                 if pc.element.layer() != my_layer {
@@ -1669,7 +1671,7 @@ impl EngineInner {
     ) -> Vec<crate::ai::PhalanxMemberThemList> {
         use crate::ai::{PhalanxEnemySnapshot, PhalanxMemberThemList, Position};
         use crate::element::Human;
-        let Some(Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
+        let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
             return Vec::new();
         };
         let Some(enemy_ai) = soldier.npc.ai_brain.enemy() else {
@@ -1680,7 +1682,7 @@ impl EngineInner {
             let entity_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
                 panic!("phalanx member references missing enemy handle {handle}")
             });
-            let entity = self.entities.get(entity_id).unwrap_or_else(|| {
+            let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!("phalanx enemy handle {handle} resolved to a vacant entity slot")
             });
             let human = entity
@@ -1724,7 +1726,7 @@ impl EngineInner {
             if current == 0 {
                 break;
             }
-            let Some(s) = self.entities.get_soldier(SoldierId(current)) else {
+            let Some(s) = self.world.entities.get_soldier(SoldierId(current)) else {
                 break;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -1842,7 +1844,7 @@ impl EngineInner {
         self.ai.global.teleport_seek_points_inside_doors();
 
         // Initialize each NPC's AI.
-        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<EntityId> = self.world.entities.npc_ids().collect();
         let hiking_paths = assets.hiking_paths.clone();
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
@@ -1861,7 +1863,7 @@ impl EngineInner {
         let entity_views = scratch.ai_entity_views.clone();
         let sight_obstacles = scratch.ai_sight_obstacles.clone();
         let all_soldier_handles = self.ai.global.all_soldier_handles.clone();
-        let ambiance = self.weather.ambiance;
+        let ambiance = self.world.weather.ambiance;
 
         // Snapshot of every live human in the engine; every per-NPC
         // init pass reuses the same list to build its detectable enemy
@@ -1872,7 +1874,7 @@ impl EngineInner {
 
         let all_soldier_entity_ids = assets.all_soldier_entity_ids.clone();
         let soldier_subordinate_ids = assets.soldier_subordinate_ids.clone();
-        let fast_grid = self.fast_grid.clone();
+        let fast_grid = self.world.fast_grid.clone();
         for &npc_id in &npc_ids {
             self.init_one_ai(
                 npc_id,
@@ -1959,7 +1961,7 @@ impl EngineInner {
         // -- Phase 1: Peek at the entity to classify (enemy / friendly,
         //    camp) and read the fields we need for the obstacle fix. --
         let (is_enemy, is_friendly, self_camp, pos_map, layer, move_box_opt) = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let (is_enemy, is_friendly, self_camp) = match entity {
@@ -1997,11 +1999,14 @@ impl EngineInner {
         // push it to an authorized position via `find_authorized_position`.
         if is_enemy && let Some(move_box) = move_box_opt {
             let mut abs_box = move_box.translated(pos_map);
-            if !self.fast_grid.is_position_authorized(&abs_box, layer)
-                && self.fast_grid.find_authorized_position(&mut abs_box, layer)
+            if !self.world.fast_grid.is_position_authorized(&abs_box, layer)
+                && self
+                    .world
+                    .fast_grid
+                    .find_authorized_position(&mut abs_box, layer)
             {
                 let new_center = abs_box.center();
-                if let Some(entity) = self.entities.get_mut(npc_id)
+                if let Some(entity) = self.world.entities.get_mut(npc_id)
                     && entity.actor_data().is_some()
                 {
                     let new_center_map = new_center;
@@ -2023,12 +2028,12 @@ impl EngineInner {
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS
         };
-        let is_forest_level = self.weather.is_forest_level;
+        let is_forest_level = self.world.weather.is_forest_level;
 
         // `entity_building_sector` needs a `&self` borrow; compute it
         // up-front while we don't hold a mutable entity borrow.
         let building_sector = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             self.entity_building_sector(entity.element_data().sector())
@@ -2037,7 +2042,7 @@ impl EngineInner {
         // Determine whether this NPC is a Merry-Man archer (Royalist
         // soldier, forest level, archer flag set by the level loader).
         let is_merry_man_archer = if is_enemy {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let is_archer = entity.enemy_ai().map(|e| e.is_archer()).unwrap_or(false);
@@ -2050,7 +2055,7 @@ impl EngineInner {
         // Grab the (possibly corrected) map position / direction /
         // sector / layer before the write-back borrow.
         let (pos_map_final, direction_final, sector_final, layer_final, current_lp) = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let elem = entity.element_data();
@@ -2066,7 +2071,7 @@ impl EngineInner {
 
         // Write-back block: mutate every field this init pass owns.
         {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             if let Some(npc) = entity.npc_data_mut() {
@@ -2144,7 +2149,7 @@ impl EngineInner {
         // Initialize the path from path_id, then test it; on failure,
         // assert in debug and silently clear in release.
         let patrol_path_opt = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             entity
@@ -2161,7 +2166,7 @@ impl EngineInner {
                 .map(|p| p.waypoints.as_slice())
                 .unwrap_or(&[]);
             let move_box = move_box_opt.unwrap_or_default();
-            let ok = test_hiking_path_fine(&self.fast_grid, waypoints, &move_box);
+            let ok = test_hiking_path_fine(&self.world.fast_grid, waypoints, &move_box);
             if !ok {
                 tracing::warn!(
                     npc = npc_id.index(),
@@ -2180,7 +2185,7 @@ impl EngineInner {
 
         // -- Phase 6: Build the init ctx and commit patrol/path state. --
         let init_ctx = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             build_ai_context_from_entity(
@@ -2199,7 +2204,7 @@ impl EngineInner {
         };
 
         {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             if let Some(ai) = entity.ai_controller_mut() {
@@ -2255,7 +2260,7 @@ impl EngineInner {
         // effects — posture / action state / eye status / life-point /
         // concussion writes that the AI layer can't reach on its own.
         let init_fx: crate::ai::InitStateSideEffects = {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             match &mut entity.npc_data_mut().map(|n| &mut n.ai_brain) {
@@ -2285,7 +2290,7 @@ impl EngineInner {
             || init_fx.zero_life_points
             || init_fx.concussion_max_and_unconscious
         {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
 
@@ -2424,7 +2429,7 @@ impl EngineInner {
             Vec<EntityId>,
         > = std::collections::HashMap::new();
 
-        for (entity_id, entity) in self.entities.actors() {
+        for (entity_id, entity) in self.world.entities.actors() {
             let elem = entity.element_data();
             let sector_raw = match elem.sector() {
                 Some(s) => crate::sector::SectorNumber::new(u16::from(s) as i16),
@@ -2449,7 +2454,7 @@ impl EngineInner {
             // occupant — used by the departure scheduler to stagger
             // NPCs exiting during alerts.
             for (n, &eid) in occupant_ids.iter().enumerate() {
-                if let Some(entity) = self.entities.get_mut(eid)
+                if let Some(entity) = self.world.entities.get_mut(eid)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
                     ai.leave_house_number = n as u16;
@@ -2460,11 +2465,12 @@ impl EngineInner {
             // for script-synthesised or otherwise proto-unlinked
             // building sectors — rare but non-fatal.
             let building_index = self
+                .world
                 .fast_grid
                 .level
                 .sector_number_map
                 .get(&sector_in)
-                .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+                .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                 .and_then(|gs| gs.building_index);
 
             // Read `arrow_reserve` off the parallel `GameHost` array
@@ -2522,7 +2528,7 @@ impl EngineInner {
         // soldiers here and clear after consumption.  Non-soldier flags
         // are ignored to match the soldier-only gate.
         let mut any_instant_change = false;
-        for (_, soldier) in self.entities.soldiers_mut() {
+        for (_, soldier) in self.world.entities.soldiers_mut() {
             let Some(ai) = soldier.npc.ai_brain.base_mut() else {
                 continue;
             };
@@ -2573,7 +2579,7 @@ impl EngineInner {
             // layer keeps playing under any residual yellow soldiers.
             let mode = match new_overall {
                 crate::ai::AlertLevel::Green => {
-                    if self.weather.is_forest_level {
+                    if self.world.weather.is_forest_level {
                         MusicMode::Alert
                     } else {
                         MusicMode::Quiet
@@ -2614,7 +2620,7 @@ impl EngineInner {
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS
         };
-        for (_, entity) in self.entities.npcs_mut() {
+        for (_, entity) in self.world.entities.npcs_mut() {
             if let Some(npc) = entity.npc_data_mut() {
                 npc.view_radius_base = r;
                 npc.view_radius_goal = r;
@@ -2673,7 +2679,7 @@ impl EngineInner {
         // frames of "standing alerted" before the enemy starts
         // running).
         let mut updates: Vec<(crate::element::EntityId, i16)> = Vec::new();
-        for (npc_id, entity) in self.entities.npcs() {
+        for (npc_id, entity) in self.world.entities.npcs() {
             let Some((_, _, front)) = self.sequence_manager.current_order_for_actor(npc_id) else {
                 continue;
             };
@@ -2688,7 +2694,7 @@ impl EngineInner {
         }
 
         for (npc_id, new_dir) in updates {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             if entity.actor_data().is_some() {
@@ -2725,19 +2731,19 @@ impl EngineInner {
             // `dispatch_filtered_stimulus`, which needs `&mut self`.
             let in_uninterruptible_command = self.is_very_very_busy(entity_id);
             let ctx = {
-                let Some(entity) = self.entities.get(entity_id) else {
+                let Some(entity) = self.world.entities.get(entity_id) else {
                     continue;
                 };
                 let mut ctx = build_ai_context_from_entity(
                     entity,
                     current_frame,
                     None,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 );
@@ -2774,19 +2780,19 @@ impl EngineInner {
 
         for &entity_id in entities {
             let ctx = {
-                let Some(entity) = self.entities.get(entity_id) else {
+                let Some(entity) = self.world.entities.get(entity_id) else {
                     continue;
                 };
                 build_ai_context_from_entity(
                     entity,
                     current_frame,
                     None,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 )
@@ -3048,7 +3054,7 @@ impl EngineInner {
         }
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
-        for (id, entity) in self.entities.npcs_mut() {
+        for (id, entity) in self.world.entities.npcs_mut() {
             let Some(npc) = entity.npc_data_mut() else {
                 continue;
             };
@@ -3072,7 +3078,7 @@ impl EngineInner {
         // Snapshot the body's position + `knocked_out_in_money_fight`
         // flag for the per-friend radius check below.
         let (body_pos, body_knocked_out_in_money_fight, body_is_soldier) = {
-            let Some(entity) = self.entities.get_mut(body_id) else {
+            let Some(entity) = self.world.entities.get_mut(body_id) else {
                 return;
             };
             let is_soldier = matches!(entity, Entity::Soldier(_));
@@ -3091,13 +3097,13 @@ impl EngineInner {
         // `get_worst_detected_type` never climbs past DETECTABLE_FRIEND
         // for civilians, dropping their emoticon / alert reactions to
         // nearby bodies.
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         let det_idx = DetectableType::Body as usize;
         for friend_id in npc_ids {
             if friend_id == body_id {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(friend_id) else {
+            let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
             let friend_pos = entity.element_data().position_map();
@@ -3157,9 +3163,9 @@ impl EngineInner {
     pub(super) fn delete_beggar_detectable_for_all_npc(&mut self, beggar_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Beggar as usize;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
-            let Some(entity) = self.entities.get_mut(friend_id) else {
+            let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
             let Some(npc) = entity.npc_data_mut() else {
@@ -3186,7 +3192,7 @@ impl EngineInner {
 
         let mut to_broadcast: Vec<EntityId> = Vec::new();
         let mut to_set_eye: Vec<(EntityId, crate::element::EyeStatus)> = Vec::new();
-        for (id, entity) in self.entities.npcs_mut() {
+        for (id, entity) in self.world.entities.npcs_mut() {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
@@ -3204,7 +3210,7 @@ impl EngineInner {
         }
 
         for (npc_id, status) in to_set_eye {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             if let Some(npc) = entity.npc_data_mut() {
@@ -3221,12 +3227,12 @@ impl EngineInner {
     pub(super) fn broadcast_resurrection(&mut self, resurrected_id: EntityId) {
         use crate::element::DetectableType;
         let det_idx = DetectableType::Body as usize;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for friend_id in npc_ids {
             if friend_id == resurrected_id {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(friend_id) else {
+            let Some(entity) = self.world.entities.get_mut(friend_id) else {
                 continue;
             };
             let Some(npc) = entity.npc_data_mut() else {
@@ -3248,11 +3254,11 @@ impl EngineInner {
             return;
         }
 
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // ── Phase 1: read-only — gather context ──
             let (ctx, ai_primary_target, ai_last_synced_focus) = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 let Some(npc) = entity.npc_data() else {
@@ -3276,7 +3282,7 @@ impl EngineInner {
                 let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
 
                 let follow_target_position = npc.follow_target.and_then(|target_id| {
-                    self.entities.get(target_id).map(|target| {
+                    self.world.entities.get(target_id).map(|target| {
                         // Original provenance:
                         // - RHEngine::PerformHourglass walks marrayElements in
                         //   creation order (RHengine.cpp:3715-3724,7909-7944).
@@ -3340,7 +3346,7 @@ impl EngineInner {
             // shared borrow dropped ──
 
             // ── Phase 2: mutable — apply refresh_view + focus sync ──
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             // Edge-triggered focus sync: only react when
@@ -3417,7 +3423,7 @@ impl EngineInner {
         }
         let mut snaps: Vec<SpeechSnap> = Vec::new();
 
-        for (npc_id, entity) in self.entities.npcs_mut() {
+        for (npc_id, entity) in self.world.entities.npcs_mut() {
             let (npc, is_soldier, is_vip, blipped, sector, in_door_transit, pos) = match entity {
                 crate::element::Entity::Soldier(s) => (
                     &mut s.npc,
@@ -3787,7 +3793,7 @@ impl EngineInner {
             // SoundIsFinished will not fire for them — we must clear
             // `current_remark` here or the `already speaking?` guard
             // would stay latched forever.
-            if let Some(entity) = self.entities.get_mut(entity_id)
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(ai) = entity.ai_controller_mut()
             {
                 ai.current_remark = Remark::TheSoundOfSilence;
@@ -3802,7 +3808,7 @@ impl EngineInner {
         // and latch `speech_in_flight` so the next pass through
         // `process_npc_speech` skips this NPC while the sound plays.
         for (entity_id, flags_bits) in accepted_mytalk {
-            if let Some(entity) = self.entities.get_mut(entity_id)
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(ai) = entity.ai_controller_mut()
             {
                 ai.pending_mytalk_flags = flags_bits;
@@ -3814,8 +3820,8 @@ impl EngineInner {
         // `sound_is_finished` callback: clear current_remark and fire
         // the MYTALK event (`inform_ai_on_finished_remark`).
         for &(actor_handle, _excl_id) in &self.feedback.sound_sim.finished_exclamations {
-            if let Some(actor_id) = self.entities.id_at_legacy_slot(actor_handle)
-                && let Some(entity) = self.entities.get_mut(actor_id)
+            if let Some(actor_id) = self.world.entities.id_at_legacy_slot(actor_handle)
+                && let Some(entity) = self.world.entities.get_mut(actor_id)
             {
                 // PC branch: nothing to do here — the C++ "currently
                 // speaking" suppression that consumed sound-finished
@@ -4076,7 +4082,7 @@ impl EngineInner {
         // restoring `active_movement` and re-driving the run animation
         // — the visual "stuck in running pose" symptom.
         let take_halt = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4093,7 +4099,7 @@ impl EngineInner {
         // Read+clear `pending_stop_menace` separately — keeps the giant
         // tuple below from growing yet another slot.
         let stop_menace = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4109,7 +4115,7 @@ impl EngineInner {
         // actor is in any shield action-state, matching the
         // any-shield-action-state arm in `go_to`.
         let lower_shield = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4145,7 +4151,7 @@ impl EngineInner {
             launch_sequences,
             set_posture,
         ) = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4295,7 +4301,7 @@ impl EngineInner {
         // here so both soldiers are updated consistently after their
         // AI ticks ran.
         if let Some((friend_id, new_target)) = friend_target_swap
-            && let Some(Entity::Soldier(s)) = self.entities.get_mut(friend_id)
+            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
             && let Some(friend_ai) = s.npc.ai_brain.base_mut()
         {
             friend_ai.primary_target = new_target;
@@ -4319,7 +4325,7 @@ impl EngineInner {
         // itself is deferred.
         let mut focus_channel_fired = false;
         if let Some(target_handle) = do_focus
-            && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
         {
             crate::ai_vision::focus_entity(
                 &mut s.npc,
@@ -4329,7 +4335,7 @@ impl EngineInner {
         }
 
         if let Some(point) = do_focus_point
-            && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
         {
             crate::ai_vision::focus_point(
                 &mut s.npc,
@@ -4338,13 +4344,13 @@ impl EngineInner {
             focus_channel_fired = true;
         }
 
-        if do_unfocus && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+        if do_unfocus && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
             crate::ai_vision::unfocus(&mut s.npc);
             focus_channel_fired = true;
         }
 
         if focus_channel_fired
-            && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
             ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
@@ -4358,7 +4364,7 @@ impl EngineInner {
         // back open at 8 units/frame.
         if slowly_open_eyes {
             let standard = self.ai.standard_view_polygon_radius;
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 s.npc.view_transition = true;
                 s.npc.view_radius = 5;
                 s.npc.view_radius_base = 5;
@@ -4369,7 +4375,7 @@ impl EngineInner {
 
         // Process pending set_direction_instantly.
         if let Some(dir) = set_dir
-            && let Some(entity) = self.entities.get_mut(npc_id)
+            && let Some(entity) = self.world.entities.get_mut(npc_id)
         {
             entity.position_iface_mut().set_direction_instantly(
                 crate::position_interface::Direction::from_raw(dir as i32),
@@ -4406,7 +4412,7 @@ impl EngineInner {
         // the correct state — the "Consider as done" branch.
         let attentive_request = {
             let mut take = None;
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(base) = s.npc.ai_brain.base_mut()
             {
                 take = base.pending_set_attentive_mode.take();
@@ -4427,7 +4433,7 @@ impl EngineInner {
         // Process pending `SetGuardedPC` — `set_guarded_pc`.  The AI
         // wrote its own `guarded_pc` field already; here we flip the
         // reciprocal `pc.guard` on the old and new target PCs.
-        let guard_delta = if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+        let guard_delta = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(base) = s.npc.ai_brain.base_mut()
         {
             base.pending_set_guarded_pc.take()
@@ -4438,7 +4444,8 @@ impl EngineInner {
             // Clear `pc.guard` on the old target
             // (`guarded_pc.set_guard(NULL)`).
             if old_pc != 0
-                && let Some(Entity::Pc(pc)) = self.entities.get_mut(EntityId::Pc(PcId(old_pc)))
+                && let Some(Entity::Pc(pc)) =
+                    self.world.entities.get_mut(EntityId::Pc(PcId(old_pc)))
             {
                 pc.pc.guard = None;
             }
@@ -4448,7 +4455,8 @@ impl EngineInner {
             // check in the `AttackingApproachingSleepingEnemy`
             // handler, so skip the redundant debug_assert here.
             if new_pc != 0
-                && let Some(Entity::Pc(pc)) = self.entities.get_mut(EntityId::Pc(PcId(new_pc)))
+                && let Some(Entity::Pc(pc)) =
+                    self.world.entities.get_mut(EntityId::Pc(PcId(new_pc)))
             {
                 pc.pc.guard = Some(npc_id);
             }
@@ -4456,7 +4464,7 @@ impl EngineInner {
 
         // Process pending entity deactivation (merry man leaving map).
         // Equivalent to `set_active(false)`.
-        if deactivate && let Some(entity) = self.entities.get_mut(npc_id) {
+        if deactivate && let Some(entity) = self.world.entities.get_mut(npc_id) {
             entity.element_data_mut().active = false;
             tracing::debug!(
                 npc = npc_id.index(),
@@ -4468,7 +4476,7 @@ impl EngineInner {
         // `charly.set_reported_to_officer(false)` call inside
         // `missed_charly_alert`.  Writes the other NPC's
         // `EnemyAi::reported_to_officer` flag.
-        let reported_updates = if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+        let reported_updates = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
             std::mem::take(&mut ai.pending_set_reported_to_officer)
@@ -4477,7 +4485,7 @@ impl EngineInner {
         };
         for (target_handle, value) in reported_updates {
             let target_id = EntityId::Soldier(SoldierId(target_handle));
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                 continue;
             };
             if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -4489,7 +4497,7 @@ impl EngineInner {
         // `set_ammo_amount(BOW, MAX_NPC_ARROWS)` call inside
         // `fleeing_run_for_arrow_reserves`.
         {
-            let refill = if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            let refill = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(ai) = s.npc.ai_brain.base_mut()
             {
                 let r = ai.pending_refill_bow_ammo;
@@ -4498,7 +4506,7 @@ impl EngineInner {
             } else {
                 false
             };
-            if refill && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+            if refill && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 s.npc.number_of_arrows = crate::parameters_ai::MAX_NPC_ARROWS as u16;
             }
         }
@@ -4514,7 +4522,7 @@ impl EngineInner {
         // the AI layer already cleared its own `my_shooting_point`
         // field synchronously in `set_state`.
         {
-            let release = if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            let release = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && let Some(enemy) = s.npc.ai_brain.enemy_mut()
             {
                 let sector = if std::mem::take(&mut enemy.pending_release_archery_sector) {
@@ -4549,7 +4557,7 @@ impl EngineInner {
         // dispatches `CALL_CHARLY_IS_BACK` carrying charly's handle.
         // The pending field's payload selects either self or an
         // explicit Charly handle.
-        let unalert = if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+        let unalert = if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
             let u = ai.pending_unalert_near_charly_seekers;
@@ -4577,9 +4585,10 @@ impl EngineInner {
                 crate::ai::CharlySeekerTarget::Npc(handle) => handle,
             };
             let charly_pos = self
+                .world
                 .entities
                 .id_at_legacy_slot(charly_handle)
-                .and_then(|charly_id| self.entities.get(charly_id))
+                .and_then(|charly_id| self.world.entities.get(charly_id))
                 .map(|e| {
                     let pm = e.element_data().position_map();
                     crate::ai::Position {
@@ -4603,7 +4612,7 @@ impl EngineInner {
                 };
                 let sq_vr = vr * vr;
                 let charly_is_self = charly_handle == npc_id.index();
-                for other_id in self.entities.npc_ids().collect::<Vec<_>>() {
+                for other_id in self.world.entities.npc_ids().collect::<Vec<_>>() {
                     if other_id == npc_id {
                         continue;
                     }
@@ -4618,7 +4627,7 @@ impl EngineInner {
                         continue;
                     }
                     let (eligible, other_pos, other_dir, other_able) = {
-                        let Some(Entity::Soldier(os)) = self.entities.get(other_id) else {
+                        let Some(Entity::Soldier(os)) = self.world.entities.get(other_id) else {
                             continue;
                         };
                         let pm = os.element.position_map();
@@ -4674,19 +4683,19 @@ impl EngineInner {
                         charly_handle,
                     );
                     let other_ctx = {
-                        let Some(entity) = self.entities.get(other_id) else {
+                        let Some(entity) = self.world.entities.get(other_id) else {
                             continue;
                         };
                         build_ai_context_from_entity(
                             entity,
                             self.control.frame_counter,
                             None,
-                            self.weather.is_forest_level,
-                            self.weather.ambiance,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
                             self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
-                            &self.fast_grid,
+                            &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
                         )
@@ -4759,7 +4768,7 @@ impl EngineInner {
             // the sequence so the soldier's gaze drops its lock for
             // the head-turn animation.  Centralise it here instead of
             // patching every caller.
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 crate::ai_vision::unfocus(&mut s.npc);
             }
             let mut seq = crate::sequence::Sequence::new();
@@ -4779,7 +4788,7 @@ impl EngineInner {
         // drops the PC and stops firing duplicate `EventSeesBeggar`
         // stimuli on subsequent frames.
         let delete_beggar_requests: Vec<EntityId> = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4798,7 +4807,7 @@ impl EngineInner {
         {
             // Resolve target classification for each ENEMY-arm push
             // so the `add_detectable` filter can run.  Resolved
-            // up-front to avoid borrowing `self.entities` mutably
+            // up-front to avoid borrowing `self.world.entities` mutably
             // while we read target metadata from it.
             use crate::element::DetectableType;
             let enemy_target_info: Vec<Option<(bool, bool, crate::element_kinds::Camp, bool)>> =
@@ -4813,7 +4822,7 @@ impl EngineInner {
                     })
                     .collect();
 
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 let npc_camp = s.soldier.cached_camp;
                 let npc_is_soldier = true; // dispatch already filtered to Soldier
                 // Delete all detectables of specified types.
@@ -4883,7 +4892,7 @@ impl EngineInner {
         // when not already present.  Fired from the enemy
         // `EVENT_FITAGAIN` / `SleepingUnconscious` handler.
         let restore_request = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4901,7 +4910,7 @@ impl EngineInner {
             use crate::element_kinds::ObjectType;
             let det_idx = DetectableType::Object as usize;
             let mut to_add: Vec<EntityId> = Vec::new();
-            for (entity_id, entity) in self.entities.objects() {
+            for (entity_id, entity) in self.world.entities.objects() {
                 if !entity.is_active() {
                     continue;
                 }
@@ -4918,7 +4927,7 @@ impl EngineInner {
                 }
             }
             if !to_add.is_empty()
-                && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+                && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 for elem_id in to_add {
@@ -4944,7 +4953,7 @@ impl EngineInner {
         // synchronously on the AI side in
         // `EnemyAi::forget_all_nearby_coins`.
         let forget_pos = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -4961,14 +4970,14 @@ impl EngineInner {
             // `entities` immutably while iterating, then mutate the
             // detectable list in a second pass.
             let mut to_remove: Vec<crate::element::EntityId> = Vec::new();
-            if let Some(Entity::Soldier(s)) = self.entities.get(npc_id)
+            if let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 for det in &s.npc.detectable_lists[det_idx] {
                     let Some(elem_id) = det.element else {
                         continue;
                     };
-                    let Some(elem) = self.entities.get(elem_id) else {
+                    let Some(elem) = self.world.entities.get(elem_id) else {
                         continue;
                     };
                     let Some(obj) = elem.object_data() else {
@@ -4986,7 +4995,7 @@ impl EngineInner {
                 }
             }
             if !to_remove.is_empty()
-                && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+                && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 s.npc.detectable_lists[det_idx]
@@ -5004,7 +5013,7 @@ impl EngineInner {
         // `abilities.rs` `CarryingCorpse`, `melee.rs` knock-out
         // paths).
         if let Some(p) = set_posture
-            && let Some(entity) = self.entities.get_mut(npc_id)
+            && let Some(entity) = self.world.entities.get_mut(npc_id)
         {
             entity.set_posture(p);
         }
@@ -5014,7 +5023,7 @@ impl EngineInner {
         // so the next detection pass treats anyone still in the cone
         // as a "first-seen" edge and re-issues EVENT_VIEW.
         let (blink_all, blink_specific) = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -5025,7 +5034,7 @@ impl EngineInner {
             let specific = std::mem::take(&mut ai.pending_blink_enemy_specific);
             (b, specific)
         };
-        if blink_all && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+        if blink_all && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
             let idx = crate::element::DetectableType::Enemy as usize;
             if let Some(list) = s.npc.detectable_lists.get_mut(idx) {
                 for det in list.iter_mut() {
@@ -5040,7 +5049,7 @@ impl EngineInner {
         // in the cone the next detection pass re-fires `EVENT_VIEW`
         // against it as a "first-seen" edge.
         if !blink_specific.is_empty()
-            && let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            && let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
         {
             let idx = crate::element::DetectableType::Enemy as usize;
             if let Some(list) = s.npc.detectable_lists.get_mut(idx) {
@@ -5062,7 +5071,7 @@ impl EngineInner {
         // (`init_battle_before_door` + `send_before_door_to_fight`
         // in `engine/soldier_helpers.rs`) are wired below.
         let in_house_alert = {
-            let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = s.npc.ai_brain.base_mut() else {
@@ -5083,24 +5092,24 @@ impl EngineInner {
         // `think_alerting_event(EVENT_VIEW)` outdoors) stays wedged
         // in `FleeingPanic` with no door picked.
         let ctx_for_panic = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let entity_sector = entity.element_data().sector();
             let building_sector = self.entity_building_sector(entity_sector);
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             )
@@ -5118,6 +5127,7 @@ impl EngineInner {
         // every soldier just to discover
         // `pending_script_seek_area == None`.
         let has_script_seek = self
+            .world
             .entities
             .get(npc_id)
             .and_then(|entity| entity.ai_controller())
@@ -5146,21 +5156,21 @@ impl EngineInner {
     /// alerts and 200 for noise-based ones.
     pub(crate) fn hey_folks_look_there(&mut self, source: EntityId, pos: MapPoint, radius: f32) {
         let (source_camp, source_pos) = {
-            let Some(Entity::Soldier(src)) = self.entities.get(source) else {
+            let Some(Entity::Soldier(src)) = self.world.entities.get(source) else {
                 return;
             };
             (src.soldier.cached_camp, src.element.position_map())
         };
 
         let radius_sq = radius * radius;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == source {
                 continue;
             }
             // Check eligibility (immut borrow).
             let eligible = {
-                let Some(Entity::Soldier(s)) = self.entities.get(npc_id) else {
+                let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 if s.soldier.cached_camp != source_camp {
@@ -5193,7 +5203,7 @@ impl EngineInner {
             }
 
             // Apply the CallLookThereStandardProcedure transition.
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) {
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
                 // Face toward the seek position via
                 // `vector_to_sector_0_to_15_iso`.
                 let p = s.element.position_map();
@@ -5252,7 +5262,7 @@ impl EngineInner {
     pub(crate) fn dispatch_enemy_in_house_alert(&mut self, source: EntityId, assets: &LevelAssets) {
         // Find the source NPC's building sector.
         let source_sector = {
-            let Some(entity) = self.entities.get(source) else {
+            let Some(entity) = self.world.entities.get(source) else {
                 return;
             };
             let sector = entity.element_data().sector();
@@ -5286,7 +5296,7 @@ impl EngineInner {
         let mut lacklandist_ids: Vec<EntityId> = Vec::new();
         let mut civilian_ids: Vec<EntityId> = Vec::new();
         for &eid in &occupant_ids {
-            let Some(entity) = self.entities.get(eid) else {
+            let Some(entity) = self.world.entities.get(eid) else {
                 continue;
             };
             match entity {
@@ -5355,30 +5365,30 @@ impl EngineInner {
     ) {
         let scratch = self.build_sim_scratch(assets);
         let ctx = {
-            let Some(entity) = self.entities.get(civ_id) else {
+            let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
             };
             let entity_sector = entity.element_data().sector();
             let building_sector = self.entity_building_sector(entity_sector);
-            let Some(entity) = self.entities.get(civ_id) else {
+            let Some(entity) = self.world.entities.get(civ_id) else {
                 return;
             };
             build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             )
         };
 
-        if let Some(Entity::Civilian(c)) = self.entities.get_mut(civ_id)
+        if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(civ_id)
             && let Some(friendly_ai) = c.npc.ai_brain.friendly_mut()
         {
             let was_already_fleeing = matches!(
@@ -5420,7 +5430,7 @@ impl EngineInner {
         let radius_y = view_radius * crate::position_interface::ASPECT_RATIO;
 
         let (source_pos, source_detection_point) = {
-            let Some(entity) = self.entities.get(source) else {
+            let Some(entity) = self.world.entities.get(source) else {
                 return;
             };
             // Source must be IsActiveAndOutsideBuilding for
@@ -5447,7 +5457,7 @@ impl EngineInner {
             level: 0,
         };
 
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         // Clone the Arc-shared snapshot so the per-civilian filter can
         // call `los_clear` without holding an immutable borrow on
         // `self.ai.global` across the later `process_pending_*` mutable
@@ -5456,7 +5466,7 @@ impl EngineInner {
         for npc_id in npc_ids {
             let obstacles = obstacles_owned.list();
             let eligible = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 let Entity::Civilian(c) = entity else {
@@ -5516,19 +5526,19 @@ impl EngineInner {
 
             // Build per-civilian AiContext and dispatch EVENT_PANIC.
             let ctx = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 build_ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     None,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 )
@@ -5568,7 +5578,7 @@ impl EngineInner {
         // Re-check the gate (state may have changed between the
         // native pushing the deferred command and us draining it).
         let (has_path, substate) = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller() else {
@@ -5590,7 +5600,7 @@ impl EngineInner {
         // waypoint index is out of range — both indicate a desync
         // that the relaunch can't repair on its own.
         let waypoint_position = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller() else {
@@ -5613,7 +5623,7 @@ impl EngineInner {
         // Build the per-tick AiContext for `go_to` (mirrors how the
         // panic / patrol-coordination paths build it).
         let ctx = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let entity_sector = entity.element_data().sector();
@@ -5622,19 +5632,19 @@ impl EngineInner {
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             )
         };
 
         // Compute `WillStopAtNextWaypoint` and call `go_to`.
-        let Some(entity) = self.entities.get_mut(npc_id) else {
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller_mut() else {
@@ -5674,7 +5684,7 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
     ) {
         // Peel the request off the AI base.
-        let Some(entity) = self.entities.get_mut(npc_id) else {
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller_mut() else {
@@ -5691,7 +5701,7 @@ impl EngineInner {
 
         // Pre-compute the set of house sector indices that contain a
         // PC (the `dangerous_house` set).  Snapshot it here so the
-        // `pick_door` closure doesn't need to borrow `self.entities`
+        // `pick_door` closure doesn't need to borrow `self.world.entities`
         // (which is re-borrowed mutably after door selection).
         let dangerous_house_sectors: std::collections::HashSet<u32> =
             if ctx.camp == crate::element::Camp::Lacklandists {
@@ -5701,7 +5711,10 @@ impl EngineInner {
                     .iter()
                     .filter(|h| {
                         h.occupant_ids.iter().any(|&eid| {
-                            matches!(self.entities.get(eid), Some(crate::element::Entity::Pc(_)))
+                            matches!(
+                                self.world.entities.get(eid),
+                                Some(crate::element::Entity::Pc(_))
+                            )
                         })
                     })
                     .map(|h| h.sector_index)
@@ -5769,13 +5782,14 @@ impl EngineInner {
         // Snapshot whether the entity is a civilian so we can pick
         // the right Say() remark after we re-borrow the AI base.
         let is_civilian = self
+            .world
             .entities
             .get(npc_id)
             .map(|e| e.is_civilian())
             .unwrap_or(false);
 
         // Re-borrow the AI base for either branch.
-        let Some(entity) = self.entities.get_mut(npc_id) else {
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller_mut() else {
@@ -5810,7 +5824,7 @@ impl EngineInner {
             if ai.couldnt_reachpoint {
                 ai.couldnt_reachpoint = false;
                 if directed_after_door_pick && let Some((retry_door, _)) = pick_door(false) {
-                    let Some(entity) = self.entities.get_mut(npc_id) else {
+                    let Some(entity) = self.world.entities.get_mut(npc_id) else {
                         return;
                     };
                     let Some(ai) = entity.ai_controller_mut() else {
@@ -5850,7 +5864,7 @@ impl EngineInner {
         npc_id: EntityId,
         ctx: &crate::ai::AiContext,
     ) {
-        let Some(entity) = self.entities.get_mut(npc_id) else {
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller_mut() else {
@@ -5867,7 +5881,7 @@ impl EngineInner {
             ctx.position.sector,
         );
 
-        let Some(entity) = self.entities.get_mut(npc_id) else {
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller_mut() else {
@@ -5877,7 +5891,7 @@ impl EngineInner {
         match anchor {
             Some(idx) => {
                 let dest = self.ai.global.seek_points[idx].position;
-                let Some(entity) = self.entities.get_mut(npc_id) else {
+                let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     return;
                 };
                 let Some(ai) = entity.ai_controller_mut() else {
@@ -5917,7 +5931,7 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
         is_civilian: bool,
     ) {
-        let Some(entity) = self.entities.get_mut(npc_id) else {
+        let Some(entity) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller_mut() else {
@@ -5974,7 +5988,7 @@ impl EngineInner {
         tick: &crate::ai::AiPerTickData,
     ) {
         let request = {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -5986,7 +6000,7 @@ impl EngineInner {
             req
         };
 
-        let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id) else {
+        let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) else {
             return;
         };
         let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() else {
@@ -6033,7 +6047,7 @@ impl EngineInner {
         let scratch = self.build_sim_scratch(assets);
 
         let frame = self.control.frame_counter;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         // ── Phase 0: Drain pending CMD_PATROL_DIRECTION broadcasts ──
         // `instruct_patrol_direction_to_patrol_members` —
@@ -6047,7 +6061,7 @@ impl EngineInner {
         // `face_to`-on-WAITING side effect).
         let mut pending_direction_broadcasts: Vec<(EntityId, u16)> = Vec::new(); // (minion, direction)
         for &npc_id in &npc_ids {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -6063,7 +6077,7 @@ impl EngineInner {
             }
         }
         for (minion_id, direction) in pending_direction_broadcasts {
-            let Some(entity) = self.entities.get_mut(minion_id) else {
+            let Some(entity) = self.world.entities.get_mut(minion_id) else {
                 continue;
             };
             if !entity.is_active() || entity.is_dead() {
@@ -6073,12 +6087,12 @@ impl EngineInner {
                 entity,
                 frame,
                 None,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             );
@@ -6106,7 +6120,7 @@ impl EngineInner {
         let mut snaps: std::collections::HashMap<EntityId, NpcSnap> =
             std::collections::HashMap::new();
         for &npc_id in &npc_ids {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 continue;
             };
             let pos = entity.element_data().position_map();
@@ -6176,7 +6190,7 @@ impl EngineInner {
             if self.is_very_very_busy(npc_id) {
                 continue;
             }
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             if !entity.is_active() || entity.is_dead() {
@@ -6253,7 +6267,7 @@ impl EngineInner {
                                     target,
                                     chief_pos.level,
                                     obstacles,
-                                    &self.fast_grid,
+                                    &self.world.fast_grid,
                                 ) {
                                     admit = false;
                                 }
@@ -6353,8 +6367,11 @@ impl EngineInner {
                     ),
                     _ => crate::coordinates::MoveBox::new(),
                 };
-                let positions =
-                    path.compute_patrol_positions(patrol_size, Some(&self.fast_grid), &chief_box);
+                let positions = path.compute_patrol_positions(
+                    patrol_size,
+                    Some(&self.world.fast_grid),
+                    &chief_box,
+                );
                 let patrol_members = ai.patrol.clone();
 
                 for (i, &member) in patrol_members.iter().enumerate() {
@@ -6408,7 +6425,7 @@ impl EngineInner {
                         target,
                         chief_s.position.level,
                         obstacles,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                     ) {
                         continue;
                     }
@@ -6424,7 +6441,7 @@ impl EngineInner {
 
         // ── Phase 4: Set patrol_chief on minions ──
         for (minion, chief) in chief_assigns {
-            if let Some(entity) = self.entities.get_mut(minion)
+            if let Some(entity) = self.world.entities.get_mut(minion)
                 && let Some(ai) = entity.ai_controller_mut()
             {
                 ai.patrol_chief = Some(chief);
@@ -6439,7 +6456,7 @@ impl EngineInner {
             (crate::ai::Position, crate::ai::AiState),
         > = std::collections::HashMap::new();
         for &npc_id in &npc_ids {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 continue;
             };
             let Some(ai) = entity.ai_controller() else {
@@ -6457,19 +6474,19 @@ impl EngineInner {
         for cmd in patrol_cmds {
             let minion_id = cmd.minion;
             let ctx = {
-                let Some(entity) = self.entities.get_mut(minion_id) else {
+                let Some(entity) = self.world.entities.get_mut(minion_id) else {
                     continue;
                 };
                 let ctx = build_ai_context_from_entity(
                     entity,
                     patrol_frame,
                     None,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 );
@@ -6561,7 +6578,7 @@ impl EngineInner {
         const HEARING_FACTOR: f32 = 1.0;
 
         let frame = self.control.frame_counter;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         // `get_hear_volume` shifts the origin Y by elevation and
         // keeps elevation as Z, so an elevated noise source
@@ -6576,7 +6593,7 @@ impl EngineInner {
             // before computing `cover_volume` so the
             // `&self.feedback.sound_sim` access below is non-overlapping.
             let (npc_pos, npc_elev) = {
-                let Some(entity) = self.entities.get_mut(npc_id) else {
+                let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     continue;
                 };
 
@@ -6631,7 +6648,7 @@ impl EngineInner {
             // push.  `noise()` has no state pre-filter: every in-camp
             // NPC in hearing range is passed to `think(stimulus)` and
             // the state machine decides.
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             let deafness = {
@@ -6681,7 +6698,7 @@ impl EngineInner {
         // cross-NPC actions — e.g. civilians send `CALL_ALERT` /
         // `CALL_REPORT` to soldiers via `AiController` on their base.
         let mut all_actions: Vec<crate::ai::CrossNpcAction> = Vec::new();
-        for (_, entity) in self.entities.npcs_mut() {
+        for (_, entity) in self.world.entities.npcs_mut() {
             if let Some(ai) = entity.ai_controller_mut() {
                 all_actions.extend(ai.take_pending_cross_npc_actions());
             }
@@ -6712,7 +6729,8 @@ impl EngineInner {
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
                     let ctx = {
-                        let Some(entity @ Entity::Soldier(_)) = self.entities.get_mut(target_id)
+                        let Some(entity @ Entity::Soldier(_)) =
+                            self.world.entities.get_mut(target_id)
                         else {
                             continue;
                         };
@@ -6720,12 +6738,12 @@ impl EngineInner {
                             entity,
                             frame,
                             None,
-                            self.weather.is_forest_level,
-                            self.weather.ambiance,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
                             self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
-                            &self.fast_grid,
+                            &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
                         );
@@ -6751,7 +6769,8 @@ impl EngineInner {
                 crate::ai::CrossNpcAction::BreakPhalanx { target } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
                     let ctx = {
-                        let Some(entity @ Entity::Soldier(_)) = self.entities.get_mut(target_id)
+                        let Some(entity @ Entity::Soldier(_)) =
+                            self.world.entities.get_mut(target_id)
                         else {
                             continue;
                         };
@@ -6759,12 +6778,12 @@ impl EngineInner {
                             entity,
                             frame,
                             None,
-                            self.weather.is_forest_level,
-                            self.weather.ambiance,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
                             self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
-                            &self.fast_grid,
+                            &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
                         );
@@ -6799,23 +6818,24 @@ impl EngineInner {
                     stimulus.to_whole_patrol = to_whole_patrol;
 
                     let ctx = {
-                        let Some(entity @ Entity::Soldier(_)) = self.entities.get(target_id) else {
+                        let Some(entity @ Entity::Soldier(_)) = self.world.entities.get(target_id)
+                        else {
                             // Target missing → try fallback directly below.
                             if let Some(sender) = fallback_to_sender {
                                 let sender_id = EntityId::Soldier(SoldierId(sender));
                                 if let Some(entity @ Entity::Soldier(_)) =
-                                    self.entities.get(sender_id)
+                                    self.world.entities.get(sender_id)
                                 {
                                     let ctx = build_ai_context_from_entity(
                                         entity,
                                         frame,
                                         None,
-                                        self.weather.is_forest_level,
-                                        self.weather.ambiance,
+                                        self.world.weather.is_forest_level,
+                                        self.world.weather.ambiance,
                                         self.ai.standard_view_polygon_radius,
                                         &scratch.ai_entity_views,
                                         &scratch.ai_sight_obstacles,
-                                        &self.fast_grid,
+                                        &self.world.fast_grid,
                                         &assets.hiking_paths,
                                         &self.ai.global.all_soldier_handles,
                                     );
@@ -6836,12 +6856,12 @@ impl EngineInner {
                             entity,
                             frame,
                             None,
-                            self.weather.is_forest_level,
-                            self.weather.ambiance,
+                            self.world.weather.is_forest_level,
+                            self.world.weather.ambiance,
                             self.ai.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
-                            &self.fast_grid,
+                            &self.world.fast_grid,
                             &assets.hiking_paths,
                             &self.ai.global.all_soldier_handles,
                         )
@@ -6857,7 +6877,8 @@ impl EngineInner {
                     if !handled && let Some(sender) = fallback_to_sender {
                         let sender_id = EntityId::Soldier(SoldierId(sender));
                         let ctx2 = {
-                            let Some(entity @ Entity::Soldier(_)) = self.entities.get(sender_id)
+                            let Some(entity @ Entity::Soldier(_)) =
+                                self.world.entities.get(sender_id)
                             else {
                                 continue;
                             };
@@ -6865,12 +6886,12 @@ impl EngineInner {
                                 entity,
                                 frame,
                                 None,
-                                self.weather.is_forest_level,
-                                self.weather.ambiance,
+                                self.world.weather.is_forest_level,
+                                self.world.weather.ambiance,
                                 self.ai.standard_view_polygon_radius,
                                 &scratch.ai_entity_views,
                                 &scratch.ai_sight_obstacles,
-                                &self.fast_grid,
+                                &self.world.fast_grid,
                                 &assets.hiking_paths,
                                 &self.ai.global.all_soldier_handles,
                             )
@@ -6888,7 +6909,7 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::SetLeftCombatNeighbour { target, neighbour } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -6898,7 +6919,7 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::SetRightCombatNeighbour { target, neighbour } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -6923,6 +6944,7 @@ impl EngineInner {
                     // Step 1: old left's right pointer = 0.
                     if old_left != 0
                         && let Some(Entity::Soldier(s)) = self
+                            .world
                             .entities
                             .get_mut(EntityId::Soldier(SoldierId(old_left)))
                         && let Some(ai) = s.npc.ai_brain.enemy_mut()
@@ -6930,8 +6952,10 @@ impl EngineInner {
                         ai.right_combat_neighbour = 0;
                     }
                     // Step 2: target.left = new_left.
-                    if let Some(Entity::Soldier(s)) =
-                        self.entities.get_mut(EntityId::Soldier(SoldierId(target)))
+                    if let Some(Entity::Soldier(s)) = self
+                        .world
+                        .entities
+                        .get_mut(EntityId::Soldier(SoldierId(target)))
                         && let Some(ai) = s.npc.ai_brain.enemy_mut()
                     {
                         ai.left_combat_neighbour = new_left;
@@ -6939,6 +6963,7 @@ impl EngineInner {
                     if new_left != 0 {
                         // Step 3: new_left's existing right's left = 0.
                         let new_lefts_old_right = self
+                            .world
                             .entities
                             .get(EntityId::Soldier(SoldierId(new_left)))
                             .and_then(|e| match e {
@@ -6949,6 +6974,7 @@ impl EngineInner {
                             .unwrap_or(0);
                         if new_lefts_old_right != 0
                             && let Some(Entity::Soldier(s)) = self
+                                .world
                                 .entities
                                 .get_mut(EntityId::Soldier(SoldierId(new_lefts_old_right)))
                             && let Some(ai) = s.npc.ai_brain.enemy_mut()
@@ -6957,6 +6983,7 @@ impl EngineInner {
                         }
                         // Step 4: new_left.right = target.
                         if let Some(Entity::Soldier(s)) = self
+                            .world
                             .entities
                             .get_mut(EntityId::Soldier(SoldierId(new_left)))
                             && let Some(ai) = s.npc.ai_brain.enemy_mut()
@@ -6976,6 +7003,7 @@ impl EngineInner {
                     // Step 1: old right's left pointer = 0.
                     if old_right != 0
                         && let Some(Entity::Soldier(s)) = self
+                            .world
                             .entities
                             .get_mut(EntityId::Soldier(SoldierId(old_right)))
                         && let Some(ai) = s.npc.ai_brain.enemy_mut()
@@ -6983,8 +7011,10 @@ impl EngineInner {
                         ai.left_combat_neighbour = 0;
                     }
                     // Step 2: target.right = new_right.
-                    if let Some(Entity::Soldier(s)) =
-                        self.entities.get_mut(EntityId::Soldier(SoldierId(target)))
+                    if let Some(Entity::Soldier(s)) = self
+                        .world
+                        .entities
+                        .get_mut(EntityId::Soldier(SoldierId(target)))
                         && let Some(ai) = s.npc.ai_brain.enemy_mut()
                     {
                         ai.right_combat_neighbour = new_right;
@@ -6992,6 +7022,7 @@ impl EngineInner {
                     if new_right != 0 {
                         // Step 3: new_right's existing left's right = 0.
                         let new_rights_old_left = self
+                            .world
                             .entities
                             .get(EntityId::Soldier(SoldierId(new_right)))
                             .and_then(|e| match e {
@@ -7002,6 +7033,7 @@ impl EngineInner {
                             .unwrap_or(0);
                         if new_rights_old_left != 0
                             && let Some(Entity::Soldier(s)) = self
+                                .world
                                 .entities
                                 .get_mut(EntityId::Soldier(SoldierId(new_rights_old_left)))
                             && let Some(ai) = s.npc.ai_brain.enemy_mut()
@@ -7010,6 +7042,7 @@ impl EngineInner {
                         }
                         // Step 4: new_right.left = target.
                         if let Some(Entity::Soldier(s)) = self
+                            .world
                             .entities
                             .get_mut(EntityId::Soldier(SoldierId(new_right)))
                             && let Some(ai) = s.npc.ai_brain.enemy_mut()
@@ -7024,7 +7057,7 @@ impl EngineInner {
                     primary_target,
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -7034,7 +7067,7 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::Say { target, remark } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -7044,7 +7077,7 @@ impl EngineInner {
 
                 crate::ai::CrossNpcAction::SetLootedAfterMoneyFight { target, looted } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -7058,7 +7091,7 @@ impl EngineInner {
                     seek_position,
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -7075,7 +7108,7 @@ impl EngineInner {
                     flags,
                 } => {
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    let Some(Entity::Soldier(s)) = self.entities.get_mut(target_id) else {
+                    let Some(Entity::Soldier(s)) = self.world.entities.get_mut(target_id) else {
                         continue;
                     };
                     if let Some(enemy_ai) = s.npc.ai_brain.enemy_mut() {
@@ -7099,7 +7132,7 @@ impl EngineInner {
                     // Dedup the push for safety since the original
                     // list pushes unconditionally.
                     let target_id = EntityId::Soldier(SoldierId(target));
-                    if let Some(entity) = self.entities.get_mut(target_id)
+                    if let Some(entity) = self.world.entities.get_mut(target_id)
                         && let Some(ai) = entity.ai_controller_mut()
                         && !ai.synchronizing_actors.contains(&actor)
                     {
@@ -7169,7 +7202,7 @@ impl EngineInner {
             // Re-enter Think for each self-stimulus (EventDone, MYTALK,
             // etc.).  This may queue more pending flags — loop again.
             let had_self_stimuli = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     break;
                 };
                 let Some(ai) = entity.ai_controller() else {
@@ -7199,6 +7232,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         let reports = self
+            .world
             .entities
             .get_mut(source_id)
             .and_then(Entity::ai_controller_mut)
@@ -7218,24 +7252,25 @@ impl EngineInner {
             let scratch = self.build_sim_scratch(assets);
             let officer_id = EntityId::Soldier(SoldierId(officer));
             let officer_building_sector = self
+                .world
                 .entities
                 .get(officer_id)
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("reporting Charly requires missing officer {officer}"));
             let officer_ctx = {
-                let entity = self.entities.get(officer_id).unwrap_or_else(|| {
+                let entity = self.world.entities.get(officer_id).unwrap_or_else(|| {
                     panic!("reporting Charly requires missing officer {officer}")
                 });
                 build_ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     officer_building_sector,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 )
@@ -7255,31 +7290,33 @@ impl EngineInner {
 
             let charly_id = EntityId::Soldier(SoldierId(charly));
             let charly_building_sector = self
+                .world
                 .entities
                 .get(charly_id)
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
             let charly_ctx = {
-                let entity = self
-                    .entities
-                    .get(charly_id)
-                    .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
+                let entity =
+                    self.world.entities.get(charly_id).unwrap_or_else(|| {
+                        panic!("officer response requires missing Charly {charly}")
+                    });
                 build_ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     charly_building_sector,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 )
             };
             let charly_tick = self.build_npc_tick_data(charly_id, &scratch, assets);
             let entity = self
+                .world
                 .entities
                 .get_mut(charly_id)
                 .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
@@ -7302,7 +7339,7 @@ impl EngineInner {
     /// observes that stimulus in the originating frame, matching the
     /// original direct `Think(...)` call.
     pub(super) fn drain_pending_self_stimuli(&mut self, assets: &LevelAssets) {
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.drain_self_stimuli_for_npc(npc_id, assets);
         }
@@ -7325,7 +7362,7 @@ impl EngineInner {
 
         loop {
             let stimulus_type = {
-                let Some(entity) = self.entities.get_mut(npc_id) else {
+                let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     return;
                 };
                 let Some(ai) = entity.ai_controller_mut() else {
@@ -7350,19 +7387,19 @@ impl EngineInner {
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     return;
                 };
                 let mut ctx = build_ai_context_from_entity(
                     entity,
                     frame,
                     None,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 );
@@ -7413,7 +7450,7 @@ impl EngineInner {
         // swapping engine state into the script host.  Always take the
         // `Option` so we don't leave stale state when scripts are off.
         let mut requests: Vec<(crate::element::EntityId, crate::ai::PathId, u8)> = Vec::new();
-        for (npc_id, entity) in self.entities.npcs_mut() {
+        for (npc_id, entity) in self.world.entities.npcs_mut() {
             let Some(ai) = entity.ai_controller_mut() else {
                 continue;
             };
@@ -7435,9 +7472,9 @@ impl EngineInner {
         self.refresh_game_host_entity_state();
         if let Some(ref mut script) = self.mission_script {
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -7461,9 +7498,9 @@ impl EngineInner {
                 }
             }
             script.swap_engine_state(
-                &mut self.entities,
+                &mut self.world.entities,
                 &mut self.ai.global,
-                &mut self.fast_grid,
+                &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
             );
@@ -7482,12 +7519,12 @@ impl EngineInner {
         // the entity-views map before rebuilding per-NPC AiContexts.
         let scratch = self.build_sim_scratch(assets);
         let frame = self.control.frame_counter;
-        let is_forest_level = self.weather.is_forest_level;
-        let ambiance = self.weather.ambiance;
+        let is_forest_level = self.world.weather.is_forest_level;
+        let ambiance = self.world.weather.ambiance;
         let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         for (npc_id, _, _) in requests {
             let ctx = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 // Read substate without holding a mutable borrow.
@@ -7507,7 +7544,7 @@ impl EngineInner {
                     standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 )
@@ -7534,7 +7571,7 @@ impl EngineInner {
 
         let current_frame = self.control.frame_counter;
 
-        for npc_id in self.entities.npc_ids().collect::<Vec<_>>() {
+        for npc_id in self.world.entities.npc_ids().collect::<Vec<_>>() {
             // Exact original phase:
             //   (frame & 255) - ((register_number + 100) & 255)
             // with unsigned-byte wrap. Passing the full phase matters:
@@ -7545,7 +7582,7 @@ impl EngineInner {
                 continue;
             }
 
-            let locked = self.entities.get(npc_id).is_some_and(|entity| {
+            let locked = self.world.entities.get(npc_id).is_some_and(|entity| {
                 entity
                     .ai_controller()
                     .is_some_and(|ai| !ai.locks_flag_field.is_empty() || ai.script_locked)
@@ -7577,7 +7614,7 @@ impl EngineInner {
             // mutable entity borrow.
             let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
 
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
 
@@ -7589,12 +7626,12 @@ impl EngineInner {
                 entity,
                 current_frame,
                 None,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             );
@@ -7607,7 +7644,7 @@ impl EngineInner {
                             &ctx,
                             &self.ai.global,
                             &tick_data,
-                            Some(&self.fast_grid),
+                            Some(&self.world.fast_grid),
                             is_idle,
                             sequence_null_about_to_launch,
                         );
@@ -7636,10 +7673,11 @@ impl EngineInner {
     pub(super) fn tick_civilian_random_speech(&mut self, assets: &LevelAssets) {
         let current_frame = self.control.frame_counter;
         let due: Vec<_> = self
+            .world
             .entities
             .npc_ids()
             .filter(|&npc_id| {
-                matches!(self.entities.get(npc_id), Some(Entity::Civilian(_)))
+                matches!(self.world.entities.get(npc_id), Some(Entity::Civilian(_)))
                     && npc_hourglass_frame_phase(current_frame, npc_id.index()) == 0
             })
             .collect();
@@ -7649,19 +7687,19 @@ impl EngineInner {
 
         let scratch = self.build_sim_scratch(assets);
         for npc_id in due {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             let ctx = build_ai_context_from_entity(
                 entity,
                 current_frame,
                 None,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             );
@@ -7689,15 +7727,15 @@ impl EngineInner {
         let scratch = self.build_sim_scratch(assets);
 
         let frame = self.control.frame_counter;
-        let is_forest_level = self.weather.is_forest_level;
-        let ambiance = self.weather.ambiance;
+        let is_forest_level = self.world.weather.is_forest_level;
+        let ambiance = self.world.weather.ambiance;
         let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             // Phase 1: read-only — gather context + eyes point + LOS scope.
             let (ctx, eyes) = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 if !entity.element_data().active {
@@ -7719,7 +7757,7 @@ impl EngineInner {
                     standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 );
@@ -7728,15 +7766,15 @@ impl EngineInner {
 
             // Build the obstacle view from individual disjoint fields
             // so the borrow checker can split it from the mut borrow
-            // on `self.entities` below.
+            // on `self.world.entities` below.
             let sight_obstacles = crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                static_active: &self.static_sight_obstacle_active,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
             };
             let ambush_points = self.ai.global.ambush_points.as_slice();
 
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             if let Some(enemy_ai) = entity.enemy_ai_mut() {
@@ -7769,14 +7807,14 @@ impl EngineInner {
         // (engine/mod.rs:1081-1096) — both kinds execute waypoint
         // macros, even if the soldier-only opcodes SBError on
         // civilians.
-        let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<EntityId> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             // Read macro-timer state without holding a borrow. The original
             // stops an elapsed macro timer even if the NPC has since left
             // DefaultInMacro; only command execution is substate-gated.
             let (fire, execute) = {
-                let Some(entity) = self.entities.get(npc_id) else {
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
                 let base = match entity {
@@ -7801,19 +7839,19 @@ impl EngineInner {
             }
 
             // Build the AI context before we take the mut AI borrow.
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             let ctx = build_ai_context_from_entity(
                 entity,
                 current_frame,
                 None,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             );
@@ -7856,9 +7894,9 @@ impl EngineInner {
     // it strictly greater than `current_frame`, preventing a fire.
     pub(super) fn tick_npc_locked_frame_timer_bumps(&mut self) {
         let frozen = self.actors_frozen();
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -7892,10 +7930,10 @@ impl EngineInner {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             // Snapshot the gating predicates without holding a borrow.
-            let on_ladder = match self.entities.get(npc_id) {
+            let on_ladder = match self.world.entities.get(npc_id) {
                 Some(entity) => entity.element_data().posture == crate::element::Posture::OnLadder,
                 _ => false,
             };
@@ -7904,7 +7942,7 @@ impl EngineInner {
                 cmd,
                 crate::element::Command::Wait | crate::element::Command::MoveWaiting
             );
-            let (script_locked, in_building) = match self.entities.get(npc_id) {
+            let (script_locked, in_building) = match self.world.entities.get(npc_id) {
                 Some(entity) => (
                     entity.ai_controller().is_some_and(|ai| ai.script_locked),
                     self.entity_data_inside_building(entity.element_data()),
@@ -7915,7 +7953,7 @@ impl EngineInner {
 
             // Bump or reset the counter; remember whether to fire.
             let trigger = {
-                let Some(entity) = self.entities.get_mut(npc_id) else {
+                let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     continue;
                 };
                 let Some(npc) = entity.npc_data_mut() else {
@@ -7945,19 +7983,19 @@ impl EngineInner {
             let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 continue;
             };
             let mut ctx = build_ai_context_from_entity(
                 entity,
                 frame,
                 None,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             );

@@ -34,7 +34,7 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.set_fade_freeze_frames_remaining(7);
     engine.control.speed = 1.75;
     engine.control.speed_int = 9;
-    engine.shield.is_protected = true;
+    engine.world.shield.is_protected = true;
     engine.script_globals = vec![-7, 0, 42, i32::MAX];
     engine.mission_domain.cheat_used_flags = 0xA5A5_5A5A;
     engine.ai.standard_view_polygon_radius = 321;
@@ -50,7 +50,7 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.players.qa_recording_slot = 2;
     engine.control.fast_forward = true;
     engine.pending_reinforcements.push(None);
-    engine.static_sight_obstacle_active = vec![true, false, true];
+    engine.world.static_sight_obstacle_active = vec![true, false, true];
 
     engine
 }
@@ -814,7 +814,7 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
         ));
         assert_eq!(
             crate::abilities::begin_eat(
-                &mut engine.entities,
+                &mut engine.world.entities,
                 &mut engine.sequence_manager,
                 actor_id,
                 sequence_id,
@@ -896,7 +896,7 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
     ));
     assert_eq!(
         crate::abilities::begin_eat(
-            &mut engine.entities,
+            &mut engine.world.entities,
             &mut engine.sequence_manager,
             later_actor,
             ability_sequence,
@@ -1052,6 +1052,7 @@ fn entity_slot_order_is_append_only_and_survives_save_round_trip() {
     assert_eq!(third.index(), 2, "removed slots must never be reused");
     assert_eq!(
         engine
+            .world
             .entities
             .occupied()
             .map(|(id, _)| id.index())
@@ -1059,7 +1060,7 @@ fn entity_slot_order_is_append_only_and_survives_save_round_trip() {
         vec![1, 2]
     );
 
-    let encoded = serde_json::to_string(&engine.entities).expect("serialize entity slots");
+    let encoded = serde_json::to_string(&engine.world.entities).expect("serialize entity slots");
     let decoded: crate::entities::Entities =
         serde_json::from_str(&encoded).expect("deserialize entity slots");
     assert_eq!(
@@ -1669,6 +1670,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
 
     // Pull the sprite back out of the rehydrated engine.
     let rehydrated_sprite = rehydrated
+        .world
         .entities
         .occupied()
         .map(|(_, entity)| entity)
@@ -1728,6 +1730,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
     // exercises deterministic state progression, not animation resources.
     let mut rehydrated = rehydrated;
     let sprite = &mut rehydrated
+        .world
         .entities
         .occupied_mut()
         .next()
@@ -2563,14 +2566,14 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         soldier: Default::default(),
     }));
 
-    if let Some(attacker) = engine.entities.get_mut(attacker_id) {
+    if let Some(attacker) = engine.world.entities.get_mut(attacker_id) {
         attacker.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = attacker.human_data_mut().unwrap();
         human.opponents.push(defender_id);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    if let Some(defender) = engine.entities.get_mut(defender_id) {
+    if let Some(defender) = engine.world.entities.get_mut(defender_id) {
         defender.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         defender
             .human_data_mut()
@@ -2658,7 +2661,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         soldier: Default::default(),
     }));
 
-    if let Some(pc) = engine.entities.get_mut(pc_id) {
+    if let Some(pc) = engine.world.entities.get_mut(pc_id) {
         pc.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = pc.human_data_mut().unwrap();
         human.opponents.push(soldier_id);
@@ -2666,7 +2669,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         human.smalltalk_hint = SmalltalkHint::Left;
         human.smalltalk_hint_opponent = Some(soldier_id);
     }
-    if let Some(soldier) = engine.entities.get_mut(soldier_id) {
+    if let Some(soldier) = engine.world.entities.get_mut(soldier_id) {
         soldier.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         soldier.human_data_mut().unwrap().opponents.push(pc_id);
     }
@@ -2772,7 +2775,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         soldier: Default::default(),
     }));
 
-    if let Some(hinted) = engine.entities.get_mut(hinted_id) {
+    if let Some(hinted) = engine.world.entities.get_mut(hinted_id) {
         hinted.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = hinted.human_data_mut().unwrap();
         human.opponents.push(hinted_opponent_id);
@@ -2781,7 +2784,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         human.smalltalk_hint = SmalltalkHint::Left;
         human.smalltalk_hint_opponent = Some(hinted_opponent_id);
     }
-    if let Some(hinted_opponent) = engine.entities.get_mut(hinted_opponent_id) {
+    if let Some(hinted_opponent) = engine.world.entities.get_mut(hinted_opponent_id) {
         hinted_opponent.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         hinted_opponent
             .human_data_mut()
@@ -2789,14 +2792,14 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
             .opponents
             .push(hinted_id);
     }
-    if let Some(free_attacker) = engine.entities.get_mut(free_attacker_id) {
+    if let Some(free_attacker) = engine.world.entities.get_mut(free_attacker_id) {
         free_attacker.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         let human = free_attacker.human_data_mut().unwrap();
         human.opponents.push(free_defender_id);
         human.smalltalk_initiative = true;
         human.received_smalltalk_initiative = true;
     }
-    if let Some(free_defender) = engine.entities.get_mut(free_defender_id) {
+    if let Some(free_defender) = engine.world.entities.get_mut(free_defender_id) {
         free_defender.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         free_defender
             .human_data_mut()
@@ -2877,12 +2880,12 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         soldier: Default::default(),
     }));
 
-    if let Some(attacker) = engine.entities.get_mut(attacker_id) {
+    if let Some(attacker) = engine.world.entities.get_mut(attacker_id) {
         let human = attacker.human_data_mut().unwrap();
         human.opponents.push(defender_id);
         human.smalltalk_initiative = true;
     }
-    if let Some(defender) = engine.entities.get_mut(defender_id) {
+    if let Some(defender) = engine.world.entities.get_mut(defender_id) {
         let human = defender.human_data_mut().unwrap();
         human.opponents.push(attacker_id);
         human.smalltalk_initiative = false;
@@ -3357,7 +3360,7 @@ fn selection_mark_skips_hidden_and_building_pcs() {
         gate_indices: Vec::new(),
         underlying_sector: None,
     });
-    engine.fast_grid.level = std::sync::Arc::new(level);
+    engine.world.fast_grid.level = std::sync::Arc::new(level);
 
     if let Some(Entity::Pc(pc)) = engine.get_entity_mut(pc_id) {
         pc.element.set_sector(Some(sector_num));
@@ -3466,7 +3469,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
 
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
-    engine.weather.ambiance = crate::engine::types::Ambiance::Night;
+    engine.world.weather.ambiance = crate::engine::types::Ambiance::Night;
     let charly_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let mut assets = LevelAssets::new();
@@ -3522,12 +3525,12 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             entity,
             engine.control.frame_counter,
             None,
-            engine.weather.is_forest_level,
-            engine.weather.ambiance,
+            engine.world.weather.is_forest_level,
+            engine.world.weather.ambiance,
             engine.ai.standard_view_polygon_radius,
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
-            &engine.fast_grid,
+            &engine.world.fast_grid,
             &assets.hiking_paths,
             &engine.ai.global.all_soldier_handles,
         )
@@ -3550,6 +3553,7 @@ fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
 
     let accepted = run_synchronous_charly_report(AiState::Default);
     let charly = accepted
+        .world
         .entities
         .soldiers()
         .next()
@@ -3567,6 +3571,7 @@ fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
 
     let refused = run_synchronous_charly_report(AiState::Attacking);
     let charly = refused
+        .world
         .entities
         .soldiers()
         .next()
@@ -4319,8 +4324,8 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         };
 
         let mut positions_before_movement =
-            crate::entities::EntitySlots::filled(engine.entities.len(), None);
-        for (entity_id, entity) in engine.entities.occupied() {
+            crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        for (entity_id, entity) in engine.world.entities.occupied() {
             positions_before_movement[entity_id] = Some(entity.element_data().position_map());
         }
 
@@ -5813,7 +5818,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     let mut engine = EngineInner::new();
     let killer = engine.add_entity(make_test_soldier(Posture::Upright));
     let victim = engine.add_entity(make_test_soldier(Posture::Lying));
-    if let Some(crate::element::Entity::Soldier(soldier)) = engine.entities.get_mut(victim) {
+    if let Some(crate::element::Entity::Soldier(soldier)) = engine.world.entities.get_mut(victim) {
         soldier.npc.life_points = 30;
         soldier.soldier.cached_max_life_points = 30;
         soldier.human.unconscious = true;
@@ -6118,8 +6123,8 @@ fn delete_macro_command_matches_original_single_vs_all() {
     let mut engine = EngineInner::new();
     let pc_a = EntityId::Pc(crate::entity_id::PcId(30));
     let pc_b = EntityId::Pc(crate::entity_id::PcId(31));
-    engine.pc_ids.push(pc_a);
-    engine.pc_ids.push(pc_b);
+    engine.world.pc_ids.push(pc_a);
+    engine.world.pc_ids.push(pc_b);
 
     // Both PCs have macros in slots 0 and 1; slot 2 is empty.
     seed_macro_slot(&mut engine, pc_a, 0, vec![(1.0, 1.0)]);
@@ -6173,8 +6178,8 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     let mut engine = EngineInner::new();
     let pc_a = EntityId::Pc(crate::entity_id::PcId(40));
     let pc_b = EntityId::Pc(crate::entity_id::PcId(41));
-    engine.pc_ids.push(pc_a);
-    engine.pc_ids.push(pc_b);
+    engine.world.pc_ids.push(pc_a);
+    engine.world.pc_ids.push(pc_b);
 
     // Both PCs record a one-step move macro at slot 0; pc_a has a slot-1
     // macro too.
@@ -6218,7 +6223,7 @@ fn start_macro_empty_slot_is_noop() {
 
     let mut engine = EngineInner::new();
     let pc = EntityId::Pc(crate::entity_id::PcId(50));
-    engine.pc_ids.push(pc);
+    engine.world.pc_ids.push(pc);
 
     // pc has a macro only in slot 2 — starting slot 0 should NOT tetris,
     // because no PC had a slot-0 macro to launch.

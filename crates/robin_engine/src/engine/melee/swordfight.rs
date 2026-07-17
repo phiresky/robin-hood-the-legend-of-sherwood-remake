@@ -103,6 +103,7 @@ impl EngineInner {
             None => return,
         };
         let this_sector_idx = self
+            .world
             .fast_grid
             .level
             .sector_number_map
@@ -110,7 +111,7 @@ impl EngineInner {
             .copied();
 
         // Snapshot opponents + current jump-lines so we can mutate in a
-        // second pass without holding a borrow on `self.entities`.
+        // second pass without holding a borrow on `self.world.entities`.
         let opponents: Vec<(EntityId, Option<crate::jump_line::JumpLineIndex>)> =
             match self.get_entity(entity_id).and_then(|e| e.human_data()) {
                 Some(h) => {
@@ -153,6 +154,7 @@ impl EngineInner {
             // valid (this side's line lives in our sector and its
             // associated line lives in the opponent's sector).
             let opp_sector_idx = self
+                .world
                 .fast_grid
                 .level
                 .sector_number_map
@@ -162,15 +164,15 @@ impl EngineInner {
             let stale = match current_jl {
                 None => true,
                 Some(idx) => {
-                    let jl = self.fast_grid.level.jump_lines.get(usize::from(*idx));
+                    let jl = self.world.fast_grid.level.jump_lines.get(usize::from(*idx));
                     match jl {
                         None => true,
                         Some(jl_data) => {
                             let this_idx_match =
                                 jl_data.sector_index.map(usize::from) == this_sector_idx;
-                            let assoc_jl = jl_data
-                                .associated_line_index
-                                .and_then(|i| self.fast_grid.level.jump_lines.get(i as usize));
+                            let assoc_jl = jl_data.associated_line_index.and_then(|i| {
+                                self.world.fast_grid.level.jump_lines.get(i as usize)
+                            });
                             let assoc_idx_match =
                                 assoc_jl.and_then(|aj| aj.sector_index).map(usize::from)
                                     == opp_sector_idx;
@@ -188,8 +190,8 @@ impl EngineInner {
             // commit when each side's returned line is the other's
             // associated line.
             let new_this_idx = is_table_swordfight_needed(
-                &self.entities,
-                &self.fast_grid,
+                &self.world.entities,
+                &self.world.fast_grid,
                 &assets.profile_manager,
                 entity_id,
                 *opp_id,
@@ -200,14 +202,15 @@ impl EngineInner {
             )> = None;
             if let Some(this_raw) = new_this_idx {
                 let new_opp_idx = is_table_swordfight_needed(
-                    &self.entities,
-                    &self.fast_grid,
+                    &self.world.entities,
+                    &self.world.fast_grid,
                     &assets.profile_manager,
                     *opp_id,
                     entity_id,
                 );
                 if let Some(opp_raw) = new_opp_idx {
                     let opp_associated = self
+                        .world
                         .fast_grid
                         .level
                         .jump_lines
@@ -236,7 +239,7 @@ impl EngineInner {
 
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
-            if let Some(entity) = self.entities.get_mut(entity_id)
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 if human.opponent_jump_lines.len() < human.opponents.len() {
@@ -251,7 +254,7 @@ impl EngineInner {
             // Mirror onto the opponent's slot for `entity_id`.
             // Use a soft path here — opponent's list may legitimately
             // have removed the entry between snapshot and write-back.
-            if let Some(entity) = self.entities.get_mut(opp_id)
+            if let Some(entity) = self.world.entities.get_mut(opp_id)
                 && let Some(human) = entity.human_data_mut()
                 && let Some(pos) = human.opponents.iter().position(|&id| id == entity_id)
             {
@@ -349,7 +352,7 @@ impl EngineInner {
             let mut best = 0usize;
             let mut best_dist = f32::MAX;
             for (idx, opp_id) in opponents.iter().enumerate() {
-                let dist = entity_distance(&self.entities, entity_id, *opp_id);
+                let dist = entity_distance(&self.world.entities, entity_id, *opp_id);
                 if dist < best_dist {
                     best_dist = dist;
                     best = idx;
@@ -359,7 +362,7 @@ impl EngineInner {
         };
 
         if new_principal != 0 {
-            if let Some(entity) = self.entities.get_mut(entity_id)
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.opponents.swap(0, new_principal);
@@ -384,7 +387,7 @@ impl EngineInner {
         new_opponent_id: EntityId,
     ) {
         let found = {
-            let Some(entity) = self.entities.get(entity_id) else {
+            let Some(entity) = self.world.entities.get(entity_id) else {
                 return;
             };
             let Some(human) = entity.human_data() else {
@@ -395,7 +398,7 @@ impl EngineInner {
 
         if let Some(idx) = found {
             // Swap to front — makes this opponent the principal.
-            if let Some(entity) = self.entities.get_mut(entity_id)
+            if let Some(entity) = self.world.entities.get_mut(entity_id)
                 && let Some(human) = entity.human_data_mut()
             {
                 human.opponents.swap(0, idx);
@@ -413,11 +416,11 @@ impl EngineInner {
             // work, and defers the distance/LOS/sword-hurt guards to
             // the EnterSwordfight dispatcher.
             if can_enter_swordfight_with(
-                &self.entities,
+                &self.world.entities,
                 entity_id,
                 new_opponent_id,
                 &assets.profile_manager,
-                &self.fast_grid,
+                &self.world.fast_grid,
             ) {
                 let mut elem = crate::sequence::SequenceElement::new_generic(
                     1,
@@ -502,7 +505,7 @@ impl EngineInner {
         // validity gates. In Rust, repeated PC bow clicks are represented
         // as pending/postponed `ShootBow` sequence elements.
         {
-            let resolver = Self::priority_resolver(&self.entities);
+            let resolver = Self::priority_resolver(&self.world.entities);
             self.sequence_manager.stop_pending_elements_matching(
                 initiator,
                 crate::element::Command::ShootBow,
@@ -512,7 +515,7 @@ impl EngineInner {
         }
 
         // Cancel any pending AI bow shot.
-        if let Some(Entity::Soldier(s)) = self.entities.get_mut(initiator)
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(initiator)
             && let Some(ai) = s.npc.ai_brain.base_mut()
         {
             ai.pending_shoot_target = None;
@@ -525,6 +528,7 @@ impl EngineInner {
         // rejection by the downstream gates doesn't strand the
         // opponent in their pre-swordfight state.
         let opponent_was_swordfighting = self
+            .world
             .entities
             .get(opponent)
             .and_then(|e| e.human_data())
@@ -533,10 +537,11 @@ impl EngineInner {
         if !opponent_was_swordfighting {
             self.stop_owner(opponent, crate::sequence::SequencePriority::Preference);
             // Synchronous Think on the opponent if they're a soldier.
-            let is_soldier = matches!(self.entities.get(opponent), Some(Entity::Soldier(_)));
+            let is_soldier = matches!(self.world.entities.get(opponent), Some(Entity::Soldier(_)));
             if is_soldier {
                 let ctx = {
                     let entity = self
+                        .world
                         .entities
                         .get(opponent)
                         .expect("opponent existence checked above");
@@ -544,12 +549,12 @@ impl EngineInner {
                         entity,
                         self.control.frame_counter,
                         None,
-                        self.weather.is_forest_level,
-                        self.weather.ambiance,
+                        self.world.weather.is_forest_level,
+                        self.world.weather.ambiance,
                         self.ai.standard_view_polygon_radius,
                         &scratch.ai_entity_views,
                         &scratch.ai_sight_obstacles,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                         &assets.hiking_paths,
                         &self.ai.global.all_soldier_handles,
                     )
@@ -569,11 +574,11 @@ impl EngineInner {
         }
 
         if !can_enter_swordfight_with(
-            &self.entities,
+            &self.world.entities,
             initiator,
             opponent,
             &assets.profile_manager,
-            &self.fast_grid,
+            &self.world.fast_grid,
         ) {
             tracing::warn!(
                 ?initiator,
@@ -584,6 +589,7 @@ impl EngineInner {
         }
 
         let already_opponent = self
+            .world
             .entities
             .get(initiator)
             .and_then(|e| e.human_data())
@@ -599,8 +605,8 @@ impl EngineInner {
             // different-sector elevation.
             {
                 let (elev_a, elev_b, sector_a, sector_b) = {
-                    let entity_a = self.entities.get(initiator);
-                    let entity_b = self.entities.get(opponent);
+                    let entity_a = self.world.entities.get(initiator);
+                    let entity_b = self.world.entities.get(opponent);
                     let (Some(ea), Some(eb)) = (entity_a, entity_b) else {
                         return false;
                     };
@@ -626,8 +632,9 @@ impl EngineInner {
             // Distance check: 3D distance must be within both
             // combatants' UBER sword range.
             {
-                let dist = entity_distance(&self.entities, initiator, opponent);
+                let dist = entity_distance(&self.world.entities, initiator, opponent);
                 let uber_a = self
+                    .world
                     .entities
                     .get(initiator)
                     .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
@@ -635,6 +642,7 @@ impl EngineInner {
                     .map(|p| p.distance[3] as f32)
                     .unwrap_or(70.0);
                 let uber_b = self
+                    .world
                     .entities
                     .get(opponent)
                     .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
@@ -686,6 +694,7 @@ impl EngineInner {
             // the opponent's principal opponent already has multiple opponents.
             if sword_hurted {
                 let initiator_opp_count = self
+                    .world
                     .entities
                     .get(initiator)
                     .and_then(|e| e.human_data())
@@ -698,6 +707,7 @@ impl EngineInner {
                 // If the opponent is already fighting and their principal
                 // opponent has >1 opponents, don't pile in.
                 let principal_opp_id = self
+                    .world
                     .entities
                     .get(opponent)
                     .and_then(|e| e.human_data())
@@ -705,6 +715,7 @@ impl EngineInner {
 
                 if let Some(principal_id) = principal_opp_id {
                     let principal_opp_count = self
+                        .world
                         .entities
                         .get(principal_id)
                         .and_then(|e| e.human_data())
@@ -718,6 +729,7 @@ impl EngineInner {
 
             // Don't enter swordfight with a charging knight.
             let opponent_is_charging_rider = self
+                .world
                 .entities
                 .get(opponent)
                 .map(|e| {
@@ -733,7 +745,7 @@ impl EngineInner {
         }
 
         // Clear step-back flag on swordfight entry.
-        if let Some(entity) = self.entities.get_mut(initiator)
+        if let Some(entity) = self.world.entities.get_mut(initiator)
             && let Some(hd) = entity.human_data_mut()
         {
             hd.last_motion_was_step_back_in_combat = false;
@@ -741,6 +753,7 @@ impl EngineInner {
 
         // Multi-opponent purging.
         let opponent_is_swordfighting = self
+            .world
             .entities
             .get(opponent)
             .and_then(|e| e.human_data())
@@ -773,6 +786,7 @@ impl EngineInner {
             // If any of their opponents have >1 opponents themselves,
             // break those fights to make room for the new 1-on-1.
             let opp_opponents: Vec<EntityId> = self
+                .world
                 .entities
                 .get(opponent)
                 .and_then(|e| e.human_data())
@@ -781,26 +795,29 @@ impl EngineInner {
 
             for ally_id in &opp_opponents {
                 let ally_opp_count = self
+                    .world
                     .entities
                     .get(*ally_id)
                     .and_then(|e| e.human_data())
                     .map(|h| h.opponents.len())
                     .unwrap_or(0);
                 if ally_opp_count > 1 {
-                    Self::remove_opponent(&mut self.entities, *ally_id, opponent);
-                    Self::remove_opponent(&mut self.entities, opponent, *ally_id);
+                    Self::remove_opponent(&mut self.world.entities, *ally_id, opponent);
+                    Self::remove_opponent(&mut self.world.entities, opponent, *ally_id);
                 }
             }
 
             // Part 2: if both sides still have opponents, purge all
             // opponents from the royalist side.
             let initiator_has_opps = self
+                .world
                 .entities
                 .get(initiator)
                 .and_then(|e| e.human_data())
                 .map(|h| !h.opponents.is_empty())
                 .unwrap_or(false);
             let opponent_has_opps = self
+                .world
                 .entities
                 .get(opponent)
                 .and_then(|e| e.human_data())
@@ -808,7 +825,7 @@ impl EngineInner {
                 .unwrap_or(false);
 
             if initiator_has_opps && opponent_has_opps {
-                let initiator_camp = entity_camp(&self.entities, initiator);
+                let initiator_camp = entity_camp(&self.world.entities, initiator);
                 let human_to_purge = if initiator_camp == crate::element::Camp::Royalists {
                     initiator
                 } else {
@@ -816,6 +833,7 @@ impl EngineInner {
                 };
 
                 let purge_opponents: Vec<EntityId> = self
+                    .world
                     .entities
                     .get(human_to_purge)
                     .and_then(|e| e.human_data())
@@ -823,8 +841,8 @@ impl EngineInner {
                     .unwrap_or_default();
 
                 for opp_id in &purge_opponents {
-                    Self::remove_opponent(&mut self.entities, *opp_id, human_to_purge);
-                    Self::remove_opponent(&mut self.entities, human_to_purge, *opp_id);
+                    Self::remove_opponent(&mut self.world.entities, *opp_id, human_to_purge);
+                    Self::remove_opponent(&mut self.world.entities, human_to_purge, *opp_id);
                 }
             }
         }
@@ -840,15 +858,26 @@ impl EngineInner {
         // on the far side.  When no table fight is involved, both
         // sides store `None`.
         let opponent_jump_line = aggressor_jump_line.and_then(|aggr| {
-            self.fast_grid
+            self.world
+                .fast_grid
                 .level
                 .jump_lines
                 .get(usize::from(aggr))
                 .and_then(|jl| jl.associated_line_index)
                 .and_then(crate::jump_line::JumpLineIndex::new)
         });
-        Self::add_opponent(&mut self.entities, opponent, initiator, opponent_jump_line);
-        Self::add_opponent(&mut self.entities, initiator, opponent, aggressor_jump_line);
+        Self::add_opponent(
+            &mut self.world.entities,
+            opponent,
+            initiator,
+            opponent_jump_line,
+        );
+        Self::add_opponent(
+            &mut self.world.entities,
+            initiator,
+            opponent,
+            aggressor_jump_line,
+        );
 
         // Recompute relative fighting ability on both sides after
         // the opponent lists change.
@@ -857,11 +886,13 @@ impl EngineInner {
 
         // Pre-compute shield bearer status and positions before mutable borrow.
         let initiator_is_shield_bearer = self
+            .world
             .entities
             .get(initiator)
             .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
             .unwrap_or(false);
         let opponent_is_shield_bearer = self
+            .world
             .entities
             .get(opponent)
             .map(|e| is_entity_shield_bearer(e, &assets.profile_manager))
@@ -881,12 +912,14 @@ impl EngineInner {
         // movement for an already-fighting entity would cancel their
         // in-progress walk-away / strafe during combat.
         let initiator_fresh = self
+            .world
             .entities
             .get(initiator)
             .and_then(|e| e.actor_data())
             .map(|a| !a.action_state.is_sword() && !a.action_state.is_shield())
             .unwrap_or(true);
         let opponent_fresh = self
+            .world
             .entities
             .get(opponent)
             .and_then(|e| e.actor_data())
@@ -928,7 +961,7 @@ impl EngineInner {
                 initiator_pos,
             ),
         ] {
-            if let Some(entity) = self.entities.get_mut(me) {
+            if let Some(entity) = self.world.entities.get_mut(me) {
                 let mut raised_sword = false;
                 if let Some(actor) = entity.actor_data_mut()
                     && !actor.action_state.is_sword()
@@ -993,8 +1026,8 @@ impl EngineInner {
             self.launch_single_order_sequence_stamped(me, Command::EnterSwordfight, order);
         }
         // Set PC melee target.
-        Self::set_pc_melee_target(&mut self.entities, initiator, opponent);
-        Self::set_pc_melee_target(&mut self.entities, opponent, initiator);
+        Self::set_pc_melee_target(&mut self.world.entities, initiator, opponent);
+        Self::set_pc_melee_target(&mut self.world.entities, opponent, initiator);
         // Initiator takes smalltalk initiative.
         self.take_smalltalk_initiative(initiator);
 
@@ -1009,6 +1042,7 @@ impl EngineInner {
     pub(crate) fn quit_swordfight(&mut self, assets: &LevelAssets, entity_id: EntityId) {
         // Collect opponent list first to avoid borrow issues
         let opponents: Vec<EntityId> = self
+            .world
             .entities
             .get(entity_id)
             .and_then(|e| e.human_data())
@@ -1017,7 +1051,7 @@ impl EngineInner {
 
         // Remove this entity from each opponent's list
         for opp_id in &opponents {
-            Self::remove_opponent(&mut self.entities, *opp_id, entity_id);
+            Self::remove_opponent(&mut self.world.entities, *opp_id, entity_id);
             // `delete_opponent` refreshes the cached
             // relative-fighting-ability on the surviving opponent so
             // future strike/parry rolls use up-to-date ratios.  No-op
@@ -1029,13 +1063,14 @@ impl EngineInner {
             // clear sword state, re-enable PC actions, clear PC melee
             // target.
             let opp_count = self
+                .world
                 .entities
                 .get(*opp_id)
                 .and_then(|e| e.human_data())
                 .map(|h| h.opponents.len())
                 .unwrap_or(0);
             if opp_count == 0 {
-                let pending_order = if let Some(entity) = self.entities.get_mut(*opp_id) {
+                let pending_order = if let Some(entity) = self.world.entities.get_mut(*opp_id) {
                     let order_type = if let Some(actor) = entity.actor_data_mut() {
                         if actor.action_state.is_sword() {
                             // Walking-animation swap: if
@@ -1153,7 +1188,7 @@ impl EngineInner {
         // "pending_order_2" duplicate of this block was dead work —
         // after the first pass set the action state to Waiting, the
         // second pass's `is_sword`/`is_shield` checks always failed.
-        let pending_order_self = if let Some(entity) = self.entities.get_mut(entity_id) {
+        let pending_order_self = if let Some(entity) = self.world.entities.get_mut(entity_id) {
             let order_type = if !entity_is_dead {
                 if let Some(actor) = entity.actor_data_mut() {
                     if actor.action_state.is_sword() {
@@ -1219,7 +1254,8 @@ impl EngineInner {
         // When a non-dead soldier voluntarily quits a swordfight,
         // immediately pump EventQuitSwordfight into its own AI so it
         // can re-plan, rather than waiting for the next AI tick.
-        if !entity_is_dead && matches!(self.entities.get(entity_id), Some(Entity::Soldier(_))) {
+        if !entity_is_dead && matches!(self.world.entities.get(entity_id), Some(Entity::Soldier(_)))
+        {
             self.dispatch_ai_stimulus(
                 entity_id,
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventQuitSwordfight),
@@ -1249,7 +1285,7 @@ impl EngineInner {
         entity_id: EntityId,
     ) {
         let (opponents, uber_range) = {
-            let entity = match self.entities.get(entity_id) {
+            let entity = match self.world.entities.get(entity_id) {
                 Some(e) => e,
                 None => return,
             };
@@ -1266,8 +1302,9 @@ impl EngineInner {
 
         let mut removed: Vec<EntityId> = Vec::new();
         for opp_id in opponents {
-            let dist = entity_distance(&self.entities, entity_id, opp_id);
+            let dist = entity_distance(&self.world.entities, entity_id, opp_id);
             let opp_uber = self
+                .world
                 .entities
                 .get(opp_id)
                 .and_then(|e| get_hth_weapon_id_full(e, &assets.profile_manager))
@@ -1276,8 +1313,8 @@ impl EngineInner {
                 .unwrap_or(70.0);
 
             if dist > uber_range && dist > opp_uber {
-                Self::remove_opponent(&mut self.entities, entity_id, opp_id);
-                Self::remove_opponent(&mut self.entities, opp_id, entity_id);
+                Self::remove_opponent(&mut self.world.entities, entity_id, opp_id);
+                Self::remove_opponent(&mut self.world.entities, opp_id, entity_id);
                 // Recompute the cached relative-fighting-ability on
                 // both surviving sides so the next strike / parade
                 // roll uses fresh ratios.  (When their list is now
@@ -1297,6 +1334,7 @@ impl EngineInner {
         // dispatches to `quit_swordfight` when the list is empty or
         // `choose_principal_opponent` when two or more remain.
         let remaining = self
+            .world
             .entities
             .get(entity_id)
             .and_then(|e| e.human_data())
@@ -1439,7 +1477,7 @@ impl EngineInner {
         tracing::info!(entity = ?pc_id, "PC coma save activated — amulet consumed");
 
         // Set life to 5, max concussion, consume amulet
-        if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
+        if let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) {
             pc.pc.life_points = 5;
             pc.human.concussion_of_the_brain = combat::CONCUSSION_MAX;
             pc.human.unconscious = true;
@@ -1464,7 +1502,7 @@ impl EngineInner {
             self.abort_quick_action(pc_id, slot);
         }
         // Close eyes / stop combat
-        if let Some(entity) = self.entities.get_mut(pc_id)
+        if let Some(entity) = self.world.entities.get_mut(pc_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.action_state = ActionState::Waiting;

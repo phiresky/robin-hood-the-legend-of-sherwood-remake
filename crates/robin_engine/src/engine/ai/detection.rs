@@ -15,7 +15,7 @@ use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture
 /// detection target for the per-royalist visibility pass (P3b).  Built
 /// once at the top of [`EngineInner::tick_enemy_ai_royalist_detection`]
 /// and threaded into the per-NPC body so the inner loop can iterate
-/// without re-borrowing `self.entities`.
+/// without re-borrowing `self.world.entities`.
 #[derive(Clone)]
 struct NpcTarget {
     id: EntityId,
@@ -205,10 +205,10 @@ impl EngineInner {
         scratch: &SimScratch,
     ) {
         let frame = self.control.frame_counter;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
-            let Some(Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
+            let Some(Entity::Soldier(soldier)) = self.world.entities.get(npc_id) else {
                 continue;
             };
             if !soldier.element.active {
@@ -262,23 +262,23 @@ impl EngineInner {
                 }
 
                 let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-                let building_sector = self
-                    .entities
-                    .get(npc_id)
-                    .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
-                let Some(entity) = self.entities.get(npc_id) else {
+                let building_sector =
+                    self.world.entities.get(npc_id).and_then(|entity| {
+                        self.entity_building_sector(entity.element_data().sector())
+                    });
+                let Some(entity) = self.world.entities.get(npc_id) else {
                     break;
                 };
                 let mut ctx = build_ai_context_from_entity(
                     entity,
                     frame,
                     building_sector,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
                     self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                     &assets.hiking_paths,
                     &self.ai.global.all_soldier_handles,
                 );
@@ -357,8 +357,8 @@ impl EngineInner {
         }
         let mut firing_listeners: Vec<FiringListener> = Vec::new();
         let next_order_id = &mut self.next_order_id;
-        for &pc_id in &self.pc_ids {
-            let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) else {
+        for &pc_id in &self.world.pc_ids {
+            let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) else {
                 continue;
             };
             if pc.actor.listen_phase != crate::element::ListenPhase::CountingDown {
@@ -415,7 +415,7 @@ impl EngineInner {
         // Independent of the blip state — targets are always
         // eligible for Heard() regardless of `blipped`.
         if !firing_listeners.is_empty() {
-            for (entity_id, target) in self.entities.targets() {
+            for (entity_id, target) in self.world.entities.targets() {
                 let target_pos = target.element.position_map();
                 let target_layer = target.element.layer();
                 let target_z = target.element.position().z;
@@ -437,11 +437,13 @@ impl EngineInner {
         }
 
         for (entity_id, entity) in self
+            .world
             .entities
             .npcs()
             .map(|(id, entity)| (id.into(), entity))
             .chain(
-                self.entities
+                self.world
+                    .entities
                     .objects()
                     .map(|(id, entity)| (id.into(), entity)),
             )
@@ -537,7 +539,7 @@ impl EngineInner {
                         // whenever the detecting PC is perched on
                         // shoulders.  Defer the call so we can emit
                         // it after releasing the immutable
-                        // `self.entities` borrow.
+                        // `self.world.entities` borrow.
                         if pc.posture == Posture::OnShoulders {
                             perched_detection_triggers.push(pc.id);
                         }
@@ -624,7 +626,7 @@ impl EngineInner {
         }
 
         for entity_id in to_reveal {
-            if let Some(entity) = self.entities.get_mut(entity_id) {
+            if let Some(entity) = self.world.entities.get_mut(entity_id) {
                 tracing::debug!(
                     entity = entity_id.index(),
                     "reveal_blip: shadow revealed by blip detection"
@@ -661,7 +663,7 @@ impl EngineInner {
         // swap).
         let mut listenable_calls: Vec<(i32, i32)> = Vec::new();
         for (target_id, listening_pc) in to_hear {
-            if let Some(Entity::Target(t)) = self.entities.get_mut(target_id)
+            if let Some(Entity::Target(t)) = self.world.entities.get_mut(target_id)
                 && t.target
                     .action_filter
                     .contains(crate::element::TargetFilter::LISTEN)
@@ -680,9 +682,9 @@ impl EngineInner {
             self.refresh_game_host_entity_state();
             if let Some(ref mut script) = self.mission_script {
                 script.swap_engine_state(
-                    &mut self.entities,
+                    &mut self.world.entities,
                     &mut self.ai.global,
-                    &mut self.fast_grid,
+                    &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
                 );
@@ -696,9 +698,9 @@ impl EngineInner {
                     }
                 }
                 script.swap_engine_state(
-                    &mut self.entities,
+                    &mut self.world.entities,
                     &mut self.ai.global,
-                    &mut self.fast_grid,
+                    &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
                 );
@@ -736,7 +738,7 @@ impl EngineInner {
         // loop, as in the original outer
         // `if (mCurrentState != STATE_ATTACKING)`.
         let (position, elevation, current_state, expects_pc_detectables) = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             // Every NPC runs the acoustic pass — it lives on the
@@ -780,7 +782,7 @@ impl EngineInner {
         // at the NPC's position into the deafness write-back.
         // Computed here because `NpcData` has no access to the
         // `SoundSourceManager`.  Done before the entity re-borrow
-        // so we don't hold `&mut self.entities` while reading
+        // so we don't hold `&mut self.world.entities` while reading
         // `&self.feedback.sound_sim`.
         let cover_volume = self
             .feedback
@@ -789,7 +791,7 @@ impl EngineInner {
             .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
 
         let (deafness, pc_target_ids) = {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
+            let Some(entity) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
             let Some(npc) = entity.npc_data_mut() else {
@@ -847,7 +849,7 @@ impl EngineInner {
                 // this same RefreshDetection call. There is no acoustic
                 // snapshot to sample in that expected stale window. A live
                 // registered PC missing from the world view is inconsistent.
-                match self.entities.get(pc_id) {
+                match self.world.entities.get(pc_id) {
                     Some(entity) if !entity.is_active() || entity.is_dead() => continue,
                     Some(_) | None => panic!(
                         "NPC {} tracks live PC {} for hearing but the PC is absent from the detection view",
@@ -857,7 +859,7 @@ impl EngineInner {
                 }
             };
             let stimulus = {
-                let Some(entity) = self.entities.get_mut(npc_id) else {
+                let Some(entity) = self.world.entities.get_mut(npc_id) else {
                     return;
                 };
                 let Some(npc) = entity.npc_data_mut() else {
@@ -973,22 +975,23 @@ impl EngineInner {
             let scratch = self.build_sim_scratch(assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let building_sector = self
+                .world
                 .entities
                 .get(npc_id)
                 .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let mut ctx = build_ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
                 building_sector,
-                self.weather.is_forest_level,
-                self.weather.ambiance,
+                self.world.weather.is_forest_level,
+                self.world.weather.ambiance,
                 self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
-                &self.fast_grid,
+                &self.world.fast_grid,
                 &assets.hiking_paths,
                 &self.ai.global.all_soldier_handles,
             );
@@ -1034,8 +1037,8 @@ impl EngineInner {
         // Forest-level flag — selects between forest and city
         // detection-speed parameters when scaling a PC's visual
         // detection speed in the per-target visibility pass below.
-        let is_forest_level = self.weather.is_forest_level;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let is_forest_level = self.world.weather.is_forest_level;
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
             self.tick_enemy_ai_acoustic_detection_for_npc(npc_id, assets, world);
@@ -1055,7 +1058,7 @@ impl EngineInner {
             // SHADOW → VIEW → BODY → OBJECT → FRIEND → MISSED_FRIEND → BEGGAR
             // order behind any earlier stimulus already in the NPC FIFO.
             let event_view_tick_data = if let Some((stimulus, tick_data)) = think_input {
-                let entity = self.entities.get_mut(npc_id).unwrap_or_else(|| {
+                let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
                     panic!(
                         "detected NPC {} disappeared before its same-phase stimulus queue",
                         npc_id.index()
@@ -1097,6 +1100,7 @@ impl EngineInner {
             );
 
             let has_pending_stimuli = self
+                .world
                 .entities
                 .get(npc_id)
                 .and_then(Entity::ai_controller)
@@ -1158,7 +1162,7 @@ impl EngineInner {
 
         // -- Read enemy state in a scoped borrow --
         let viewer = {
-            let entity = self.entities.get(npc_id)?;
+            let entity = self.world.entities.get(npc_id)?;
             SoldierSightContext::from_viewer(entity, Camp::Lacklandists)?
         };
         if viewer.ai_locked {
@@ -1193,7 +1197,7 @@ impl EngineInner {
         // (the ground path is cached as a last-viewed-radius
         // ground value).
         let is_night_or_fog = matches!(
-            self.weather.ambiance,
+            self.world.weather.ambiance,
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         // Once-per-viewer base call — the ground (no-obstacle) radius.
@@ -1208,7 +1212,7 @@ impl EngineInner {
             view_forward,
             real_half_aperture,
             is_night_or_fog,
-            &self.fast_grid.level,
+            &self.world.fast_grid.level,
             self.sight_obstacles(assets),
             None,
         );
@@ -1238,7 +1242,7 @@ impl EngineInner {
         );
 
         // -- Mutating pass: update detectable list + suspects --
-        // `&self.sight_obstacles` and `self.entities.get_mut(...)`
+        // `&self.sight_obstacles` and `self.world.entities.get_mut(...)`
         // are disjoint fields on `self`, so the split borrow is
         // valid.  We scope the mut access so we can push to
         // `transitions` afterwards without conflict.
@@ -1253,18 +1257,18 @@ impl EngineInner {
             // method-level borrow of `self`, not field-level.
             let sight_obstacles = crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                static_active: &self.static_sight_obstacle_active,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
             };
             // Split-borrow `ai_global` so we can pass it into
             // `EnemyAi::think` alongside the mut borrow on
-            // `self.entities`.  Rust field-level borrow checking
+            // `self.world.entities`.  Rust field-level borrow checking
             // allows this because they're disjoint fields.  The
             // outer `ai_global` split-borrow is only read by a
             // nested scope below; the now-deferred stimulus pushes
             // at this level don't need it.
             let _ai_global = &mut self.ai.global;
-            let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id) else {
                 return None;
             };
 
@@ -1409,7 +1413,7 @@ impl EngineInner {
                                 view_forward,
                                 real_half_aperture,
                                 is_night_or_fog,
-                                &self.fast_grid.level,
+                                &self.world.fast_grid.level,
                                 sight_obstacles,
                                 Some(obs),
                             )
@@ -1449,7 +1453,7 @@ impl EngineInner {
                         viewer_eye_z: eye_z,
                         target_eye_z: pc.detection_z,
                         sight_obstacles,
-                        fast_grid: &self.fast_grid,
+                        fast_grid: &self.world.fast_grid,
                         layer,
                         target_unconscious: pc.unconscious,
                         target_passing_door: pc.passing_door,
@@ -1803,7 +1807,7 @@ impl EngineInner {
                         pc.position,
                         layer,
                         sight_obstacles,
-                        &self.fast_grid,
+                        &self.world.fast_grid,
                     ) {
                         continue;
                     }
@@ -2034,7 +2038,7 @@ impl EngineInner {
                                 me_pos_map,
                                 layer,
                                 sight_obstacles,
-                                &self.fast_grid,
+                                &self.world.fast_grid,
                             )
                         };
                     tick_data
@@ -2627,7 +2631,7 @@ impl EngineInner {
     ) {
         let universal_frame = self.control.frame_counter;
         let golden_eye = self.ai.global.golden_eye_mode;
-        let is_forest_level = self.weather.is_forest_level;
+        let is_forest_level = self.world.weather.is_forest_level;
 
         // Build target list from alive Lacklandist soldiers.
         let mut npc_targets: Vec<NpcTarget> = Vec::new();
@@ -2659,7 +2663,7 @@ impl EngineInner {
 
         let mut to_reveal: Vec<EntityId> = Vec::new();
         let mut royalist_alert_calls: Vec<(EntityId, MapPoint)> = Vec::new();
-        let royalist_ids = self.entities.npc_ids().collect::<Vec<_>>();
+        let royalist_ids = self.world.entities.npc_ids().collect::<Vec<_>>();
 
         for npc_id in royalist_ids {
             self.tick_enemy_ai_royalist_detection_for_npc(
@@ -2675,7 +2679,7 @@ impl EngineInner {
         }
 
         for target_id in to_reveal {
-            if let Some(entity) = self.entities.get_mut(target_id)
+            if let Some(entity) = self.world.entities.get_mut(target_id)
                 && entity.element_data().blipped
             {
                 tracing::debug!(
@@ -2711,7 +2715,7 @@ impl EngineInner {
     ) {
         // -- Read royalist soldier viewer state --
         let viewer = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Royalists) else {
@@ -2741,7 +2745,7 @@ impl EngineInner {
         // Effective view radius accounting for eye height and
         // night/fog light modulation.
         let is_night_or_fog = matches!(
-            self.weather.ambiance,
+            self.world.weather.ambiance,
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
@@ -2751,7 +2755,7 @@ impl EngineInner {
             view_forward,
             real_half_aperture,
             is_night_or_fog,
-            &self.fast_grid.level,
+            &self.world.fast_grid.level,
             self.sight_obstacles(assets),
             None,
         );
@@ -2772,7 +2776,7 @@ impl EngineInner {
                         view_forward,
                         real_half_aperture,
                         is_night_or_fog,
-                        &self.fast_grid.level,
+                        &self.world.fast_grid.level,
                         obstacles,
                         Some(obs),
                     );
@@ -2811,15 +2815,15 @@ impl EngineInner {
             // from the mut borrows of `ai_global` / `entities`.
             let sight_obstacles = crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                static_active: &self.static_sight_obstacle_active,
+                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                static_active: &self.world.static_sight_obstacle_active,
             };
             // Split-borrow ai_global (kept live so the
             // royalist detection below still compiles —
             // the now-deferred EVENT_VIEW push doesn't
             // need it).
             let _ai_global = &mut self.ai.global;
-            let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
+            let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id) else {
                 return;
             };
 
@@ -2898,7 +2902,7 @@ impl EngineInner {
                         viewer_eye_z: eye_z,
                         target_eye_z: target.eye_z,
                         sight_obstacles,
-                        fast_grid: &self.fast_grid,
+                        fast_grid: &self.world.fast_grid,
                         layer,
                         // NpcTarget list filters out
                         // unconscious soldiers at build time
@@ -3096,7 +3100,7 @@ impl EngineInner {
 
         // -- Read NPC view-state in a scoped read borrow --
         let viewer = {
-            let Some(entity) = self.entities.get(npc_id) else {
+            let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
             // RefreshDetection runs the per-type loop for both
@@ -3136,7 +3140,7 @@ impl EngineInner {
         let viewer_in_building = viewer_building_sector.is_some();
 
         let is_night_or_fog = matches!(
-            self.weather.ambiance,
+            self.world.weather.ambiance,
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let effective_view_radius_ground = ai_vision::compute_view_radius(
@@ -3146,7 +3150,7 @@ impl EngineInner {
             view_forward,
             real_half_aperture,
             is_night_or_fog,
-            &self.fast_grid.level,
+            &self.world.fast_grid.level,
             self.sight_obstacles(assets),
             None,
         );
@@ -3170,7 +3174,7 @@ impl EngineInner {
                         view_forward,
                         real_half_aperture,
                         is_night_or_fog,
-                        &self.fast_grid.level,
+                        &self.world.fast_grid.level,
                         obstacles,
                         Some(obs),
                     );
@@ -3204,11 +3208,11 @@ impl EngineInner {
         // so we keep one mut-borrow scope spanning both passes.
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.dynamic_sight_obstacles,
-            static_active: &self.static_sight_obstacle_active,
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
         };
         let _ai_global = &mut self.ai.global;
-        let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
+        let Some(Entity::Soldier(soldier)) = self.world.entities.get_mut(npc_id) else {
             return;
         };
 
@@ -3258,7 +3262,7 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
-                fast_grid: &self.fast_grid,
+                fast_grid: &self.world.fast_grid,
             },
         );
 
@@ -3294,7 +3298,7 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
-                fast_grid: &self.fast_grid,
+                fast_grid: &self.world.fast_grid,
             },
         );
 
@@ -3338,7 +3342,7 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
-                fast_grid: &self.fast_grid,
+                fast_grid: &self.world.fast_grid,
             },
         );
 
@@ -3379,7 +3383,7 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
-                fast_grid: &self.fast_grid,
+                fast_grid: &self.world.fast_grid,
             },
         );
 
@@ -3433,7 +3437,7 @@ impl EngineInner {
                 universal_frame,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
-                fast_grid: &self.fast_grid,
+                fast_grid: &self.world.fast_grid,
             },
         );
     }

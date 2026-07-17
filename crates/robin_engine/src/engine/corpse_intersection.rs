@@ -57,7 +57,7 @@ impl EngineInner {
     pub(crate) fn process_corpse_intersection_updates(&mut self) {
         let mut transitions: Vec<(EntityId, bool)> = Vec::new();
 
-        for (entity_id, entity) in self.entities.humans_mut() {
+        for (entity_id, entity) in self.world.entities.humans_mut() {
             let is_lying = entity.element_data().posture.is_lying();
             let Some(human) = entity.human_data_mut() else {
                 continue;
@@ -176,7 +176,7 @@ impl EngineInner {
         candidate_small_flag: bool,
     ) -> Vec<EntityId> {
         let mut out = Vec::new();
-        for (id, actor) in self.entities.humans() {
+        for (id, actor) in self.world.entities.humans() {
             if id == corpse {
                 continue;
             }
@@ -275,11 +275,12 @@ impl EngineInner {
         sector: Option<crate::position_interface::SectorHandle>,
     ) -> bool {
         let Some(sn) = sector else { return false };
-        self.fast_grid
+        self.world
+            .fast_grid
             .level
             .sector_number_map
             .get(&crate::sector::SectorNumber::new(u16::from(sn) as i16))
-            .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+            .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
             .map(|gs| gs.sector_type.is_building())
             .unwrap_or(false)
     }
@@ -293,11 +294,12 @@ impl EngineInner {
         sector: Option<crate::position_interface::SectorHandle>,
     ) -> bool {
         let Some(sn) = sector else { return false };
-        self.fast_grid
+        self.world
+            .fast_grid
             .level
             .sector_number_map
             .get(&crate::sector::SectorNumber::new(u16::from(sn) as i16))
-            .and_then(|&idx| self.fast_grid.level.sectors.get(idx))
+            .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
             .map(|gs| gs.sector_type.is_lift())
             .unwrap_or(false)
     }

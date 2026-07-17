@@ -685,7 +685,7 @@ impl EngineInner {
     ) -> OrderType {
         use crate::element::Posture;
 
-        let Some(entity) = self.entities.get(owner) else {
+        let Some(entity) = self.world.entities.get(owner) else {
             return action;
         };
         let elem = entity.element_data();
@@ -760,7 +760,7 @@ impl EngineInner {
             .and_then(|e| e.human_data())
             .and_then(|h| h.opponents.first().copied());
 
-        if let Some(entity) = self.entities.get_mut(entity_id)
+        if let Some(entity) = self.world.entities.get_mut(entity_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = false;
@@ -779,7 +779,7 @@ impl EngineInner {
             return;
         }
 
-        if let Some(entity) = self.entities.get_mut(principal_id)
+        if let Some(entity) = self.world.entities.get_mut(principal_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.smalltalk_initiative = true;
@@ -881,6 +881,7 @@ impl EngineInner {
         half_diagonal_idx: usize,
     ) -> Option<MapPoint> {
         let hd = self
+            .world
             .fast_grid
             .level
             .move_box_half_diagonals
@@ -891,6 +892,7 @@ impl EngineInner {
             MapPoint::new(candidate.x + hd.x, candidate.y + hd.y),
         );
         if self
+            .world
             .fast_grid
             .find_authorized_position_toward(&mut bbox, reference, layer)
         {
@@ -1005,8 +1007,11 @@ impl EngineInner {
                 None,
             )
         } else {
-            let hit = self.fast_grid.get_sector_screen(click_point, reference);
-            let is_valid = hit.is_valid_for_move(&self.fast_grid);
+            let hit = self
+                .world
+                .fast_grid
+                .get_sector_screen(click_point, reference);
+            let is_valid = hit.is_valid_for_move(&self.world.fast_grid);
 
             // ── Door/Drawbridge click shortcut ──
             //
@@ -1018,19 +1023,20 @@ impl EngineInner {
             // motion area).
             let is_door_click_sector = hit
                 .sector_idx
-                .and_then(|i| self.fast_grid.level.sectors.get(usize::from(i)))
+                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
                 .is_some_and(|s| s.sector_type.is_door());
             let is_jump_click = hit
                 .sector_idx
-                .and_then(|i| self.fast_grid.level.sectors.get(usize::from(i)))
+                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
                 .is_some_and(|s| s.sector_type.is_jump());
             let jump_underlying_sector = hit
                 .sector_idx
-                .and_then(|i| self.fast_grid.level.sectors.get(usize::from(i)))
+                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
                 .filter(|s| s.sector_type.is_jump())
                 .and_then(|s| s.underlying_sector)
                 .and_then(|i| {
-                    self.fast_grid
+                    self.world
+                        .fast_grid
                         .level
                         .sectors
                         .get(usize::from(i))
@@ -1042,7 +1048,7 @@ impl EngineInner {
             // emit a `GoalShape::Door` terminal element.
             let clicked_sector_door_index: Option<u32> = hit
                 .sector_idx
-                .and_then(|i| self.fast_grid.level.sectors.get(usize::from(i)))
+                .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)))
                 .and_then(|s| s.door_index);
             let clicked_polygon_door_index = self
                 .mission_script
@@ -1137,6 +1143,7 @@ impl EngineInner {
                     .and_then(crate::jump_line::JumpLineIndex::new);
                 if let Some(source_line_idx) = source_line_idx {
                     let Some(source_line) = self
+                        .world
                         .fast_grid
                         .level
                         .jump_lines
@@ -1152,6 +1159,7 @@ impl EngineInner {
                         panic!("line-jump source line {source_line_idx} has no associated line");
                     };
                     if self
+                        .world
                         .fast_grid
                         .level
                         .jump_lines
@@ -1420,7 +1428,7 @@ impl EngineInner {
             // PC authorisation for the gate A*.  Click-to-move never
             // sets `MoveFlags::MAP`, so `allow_leave_map = false` here.
             let pc_auth = self.get_entity(*pc_id).map(|e| e.actor_auth_info());
-            let level = self.fast_grid.level.clone();
+            let level = self.world.fast_grid.level.clone();
             let door_goal_info = door_goal.and_then(|door_idx| {
                 let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
                 host.and_then(|h| {
@@ -1456,7 +1464,7 @@ impl EngineInner {
                     tracing::warn!("skipping gate path without resolved goal sector");
                     continue;
                 };
-                let level = self.fast_grid.level.clone();
+                let level = self.world.fast_grid.level.clone();
                 let game_host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
                 game_host.and_then(|h| {
                     crate::gate::find_path_gates(
@@ -2738,7 +2746,11 @@ impl EngineInner {
             } else {
                 MapBBox::new()
             };
-            if !self.fast_grid.find_authorized_position(&mut bbox, layer) {
+            if !self
+                .world
+                .fast_grid
+                .find_authorized_position(&mut bbox, layer)
+            {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return false;
             }
@@ -2754,6 +2766,7 @@ impl EngineInner {
         if intent.ask_obstacle && !intent.compute_direction {
             let dest = MapPoint::new(intent.target_x, intent.target_y);
             if !self
+                .world
                 .fast_grid
                 .is_straight_movement_authorized(position, dest, layer, &move_box)
             {
@@ -2769,7 +2782,7 @@ impl EngineInner {
     /// by the GoTo pre-flight gates to surface a same-frame failure to
     /// the AI's stuck-retry / fallback logic.
     fn set_ai_couldnt_reachpoint(&mut self, entity_id: EntityId) {
-        let Some(entity) = self.entities.get_mut(entity_id) else {
+        let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
         if let Some(ai) = entity.ai_controller_mut() {
@@ -2951,8 +2964,8 @@ impl EngineInner {
         // direction, and selects directional animations
         // (forward/backward/strafe) based on the angle between
         // movement and facing.
-        let mut combat_face_targets = EntitySlots::filled(self.entities.len(), None);
-        for (actor_id, entity) in self.entities.actors() {
+        let mut combat_face_targets = EntitySlots::filled(self.world.entities.len(), None);
+        for (actor_id, entity) in self.world.entities.actors() {
             let actor = entity
                 .actor_data()
                 .expect("entities.actors() yielded non-actor entity");
@@ -2973,7 +2986,7 @@ impl EngineInner {
             // shield-bearer away from the ally.
             if is_shield_moving
                 && let Some(protected_id) = entity.pc_data().and_then(|pc| pc.shield_protected)
-                && let Some(ally) = self.entities.get(protected_id)
+                && let Some(ally) = self.world.entities.get(protected_id)
             {
                 let self_pos = entity.element_data().position_map();
                 let ally_pos = ally.element_data().position_map();
@@ -3019,7 +3032,7 @@ impl EngineInner {
             };
 
             if let Some(opp_id) = opp_id_opt
-                && let Some(opp) = self.entities.get(opp_id)
+                && let Some(opp) = self.world.entities.get(opp_id)
             {
                 combat_face_targets[actor_id] = Some(opp.element_data().position_map());
             } else {
@@ -3034,15 +3047,15 @@ impl EngineInner {
         // for every entity with an active movement
         // (`distance *= speed_factor` during the per-frame motion
         // update). Pre-computed here so the main loop can borrow
-        // `self.entities` mutably while consulting
+        // `self.world.entities` mutably while consulting
         // `self.sequence_manager` for the factor.
-        let mut speed_factors = EntitySlots::filled(self.entities.len(), 1.0);
+        let mut speed_factors = EntitySlots::filled(self.world.entities.len(), 1.0);
         // Per-entity line-snap info: `(line_index, tolerance)` set
         // when the active movement element carries `MoveFlags::LINE`
         // and a `line_id`.  Drives the final-waypoint snap to the
         // nearest point on the line at arrival time, comparing the
         // line's distance against the element's tolerance.
-        let mut line_snaps = EntitySlots::filled(self.entities.len(), None);
+        let mut line_snaps = EntitySlots::filled(self.world.entities.len(), None);
         // Per-entity final-waypoint tolerance snapshot for the arrival
         // check.  The seek-arrival predicate is:
         //
@@ -3092,11 +3105,12 @@ impl EngineInner {
             /// flag.
             has_post_seek: bool,
         }
-        let mut final_tolerances = EntitySlots::filled(self.entities.len(), FinalTol::default());
-        let mut point_seek_post_sectors = EntitySlots::filled(self.entities.len(), None);
+        let mut final_tolerances =
+            EntitySlots::filled(self.world.entities.len(), FinalTol::default());
+        let mut point_seek_post_sectors = EntitySlots::filled(self.world.entities.len(), None);
         let mut sword_movement_starts: Vec<EntityId> = Vec::new();
         let mut sword_movement_terminations: Vec<EntityId> = Vec::new();
-        for (actor_id, entity) in self.entities.actors() {
+        for (actor_id, entity) in self.world.entities.actors() {
             let Some(actor) = entity.actor_data() else {
                 continue;
             };
@@ -3187,8 +3201,8 @@ impl EngineInner {
         // must run before the main loop because the per-tick turn
         // advances `position_iface` (a mutable borrow that would
         // conflict with `entity.element_data_mut()`).
-        let mut drunk_turn_overrides = EntitySlots::filled(self.entities.len(), None);
-        for (soldier_id, soldier) in self.entities.soldiers_mut() {
+        let mut drunk_turn_overrides = EntitySlots::filled(self.world.entities.len(), None);
+        for (soldier_id, soldier) in self.world.entities.soldiers_mut() {
             let is_drunk = soldier
                 .npc
                 .ai_brain
@@ -3263,11 +3277,11 @@ impl EngineInner {
         //     down.  The high / low exit points are the in-side
         //     points of the lift's highest and lowest doors.
         //
-        // Pre-computed here so the main loop can borrow `self.entities`
-        // mutably without touching `self.fast_grid` or the door table.
-        let mut lift_translations = EntitySlots::filled(self.entities.len(), None);
-        let mut door_pass_wall_directions = EntitySlots::filled(self.entities.len(), None);
-        for (actor_id, entity) in self.entities.actors() {
+        // Pre-computed here so the main loop can borrow `self.world.entities`
+        // mutably without touching `self.world.fast_grid` or the door table.
+        let mut lift_translations = EntitySlots::filled(self.world.entities.len(), None);
+        let mut door_pass_wall_directions = EntitySlots::filled(self.world.entities.len(), None);
+        for (actor_id, entity) in self.world.entities.actors() {
             let posture = entity.element_data().posture;
             let door_pass_action = entity
                 .actor_data()
@@ -3394,7 +3408,7 @@ impl EngineInner {
         // "already-moved" view: each actor's anti-collision lookup
         // reads live positions from earlier-processed actors.
         let mut anti_snapshots = super::anti_collision::snapshot_all(
-            &self.entities,
+            &self.world.entities,
             &self.sequence_manager,
             &assets.profile_manager,
         );
@@ -3485,12 +3499,12 @@ impl EngineInner {
         // before its own movement. Mutations by an earlier-created actor are
         // therefore visible, while a later-created target still exposes its
         // pre-movement state, matching RHEngine's virtual Hourglass loop.
-        let movement_actor_ids: Vec<_> = self.entities.actors().map(|(id, _)| id).collect();
+        let movement_actor_ids: Vec<_> = self.world.entities.actors().map(|(id, _)| id).collect();
         for actor_id in movement_actor_ids {
             let entity_id = actor_id.into();
             let ft = final_tolerances[actor_id];
             let live_seek_target = ft.target_id.and_then(|target_id| {
-                self.entities.get(target_id).map(|target| {
+                self.world.entities.get(target_id).map(|target| {
                     let target_data = target.element_data();
                     let use_point_offset = if ft.use_point {
                         target_data
@@ -3509,6 +3523,7 @@ impl EngineInner {
                 })
             });
             let entity = self
+                .world
                 .entities
                 .get_mut(entity_id)
                 .expect("movement actor ID collected from entity table must remain present");
@@ -3879,7 +3894,7 @@ impl EngineInner {
                 // ladder vector (`pt_low - pt_high`) with the movement
                 // vector — non-negative means moving down.  Snapshotted
                 // in `lift_translations` so we don't have to re-borrow
-                // `self.fast_grid` or the door table mid-loop.
+                // `self.world.fast_grid` or the door table mid-loop.
                 match lift_translations[actor_id] {
                     Some(LiftAnimContext::Upright(lt)) => lt.translate_upright_action(base),
                     Some(LiftAnimContext::OnClimb {
@@ -4368,17 +4383,18 @@ impl EngineInner {
             let old_pos = elem.position_map();
             let entity_layer = elem.layer();
             let entity_posture = elem.posture;
-            let eligible_for_crossing = !matches!(
-                entity_posture,
-                crate::element::Posture::Flying
-                    | crate::element::Posture::OnWall
-                    | crate::element::Posture::OnLadder
-                    | crate::element::Posture::Carried
-                    | crate::element::Posture::OnShoulders
-                    | crate::element::Posture::CarryingCorpse
-                    | crate::element::Posture::CarryingOnShoulders
-                    | crate::element::Posture::HelpingToClimb
-            ) && self.fast_grid.level.map_bbox.contains_point(old_pos);
+            let eligible_for_crossing =
+                !matches!(
+                    entity_posture,
+                    crate::element::Posture::Flying
+                        | crate::element::Posture::OnWall
+                        | crate::element::Posture::OnLadder
+                        | crate::element::Posture::Carried
+                        | crate::element::Posture::OnShoulders
+                        | crate::element::Posture::CarryingCorpse
+                        | crate::element::Posture::CarryingOnShoulders
+                        | crate::element::Posture::HelpingToClimb
+                ) && self.world.fast_grid.level.map_bbox.contains_point(old_pos);
 
             // LINE-snap early arrival: when the active element
             // carries `MoveFlags::LINE` + `line_id` and the actor is
@@ -4391,7 +4407,13 @@ impl EngineInner {
                     false
                 } else {
                     let actor_pt = elem.position_map();
-                    match self.fast_grid.level.jump_lines.get(usize::from(line_idx)) {
+                    match self
+                        .world
+                        .fast_grid
+                        .level
+                        .jump_lines
+                        .get(usize::from(line_idx))
+                    {
                         Some(jl) => {
                             let d = jl.compute_distance(actor_pt);
                             // Tolerance of 0 means "on the line" —
@@ -4538,7 +4560,7 @@ impl EngineInner {
                 && elem
                     .sprite
                     .position_iface
-                    .is_goal_reached(&self.fast_grid, None);
+                    .is_goal_reached(&self.world.fast_grid, None);
 
             if dist <= speed
                 || movement_goal_reached
@@ -4822,7 +4844,7 @@ impl EngineInner {
                         mover_snap,
                         anti_snapshots.as_slice(),
                         &self.ai.global.repulsive_points,
-                        Some(&self.fast_grid),
+                        Some(&self.world.fast_grid),
                         Some(&mut state),
                         nx,
                         ny,
@@ -4944,7 +4966,7 @@ impl EngineInner {
             // LINE_PATCH handling is gated to PCs only.
             if eligible_for_crossing {
                 let new_pos = entity.element_data().position_map();
-                if self.fast_grid.level.map_bbox.contains_point(new_pos) {
+                if self.world.fast_grid.level.map_bbox.contains_point(new_pos) {
                     line_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
                     if entity.is_pc() {
                         patch_cross_checks.push((entity_id, old_pos, new_pos, entity_layer));
@@ -5316,7 +5338,7 @@ impl EngineInner {
     /// without a corresponding `set_state`.  In either case the halt
     /// below will swallow the exit event and leave the AI stranded.
     fn check_shape1_contract(&self, entity_id: EntityId) {
-        let Some(entity) = self.entities.get(entity_id) else {
+        let Some(entity) = self.world.entities.get(entity_id) else {
             return;
         };
         let Some(ai) = entity.ai_controller() else {
@@ -5356,7 +5378,7 @@ impl EngineInner {
     /// halt happens on the same call stack as the new element launch,
     /// `StopAll` / `FaceTo` halt the actor inline.
     pub(super) fn process_pending_ai_orders(&mut self) {
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             self.launch_pending_orders_for_npc(npc_id);
         }
@@ -5383,7 +5405,7 @@ impl EngineInner {
         // interrupt are tagged `from_halt` and don't fire
         // `Think(EventDone)`.
         let (has_pending_orders, take_halt) = {
-            let Some(entity) = self.entities.get_mut(entity_id) else {
+            let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -5400,7 +5422,7 @@ impl EngineInner {
             return;
         }
         let intents: Vec<crate::order::AiOrderIntent> = {
-            let Some(entity) = self.entities.get_mut(entity_id) else {
+            let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 return;
             };
             let Some(ai) = entity.ai_controller_mut() else {
@@ -5580,14 +5602,14 @@ impl EngineInner {
         new_pos: MapPoint,
         increment_map: MapVec,
     ) {
-        let line = match self.fast_grid.level.lines.get(usize::from(line_idx)) {
+        let line = match self.world.fast_grid.level.lines.get(usize::from(line_idx)) {
             Some(l) if l.is_elevation => l,
             _ => return,
         };
         let left = line.left_obstacle_index;
         let right = line.right_obstacle_index;
 
-        let (current, layer) = match self.entities.get(entity_id) {
+        let (current, layer) = match self.world.entities.get(entity_id) {
             Some(e) => (
                 e.element_data().obstacle_index().map(u16::from),
                 e.element_data().layer(),
@@ -5706,6 +5728,7 @@ impl EngineInner {
         }
 
         let mut indices = self
+            .world
             .fast_grid
             .get_crossing_elevation_line_indices(layer, old_pos, new_pos);
         if indices.is_empty() {
@@ -5714,7 +5737,7 @@ impl EngineInner {
 
         // Read the actor's current obstacle — used as the seed for the
         // sort when multiple lines are crossed.
-        let mut current_obstacle = match self.entities.get(entity_id) {
+        let mut current_obstacle = match self.world.entities.get(entity_id) {
             Some(e) => e.element_data().obstacle_index().map(u16::from),
             None => return false,
         };
@@ -5730,7 +5753,13 @@ impl EngineInner {
             for i in 0..n.saturating_sub(1) {
                 let mut matched = false;
                 for j in i..n {
-                    let line = match self.fast_grid.level.lines.get(usize::from(indices[j])) {
+                    let line = match self
+                        .world
+                        .fast_grid
+                        .level
+                        .lines
+                        .get(usize::from(indices[j]))
+                    {
                         Some(l) => l,
                         None => continue,
                     };
@@ -5807,6 +5836,7 @@ impl EngineInner {
         }
 
         let indices = self
+            .world
             .fast_grid
             .get_crossing_patch_line_indices(layer, old_pos, new_pos);
         if indices.is_empty() {
@@ -5835,7 +5865,7 @@ impl EngineInner {
         // decision matters, which is independent of edge count.
         let mut seen: Vec<crate::patch::PatchIndex> = Vec::new();
         for &line_idx in &indices {
-            let Some(line) = self.fast_grid.level.lines.get(usize::from(line_idx)) else {
+            let Some(line) = self.world.fast_grid.level.lines.get(usize::from(line_idx)) else {
                 continue;
             };
             let Some(patch_index) = line.patch_index else {
@@ -5880,7 +5910,12 @@ impl EngineInner {
                     continue;
                 }
             };
-            let Some(apply_sector) = self.fast_grid.level.sectors.get(apply_sector_idx as usize)
+            let Some(apply_sector) = self
+                .world
+                .fast_grid
+                .level
+                .sectors
+                .get(apply_sector_idx as usize)
             else {
                 continue;
             };
@@ -5956,6 +5991,7 @@ impl EngineInner {
         }
 
         let indices = self
+            .world
             .fast_grid
             .get_crossing_sound_line_indices(layer, old_pos, new_pos);
         if indices.is_empty() {
@@ -6085,7 +6121,7 @@ impl EngineInner {
                 _ => None,
             };
             if let Some(want) = sword_variant
-                && let Some(entity) = self.entities.get(owner)
+                && let Some(entity) = self.world.entities.get(owner)
                 && entity.sprite().has_animation(want)
             {
                 move_action = want;
@@ -6104,7 +6140,7 @@ impl EngineInner {
         // Gated on PC because soldier/civilian shield holders fall
         // through to the upright animation.  Skip when the sprite
         // lacks the shield row (mirrors the sword PC fallback above).
-        let owner_is_pc = self.entities.get(owner).is_some_and(|e| e.is_pc());
+        let owner_is_pc = self.world.entities.get(owner).is_some_and(|e| e.is_pc());
         if owner_is_pc
             && posture_after == crate::element::Posture::Upright
             && action_after.is_shield()
@@ -6126,7 +6162,7 @@ impl EngineInner {
                 }
             };
             if let Some(want) = want
-                && let Some(entity) = self.entities.get(owner)
+                && let Some(entity) = self.world.entities.get(owner)
                 && entity.sprite().has_animation(want)
             {
                 move_action = want;
@@ -6143,21 +6179,21 @@ impl EngineInner {
         let mut want_reverse_flag = false;
         match posture_after {
             crate::element::Posture::CarryingCorpse => {
-                if let Some(entity) = self.entities.get(owner)
+                if let Some(entity) = self.world.entities.get(owner)
                     && entity.sprite().has_animation(OrderType::WalkingWithCorpse)
                 {
                     move_action = OrderType::WalkingWithCorpse;
                 }
             }
             crate::element::Posture::Crouched => {
-                if let Some(entity) = self.entities.get(owner)
+                if let Some(entity) = self.world.entities.get(owner)
                     && entity.sprite().has_animation(OrderType::WalkingCrouched)
                 {
                     move_action = OrderType::WalkingCrouched;
                 }
             }
             crate::element::Posture::CarryingOnShoulders => {
-                if let Some(entity) = self.entities.get(owner)
+                if let Some(entity) = self.world.entities.get(owner)
                     && entity
                         .sprite()
                         .has_animation(OrderType::WalkingCarryingOnShoulders)
@@ -6178,6 +6214,7 @@ impl EngineInner {
                 // the upstream sword-variant block + sprite-fallback
                 // above.
                 let owner_sector = self
+                    .world
                     .entities
                     .get(owner)
                     .and_then(|e| e.element_data().sector());
@@ -6244,7 +6281,7 @@ impl EngineInner {
                 *flags |= crate::sequence::MoveFlags::REVERSED;
             }
             if elem.posture_after_transition == crate::element::Posture::Undefined
-                && let Some(entity) = self.entities.get(owner)
+                && let Some(entity) = self.world.entities.get(owner)
             {
                 elem.posture_after_transition = entity.element_data().posture;
             }
@@ -6262,7 +6299,7 @@ impl EngineInner {
             half_diagonal,
             actor_passing_door,
         ) = {
-            let entity = match self.entities.get(owner) {
+            let entity = match self.world.entities.get(owner) {
                 Some(e) => e,
                 _ => return MovePathOutcome::ActorGone,
             };
@@ -6292,11 +6329,13 @@ impl EngineInner {
         // The later RHPathFinder::AddPathRequest extraction still runs
         // on the unexpanded move box when pathfinding is needed.
         if !self
+            .world
             .fast_grid
             .is_position_authorized(&move_box_map, entity_layer)
         {
             let mut box_element = Self::expand_move_box_for_command_extraction(move_box_map);
             if self
+                .world
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)
             {
@@ -6356,6 +6395,7 @@ impl EngineInner {
             || actor_passing_door
             || source_is_lift_rail
             || self
+                .world
                 .fast_grid
                 .is_reachable_thick(source, dest, entity_layer, half_diagonal);
 
@@ -6382,11 +6422,13 @@ impl EngineInner {
         if !straight_ok
             && !skip_source_extraction
             && !self
+                .world
                 .fast_grid
                 .is_position_authorized(&move_box_map, entity_layer)
         {
             let mut box_element = move_box_map;
             if !self
+                .world
                 .fast_grid
                 .find_authorized_position(&mut box_element, entity_layer)
             {
@@ -6533,9 +6575,9 @@ impl EngineInner {
             if !still_live {
                 return;
             }
-            let waypoints = self.pathfinder.find_path(
+            let waypoints = self.world.pathfinder.find_path(
                 assets.pathfinder_graph.as_ref(),
-                &self.fast_grid,
+                &self.world.fast_grid,
                 request.layer,
                 request.sector,
                 request.half_diagonal_idx,
@@ -6578,6 +6620,7 @@ impl EngineInner {
         );
         if is_movement_anim && !is_pass_door {
             let blood_alcohol = self
+                .world
                 .entities
                 .get(owner)
                 .and_then(|e| e.npc_data())
@@ -6586,6 +6629,7 @@ impl EngineInner {
                 .unwrap_or(0);
             if blood_alcohol > 0 {
                 let (half_diag, move_box) = self
+                    .world
                     .entities
                     .get(owner)
                     .map(|e| e.position_iface())
@@ -6599,7 +6643,7 @@ impl EngineInner {
                     entity_layer,
                     &move_box,
                     half_diag,
-                    &self.fast_grid,
+                    &self.world.fast_grid,
                 );
             }
         }
@@ -6740,7 +6784,7 @@ impl EngineInner {
         // handler flips it to the moving state on completion.  End-only
         // transitions are appended behind the movement orders; they must
         // not delay the actor entering Moving/MovingSword now.
-        if let Some(entity) = self.entities.get_mut(owner)
+        if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             if !have_start_transition {
@@ -6824,6 +6868,7 @@ impl EngineInner {
             }
 
             let is_pc = self
+                .world
                 .entities
                 .get(req.owner)
                 .map(|e| e.is_pc())

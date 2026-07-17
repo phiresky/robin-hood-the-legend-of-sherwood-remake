@@ -319,10 +319,10 @@ impl EngineInner {
         // Advance per-PC QA macro-icon shift-fall phase so host
         // renderers can read via `macro_shift_phase` without mutating
         // engine state at draw time.
-        display.tick_macro_shift_phases(&self.pc_ids, &self.players.macro_store);
+        display.tick_macro_shift_phases(&self.world.pc_ids, &self.players.macro_store);
         // Advance per-PC QA titbit fizzle-blink phase.  Host renderer
         // reads visibility via `macro_titbit_blink_hidden`.
-        display.tick_macro_blink_phases(&self.pc_ids);
+        display.tick_macro_blink_phases(&self.world.pc_ids);
         // Advance destination-marker animation and retire finished
         // marks.  Used to run during rendering, which broke rollback
         // determinism — the render path is now read-only.
@@ -441,7 +441,7 @@ impl EngineInner {
 
     /// Whether any PC is currently guarded.
     pub fn is_pc_guarded(&self) -> bool {
-        for &pc_id in &self.pc_ids {
+        for &pc_id in &self.world.pc_ids {
             if let Some(Entity::Pc(pc)) = self.get_entity(pc_id)
                 && pc.pc.guard.is_some()
             {
@@ -459,7 +459,7 @@ impl EngineInner {
         if self.actors_frozen() {
             return;
         }
-        // Two-pass to avoid overlapping borrows of `self.entities`
+        // Two-pass to avoid overlapping borrows of `self.world.entities`
         // and `self.sequence_manager`.
         struct Pending {
             owner: EntityId,
@@ -468,7 +468,7 @@ impl EngineInner {
             terminate: bool,
         }
         let mut pending: Vec<Pending> = Vec::new();
-        for (owner, _) in self.entities.actors() {
+        for (owner, _) in self.world.entities.actors() {
             let owner = owner.into();
             let Some((seq_id, elem_idx)) = self.sequence_manager.current_element_for_actor(owner)
             else {
@@ -488,7 +488,7 @@ impl EngineInner {
             });
         }
         for p in &mut pending {
-            if let Some(entity) = self.entities.get_mut(p.owner)
+            if let Some(entity) = self.world.entities.get_mut(p.owner)
                 && let Some(actor) = entity.actor_data_mut()
             {
                 if actor.wait_time == 0 {
@@ -726,9 +726,9 @@ impl EngineInner {
                     game_host.frame_counter = self.control.frame_counter;
                 }
                 script.swap_engine_state(
-                    &mut self.entities,
+                    &mut self.world.entities,
                     &mut self.ai.global,
-                    &mut self.fast_grid,
+                    &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
                 );
@@ -736,9 +736,9 @@ impl EngineInner {
                     tracing::warn!("Script Hourglass error: {e}");
                 }
                 script.swap_engine_state(
-                    &mut self.entities,
+                    &mut self.world.entities,
                     &mut self.ai.global,
-                    &mut self.fast_grid,
+                    &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
                 );
@@ -760,17 +760,17 @@ impl EngineInner {
                         game_host.frame_counter = self.control.frame_counter;
                     }
                     script.swap_engine_state(
-                        &mut self.entities,
+                        &mut self.world.entities,
                         &mut self.ai.global,
-                        &mut self.fast_grid,
+                        &mut self.world.fast_grid,
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
                     );
                     let victory_result = script.check_victory_condition(game_seconds);
                     script.swap_engine_state(
-                        &mut self.entities,
+                        &mut self.world.entities,
                         &mut self.ai.global,
-                        &mut self.fast_grid,
+                        &mut self.world.fast_grid,
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
                     );
@@ -831,9 +831,9 @@ impl EngineInner {
             // Original: RHEngine::PerformHourglass checks the PC's explicit
             // IsPlayable() flag and guard state. Death paths are responsible
             // for clearing playability; do not substitute an HP/posture test.
-            if !self.pc_ids.is_empty() {
-                let any_playable_and_free = self.pc_ids.iter().any(|&pc_id| {
-                    if let Some(Entity::Pc(pc)) = self.entities.get(pc_id) {
+            if !self.world.pc_ids.is_empty() {
+                let any_playable_and_free = self.world.pc_ids.iter().any(|&pc_id| {
+                    if let Some(Entity::Pc(pc)) = self.world.entities.get(pc_id) {
                         let guarded = pc.pc.guard.is_some();
                         pc.pc.playable && !guarded
                     } else {
@@ -859,7 +859,7 @@ impl EngineInner {
 
             // Check if any civilian was killed (not by accident) → mission failure
             let mut killed_civilian = None;
-            for (npc_id, civilian) in self.entities.civilians() {
+            for (npc_id, civilian) in self.world.entities.civilians() {
                 if civilian.element.posture.is_dead() {
                     let npc_id: EntityId = npc_id.into();
                     // Check killed_by_accident via the civilian's human data
@@ -888,7 +888,7 @@ impl EngineInner {
         // `drain_pending_reinforcements` already handles the
         // `&mut LevelAssets` needed for sprite loading, and the
         // intermediate message was never observed by anything else.
-        let pc_ids_for_reinf: Vec<EntityId> = self.pc_ids.clone();
+        let pc_ids_for_reinf: Vec<EntityId> = self.world.pc_ids.clone();
         for pc_id in pc_ids_for_reinf {
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
                 continue;
@@ -1104,7 +1104,7 @@ impl EngineInner {
                         if self.is_sherwood(&assets.profile_manager) {
                             match pc {
                                 None => {
-                                    let ids = self.pc_ids.clone();
+                                    let ids = self.world.pc_ids.clone();
                                     for id in ids {
                                         if let Some(crate::element::Entity::Pc(pc)) =
                                             self.get_entity_mut(id)
@@ -1262,7 +1262,7 @@ impl EngineInner {
                         let slot = msg.value as usize;
                         match pc {
                             None => {
-                                let pc_ids = self.pc_ids.clone();
+                                let pc_ids = self.world.pc_ids.clone();
                                 for pc_id in pc_ids {
                                     self.set_blinking_for_slot(pc_id, slot);
                                 }
@@ -1407,7 +1407,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(());
         self.tick_concussion_healing(assets);
         let mut to_remove = Vec::new();
-        for (id, entity) in self.entities.occupied_mut() {
+        for (id, entity) in self.world.entities.occupied_mut() {
             if !entity.hourglass() {
                 to_remove.push(id);
             }
@@ -1617,7 +1617,7 @@ impl EngineInner {
                             _ => None,
                         });
                     if let Some(post_seek) = post_seek
-                        && let Some(entity) = self.entities.get_mut(*owner)
+                        && let Some(entity) = self.world.entities.get_mut(*owner)
                         && let Some(actor) = entity.actor_data_mut()
                     {
                         actor.post_seek_sequence = Some(post_seek);
@@ -1686,7 +1686,7 @@ impl EngineInner {
                             // Arm the actor's seek-refresh wait;
                             // seek-distance / seek-to-point live on
                             // the movement element.
-                            if let Some(entity) = self.entities.get_mut(*owner)
+                            if let Some(entity) = self.world.entities.get_mut(*owner)
                                 && let Some(actor) = entity.actor_data_mut()
                             {
                                 actor.seek_refresh_wait = 25;
@@ -1700,7 +1700,7 @@ impl EngineInner {
                             // Point-target SEEK: the layer / sector /
                             // tolerance live on the movement element;
                             // keep the actor refresh stamp coherent.
-                            if let Some(entity) = self.entities.get_mut(*owner)
+                            if let Some(entity) = self.world.entities.get_mut(*owner)
                                 && let Some(actor) = entity.actor_data_mut()
                             {
                                 actor.seek_target = None;
@@ -1979,7 +1979,7 @@ impl EngineInner {
                             }
 
                             match bow_shot::begin_bow_shot(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 target,
@@ -2128,7 +2128,7 @@ impl EngineInner {
                                 // C++ Translate(RHCOMMAND_PASS_DOOR) calls
                                 // mpSprite->SetAntiCollisionOn(false) before expanding the
                                 // door-pass order chain.
-                                if let Some(entity) = self.entities.get_mut(owner) {
+                                if let Some(entity) = self.world.entities.get_mut(owner) {
                                     entity.position_iface_mut().set_anti_collision_on(false);
                                 }
 
@@ -2255,7 +2255,7 @@ impl EngineInner {
                                     Some(dest),
                                     "ChangePosition",
                                 );
-                                if let Some(entity) = self.entities.get_mut(owner) {
+                                if let Some(entity) = self.world.entities.get_mut(owner) {
                                     // `SetDirectionInstantly` from the
                                     // element's direction field so a
                                     // ChangePosition can rotate the
@@ -2356,7 +2356,12 @@ impl EngineInner {
                                     None
                                 };
                             let grid_idx = gate_info.and_then(|(sn, _)| {
-                                self.fast_grid.level.sector_number_map.get(&sn).copied()
+                                self.world
+                                    .fast_grid
+                                    .level
+                                    .sector_number_map
+                                    .get(&sn)
+                                    .copied()
                             });
                             let is_high = gate_info.map(|(_, h)| h).unwrap_or(false);
                             // `is_authorized_downwards` /
@@ -2365,7 +2370,7 @@ impl EngineInner {
                             // lift is on cooldown.
                             let authorised = match grid_idx {
                                 Some(idx) => {
-                                    let lift = self.fast_grid.lift_state_mut(idx as u32);
+                                    let lift = self.world.fast_grid.lift_state_mut(idx as u32);
                                     if is_high {
                                         lift.is_authorized_downwards()
                                     } else {
@@ -2384,7 +2389,7 @@ impl EngineInner {
                                 // (100 for downwards, 80 for upwards).
                                 if let Some((sn, _)) = gate_info {
                                     if let Some(idx) = grid_idx {
-                                        let lift = self.fast_grid.lift_state_mut(idx as u32);
+                                        let lift = self.world.fast_grid.lift_state_mut(idx as u32);
                                         if is_high {
                                             lift.set_occupied_downwards(true);
                                         } else {
@@ -2529,7 +2534,7 @@ impl EngineInner {
                             // to `LookForward`, which means the vision
                             // cone never rotates even though the sprite
                             // animation plays.  So both sides are needed.
-                            let order_type = if let Some(entity) = self.entities.get(owner) {
+                            let order_type = if let Some(entity) = self.world.entities.get(owner) {
                                 let attentive = entity.enemy_ai().is_some_and(|e| e.attentive);
                                 let ot = match elem.command {
                                     Command::LookLeft => {
@@ -2947,7 +2952,7 @@ impl EngineInner {
                                         continue;
                                     }
                                 };
-                            if let Some(entity) = self.entities.get_mut(owner) {
+                            if let Some(entity) = self.world.entities.get_mut(owner) {
                                 entity.element_data_mut().set_direction_instantly(dir);
                                 if let Some(actor) = entity.actor_data_mut() {
                                     actor.clear_path();
@@ -2974,7 +2979,7 @@ impl EngineInner {
                                     } => antagonist,
                                     _ => None,
                                 });
-                            let Some(victim) = self.entities.get_mut(owner) else {
+                            let Some(victim) = self.world.entities.get_mut(owner) else {
                                 self.sequence_manager.element_impossible(seq_id, elem_idx);
                                 continue;
                             };
@@ -3139,7 +3144,7 @@ impl EngineInner {
                         // `melee::process_pc_combat_anim_speech`
                         // fires `HERO_PROVOKE_OPPONENT` for PCs.
                         Command::Provoke => {
-                            if let Some(entity) = self.entities.get_mut(owner)
+                            if let Some(entity) = self.world.entities.get_mut(owner)
                                 && let Some(ai) = entity.ai_controller_mut()
                             {
                                 ai.say(crate::ai::Remark::ProvokesCombat);
@@ -3188,6 +3193,7 @@ impl EngineInner {
                                 .unwrap_or(false);
                             if !already_queued {
                                 let standing_up = match self
+                                    .world
                                     .entities
                                     .get(owner)
                                     .and_then(|entity| entity.actor_data())
@@ -3216,7 +3222,7 @@ impl EngineInner {
                             // Pre-pushed orders (e.g. `handle_post_concussion`)
                             // already carry stamped `order_id`s (required
                             // at construction), so no batch fixup is needed.
-                            if let Some(entity) = self.entities.get_mut(owner) {
+                            if let Some(entity) = self.world.entities.get_mut(owner) {
                                 entity.set_posture(crate::element::Posture::Upright);
                             }
                             let has_front = self
@@ -3298,7 +3304,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_carry(
-                                        &mut self.entities,
+                                        &mut self.world.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3338,7 +3344,7 @@ impl EngineInner {
                         }
                         Command::DropCorpse => {
                             match abilities::begin_drop(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3384,7 +3390,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_tie(
-                                        &mut self.entities,
+                                        &mut self.world.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3417,7 +3423,7 @@ impl EngineInner {
                                 .and_then(|e| e.human_data())
                                 .and_then(|h| h.carrier);
                             match abilities::begin_climb_down_from_shoulders(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3456,15 +3462,15 @@ impl EngineInner {
                             };
                             // Disjoint-field obstacle list so the headroom
                             // ray-cast inside `begin_climb_on_shoulders`
-                            // can run alongside the `&mut self.entities`
+                            // can run alongside the `&mut self.world.entities`
                             // borrow.
                             let obstacles = crate::sight_obstacle::ObstacleList {
                                 static_obstacles: assets.static_sight_obstacles.as_slice(),
-                                dynamic_obstacles: &self.dynamic_sight_obstacles,
-                                static_active: &self.static_sight_obstacle_active,
+                                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+                                static_active: &self.world.static_sight_obstacle_active,
                             };
                             match abilities::begin_climb_on_shoulders(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 helper_id,
@@ -3510,7 +3516,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_heal(
-                                            &mut self.entities,
+                                            &mut self.world.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             target_id,
@@ -3536,7 +3542,7 @@ impl EngineInner {
                         }
                         Command::WhistleCmd => {
                             match abilities::begin_whistle(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3572,7 +3578,7 @@ impl EngineInner {
                                 continue;
                             }
                             match abilities::begin_eat(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &mut self.sequence_manager,
                                 owner,
                                 seq_id,
@@ -3597,7 +3603,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_hit(
-                                        &mut self.entities,
+                                        &mut self.world.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3630,7 +3636,7 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     match abilities::begin_strangle(
-                                        &mut self.entities,
+                                        &mut self.world.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         target_id,
@@ -3672,7 +3678,7 @@ impl EngineInner {
                             match beggar {
                                 Some(beggar_id) => {
                                     match abilities::begin_pay(
-                                        &mut self.entities,
+                                        &mut self.world.entities,
                                         &mut self.sequence_manager,
                                         owner,
                                         beggar_id,
@@ -3704,7 +3710,7 @@ impl EngineInner {
                         }
                         Command::ReceivePurse => {
                             match abilities::begin_receive_purse(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 owner,
                                 seq_id,
                                 elem_idx,
@@ -3726,7 +3732,7 @@ impl EngineInner {
                             // (tick_abilities) → ListenDone →
                             // element_terminated in combat.rs.
                             match abilities::begin_listen(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 &assets.profile_manager,
                                 &mut self.sequence_manager,
                                 owner,
@@ -3751,7 +3757,7 @@ impl EngineInner {
                             // transition animation — so we terminate
                             // the LeaveListen element immediately.
                             if abilities::begin_leave_listen(
-                                &mut self.entities,
+                                &mut self.world.entities,
                                 owner,
                                 &mut self.next_order_id,
                             ) {
@@ -3930,7 +3936,7 @@ impl EngineInner {
                                 && prev_qty + dropped <= MAX_AMMO_PER_PILE
                             {
                                 if let Some(crate::element::Entity::Bonus(b)) =
-                                    self.entities.get_mut(last_id)
+                                    self.world.entities.get_mut(last_id)
                                 {
                                     b.object.quantity = prev_qty + dropped;
                                 }
@@ -3959,7 +3965,7 @@ impl EngineInner {
                                 && prev_bonus_state.is_some()
                             {
                                 let new_dir = (direction + 1).rem_euclid(16);
-                                if let Some(entity) = self.entities.get_mut(owner) {
+                                if let Some(entity) = self.world.entities.get_mut(owner) {
                                     entity.element_data_mut().set_direction_instantly(new_dir);
                                 }
                                 new_dir
@@ -3976,6 +3982,7 @@ impl EngineInner {
                                     let mut b = crate::coordinates::MapBBox::new();
                                     b.expand_point(pos);
                                     if self
+                                        .world
                                         .fast_grid
                                         .find_authorized_position_toward(&mut b, pos, layer)
                                     {
@@ -3990,7 +3997,7 @@ impl EngineInner {
                                     active: true,
                                     // Bonus default: blipped iff this
                                     // isn't a forest level.
-                                    blipped: !self.weather.is_forest_level,
+                                    blipped: !self.world.weather.is_forest_level,
                                     ..Default::default()
                                 };
                                 bonus_element.sprite.apply_placement(
@@ -4032,7 +4039,7 @@ impl EngineInner {
                             // next drop's merge gate evaluates against
                             // this drop.
                             if let Some(crate::element::Entity::Pc(pc)) =
-                                self.entities.get_mut(owner)
+                                self.world.entities.get_mut(owner)
                             {
                                 pc.pc.last_ammo_dropping_position = pos;
                                 pc.pc.last_dropping_direction = bumped_direction as u8;
@@ -4124,6 +4131,7 @@ impl EngineInner {
                                 let mut b = crate::coordinates::MapBBox::new();
                                 b.expand_point(pos);
                                 if self
+                                    .world
                                     .fast_grid
                                     .find_authorized_position_toward(&mut b, pos, layer)
                                 {
@@ -4144,7 +4152,7 @@ impl EngineInner {
                             let mut ale_element = crate::element::ElementData {
                                 kind: crate::element::ElementKind::ObjectBonus,
                                 active: true,
-                                blipped: !self.weather.is_forest_level,
+                                blipped: !self.world.weather.is_forest_level,
                                 ..Default::default()
                             };
                             ale_element.sprite.apply_placement(
@@ -4187,7 +4195,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_net(
-                                            &mut self.entities,
+                                            &mut self.world.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             pos,
@@ -4222,7 +4230,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_purse(
-                                            &mut self.entities,
+                                            &mut self.world.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             pos,
@@ -4257,7 +4265,7 @@ impl EngineInner {
                                         self.sequence_manager.element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_wasp_nest(
-                                            &mut self.entities,
+                                            &mut self.world.entities,
                                             &mut self.sequence_manager,
                                             owner,
                                             pos,
@@ -4322,7 +4330,7 @@ impl EngineInner {
                             }
                             let begin = match cmd {
                                 Command::ThrowApple => abilities::begin_throw_apple(
-                                    &mut self.entities,
+                                    &mut self.world.entities,
                                     &mut self.sequence_manager,
                                     owner,
                                     target,
@@ -4331,7 +4339,7 @@ impl EngineInner {
                                     &mut self.next_order_id,
                                 ),
                                 Command::ThrowStone => abilities::begin_throw_stone(
-                                    &mut self.entities,
+                                    &mut self.world.entities,
                                     &mut self.sequence_manager,
                                     owner,
                                     target,
@@ -4377,7 +4385,7 @@ impl EngineInner {
                                     crate::sequence::FieldValue::Integer(d) => Some(*d as i16),
                                     _ => None,
                                 });
-                            if let Some(entity) = self.entities.get_mut(owner) {
+                            if let Some(entity) = self.world.entities.get_mut(owner) {
                                 // Apply the direction: explicit wins;
                                 // otherwise face the camera point.
                                 // Use `set_direction_goal` (not
@@ -4436,7 +4444,7 @@ impl EngineInner {
                                     .get_entity(antag_id)
                                     .map(|e| e.element_data().position_map());
                                 if let (Some(antag_pos), Some(entity)) =
-                                    (antag_pos, self.entities.get_mut(owner))
+                                    (antag_pos, self.world.entities.get_mut(owner))
                                 {
                                     let pos = entity.element_data().position_map();
                                     let dir =
@@ -4501,7 +4509,7 @@ impl EngineInner {
                             } else {
                                 None
                             };
-                            if let Some(entity) = self.entities.get_mut(owner)
+                            if let Some(entity) = self.world.entities.get_mut(owner)
                                 && let Some(dir) = explicit_direction
                             {
                                 entity.element_data_mut().set_direction_instantly(dir);
@@ -4811,7 +4819,7 @@ impl EngineInner {
                                         _ => None,
                                     })
                                     .unwrap_or(0);
-                                if let Some(entity) = self.entities.get_mut(owner)
+                                if let Some(entity) = self.world.entities.get_mut(owner)
                                     && let Some(actor) = entity.actor_data_mut()
                                 {
                                     actor.wait_time = timer_val;
@@ -4826,7 +4834,7 @@ impl EngineInner {
                                 && action_state == crate::element::ActionState::Listening
                             {
                                 const TIME_LISTEN_WAIT: u32 = 25;
-                                if let Some(entity) = self.entities.get_mut(owner)
+                                if let Some(entity) = self.world.entities.get_mut(owner)
                                     && let Some(actor) = entity.actor_data_mut()
                                 {
                                     actor.wait_time = TIME_LISTEN_WAIT;
@@ -4838,7 +4846,7 @@ impl EngineInner {
                             // order is queued, when a conscious Lying
                             // actor is stuck under a net.
                             if set_posture_stuck_under_net
-                                && let Some(entity) = self.entities.get_mut(owner)
+                                && let Some(entity) = self.world.entities.get_mut(owner)
                             {
                                 entity
                                     .element_data_mut()
@@ -5079,14 +5087,14 @@ impl EngineInner {
                                     panic!("{:?}: missing interaction antagonist", command)
                                 });
                                 let direction_goal = {
-                                    let owner_pos = self.entities[owner]
+                                    let owner_pos = self.world.entities[owner]
                                         .as_ref()
                                         .unwrap_or_else(|| {
                                             panic!("{:?}: owner {:?} is missing", command, owner)
                                         })
                                         .element_data()
                                         .position_map();
-                                    let antagonist_pos = self.entities[a_id]
+                                    let antagonist_pos = self.world.entities[a_id]
                                         .as_ref()
                                         .unwrap_or_else(|| {
                                             panic!(
@@ -5101,7 +5109,7 @@ impl EngineInner {
                                         antagonist_pos.y - owner_pos.y,
                                     )
                                 };
-                                self.entities[owner]
+                                self.world.entities[owner]
                                     .as_mut()
                                     .unwrap_or_else(|| {
                                         panic!("{:?}: owner {:?} is missing", command, owner)
@@ -5239,7 +5247,7 @@ impl EngineInner {
                             // action.  We collect the call here and
                             // dispatch after the action loop so the
                             // script can safely borrow
-                            // `self.entities`.
+                            // `self.world.entities`.
                             let method = match cmd {
                                 Command::ActivateApple => "ActivatedByApple",
                                 Command::ActivateArrow => "ActivatedByArrow",
@@ -5520,8 +5528,8 @@ impl EngineInner {
         // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
         // (and therefore the observer's own movement) before RefreshView,
         // while actors with a later creation order have not run yet.
-        let mut positions_before_movement = EntitySlots::filled(self.entities.len(), None);
-        for (entity_id, entity) in self.entities.occupied() {
+        let mut positions_before_movement = EntitySlots::filled(self.world.entities.len(), None);
+        for (entity_id, entity) in self.world.entities.occupied() {
             positions_before_movement[entity_id] = Some(entity.element_data().position_map());
         }
 
@@ -5535,6 +5543,7 @@ impl EngineInner {
         // Only check entities actively moving in sword state.
         {
             let ids_to_check: Vec<EntityId> = self
+                .world
                 .entities
                 .humans()
                 .filter_map(|(entity_id, e)| {
@@ -5572,6 +5581,7 @@ impl EngineInner {
         // behaviour.
         {
             let pinch_aborts: Vec<(crate::sequence::SequenceId, usize)> = self
+                .world
                 .entities
                 .pcs()
                 .filter_map(|(eid, e)| {
@@ -5589,8 +5599,10 @@ impl EngineInner {
                     if !e.element.sprite.position_iface.is_moving_map() {
                         return None;
                     }
-                    if !crate::engine::melee::enemies_are_blocking_my_movement(&self.entities, eid)
-                    {
+                    if !crate::engine::melee::enemies_are_blocking_my_movement(
+                        &self.world.entities,
+                        eid,
+                    ) {
                         return None;
                     }
                     Some((seq_id, elem_idx))
@@ -5869,8 +5881,8 @@ impl EngineInner {
         // systems with proven cross-batch differences; keep the slot count
         // live rather than snapshotting ids.
         let mut slot = 0;
-        while slot < self.entities.len() {
-            let Some(entity_id) = self.entities.id_at_legacy_slot(slot as u32) else {
+        while slot < self.world.entities.len() {
+            let Some(entity_id) = self.world.entities.id_at_legacy_slot(slot as u32) else {
                 slot += 1;
                 continue;
             };
@@ -5949,7 +5961,7 @@ impl EngineInner {
         // campaign profile manager to look up LittleJohnCarry contextual
         // actions on the carrier.
         if self.mission_domain.campaign.is_some() {
-            abilities::sync_carried_positions(&mut self.entities, &assets.profile_manager);
+            abilities::sync_carried_positions(&mut self.world.entities, &assets.profile_manager);
         }
 
         // TODO(original-parity): move further gameplay maintenance into the
@@ -5992,7 +6004,7 @@ impl EngineInner {
         // expire finished titbits.
         {
             let query = EntityTitbitQuery {
-                entities: &self.entities,
+                entities: &self.world.entities,
                 sequence_manager: &self.sequence_manager,
                 follow_element: self.players.seats[0].follow_element,
             };
@@ -6001,9 +6013,10 @@ impl EngineInner {
             // display order using each supplier entity's Y position
             // as a stand-in (we don't compute display order yet).
             self.feedback.titbit_manager.prepare_refresh(|handle| {
-                self.entities
+                self.world
+                    .entities
                     .id_at_legacy_slot(handle.0)
-                    .and_then(|entity_id| self.entities.get(entity_id))
+                    .and_then(|entity_id| self.world.entities.get(entity_id))
                     .map(|e| e.element_data().position_map().y)
             });
         }
@@ -6024,7 +6037,7 @@ impl EngineInner {
         {
             let mut deselect = Vec::new();
             for &pc_id in &self.players.seats[0].selection {
-                if let Some(entity) = self.entities.get(pc_id) {
+                if let Some(entity) = self.world.entities.get(pc_id) {
                     let should_deselect = match entity {
                         Entity::Pc(pc) => pc.pc.life_points <= 0 || pc.human.unconscious,
                         _ => false,
@@ -6119,7 +6132,7 @@ impl EngineInner {
         use crate::element::ActionState;
         use crate::stealth;
 
-        let entity = match self.entities.get(owner) {
+        let entity = match self.world.entities.get(owner) {
             Some(e) => e,
             None => {
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -6158,9 +6171,9 @@ impl EngineInner {
         };
 
         // Resolve the HIDDEN-titbit phase from the PC's identity
-        // before we take a mutable borrow on `self.entities`.
+        // before we take a mutable borrow on `self.world.entities`.
         let hidden_phase = if transition.result_posture.is_hidden() {
-            let Some(crate::element::Entity::Pc(pc)) = self.entities.get(owner) else {
+            let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get(owner) else {
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
                 return;
             };
@@ -6186,7 +6199,7 @@ impl EngineInner {
         // animation: the dispatch registers a transition sequence
         // element whose `animation` maps to an order, and the order
         // drives the sprite animation.
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             let old_posture = entity.element_data().posture;
             entity.set_posture(transition.result_posture);
             if let Some(actor) = entity.actor_data_mut() {
@@ -6275,7 +6288,7 @@ impl EngineInner {
             return false;
         }
 
-        let posture = match self.entities.get(owner) {
+        let posture = match self.world.entities.get(owner) {
             Some(e) => e.element_data().posture,
             None => return false,
         };
@@ -6341,7 +6354,7 @@ impl EngineInner {
         // element and goes away with it.
         let dispatching = self.find_dispatching_element(owner, command);
 
-        if let Some(entity) = self.entities.get_mut(owner) {
+        if let Some(entity) = self.world.entities.get_mut(owner) {
             entity.set_posture(transition.result_posture);
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = transition.result_action_state;
@@ -6475,7 +6488,7 @@ impl EngineInner {
                 _ => None,
             });
 
-        let Some(entity) = self.entities.get_mut(entity_id) else {
+        let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
         if entity.actor_data().is_none() {
@@ -6561,7 +6574,7 @@ impl EngineInner {
 
         match action {
             OT::TransitionWaitingUprightClimbingWallUp => {
-                if let Some(entity) = self.entities.get_mut(entity_id) {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::OnWall);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
@@ -6569,7 +6582,7 @@ impl EngineInner {
                 }
             }
             OT::TransitionWaitingCrouchedClimbingWallDown => {
-                if let Some(entity) = self.entities.get_mut(entity_id) {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::OnWall);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
@@ -6595,7 +6608,7 @@ impl EngineInner {
                     Some(point_in),
                     "crenel climb-down transition",
                 );
-                if let Some(entity) = self.entities.get_mut(entity_id) {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::OnWall);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
@@ -6607,7 +6620,7 @@ impl EngineInner {
                 }
             }
             OT::TransitionClimbingWallUpWaitingCrouched => {
-                if let Some(entity) = self.entities.get_mut(entity_id) {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(if is_pc {
                         Posture::Crouched
                     } else {
@@ -6638,7 +6651,7 @@ impl EngineInner {
                     Some(point_out_probe),
                     "crenel climb-up transition",
                 );
-                if let Some(entity) = self.entities.get_mut(entity_id) {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::Flying);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;
@@ -6656,7 +6669,7 @@ impl EngineInner {
                 }
             }
             OT::TransitionClimbingWallDownWaitingUpright => {
-                if let Some(entity) = self.entities.get_mut(entity_id) {
+                if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     entity.set_posture(Posture::Upright);
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Waiting;
@@ -6767,7 +6780,7 @@ impl EngineInner {
             );
         }
 
-        let Some(entity) = self.entities.get_mut(entity_id) else {
+        let Some(entity) = self.world.entities.get_mut(entity_id) else {
             return;
         };
         let elem = entity.element_data_mut();
@@ -6871,7 +6884,7 @@ impl EngineInner {
             let mut door_triggers: Vec<(EntityId, crate::gate::DoorIndex, bool, u8)> = Vec::new();
             let mut select_triggers: Vec<(EntityId, f32)> = Vec::new();
             let (advance, arrived_movement, completed_pass) = {
-                let Some(entity) = self.entities.get_mut(entity_id) else {
+                let Some(entity) = self.world.entities.get_mut(entity_id) else {
                     continue;
                 };
                 let Some(actor) = entity.actor_data_mut() else {
@@ -7063,7 +7076,7 @@ impl EngineInner {
         // DRINKING_ALE DONE — deactivate the antagonist to hide
         // the ale bottle.
         for antag in sides.deactivate_entities {
-            if let Some(entity) = self.entities.get_mut(antag) {
+            if let Some(entity) = self.world.entities.get_mut(antag) {
                 entity.element_data_mut().active = false;
             }
         }
@@ -7144,7 +7157,7 @@ impl EngineInner {
             // own Entity::Scroll variant and a script-driven
             // `IsTaken` dispatch.
             let is_scroll = matches!(
-                self.entities.get(object),
+                self.world.entities.get(object),
                 Some(crate::element::Entity::Scroll(_))
             );
             if is_scroll {
@@ -7153,6 +7166,7 @@ impl EngineInner {
             }
 
             let object_type = self
+                .world
                 .entities
                 .get(object)
                 .and_then(|e| e.object_data())
@@ -7224,7 +7238,7 @@ impl EngineInner {
                         _ => 0,
                     };
                     if value > 0 {
-                        if let Some(entity) = self.entities.get_mut(taker)
+                        if let Some(entity) = self.world.entities.get_mut(taker)
                             && let Some(npc) = entity.npc_data_mut()
                         {
                             npc.money = npc.money.saturating_add(value);
@@ -7232,7 +7246,7 @@ impl EngineInner {
                         // Deactivate the object (clearing `active`
                         // is our equivalent of unlinking from the
                         // engine's active-element list).
-                        if let Some(entity) = self.entities.get_mut(object) {
+                        if let Some(entity) = self.world.entities.get_mut(object) {
                             entity.element_data_mut().active = false;
                         }
                     }
@@ -7248,6 +7262,7 @@ impl EngineInner {
         // the per-profile increment (see profiles.rs).
         for soldier in sides.drink_done {
             let profile_idx = self
+                .world
                 .entities
                 .get(soldier)
                 .and_then(|e| e.soldier_data())
@@ -7259,7 +7274,7 @@ impl EngineInner {
             if beer == 0 {
                 continue;
             }
-            if let Some(entity) = self.entities.get_mut(soldier)
+            if let Some(entity) = self.world.entities.get_mut(soldier)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(base) = npc.ai_brain.base_mut()
             {
@@ -7272,6 +7287,7 @@ impl EngineInner {
         // thief.money += victim.money; victim.money = 0.
         for (thief, victim) in sides.pickpockets {
             let stolen = self
+                .world
                 .entities
                 .get(victim)
                 .and_then(|e| e.npc_data())
@@ -7280,12 +7296,12 @@ impl EngineInner {
             if stolen == 0 {
                 continue;
             }
-            if let Some(entity) = self.entities.get_mut(victim)
+            if let Some(entity) = self.world.entities.get_mut(victim)
                 && let Some(npc) = entity.npc_data_mut()
             {
                 npc.money = 0;
             }
-            if let Some(entity) = self.entities.get_mut(thief)
+            if let Some(entity) = self.world.entities.get_mut(thief)
                 && let Some(npc) = entity.npc_data_mut()
             {
                 npc.money = npc.money.saturating_add(stolen);
@@ -7295,7 +7311,7 @@ impl EngineInner {
         // GETTING_FREE_FROM_WASP START — `Say(REMARK_WASP_STING)`.
         // Plain `say` on the AI base.
         for speaker in sides.wasp_sting_remark {
-            if let Some(entity) = self.entities.get_mut(speaker)
+            if let Some(entity) = self.world.entities.get_mut(speaker)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(base) = npc.ai_brain.base_mut()
             {
@@ -7313,9 +7329,10 @@ impl EngineInner {
         for speaker in sides.special_remark {
             // Two-step: read weapon/sprite info immutably, then
             // dispatch the remark mutably.  Splitting avoids holding
-            // an immutable borrow on `self.entities` across the
+            // an immutable borrow on `self.world.entities` across the
             // mutable `npc.ai_brain.enemy_mut()` call.
             let is_shield_bearer = self
+                .world
                 .entities
                 .get(speaker)
                 .map(|entity| {
@@ -7336,7 +7353,7 @@ impl EngineInner {
                     weapon_is_shield && has_shield_anim
                 })
                 .unwrap_or(false);
-            if let Some(entity) = self.entities.get_mut(speaker)
+            if let Some(entity) = self.world.entities.get_mut(speaker)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(enemy) = npc.ai_brain.enemy_mut()
             {
@@ -7350,7 +7367,7 @@ impl EngineInner {
         // `NOISE_VOLUME_HEEELP`, = 200).
         for speaker in sides.cry_for_help_under_net {
             let (remark, origin, layer, elevation) = {
-                let Some(entity) = self.entities.get(speaker) else {
+                let Some(entity) = self.world.entities.get(speaker) else {
                     continue;
                 };
                 let is_soldier = matches!(entity, Entity::Soldier(_));
@@ -7368,7 +7385,7 @@ impl EngineInner {
                     pos3d.z.max(0.0) as u16,
                 )
             };
-            if let Some(entity) = self.entities.get_mut(speaker)
+            if let Some(entity) = self.world.entities.get_mut(speaker)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(base) = npc.ai_brain.base_mut()
             {
@@ -7502,7 +7519,7 @@ impl EngineInner {
         };
         match cmd {
             Command::Unblip => {
-                if let Some(entity) = self.entities.get_mut(owner)
+                if let Some(entity) = self.world.entities.get_mut(owner)
                     && entity.element_data().blipped
                 {
                     entity.reveal_blip();
@@ -7542,7 +7559,7 @@ impl EngineInner {
                     (old, new)
                 };
                 if let (Some(old), Some(new)) = (old_anim, new_anim)
-                    && let Some(entity) = self.entities.get_mut(owner)
+                    && let Some(entity) = self.world.entities.get_mut(owner)
                 {
                     entity.element_data_mut().sprite.replace_anim(old, new);
                 }
@@ -7561,7 +7578,7 @@ impl EngineInner {
                     )
                 };
                 if let Some(old) = old_anim
-                    && let Some(entity) = self.entities.get_mut(owner)
+                    && let Some(entity) = self.world.entities.get_mut(owner)
                 {
                     entity.element_data_mut().sprite.restore_anim(old);
                 }
@@ -7606,7 +7623,7 @@ impl EngineInner {
                         speak_variant.map(|v| v as i32),
                     );
                 } else if let Ok(remark) = crate::ai::Remark::try_from(speak_id)
-                    && let Some(entity) = self.entities.get_mut(owner)
+                    && let Some(entity) = self.world.entities.get_mut(owner)
                     && let Some(ai) = entity.npc_data_mut().and_then(|n| n.ai_brain.base_mut())
                 {
                     let flags_bits = speak_flags.unwrap_or(0) as u16;
@@ -7741,7 +7758,7 @@ impl EngineInner {
                     const TELEPORT_FADE_FRAMES: u16 = 20;
                     let mut bstars = true;
                     if is_pc
-                        && let Some(entity) = self.entities.get_mut(owner)
+                        && let Some(entity) = self.world.entities.get_mut(owner)
                         && let Some(pc) = entity.pc_data_mut()
                     {
                         let breturn = pc.teleport_counter > 0;
@@ -7777,7 +7794,7 @@ impl EngineInner {
                     // When either step fails the entire apply
                     // block is skipped — the actor stays put but
                     // the new-position star burst still fires.
-                    let probe = self.fast_grid.get_sector_screen_accessible(dest);
+                    let probe = self.world.fast_grid.get_sector_screen_accessible(dest);
                     let move_box = self
                         .get_entity(owner)
                         .map(|e| *e.position_iface().get_move_box());
@@ -7786,7 +7803,7 @@ impl EngineInner {
                             (probe.sector_idx, probe.sector, move_box)
                         {
                             let mut box_at = move_box.translated(dest);
-                            if self.fast_grid.find_authorized_position_toward(
+                            if self.world.fast_grid.find_authorized_position_toward(
                                 &mut box_at,
                                 dest,
                                 probe.layer,
@@ -7830,7 +7847,7 @@ impl EngineInner {
                             "script teleport",
                         );
 
-                        if let Some(entity) = self.entities.get_mut(owner) {
+                        if let Some(entity) = self.world.entities.get_mut(owner) {
                             entity.element_data_mut().set_sector(final_sector_handle);
                         }
 
@@ -7843,7 +7860,7 @@ impl EngineInner {
                             let lift = self.get_sector_lift_type(final_sector_number);
                             match lift {
                                 Some(crate::sector::LiftType::Ladder) => {
-                                    if let Some(entity) = self.entities.get_mut(owner) {
+                                    if let Some(entity) = self.world.entities.get_mut(owner) {
                                         entity.set_posture(crate::element::Posture::OnLadder);
                                         if let Some(actor) = entity.actor_data_mut() {
                                             actor.action_state =
@@ -7852,7 +7869,7 @@ impl EngineInner {
                                     }
                                 }
                                 Some(crate::sector::LiftType::Wall) => {
-                                    if let Some(entity) = self.entities.get_mut(owner) {
+                                    if let Some(entity) = self.world.entities.get_mut(owner) {
                                         entity.set_posture(crate::element::Posture::OnWall);
                                         if let Some(actor) = entity.actor_data_mut() {
                                             actor.action_state =
@@ -7949,7 +7966,7 @@ impl EngineInner {
                 // NPC AI calls `script_lock(false, true)` /
                 // `script_unlock`.  PCs cannot be locked this way.
                 let lock = cmd == Command::LockAi;
-                if let Some(entity) = self.entities.get_mut(owner)
+                if let Some(entity) = self.world.entities.get_mut(owner)
                     && entity.is_npc()
                 {
                     let is_unconscious =
@@ -8864,6 +8881,7 @@ mod drop_ammo_merge_tests {
 
     fn count_bonuses(engine: &EngineInner, action: Action) -> Vec<(EntityId, u16)> {
         engine
+            .world
             .entities
             .bonuses()
             .filter_map(|(entity_id, bonus)| {
@@ -9019,7 +9037,7 @@ mod drop_ammo_merge_tests {
 
         // Teleport the PC sideways before the second drop — same as
         // walking off the original tile.
-        if let Some(entity) = engine.entities.get_mut(pc_id) {
+        if let Some(entity) = engine.world.entities.get_mut(pc_id) {
             entity
                 .element_data_mut()
                 .set_position_map(crate::coordinates::MapPoint { x: 200.0, y: 200.0 });

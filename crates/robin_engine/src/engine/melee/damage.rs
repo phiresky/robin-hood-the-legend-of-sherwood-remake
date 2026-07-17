@@ -30,11 +30,12 @@ impl EngineInner {
         // box and can drift further.
         let click = crate::coordinates::MapPoint::new(start.x, start.y);
         if self
+            .world
             .fast_grid
             .find_authorized_position_toward(&mut bbox, click, layer)
         {
             let center = bbox.center();
-            if let Some(entity) = self.entities.get_mut(victim_id) {
+            if let Some(entity) = self.world.entities.get_mut(victim_id) {
                 entity
                     .element_data_mut()
                     .set_position_map(crate::coordinates::MapPoint {
@@ -221,7 +222,7 @@ impl EngineInner {
                     (elem.direction(), elem.position().z)
                 })
                 .unwrap_or((0, 0.0));
-            let def_to_atk = direction_to(&self.entities, victim_id, attacker);
+            let def_to_atk = direction_to(&self.world.entities, victim_id, attacker);
             let ability = self
                 .get_entity(attacker)
                 .map(|e| fighting_ability_from_profile(e, &assets.profile_manager))
@@ -239,7 +240,7 @@ impl EngineInner {
         };
 
         // Read defender context
-        let victim = match self.entities.get(victim_id) {
+        let victim = match self.world.entities.get(victim_id) {
             Some(e) => e,
             None => return,
         };
@@ -258,7 +259,7 @@ impl EngineInner {
 
         let ctx = concussion_ctx_full(
             victim,
-            self.weather.is_forest_level,
+            self.world.weather.is_forest_level,
             self.mission_domain.campaign.as_ref(),
         );
 
@@ -287,7 +288,7 @@ impl EngineInner {
         };
 
         // Apply damage (requires mutable access to human_data + life_points)
-        let victim = match self.entities.get_mut(victim_id) {
+        let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
             None => return,
         };
@@ -512,7 +513,7 @@ impl EngineInner {
         }
 
         // Soldier learning: bad sword strike experience.
-        if let Some(Entity::Soldier(_)) = self.entities.get(victim_id)
+        if let Some(Entity::Soldier(_)) = self.world.entities.get(victim_id)
             && attacker_id.is_some()
             && !result.is_empty()
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
@@ -697,7 +698,7 @@ impl EngineInner {
         // Gate the post-drop hulk flash on dead/unconscious bodies
         // dropped inside a building so they remain visible through
         // walls.
-        let in_building = is_in_building_sector(carrier_sector, &self.fast_grid);
+        let in_building = is_in_building_sector(carrier_sector, &self.world.fast_grid);
 
         if let Some(carried) = self.get_entity_mut(carried_id) {
             let elem = carried.element_data_mut();
@@ -797,18 +798,18 @@ impl EngineInner {
             }
         }
 
-        let victim = match self.entities.get(victim_id) {
+        let victim = match self.world.entities.get(victim_id) {
             Some(e) => e,
             None => return,
         };
         let ctx = concussion_ctx_full(
             victim,
-            self.weather.is_forest_level,
+            self.world.weather.is_forest_level,
             self.mission_domain.campaign.as_ref(),
         );
         let max_lp = get_max_life_points(victim);
 
-        let victim = match self.entities.get_mut(victim_id) {
+        let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
             None => return,
         };
@@ -919,18 +920,18 @@ impl EngineInner {
             return;
         }
 
-        let victim = match self.entities.get(victim_id) {
+        let victim = match self.world.entities.get(victim_id) {
             Some(e) => e,
             None => return,
         };
         let ctx = concussion_ctx_full(
             victim,
-            self.weather.is_forest_level,
+            self.world.weather.is_forest_level,
             self.mission_domain.campaign.as_ref(),
         );
         let max_lp = get_max_life_points(victim);
 
-        let victim = match self.entities.get_mut(victim_id) {
+        let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
             None => return,
         };
@@ -1059,13 +1060,13 @@ impl EngineInner {
             tracing::debug!(?victim_id, "hit damage blocked: scroll-carrying beggar");
             return;
         }
-        let victim = match self.entities.get(victim_id) {
+        let victim = match self.world.entities.get(victim_id) {
             Some(e) => e,
             None => return,
         };
         let ctx = concussion_ctx_full(
             victim,
-            self.weather.is_forest_level,
+            self.world.weather.is_forest_level,
             self.mission_domain.campaign.as_ref(),
         );
         let life_points = get_life_points(victim);
@@ -1073,7 +1074,7 @@ impl EngineInner {
             && victim.soldier_data().map(|s| s.cached_camp)
                 == Some(crate::element::Camp::Lacklandists);
 
-        let victim = match self.entities.get_mut(victim_id) {
+        let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
             None => return,
         };
@@ -1257,7 +1258,7 @@ impl EngineInner {
                 let try_x = victim_pos.x + flight_x * frac;
                 let try_y = victim_pos.y + flight_y * frac;
                 let pt_try = crate::coordinates::MapPoint::new(try_x, try_y);
-                if self.fast_grid.is_straight_movement_authorized(
+                if self.world.fast_grid.is_straight_movement_authorized(
                     pt_start,
                     pt_try,
                     victim_layer,
@@ -1296,7 +1297,7 @@ impl EngineInner {
                 .unwrap_or(0)
         };
 
-        if let Some(entity) = self.entities.get_mut(victim_id) {
+        if let Some(entity) = self.world.entities.get_mut(victim_id) {
             entity
                 .element_data_mut()
                 .set_direction_instantly(facing_sector);
@@ -1319,7 +1320,7 @@ impl EngineInner {
         // ActiveFlight is applied unconditionally (it's separate from
         // animation state — the per-frame flight tick reads it).
         if !is_harder_hit
-            && let Some(entity) = self.entities.get_mut(victim_id)
+            && let Some(entity) = self.world.entities.get_mut(victim_id)
             && let Some(actor) = entity.actor_data_mut()
         {
             let dx = goal_x - victim_pos.x;
@@ -1386,7 +1387,7 @@ impl EngineInner {
         }
 
         // SetStates(StuckUnderNet, Waiting).
-        if let Some(entity) = self.entities.get_mut(victim_id) {
+        if let Some(entity) = self.world.entities.get_mut(victim_id) {
             entity.set_posture_stuck_under_net_for_human();
         }
 
@@ -1430,7 +1431,7 @@ impl EngineInner {
 
         // Read state without holding a borrow on self
         let (life_points, is_unconscious, is_pc, in_coma) = {
-            let victim = match self.entities.get(victim_id) {
+            let victim = match self.world.entities.get(victim_id) {
                 Some(e) => e,
                 None => return,
             };
@@ -1477,7 +1478,7 @@ impl EngineInner {
             // PC.  Resolve the attacker identity here so
             // `handle_knockout` can gate the broadcast.
             let attacker_is_pc = attacker_id
-                .and_then(|id| self.entities.get(id))
+                .and_then(|id| self.world.entities.get(id))
                 .map(|e| e.kind().is_pc())
                 .unwrap_or(false);
             self.handle_knockout(assets, victim_id, damage_element, attacker_is_pc);
@@ -1556,7 +1557,7 @@ impl EngineInner {
             .unwrap_or(false);
 
         if let Some(direction) = flight_direction
-            && let Some(victim) = self.entities.get_mut(victim_id)
+            && let Some(victim) = self.world.entities.get_mut(victim_id)
         {
             victim
                 .element_data_mut()
@@ -1604,16 +1605,16 @@ impl EngineInner {
         kind: crate::element::DetectableType,
     ) {
         let det_idx = kind as usize;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
         for npc_id in npc_ids {
             if npc_id == subject {
                 continue;
             }
-            if let Some(Entity::Soldier(s)) = self.entities.get_mut(npc_id)
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id)
                 && det_idx < s.npc.detectable_lists.len()
             {
                 s.npc.detectable_lists[det_idx].retain(|d| d.element != Some(subject));
-            } else if let Some(Entity::Civilian(c)) = self.entities.get_mut(npc_id)
+            } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(npc_id)
                 && det_idx < c.npc.detectable_lists.len()
             {
                 c.npc.detectable_lists[det_idx].retain(|d| d.element != Some(subject));
@@ -1636,6 +1637,7 @@ impl EngineInner {
     /// - Always: burn the three macro slots belonging to the dead PC.
     pub(super) fn apply_pc_kill_cascade(&mut self, assets: &LevelAssets, victim_id: EntityId) {
         let pc_info = self
+            .world
             .entities
             .get(victim_id)
             .and_then(|e| e.pc_data())
@@ -1686,7 +1688,7 @@ impl EngineInner {
                 })
                 .is_some();
             if has_replacement
-                && let Some(entity) = self.entities.get_mut(victim_id)
+                && let Some(entity) = self.world.entities.get_mut(victim_id)
                 && let Some(pc) = entity.pc_data_mut()
             {
                 pc.trumpet_enabled = true;
@@ -1800,7 +1802,7 @@ impl EngineInner {
                 crate::sequence::SequenceElementData::Damage { origin, .. } => *origin,
                 _ => None,
             })
-            .and_then(|k| self.entities.get(k))
+            .and_then(|k| self.world.entities.get(k))
             .map(|e| e.is_pc())
             .unwrap_or(false);
 
@@ -1823,7 +1825,7 @@ impl EngineInner {
         self.delete_detectable_for_all_npc(victim_id, crate::element::DetectableType::Friend);
         self.delete_detectable_for_all_npc(victim_id, crate::element::DetectableType::MissedFriend);
 
-        let victim = match self.entities.get_mut(victim_id) {
+        let victim = match self.world.entities.get_mut(victim_id) {
             Some(e) => e,
             None => return,
         };
@@ -1897,6 +1899,7 @@ impl EngineInner {
         // true; the per-frame update reaps the titbit once the flag
         // turns false a tick later.
         let still_unconscious = self
+            .world
             .entities
             .get(victim_id)
             .and_then(|e| e.human_data())
@@ -1905,7 +1908,7 @@ impl EngineInner {
             crate::titbit::ElementHandle(victim_id.index()),
             still_unconscious,
         );
-        if let Some(entity) = self.entities.get_mut(victim_id)
+        if let Some(entity) = self.world.entities.get_mut(victim_id)
             && let Some(human) = entity.human_data_mut()
         {
             human.unconscious = false;
@@ -2029,7 +2032,7 @@ impl EngineInner {
         attacker_is_pc: bool,
         set_lying_now: bool,
     ) {
-        let Some(victim) = self.entities.get_mut(victim_id) else {
+        let Some(victim) = self.world.entities.get_mut(victim_id) else {
             return;
         };
 
