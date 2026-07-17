@@ -2,21 +2,134 @@
 //!
 //! The native and headless loops still differ in input, modal, and
 //! presentation work, but they share the same deterministic frame
-//! bookkeeping through [`MissionRuntime`].
+//! bookkeeping through [`TimelineRuntime`].
 
 use super::multiplayer::MultiplayerRollbackTelemetry;
 use super::replay_init::ReplayAndRollback;
+use crate::Host;
+use crate::game::Game;
 use crate::game_operation::GameCode;
-use crate::player_command::PlayerInput;
+use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
 use crate::replay::{ReplayPlayer, ReplayRecorder};
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use crate::sim_timeline::{
     CheckpointPolicy, RECENT_TIMELINE_HISTORY_FRAMES, RetentionPolicy, SnapshotHistory,
 };
-use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine::{DevState, Engine, LevelAssets};
+use robin_engine::engine_manager::EngineManager;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
+
+/// Common owned state for one loaded mission.
+///
+/// This deliberately stops at the simulation/host boundary. Renderer, input,
+/// audio backend, and modal resources remain in the graphical driver until the
+/// interactive-frontend extraction. None of these process resources is
+/// serializable; deterministic persistence remains the Engine snapshot.
+pub(super) struct MissionWorld {
+    // TODO(refactor): make these fields private once frame methods move onto
+    // their focused owners. Wave 1 borrows them directly to keep loop order
+    // and behavior unchanged.
+    pub(super) host: Host,
+    pub(super) game: Game,
+    pub(super) manager: EngineManager,
+    pub(super) assets: Arc<LevelAssets>,
+    pub(super) dev: DevState,
+}
+
+impl MissionWorld {
+    pub(super) fn new(
+        host: Host,
+        game: Game,
+        manager: EngineManager,
+        assets: Arc<LevelAssets>,
+        dev: DevState,
+    ) -> Self {
+        Self {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        }
+    }
+}
+
+/// Mission-lifetime host controls which are neither deterministic Engine state
+/// nor timeline resources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MissionControl {
+    pub(super) manual_pause: bool,
+    pub(super) step_forward_repeat_at_ms: Option<u32>,
+    pub(super) step_back_repeat_at_ms: Option<u32>,
+    pub(super) last_shadow_color: u16,
+}
+
+impl MissionControl {
+    pub(super) fn new(manual_pause: bool, last_shadow_color: u16) -> Self {
+        Self {
+            manual_pause,
+            step_forward_repeat_at_ms: None,
+            step_back_repeat_at_ms: None,
+            last_shadow_color,
+        }
+    }
+}
+
+/// Ephemeral state for one host-loop iteration.
+///
+/// The headless driver adopts this shell in Wave 1. The graphical driver keeps
+/// its locals until its input/modal frontend is extracted, avoiding a broad
+/// parameter-only rewrite with no ownership benefit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MissionFrame {
+    pub(super) started_at_ms: u32,
+    pub(super) commands: FrameCommands,
+    pub(super) modal_dismissals: Vec<PlayerCommand>,
+    pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
+    pub(super) recorder_hash: Option<u64>,
+}
+
+impl MissionFrame {
+    pub(super) fn new(started_at_ms: u32) -> Self {
+        Self {
+            started_at_ms,
+            commands: FrameCommands::new(),
+            modal_dismissals: Vec::new(),
+            replay_modal_dismissals: VecDeque::new(),
+            recorder_hash: None,
+        }
+    }
+}
+
+/// Owner of the common state for one active mission.
+///
+/// `TimelineRuntime` remains a focused component rather than growing Engine,
+/// Host, and UI responsibilities. The dedicated headless driver borrows these
+/// three disjoint fields in Wave 1. The graphical driver adopts the same owner
+/// with its interactive-frontend extraction, avoiding a broad parameter-only
+/// rewrite now.
+pub(super) struct MissionRuntime {
+    pub(super) world: MissionWorld,
+    pub(super) timeline: TimelineRuntime,
+    pub(super) control: MissionControl,
+}
+
+impl MissionRuntime {
+    pub(super) fn new(
+        world: MissionWorld,
+        timeline: TimelineRuntime,
+        control: MissionControl,
+    ) -> Self {
+        Self {
+            world,
+            timeline,
+            control,
+        }
+    }
+}
 
 /// Coarse stages that both mission-loop implementations pass through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +138,84 @@ pub(super) enum MissionPhase {
     Simulation,
     Bookkeeping,
     Presentation,
+}
+
+/// Which host driver is advancing the deterministic mission timeline.
+///
+/// This is intentionally distinct from `CliArgs::headless`: the graphical
+/// driver can suppress drawing for tooling, while the dedicated headless
+/// driver has a different modal and replay-completion contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) enum FrameContract {
+    Graphical,
+    Headless,
+}
+
+/// Behavior-sensitive checkpoints in one host-frame contract.
+///
+/// The arrays returned by [`FrameContract::stages`] characterize the current
+/// loops before ownership is moved. They are deliberately more detailed than
+/// [`MissionPhase`], whose assertions cover only the shared deterministic
+/// timeline. Moving a checkpoint requires changing the corresponding contract
+/// test and validating the move against replay hashes and Original ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(test)]
+pub(super) enum FrameContractStage {
+    NetworkIngress,
+    TimelineBegin,
+    InputAndMenus,
+    OperationAndSave,
+    PreTickCommands,
+    Simulation,
+    HostRpcAndTimelineCommit,
+    ModalDrain,
+    RecorderCommit,
+    AppEffectsAndAudio,
+    Presentation,
+    PostInitialize,
+    Pacing,
+}
+
+#[cfg(test)]
+const GRAPHICAL_FRAME_CONTRACT: &[FrameContractStage] = &[
+    FrameContractStage::NetworkIngress,
+    FrameContractStage::TimelineBegin,
+    FrameContractStage::InputAndMenus,
+    FrameContractStage::OperationAndSave,
+    FrameContractStage::PreTickCommands,
+    FrameContractStage::Simulation,
+    FrameContractStage::HostRpcAndTimelineCommit,
+    FrameContractStage::ModalDrain,
+    FrameContractStage::RecorderCommit,
+    FrameContractStage::AppEffectsAndAudio,
+    FrameContractStage::Presentation,
+    FrameContractStage::PostInitialize,
+    FrameContractStage::Pacing,
+];
+
+#[cfg(test)]
+const HEADLESS_FRAME_CONTRACT: &[FrameContractStage] = &[
+    FrameContractStage::TimelineBegin,
+    FrameContractStage::PreTickCommands,
+    FrameContractStage::Simulation,
+    FrameContractStage::HostRpcAndTimelineCommit,
+    FrameContractStage::ModalDrain,
+    // The dedicated headless path crosses the first-refresh semantic boundary
+    // before committing frame zero. It has no audio or renderer to run first.
+    FrameContractStage::PostInitialize,
+    FrameContractStage::RecorderCommit,
+    FrameContractStage::Presentation,
+    FrameContractStage::Pacing,
+];
+
+impl FrameContract {
+    #[cfg(test)]
+    pub(super) fn stages(self) -> &'static [FrameContractStage] {
+        match self {
+            Self::Graphical => GRAPHICAL_FRAME_CONTRACT,
+            Self::Headless => HEADLESS_FRAME_CONTRACT,
+        }
+    }
 }
 
 /// The decision produced at the end of one host frame.
@@ -88,7 +279,8 @@ impl FrameClock {
 /// This is deliberately not serializable: recorder writers, rollback
 /// workers, and live network diagnostics are process resources, not game
 /// state. Persisting them would create a fake/default runtime on restore.
-pub(super) struct MissionRuntime {
+pub(super) struct TimelineRuntime {
+    contract: FrameContract,
     phase: MissionPhase,
     clock: FrameClock,
 
@@ -112,13 +304,15 @@ pub(super) struct MissionRuntime {
     pub(super) pending_mp_state_hash: Option<(u32, u64)>,
 }
 
-impl MissionRuntime {
+impl TimelineRuntime {
     pub(super) fn new(
         replay: ReplayAndRollback,
+        contract: FrameContract,
         wait_for_multiplayer_start: bool,
         local_is_host: bool,
     ) -> Self {
         Self {
+            contract,
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
             replay_recorder: replay.recorder,
@@ -148,6 +342,10 @@ impl MissionRuntime {
 
     pub(super) fn initially_paused(&self) -> bool {
         self.start_paused || self.mp_waiting_for_initial_snapshot || self.mp_waiting_for_begin_sim
+    }
+
+    pub(super) fn frame_contract(&self) -> FrameContract {
+        self.contract
     }
 
     /// Start the input phase and capture the shared pre-command snapshots.
@@ -275,6 +473,101 @@ fn transition_phase(phase: &mut MissionPhase, expected: MissionPhase, next: Miss
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mission_control_round_trips_without_defaulting_process_state() {
+        let control = MissionControl {
+            manual_pause: true,
+            step_forward_repeat_at_ms: Some(120),
+            step_back_repeat_at_ms: Some(240),
+            last_shadow_color: 0x1234,
+        };
+        let encoded = serde_json::to_string(&control).expect("serialize mission control");
+        let decoded: MissionControl =
+            serde_json::from_str(&encoded).expect("deserialize mission control");
+        assert_eq!(decoded, control);
+    }
+
+    #[test]
+    fn mission_frame_owns_only_one_iterations_commands() {
+        let mut frame = MissionFrame::new(777);
+        frame.commands.push(PlayerCommand::QuitMissionRequested);
+        frame.recorder_hash = Some(0x55aa);
+
+        let encoded = serde_json::to_string(&frame).expect("serialize mission frame");
+        let decoded: MissionFrame =
+            serde_json::from_str(&encoded).expect("deserialize mission frame");
+
+        assert_eq!(decoded.started_at_ms, 777);
+        assert_eq!(decoded.commands.commands.len(), 1);
+        assert!(matches!(
+            decoded.commands.commands[0].command,
+            PlayerCommand::QuitMissionRequested
+        ));
+        assert_eq!(decoded.recorder_hash, Some(0x55aa));
+        assert!(decoded.modal_dismissals.is_empty());
+        assert!(decoded.replay_modal_dismissals.is_empty());
+    }
+
+    #[test]
+    fn graphical_contract_keeps_original_refresh_sound_post_initialize_tail() {
+        let stages = FrameContract::Graphical.stages();
+        assert_eq!(
+            stages,
+            &[
+                FrameContractStage::NetworkIngress,
+                FrameContractStage::TimelineBegin,
+                FrameContractStage::InputAndMenus,
+                FrameContractStage::OperationAndSave,
+                FrameContractStage::PreTickCommands,
+                FrameContractStage::Simulation,
+                FrameContractStage::HostRpcAndTimelineCommit,
+                FrameContractStage::ModalDrain,
+                FrameContractStage::RecorderCommit,
+                FrameContractStage::AppEffectsAndAudio,
+                FrameContractStage::Presentation,
+                FrameContractStage::PostInitialize,
+                FrameContractStage::Pacing,
+            ]
+        );
+        let present = stages
+            .iter()
+            .position(|stage| *stage == FrameContractStage::Presentation)
+            .expect("graphical contract requires presentation");
+        let post_initialize = stages
+            .iter()
+            .position(|stage| *stage == FrameContractStage::PostInitialize)
+            .expect("graphical contract requires PostInitialize");
+        assert!(present < post_initialize);
+    }
+
+    #[test]
+    fn headless_contract_keeps_post_initialize_before_frame_zero_commit() {
+        let stages = FrameContract::Headless.stages();
+        assert_eq!(
+            stages,
+            &[
+                FrameContractStage::TimelineBegin,
+                FrameContractStage::PreTickCommands,
+                FrameContractStage::Simulation,
+                FrameContractStage::HostRpcAndTimelineCommit,
+                FrameContractStage::ModalDrain,
+                FrameContractStage::PostInitialize,
+                FrameContractStage::RecorderCommit,
+                FrameContractStage::Presentation,
+                FrameContractStage::Pacing,
+            ]
+        );
+        let post_initialize = stages
+            .iter()
+            .position(|stage| *stage == FrameContractStage::PostInitialize)
+            .expect("headless contract requires PostInitialize");
+        let commit = stages
+            .iter()
+            .position(|stage| *stage == FrameContractStage::RecorderCommit)
+            .expect("headless contract requires recorder commit");
+        assert!(post_initialize < commit);
+    }
 
     #[test]
     fn frame_clock_preserves_original_25_hz_and_slow_motion_cadence() {
