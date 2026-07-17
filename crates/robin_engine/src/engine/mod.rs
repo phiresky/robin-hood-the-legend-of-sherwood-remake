@@ -434,10 +434,31 @@ pub struct EngineInner {
 /// `ResumeAll` dispatches to schedule a deterministic finish.
 pub type SourceDurations = std::sync::Arc<std::collections::BTreeMap<u32, u32>>;
 
-/// Fallback duration when the host hasn't (or can't) populate a
-/// sample-length entry for a given source id — approximately 3 s at
-/// 25 fps.
-pub const SOURCE_DEFAULT_FRAMES: u32 = 75;
+/// Return the decoded duration for an exclamation, or the original
+/// missing-sample completion value. `RHSound::GetSampleLengthMs` returns
+/// zero when `GetCacheEntryForSettings` cannot resolve/load the sample;
+/// the following sound hourglass then completes that pending sound
+/// immediately. Rust schedules that zero-length completion for the next
+/// simulation boundary so it remains rollback deterministic.
+pub(super) fn exclamation_duration_frames(
+    durations: &ExclamationDurations,
+    group: crate::sound::ExclamationGroup,
+    profile_id: u32,
+    exclamation_id: u16,
+) -> u32 {
+    durations
+        .get(&(group, profile_id, exclamation_id))
+        .copied()
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                ?group,
+                profile_id,
+                exclamation_id,
+                "exclamation sample missing from duration table; scheduling zero-length completion"
+            );
+            0
+        })
+}
 
 /// A queued persistent background decal update for an FX entity whose
 /// patch just transitioned. `restore_only = true` removes the decal
