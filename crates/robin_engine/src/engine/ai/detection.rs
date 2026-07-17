@@ -176,6 +176,23 @@ fn enemies_near_from_them_list(
         .collect()
 }
 
+fn queued_human_detection_stimuli(
+    event_type: crate::ai::StimulusType,
+    shadow_dispatches: Vec<crate::ai::Position>,
+    rising_dispatches: Vec<EntityId>,
+) -> Vec<crate::ai::Stimulus> {
+    let mut stimuli = Vec::with_capacity(shadow_dispatches.len() + rising_dispatches.len());
+    stimuli.extend(shadow_dispatches.into_iter().map(|position| {
+        crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventSeesShadow, position)
+    }));
+    stimuli.extend(
+        rising_dispatches
+            .into_iter()
+            .map(|target_id| crate::ai::Stimulus::with_human(event_type, target_id.index())),
+    );
+    stimuli
+}
+
 impl EngineInner {
     /// Original: `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest`.
     ///
@@ -905,10 +922,12 @@ impl EngineInner {
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): Acoustic detection is still globally precomputed before
-    // this loop, Royalist detection remains a later global phase, and every
-    // stimulus in one NPC's FIFO currently shares the same boundary scratch
-    // rather than rebuilding context after each preceding Think mutation.
+    // TODO(parity): EVENT_HEAR is still queued by a global acoustic prepass
+    // instead of being Thought synchronously before this NPC's optical scan;
+    // EVENT_OUTOFVIEW is collected for a later global dispatch; Royalist
+    // detection remains a later global phase; and every stimulus in one NPC's
+    // FIFO shares the same boundary scratch instead of rebuilding context
+    // after each preceding Think mutation.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
@@ -945,7 +964,7 @@ impl EngineInner {
             // before scanning later detectable types, preserving the relative
             // SHADOW → VIEW → BODY → OBJECT → FRIEND → MISSED_FRIEND → BEGGAR
             // order behind any earlier stimulus already in the NPC FIFO.
-            if let Some((stimulus, _tick_data)) = think_input {
+            let event_view_tick_data = if let Some((stimulus, tick_data)) = think_input {
                 let entity = self.entities.get_mut(npc_id).unwrap_or_else(|| {
                     panic!(
                         "detected NPC {} disappeared before its same-phase stimulus queue",
@@ -958,8 +977,17 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
+                let queue_index = ai.pending_stimuli.len();
+                let stimulus_type = stimulus.stimulus_type;
                 ai.pending_stimuli.push(stimulus);
-            }
+                Some(super::post_detection::PendingEventViewTickData {
+                    queue_index,
+                    stimulus_type,
+                    tick_data,
+                })
+            } else {
+                None
+            };
             // Original NPC::Hourglass completes this NPC's entire
             // RefreshDetection scan before flushing its FIFO stimulus list.
             // Rebuild only the volatile human/object target metadata here;
@@ -967,7 +995,8 @@ impl EngineInner {
             // construction also updates produced-noise state. No Think has
             // run for this NPC yet, so all its buckets observe the same
             // pre-Think state.
-            let (human_targets, object_targets) = self.tick_enemy_ai_build_human_object_targets();
+            let (human_targets, object_targets) =
+                self.tick_enemy_ai_build_human_object_targets_for_npc(npc_id);
             self.tick_enemy_ai_refresh_per_type_for_npc(
                 npc_id,
                 assets,
@@ -977,16 +1006,35 @@ impl EngineInner {
                 golden_eye,
             );
 
+            let has_pending_stimuli = self
+                .entities
+                .get(npc_id)
+                .and_then(Entity::ai_controller)
+                .is_some_and(|ai| !ai.pending_stimuli.is_empty());
+            if !has_pending_stimuli {
+                assert!(
+                    event_view_tick_data.is_none(),
+                    "queued EVENT_VIEW lost its pending stimulus before the per-NPC drain"
+                );
+                continue;
+            }
+
             // Refresh live entity/context views at this NPC's FIFO-flush
             // boundary. Earlier NPC Think calls may have changed AI state,
             // focus, sequences, or other metadata consumed by this slot.
+            // Quiet NPCs skip this full entity-view clone entirely.
             let live_scratch = self.build_sim_scratch(assets);
 
             // TODO(parity): rebuild context views between successive queued
             // stimuli when an earlier Think can mutate data consumed by the
             // next one. Acoustic and Royalist detection are still coordinated
             // by their existing global phases rather than this per-NPC loop.
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, &live_scratch);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                npc_id,
+                assets,
+                &live_scratch,
+                event_view_tick_data,
+            );
         }
 
         (transitions, out_of_view_dispatches)
@@ -3528,9 +3576,14 @@ impl EngineInner {
         if (!rising_dispatches.is_empty() || !shadow_dispatches.is_empty())
             && let Some(ai) = soldier.npc.ai_brain.base_mut()
         {
-            for target_id in rising_dispatches {
-                let stimulus = crate::ai::Stimulus::with_human(event_type, target_id.index());
-                ai.pending_stimuli.push(stimulus);
+            for _shadow_pos in &shadow_dispatches {
+                tracing::trace!(
+                    npc = ?npc_id,
+                    ?kind,
+                    "EventSeesShadow (rising edge)"
+                );
+            }
+            for target_id in &rising_dispatches {
                 tracing::trace!(
                     npc = ?npc_id,
                     target = ?target_id,
@@ -3539,18 +3592,11 @@ impl EngineInner {
                     "non-Enemy detectable rising edge"
                 );
             }
-            for shadow_pos in shadow_dispatches {
-                let stimulus = crate::ai::Stimulus::with_position(
-                    crate::ai::StimulusType::EventSeesShadow,
-                    shadow_pos,
-                );
-                ai.pending_stimuli.push(stimulus);
-                tracing::trace!(
-                    npc = ?npc_id,
-                    ?kind,
-                    "EventSeesShadow (rising edge)"
-                );
-            }
+            ai.pending_stimuli.extend(queued_human_detection_stimuli(
+                event_type,
+                shadow_dispatches,
+                rising_dispatches,
+            ));
         }
     }
 
@@ -3835,5 +3881,23 @@ mod tests {
         });
 
         assert_eq!(selected, vec![5, 1]);
+    }
+
+    #[test]
+    fn body_predetection_shadow_is_queued_before_body_commit() {
+        let stimuli = queued_human_detection_stimuli(
+            crate::ai::StimulusType::EventSeesBody,
+            vec![Position::default()],
+            vec![EntityId::Soldier(crate::entity_id::SoldierId(7))],
+        );
+        assert_eq!(stimuli.len(), 2);
+        assert_eq!(
+            stimuli[0].stimulus_type,
+            crate::ai::StimulusType::EventSeesShadow
+        );
+        assert_eq!(
+            stimuli[1].stimulus_type,
+            crate::ai::StimulusType::EventSeesBody
+        );
     }
 }

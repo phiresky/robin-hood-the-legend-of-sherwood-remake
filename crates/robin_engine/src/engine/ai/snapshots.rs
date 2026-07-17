@@ -1025,11 +1025,10 @@ impl EngineInner {
         ko_money_fight_soldiers
     }
 
-    /// P2e — snapshot every potential human + object target referenced
-    /// in any NPC's per-type detectable list.  Built once per tick and
-    /// passed into the per-NPC body / friend / missed-friend / beggar /
-    /// object detection passes so they can run without re-borrowing
-    /// `self.entities` for each lookup.
+    /// Snapshot every potential human + object target referenced by one
+    /// NPC's per-type detectable lists at that NPC's creation-order boundary.
+    /// The resulting maps let the body / friend / missed-friend / beggar /
+    /// object passes run without re-borrowing `self.entities` for each lookup.
     ///
     /// Captures the targets the per-type detection-refresh loop
     /// dereferences from each detectable list.  Hashing by
@@ -1045,48 +1044,44 @@ impl EngineInner {
     /// predicate).  Object stays in its own snapshot map because it
     /// uses `compute_object_visibility`, which has a different query
     /// shape.
-    pub(super) fn tick_enemy_ai_build_human_object_targets(
+    pub(super) fn tick_enemy_ai_build_human_object_targets_for_npc(
         &self,
+        npc_id: EntityId,
     ) -> (
         std::collections::HashMap<EntityId, HumanTarget>,
         std::collections::HashMap<EntityId, ObjectTarget>,
     ) {
         use crate::element::DetectableType;
 
-        // Collect every entity referenced by any human-typed
-        // detectable list (Body / Friend / MissedFriend / Beggar)
-        // across all NPCs, plus every object-typed list.  One pass
-        // over NPCs; one pass over `entities` for each set.
-        let mut human_ids: std::collections::HashSet<EntityId> =
-            std::collections::HashSet::with_capacity(self.entities.len());
-        let mut object_ids: std::collections::HashSet<EntityId> =
-            std::collections::HashSet::with_capacity(self.entities.len());
-        for (_, entity) in self.entities.npcs() {
-            let Some(npc) = entity.npc_data() else {
-                continue;
-            };
-            for kind in [
-                DetectableType::Body,
-                DetectableType::Friend,
-                DetectableType::MissedFriend,
-                DetectableType::Beggar,
-            ] {
-                let idx = kind as usize;
-                if idx < npc.detectable_lists.len() {
-                    for d in &npc.detectable_lists[idx] {
-                        if let Some(id) = d.element {
-                            human_ids.insert(id);
-                        }
-                    }
+        let entity = self.entities.get(npc_id).unwrap_or_else(|| {
+            panic!(
+                "NPC {} disappeared before its live detection target snapshot",
+                npc_id.index()
+            )
+        });
+        let npc = entity.npc_data().unwrap_or_else(|| {
+            panic!(
+                "creation-ordered NPC {} has no NPC data for detection",
+                npc_id.index()
+            )
+        });
+        let mut human_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
+        let mut object_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
+        for kind in [
+            DetectableType::Body,
+            DetectableType::Friend,
+            DetectableType::MissedFriend,
+            DetectableType::Beggar,
+        ] {
+            for detectable in &npc.detectable_lists[kind as usize] {
+                if let Some(id) = detectable.element {
+                    human_ids.insert(id);
                 }
             }
-            let obj_idx = DetectableType::Object as usize;
-            if obj_idx < npc.detectable_lists.len() {
-                for d in &npc.detectable_lists[obj_idx] {
-                    if let Some(id) = d.element {
-                        object_ids.insert(id);
-                    }
-                }
+        }
+        for detectable in &npc.detectable_lists[DetectableType::Object as usize] {
+            if let Some(id) = detectable.element {
+                object_ids.insert(id);
             }
         }
 

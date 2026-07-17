@@ -5,6 +5,37 @@
 
 use super::snapshots::{Detection, PcSnapshot};
 use super::*;
+
+/// Full-fidelity detection input attached to the one ENEMY stimulus queued by
+/// `RefreshDetection`. Its queue index preserves FIFO order while allowing the
+/// drain to avoid replacing the detection-built input with the narrower live
+/// fallback builder.
+pub(super) struct PendingEventViewTickData {
+    pub(super) queue_index: usize,
+    pub(super) stimulus_type: crate::ai::StimulusType,
+    pub(super) tick_data: crate::ai::AiPerTickData,
+}
+
+fn take_event_view_tick_data(
+    queue_index: usize,
+    stimulus: &crate::ai::Stimulus,
+    pending: &mut Option<PendingEventViewTickData>,
+) -> Option<crate::ai::AiPerTickData> {
+    if !pending
+        .as_ref()
+        .is_some_and(|override_data| override_data.queue_index == queue_index)
+    {
+        return None;
+    }
+    let override_data = pending
+        .take()
+        .expect("matching EVENT_VIEW tick-data override disappeared");
+    assert_eq!(
+        stimulus.stimulus_type, override_data.stimulus_type,
+        "EVENT_VIEW tick-data override no longer points at its queued stimulus"
+    );
+    Some(override_data.tick_data)
+}
 use crate::coordinates::MapPoint;
 use crate::element::{Entity, EntityId};
 
@@ -387,7 +418,7 @@ impl EngineInner {
     ) {
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, scratch);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, scratch, None);
         }
     }
 
@@ -400,6 +431,7 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         scratch: &SimScratch,
+        mut event_view_tick_data: Option<PendingEventViewTickData>,
     ) {
         let stimuli = {
             let Some(entity) = self.entities.get_mut(npc_id) else {
@@ -413,7 +445,7 @@ impl EngineInner {
         if stimuli.is_empty() {
             return;
         }
-        for stimulus in stimuli {
+        for (queue_index, stimulus) in stimuli.into_iter().enumerate() {
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let Some(entity) = self.entities.get(npc_id) else {
@@ -440,30 +472,38 @@ impl EngineInner {
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
             };
-            // pending_stimuli drain for this NPC — includes
-            // deferred EVENT_VIEW / EVENT_HEAR / EVENT_SEES_SHADOW
-            // from the detection pass.  The builder populates
-            // primary-target metadata, friend-swap candidates,
-            // and seeded enemy_sq_distances so the downstream
-            // handlers (battle_decisions, filter_ai_event) see
-            // real context instead of stub().
-            let target_override = match stimulus.info {
-                crate::ai::StimulusInfo::Human(handle)
-                    if matches!(
-                        stimulus.stimulus_type,
-                        crate::ai::StimulusType::EventView
-                            | crate::ai::StimulusType::EventSeesBeggar
-                            | crate::ai::StimulusType::EventEnemyNear
-                    ) =>
-                {
-                    Some(EntityId::Pc(crate::entity_id::PcId(handle)))
-                }
-                _ => None,
-            };
+            // The ENEMY commit carries the full input assembled by the
+            // detection scan. Every other deferred stimulus uses the live,
+            // narrower fallback builder.
             let tick_data =
-                self.build_npc_tick_data_for_target(npc_id, scratch, assets, target_override);
+                take_event_view_tick_data(queue_index, &stimulus, &mut event_view_tick_data)
+                    .unwrap_or_else(|| {
+                        let target_override = match stimulus.info {
+                            crate::ai::StimulusInfo::Human(handle)
+                                if matches!(
+                                    stimulus.stimulus_type,
+                                    crate::ai::StimulusType::EventView
+                                        | crate::ai::StimulusType::EventSeesBeggar
+                                        | crate::ai::StimulusType::EventEnemyNear
+                                ) =>
+                            {
+                                Some(EntityId::Pc(crate::entity_id::PcId(handle)))
+                            }
+                            _ => None,
+                        };
+                        self.build_npc_tick_data_for_target(
+                            npc_id,
+                            scratch,
+                            assets,
+                            target_override,
+                        )
+                    });
             self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
         }
+        assert!(
+            event_view_tick_data.is_none(),
+            "EVENT_VIEW tick-data override did not match any queued stimulus"
+        );
     }
 
     /// Drain stimuli retained by `start_think` while an NPC was AI- or
@@ -537,5 +577,34 @@ impl EngineInner {
                 self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_view_tick_data_override_is_one_shot_at_exact_fifo_index() {
+        let mut full_tick_data = crate::ai::AiPerTickData::stub();
+        full_tick_data.personally_visible_enemies = 7;
+        full_tick_data.us_battle_points = 321;
+        let mut pending = Some(PendingEventViewTickData {
+            queue_index: 1,
+            stimulus_type: crate::ai::StimulusType::EventView,
+            tick_data: full_tick_data,
+        });
+        let shadow = crate::ai::Stimulus::with_position(
+            crate::ai::StimulusType::EventSeesShadow,
+            crate::ai::Position::default(),
+        );
+        let view = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, 42);
+
+        assert!(take_event_view_tick_data(0, &shadow, &mut pending).is_none());
+        let selected = take_event_view_tick_data(1, &view, &mut pending)
+            .expect("exact EVENT_VIEW queue entry keeps detection-built input");
+        assert_eq!(selected.personally_visible_enemies, 7);
+        assert_eq!(selected.us_battle_points, 321);
+        assert!(pending.is_none());
     }
 }
