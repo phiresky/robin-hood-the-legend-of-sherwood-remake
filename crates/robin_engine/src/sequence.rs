@@ -23,12 +23,17 @@
 //! The engine then calls back into the SequenceManager (e.g. [`SequenceManager::element_terminated`])
 //! to advance the state machine.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    fmt,
+};
 
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-use crate::element::{ActionState, Command, EntityId, Posture};
+use crate::element::{
+    ActionState, Command, EntityId, Posture, SendMessageCommand, SequenceCommand,
+};
 use crate::order::{Order, OrderType};
 
 // ═══════════════════════════════════════════════════════════════════
@@ -558,6 +563,54 @@ pub enum FieldValue {
     DoorId(crate::gate::DoorIndex),
 }
 
+/// A violated sequence construction invariant.
+///
+/// These errors are exposed through checked construction methods. The legacy
+/// convenience methods panic with the same error instead of silently dropping
+/// an invalid order or changing an invalid insertion into an append.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SequenceInvariantError {
+    InvalidOrderAction,
+    OrderInsertionOutOfBounds { index: usize, len: usize },
+    NonContiguousCommandLevel { previous: u16, next: u16 },
+    LegacyCommandRequiresGenericData { command: Command },
+    MissingLegacyCommandField { command: Command, field: Field },
+    InvalidLegacyCommandFieldType { command: Command, field: Field },
+}
+
+impl fmt::Display for SequenceInvariantError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidOrderAction => write!(formatter, "order action is Invalid"),
+            Self::OrderInsertionOutOfBounds { index, len } => write!(
+                formatter,
+                "order insertion index {index} is out of bounds for length {len}"
+            ),
+            Self::NonContiguousCommandLevel { previous, next } => write!(
+                formatter,
+                "command level must stay at {previous} or advance to {}; got {next}",
+                previous.saturating_add(1)
+            ),
+            Self::LegacyCommandRequiresGenericData { command } => {
+                write!(
+                    formatter,
+                    "legacy command {command:?} requires generic data"
+                )
+            }
+            Self::MissingLegacyCommandField { command, field } => write!(
+                formatter,
+                "legacy command {command:?} is missing required field {field:?}"
+            ),
+            Self::InvalidLegacyCommandFieldType { command, field } => write!(
+                formatter,
+                "legacy command {command:?} has the wrong value type for field {field:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SequenceInvariantError {}
+
 // ═══════════════════════════════════════════════════════════════════
 //  Element subtype data
 // ═══════════════════════════════════════════════════════════════════
@@ -830,6 +883,33 @@ impl SequenceElement {
         elem
     }
 
+    /// Create a payload-bearing message command in the legacy storage shape.
+    ///
+    /// The field bag remains the serialized representation during the staged
+    /// migration, but callers supply one typed payload and
+    /// [`Self::sequence_command`] performs checked conversion when it is read.
+    ///
+    /// Original provenance: `original-code/RHScript.cpp:6836-6843` and
+    /// `original-code/RHScript.cpp:6890-6897` record all three fields, including
+    /// explicit zero arguments for the no-arguments native.
+    pub fn new_send_message(
+        command_level: u16,
+        owner: Option<EntityId>,
+        payload: SendMessageCommand,
+    ) -> Self {
+        let mut element = Self::new_generic(command_level, Command::SendMessage, owner);
+        element.set_property(Field::Message, FieldValue::Integer(payload.message as u32));
+        element.set_property(
+            Field::MessageArgument,
+            FieldValue::Integer(payload.argument as u32),
+        );
+        element.set_property(
+            Field::MessageExtendedArgument,
+            FieldValue::Integer(payload.extended_argument as u32),
+        );
+        element
+    }
+
     /// Create a new generic-damage element (concussion + wounding).
     pub fn new_damage(
         command_level: u16,
@@ -884,6 +964,16 @@ impl SequenceElement {
         }
     }
 
+    /// Convert this element's legacy command + subtype data into the typed
+    /// command representation.
+    ///
+    /// Message conversion is intentionally strict: the original constructors
+    /// always write all three integer fields, so absence or a mismatched field
+    /// type is corrupt state, not a request for a zero default.
+    pub fn sequence_command(&self) -> Result<SequenceCommand, SequenceInvariantError> {
+        SequenceCommand::try_from(self)
+    }
+
     /// Set the speed factor on a movement element. Panics if not a movement element.
     pub fn set_speed_factor(&mut self, factor: f32) {
         match &mut self.data {
@@ -911,55 +1001,53 @@ impl SequenceElement {
     }
 
     /// Add an order at the back of the queue.
-    /// Invalid-action orders trip a debug assert and are dropped on
-    /// release.
+    ///
+    /// Panics on an invalid action. Use [`Self::try_push_order`] at an input
+    /// boundary that needs to report corrupt data without panicking.
     pub fn push_order(&mut self, order: Order) {
-        debug_assert_ne!(
-            order.order_type,
-            OrderType::Invalid,
-            "push_order: order action must be defined before insertion"
-        );
+        self.try_push_order(order)
+            .unwrap_or_else(|error| panic!("push_order: {error}"));
+    }
+
+    /// Checked form of [`Self::push_order`].
+    pub fn try_push_order(&mut self, order: Order) -> Result<(), SequenceInvariantError> {
         if order.order_type == OrderType::Invalid {
-            tracing::warn!("push_order: dropping order with Invalid order_type");
-            return;
+            return Err(SequenceInvariantError::InvalidOrderAction);
         }
         self.orders.push_back(order);
+        Ok(())
     }
 
     /// Insert an order at a specific index.
-    /// Out-of-range indices trip a debug assert and fall back to a
-    /// back-insert.
+    ///
+    /// Panics for invalid actions or out-of-range indices. Use
+    /// [`Self::try_insert_order`] at an input boundary that needs to report the
+    /// invariant error.
     pub fn insert_order(&mut self, index: usize, order: Order) {
-        debug_assert_ne!(
-            order.order_type,
-            OrderType::Invalid,
-            "insert_order: order action must be defined before insertion"
-        );
+        self.try_insert_order(index, order)
+            .unwrap_or_else(|error| panic!("insert_order: {error}"));
+    }
+
+    /// Checked form of [`Self::insert_order`].
+    pub fn try_insert_order(
+        &mut self,
+        index: usize,
+        order: Order,
+    ) -> Result<(), SequenceInvariantError> {
         if order.order_type == OrderType::Invalid {
-            tracing::warn!("insert_order: dropping order with Invalid order_type");
-            return;
+            return Err(SequenceInvariantError::InvalidOrderAction);
         }
-        debug_assert!(
-            index <= self.orders.len(),
-            "insert_order: index {} out of range (len {})",
-            index,
-            self.orders.len()
-        );
         if index > self.orders.len() {
-            tracing::warn!(
-                "insert_order: index {} out of range (len {}); appending instead",
+            return Err(SequenceInvariantError::OrderInsertionOutOfBounds {
                 index,
-                self.orders.len()
-            );
+                len: self.orders.len(),
+            });
         }
         // VecDeque doesn't have insert, so we convert
         let mut temp: Vec<Order> = self.orders.drain(..).collect();
-        if index <= temp.len() {
-            temp.insert(index, order);
-        } else {
-            temp.push(order);
-        }
+        temp.insert(index, order);
         self.orders = temp.into();
+        Ok(())
     }
 
     /// Remove and return the first order, advancing to the next.
@@ -1233,10 +1321,15 @@ impl SequenceElement {
     /// Whether this command is executed immediately (synchronously) rather
     /// than being deferred to the hourglass queue.
     pub fn executed_immediately(&self) -> bool {
-        matches!(
-            self.command,
-            // Commands dispatched to owner immediately
-            Command::Teleport
+        let command = self
+            .sequence_command()
+            .unwrap_or_else(|error| panic!("executed_immediately: {error}"));
+        match command {
+            SequenceCommand::SendMessage(_) => true,
+            SequenceCommand::Legacy(command) => matches!(
+                command,
+                // Commands dispatched to owner immediately
+                Command::Teleport
                 | Command::LockAi
                 | Command::UnlockAi
                 | Command::ReplaceAnim
@@ -1254,10 +1347,43 @@ impl SequenceElement {
                 | Command::Timer
                 | Command::ActionAvailable
                 | Command::CharacterAvailable
-                | Command::OpenScroll
-                // SendMessage: immediate to owner if present, else to engine
-                | Command::SendMessage
-        )
+                    | Command::OpenScroll
+            ),
+        }
+    }
+}
+
+impl TryFrom<&SequenceElement> for SequenceCommand {
+    type Error = SequenceInvariantError;
+
+    fn try_from(element: &SequenceElement) -> Result<Self, Self::Error> {
+        if element.command != Command::SendMessage {
+            return Ok(Self::Legacy(element.command));
+        }
+
+        let SequenceElementData::Generic { properties } = &element.data else {
+            return Err(SequenceInvariantError::LegacyCommandRequiresGenericData {
+                command: element.command,
+            });
+        };
+
+        let integer = |field| match properties.get(&field) {
+            Some(FieldValue::Integer(value)) => Ok(*value as i32),
+            Some(_) => Err(SequenceInvariantError::InvalidLegacyCommandFieldType {
+                command: element.command,
+                field,
+            }),
+            None => Err(SequenceInvariantError::MissingLegacyCommandField {
+                command: element.command,
+                field,
+            }),
+        };
+
+        Ok(Self::SendMessage(SendMessageCommand::new(
+            integer(Field::Message)?,
+            integer(Field::MessageArgument)?,
+            integer(Field::MessageExtendedArgument)?,
+        )))
     }
 }
 
@@ -1334,19 +1460,31 @@ impl Sequence {
         seq
     }
 
-    /// Append a sequence element. Sets up the linked-list-style
-    /// next-element relationship and validates command level ordering.
+    /// Append a sequence element, panicking if its command level is not
+    /// contiguous. Use [`Self::try_append_element`] when importing untrusted
+    /// legacy data.
     pub fn append_element(&mut self, element: SequenceElement) {
+        self.try_append_element(element)
+            .unwrap_or_else(|error| panic!("append_element: {error}"));
+    }
+
+    /// Checked form of [`Self::append_element`].
+    pub fn try_append_element(
+        &mut self,
+        element: SequenceElement,
+    ) -> Result<(), SequenceInvariantError> {
         if let Some(last) = self.elements.last() {
-            debug_assert!(
-                element.command_level == last.command_level
-                    || element.command_level == last.command_level + 1,
-                "command level must be same or +1 (was {} after {})",
-                element.command_level,
-                last.command_level
-            );
+            let level_is_contiguous = element.command_level == last.command_level
+                || last.command_level.checked_add(1) == Some(element.command_level);
+            if !level_is_contiguous {
+                return Err(SequenceInvariantError::NonContiguousCommandLevel {
+                    previous: last.command_level,
+                    next: element.command_level,
+                });
+            }
         }
         self.elements.push(element);
+        Ok(())
     }
 
     /// Number of elements.
@@ -4429,12 +4567,14 @@ mod tests {
             SequenceAction::ExecuteImmediateEngine { .. }
         ));
 
-        // SendMessage with owner — owner branch.
+        // SendMessage with owner — owner branch. Original:
+        // RHsequenceelement.cpp:765-774 invokes the owner callback during
+        // registration rather than putting the command in Hourglass.
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(
+        seq.append_element(SequenceElement::new_send_message(
             1,
-            Command::SendMessage,
             Some(EntityId::Pc(crate::entity_id::PcId(3))),
+            SendMessageCommand::new(41, -2, 3),
         ));
         let _seq_id = mgr.launch_sequence(seq);
         let actions = mgr.take_pending_immediate_actions();
@@ -4448,7 +4588,11 @@ mod tests {
 
         // SendMessage without owner — engine branch.
         let mut seq = Sequence::new();
-        seq.append_element(make_simple_element(1, Command::SendMessage, None));
+        seq.append_element(SequenceElement::new_send_message(
+            1,
+            None,
+            SendMessageCommand::new(42, 4, -5),
+        ));
         let _seq_id = mgr.launch_sequence(seq);
         let actions = mgr.take_pending_immediate_actions();
         assert!(matches!(
@@ -4548,6 +4692,74 @@ mod tests {
             Some(FieldValue::Integer(50)) => {}
             other => panic!("expected Integer(50), got {:?}", other),
         }
+    }
+
+    #[test]
+    fn message_command_converts_legacy_fields_without_inventing_defaults() {
+        let payload = SendMessageCommand::new(-17, 23, -42);
+        let elem = SequenceElement::new_send_message(
+            1,
+            Some(EntityId::Pc(crate::entity_id::PcId(0))),
+            payload,
+        );
+
+        assert_eq!(
+            elem.sequence_command(),
+            Ok(SequenceCommand::SendMessage(payload))
+        );
+
+        let mut missing = SequenceElement::new_generic(1, Command::SendMessage, None);
+        missing.set_property(Field::Message, FieldValue::Integer(7));
+        missing.set_property(Field::MessageArgument, FieldValue::Integer(8));
+        assert_eq!(
+            missing.sequence_command(),
+            Err(SequenceInvariantError::MissingLegacyCommandField {
+                command: Command::SendMessage,
+                field: Field::MessageExtendedArgument,
+            })
+        );
+
+        let wrong_subtype = SequenceElement::new(1, Command::SendMessage, None);
+        assert_eq!(
+            wrong_subtype.sequence_command(),
+            Err(SequenceInvariantError::LegacyCommandRequiresGenericData {
+                command: Command::SendMessage,
+            })
+        );
+    }
+
+    #[test]
+    fn checked_order_mutation_preserves_queue_on_invariant_errors() {
+        let mut elem = SequenceElement::new(1, Command::Move, None);
+        elem.push_order(Order::test_new(OrderType::WalkingUpright, 1.0, 2.0));
+
+        assert_eq!(
+            elem.try_push_order(Order::test_new(OrderType::Invalid, 3.0, 4.0)),
+            Err(SequenceInvariantError::InvalidOrderAction)
+        );
+        assert_eq!(elem.orders.len(), 1);
+
+        assert_eq!(
+            elem.try_insert_order(2, Order::test_new(OrderType::Turning, 5.0, 6.0),),
+            Err(SequenceInvariantError::OrderInsertionOutOfBounds { index: 2, len: 1 })
+        );
+        assert_eq!(elem.orders.len(), 1);
+        assert_eq!(elem.orders[0].target_x, 1.0);
+    }
+
+    #[test]
+    fn checked_append_rejects_non_contiguous_command_levels() {
+        let mut seq = Sequence::new();
+        seq.append_element(SequenceElement::new(1, Command::Move, None));
+
+        assert_eq!(
+            seq.try_append_element(SequenceElement::new(3, Command::Turn, None)),
+            Err(SequenceInvariantError::NonContiguousCommandLevel {
+                previous: 1,
+                next: 3,
+            })
+        );
+        assert_eq!(seq.len(), 1);
     }
 
     #[test]

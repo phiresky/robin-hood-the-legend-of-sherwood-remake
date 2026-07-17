@@ -56,10 +56,11 @@ mod signatures;
 mod tests;
 
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
-pub use defs::{NativeFn, native_name};
+pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
-    NATIVE_SIGNATURES, NativeParamSig, NativeSignature, native_signature_by_index,
-    native_signature_by_name,
+    NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
+    NativeSignature, native_definition_by_index, native_definition_by_name,
+    native_signature_by_index, native_signature_by_name,
 };
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
@@ -5025,7 +5026,12 @@ impl HostFunctions for GameHost {
                 }
 
                 // --- entity type checks ---
+                // Original: original-code/RHScript.cpp, RHScript::ThisActor
+                // returns the callback's pScriptThis verbatim.
                 ThisActor => self.script_this,
+                // Original: original-code/RHScript.cpp,
+                // RHScript::GetNumberOfActorsInEngine returns
+                // marrayElementsScript.Size().
                 GetNumberOfActorsInEngine => self.entities.len() as i32,
                 IsActorAnimation => {
                     let handle = stack.pop_i32();
@@ -8197,26 +8203,14 @@ impl HostFunctions for GameHost {
                     let bow_exp = stack.pop_i32();
                     let sword_exp = stack.pop_i32();
                     let actor = stack.pop_i32();
-                    // The original wrote both the persistent
-                    // PcDescription's PcStatus and the in-mission
-                    // PC's PcStatus (two separate storage sites).
-                    //
-                    // SIMPLIFICATION: we fold these.  The entity
-                    // doesn't carry a duplicate status; every
-                    // in-mission skill read goes through the
-                    // campaign's character description via
-                    // `profile_index` (see
-                    // `engine::combat::award_bow_kill_xp`,
-                    // `engine::melee::award_sword_kill_xp`).  So
-                    // updating the campaign description alone
-                    // already propagates the new caps to the live
-                    // entity, but the original "set live caps
-                    // without touching the persistent description"
-                    // semantic (caps reset on next mission load) is
-                    // lost the other way: values written here
-                    // persist into subsequent missions.  All known
-                    // callers set caps once at mission start, so no
-                    // observable divergence today.
+                    // The original has one backing status here, not separate live and
+                    // persistent copies. `RHElementActorPC` is constructed with
+                    // `&pDescription->PCStatus` (`RHelementactorpc.cpp`), and
+                    // `RHElementActorHuman::SetCapacity` writes through that pointer
+                    // (`RHelementactorhuman.cpp`). `RHCampaign::Serialize` then writes
+                    // the same PC descriptions. Rust likewise keeps the PC status on
+                    // the campaign description, so this actor-scoped call must update
+                    // that serialized backing state.
                     //
                     // Validate the actor is a PC handle to surface
                     // script bugs that pass NPCs.
