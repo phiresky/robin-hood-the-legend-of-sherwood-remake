@@ -2114,6 +2114,24 @@ macro_rules! dispatch_element {
     };
 }
 
+macro_rules! entity_variant_accessors {
+    ($as_ref:ident, $as_mut:ident, $variant:ident, $entity:ty) => {
+        pub fn $as_ref(&self) -> Option<&$entity> {
+            match self {
+                Self::$variant(entity) => Some(entity),
+                _ => None,
+            }
+        }
+
+        pub fn $as_mut(&mut self) -> Option<&mut $entity> {
+            match self {
+                Self::$variant(entity) => Some(entity),
+                _ => None,
+            }
+        }
+    };
+}
+
 impl Entity {
     pub fn entity_id_kind(&self) -> EntityIdKind {
         match self {
@@ -2128,6 +2146,21 @@ impl Entity {
             Self::Net(_) => EntityIdKind::Net,
         }
     }
+
+    entity_variant_accessors!(as_pc, as_pc_mut, Pc, ActorPc);
+    entity_variant_accessors!(as_soldier, as_soldier_mut, Soldier, ActorSoldier);
+    entity_variant_accessors!(as_civilian, as_civilian_mut, Civilian, ActorCivilian);
+    entity_variant_accessors!(as_fx, as_fx_mut, Fx, ElementFx);
+    entity_variant_accessors!(as_target, as_target_mut, Target, ElementTarget);
+    entity_variant_accessors!(as_bonus, as_bonus_mut, Bonus, ElementBonus);
+    entity_variant_accessors!(as_scroll, as_scroll_mut, Scroll, ElementScroll);
+    entity_variant_accessors!(
+        as_projectile,
+        as_projectile_mut,
+        Projectile,
+        ElementProjectile
+    );
+    entity_variant_accessors!(as_net, as_net_mut, Net, ElementNet);
 
     // — Element data access —
 

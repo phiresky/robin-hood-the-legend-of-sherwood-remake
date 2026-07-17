@@ -28,6 +28,8 @@ use serde::Deserialize;
 
 use crate::campaign::Campaign;
 use crate::game::{Jingle as GameJingle, SoundMode as GameSoundMode};
+use crate::host::ApplicationContext;
+use crate::key_config_store::KeyConfigStore;
 use crate::player_profile::{DifficultyLevel, PlayerProfileManager};
 use crate::replay_format::COMPACT_PREFIX;
 use crate::save_file::special_slots;
@@ -259,7 +261,7 @@ pub struct CliArgs {
     /// not been threaded through `CliArgs` directly.
     #[clap(skip)]
     #[serde(skip)]
-    pub global_options: engine_api::GlobalOptions,
+    pub global_options: ApplicationContext,
 
     /// Internal handoff: when the main menu's custom-mission picker
     /// chooses a Spellforge mod, this carries the bits the session
@@ -316,7 +318,7 @@ impl Default for CliArgs {
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,
             mp_nickname: String::new(),
-            global_options: engine_api::GlobalOptions::default(),
+            global_options: ApplicationContext::default(),
             pending_lua_mission: None,
         };
         install_global_options(&mut args);
@@ -338,7 +340,7 @@ fn install_global_options(args: &mut CliArgs) {
         ..Default::default()
     };
 
-    args.global_options = opts.clone();
+    args.global_options = ApplicationContext::bootstrap(opts.clone());
     // Install the process-wide `GlobalOptions` so UI layers that don't
     // have a `Game` or `CliArgs` in scope can still read startup flags.
     engine_api::GlobalOptions::set_global(opts);
@@ -421,8 +423,10 @@ fn normalize_wasm_query(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use clap::error::ErrorKind;
+    use robin_engine::profiles::ProfileManager;
 
-    use super::try_parse_cli_from;
+    use super::{current_mission_id, required_mission_id, try_parse_cli_from};
+    use crate::campaign::Campaign;
 
     #[test]
     fn clap_launcher_flags_populate_global_options() {
@@ -470,6 +474,18 @@ mod tests {
         let err = try_parse_cli_from(["robin", "--proto", "Leicester"]).unwrap_err();
 
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    #[should_panic(expected = "required test mission: mission ID zero is invalid")]
+    fn required_mission_id_rejects_zero() {
+        required_mission_id(Some(0), "required test mission");
+    }
+
+    #[test]
+    #[should_panic(expected = "current_mission_id: campaign must have a valid current mission")]
+    fn current_mission_id_rejects_missing_current_mission() {
+        current_mission_id(&Campaign::default(), &ProfileManager::new());
     }
 }
 use crate::game_operation::GameCode;
@@ -560,7 +576,12 @@ fn add_language_folder() {
 fn setup_data_dir() -> Result<(), String> {
     if let Ok(data_dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         tracing::info!("ROBINHOOD_DATA_DIR set, using primary datadir {}", data_dir);
-        SbFile::set_primary_path(&data_dir);
+        let status = SbFile::set_primary_path(&data_dir);
+        if status != SBFILE_NO_ERROR {
+            return Err(format!(
+                "Unable to install ROBINHOOD_DATA_DIR {data_dir}: SBFile error {status}"
+            ));
+        }
     } else if !Path::new("Data").is_dir()
         && let Ok(exe) = std::env::current_exe()
         && let Some(parent) = exe.parent()
@@ -569,9 +590,20 @@ fn setup_data_dir() -> Result<(), String> {
             "Using executable directory as primary datadir: {}",
             parent.display()
         );
-        SbFile::set_primary_path(&parent.to_string_lossy());
+        let status = SbFile::set_primary_path(&parent.to_string_lossy());
+        if status != SBFILE_NO_ERROR {
+            return Err(format!(
+                "Unable to install executable directory {}: SBFile error {status}",
+                parent.display()
+            ));
+        }
     } else {
-        SbFile::set_primary_path(".");
+        let status = SbFile::set_primary_path(".");
+        if status != SBFILE_NO_ERROR {
+            return Err(format!(
+                "Unable to install current directory as datadir: SBFile error {status}"
+            ));
+        }
     }
 
     // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
@@ -634,12 +666,13 @@ fn setup_data_dir() -> Result<(), String> {
 }
 
 /// Result tuple for [`rust_init`] / [`rust_init_with_shipping`] /
-/// [`rust_init_finish`]: the loaded campaign, profile manager, and the
-/// optional shipping datadir handle (if one was found / supplied).
+/// [`rust_init_finish`]: the loaded campaign, mission profile manager, and
+/// explicit application context (player profiles, key bindings, options,
+/// and optional shipping data).
 pub type RustInit = (
     Campaign,
     std::sync::Arc<engine_profiles::ProfileManager>,
-    Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
+    ApplicationContext,
 );
 
 /// Pure-Rust initialization: logging, data dir, profiles, campaign.
@@ -654,12 +687,8 @@ pub fn rust_init() -> Result<RustInit, String> {
         .map_err(|e| format!("shipping datadir: {e:#}"))?
         .map(std::sync::Arc::new);
     if let Some(ref dd) = shipping {
-        let _ = assets_shipping_datadir::install_global(dd.clone());
-        // Hand the small-file bundle to `asset_fs` so every `SbFile::open`
-        // hits the in-memory map instead of issuing loose-file I/O.
-        // Anything not in the bundle falls through to disk (native) or
-        // synchronous fetch (wasm).
-        let _ = robin_util::asset_fs::install_bundle(std::sync::Arc::new(dd.raw.clone()));
+        assets_shipping_datadir::install_global(dd.clone())
+            .map_err(|error| format!("install shipping datadir: {error:#}"))?;
     }
 
     rust_init_finish(shipping)
@@ -667,7 +696,7 @@ pub fn rust_init() -> Result<RustInit, String> {
 
 /// Wasm variant of [`rust_init`] — the JS host has already decoded the
 /// shipping datadir from the fetched `datadir.bin` bytes and installed
-/// it via `install_global` / `install_bundle`, so we skip the
+/// it via `install_global`, so we skip the
 /// `try_load` step and reuse the supplied handle.
 pub fn rust_init_with_shipping(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
@@ -681,7 +710,8 @@ pub fn rust_init_with_shipping(
 fn rust_init_finish(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
 ) -> Result<RustInit, String> {
-    let profiles = std::sync::Arc::new(load_profiles(shipping.as_deref())?);
+    let options = engine_api::GlobalOptions::default();
+    let profiles = std::sync::Arc::new(load_profiles(shipping.as_deref(), &options)?);
     tracing::info!(
         "Rust profiles: {} chars, {} soldiers, {} missions, {} weapons",
         profiles.characters.len(),
@@ -689,17 +719,27 @@ fn rust_init_finish(
         profiles.missions.len(),
         profiles.hth_weapons.len()
     );
-    // Initialize the global player profile manager from the on-disk
-    // `<save_dir>/profiles.json` (creates a default "Robin" profile if
-    // the file doesn't exist). Must run before `Campaign::create` so
-    // `DifficultyLevel::current()` returns the active profile's difficulty
-    // when filling full-pockets ammo at campaign init.
-    init_global_player_profile_manager();
-    init_global_key_config_store();
+    let player_profiles = load_player_profile_manager();
+    let key_configs = load_key_config_store();
+
+    let application_context = ApplicationContext::complete(
+        options,
+        player_profiles.clone(),
+        key_configs.clone(),
+        shipping,
+    )?;
+
+    // PARITY TODO(app-context): menu/options and level-load helpers outside
+    // this slice still use their historical singleton APIs. Mirror the same
+    // loaded values until those call sites can accept `ApplicationContext`;
+    // gameplay difficulty and the host side-effects changed in this slice do
+    // not read these mirrors.
+    *PlayerProfileManager::global() = Some(player_profiles);
+    *KeyConfigStore::global() = Some(key_configs);
 
     let campaign = Campaign::create(&profiles);
 
-    Ok((campaign, profiles, shipping))
+    Ok((campaign, profiles, application_context))
 }
 
 /// Load the character / soldier / mission profile pool.
@@ -712,6 +752,7 @@ fn rust_init_finish(
 ///      legacy CPF reader.
 fn load_profiles(
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+    options: &engine_api::GlobalOptions,
 ) -> Result<ProfileManager, String> {
     if let Some(dd) = shipping
         && let Some(p) = &dd.profiles
@@ -730,16 +771,13 @@ fn load_profiles(
     // hiding required-action glyphs in the briefing UI and breaking
     // auto-gang-selection.  Walk every mission `.rhm` file and fold
     // beam-me action flags into the profile.
-    let level_dir = engine_api::GlobalOptions::global()
-        .as_ref()
-        .map(|o| o.level_directory.clone())
-        .unwrap_or_else(|| "Data/Levels".to_string());
+    let level_dir = &options.level_directory;
 
     let json_path = "Data/Configuration/profile.cpf.json";
     if engine_sbfile::SbFile::exists(json_path) {
         tracing::info!("Profiles: loading JSON dump {json_path}");
         let mut mgr = ProfileManager::load_json(json_path)?;
-        mgr.import_beam_mes(&level_dir);
+        mgr.import_beam_mes(level_dir);
         return Ok(mgr);
     }
     let cpf_path = "Data/Configuration/profile.cpf";
@@ -749,16 +787,12 @@ fn load_profiles(
     let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)
         .map_err(|e| format!("Failed to read profiles from {cpf_path}: error {e}"))?;
-    mgr.import_beam_mes(&level_dir);
+    mgr.import_beam_mes(level_dir);
     Ok(mgr)
 }
 
-/// Populate the `GLOBAL_PPM` singleton so callbacks and key-binding
-/// readers can see the active profile.  Uses the OS-appropriate per-user
-/// save directory via `save_file::default_save_directory`.  If loading
-/// fails, a fresh default manager is installed so subsequent saves still
-/// succeed (there's always at least one profile).
-fn init_global_player_profile_manager() {
+/// Load the player-profile service owned by [`ApplicationContext`].
+fn load_player_profile_manager() -> PlayerProfileManager {
     let save_dir = crate::save_file::default_save_directory();
     let save_dir_str = save_dir.to_string_lossy().into_owned();
     let mgr = match PlayerProfileManager::load(&save_dir_str) {
@@ -773,14 +807,13 @@ fn init_global_player_profile_manager() {
             mgr
         }
     };
-    *PlayerProfileManager::global() = Some(mgr);
+    mgr
 }
 
-/// Populate the global [`KeyConfigStore`] singleton.  Falls back to an
-/// empty store on I/O error so the menu still works (entries are created
-/// lazily per profile id).
-pub(crate) fn init_global_key_config_store() {
-    use crate::key_config_store::KeyConfigStore;
+/// Load the key-config service owned by [`ApplicationContext`]. First-run
+/// stores are intentionally empty; `ApplicationContext::complete` creates
+/// the active profile's original-compatible default entry.
+fn load_key_config_store() -> KeyConfigStore {
     let save_dir = crate::save_file::default_save_directory();
     let save_dir_str = save_dir.to_string_lossy().into_owned();
     let store = KeyConfigStore::load(&save_dir_str).unwrap_or_else(|err| {
@@ -789,7 +822,7 @@ pub(crate) fn init_global_key_config_store() {
         );
         KeyConfigStore::new(save_dir_str)
     });
-    *KeyConfigStore::global() = Some(store);
+    store
 }
 
 // ─── Game callbacks (pure-Rust path) ────────────────────────────────
@@ -810,6 +843,10 @@ pub(crate) fn init_global_key_config_store() {
 /// by [`crate::game_session::perform_pending_save_load`] before the next
 /// engine tick, using [`crate::save_file::GameSaveFile`].
 pub(crate) struct RustCallbacks {
+    /// Explicit persistence context for entry-point-owned mission paths.
+    /// `None` remains only for the untouched `game_session::run_session`
+    /// compatibility constructor.
+    application_context: Option<ApplicationContext>,
     /// Save-slot metadata manager, persists slot list as `saves.json`.
     pub save_manager: SaveGameManager,
     /// Pending save/load request queued by the state machine, handled
@@ -906,8 +943,9 @@ pub enum SaveLoadRequest {
         mission_id: u32,
     },
     /// Write the Restart auto-save (pre-restart snapshot), called once
-    /// per mission right after level init finishes.
-    Restart { mission_id: u32 },
+    /// per mission right after level init finishes. The live campaign
+    /// supplies the required mission ID when the request is processed.
+    Restart,
     /// Apply the Restart auto-save to the engine, restoring the
     /// pristine post-level-init state without reloading the level.
     /// Called when the op code transitions to a level-restart
@@ -932,6 +970,7 @@ pub enum SaveLoadRequest {
 impl RustCallbacks {
     pub fn new() -> Self {
         Self {
+            application_context: None,
             save_manager: SaveGameManager::open_default(),
             pending: None,
             loading_requested: false,
@@ -945,6 +984,13 @@ impl RustCallbacks {
             pending_reset_input: false,
         }
     }
+
+    pub fn with_application_context(application_context: ApplicationContext) -> Self {
+        Self {
+            application_context: Some(application_context),
+            ..Self::new()
+        }
+    }
 }
 
 impl SaveLoadRequest {
@@ -954,7 +1000,7 @@ impl SaveLoadRequest {
         matches!(
             self,
             SaveLoadRequest::Save { .. }
-                | SaveLoadRequest::Restart { .. }
+                | SaveLoadRequest::Restart
                 | SaveLoadRequest::Continue { .. }
                 | SaveLoadRequest::QuickSave { .. }
                 | SaveLoadRequest::Sherwood { .. }
@@ -978,7 +1024,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
     fn serialize_for_restart(&mut self, write: bool) {
         self.pending = Some(if write {
-            SaveLoadRequest::Restart { mission_id: 0 }
+            SaveLoadRequest::Restart
         } else {
             SaveLoadRequest::LoadRestart
         });
@@ -987,6 +1033,18 @@ impl crate::game::GameCallbacks for RustCallbacks {
         self.pending = Some(SaveLoadRequest::Continue { mission_id });
     }
     fn save_profiles(&mut self) {
+        if let Some(context) = self.application_context.as_ref() {
+            match context.with_player_profiles_mut(|mgr| mgr.save()) {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => tracing::error!("save_profiles failed: {err}"),
+                Err(error) => panic!("save_profiles lost its ApplicationContext: {error}"),
+            }
+            return;
+        }
+
+        // PARITY TODO(app-context): `game_session::run_session` still creates
+        // callbacks without accepting the explicit context. Remove this
+        // compatibility branch when that excluded module is migrated.
         // Persist the currently loaded profile manager to
         // `<save_dir>/profiles.json` on quit.
         let guard = PlayerProfileManager::global();
@@ -1003,6 +1061,38 @@ impl crate::game::GameCallbacks for RustCallbacks {
         campaign: &Campaign,
         profiles: &engine_profiles::ProfileManager,
     ) {
+        if let Some(context) = self.application_context.as_ref() {
+            let mission_secs = self.get_current_playing_time(campaign);
+            context
+                .with_player_profiles_mut(|manager| {
+                    let profile = manager
+                        .get_active_mut()
+                        .expect("ApplicationContext lost its required active player profile");
+                    profile.score =
+                        campaign.get_value(engine_campaign::CampaignValue::Score) as u32;
+                    profile.ransom =
+                        campaign.get_value(engine_campaign::CampaignValue::Ransom) as u32;
+                    profile.progression = campaign.get_progression(profiles);
+                    profile.play_time += mission_secs;
+
+                    let dead =
+                        campaign.get_value(engine_campaign::CampaignValue::DeadSoldiers) as u32;
+                    let alive =
+                        campaign.get_value(engine_campaign::CampaignValue::LivingSoldiers) as u32;
+                    profile.preserved_lives = if dead != 0 || alive != 0 {
+                        (100.0 * alive as f32 / (dead + alive) as f32) as u32
+                    } else {
+                        0
+                    };
+                })
+                .unwrap_or_else(|error| {
+                    panic!("profile synchronization lost its ApplicationContext: {error}")
+                });
+            return;
+        }
+
+        // PARITY TODO(app-context): compatibility for the still-global
+        // callbacks constructed inside excluded `game_session::run_session`.
         // Copy end-of-mission campaign values (score, ransom, play time,
         // dead/alive soldiers → preserved_lives ratio) into the active
         // profile.
@@ -1030,10 +1120,14 @@ impl crate::game::GameCallbacks for RustCallbacks {
             .unwrap_or(false)
     }
     fn save_game_mission_id(&self) -> u32 {
-        self.save_manager
+        let idx = self
+            .save_manager
             .find_by_filename(special_slots::CONTINUE)
-            .and_then(|idx| self.save_manager.slot_mission_id(idx))
-            .unwrap_or(0)
+            .expect("save_game_mission_id: Continue slot must exist after file-exists check");
+        required_mission_id(
+            self.save_manager.slot_mission_id(idx),
+            "save_game_mission_id: Continue slot must have a cached mission ID",
+        )
     }
     fn set_sound_mode(&mut self, mode: GameSoundMode) {
         // Queued and flushed by `flush_pending_callbacks` in the frame
@@ -1082,16 +1176,29 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
 }
 
-/// Resolve the mission profile ID of the campaign's current mission, or 0.
+/// Require a real mission ID from state that has already been established.
+///
+/// Original: `original-code/RHgame.cpp:1644-1646` and `:3215` directly
+/// dereference the campaign's current mission/profile when comparing or
+/// writing saves; zero is not substituted for missing required state.
+pub(crate) fn required_mission_id(mission_id: Option<u32>, context: &str) -> u32 {
+    let mission_id = mission_id.unwrap_or_else(|| panic!("{context}"));
+    assert_ne!(mission_id, 0, "{context}: mission ID zero is invalid");
+    mission_id
+}
+
+/// Resolve the required mission profile ID of the campaign's current mission.
 pub(crate) fn current_mission_id(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
 ) -> u32 {
-    campaign
-        .current_mission_idx
-        .and_then(|idx| campaign.missions.get(idx))
-        .map(|m| m.profile(profiles).id)
-        .unwrap_or(0)
+    required_mission_id(
+        campaign
+            .current_mission_idx
+            .and_then(|idx| campaign.missions.get(idx))
+            .map(|m| m.profile(profiles).id),
+        "current_mission_id: campaign must have a valid current mission",
+    )
 }
 
 /// Flush sound / mouse callback intents queued by the Game state machine
@@ -1297,10 +1404,10 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror the load into the Continue slot,
                             // guarded by IsContinue/IsRestart so we
                             // don't clobber the slot we just loaded.
-                            let mid = callbacks
-                                .save_manager
-                                .slot_mission_id(idx)
-                                .unwrap_or(mission_id);
+                            let mid = required_mission_id(
+                                callbacks.save_manager.slot_mission_id(idx),
+                                "loaded save slot must retain its cached mission ID",
+                            );
                             if !is_continue && !is_restart {
                                 callbacks.save_manager.write_continue_save_background(
                                     host,
@@ -1325,15 +1432,11 @@ pub(crate) fn perform_pending_save_load(
                 }
             }
         }
-        SaveLoadRequest::Restart { mission_id } => {
-            let mid = if mission_id == 0 {
-                engine
-                    .campaign()
-                    .map(|c| current_mission_id(c, profiles))
-                    .unwrap_or(0)
-            } else {
-                mission_id
-            };
+        SaveLoadRequest::Restart => {
+            let campaign = engine
+                .campaign()
+                .expect("Restart save requires the engine campaign");
+            let mid = current_mission_id(campaign, profiles);
             if let Err(err) = callbacks.save_manager.write_restart_save(
                 host,
                 game,
@@ -1432,7 +1535,10 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror into the Continue slot — QuickSave is
                             // neither Continue nor Restart so it always
                             // mirrors.
-                            let mid = callbacks.save_manager.slot_mission_id(i).unwrap_or(0);
+                            let mid = required_mission_id(
+                                callbacks.save_manager.slot_mission_id(i),
+                                "loaded QuickSave slot must retain its cached mission ID",
+                            );
                             callbacks.save_manager.write_continue_save_background(
                                 host,
                                 game,
@@ -1488,11 +1594,15 @@ pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 
 
 /// Detect demo mode at runtime by checking for demo mission files.
 /// Returns `(mission_name, proto_name, pc_string, location)` if a demo is detected.
-pub(crate) fn detect_demo_mode()
--> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
+pub(crate) fn detect_demo_mode_with_context(
+    application_context: &ApplicationContext,
+) -> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
     let resolve = SbFile::exists;
     let shipping_has_level = |mission: &str| {
-        assets_shipping_datadir::global().is_some_and(|dd| dd.levels.contains_key(mission))
+        application_context
+            .shipping()
+            .expect("demo detection requires an initialized ApplicationContext")
+            .is_some_and(|dd| dd.levels.contains_key(mission))
     };
     if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
         // Leicester demo — R=Robin, J=Jean, M=Marianne, T=Tuck, F=Ferris.
@@ -1504,6 +1614,30 @@ pub(crate) fn detect_demo_mode()
         ))
     } else if resolve("Data/Levels/Demo_Lin.rhm") || shipping_has_level("Demo_Lin") {
         // Lincoln demo — R=Robin, S=Stutely, A/B/C=Peasants
+        Some(("Demo_Lin", "Lincoln", "RSABC", MissionLocation::Lincoln))
+    } else {
+        None
+    }
+}
+
+/// Compatibility shim for the excluded `game_session` setup path.
+///
+/// PARITY TODO(app-context): pass `ApplicationContext` into `run_mission`
+/// setup and delete this remaining shipping-global read.
+pub(crate) fn detect_demo_mode()
+-> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
+    let resolve = SbFile::exists;
+    let shipping_has_level = |mission: &str| {
+        assets_shipping_datadir::global().is_some_and(|dd| dd.levels.contains_key(mission))
+    };
+    if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
+        Some((
+            "Dem_Lei_MP",
+            "Leicester",
+            "RJMTF",
+            MissionLocation::Leicester,
+        ))
+    } else if resolve("Data/Levels/Demo_Lin.rhm") || shipping_has_level("Demo_Lin") {
         Some(("Demo_Lin", "Lincoln", "RSABC", MissionLocation::Lincoln))
     } else {
         None
@@ -1588,6 +1722,29 @@ fn force_mission_launch(
     Ok(Some((idx, location)))
 }
 
+/// Synchronous compatibility boundary for main-menu modules outside this
+/// slice. All guards are dropped before the caller enters an async menu.
+fn mirror_context_to_legacy_stores(context: &ApplicationContext) -> Result<(), String> {
+    let (profiles, keys) = context.legacy_service_snapshots()?;
+    *PlayerProfileManager::global() = Some(profiles);
+    *KeyConfigStore::global() = Some(keys);
+    Ok(())
+}
+
+/// Adopt profile/key edits made by the legacy main menu after its future has
+/// completed. Snapshot each singleton separately; no guard crosses an await.
+fn adopt_legacy_stores_into_context(context: &ApplicationContext) -> Result<(), String> {
+    let profiles = PlayerProfileManager::global()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "legacy main menu removed the player-profile store".to_string())?;
+    let keys = KeyConfigStore::global()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| "legacy main menu removed the key-config store".to_string())?;
+    context.replace_legacy_service_snapshots(profiles, keys)
+}
+
 /// Run the game loop: main menu -> mission selection -> game -> repeat.
 ///
 /// Outer loop: main menu (Start/Exit) -> campaign map -> game loop ->
@@ -1596,9 +1753,19 @@ pub async fn run_rust_game(
     window: &mut GameWindow,
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
-    shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
+    application_context: ApplicationContext,
     args: &CliArgs,
 ) -> Result<i32, String> {
+    // Combine parsed launcher options with the services loaded by `rust_init`.
+    // Every lock-backed value used below is copied into an owned snapshot
+    // before the first `.await`; futures never retain a profile/key guard.
+    let application_context =
+        application_context.with_options(args.global_options.options().clone());
+    let shipping = application_context.shipping()?;
+    let mut run_args = args.clone();
+    run_args.global_options = application_context.clone();
+    let args = &run_args;
+
     // Bring up the script-RPC transport. Native binds a loopback HTTP
     // listener; wasm installs the in-process JS bridge queue. The
     // handle lives in a process-global so the per-tick drain in
@@ -1678,7 +1845,7 @@ pub async fn run_rust_game(
         // record session produces, causing every tick to `state_hash`
         // desync at frame 0 vs the recording.
         campaign.reset(&profiles);
-        if let Some((_, _, pcs, _)) = detect_demo_mode() {
+        if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&application_context) {
             campaign.create_gang_from_pcs(pcs, &profiles);
         }
         campaign.add_all_to_mission_team();
@@ -1689,7 +1856,7 @@ pub async fn run_rust_game(
         let mut replay_args = args.clone();
         replay_args.replay_data = Some(pending.data);
         replay_args.start_paused = replay_args.start_paused || pending.paused;
-        let mut callbacks = RustCallbacks::new();
+        let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
         run_mission(
             window,
             &mut callbacks,
@@ -1707,7 +1874,7 @@ pub async fn run_rust_game(
     // Mirrors `-MISSION foo [-PROTO bar]`: select an existing profile
     // when present, otherwise append a synthetic profile and launch it.
     if let Some((idx, location)) = force_mission_launch(&mut campaign, &mut profiles, args)? {
-        let mut callbacks = RustCallbacks::new();
+        let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
         run_mission(
             window,
             &mut callbacks,
@@ -1726,7 +1893,7 @@ pub async fn run_rust_game(
         tracing::info!("--force-main-menu: skipping demo auto-start detection");
         None
     } else {
-        detect_demo_mode()
+        detect_demo_mode_with_context(&application_context)
     };
     if let Some((mission_name, proto_name, pcs, location)) = demo_config {
         tracing::info!(
@@ -1738,7 +1905,7 @@ pub async fn run_rust_game(
         campaign.add_all_to_mission_team();
         // Demo mission is index 1 (index 0 = Sherwood)
         campaign.current_mission_idx = Some(1);
-        let mut callbacks = RustCallbacks::new();
+        let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
         run_mission(
             window,
             &mut callbacks,
@@ -1762,7 +1929,7 @@ pub async fn run_rust_game(
         campaign.reset(&profiles);
         campaign.force_next_mission(0);
         campaign.current_mission_idx = Some(0);
-        let mut callbacks = RustCallbacks::new();
+        let mut callbacks = RustCallbacks::with_application_context(application_context.clone());
         run_mission(
             window,
             &mut callbacks,
@@ -1810,7 +1977,8 @@ pub async fn run_rust_game(
                     }
                     campaign.force_next_mission(idx);
                     campaign.current_mission_idx = Some(idx);
-                    let mut callbacks = RustCallbacks::new();
+                    let mut callbacks =
+                        RustCallbacks::with_application_context(application_context.clone());
                     run_mission(
                         window,
                         &mut callbacks,
@@ -1850,13 +2018,23 @@ pub async fn run_rust_game(
 
     // ── Full game: outer main menu loop ──
     loop {
-        match show_main_menu(window, &campaign, &profiles, shipping.as_deref()).await? {
+        // PARITY TODO(app-context): `main_menu` is outside this slice and
+        // still edits singleton profile/key stores. Mirror owned snapshots on
+        // either side of its await; the guards themselves never survive the
+        // synchronous helper calls.
+        mirror_context_to_legacy_stores(&application_context)?;
+        let menu_choice = show_main_menu(window, &campaign, &profiles, shipping.as_deref()).await?;
+        adopt_legacy_stores_into_context(&application_context)?;
+
+        match menu_choice {
             MainMenuChoice::Start => {
                 // Reset campaign for a new game
                 campaign.reset(&profiles);
                 tracing::info!("Campaign reset for new game");
 
-                if let Some((mission_name, _proto_name, pcs, location)) = detect_demo_mode() {
+                if let Some((mission_name, _proto_name, pcs, location)) =
+                    detect_demo_mode_with_context(&application_context)
+                {
                     tracing::info!(
                         "Main menu Start: demo datadir detected, launching `{mission_name}`"
                     );
@@ -1870,7 +2048,8 @@ pub async fn run_rust_game(
                             format!("demo mission `{mission_name}` is present in data but missing from campaign")
                         })?;
                     campaign.current_mission_idx = Some(idx);
-                    let mut callbacks = RustCallbacks::new();
+                    let mut callbacks =
+                        RustCallbacks::with_application_context(application_context.clone());
                     run_mission(
                         window,
                         &mut callbacks,
@@ -1888,6 +2067,7 @@ pub async fn run_rust_game(
                 // Session always returns to menu (window close causes Quit → QuitToMenu)
                 let SessionResult::QuitToMenu =
                     run_session(window, &mut campaign, &profiles, args, None).await?;
+                adopt_legacy_stores_into_context(&application_context)?;
                 tracing::info!("Returned to main menu");
             }
             MainMenuChoice::Load { slot, mission_id } => {
@@ -1921,6 +2101,7 @@ pub async fn run_rust_game(
                     }),
                 )
                 .await?;
+                adopt_legacy_stores_into_context(&application_context)?;
                 tracing::info!("Returned to main menu from Load");
             }
             MainMenuChoice::Multiplayer(launch) => {
@@ -1935,7 +2116,7 @@ pub async fn run_rust_game(
                     ));
                 };
                 campaign.reset(&profiles);
-                if let Some((_, _, pcs, _)) = detect_demo_mode() {
+                if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&application_context) {
                     campaign.create_gang_from_pcs(pcs, &profiles);
                 }
                 campaign.force_next_mission(idx);
@@ -1964,6 +2145,7 @@ pub async fn run_rust_game(
                 mp_args.mp_expected_players = Some(launch.expected_players);
                 let SessionResult::QuitToMenu =
                     run_session(window, &mut campaign, &profiles, &mp_args, None).await?;
+                adopt_legacy_stores_into_context(&application_context)?;
                 tracing::info!("Returned to main menu from Multiplayer");
             }
             MainMenuChoice::CustomMission(launch) => {
@@ -2011,7 +2193,7 @@ pub async fn run_rust_game(
                 // demo manifest, same as MainMenuChoice::Start. Custom
                 // missions don't dictate roster, they piggyback on
                 // whatever the datadir's campaign would have used.
-                if let Some((_, _, pcs, _)) = detect_demo_mode() {
+                if let Some((_, _, pcs, _)) = detect_demo_mode_with_context(&application_context) {
                     campaign.create_gang_from_pcs(pcs, &profiles);
                     campaign.add_all_to_mission_team();
                 }
@@ -2031,6 +2213,7 @@ pub async fn run_rust_game(
                 });
                 let SessionResult::QuitToMenu =
                     run_session(window, &mut campaign, &profiles, &session_args, None).await?;
+                adopt_legacy_stores_into_context(&application_context)?;
                 drop(mount_guard);
                 tracing::info!("Returned to main menu from CustomMission");
             }
@@ -2045,9 +2228,15 @@ pub async fn run_rust_game(
 pub async fn run_rust_game_headless(
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
-    _shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
+    application_context: ApplicationContext,
     args: &CliArgs,
 ) -> Result<i32, String> {
+    let application_context =
+        application_context.with_options(args.global_options.options().clone());
+    let mut run_args = args.clone();
+    run_args.global_options = application_context.clone();
+    let args = &run_args;
+
     #[cfg(not(target_arch = "wasm32"))]
     crate::http_server::start_global(args.http_server)?;
 
@@ -2055,7 +2244,9 @@ pub async fn run_rust_game_headless(
 
     let launch = if let Some(launch) = force_mission_launch(&mut campaign, &mut profiles, args)? {
         Some(launch)
-    } else if let Some((mission_name, _proto_name, pcs, location)) = detect_demo_mode() {
+    } else if let Some((mission_name, _proto_name, pcs, location)) =
+        detect_demo_mode_with_context(&application_context)
+    {
         campaign.reset(&profiles);
         campaign.create_gang_from_pcs(pcs, &profiles);
         campaign.add_all_to_mission_team();
@@ -2063,7 +2254,11 @@ pub async fn run_rust_game_headless(
             .missions
             .iter()
             .position(|m| m.profile(&profiles).mission_filename == mission_name)
-            .unwrap_or(1);
+            .ok_or_else(|| {
+                format!(
+                    "demo mission `{mission_name}` is present in data but missing from campaign"
+                )
+            })?;
         campaign.current_mission_idx = Some(idx);
         Some((idx, location))
     } else if args.sherwood {
@@ -2104,7 +2299,7 @@ pub async fn run_rust_game_headless(
         );
     };
 
-    let mut callbacks = RustCallbacks::new();
+    let mut callbacks = RustCallbacks::with_application_context(application_context);
     run_mission_headless(
         &mut callbacks,
         &mut campaign,

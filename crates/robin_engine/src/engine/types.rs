@@ -758,13 +758,10 @@ pub struct LevelAssets {
 /// reads this when an NPC speaks to schedule the deterministic
 /// MYTALK finish — instead of waiting for the audio backend's
 /// wall-clock playback completion, which doesn't replay during
-/// rollback. Missing entries use `EXCLAMATION_DEFAULT_FRAMES`.
+/// rollback. As in the original sound hourglass, a missing sample has
+/// length zero and completes at the next scheduling boundary.
 pub type ExclamationDurations =
     std::sync::Arc<std::collections::BTreeMap<(crate::sound::ExclamationGroup, u32, u16), u32>>;
-
-/// Default number of sim frames an exclamation lasts when its sample
-/// length isn't in the duration table. ~3 s @ 25 fps.
-pub const EXCLAMATION_DEFAULT_FRAMES: u32 = 75;
 
 impl LevelAssets {
     /// Mutable access to sprite_scriptor during initialization.
@@ -971,9 +968,9 @@ pub struct MissionScript {
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
 
-    /// Has the script's `PostInitialize` entry point run yet?  The first
-    /// tick after level-load flips this and fires `PostInitialize`.
-    /// Sim-side so `perform_hourglass` can handle the one-shot call
+    /// Has the script's `PostInitialize` entry point run yet?  The host's
+    /// first post-refresh stage flips this after rendering and sound.
+    /// Serialized so rollback replay reproduces the same frame boundary
     /// without a host-owned companion bool.
     pub post_initialized: bool,
 }
@@ -1584,6 +1581,33 @@ impl MissionScript {
         std::mem::swap(&mut self.game_host.mission_stat, mission_stat);
     }
 
+    /// Borrow the live engine state for one script/native dispatch.
+    ///
+    /// The returned context restores both the engine-owned state and an
+    /// optional `script_this` override when it is dropped, including while
+    /// unwinding or propagating an error.  Keeping this transaction here also
+    /// means dispatch sites cannot accidentally add an early return between
+    /// the old pair of [`Self::swap_engine_state`] calls.
+    pub(crate) fn script_context<'a>(
+        &'a mut self,
+        entities: &'a mut crate::entities::Entities,
+        ai_global: &'a mut crate::ai::AiGlobalState,
+        fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+        campaign: &'a mut Option<crate::campaign::Campaign>,
+        mission_stat: &'a mut crate::mission_stat::MissionStat,
+        script_this: Option<i32>,
+    ) -> ScriptContext<'a> {
+        ScriptContext::new(
+            &mut self.game_host,
+            entities,
+            ai_global,
+            fast_grid,
+            campaign,
+            mission_stat,
+            script_this,
+        )
+    }
+
     /// Call the script's `Hourglass` function (once per game-second).
     pub(crate) fn hourglass(&mut self, game_seconds: u32) -> Result<i32, String> {
         Self::with_game_host_attached(&mut self.game_host, &mut self.instance, |instance, host| {
@@ -1654,6 +1678,74 @@ impl MissionScript {
     /// Get an immutable reference to the underlying [`GameHost`].
     pub fn game_host(&self) -> Option<&GameHost> {
         Some(&self.game_host)
+    }
+}
+
+/// Scoped access to the live engine state installed on a [`GameHost`].
+///
+/// This is deliberately transient and non-serializable: it only exists while
+/// one native or script callback is executing.  Dropping it commits mutations
+/// back to the borrowed engine fields and restores the host's parked state.
+///
+/// TODO: Replace the five legacy swaps with native-specific borrowed fields
+/// plus explicit effects as native groups are migrated.  Until then this guard
+/// makes the legacy transaction safe on every Rust exit path.
+#[must_use = "dropping the script context restores the borrowed engine state"]
+pub(crate) struct ScriptContext<'a> {
+    game_host: &'a mut GameHost,
+    entities: &'a mut crate::entities::Entities,
+    ai_global: &'a mut crate::ai::AiGlobalState,
+    fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+    campaign: &'a mut Option<crate::campaign::Campaign>,
+    mission_stat: &'a mut crate::mission_stat::MissionStat,
+    saved_script_this: Option<i32>,
+}
+
+impl<'a> ScriptContext<'a> {
+    fn new(
+        game_host: &'a mut GameHost,
+        entities: &'a mut crate::entities::Entities,
+        ai_global: &'a mut crate::ai::AiGlobalState,
+        fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
+        campaign: &'a mut Option<crate::campaign::Campaign>,
+        mission_stat: &'a mut crate::mission_stat::MissionStat,
+        script_this: Option<i32>,
+    ) -> Self {
+        entities.swap_slots_with(&mut game_host.entities);
+        std::mem::swap(&mut game_host.ai_global, ai_global);
+        std::mem::swap(&mut game_host.fast_grid, fast_grid);
+        std::mem::swap(&mut game_host.campaign, campaign);
+        std::mem::swap(&mut game_host.mission_stat, mission_stat);
+
+        let saved_script_this =
+            script_this.map(|value| std::mem::replace(&mut game_host.script_this, value));
+
+        Self {
+            game_host,
+            entities,
+            ai_global,
+            fast_grid,
+            campaign,
+            mission_stat,
+            saved_script_this,
+        }
+    }
+
+    pub(crate) fn game_host_mut(&mut self) -> &mut GameHost {
+        self.game_host
+    }
+}
+
+impl Drop for ScriptContext<'_> {
+    fn drop(&mut self) {
+        if let Some(saved) = self.saved_script_this {
+            self.game_host.script_this = saved;
+        }
+        self.entities.swap_slots_with(&mut self.game_host.entities);
+        std::mem::swap(&mut self.game_host.ai_global, self.ai_global);
+        std::mem::swap(&mut self.game_host.fast_grid, self.fast_grid);
+        std::mem::swap(&mut self.game_host.campaign, self.campaign);
+        std::mem::swap(&mut self.game_host.mission_stat, self.mission_stat);
     }
 }
 

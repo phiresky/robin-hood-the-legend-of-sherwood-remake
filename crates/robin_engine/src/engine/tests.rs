@@ -19,6 +19,77 @@ fn engine_creation() {
 }
 
 #[test]
+fn simulation_gate_extraction_preserves_snapshot_schema_and_hash() {
+    use std::hash::{Hash, Hasher};
+
+    let engine = EngineInner::new();
+    assert_eq!(
+        crate::replay::state_hash(&engine),
+        14_280_078_644_944_828_275
+    );
+
+    let json = serde_json::to_value(&engine).expect("serialize engine");
+    let object = json
+        .as_object()
+        .expect("EngineInner should serialize as a map");
+    assert_eq!(
+        object.get("lock_engine"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        object.get("freeze_all"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        object.get("fade_freeze_frames_remaining"),
+        Some(&serde_json::Value::from(0))
+    );
+    assert!(!object.contains_key("simulation_gates"));
+
+    let bytes =
+        bincode::serde::encode_to_vec(&engine, bincode::config::standard()).expect("encode");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    assert_eq!(bytes.len(), 549);
+    assert_eq!(hasher.finish(), 11_550_366_599_421_462_693);
+}
+
+#[test]
+fn simulation_gates_survive_rollback_restore_and_replay() {
+    let assets = LevelAssets::new();
+    let mut original = EngineInner::new();
+    original.lock_engine = true;
+    original.freeze_all = true;
+    original.fade_freeze_frames_remaining = 2;
+
+    let bytes =
+        bincode::serde::encode_to_vec(&original, bincode::config::standard()).expect("encode");
+    let (mut replay, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).expect("decode");
+    assert_eq!(consumed, bytes.len());
+    assert!(replay.lock_engine);
+    assert!(replay.freeze_all);
+    assert_eq!(replay.fade_freeze_frames_remaining, 2);
+    assert_eq!(
+        crate::replay::state_hash(&original),
+        crate::replay::state_hash(&replay)
+    );
+
+    let mut original_display = HostDisplayState::default();
+    let mut replay_display = original_display.clone();
+    let mut original_dev = DevState::default();
+    let mut replay_dev = DevState::default();
+    for _ in 0..4 {
+        original.perform_hourglass(&mut original_display, &assets, &mut original_dev);
+        replay.perform_hourglass(&mut replay_display, &assets, &mut replay_dev);
+        assert_eq!(
+            crate::replay::state_hash(&original),
+            crate::replay::state_hash(&replay)
+        );
+    }
+}
+
+#[test]
 fn scrolling_table_generation() {
     let bg = BackgroundTransform::default();
     assert_eq!(bg.x_scrolling_values[0], 0.0);
@@ -374,6 +445,77 @@ fn rollback_clone_stays_in_sync() {
     }
     assert_eq!(second_replay.frame_counter, original.frame_counter);
     assert_eq!(second_replay.rng.get_seed(), original.rng.get_seed());
+}
+
+/// `RHGame::GameLoop` calls mission `PostInitialize` only after its
+/// first `Refresh(true, true)` and `RHSound::Hourglass` calls.  Keep the
+/// engine tick and that host-owned boundary observably separate: frame
+/// zero must finish without flipping the serialized one-shot flag, and
+/// the explicit post-refresh stage must flip it without advancing time.
+#[test]
+fn post_initialize_waits_for_post_refresh_stage() {
+    use crate::scb::{ClassEntry, Function, ScbFile};
+    use crate::vm::{Opcode, Quad};
+
+    let begin = Quad {
+        operation: Opcode::BeginFunction as u8,
+        operands: [0; 8],
+    };
+    let ret = Quad {
+        operation: Opcode::Return as u8,
+        operands: [0; 8],
+    };
+    let startup = ClassEntry {
+        source_file: "post_initialize_ordering_test.scs".into(),
+        class_name: "StartUp".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "PostInitialize".into(),
+            address: 0,
+            num_parameters: 0,
+            size_of_return_value: 0,
+            size_of_parameters: 0,
+            size_of_volatile: 0,
+            size_of_temporary: 0,
+        }],
+        quads: vec![begin, ret],
+    };
+
+    let mut engine = EngineInner::new();
+    engine.mission_script = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("synthetic StartUp script"),
+    );
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    assert_eq!(engine.frame_counter, 1, "the first simulation frame ran");
+    assert!(
+        !engine.mission_script.as_ref().unwrap().post_initialized,
+        "PostInitialize must not run before the first host refresh and sound hourglass"
+    );
+
+    let first_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
+    assert!(first_post_initialize_effects.is_some());
+    assert_eq!(
+        engine.frame_counter, 1,
+        "the post-refresh stage must not advance simulation time"
+    );
+    assert!(
+        engine.mission_script.as_ref().unwrap().post_initialized,
+        "the post-refresh stage must dispatch PostInitialize exactly at the frame-one boundary"
+    );
+
+    let second_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
+    assert!(second_post_initialize_effects.is_none());
+    assert_eq!(engine.frame_counter, 1);
+    assert!(engine.mission_script.as_ref().unwrap().post_initialized);
 }
 
 /// Serialize the engine to JSON, deserialize it back, advance the
@@ -2056,6 +2198,114 @@ fn make_test_soldier(posture: crate::element::Posture) -> Entity {
     })
 }
 
+const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
+
+fn build_mytalk_timing_test(duration_frames: Option<u32>) -> (EngineInner, EntityId, LevelAssets) {
+    use crate::ai::{Remark, SpeechFlags};
+    use crate::element::AiBrain;
+    use crate::profiles::SoldierProfile;
+    use crate::sound::ExclamationGroup;
+
+    let mut engine = EngineInner::new();
+    engine.frame_counter = 100;
+
+    let mut soldier_entity = make_test_soldier(crate::element::Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let ai = soldier.npc.ai_brain.base_mut().unwrap();
+    ai.current_remark = Remark::Arrow;
+    ai.current_remark_flags = (SpeechFlags::MYTALK_1 | SpeechFlags::ALWAYS).bits();
+    let soldier_id = engine.add_entity(soldier_entity);
+
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .push(SoldierProfile {
+            profile_name: "timing-test-soldier".into(),
+            exclamation_id: SPEECH_TIMING_PROFILE_ID,
+            ..Default::default()
+        });
+    if let Some(frames) = duration_frames {
+        std::sync::Arc::make_mut(&mut assets.exclamation_durations).insert(
+            (
+                ExclamationGroup::Civilian,
+                SPEECH_TIMING_PROFILE_ID,
+                Remark::Arrow as u16,
+            ),
+            frames,
+        );
+    }
+
+    (engine, soldier_id, assets)
+}
+
+fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiController {
+    engine
+        .get_entity(soldier_id)
+        .and_then(Entity::ai_controller)
+        .expect("timing-test soldier has an AI controller")
+}
+
+#[test]
+fn mytalk_completion_obeys_exact_asset_duration_frame() {
+    use crate::ai::{Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(Some(3));
+    engine.process_npc_speech(&assets);
+
+    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(engine.sound_sim.playing_exclamations[0].finish_frame, 103);
+    assert!(mytalk_ai(&engine, soldier_id).speech_in_flight);
+
+    for frame in [101, 102] {
+        engine.frame_counter = frame;
+        super::tick::drain_matured_exclamations(&mut engine.sound_sim, frame);
+        engine.process_npc_speech(&assets);
+        let ai = mytalk_ai(&engine, soldier_id);
+        assert!(ai.speech_in_flight);
+        assert_eq!(ai.current_remark, Remark::Arrow);
+        assert!(ai.pending_self_stimuli.is_empty());
+    }
+
+    engine.frame_counter = 103;
+    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 103);
+    engine.process_npc_speech(&assets);
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert!(!ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+}
+
+#[test]
+fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
+    use crate::ai::{Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(None);
+    engine.process_npc_speech(&assets);
+
+    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(
+        engine.sound_sim.playing_exclamations[0].finish_frame, 100,
+        "missing metadata must not fabricate a 75-frame speech"
+    );
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert!(ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::Arrow);
+
+    engine.frame_counter = 101;
+    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 101);
+    engine.process_npc_speech(&assets);
+
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert_eq!(engine.frame_counter, 101);
+    assert!(!ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+    assert_eq!(ai.pending_mytalk_flags, 0);
+    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+}
+
 /// Build a minimal civilian entity for NPC-translate tests.
 fn make_test_civilian(posture: crate::element::Posture) -> Entity {
     Entity::Civilian(crate::element::ActorCivilian {
@@ -2224,6 +2474,123 @@ fn primary_target_tracking_precedes_view_refresh() {
     assert_eq!(
         soldier.npc.direction_old, expected,
         "RefreshView must observe the combat tracking direction in the same frame"
+    );
+}
+
+#[test]
+fn npc_hourglass_observes_exact_original_phase_order() {
+    use super::tick::{NpcHourglassPhase as Phase, capture_npc_hourglass_phases};
+
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    let (_, phases) =
+        capture_npc_hourglass_phases(|| engine.perform_hourglass(&mut display, &assets, &mut dev));
+
+    assert_eq!(
+        phases,
+        vec![
+            Phase::SoldierPrelude,
+            Phase::Patrol,
+            Phase::BaseHuman,
+            Phase::Broadcasts,
+            Phase::View,
+            Phase::Detection,
+            Phase::Ambush,
+            Phase::Busy,
+            Phase::Ladder,
+            Phase::LockGate,
+            Phase::SixteenthFrame,
+            Phase::NormalTimer,
+            Phase::MacroTimer,
+            Phase::QueuedStimuli,
+        ]
+    );
+}
+
+#[test]
+fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
+    use super::ai::npc_hourglass_frame_phase;
+
+    let sixteenth_frame_visits: Vec<_> = (0..256)
+        .filter_map(|frame| {
+            let phase = npc_hourglass_frame_phase(frame, 0);
+            (phase & 15 == 0).then_some((frame, phase))
+        })
+        .collect();
+    assert_eq!(
+        sixteenth_frame_visits,
+        vec![
+            (4, 160),
+            (20, 176),
+            (36, 192),
+            (52, 208),
+            (68, 224),
+            (84, 240),
+            (100, 0),
+            (116, 16),
+            (132, 32),
+            (148, 48),
+            (164, 64),
+            (180, 80),
+            (196, 96),
+            (212, 112),
+            (228, 128),
+            (244, 144),
+        ]
+    );
+    assert_eq!(
+        sixteenth_frame_visits
+            .iter()
+            .filter_map(|&(frame, phase)| (phase & 63 == 0).then_some(frame))
+            .collect::<Vec<_>>(),
+        vec![36, 100, 164, 228]
+    );
+}
+
+#[test]
+fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+
+    let ai = engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| entity.ai_controller_mut())
+        .expect("test soldier has AI");
+    ai.locks_flag_field = crate::ai::AiLockFlags::BUSY;
+    ai.stimulus_queue.push(crate::ai::Stimulus::new(
+        crate::ai::StimulusType::EventAfterCombatInjury,
+    ));
+
+    engine.tick_ai_queued_stimuli(&assets);
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .stimulus_queue
+            .len(),
+        1,
+        "the Hourglass lock gate must preserve queued stimuli"
+    );
+
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| entity.ai_controller_mut())
+        .unwrap()
+        .locks_flag_field = crate::ai::AiLockFlags::empty();
+    engine.tick_ai_queued_stimuli(&assets);
+    assert!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .stimulus_queue
+            .is_empty(),
+        "the final unlocked Hourglass phase must replay the old lock queue"
     );
 }
 

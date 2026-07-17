@@ -28,6 +28,30 @@ struct WithSerdeSkip {
     c: u32,
 }
 
+#[derive(StateHash, Serialize)]
+struct WithExplicitHashSkip {
+    a: u32,
+    #[state_hash(skip)]
+    serialized_but_unhashed: u32,
+}
+
+#[derive(StateHash, Serialize)]
+enum WithSkippedEnumFields {
+    Tuple(u32, #[serde(skip)] u32, u32),
+    Named {
+        a: u32,
+        #[serde(skip_serializing)]
+        transient: u32,
+        c: u32,
+    },
+}
+
+#[derive(StateHash)]
+struct NoFields;
+
+#[derive(StateHash)]
+struct OneSkippedField(#[state_hash(skip)] ());
+
 #[derive(StateHash)]
 struct Nested {
     pl: Plain,
@@ -85,7 +109,66 @@ fn float_fields_via_to_bits() {
 fn serde_skip_excluded_from_hash() {
     let a = WithSerdeSkip { a: 1, b: 99, c: 3 };
     let b = WithSerdeSkip { a: 1, b: 100, c: 3 };
+    assert_eq!(
+        serde_json::to_value(&a).unwrap(),
+        serde_json::to_value(&b).unwrap()
+    );
     assert_eq!(compute(&a), compute(&b));
+}
+
+#[test]
+fn explicit_hash_skip_does_not_change_serialization() {
+    let a = WithExplicitHashSkip {
+        a: 1,
+        serialized_but_unhashed: 10,
+    };
+    let b = WithExplicitHashSkip {
+        a: 1,
+        serialized_but_unhashed: 20,
+    };
+
+    assert_ne!(
+        serde_json::to_value(&a).unwrap(),
+        serde_json::to_value(&b).unwrap()
+    );
+    assert_eq!(compute(&a), compute(&b));
+}
+
+#[test]
+fn enum_tuple_skip_matches_struct_skip_semantics() {
+    let a = WithSkippedEnumFields::Tuple(1, 10, 3);
+    let b = WithSkippedEnumFields::Tuple(1, 20, 3);
+
+    assert_eq!(
+        serde_json::to_value(&a).unwrap(),
+        serde_json::to_value(&b).unwrap()
+    );
+    assert_eq!(compute(&a), compute(&b));
+}
+
+#[test]
+fn enum_named_skip_serializing_matches_struct_skip_semantics() {
+    let a = WithSkippedEnumFields::Named {
+        a: 1,
+        transient: 10,
+        c: 3,
+    };
+    let b = WithSkippedEnumFields::Named {
+        a: 1,
+        transient: 20,
+        c: 3,
+    };
+
+    assert_eq!(
+        serde_json::to_value(&a).unwrap(),
+        serde_json::to_value(&b).unwrap()
+    );
+    assert_eq!(compute(&a), compute(&b));
+}
+
+#[test]
+fn skipped_field_has_an_explicit_hash_schema_marker() {
+    assert_ne!(compute(&NoFields), compute(&OneSkippedField(())));
 }
 
 #[test]

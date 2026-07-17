@@ -15,3 +15,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 thiserror = "2"
 nonmax = "0.5"
 enum-map = "2"
+
+[dev-dependencies]
+tempfile = "3"
+serde_json = "1"
