@@ -1,6 +1,8 @@
 //! Game session: mission selection loop and the per-mission game loop.
 
+mod bootstrap;
 mod dispatch;
+mod headless;
 mod input_handlers;
 mod interactive;
 mod modal_state;
@@ -12,12 +14,14 @@ mod runtime;
 mod setup;
 mod tick;
 
+use bootstrap::{MissionBootstrap, MissionSpec};
 use dispatch::apply_local_viewport_scroll;
 pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
+use headless::{HeadlessMission, HeadlessPolicy};
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
 use interactive::{
-    InteractiveFrontend, MissionAudio, MissionHud, MissionInput, MissionPresentation,
-    MissionResources, MissionUi, RenderViewState,
+    InteractiveFrontend, InteractiveMission, MissionAudio, MissionHud, MissionInput,
+    MissionPresentation, MissionResources, MissionUi, RenderViewState,
 };
 use modal_state::{
     ActiveModal, ActiveModalOutcome, drain_pending_console_display, drain_pending_debriefings,
@@ -39,13 +43,11 @@ use render::{
     drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
     update_mouse_and_cursor,
 };
-use replay_init::init_replay_and_rollback;
 use robin_assets::res_descr as assets_res_descr;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, ScrollDirection};
-use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::messenger as engine_messenger;
 use robin_engine::mission as engine_mission;
@@ -54,14 +56,13 @@ use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
 use runtime::{
-    FrameContract, FrameOutcome, FramePacing, MissionControl, MissionFrame, MissionRuntime,
-    MissionWorld, TimelineRuntime,
+    FrameOutcome, FramePacing, MissionControl, MissionFrame, MissionRuntime, MissionWorld,
 };
 use setup::{
-    MissionSprites, extract_ground_mark_sprite_data, extract_minimap_widget_setup,
-    extract_titbit_row_frame_counts, init_audio_backend, load_level_and_sprite_bank,
-    load_mission_sprites, pre_decode_maps_and_resources, setup_input_and_camera,
-    setup_mission_audio,
+    LoadedInteractiveResources, MissionSprites, extract_ground_mark_sprite_data,
+    extract_minimap_widget_setup, extract_titbit_row_frame_counts, init_audio_backend,
+    load_level_and_sprite_bank, load_mission_sprites, pre_decode_maps_and_resources,
+    setup_input_and_camera,
 };
 use tick::{
     dismiss_pending_modals, drain_steps, modal_state_pending, post_render_engine_cleanup,
@@ -117,7 +118,6 @@ use crate::window::GameWindow;
 use crate::zoom_hud::{
     ZoomButton, ZoomButtonEnable, ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker,
 };
-use std::sync::Arc;
 
 /// Read the active player profile's texture scale mode, falling back to
 /// the default (`Linear`) if no profile is loaded yet.
@@ -254,25 +254,6 @@ fn install_pending_lua_session(
     Ok(())
 }
 
-/// Dispatch required Spellforge startup while the Engine owns the live script
-/// host and authoritative RNG stream.
-fn run_required_spellforge_startup(
-    host: &Host,
-    engine: &mut Engine,
-    engine_rng_seed: u64,
-) -> Result<(), crate::lua_session::SpellforgeSessionError> {
-    let Some(lua) = host.lua_session.as_ref() else {
-        return Ok(());
-    };
-    tracing::info!(
-        "Lua: firing Initialize for mission '{}' (seed={engine_rng_seed})",
-        lua.mission_basename()
-    );
-    engine.with_mission_script_game_host_and_rng(|native_parts| {
-        lua.run_required_startup_events(native_parts, engine_rng_seed as i32)
-    })
-}
-
 /// Borrow menu resources required by a confirmation or pause-menu action.
 ///
 /// Original: `original-code/RHMenuIngame.cpp:297-310` constructs the Really
@@ -344,88 +325,52 @@ pub(crate) async fn run_mission_headless(
     let titbit_row_frame_counts = extract_titbit_row_frame_counts(&mut cursor_res);
     let minimap_widget = extract_minimap_widget_setup(&mut cursor_res);
 
-    let (mut engine, mut assets, dev, _pre_decoded_bg, _pre_decoded_mm, engine_rng_seed) =
-        load_level_and_sprite_bank(
-            None,
-            &mut None,
-            &mut host,
-            &mut game,
-            campaign_ref,
-            profiles,
-            &mut text_res,
-            args,
-            1024.0,
-            768.0,
-            ground_mark_sprite,
-            titbit_row_frame_counts,
-            minimap_widget,
-        )?;
+    let loaded = load_level_and_sprite_bank(
+        None,
+        &mut None,
+        &mut host,
+        &mut game,
+        campaign_ref,
+        profiles,
+        &mut text_res,
+        args,
+        1024.0,
+        768.0,
+        ground_mark_sprite,
+        titbit_row_frame_counts,
+        minimap_widget,
+    )?;
 
-    if let Err(error) = run_required_spellforge_startup(&host, &mut engine, engine_rng_seed) {
-        restore_engine_campaign(campaign_ref, &mut engine, "Spellforge startup failure");
+    let mut bootstrap = MissionBootstrap::new(
+        MissionSpec::headless(mission_idx, location),
+        host,
+        game,
+        loaded,
+    );
+    if let Err(error) = bootstrap.start_required_spellforge() {
+        restore_engine_campaign(
+            campaign_ref,
+            &mut bootstrap.loaded.engine,
+            "Spellforge startup failure",
+        );
         return Err(error.to_string());
     }
-
-    setup_mission_audio(
-        &mut host,
-        None,
-        &engine,
-        &mut assets,
-        profiles,
-        location,
-        &game.global_options.sound_directory,
-    );
-    let (_unused_bg_slot, _unused_mm_slot, _level_descriptors, _hud_fonts) =
-        pre_decode_maps_and_resources(None, &mut None, &mut engine, profiles, &host, &game);
-
-    engine.campaign_reset_mission_length();
+    bootstrap.prepare_audio(None, profiles);
+    // True headless has no HUD, renderer, dialogue widgets, or debriefing
+    // frontend. The engine-required background dimensions were decoded before
+    // construction; loading level descriptors and HUD fonts here was purely
+    // graphical work.
+    bootstrap.loaded.engine.campaign_reset_mission_length();
     <RustCallbacks as crate::game::GameCallbacks>::start_play_time(callbacks);
-
-    let mission_id_for_recorder = engine
-        .campaign()
-        .and_then(|c| {
-            c.missions
-                .get(mission_idx)
-                .map(|m| m.profile(profiles).mission_filename.clone())
-        })
-        .unwrap_or_else(|| format!("mission_{mission_idx}"));
-    let assets = Arc::new(assets);
-    let replay = init_replay_and_rollback(
-        &mut engine,
-        Arc::clone(&assets),
-        args,
-        mission_idx,
-        &mission_id_for_recorder,
-        engine_rng_seed,
-        host.net.is_some(),
-    );
-    let timeline = TimelineRuntime::new(
-        replay,
-        FrameContract::Headless,
-        // TODO(parity): Teach headless to drain the multiplayer start
-        // barrier. Until then, preserve its existing replay-runner
-        // behavior instead of entering a gate it cannot release.
-        false,
-        host.local_seat == engine_player_command::PlayerId::HOST,
-    );
-    debug_assert_eq!(timeline.frame_contract(), FrameContract::Headless);
-    let manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
-    let control = MissionControl::new(
-        timeline.initially_paused(),
-        manager.engine.weather().night_color,
-    );
-    let mut mission = MissionRuntime::new(
-        MissionWorld::new(host, game, manager, assets, dev),
-        timeline,
-        control,
-    );
+    let mut mission = bootstrap.finish_headless(args, profiles, HeadlessPolicy::replay_runner());
     // Borrow the owned components under their existing local names. This keeps
     // Wave 1 as an ownership-only change; phase extraction comes later.
+    let HeadlessMission { runtime, policy } = &mut mission;
     let MissionRuntime {
         world,
         timeline: runtime,
         control,
-    } = &mut mission;
+    } = runtime;
     let MissionWorld {
         host,
         game,
@@ -462,7 +407,9 @@ pub(crate) async fn run_mission_headless(
             );
         }
 
-        let _ = dismiss_pending_modals(host);
+        if policy.auto_dismiss_modals {
+            let _ = dismiss_pending_modals(host);
+        }
         runtime.begin_simulation();
         let tick_exit_code = if *manual_pause {
             None
@@ -523,7 +470,11 @@ pub(crate) async fn run_mission_headless(
             manual_pause,
             &mut headless_active_modal,
         );
-        let dismissed = dismiss_pending_modals(host);
+        let dismissed = if policy.auto_dismiss_modals {
+            dismiss_pending_modals(host)
+        } else {
+            0
+        };
         if dismissed > 0 {
             tracing::debug!(dismissed, "headless: auto-dismissed pending modal(s)");
         }
@@ -573,7 +524,8 @@ pub(crate) async fn run_mission_headless(
             tracing::info!("headless replay finished");
         }
         runtime.begin_presentation();
-        let exit = tick_exit_code.or(replay_finished.then_some(GameCode::Quit));
+        let exit = tick_exit_code
+            .or((policy.exit_when_replay_finishes && replay_finished).then_some(GameCode::Quit));
         let exit_context = if tick_exit_code.is_some() {
             Some("headless mission exit")
         } else if replay_finished {
@@ -1000,22 +952,28 @@ pub(crate) async fn run_mission(
     // See `load_level_and_sprite_bank` for the full sequence.
     let screen_w = window.width as f32;
     let screen_h = window.height as f32;
-    let (mut engine, mut assets, dev, pre_decoded_bg, pre_decoded_mm, engine_rng_seed) =
-        load_level_and_sprite_bank(
-            Some(&mut *window),
-            &mut loading_screen,
-            &mut host,
-            &mut game,
-            campaign_ref,
-            profiles,
-            &mut text_res,
-            args,
-            screen_w,
-            screen_h,
-            ground_mark_sprite,
-            titbit_row_frame_counts,
-            minimap_widget,
-        )?;
+    let loaded = load_level_and_sprite_bank(
+        Some(&mut *window),
+        &mut loading_screen,
+        &mut host,
+        &mut game,
+        campaign_ref,
+        profiles,
+        &mut text_res,
+        args,
+        screen_w,
+        screen_h,
+        ground_mark_sprite,
+        titbit_row_frame_counts,
+        minimap_widget,
+    )?;
+
+    let mut bootstrap = MissionBootstrap::new(
+        MissionSpec::interactive(mission_idx, location, screen_w, screen_h),
+        host,
+        game,
+        loaded,
+    );
 
     // ── Spellforge Lua: post-level-load events ──
     //
@@ -1029,8 +987,12 @@ pub(crate) async fn run_mission(
     // Vanilla missions take this as a no-op. A required Spellforge session
     // has already been constructed, so a missing host or failed event aborts
     // mission startup instead of continuing with partially initialized state.
-    if let Err(error) = run_required_spellforge_startup(&host, &mut engine, engine_rng_seed) {
-        restore_engine_campaign(campaign_ref, &mut engine, "Spellforge startup failure");
+    if let Err(error) = bootstrap.start_required_spellforge() {
+        restore_engine_campaign(
+            campaign_ref,
+            &mut bootstrap.loaded.engine,
+            "Spellforge startup failure",
+        );
         return Err(error.to_string());
     }
 
@@ -1040,28 +1002,27 @@ pub(crate) async fn run_mission(
     if let Some(ref mut ls) = loading_screen {
         ls.set_status("Loading mission audio...", 0.75);
     }
-    setup_mission_audio(
-        &mut host,
-        audio_backend.as_mut(),
-        &engine,
-        &mut assets,
-        profiles,
-        location,
-        &game.global_options.sound_directory,
-    );
-    let assets = Arc::new(assets);
+    bootstrap.prepare_audio(audio_backend.as_mut(), profiles);
+    let mut host = &mut bootstrap.host;
+    let game = &mut bootstrap.game;
+    let mut engine = &mut bootstrap.loaded.engine;
+    let assets = &mut bootstrap.loaded.assets;
+    let pre_decoded_bg = bootstrap.loaded.pre_decoded_background.take();
+    let pre_decoded_mm = bootstrap.loaded.pre_decoded_minimap.take();
     // ── Post-audio progress + pre-decode ──
     // Runs the slow CPU work *before* closing the loading screen.
     // See `pre_decode_maps_and_resources` for the full breakdown.
-    let (_unused_bg_slot, _unused_mm_slot, level_descriptors, hud_fonts) =
-        pre_decode_maps_and_resources(
-            Some(&mut *window),
-            &mut loading_screen,
-            &mut engine,
-            profiles,
-            &host,
-            &game,
-        );
+    let LoadedInteractiveResources {
+        level_descriptors,
+        hud_fonts,
+    } = pre_decode_maps_and_resources(
+        Some(&mut *window),
+        &mut loading_screen,
+        &mut engine,
+        profiles,
+        &host,
+        &game,
+    );
 
     // Pre-resolve every short-briefing string from the level's text table
     // so the pause-menu render closures can do an immutable lookup.
@@ -1390,81 +1351,10 @@ pub(crate) async fn run_mission(
     let pc_action_tooltip = PcActionTooltipTracker::new();
     let last_cursor_id: i32 = crate::resource_ids::RHMOUSE_DEFAULT;
 
-    // ── Replay recording / playback + rollback + rewind ──
-    // Record-by-default; `--record <path>` overrides the destination,
-    // `--replay <path>` disables recording in favour of playback.  See
-    // `init_replay_and_rollback` for the full breakdown.
-    let replay = {
-        // `campaign_ref` was emptied by `std::mem::take` during level
-        // init (see the top of this function) — the real campaign
-        // now lives inside the engine.  Pull the `mission_filename`
-        // out here so the replay recorder can stamp it into the
-        // header; mutable-borrowing `engine` for
-        // `init_replay_and_rollback` below would conflict with an
-        // immutable `engine.campaign()` borrow.
-        let mission_id_for_recorder = engine
-            .campaign()
-            .and_then(|c| {
-                c.missions
-                    .get(mission_idx)
-                    .map(|m| m.profile(profiles).mission_filename.clone())
-            })
-            .unwrap_or_else(|| format!("mission_{mission_idx}"));
-        init_replay_and_rollback(
-            &mut engine,
-            Arc::clone(&assets),
-            args,
-            mission_idx,
-            &mission_id_for_recorder,
-            engine_rng_seed,
-            host.net.is_some(),
-        )
-    };
-
-    // Bundle the per-frame engine + rollback state into one
-    // `EngineManager`.  After this point, `engine` no longer exists
-    // as a separate binding — use `manager.engine`, `manager.sim_frame`,
-    // and `manager.pending_inputs` (or the methods on `manager`) for
-    // the rest of `run_mission`.
-    let manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
-    // Multiplayer: peer state hashes received from the host (only the
-    // server broadcasts).  Each entry is `(frame → host_hash)`; the
-    // client compares its locally-computed hash at the same sampling
-    // point.  Drained as frames are reached.
-    let runtime = TimelineRuntime::new(
-        replay,
-        FrameContract::Graphical,
-        host.net.is_some(),
-        host.local_seat == engine_player_command::PlayerId::HOST,
-    );
-    debug_assert_eq!(runtime.frame_contract(), FrameContract::Graphical);
-
-    // Manual pause toggle, distinct from the pause menu.  Set on mission
-    // entry by `--start-paused` or by a `load-replay` RPC call that
-    // requested `paused: true`; persists across `/step-forward` calls
-    // (step requests bypass the pause gate to run their own ticks
-    // synchronously, but they don't clear this flag — the sim stays
-    // paused between step calls).  Kept separate from `pause_menu` so
-    // the HUD / cursor / input stay fully interactive while the sim is
-    // frozen.  Also toggled by the in-game step-debug keys: `.` and `,`
-    // enable it (and step one frame forward/back), Enter clears it.
-    let manual_pause = runtime.initially_paused();
-
-    // Track the ambience-derived shadow key so host-side sprite caches
-    // (selection marks + titbits) can be rebound when
-    // `weather.ambiance` changes mid-mission. The shadow key is
-    // baked into the frame dictionaries at load time and never
-    // re-run; this poll closes that gap by reloading the
-    // shadow-dependent sprite caches whenever the engine state's
-    // `night_color` deviates from the last rebind. Cheap (two u16
-    // comparisons per frame) and dormant until something actually
-    // mutates the ambience.
-    let last_shadow_color = manager.engine.weather().night_color;
-
-    // The graphical driver now has the same common runtime owner as the
-    // headless driver. Native process resources live beside it in focused
-    // frontend owners; callbacks and the event pump intentionally remain
-    // outside both ownership trees.
+    // Replay/timeline construction remains after SCB Initialize,
+    // Spellforge startup, mission audio, and frontend resource loading. The
+    // bootstrap consumes all common process state only after the complete
+    // interactive frontend below has been assembled.
     let corner_layout = CornerHudLayout::for_resolution(
         renderer.screen_width() as u32,
         renderer.screen_height() as u32,
@@ -1475,12 +1365,7 @@ pub(crate) async fn run_mission(
         renderer.screen_height() as u32,
         &stature_sprites,
     );
-    let mut mission = MissionRuntime::new(
-        MissionWorld::new(host, game, manager, assets, dev),
-        runtime,
-        MissionControl::new(manual_pause, last_shadow_color),
-    );
-    let mut frontend = InteractiveFrontend {
+    let frontend = InteractiveFrontend {
         input: MissionInput::new(threaded_input, input_translator),
         audio: MissionAudio::new(audio_backend, sample_loader, sound_rng),
         resources: MissionResources {
@@ -1523,14 +1408,17 @@ pub(crate) async fn run_mission(
         },
     };
 
+    let mut mission = bootstrap.finish_interactive(frontend, args, profiles);
+
     // Preserve the existing statement order while migrating ownership. These
     // are disjoint borrows from the two mission-lifetime roots, not secondary
     // state copies.
+    let InteractiveMission { runtime, frontend } = &mut mission;
     let MissionRuntime {
         world,
         timeline: runtime,
         control,
-    } = &mut mission;
+    } = runtime;
     let MissionWorld {
         host,
         game,
