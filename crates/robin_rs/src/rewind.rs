@@ -30,7 +30,10 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::engine::{DevState, Engine, HostDisplayState, LevelAssets};
 use crate::player_command::PlayerInput;
-use crate::sim_timeline::{SimSnapshot as Snapshot, replay_one_frame};
+use crate::sim_timeline::{
+    CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, SnapshotHistory,
+    replay_one_frame,
+};
 
 /// How often (in sim frames) to take a snapshot.  Matches the cadence
 /// of the replay state-hash check so the two systems have similar
@@ -52,7 +55,7 @@ const BUCKET_GROWTH: f32 = 1.3;
 /// snapshot.
 pub struct RewindBuffer {
     /// Exponentially spaced snapshots, oldest first.
-    snapshots: VecDeque<Snapshot>,
+    snapshots: SnapshotHistory,
     /// One entry per simulated frame from [`Self::oldest_cmd_frame`]
     /// up to the most recently recorded frame, holding the commands
     /// applied during that frame.
@@ -81,7 +84,15 @@ pub struct RewindBuffer {
 impl RewindBuffer {
     pub fn new() -> Self {
         Self {
-            snapshots: VecDeque::new(),
+            snapshots: SnapshotHistory::new(
+                CheckpointPolicy::EveryNthFrame {
+                    interval: SNAPSHOT_INTERVAL,
+                },
+                RetentionPolicy::Exponential {
+                    interval: SNAPSHOT_INTERVAL,
+                    growth: BUCKET_GROWTH,
+                },
+            ),
             commands: VecDeque::new(),
             oldest_cmd_frame: 0,
             pending: None,
@@ -114,7 +125,7 @@ impl RewindBuffer {
     /// [`SNAPSHOT_INTERVAL`] — non-aligned frames still need to
     /// register their commands but don't add to the snapshot ring.
     pub fn begin_frame(&mut self, frame: u32, engine: &Engine, _assets: &LevelAssets) {
-        if frame.is_multiple_of(SNAPSHOT_INTERVAL) {
+        if self.snapshots.should_checkpoint(frame) {
             self.pending = Some(Snapshot::new(frame, engine));
         } else {
             self.pending = None;
@@ -127,8 +138,7 @@ impl RewindBuffer {
     pub fn end_frame(&mut self, cmds: Vec<PlayerInput>) {
         let frame = if let Some(snap) = self.pending.take() {
             let f = snap.frame;
-            self.snapshots.push_back(snap);
-            self.prune_exponential();
+            self.snapshots.remember(snap);
             f
         } else if let Some(back) = self.commands.back() {
             // No snapshot this frame; infer the frame number from the
@@ -151,7 +161,7 @@ impl RewindBuffer {
         // Trim commands older than the oldest retained snapshot; they
         // can never be needed for a rewind replay (we always start
         // from a snapshot that's at or before the target frame).
-        if let Some(oldest) = self.snapshots.front().map(|s| s.frame) {
+        if let Some(oldest) = self.snapshots.oldest_frame() {
             while self.oldest_cmd_frame < oldest && !self.commands.is_empty() {
                 self.commands.pop_front();
                 self.oldest_cmd_frame += 1;
@@ -190,12 +200,10 @@ impl RewindBuffer {
 
         // Pick the closest starting point ≤ target_frame.  A cached
         // state beats a retained snapshot when both are available.
-        let snap = self
+        let mut snapshot = self
             .snapshots
-            .iter()
-            .rev()
-            .find(|s| s.frame <= target_frame)?;
-        let mut snapshot = snap.clone();
+            .restore(target_frame, RestorePolicy::LatestAtOrBefore)
+            .ok()?;
         if let Some(cache) = &self.session
             && let Some((&cached_frame, cached)) = cache.range(..=target_frame).next_back()
             && cached_frame > snapshot.frame
@@ -231,7 +239,7 @@ impl RewindBuffer {
     /// from the newest.  Used by the main loop to decide whether a
     /// rewind request has any chance of succeeding.
     pub fn oldest_reachable_frame(&self) -> Option<u32> {
-        self.snapshots.front().map(|s| s.frame)
+        self.snapshots.oldest_frame()
     }
 
     /// The frame number that [`Self::end_frame`] would next record.
@@ -298,67 +306,8 @@ impl RewindBuffer {
         while self.commands.len() > idx as usize {
             self.commands.pop_back();
         }
-        while let Some(snap) = self.snapshots.back() {
-            if snap.frame > frame {
-                self.snapshots.pop_back();
-            } else {
-                break;
-            }
-        }
+        self.snapshots.truncate_after(frame);
     }
-
-    /// Drop snapshots so the retained set is exponentially spaced:
-    /// newest is kept, and for each older snapshot we keep at most
-    /// one per `bucket_for_age` bucket.
-    ///
-    /// Target distances-from-newest: roughly 25, 50, 100, 200, 400, …
-    /// frames back.  When two snapshots land in the same bucket we
-    /// keep the OLDER one — otherwise every new snapshot would push
-    /// the whole retained window forward, and the oldest reachable
-    /// frame would never grow beyond one bucket span.  Keeping the
-    /// older member of each bucket lets snapshots age naturally into
-    /// larger buckets until they eventually roll off the oldest edge.
-    fn prune_exponential(&mut self) {
-        let Some(newest_frame) = self.snapshots.back().map(|s| s.frame) else {
-            return;
-        };
-
-        // kept[i] corresponds to buckets[i] — parallel Vecs give us
-        // O(buckets) lookup without a hashmap allocation.
-        let mut kept: Vec<Snapshot> = Vec::with_capacity(self.snapshots.len());
-        let mut buckets: Vec<u32> = Vec::with_capacity(self.snapshots.len());
-
-        // Walk newest → oldest.  For each bucket, overwrite the slot
-        // with whichever snapshot we see later — we iterate oldest
-        // last per bucket, so "later" == "older", which is what we
-        // want to retain.
-        while let Some(snap) = self.snapshots.pop_back() {
-            let age = newest_frame.saturating_sub(snap.frame);
-            let bucket = bucket_for_age(age);
-            if let Some(pos) = buckets.iter().position(|&b| b == bucket) {
-                kept[pos] = snap;
-            } else {
-                buckets.push(bucket);
-                kept.push(snap);
-            }
-        }
-        // kept is newest → oldest; put back in oldest → newest order.
-        kept.reverse();
-        self.snapshots.extend(kept);
-    }
-}
-
-/// Map an age (in frames) to an exponential bucket index.  Ages below
-/// [`SNAPSHOT_INTERVAL`] all land in bucket 0 (the newest snapshot
-/// itself); from there each bucket covers a [`BUCKET_GROWTH`]-times
-/// wider range of frames than the previous one.
-fn bucket_for_age(age_frames: u32) -> u32 {
-    if age_frames < SNAPSHOT_INTERVAL {
-        return 0;
-    }
-    let ratio = age_frames as f32 / SNAPSHOT_INTERVAL as f32;
-    // floor(log_BUCKET_GROWTH(ratio)) + 1
-    (ratio.ln() / BUCKET_GROWTH.ln()).floor() as u32 + 1
 }
 
 impl Default for RewindBuffer {
@@ -370,55 +319,6 @@ impl Default for RewindBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bucket_for_age_is_monotonic_and_dense() {
-        // Ages below one interval collapse to bucket 0.
-        assert_eq!(bucket_for_age(0), 0);
-        assert_eq!(bucket_for_age(SNAPSHOT_INTERVAL - 1), 0);
-        // Exactly one interval back → bucket 1 (the closest retained
-        // snapshot slot).
-        assert_eq!(bucket_for_age(SNAPSHOT_INTERVAL), 1);
-        // Buckets are non-decreasing in age.
-        let mut last = 0;
-        for i in 0..=40 {
-            let b = bucket_for_age(i * SNAPSHOT_INTERVAL);
-            assert!(b >= last, "bucket decreased at i={i}: {last} → {b}");
-            last = b;
-        }
-        // Adjacent ages at the low end should land in distinct
-        // buckets (denser than a factor-of-2 scheme).
-        assert_ne!(
-            bucket_for_age(SNAPSHOT_INTERVAL),
-            bucket_for_age(2 * SNAPSHOT_INTERVAL)
-        );
-        assert_ne!(
-            bucket_for_age(2 * SNAPSHOT_INTERVAL),
-            bucket_for_age(3 * SNAPSHOT_INTERVAL)
-        );
-    }
-
-    /// Mirror of [`RewindBuffer::prune_exponential`] operating on bare
-    /// frame numbers so the retention policy can be tested without
-    /// instantiating real state clones.  Must be kept in sync with
-    /// the real impl.
-    fn prune_frames(frames: &mut Vec<u32>) {
-        let Some(&newest) = frames.last() else { return };
-        let mut kept: Vec<u32> = Vec::new();
-        let mut buckets: Vec<u32> = Vec::new();
-        while let Some(f) = frames.pop() {
-            let age = newest.saturating_sub(f);
-            let bucket = bucket_for_age(age);
-            if let Some(pos) = buckets.iter().position(|&b| b == bucket) {
-                kept[pos] = f;
-            } else {
-                buckets.push(bucket);
-                kept.push(f);
-            }
-        }
-        kept.reverse();
-        frames.extend(kept);
-    }
 
     #[test]
     fn splice_late_input_appends_to_correct_frame() {
@@ -446,36 +346,5 @@ mod tests {
         // Below oldest_cmd_frame: also false.
         buf.oldest_cmd_frame = 5;
         assert!(!buf.splice_late_input(2, inp));
-    }
-
-    #[test]
-    fn pruning_retains_exponentially_old_history() {
-        // Simulate 40 snapshot intervals == 1000 frames == 40 seconds
-        // of game time.  After pruning each insert, the oldest
-        // retained frame should still reach far back.
-        let mut frames: Vec<u32> = Vec::new();
-        for i in 0..=40 {
-            frames.push(i * SNAPSHOT_INTERVAL);
-            prune_frames(&mut frames);
-        }
-        let newest = *frames.last().unwrap();
-        let oldest = *frames.first().unwrap();
-        assert_eq!(newest, 40 * SNAPSHOT_INTERVAL);
-        // With exponential retention we expect the oldest retained
-        // frame to span at least half the full history — a flat
-        // "keep newest per bucket" implementation loses everything
-        // beyond one bucket span and would fail this assertion.
-        assert!(
-            newest - oldest >= 20 * SNAPSHOT_INTERVAL,
-            "expected oldest to reach >=500 frames back; got {oldest} (newest={newest})"
-        );
-        // Bucket count is bounded by log_BUCKET_GROWTH(intervals) + 2.
-        // At growth 1.3 across 40 intervals that's around 14 buckets
-        // in steady state; leave some headroom for off-by-one.
-        assert!(
-            frames.len() <= 20,
-            "too many snapshots retained: {}",
-            frames.len()
-        );
     }
 }

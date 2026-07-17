@@ -97,7 +97,9 @@ use crate::sdl_audio::{self};
 use crate::sherwood_hud::{
     SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout, SherwoodTooltipTracker,
 };
-use crate::sim_timeline::{RECENT_TIMELINE_HISTORY_FRAMES, RecentTimelineHistory, SimSnapshot};
+use crate::sim_timeline::{
+    CheckpointPolicy, RECENT_TIMELINE_HISTORY_FRAMES, RetentionPolicy, SnapshotHistory,
+};
 use crate::stature_hud::{
     StatureButton, StatureEnable, StatureHudLayout, StatureSprites, StatureTooltipTracker,
 };
@@ -1322,7 +1324,12 @@ pub(crate) async fn run_mission(
     // client compares its locally-computed hash at the same sampling
     // point.  Drained as frames are reached.
     let mut peer_hashes: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
-    let mut recent_timeline_history = RecentTimelineHistory::new(RECENT_TIMELINE_HISTORY_FRAMES);
+    let mut recent_timeline_history = SnapshotHistory::new(
+        CheckpointPolicy::EveryFrame,
+        RetentionPolicy::Latest {
+            capacity: RECENT_TIMELINE_HISTORY_FRAMES,
+        },
+    );
 
     // Manual pause toggle, distinct from the pause menu.  Set on mission
     // entry by `--start-paused` or by a `load-replay` RPC call that
@@ -1463,7 +1470,7 @@ pub(crate) async fn run_mission(
         }
         let net_inputs = net_drain.inputs;
         if host.net.is_some() {
-            recent_timeline_history.remember(SimSnapshot::new(manager.sim_frame, &manager.engine));
+            recent_timeline_history.checkpoint(manager.sim_frame, &manager.engine);
         }
         if !net_inputs.is_empty() {
             manager.engine.apply_commands(
@@ -2746,8 +2753,7 @@ pub(crate) async fn run_mission(
                 }
             }
             if pre_tick_net_drain.rewrote_sim_state && host.net.is_some() {
-                recent_timeline_history
-                    .remember(SimSnapshot::new(manager.sim_frame, &manager.engine));
+                recent_timeline_history.checkpoint(manager.sim_frame, &manager.engine);
             }
             if !pre_tick_net_drain.inputs.is_empty() {
                 manager.engine.apply_commands(
