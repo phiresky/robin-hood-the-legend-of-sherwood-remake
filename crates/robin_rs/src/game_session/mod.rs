@@ -48,7 +48,10 @@ use robin_engine::player_command as engine_player_command;
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
-use runtime::{FrameContract, FrameOutcome, FramePacing, TimelineRuntime};
+use runtime::{
+    FrameContract, FrameOutcome, FramePacing, MissionControl, MissionFrame, MissionRuntime,
+    MissionWorld, TimelineRuntime,
+};
 use setup::{
     MissionSprites, extract_ground_mark_sprite_data, extract_minimap_widget_setup,
     extract_titbit_row_frame_counts, init_audio_backend, load_level_and_sprite_bank,
@@ -338,7 +341,7 @@ pub(crate) async fn run_mission_headless(
     let titbit_row_frame_counts = extract_titbit_row_frame_counts(&mut cursor_res);
     let minimap_widget = extract_minimap_widget_setup(&mut cursor_res);
 
-    let (mut engine, mut assets, mut dev, _pre_decoded_bg, _pre_decoded_mm, engine_rng_seed) =
+    let (mut engine, mut assets, dev, _pre_decoded_bg, _pre_decoded_mm, engine_rng_seed) =
         load_level_and_sprite_bank(
             None,
             &mut None,
@@ -393,7 +396,7 @@ pub(crate) async fn run_mission_headless(
         engine_rng_seed,
         host.net.is_some(),
     );
-    let mut runtime = TimelineRuntime::new(
+    let timeline = TimelineRuntime::new(
         replay,
         FrameContract::Headless,
         // TODO(parity): Teach headless to drain the multiplayer start
@@ -402,52 +405,72 @@ pub(crate) async fn run_mission_headless(
         false,
         host.local_seat == engine_player_command::PlayerId::HOST,
     );
-    debug_assert_eq!(runtime.frame_contract(), FrameContract::Headless);
-    let mut manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
-    let mut manual_pause = runtime.initially_paused();
+    debug_assert_eq!(timeline.frame_contract(), FrameContract::Headless);
+    let manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
+    let control = MissionControl::new(
+        timeline.initially_paused(),
+        manager.engine.weather().night_color,
+    );
+    let mut mission = MissionRuntime::new(
+        MissionWorld::new(host, game, manager, assets, dev),
+        timeline,
+        control,
+    );
+    // Borrow the owned components under their existing local names. This keeps
+    // Wave 1 as an ownership-only change; phase extraction comes later.
+    let MissionRuntime {
+        world,
+        timeline: runtime,
+        control,
+    } = &mut mission;
+    let MissionWorld {
+        host,
+        game,
+        manager,
+        assets,
+        dev,
+    } = world;
+    let manual_pause = &mut control.manual_pause;
 
     loop {
-        let recorder_hash_this_frame = runtime.begin_frame(
-            crate::window::process_uptime_ms(),
+        let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
+        frame.recorder_hash = runtime.begin_frame(
+            frame.started_at_ms,
             manager.sim_frame,
             &manager.engine,
             &assets,
         );
 
-        let mut frame_cmds = Vec::new();
-        let mut frame_modal_dismissals = Vec::new();
-        let mut replay_modal_dismissals: std::collections::VecDeque<PlayerCommand> =
-            std::collections::VecDeque::new();
         if let Some(player) = runtime.replay_player.as_mut()
             && !player.is_finished()
         {
             for cmd in player.next_frame() {
                 if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
-                    replay_modal_dismissals.push_back(cmd.command.clone());
+                    frame.replay_modal_dismissals.push_back(cmd.command.clone());
                     continue;
                 }
-                frame_cmds.push(cmd.clone());
+                frame.commands.push(cmd.clone());
             }
             manager.engine.apply_commands(
                 &mut host.engine_display,
                 &mut host.input,
                 &assets,
-                &frame_cmds,
+                &frame.commands.commands,
             );
         }
 
-        let _ = dismiss_pending_modals(&mut host);
+        let _ = dismiss_pending_modals(host);
         runtime.begin_simulation();
-        let tick_exit_code = if manual_pause {
+        let tick_exit_code = if *manual_pause {
             None
         } else {
             let mut display = std::mem::take(&mut host.engine_display);
             let result = game.run_engine_tick(
-                &mut host,
+                host,
                 &mut display,
                 assets.as_ref(),
                 &mut manager.engine,
-                &mut dev,
+                dev,
                 false,
                 false,
             );
@@ -457,16 +480,18 @@ pub(crate) async fn run_mission_headless(
         runtime.begin_bookkeeping();
 
         let net = host.net.take();
-        crate::http_server::drain_global(&mut manager, &mut host, &assets, net.as_ref());
+        crate::http_server::drain_global(manager, host, &assets, net.as_ref());
         host.net = net;
         if host.pending_mission_state_popup {
             host.pending_mission_state_popup = false;
             let kind = engine_player_command::ModalKind::MissionState {
                 kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
             };
-            let result = pop_matching_dismissal(&mut replay_modal_dismissals, &kind)
+            let result = pop_matching_dismissal(&mut frame.replay_modal_dismissals, &kind)
                 .unwrap_or(engine_player_command::DialogResult::Completed);
-            frame_modal_dismissals.push(PlayerCommand::ModalDismiss { kind, result });
+            frame
+                .modal_dismissals
+                .push(PlayerCommand::ModalDismiss { kind, result });
             if result == engine_player_command::DialogResult::Completed {
                 let cmd = PlayerCommand::QuitMissionRequested;
                 if let Some(net) = host.net.as_ref() {
@@ -479,23 +504,23 @@ pub(crate) async fn run_mission_headless(
                         std::slice::from_ref(&cmd),
                     );
                 }
-                frame_cmds.push(PlayerInput::new(host.local_seat, cmd));
+                frame.commands.push(PlayerInput::new(host.local_seat, cmd));
             }
         }
         let mut headless_active_modal: Option<ActiveModal> = None;
         drain_steps(
-            &mut manager,
-            &mut host,
+            manager,
+            host,
             &assets,
-            &mut dev,
-            &mut game,
+            dev,
+            game,
             &mut runtime.rewind_buffer,
             &mut runtime.rollback_checker,
             &mut runtime.replay_player,
-            &mut manual_pause,
+            manual_pause,
             &mut headless_active_modal,
         );
-        let dismissed = dismiss_pending_modals(&mut host);
+        let dismissed = dismiss_pending_modals(host);
         if dismissed > 0 {
             tracing::debug!(dismissed, "headless: auto-dismissed pending modal(s)");
         }
@@ -504,10 +529,10 @@ pub(crate) async fn run_mission_headless(
         // path has already closed the modal; keep that visible at
         // debug level without making every clean headless replay look
         // like a simulation warning.
-        if !replay_modal_dismissals.is_empty() {
+        if !frame.replay_modal_dismissals.is_empty() {
             tracing::debug!(
                 "Replay headless: {} recorded ModalDismiss command(s) unused this frame",
-                replay_modal_dismissals.len()
+                frame.replay_modal_dismissals.len()
             );
         }
 
@@ -517,21 +542,23 @@ pub(crate) async fn run_mission_headless(
         // replay and interactive play share the original frame ordering.
         let mut display = std::mem::take(&mut host.engine_display);
         let _ = crate::sim_timeline::run_post_initialize_stage(
-            &mut host,
+            host,
             &mut display,
             &assets,
             &mut manager.engine,
-            &mut dev,
+            dev,
         );
         host.engine_display = display;
 
-        if !manual_pause {
+        if !*manual_pause {
             if let Some(checker) = runtime.rollback_checker.as_mut() {
-                checker.end_frame(&mut host, frame_cmds.clone(), &manager.engine);
+                checker.end_frame(host, frame.commands.commands.clone(), &manager.engine);
             }
-            runtime.rewind_buffer.end_frame(frame_cmds.clone());
-            runtime.record_commands(recorder_hash_this_frame, &frame_cmds, true);
-            runtime.finish_recording(frame_modal_dismissals, true);
+            runtime
+                .rewind_buffer
+                .end_frame(frame.commands.commands.clone());
+            runtime.record_commands(frame.recorder_hash, &frame.commands.commands, true);
+            runtime.finish_recording(frame.modal_dismissals, true);
             manager.sim_frame += 1;
         }
 
@@ -571,7 +598,7 @@ pub(crate) async fn run_mission_headless(
                 );
                 return Ok(code);
             }
-            FrameOutcome::Continue { sleep_ms } if manual_pause => {
+            FrameOutcome::Continue { sleep_ms } if *manual_pause => {
                 crate::window::sleep_ms(u64::from(sleep_ms.max(10))).await;
             }
             FrameOutcome::Continue { sleep_ms: 0 } => crate::window::yield_to_runtime().await,

@@ -6,17 +6,130 @@
 
 use super::multiplayer::MultiplayerRollbackTelemetry;
 use super::replay_init::ReplayAndRollback;
+use crate::Host;
+use crate::game::Game;
 use crate::game_operation::GameCode;
-use crate::player_command::PlayerInput;
+use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
 use crate::replay::{ReplayPlayer, ReplayRecorder};
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use crate::sim_timeline::{
     CheckpointPolicy, RECENT_TIMELINE_HISTORY_FRAMES, RetentionPolicy, SnapshotHistory,
 };
-use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::engine::{DevState, Engine, LevelAssets};
+use robin_engine::engine_manager::EngineManager;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
+
+/// Common owned state for one loaded mission.
+///
+/// This deliberately stops at the simulation/host boundary. Renderer, input,
+/// audio backend, and modal resources remain in the graphical driver until the
+/// interactive-frontend extraction. None of these process resources is
+/// serializable; deterministic persistence remains the Engine snapshot.
+pub(super) struct MissionWorld {
+    // TODO(refactor): make these fields private once frame methods move onto
+    // their focused owners. Wave 1 borrows them directly to keep loop order
+    // and behavior unchanged.
+    pub(super) host: Host,
+    pub(super) game: Game,
+    pub(super) manager: EngineManager,
+    pub(super) assets: Arc<LevelAssets>,
+    pub(super) dev: DevState,
+}
+
+impl MissionWorld {
+    pub(super) fn new(
+        host: Host,
+        game: Game,
+        manager: EngineManager,
+        assets: Arc<LevelAssets>,
+        dev: DevState,
+    ) -> Self {
+        Self {
+            host,
+            game,
+            manager,
+            assets,
+            dev,
+        }
+    }
+}
+
+/// Mission-lifetime host controls which are neither deterministic Engine state
+/// nor timeline resources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MissionControl {
+    pub(super) manual_pause: bool,
+    pub(super) step_forward_repeat_at_ms: Option<u32>,
+    pub(super) step_back_repeat_at_ms: Option<u32>,
+    pub(super) last_shadow_color: u16,
+}
+
+impl MissionControl {
+    pub(super) fn new(manual_pause: bool, last_shadow_color: u16) -> Self {
+        Self {
+            manual_pause,
+            step_forward_repeat_at_ms: None,
+            step_back_repeat_at_ms: None,
+            last_shadow_color,
+        }
+    }
+}
+
+/// Ephemeral state for one host-loop iteration.
+///
+/// The headless driver adopts this shell in Wave 1. The graphical driver keeps
+/// its locals until its input/modal frontend is extracted, avoiding a broad
+/// parameter-only rewrite with no ownership benefit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MissionFrame {
+    pub(super) started_at_ms: u32,
+    pub(super) commands: FrameCommands,
+    pub(super) modal_dismissals: Vec<PlayerCommand>,
+    pub(super) replay_modal_dismissals: VecDeque<PlayerCommand>,
+    pub(super) recorder_hash: Option<u64>,
+}
+
+impl MissionFrame {
+    pub(super) fn new(started_at_ms: u32) -> Self {
+        Self {
+            started_at_ms,
+            commands: FrameCommands::new(),
+            modal_dismissals: Vec::new(),
+            replay_modal_dismissals: VecDeque::new(),
+            recorder_hash: None,
+        }
+    }
+}
+
+/// Owner of the common state for one active mission.
+///
+/// `TimelineRuntime` remains a focused component rather than growing Engine,
+/// Host, and UI responsibilities. The dedicated headless driver borrows these
+/// three disjoint fields in Wave 1. The graphical driver adopts the same owner
+/// with its interactive-frontend extraction, avoiding a broad parameter-only
+/// rewrite now.
+pub(super) struct MissionRuntime {
+    pub(super) world: MissionWorld,
+    pub(super) timeline: TimelineRuntime,
+    pub(super) control: MissionControl,
+}
+
+impl MissionRuntime {
+    pub(super) fn new(
+        world: MissionWorld,
+        timeline: TimelineRuntime,
+        control: MissionControl,
+    ) -> Self {
+        Self {
+            world,
+            timeline,
+            control,
+        }
+    }
+}
 
 /// Coarse stages that both mission-loop implementations pass through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,6 +473,41 @@ fn transition_phase(phase: &mut MissionPhase, expected: MissionPhase, next: Miss
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mission_control_round_trips_without_defaulting_process_state() {
+        let control = MissionControl {
+            manual_pause: true,
+            step_forward_repeat_at_ms: Some(120),
+            step_back_repeat_at_ms: Some(240),
+            last_shadow_color: 0x1234,
+        };
+        let encoded = serde_json::to_string(&control).expect("serialize mission control");
+        let decoded: MissionControl =
+            serde_json::from_str(&encoded).expect("deserialize mission control");
+        assert_eq!(decoded, control);
+    }
+
+    #[test]
+    fn mission_frame_owns_only_one_iterations_commands() {
+        let mut frame = MissionFrame::new(777);
+        frame.commands.push(PlayerCommand::QuitMissionRequested);
+        frame.recorder_hash = Some(0x55aa);
+
+        let encoded = serde_json::to_string(&frame).expect("serialize mission frame");
+        let decoded: MissionFrame =
+            serde_json::from_str(&encoded).expect("deserialize mission frame");
+
+        assert_eq!(decoded.started_at_ms, 777);
+        assert_eq!(decoded.commands.commands.len(), 1);
+        assert!(matches!(
+            decoded.commands.commands[0].command,
+            PlayerCommand::QuitMissionRequested
+        ));
+        assert_eq!(decoded.recorder_hash, Some(0x55aa));
+        assert!(decoded.modal_dismissals.is_empty());
+        assert!(decoded.replay_modal_dismissals.is_empty());
+    }
 
     #[test]
     fn graphical_contract_keeps_original_refresh_sound_post_initialize_tail() {
