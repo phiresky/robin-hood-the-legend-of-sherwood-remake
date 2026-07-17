@@ -141,7 +141,9 @@ pub enum SoundCommand {
     Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
 pub enum DeferredCommand {
-    /// SendMessage / SendMessageWithArguments
+    /// SendMessage / SendMessageWithArguments. The engine must turn this
+    /// into a one-element `Command::SendMessage` sequence; it is not a
+    /// direct `ProcessMessage` callback request.
     SendMessage {
         actor: i32,
         message: i32,

@@ -42,6 +42,8 @@ mod scroll_reveal;
 mod seat;
 mod sector_motion;
 mod selection;
+#[cfg(test)]
+mod send_message_tests;
 mod sequence_validity;
 mod simulation_gate;
 mod soldier_helpers;
