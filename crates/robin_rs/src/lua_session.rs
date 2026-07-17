@@ -76,6 +76,21 @@ pub enum LuaSessionError {
     Lua(#[from] MissionLuaError),
     #[error("mlua: {0}")]
     Mlua(#[from] mlua::Error),
+    #[error("Lua event `{event}` failed for mission `{mission}`: {source}")]
+    Event {
+        mission: String,
+        event: String,
+        #[source]
+        source: mlua::Error,
+    },
+    #[error(
+        "Lua event `{event}` for mission `{mission}` returned Lua {actual}; expected an integer, integral number, boolean, or nil"
+    )]
+    UnexpectedEventReturn {
+        mission: String,
+        event: String,
+        actual: String,
+    },
 }
 
 impl LuaSession {
@@ -151,10 +166,19 @@ impl LuaSession {
     /// missions cherry-pick which events they override, and missing
     /// ones are perfectly valid.
     ///
-    /// Returns the integer result of the Lua call, defaulting to 0
-    /// when the script returns nothing or a non-integer (matching
-    /// the original DLL's `luaRun` template).
-    pub fn run_event(&self, host: &mut GameHost, event_name: &str, args: &[i32]) -> i32 {
+    /// Returns the integer-compatible result of the Lua call. A missing
+    /// function or no explicit return is a successful no-op; a Lua failure
+    /// or incompatible return is preserved as a typed [`LuaSessionError`].
+    ///
+    /// TODO(parity): The Spellforge DLL's `luaRun` implementation is not in
+    /// `original-code`; verify its accepted event return conversions if that
+    /// source becomes available. Runtime errors must remain errors regardless.
+    pub fn run_event(
+        &self,
+        host: &mut GameHost,
+        event_name: &str,
+        args: &[i32],
+    ) -> Result<i32, LuaSessionError> {
         let result = self.state.with_host(host, |lua| {
             let globals = lua.globals();
             let v: mlua::Value = globals.get(event_name)?;
@@ -166,7 +190,7 @@ impl LuaSession {
                     "LuaSession[{}]: no global function `{event_name}`",
                     self.mission_basename
                 );
-                return Ok(0_i32);
+                return Ok(None);
             };
             // Variadic call — `mlua::Variadic` lets us pass a
             // slice without knowing arity statically. Convert i32
@@ -176,24 +200,31 @@ impl LuaSession {
                 variadic.push(mlua::Value::Integer(*a));
             }
             let ret: mlua::MultiValue = func.call(variadic)?;
-            // Pull the first return value as i32, defaulting to 0.
-            let head = ret.into_iter().next();
-            Ok(match head {
-                Some(mlua::Value::Integer(i)) => i,
-                Some(mlua::Value::Number(n)) => n as i32,
-                Some(mlua::Value::Boolean(b)) => i32::from(b),
-                _ => 0,
-            })
+            Ok(ret.into_iter().next())
         });
-        match result {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(
-                    "LuaSession[{}]: error running {event_name}: {e}",
-                    self.mission_basename
-                );
-                0
+
+        let returned = result.map_err(|source| LuaSessionError::Event {
+            mission: self.mission_basename.clone(),
+            event: event_name.to_owned(),
+            source,
+        })?;
+        match returned {
+            None | Some(mlua::Value::Nil) => Ok(0),
+            Some(mlua::Value::Integer(value)) => Ok(value),
+            Some(mlua::Value::Number(value))
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && value >= i32::MIN as f64
+                    && value <= i32::MAX as f64 =>
+            {
+                Ok(value as i32)
             }
+            Some(mlua::Value::Boolean(value)) => Ok(i32::from(value)),
+            Some(value) => Err(LuaSessionError::UnexpectedEventReturn {
+                mission: self.mission_basename.clone(),
+                event: event_name.to_owned(),
+                actual: value.type_name().to_owned(),
+            }),
         }
     }
 }
@@ -326,4 +357,67 @@ fn find_shared_lib_zip(mods_root: &Path) -> Option<PathBuf> {
         .collect();
     entries.sort();
     entries.pop()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_with_script(source: &str) -> LuaSession {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        fs::write(tempdir.path().join("test_mission.lua"), source).expect("write script");
+        let mut state = MissionLuaState::new(tempdir.path()).expect("new Lua state");
+        register_natives(&mut state).expect("register natives");
+        state.load_script("test_mission").expect("load script");
+        LuaSession {
+            _tempdir: tempdir,
+            state,
+            mission_basename: "test_mission".to_owned(),
+        }
+    }
+
+    #[test]
+    fn event_returns_are_checked_table_driven() {
+        let session = session_with_script(
+            r#"
+            function NoReturn() end
+            function IntegerReturn() return 17 end
+            function IntegralNumberReturn() return 18 / 1 end
+            function BooleanReturn() return true end
+            function BadReturn() return {} end
+            "#,
+        );
+        let mut host = GameHost::new();
+        let valid_cases = [
+            ("Missing", 0),
+            ("NoReturn", 0),
+            ("IntegerReturn", 17),
+            ("IntegralNumberReturn", 18),
+            ("BooleanReturn", 1),
+        ];
+        for (event, expected) in valid_cases {
+            assert_eq!(session.run_event(&mut host, event, &[]).unwrap(), expected);
+        }
+
+        assert!(matches!(
+            session.run_event(&mut host, "BadReturn", &[]),
+            Err(LuaSessionError::UnexpectedEventReturn { actual, .. }) if actual == "table"
+        ));
+    }
+
+    #[test]
+    fn event_lua_errors_are_not_replaced_with_zero() {
+        let session = session_with_script(
+            r#"
+            function Fails()
+                error("deliberate failure")
+            end
+            "#,
+        );
+        let mut host = GameHost::new();
+
+        let err = session.run_event(&mut host, "Fails", &[]).unwrap_err();
+        assert!(matches!(err, LuaSessionError::Event { .. }));
+        assert!(err.to_string().contains("deliberate failure"));
+    }
 }

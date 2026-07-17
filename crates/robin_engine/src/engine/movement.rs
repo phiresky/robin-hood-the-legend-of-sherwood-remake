@@ -3369,9 +3369,15 @@ impl EngineInner {
             crate::element::Posture,
             crate::element::ActionState,
         )> = Vec::new();
+        // PC movement actions actually dispatched this frame.  The original
+        // RHElementActorPC performs action-specific side effects from inside
+        // the matching Execute arm, so posture alone is not a substitute for
+        // this per-frame execution record.
+        let mut executed_pc_movement_actions: Vec<(EntityId, OrderType)> = Vec::new();
 
         for (actor_id, entity) in self.entities.actors_mut() {
             let entity_id = actor_id.into();
+            let is_pc = entity.is_pc();
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
             // is derived from the action state machine, not hardcoded
@@ -3968,6 +3974,9 @@ impl EngineInner {
                 motion_method,
                 dest_already_at_pos,
             );
+            if is_pc {
+                executed_pc_movement_actions.push((entity_id, order_action));
+            }
             if let Some((posture, action_state)) =
                 movement_execute_state_effect(order_action, motion_state)
             {
@@ -5003,6 +5012,12 @@ impl EngineInner {
         for (seq_id, elem_idx) in blocked_impossible {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
         }
+
+        // RHElementActorPC::Execute calls CanCarryOnShoulders only from the
+        // WALKING_CARRYING_ON_SHOULDERS action arm, after PerformMotion.  Run
+        // the equivalent check from the captured action dispatches rather
+        // than from the carrier's persistent posture.
+        self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
 
         // Collect entity IDs for EventReachPoint dispatch.  Two paths
         // fire the same event: the condolation drain (triggered by

@@ -1,10 +1,11 @@
-//! Script-native signature metadata used by tooling.
+//! Declarative registry for native IDs, signatures, provenance, and Lua exposure.
 //!
-//! `NativeFn` remains the source of truth for native indices and names. This
-//! table carries the extra return/parameter metadata needed by the decompiler
-//! and debug HTTP endpoints.
+//! Original provenance: `original-code/GVMCoreCustom.cpp`,
+//! `VMCoreCustom::InitializeStaticExtensions`, is the authoritative 0..=264
+//! registration order. `original-code/RHScriptAPI.scs` is the authoritative
+//! source for the corresponding script-visible signatures.
 
-use super::{NativeFn, native_name};
+use super::NativeFn;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeParamSig {
@@ -19,2716 +20,517 @@ pub struct NativeSignature {
     pub params: &'static [NativeParamSig],
 }
 
-macro_rules! sig {
-    ($name:literal, $return_type:literal, [$($param:expr),* $(,)?]) => {
-        NativeSignature {
-            name: $name,
-            return_type: $return_type,
-            params: &[$($param),*],
+/// Namespace owning a native ID.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeNamespace {
+    /// Fixed namespace used by shipped SCB bytecode.
+    Original,
+    /// Functions supplied by the Rust/Lua port, outside the original ABI.
+    RustExtension,
+}
+
+/// Complete metadata for one native function.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeDefinition {
+    pub native: NativeFn,
+    pub namespace: NativeNamespace,
+    pub signature: NativeSignature,
+    pub expose_to_lua: bool,
+}
+
+/// The single declaration of every native. Consumers expand this to generate
+/// the ID enum and metadata tables, so order, signatures, and Lua enumeration
+/// cannot drift independently.
+macro_rules! native_registry {
+    ($consumer:ident) => {
+        $consumer! {
+            original {
+            InitGlobal => ("void", [("int", "iID"), ("int", "iValue")], lua);
+            SetGlobal => ("void", [("int", "iID"), ("int", "iValue")], lua);
+            GetGlobal => ("int", [("int", "iID")], lua);
+            GetActorScript => ("Actor", [("int", "iPosition")], lua);
+            GetDoorScript => ("Door", [("int", "iPosition")], lua);
+            GetPatchScript => ("Patch", [("int", "iPosition")], lua);
+            GetLocationScript => ("Location", [("int", "iPosition")], lua);
+            GetSoundSourceScript => ("SoundSource", [("int", "iPosition")], lua);
+            GetBuildingScript => ("Building", [("int", "iPosition")], lua);
+            GetWayScript => ("Way", [("int", "iPosition")], lua);
+            GetActorIndex => ("int", [("Actor", "actor")], lua);
+            GetDoorIndex => ("int", [("Door", "door")], lua);
+            GetPatchIndex => ("int", [("Patch", "patch")], lua);
+            GetLocationIndex => ("int", [("Location", "location")], lua);
+            GetSoundSourceIndex => ("int", [("SoundSource", "soundsource")], lua);
+            GetBuildingIndex => ("int", [("Building", "building")], lua);
+            GetWayIndex => ("int", [("Way", "way")], lua);
+            StartDialog => ("void", [("int", "iDialogue")], lua);
+            ScrollCameraTo => ("bool", [("Location", "location")], lua);
+            ScrollCameraSlowlyTo => ("bool", [("Location", "location"), ("float", "fSpeed")], lua);
+            JumpCameraTo => ("bool", [("Location", "location")], lua);
+            SetZoomLevel => ("bool", [("float", "fZoom")], lua);
+            DisplayMap => ("bool", [("bool", "bDisplay")], lua);
+            DisplayConsole => ("void", [], lua);
+            CustomizeMinimapDisplay => ("void", [("Actor", "actor"), ("int", "iKindOfDot")], lua);
+            DefineFlatTrajectoryZone => ("void", [("Location", "pLocation"), ("int", "iApex")], lua);
+            AddShortBriefing => ("void", [("int", "iID"), ("bool", "bPrimary")], lua);
+            DoneShortBriefing => ("void", [("int", "iID")], lua);
+            ChooseVictoryDefeatText => ("void", [("int", "iID")], lua);
+            ForceCheckVictory => ("void", [], lua);
+            Start => ("bool", [], lua);
+            Thanx => ("bool", [], lua);
+            Then => ("int", [], lua);
+            RecordScrollCameraTo => ("bool", [("Location", "location")], lua);
+            RecordJumpCameraTo => ("bool", [("Location", "location")], lua);
+            RecordSetZoom => ("bool", [("float", "fZoomLevel")], lua);
+            RecordDisplayMap => ("bool", [("bool", "bDisplay")], lua);
+            RecordActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction"), ("bool", "bAvailable")], lua);
+            RecordCharacterAvailable => ("bool", [("Actor", "actor"), ("bool", "bAvailable")], lua);
+            RecordLockCameraOn => ("bool", [("Actor", "actor")], lua);
+            RecordClearCameraLock => ("bool", [], lua);
+            RecordPlayDialog => ("bool", [("int", "iDialogID")], lua);
+            RecordMoveCameraTo => ("bool", [("Location", "destination"), ("int", "iSpeed")], lua);
+            RecordSendMessage => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode")], lua);
+            RecordSendMessageWithArguments => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode"), ("int", "iArgument1"), ("int", "iArgument2")], lua);
+            RecordMove => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iStyle")], lua);
+            RecordEnterGame => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection"), ("int", "iStyle")], lua);
+            RecordLeaveGame => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection"), ("int", "iStyle")], lua);
+            RecordTurnTo => ("bool", [("Actor", "actor"), ("Location", "location")], lua);
+            RecordPlayAnim => ("bool", [("Actor", "actor"), ("int", "iId")], lua);
+            RecordPlayAnimLoop => ("bool", [("Actor", "actor"), ("int", "iId")], lua);
+            RecordPlayAnimFreeze => ("bool", [("Actor", "actor"), ("int", "iId")], lua);
+            RecordLockAI => ("bool", [("Actor", "actor")], lua);
+            RecordUnlockAI => ("bool", [("Actor", "actor")], lua);
+            RecordLockUser => ("bool", [], lua);
+            RecordUnLockUser => ("bool", [], lua);
+            RecordTimer => ("bool", [("int", "iFrames")], lua);
+            RecordSeekActor => ("bool", [("Actor", "actor"), ("Actor", "target"), ("int", "iStyle"), ("float", "fTolerance")], lua);
+            RecordStopSeek => ("bool", [("Actor", "actor")], lua);
+            RecordAction => ("bool", [("Actor", "actor"), ("int", "iID"), ("int", "iValue")], lua);
+            RecordReplaceAnim => ("bool", [("Actor", "actor"), ("int", "iOriginalAnim"), ("int", "iNewAnim")], lua);
+            RecordRestoreAnim => ("bool", [("Actor", "actor"), ("int", "iOriginalAnim")], lua);
+            RecordSpeakPC => ("bool", [("Actor", "actor"), ("int", "iRemarkID"), ("int", "iRemarkVariant")], lua);
+            RecordTakeCorpse => ("int", [("Actor", "taker"), ("Actor", "corpse"), ("int", "iStyle")], lua);
+            RecordMoveIntoBuilding => ("bool", [("Actor", "actor"), ("Location", "pointBeforeDoor"), ("int", "iStyle")], lua);
+            RecordLeaveCorpse => ("bool", [("Actor", "actor")], lua);
+            ResetAnim => ("bool", [("Actor", "actor")], lua);
+            RecordStartMobileElement => ("void", [("int", "iIndex")], lua);
+            RecordStopMobileElement => ("void", [("int", "iIndex")], lua);
+            RecordSpeak => ("bool", [("Actor", "actor"), ("int", "iRemarkID")], lua);
+            RecordSeekActorMessage => ("bool", [("Actor", "pActor"), ("Actor", "pTarget"), ("int", "iStyle"), ("float", "fDistance"), ("Actor", "pActorEvent"), ("int", "iID")], lua);
+            RecordSeekActorMessageWithArguments => ("bool", [("Actor", "pActor"), ("Actor", "pTarget"), ("int", "iStyle"), ("float", "fDistance"), ("Actor", "pActorEvent"), ("int", "iID"), ("int", "iArg1"), ("int", "iArg2")], lua);
+            RecordActivateMobileElement => ("void", [("int", "iIndex")], lua);
+            RecordDeactivateMobileElement => ("void", [("int", "iIndex")], lua);
+            ThisActor => ("Actor", [], lua);
+            GetNumberOfActorsInEngine => ("int", [], lua);
+            IsActorAnimation => ("bool", [("Actor", "actor")], lua);
+            IsActorObject => ("bool", [("Actor", "actor")], lua);
+            IsActorCharacter => ("bool", [("Actor", "actor")], lua);
+            IsActorPC => ("bool", [("Actor", "actor")], lua);
+            IsActorNPC => ("bool", [("Actor", "actor")], lua);
+            IsActorSoldier => ("bool", [("Actor", "actor")], lua);
+            IsActorCivilian => ("bool", [("Actor", "actor")], lua);
+            IsActorAnimal => ("bool", [("Actor", "actor")], lua);
+            IsActorCart => ("bool", [("Actor", "actor")], lua);
+            IsNull => ("bool", [("Actor", "actor")], lua);
+            IsActorEqual => ("bool", [("Actor", "one"), ("Actor", "two")], lua);
+            IsActorDead => ("bool", [("Actor", "actor")], lua);
+            IsActorKO => ("bool", [("Actor", "actor")], lua);
+            IsActorTied => ("bool", [("Actor", "actor")], lua);
+            IsActorHS => ("bool", [("Actor", "actor")], lua);
+            GetActorPosture => ("int", [("Actor", "actor")], lua);
+            SetActorPosture => ("void", [("Actor", "actor"), ("int", "iPosture")], lua);
+            GetActorDirection => ("int", [("Actor", "actor")], lua);
+            SetActorDirection => ("bool", [("Actor", "actor"), ("int", "iDirection")], lua);
+            GetActorLocation => ("Location", [("Actor", "actor")], lua);
+            SetActorLocation => ("bool", [("Actor", "actor"), ("Location", "location")], lua);
+            IsInside => ("bool", [("Actor", "actor"), ("Location", "location")], lua);
+            IsInsideBuilding => ("bool", [("Actor", "actor"), ("Building", "building")], lua);
+            UnBlip => ("bool", [("Actor", "actor")], lua);
+            GetMovementStyle => ("int", [("Actor", "actor")], lua);
+            GetCurrentAction => ("int", [("Actor", "actor")], lua);
+            InflictPain => ("void", [("Actor", "actor"), ("int", "iDamage"), ("bool", "bStun")], lua);
+            StopActor => ("bool", [("Actor", "actor")], lua);
+            Sees => ("bool", [("Actor", "actorNPC"), ("Actor", "actorTarget")], lua);
+            EnableViewCone => ("void", [("Actor", "actor")], lua);
+            GetOutlineDisplay => ("bool", [], lua);
+            SetOutlineDisplay => ("void", [("bool", "bDisplay")], lua);
+            PrototypeFilterEvent => ("bool", [("Actor", "prototype"), ("Actor", "actorSource"), ("int", "iEvent")], lua);
+            SendMessage => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode")], lua);
+            SendMessageWithArguments => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode"), ("int", "iArgument1"), ("int", "iArgument2")], lua);
+            God => ("Actor", [], lua);
+            Select => ("bool", [("int", "selectCode")], lua);
+            Deactivate => ("bool", [("Actor", "actor")], lua);
+            Activate => ("bool", [("Actor", "actor")], lua);
+            SetActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction"), ("bool", "bAvailable")], lua);
+            IsActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction")], lua);
+            SetPersistentProperty => ("bool", [("Actor", "actor"), ("int", "iProperty"), ("int", "iAmount")], lua);
+            GetPersistentProperty => ("int", [("Actor", "actor"), ("int", "iProperty")], lua);
+            IsAnyCivilianDead => ("bool", [], lua);
+            IsAnyEnemyDead => ("bool", [], lua);
+            GetOverallEnemyAlert => ("int", [], lua);
+            GetOverallCivilianAlert => ("int", [], lua);
+            SetAIAlertStatus => ("bool", [("Actor", "actor"), ("int", "iStatus")], lua);
+            GetAIAlertStatus => ("int", [("Actor", "actor")], lua);
+            SetAIState => ("bool", [("Actor", "actor"), ("int", "iState")], lua);
+            GetAIState => ("int", [("Actor", "actor")], lua);
+            SetAIAttitude => ("bool", [("Actor", "actor"), ("int", "iAttitude")], lua);
+            GetAIAttitude => ("int", [("Actor", "actor")], lua);
+            SetAILevel => ("bool", [("Actor", "actor"), ("int", "iProperty"), ("int", "iLevel")], lua);
+            StareActor => ("void", [("Actor", "actor"), ("Actor", "actorTarget"), ("bool", "bTurnSprite")], lua);
+            StareLocation => ("void", [("Actor", "actor"), ("Location", "locPoint"), ("bool", "bTurnSprite")], lua);
+            AssignPath => ("void", [("Actor", "actor"), ("Way", "myWay")], lua);
+            AssignPost => ("void", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection")], lua);
+            LockAI => ("void", [("Actor", "actor"), ("bool", "bRememberEvents")], lua);
+            UnlockAI => ("void", [("Actor", "actor")], lua);
+            ForceBattleDecision => ("void", [("Actor", "actor"), ("int", "iDecision")], lua);
+            MakeNoise => ("void", [("Location", "location"), ("int", "iTypeID")], lua);
+            Freeze => ("void", [("Actor", "actor"), ("bool", "bFrozen")], lua);
+            FreezeAll => ("void", [("bool", "bFrozen")], lua);
+            SetPathWalkingStyle => ("void", [("Actor", "NPC"), ("int", "i0Walking1Running2Backward")], lua);
+            GetSoldierRank => ("int", [("Actor", "actor")], lua);
+            IsAnimationActive => ("bool", [("Actor", "actor")], lua);
+            SetAnimationState => ("bool", [("Actor", "actor"), ("bool", "bState")], lua);
+            IsPatchApplied => ("bool", [("Patch", "patch")], lua);
+            ApplyPatch => ("bool", [("Patch", "patch")], lua);
+            ResetPatch => ("bool", [("Patch", "patch")], lua);
+            SuspendAllSoundSources => ("bool", [], lua);
+            ResumeAllSoundSources => ("bool", [], lua);
+            ActivateSoundSource => ("bool", [("SoundSource", "source")], lua);
+            DeactivateSoundSource => ("bool", [("SoundSource", "source")], lua);
+            DestroySoundSource => ("bool", [("SoundSource", "source")], lua);
+            CleanFromHisBuildingBeforeTeleport => ("bool", [("Actor", "actor")], no_lua);
+            CleanFromScriptZoneBeforeTeleport => ("bool", [("Actor", "actor"), ("Location", "cestLaZone")], no_lua);
+            AddToScriptZoneAfterTeleport => ("bool", [("Actor", "actor"), ("Location", "cestLaZone")], no_lua);
+            SetCorpseExistsInBuilding => ("void", [("Actor", "pActor")], no_lua);
+            // TODO(original parity): `RHScriptAPI.scs` and `GVMCoreCustom.cpp`
+            // spell ID 156 as `PutActorInBulding`. Rust retains its established
+            // corrected public spelling.
+            PutActorInBuilding => ("void", [("Actor", "actor"), ("Building", "building")], no_lua);
+            SetBuildingActive => ("void", [("Building", "building"), ("bool", "bActive")], lua);
+            GetAnyActorInsideBuilding => ("Actor", [("Building", "building")], lua);
+            NoWhere => ("Location", [], lua);
+            GetDistance => ("int", [("Location", "here"), ("Location", "there")], lua);
+            Rand => ("int", [("int", "iMaximum")], lua);
+            PrintConsole => ("void", [("int", "iValue")], lua);
+            GetSizeOfMissionTeam => ("int", [], lua);
+            GetPCFromMissionTeam => ("Actor", [("int", "ulPC")], lua);
+            AddPCToMissionTeam => ("void", [("Actor", "actor")], lua);
+            RemovePCFromMissionTeam => ("void", [("Actor", "actor")], lua);
+            GetNumberOfObligatoryPCsInMissionTeam => ("int", [], lua);
+            GetObligatoryPCFromMissionTeam => ("Actor", [("int", "ulPC")], lua);
+            IsPCObligatoryInMissionTeam => ("bool", [("Actor", "actor")], lua);
+            IsMissionTeamValid => ("bool", [], lua);
+            GetLastPlayedMission => ("int", [], lua);
+            GetNextPlayedMission => ("int", [], lua);
+            IsMenToBlazonConversionMode => ("bool", [], no_lua);
+            GetNumberOfBeamMes => ("int", [], no_lua);
+            MoveBeamMe => ("void", [("int", "iIndex"), ("Location", "pLocation")], no_lua);
+            SetCompanyNumber => ("void", [("Actor", "pActor"), ("int", "iNumber")], lua);
+            SetAlwaysAttentive => ("void", [("Actor", "actor"), ("bool", "bYes")], lua);
+            WinBlazon => ("void", [("Actor", "blazon")], lua);
+            LoseBlazon => ("void", [("Actor", "blazon")], lua);
+            SetInvisible => ("void", [("Actor", "actor"), ("bool", "bHollow")], lua);
+            IsInvisible => ("bool", [("Actor", "actor")], lua);
+            IsDoorLockedPC => ("bool", [("Door", "door")], lua);
+            IsDoorUnlockable => ("bool", [("Door", "door")], lua);
+            IsDoorLockedNPCCivilian => ("bool", [("Door", "door")], lua);
+            IsDoorLockedNPCVillain => ("bool", [("Door", "door")], lua);
+            SetDoorLockedPC => ("void", [("Door", "door"), ("bool", "bState")], lua);
+            SetDoorUnlockable => ("void", [("Door", "door"), ("bool", "bState")], lua);
+            SetDoorLockedNPCCivilian => ("void", [("Door", "door"), ("bool", "bState")], lua);
+            SetDoorLockedNPCVillain => ("void", [("Door", "door"), ("bool", "bState")], lua);
+            SetDoorSpecialAutorisation => ("void", [("Door", "door"), ("Actor", "actor"), ("bool", "bDirect")], lua);
+            ActivateDoorMouseSector => ("void", [("bool", "bActive"), ("Door", "door")], lua);
+            ThisScroll => ("Actor", [], lua);
+            GetScrollStatus => ("int", [("Actor", "scroll")], lua);
+            SetScrollStatus => ("void", [("Actor", "scroll"), ("int", "iStatus")], lua);
+            GetCustomCampaignValue => ("int", [("int", "iIndex")], lua);
+            SetCustomCampaignValue => ("void", [("int", "iIndex"), ("int", "iValue")], lua);
+            GetCustomNPCValue => ("int", [("Actor", "actor"), ("int", "iIndex")], lua);
+            SetCustomNPCValue => ("void", [("Actor", "actor"), ("int", "iIndex"), ("int", "iValue")], lua);
+            RegisterAsProductionSector => ("void", [("int", "iType"), ("Location", "sector"), ("int", "iProductionSpeed")], lua);
+            AddProductionPoint => ("void", [("int", "iType"), ("Location", "point")], lua);
+            GetActorForBeamMe => ("Actor", [("int", "iIndex")], lua);
+            DisplayPopupText => ("void", [("int", "iPopupTextID")], lua);
+            RecordDisplayPopupText => ("void", [("int", "iPopupTextID")], lua);
+            GetNumberOfActorsInSector => ("int", [("Location", "loc")], lua);
+            GetActorInSector => ("Actor", [("Location", "loc"), ("int", "iIndex")], lua);
+            BitwiseAnd => ("int", [("int", "i"), ("int", "j")], lua);
+            BitwiseOr => ("int", [("int", "i"), ("int", "j")], lua);
+            BitwiseXor => ("int", [("int", "i"), ("int", "j")], lua);
+            HasPCAction => ("bool", [("Actor", "actPC"), ("int", "iActionCode")], lua);
+            HasAnyPCAction => ("bool", [("int", "iActionCode")], lua);
+            GetRobin => ("Actor", [], lua);
+            RecordMoveNear => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iStyle"), ("int", "iTolerance")], lua);
+            ComputeLocationBetween => ("Location", [("Location", "locA"), ("Location", "locB"), ("float", "fLambdaBetweenZeroAndOne")], lua);
+            DeclareAsCombatTrainer => ("void", [("Actor", "actor")], lua);
+            GetRelic => ("Actor", [("int", "iID")], lua);
+            GetNumberOfPCs => ("int", [], lua);
+            GetPC => ("Actor", [("int", "i")], lua);
+            AddAsSubordinate => ("void", [("Actor", "actChief"), ("Actor", "actSubordinate")], lua);
+            RemoveAllSubordinates => ("void", [("Actor", "actChief")], lua);
+            SwitchToAlertPath => ("void", [("Actor", "actSoldier")], lua);
+            IsActorRider => ("bool", [("Actor", "actWhoever")], lua);
+            IsUnblipped => ("bool", [("Actor", "actWhoever")], lua);
+            IsBlazonWon => ("bool", [("Actor", "blazon")], lua);
+            AddRepulsivePoint => ("int", [("Location", "location"), ("float", "fRadius"), ("float", "fActionRadius"), ("int", "iFlags")], lua);
+            SetViewRadius => ("void", [("int", "iRadius")], lua);
+            RecordFreezeAll => ("void", [("bool", "bFreeze")], lua);
+            DeleteRepulsivePoint => ("void", [("int", "iID")], lua);
+            SetNPCEmoticon => ("void", [("Actor", "actNPC"), ("int", "iEmoticonType"), ("int", "iTime")], lua);
+            ConfiscateMoney => ("void", [("Actor", "actCapitalist")], lua);
+            AreAllPCsInside => ("bool", [("Location", "location")], lua);
+            AreAllEnemiesInsideHS => ("bool", [("Location", "locZone")], lua);
+            AddPCToGang => ("void", [("Actor", "actor")], lua);
+            AttachScrollToNPC => ("void", [("Actor", "actNPC"), ("Actor", "scroll")], lua);
+            AreAllBlazonsWon => ("bool", [], lua);
+            IsBonusItemPickedUp => ("bool", [("Actor", "actItem")], lua);
+            GetRansomMoney => ("int", [], lua);
+            SetRansomMoney => ("void", [("int", "iRansomMoneyAmount")], lua);
+            GetDifficultyLevel => ("int", [], lua);
+            DisplaySherwoodReport => ("void", [], lua);
+            IsActorActive => ("bool", [("Actor", "actor")], lua);
+            AddFarmerToGang => ("void", [("int", "iType"), ("int", "iExperienceSword"), ("int", "iExperienceBow")], lua);
+            SetExperiences => ("void", [("Actor", "actor"), ("int", "iExperienceSword"), ("int", "iExperienceBow")], lua);
+            RecordUnBlip => ("bool", [("Actor", "pActor")], lua);
+            SetPatchAnimationActive => ("void", [("Patch", "patch"), ("bool", "bActive")], lua);
+            GetNumberOfPCsAlive => ("int", [], lua);
+            AreAllPCsAliveInside => ("bool", [("Location", "location")], lua);
+            TransformHandleTargetToTakeTarget => ("void", [("Actor", "actTarget")], lua);
+            IsPCSelected => ("bool", [("Actor", "actPC")], lua);
+            GetNumberOfSelectedPCs => ("int", [], lua);
+            GetSelectedPC => ("Actor", [("int", "iIndex")], lua);
+            PlayTrapJingle => ("void", [], lua);
+            MakePCCrouched => ("void", [("Actor", "actPC")], lua);
+            HasAnyPCActionWhoIsInThisLevelOrCouldMaybeComeFromSherwood => ("bool", [("int", "iActionCode")], lua);
+            LockPatch => ("void", [("Patch", "patch"), ("bool", "bLocked")], lua);
+            HasAnyActivePCAction => ("bool", [("int", "iActionCode")], lua);
+            GetPCType => ("int", [("Actor", "actPC")], lua);
+            SelectActorPC => ("void", [("Actor", "actPCOrGodForAllPCs"), ("bool", "bSelectOrUnselect")], lua);
+            HasAnyActionSelected => ("bool", [("Actor", "actPC")], lua);
+            GetActorActionState => ("int", [("Actor", "actor")], lua);
+            SetActorActionState => ("void", [("Actor", "actor"), ("int", "iActionState")], lua);
+            SecretAgentsAreBackInSherwood => ("bool", [], lua);
+            FadeToBlack => ("void", [("int", "iSpeed")], lua);
+            LinkTargetToFX => ("void", [("Actor", "actTarget"), ("Actor", "actFX")], lua);
+            ForbidNPCRemark => ("void", [("Actor", "actNPC"), ("int", "iRemark"), ("bool", "bTrueMeansForbidFalseMeansAllow")], lua);
+            }
+            rust_extensions {
+            Reveal => ("int", [("Actor", "actActor")], lua);
+            AddObjective => ("int", [("int", "iObjectiveID"), ("bool", "bIsMainObjective")], lua);
+            CompleteObjective => ("int", [("int", "iObjectiveID")], lua);
+            IsActorOutOfAction => ("bool", [("Actor", "actActor")], lua);
+            SetPatrolShouldRun => ("void", [("Actor", "actPatrolLeader"), ("bool", "bShouldRun")], lua);
+            SequenceReveal => ("int", [("Actor", "actActor")], lua);
+            }
         }
     };
 }
 
-pub const NATIVE_SIGNATURES: &[NativeSignature] = &[
-    sig!(
-        "InitGlobal",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iID"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iValue"
-            }
-        ]
-    ),
-    sig!(
-        "SetGlobal",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iID"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iValue"
-            }
-        ]
-    ),
-    sig!(
-        "GetGlobal",
-        "int",
-        [NativeParamSig {
-            ty: "int",
-            name: "iID"
-        }]
-    ),
-    sig!(
-        "GetActorScript",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetDoorScript",
-        "Door",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetPatchScript",
-        "Patch",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetLocationScript",
-        "Location",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetSoundSourceScript",
-        "SoundSource",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetBuildingScript",
-        "Building",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetWayScript",
-        "Way",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPosition"
-        }]
-    ),
-    sig!(
-        "GetActorIndex",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "GetDoorIndex",
-        "int",
-        [NativeParamSig {
-            ty: "Door",
-            name: "door"
-        }]
-    ),
-    sig!(
-        "GetPatchIndex",
-        "int",
-        [NativeParamSig {
-            ty: "Patch",
-            name: "patch"
-        }]
-    ),
-    sig!(
-        "GetLocationIndex",
-        "int",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "GetSoundSourceIndex",
-        "int",
-        [NativeParamSig {
-            ty: "SoundSource",
-            name: "soundsource"
-        }]
-    ),
-    sig!(
-        "GetBuildingIndex",
-        "int",
-        [NativeParamSig {
-            ty: "Building",
-            name: "building"
-        }]
-    ),
-    sig!(
-        "GetWayIndex",
-        "int",
-        [NativeParamSig {
-            ty: "Way",
-            name: "way"
-        }]
-    ),
-    sig!(
-        "StartDialog",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iDialogue"
-        }]
-    ),
-    sig!(
-        "ScrollCameraTo",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "ScrollCameraSlowlyTo",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fSpeed"
-            }
-        ]
-    ),
-    sig!(
-        "JumpCameraTo",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "SetZoomLevel",
-        "bool",
-        [NativeParamSig {
-            ty: "float",
-            name: "fZoom"
-        }]
-    ),
-    sig!(
-        "DisplayMap",
-        "bool",
-        [NativeParamSig {
-            ty: "bool",
-            name: "bDisplay"
-        }]
-    ),
-    sig!("DisplayConsole", "void", []),
-    sig!(
-        "CustomizeMinimapDisplay",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iKindOfDot"
-            }
-        ]
-    ),
-    sig!(
-        "DefineFlatTrajectoryZone",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "pLocation"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iApex"
-            }
-        ]
-    ),
-    sig!(
-        "AddShortBriefing",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iID"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bPrimary"
-            }
-        ]
-    ),
-    sig!(
-        "DoneShortBriefing",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iID"
-        }]
-    ),
-    sig!(
-        "ChooseVictoryDefeatText",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iID"
-        }]
-    ),
-    sig!("ForceCheckVictory", "void", []),
-    sig!("Start", "bool", []),
-    sig!("Thanx", "bool", []),
-    sig!("Then", "int", []),
-    sig!(
-        "RecordScrollCameraTo",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "RecordJumpCameraTo",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "RecordSetZoom",
-        "bool",
-        [NativeParamSig {
-            ty: "float",
-            name: "fZoomLevel"
-        }]
-    ),
-    sig!(
-        "RecordDisplayMap",
-        "bool",
-        [NativeParamSig {
-            ty: "bool",
-            name: "bDisplay"
-        }]
-    ),
-    sig!(
-        "RecordActionAvailable",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iAction"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bAvailable"
-            }
-        ]
-    ),
-    sig!(
-        "RecordCharacterAvailable",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bAvailable"
-            }
-        ]
-    ),
-    sig!(
-        "RecordLockCameraOn",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!("RecordClearCameraLock", "bool", []),
-    sig!(
-        "RecordPlayDialog",
-        "bool",
-        [NativeParamSig {
-            ty: "int",
-            name: "iDialogID"
-        }]
-    ),
-    sig!(
-        "RecordMoveCameraTo",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "destination"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iSpeed"
-            }
-        ]
-    ),
-    sig!(
-        "RecordSendMessage",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actReceiver"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iMessageCode"
-            }
-        ]
-    ),
-    sig!(
-        "RecordSendMessageWithArguments",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actReceiver"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iMessageCode"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iArgument1"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iArgument2"
-            }
-        ]
-    ),
-    sig!(
-        "RecordMove",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            }
-        ]
-    ),
-    sig!(
-        "RecordEnterGame",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iDirection"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            }
-        ]
-    ),
-    sig!(
-        "RecordLeaveGame",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iDirection"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            }
-        ]
-    ),
-    sig!(
-        "RecordTurnTo",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            }
-        ]
-    ),
-    sig!(
-        "RecordPlayAnim",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iId"
-            }
-        ]
-    ),
-    sig!(
-        "RecordPlayAnimLoop",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iId"
-            }
-        ]
-    ),
-    sig!(
-        "RecordPlayAnimFreeze",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iId"
-            }
-        ]
-    ),
-    sig!(
-        "RecordLockAI",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "RecordUnlockAI",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!("RecordLockUser", "bool", []),
-    sig!("RecordUnLockUser", "bool", []),
-    sig!(
-        "RecordTimer",
-        "bool",
-        [NativeParamSig {
-            ty: "int",
-            name: "iFrames"
-        }]
-    ),
-    sig!(
-        "RecordSeekActor",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "target"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fTolerance"
-            }
-        ]
-    ),
-    sig!(
-        "RecordStopSeek",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "RecordAction",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iID"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iValue"
-            }
-        ]
-    ),
-    sig!(
-        "RecordReplaceAnim",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iOriginalAnim"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iNewAnim"
-            }
-        ]
-    ),
-    sig!(
-        "RecordRestoreAnim",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iOriginalAnim"
-            }
-        ]
-    ),
-    sig!(
-        "RecordSpeakPC",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iRemarkID"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iRemarkVariant"
-            }
-        ]
-    ),
-    sig!(
-        "RecordTakeCorpse",
-        "int",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "taker"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "corpse"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            }
-        ]
-    ),
-    sig!(
-        "RecordMoveIntoBuilding",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "pointBeforeDoor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            }
-        ]
-    ),
-    sig!(
-        "RecordLeaveCorpse",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "ResetAnim",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "RecordStartMobileElement",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!(
-        "RecordStopMobileElement",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!(
-        "RecordSpeak",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iRemarkID"
-            }
-        ]
-    ),
-    sig!(
-        "RecordSeekActorMessage",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "pActor"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "pTarget"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fDistance"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "pActorEvent"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iID"
-            }
-        ]
-    ),
-    sig!(
-        "RecordSeekActorMessageWithArguments",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "pActor"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "pTarget"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fDistance"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "pActorEvent"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iID"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iArg1"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iArg2"
-            }
-        ]
-    ),
-    sig!(
-        "RecordActivateMobileElement",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!(
-        "RecordDeactivateMobileElement",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!("ThisActor", "Actor", []),
-    sig!("GetNumberOfActorsInEngine", "int", []),
-    sig!(
-        "IsActorAnimation",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorObject",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorCharacter",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorPC",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorNPC",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorSoldier",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorCivilian",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorAnimal",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorCart",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsNull",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorEqual",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "one"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "two"
-            }
-        ]
-    ),
-    sig!(
-        "IsActorDead",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorKO",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorTied",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsActorHS",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "GetActorPosture",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetActorPosture",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iPosture"
-            }
-        ]
-    ),
-    sig!(
-        "GetActorDirection",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetActorDirection",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iDirection"
-            }
-        ]
-    ),
-    sig!(
-        "GetActorLocation",
-        "Location",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetActorLocation",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            }
-        ]
-    ),
-    sig!(
-        "IsInside",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            }
-        ]
-    ),
-    sig!(
-        "IsInsideBuilding",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Building",
-                name: "building"
-            }
-        ]
-    ),
-    sig!(
-        "UnBlip",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "GetMovementStyle",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "GetCurrentAction",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "InflictPain",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iDamage"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bStun"
-            }
-        ]
-    ),
-    sig!(
-        "StopActor",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "Sees",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actorNPC"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "actorTarget"
-            }
-        ]
-    ),
-    sig!(
-        "EnableViewCone",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!("GetOutlineDisplay", "bool", []),
-    sig!(
-        "SetOutlineDisplay",
-        "void",
-        [NativeParamSig {
-            ty: "bool",
-            name: "bDisplay"
-        }]
-    ),
-    sig!(
-        "PrototypeFilterEvent",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "prototype"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "actorSource"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iEvent"
-            }
-        ]
-    ),
-    sig!(
-        "SendMessage",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actReceiver"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iMessageCode"
-            }
-        ]
-    ),
-    sig!(
-        "SendMessageWithArguments",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actReceiver"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iMessageCode"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iArgument1"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iArgument2"
-            }
-        ]
-    ),
-    sig!("God", "Actor", []),
-    sig!(
-        "Select",
-        "bool",
-        [NativeParamSig {
-            ty: "int",
-            name: "selectCode"
-        }]
-    ),
-    sig!(
-        "Deactivate",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "Activate",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetActionAvailable",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iAction"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bAvailable"
-            }
-        ]
-    ),
-    sig!(
-        "IsActionAvailable",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iAction"
-            }
-        ]
-    ),
-    sig!(
-        "SetPersistentProperty",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iProperty"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iAmount"
-            }
-        ]
-    ),
-    sig!(
-        "GetPersistentProperty",
-        "int",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iProperty"
-            }
-        ]
-    ),
-    sig!("IsAnyCivilianDead", "bool", []),
-    sig!("IsAnyEnemyDead", "bool", []),
-    sig!("GetOverallEnemyAlert", "int", []),
-    sig!("GetOverallCivilianAlert", "int", []),
-    sig!(
-        "SetAIAlertStatus",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStatus"
-            }
-        ]
-    ),
-    sig!(
-        "GetAIAlertStatus",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetAIState",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iState"
-            }
-        ]
-    ),
-    sig!(
-        "GetAIState",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetAIAttitude",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iAttitude"
-            }
-        ]
-    ),
-    sig!(
-        "GetAIAttitude",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetAILevel",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iProperty"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iLevel"
-            }
-        ]
-    ),
-    sig!(
-        "StareActor",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "actorTarget"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bTurnSprite"
-            }
-        ]
-    ),
-    sig!(
-        "StareLocation",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "locPoint"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bTurnSprite"
-            }
-        ]
-    ),
-    sig!(
-        "AssignPath",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Way",
-                name: "myWay"
-            }
-        ]
-    ),
-    sig!(
-        "AssignPost",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iDirection"
-            }
-        ]
-    ),
-    sig!(
-        "LockAI",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bRememberEvents"
-            }
-        ]
-    ),
-    sig!(
-        "UnlockAI",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "ForceBattleDecision",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iDecision"
-            }
-        ]
-    ),
-    sig!(
-        "MakeNoise",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iTypeID"
-            }
-        ]
-    ),
-    sig!(
-        "Freeze",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bFrozen"
-            }
-        ]
-    ),
-    sig!(
-        "FreezeAll",
-        "void",
-        [NativeParamSig {
-            ty: "bool",
-            name: "bFrozen"
-        }]
-    ),
-    sig!(
-        "SetPathWalkingStyle",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "NPC"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "i0Walking1Running2Backward"
-            }
-        ]
-    ),
-    sig!(
-        "GetSoldierRank",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsAnimationActive",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetAnimationState",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bState"
-            }
-        ]
-    ),
-    sig!(
-        "IsPatchApplied",
-        "bool",
-        [NativeParamSig {
-            ty: "Patch",
-            name: "patch"
-        }]
-    ),
-    sig!(
-        "ApplyPatch",
-        "bool",
-        [NativeParamSig {
-            ty: "Patch",
-            name: "patch"
-        }]
-    ),
-    sig!(
-        "ResetPatch",
-        "bool",
-        [NativeParamSig {
-            ty: "Patch",
-            name: "patch"
-        }]
-    ),
-    sig!("SuspendAllSoundSources", "bool", []),
-    sig!("ResumeAllSoundSources", "bool", []),
-    sig!(
-        "ActivateSoundSource",
-        "bool",
-        [NativeParamSig {
-            ty: "SoundSource",
-            name: "source"
-        }]
-    ),
-    sig!(
-        "DeactivateSoundSource",
-        "bool",
-        [NativeParamSig {
-            ty: "SoundSource",
-            name: "source"
-        }]
-    ),
-    sig!(
-        "DestroySoundSource",
-        "bool",
-        [NativeParamSig {
-            ty: "SoundSource",
-            name: "source"
-        }]
-    ),
-    sig!(
-        "CleanFromHisBuildingBeforeTeleport",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "CleanFromScriptZoneBeforeTeleport",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "cestLaZone"
-            }
-        ]
-    ),
-    sig!(
-        "AddToScriptZoneAfterTeleport",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "cestLaZone"
-            }
-        ]
-    ),
-    sig!(
-        "SetCorpseExistsInBuilding",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "pActor"
-        }]
-    ),
-    sig!(
-        "PutActorInBulding",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Building",
-                name: "building"
-            }
-        ]
-    ),
-    sig!(
-        "SetBuildingActive",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Building",
-                name: "building"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bActive"
-            }
-        ]
-    ),
-    sig!(
-        "GetAnyActorInsideBuilding",
-        "Actor",
-        [NativeParamSig {
-            ty: "Building",
-            name: "building"
-        }]
-    ),
-    sig!("NoWhere", "Location", []),
-    sig!(
-        "GetDistance",
-        "int",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "here"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "there"
-            }
-        ]
-    ),
-    sig!(
-        "Rand",
-        "int",
-        [NativeParamSig {
-            ty: "int",
-            name: "iMaximum"
-        }]
-    ),
-    sig!(
-        "PrintConsole",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iValue"
-        }]
-    ),
-    sig!("GetSizeOfMissionTeam", "int", []),
-    sig!(
-        "GetPCFromMissionTeam",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "ulPC"
-        }]
-    ),
-    sig!(
-        "AddPCToMissionTeam",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "RemovePCFromMissionTeam",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!("GetNumberOfObligatoryPCsInMissionTeam", "int", []),
-    sig!(
-        "GetObligatoryPCFromMissionTeam",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "ulPC"
-        }]
-    ),
-    sig!(
-        "IsPCObligatoryInMissionTeam",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!("IsMissionTeamValid", "bool", []),
-    sig!("GetLastPlayedMission", "int", []),
-    sig!("GetNextPlayedMission", "int", []),
-    sig!("IsMenToBlazonConversionMode", "bool", []),
-    sig!("GetNumberOfBeamMes", "int", []),
-    sig!(
-        "MoveBeamMe",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iIndex"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "pLocation"
-            }
-        ]
-    ),
-    sig!(
-        "SetCompanyNumber",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "pActor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iNumber"
-            }
-        ]
-    ),
-    sig!(
-        "SetAlwaysAttentive",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bYes"
-            }
-        ]
-    ),
-    sig!(
-        "WinBlazon",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "blazon"
-        }]
-    ),
-    sig!(
-        "LoseBlazon",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "blazon"
-        }]
-    ),
-    sig!(
-        "SetInvisible",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bHollow"
-            }
-        ]
-    ),
-    sig!(
-        "IsInvisible",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "IsDoorLockedPC",
-        "bool",
-        [NativeParamSig {
-            ty: "Door",
-            name: "door"
-        }]
-    ),
-    sig!(
-        "IsDoorUnlockable",
-        "bool",
-        [NativeParamSig {
-            ty: "Door",
-            name: "door"
-        }]
-    ),
-    sig!(
-        "IsDoorLockedNPCCivilian",
-        "bool",
-        [NativeParamSig {
-            ty: "Door",
-            name: "door"
-        }]
-    ),
-    sig!(
-        "IsDoorLockedNPCVillain",
-        "bool",
-        [NativeParamSig {
-            ty: "Door",
-            name: "door"
-        }]
-    ),
-    sig!(
-        "SetDoorLockedPC",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Door",
-                name: "door"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bState"
-            }
-        ]
-    ),
-    sig!(
-        "SetDoorUnlockable",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Door",
-                name: "door"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bState"
-            }
-        ]
-    ),
-    sig!(
-        "SetDoorLockedNPCCivilian",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Door",
-                name: "door"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bState"
-            }
-        ]
-    ),
-    sig!(
-        "SetDoorLockedNPCVillain",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Door",
-                name: "door"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bState"
-            }
-        ]
-    ),
-    sig!(
-        "SetDoorSpecialAutorisation",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Door",
-                name: "door"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bDirect"
-            }
-        ]
-    ),
-    sig!(
-        "ActivateDoorMouseSector",
-        "void",
-        [
-            NativeParamSig {
-                ty: "bool",
-                name: "bActive"
-            },
-            NativeParamSig {
-                ty: "Door",
-                name: "door"
-            }
-        ]
-    ),
-    sig!("ThisScroll", "Actor", []),
-    sig!(
-        "GetScrollStatus",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "scroll"
-        }]
-    ),
-    sig!(
-        "SetScrollStatus",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "scroll"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStatus"
-            }
-        ]
-    ),
-    sig!(
-        "GetCustomCampaignValue",
-        "int",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!(
-        "SetCustomCampaignValue",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iIndex"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iValue"
-            }
-        ]
-    ),
-    sig!(
-        "GetCustomNPCValue",
-        "int",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iIndex"
-            }
-        ]
-    ),
-    sig!(
-        "SetCustomNPCValue",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iIndex"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iValue"
-            }
-        ]
-    ),
-    sig!(
-        "RegisterAsProductionSector",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iType"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "sector"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iProductionSpeed"
-            }
-        ]
-    ),
-    sig!(
-        "AddProductionPoint",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iType"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "point"
-            }
-        ]
-    ),
-    sig!(
-        "GetActorForBeamMe",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!(
-        "DisplayPopupText",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPopupTextID"
-        }]
-    ),
-    sig!(
-        "RecordDisplayPopupText",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iPopupTextID"
-        }]
-    ),
-    sig!(
-        "GetNumberOfActorsInSector",
-        "int",
-        [NativeParamSig {
-            ty: "Location",
-            name: "loc"
-        }]
-    ),
-    sig!(
-        "GetActorInSector",
-        "Actor",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "loc"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iIndex"
-            }
-        ]
-    ),
-    sig!(
-        "BitwiseAnd",
-        "int",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "i"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "j"
-            }
-        ]
-    ),
-    sig!(
-        "BitwiseOr",
-        "int",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "i"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "j"
-            }
-        ]
-    ),
-    sig!(
-        "BitwiseXor",
-        "int",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "i"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "j"
-            }
-        ]
-    ),
-    sig!(
-        "HasPCAction",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actPC"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iActionCode"
-            }
-        ]
-    ),
-    sig!(
-        "HasAnyPCAction",
-        "bool",
-        [NativeParamSig {
-            ty: "int",
-            name: "iActionCode"
-        }]
-    ),
-    sig!("GetRobin", "Actor", []),
-    sig!(
-        "RecordMoveNear",
-        "bool",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iStyle"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iTolerance"
-            }
-        ]
-    ),
-    sig!(
-        "ComputeLocationBetween",
-        "Location",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "locA"
-            },
-            NativeParamSig {
-                ty: "Location",
-                name: "locB"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fLambdaBetweenZeroAndOne"
-            }
-        ]
-    ),
-    sig!(
-        "DeclareAsCombatTrainer",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "GetRelic",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "iID"
-        }]
-    ),
-    sig!("GetNumberOfPCs", "int", []),
-    sig!(
-        "GetPC",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "i"
-        }]
-    ),
-    sig!(
-        "AddAsSubordinate",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actChief"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "actSubordinate"
-            }
-        ]
-    ),
-    sig!(
-        "RemoveAllSubordinates",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actChief"
-        }]
-    ),
-    sig!(
-        "SwitchToAlertPath",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actSoldier"
-        }]
-    ),
-    sig!(
-        "IsActorRider",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actWhoever"
-        }]
-    ),
-    sig!(
-        "IsUnblipped",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actWhoever"
-        }]
-    ),
-    sig!(
-        "IsBlazonWon",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "blazon"
-        }]
-    ),
-    sig!(
-        "AddRepulsivePoint",
-        "int",
-        [
-            NativeParamSig {
-                ty: "Location",
-                name: "location"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fRadius"
-            },
-            NativeParamSig {
-                ty: "float",
-                name: "fActionRadius"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iFlags"
-            }
-        ]
-    ),
-    sig!(
-        "SetViewRadius",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iRadius"
-        }]
-    ),
-    sig!(
-        "RecordFreezeAll",
-        "void",
-        [NativeParamSig {
-            ty: "bool",
-            name: "bFreeze"
-        }]
-    ),
-    sig!(
-        "DeleteRepulsivePoint",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iID"
-        }]
-    ),
-    sig!(
-        "SetNPCEmoticon",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actNPC"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iEmoticonType"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iTime"
-            }
-        ]
-    ),
-    sig!(
-        "ConfiscateMoney",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actCapitalist"
-        }]
-    ),
-    sig!(
-        "AreAllPCsInside",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "AreAllEnemiesInsideHS",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "locZone"
-        }]
-    ),
-    sig!(
-        "AddPCToGang",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "AttachScrollToNPC",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actNPC"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "scroll"
-            }
-        ]
-    ),
-    sig!("AreAllBlazonsWon", "bool", []),
-    sig!(
-        "IsBonusItemPickedUp",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actItem"
-        }]
-    ),
-    sig!("GetRansomMoney", "int", []),
-    sig!(
-        "SetRansomMoney",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iRansomMoneyAmount"
-        }]
-    ),
-    sig!("GetDifficultyLevel", "int", []),
-    sig!("DisplaySherwoodReport", "void", []),
-    sig!(
-        "IsActorActive",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "AddFarmerToGang",
-        "void",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iType"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iExperienceSword"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iExperienceBow"
-            }
-        ]
-    ),
-    sig!(
-        "SetExperiences",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iExperienceSword"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iExperienceBow"
-            }
-        ]
-    ),
-    sig!(
-        "RecordUnBlip",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "pActor"
-        }]
-    ),
-    sig!(
-        "SetPatchAnimationActive",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Patch",
-                name: "patch"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bActive"
-            }
-        ]
-    ),
-    sig!("GetNumberOfPCsAlive", "int", []),
-    sig!(
-        "AreAllPCsAliveInside",
-        "bool",
-        [NativeParamSig {
-            ty: "Location",
-            name: "location"
-        }]
-    ),
-    sig!(
-        "TransformHandleTargetToTakeTarget",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actTarget"
-        }]
-    ),
-    sig!(
-        "IsPCSelected",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actPC"
-        }]
-    ),
-    sig!("GetNumberOfSelectedPCs", "int", []),
-    sig!(
-        "GetSelectedPC",
-        "Actor",
-        [NativeParamSig {
-            ty: "int",
-            name: "iIndex"
-        }]
-    ),
-    sig!("PlayTrapJingle", "void", []),
-    sig!(
-        "MakePCCrouched",
-        "void",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actPC"
-        }]
-    ),
-    sig!(
-        "HasAnyPCActionWhoIsInThisLevelOrCouldMaybeComeFromSherwood",
-        "bool",
-        [NativeParamSig {
-            ty: "int",
-            name: "iActionCode"
-        }]
-    ),
-    sig!(
-        "LockPatch",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Patch",
-                name: "patch"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bLocked"
-            }
-        ]
-    ),
-    sig!(
-        "HasAnyActivePCAction",
-        "bool",
-        [NativeParamSig {
-            ty: "int",
-            name: "iActionCode"
-        }]
-    ),
-    sig!(
-        "GetPCType",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actPC"
-        }]
-    ),
-    sig!(
-        "SelectActorPC",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actPCOrGodForAllPCs"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bSelectOrUnselect"
-            }
-        ]
-    ),
-    sig!(
-        "HasAnyActionSelected",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actPC"
-        }]
-    ),
-    sig!(
-        "GetActorActionState",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actor"
-        }]
-    ),
-    sig!(
-        "SetActorActionState",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actor"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iActionState"
-            }
-        ]
-    ),
-    sig!("SecretAgentsAreBackInSherwood", "bool", []),
-    sig!(
-        "FadeToBlack",
-        "void",
-        [NativeParamSig {
-            ty: "int",
-            name: "iSpeed"
-        }]
-    ),
-    sig!(
-        "LinkTargetToFX",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actTarget"
-            },
-            NativeParamSig {
-                ty: "Actor",
-                name: "actFX"
-            }
-        ]
-    ),
-    sig!(
-        "ForbidNPCRemark",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actNPC"
-            },
-            NativeParamSig {
-                ty: "int",
-                name: "iRemark"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bTrueMeansForbidFalseMeansAllow"
-            }
-        ]
-    ),
-    // ── Spellforge / Lua-only natives ──
-    sig!(
-        "Reveal",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actActor"
-        }]
-    ),
-    sig!(
-        "AddObjective",
-        "int",
-        [
-            NativeParamSig {
-                ty: "int",
-                name: "iObjectiveID"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bIsMainObjective"
-            },
-        ]
-    ),
-    sig!(
-        "CompleteObjective",
-        "int",
-        [NativeParamSig {
-            ty: "int",
-            name: "iObjectiveID"
-        }]
-    ),
-    sig!(
-        "IsActorOutOfAction",
-        "bool",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actActor"
-        }]
-    ),
-    sig!(
-        "SetPatrolShouldRun",
-        "void",
-        [
-            NativeParamSig {
-                ty: "Actor",
-                name: "actPatrolLeader"
-            },
-            NativeParamSig {
-                ty: "bool",
-                name: "bShouldRun"
-            },
-        ]
-    ),
-    sig!(
-        "SequenceReveal",
-        "int",
-        [NativeParamSig {
-            ty: "Actor",
-            name: "actActor"
-        }]
-    ),
-];
+pub(crate) use native_registry;
+
+macro_rules! lua_exposure {
+    (lua) => {
+        true
+    };
+    (no_lua) => {
+        false
+    };
+}
+
+macro_rules! signature {
+    ($name:ident, $return_type:literal, [$(($param_type:literal, $param_name:literal)),* $(,)?]) => {
+        NativeSignature {
+            name: stringify!($name),
+            return_type: $return_type,
+            params: &[
+                $(NativeParamSig { ty: $param_type, name: $param_name }),*
+            ],
+        }
+    };
+}
+
+macro_rules! define_native_metadata {
+    (
+        original {
+            $( $original:ident => ($original_return:literal, $original_params:tt, $original_lua:ident); )*
+        }
+        rust_extensions {
+            $( $extension:ident => ($extension_return:literal, $extension_params:tt, $extension_lua:ident); )*
+        }
+    ) => {
+        /// Complete registry in numeric ID order.
+        pub const NATIVE_REGISTRY: &[NativeDefinition] = &[
+            $(
+                NativeDefinition {
+                    native: NativeFn::$original,
+                    namespace: NativeNamespace::Original,
+                    signature: signature!($original, $original_return, $original_params),
+                    expose_to_lua: lua_exposure!($original_lua),
+                },
+            )*
+            $(
+                NativeDefinition {
+                    native: NativeFn::$extension,
+                    namespace: NativeNamespace::RustExtension,
+                    signature: signature!($extension, $extension_return, $extension_params),
+                    expose_to_lua: lua_exposure!($extension_lua),
+                },
+            )*
+        ];
+
+        /// Compatibility view of all signatures in numeric ID order.
+        pub const NATIVE_SIGNATURES: &[NativeSignature] = &[
+            $(signature!($original, $original_return, $original_params),)*
+            $(signature!($extension, $extension_return, $extension_params),)*
+        ];
+    };
+}
+
+native_registry!(define_native_metadata);
+
+pub fn native_definition_by_index(index: u32) -> Option<&'static NativeDefinition> {
+    NATIVE_REGISTRY
+        .iter()
+        .find(|definition| definition.native as u32 == index)
+}
+
+pub fn native_definition_by_name(name: &str) -> Option<&'static NativeDefinition> {
+    NATIVE_REGISTRY
+        .iter()
+        .find(|definition| definition.signature.name == name)
+}
 
 pub fn native_signature_by_index(index: u32) -> Option<&'static NativeSignature> {
-    NativeFn::try_from(index).ok()?;
-    native_signature_by_name(native_name(index))
+    native_definition_by_index(index).map(|definition| &definition.signature)
 }
 
 pub fn native_signature_by_name(name: &str) -> Option<&'static NativeSignature> {
-    NATIVE_SIGNATURES.iter().find(|sig| sig.name == name)
+    native_definition_by_name(name).map(|definition| &definition.signature)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+    use crate::natives::{ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
+
+    #[test]
+    fn registry_has_exhaustive_unique_ids_names_and_signatures() {
+        assert_eq!(NATIVE_REGISTRY.len(), NATIVE_SIGNATURES.len());
+
+        let mut ids = HashSet::new();
+        let mut names = HashSet::new();
+        for (position, definition) in NATIVE_REGISTRY.iter().enumerate() {
+            let id = definition.native as u32;
+            assert!(ids.insert(id), "duplicate native ID {id}");
+            assert!(
+                names.insert(definition.signature.name),
+                "duplicate native name {}",
+                definition.signature.name
+            );
+            assert_eq!(native_name(id), definition.signature.name);
+            assert_eq!(
+                native_signature_by_index(id),
+                Some(&definition.signature),
+                "missing signature for registry position {position}"
+            );
+            assert_eq!(
+                native_signature_by_name(definition.signature.name),
+                Some(&definition.signature)
+            );
+            assert_eq!(NATIVE_SIGNATURES[position], definition.signature);
+        }
+    }
+
+    #[test]
+    fn namespaces_are_contiguous_and_ordered() {
+        assert_eq!(ORIGINAL_NATIVE_COUNT, 265);
+        assert_eq!(RUST_EXTENSION_NATIVE_START, ORIGINAL_NATIVE_COUNT);
+
+        for (expected_id, definition) in NATIVE_REGISTRY
+            .iter()
+            .take(ORIGINAL_NATIVE_COUNT as usize)
+            .enumerate()
+        {
+            assert_eq!(definition.namespace, NativeNamespace::Original);
+            assert_eq!(definition.native as usize, expected_id);
+        }
+
+        let extensions = &NATIVE_REGISTRY[ORIGINAL_NATIVE_COUNT as usize..];
+        assert!(!extensions.is_empty());
+        for (offset, definition) in extensions.iter().enumerate() {
+            assert_eq!(definition.namespace, NativeNamespace::RustExtension);
+            assert_eq!(
+                definition.native as u32,
+                RUST_EXTENSION_NATIVE_START + offset as u32
+            );
+        }
+    }
+
+    #[test]
+    fn original_namespace_matches_original_registration_table_exactly() {
+        // Original provenance: `VMCoreCustom::InitializeStaticExtensions` in
+        // `original-code/GVMCoreCustom.cpp` assigns every ABI index explicitly.
+        let original = include_str!("../../../../original-code/GVMCoreCustom.cpp");
+        let mut expected = vec![None; ORIGINAL_NATIVE_COUNT as usize];
+        for line in original.lines() {
+            let Some(rest) = line.trim().strip_prefix("mparrayNativeFunctions[") else {
+                continue;
+            };
+            let Some((index, rest)) = rest.split_once("] = I") else {
+                continue;
+            };
+            let index: usize = index.parse().expect("original native index is numeric");
+            if index >= expected.len() {
+                continue;
+            }
+            let (name, _) = rest
+                .split_once(';')
+                .expect("original native assignment contains a semicolon");
+            let name = match name {
+                // TODO(original parity): preserve Rust's established corrected
+                // spelling while keeping the original typo explicit here.
+                "PutActorInBulding" => "PutActorInBuilding",
+                name => name,
+            };
+            assert!(
+                expected[index].replace(name).is_none(),
+                "duplicate original ID {index}"
+            );
+        }
+
+        for (index, definition) in NATIVE_REGISTRY
+            .iter()
+            .take(ORIGINAL_NATIVE_COUNT as usize)
+            .enumerate()
+        {
+            assert_eq!(
+                expected[index],
+                Some(definition.signature.name),
+                "original native registration mismatch at ID {index}"
+            );
+        }
+        assert!(expected.into_iter().all(|name| name.is_some()));
+    }
+
+    #[test]
+    fn lua_enumeration_is_unique_and_follows_registry_order() {
+        let exposed: Vec<_> = NATIVE_REGISTRY
+            .iter()
+            .filter(|definition| definition.expose_to_lua)
+            .collect();
+        assert!(!exposed.is_empty());
+        assert!(
+            exposed
+                .windows(2)
+                .all(|pair| (pair[0].native as u32) < pair[1].native as u32)
+        );
+
+        let names: HashSet<_> = exposed
+            .iter()
+            .map(|definition| definition.signature.name)
+            .collect();
+        assert_eq!(names.len(), exposed.len());
+    }
 }

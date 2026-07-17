@@ -17,5 +17,5 @@
 mod natives;
 mod state;
 
-pub use natives::{NATIVE_ALIASES, NativeBinding, register_natives};
+pub use natives::{NATIVE_ALIASES, NativeAbiError, NativeBinding, register_natives};
 pub use state::{MissionLuaError, MissionLuaState};
