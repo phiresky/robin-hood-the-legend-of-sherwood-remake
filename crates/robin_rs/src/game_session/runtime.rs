@@ -25,9 +25,9 @@ use std::sync::Arc;
 /// Common owned state for one loaded mission.
 ///
 /// This deliberately stops at the simulation/host boundary. Renderer, input,
-/// audio backend, and modal resources remain in the graphical driver until the
-/// interactive-frontend extraction. None of these process resources is
-/// serializable; deterministic persistence remains the Engine snapshot.
+/// audio backend, and modal resources are owned by the graphical driver's
+/// `InteractiveFrontend`. None of these process resources is serializable;
+/// deterministic persistence remains the Engine snapshot.
 pub(super) struct MissionWorld {
     // TODO(refactor): make these fields private once frame methods move onto
     // their focused owners. Wave 1 borrows them directly to keep loop order
@@ -80,9 +80,8 @@ impl MissionControl {
 
 /// Ephemeral state for one host-loop iteration.
 ///
-/// The headless driver adopts this shell in Wave 1. The graphical driver keeps
-/// its locals until its input/modal frontend is extracted, avoiding a broad
-/// parameter-only rewrite with no ownership benefit.
+/// Both mission drivers use this shell. The graphical driver additionally uses
+/// its modal-dismissal queue while the frontend owns native process resources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct MissionFrame {
     pub(super) started_at_ms: u32,
@@ -107,10 +106,9 @@ impl MissionFrame {
 /// Owner of the common state for one active mission.
 ///
 /// `TimelineRuntime` remains a focused component rather than growing Engine,
-/// Host, and UI responsibilities. The dedicated headless driver borrows these
-/// three disjoint fields in Wave 1. The graphical driver adopts the same owner
-/// with its interactive-frontend extraction, avoiding a broad parameter-only
-/// rewrite now.
+/// Host, and UI responsibilities. Both drivers borrow these three disjoint
+/// fields; the graphical driver keeps native process resources in a separate
+/// `InteractiveFrontend` owner.
 pub(super) struct MissionRuntime {
     pub(super) world: MissionWorld,
     pub(super) timeline: TimelineRuntime,
