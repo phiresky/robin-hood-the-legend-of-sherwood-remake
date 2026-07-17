@@ -2227,6 +2227,123 @@ fn primary_target_tracking_precedes_view_refresh() {
     );
 }
 
+#[test]
+fn npc_hourglass_observes_exact_original_phase_order() {
+    use super::tick::{NpcHourglassPhase as Phase, capture_npc_hourglass_phases};
+
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    let (_, phases) =
+        capture_npc_hourglass_phases(|| engine.perform_hourglass(&mut display, &assets, &mut dev));
+
+    assert_eq!(
+        phases,
+        vec![
+            Phase::SoldierPrelude,
+            Phase::Patrol,
+            Phase::BaseHuman,
+            Phase::Broadcasts,
+            Phase::View,
+            Phase::Detection,
+            Phase::Ambush,
+            Phase::Busy,
+            Phase::Ladder,
+            Phase::LockGate,
+            Phase::SixteenthFrame,
+            Phase::NormalTimer,
+            Phase::MacroTimer,
+            Phase::QueuedStimuli,
+        ]
+    );
+}
+
+#[test]
+fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
+    use super::ai::npc_hourglass_frame_phase;
+
+    let sixteenth_frame_visits: Vec<_> = (0..256)
+        .filter_map(|frame| {
+            let phase = npc_hourglass_frame_phase(frame, 0);
+            (phase & 15 == 0).then_some((frame, phase))
+        })
+        .collect();
+    assert_eq!(
+        sixteenth_frame_visits,
+        vec![
+            (4, 160),
+            (20, 176),
+            (36, 192),
+            (52, 208),
+            (68, 224),
+            (84, 240),
+            (100, 0),
+            (116, 16),
+            (132, 32),
+            (148, 48),
+            (164, 64),
+            (180, 80),
+            (196, 96),
+            (212, 112),
+            (228, 128),
+            (244, 144),
+        ]
+    );
+    assert_eq!(
+        sixteenth_frame_visits
+            .iter()
+            .filter_map(|&(frame, phase)| (phase & 63 == 0).then_some(frame))
+            .collect::<Vec<_>>(),
+        vec![36, 100, 164, 228]
+    );
+}
+
+#[test]
+fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+
+    let ai = engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| entity.ai_controller_mut())
+        .expect("test soldier has AI");
+    ai.locks_flag_field = crate::ai::AiLockFlags::BUSY;
+    ai.stimulus_queue.push(crate::ai::Stimulus::new(
+        crate::ai::StimulusType::EventAfterCombatInjury,
+    ));
+
+    engine.tick_ai_queued_stimuli(&assets);
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .stimulus_queue
+            .len(),
+        1,
+        "the Hourglass lock gate must preserve queued stimuli"
+    );
+
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| entity.ai_controller_mut())
+        .unwrap()
+        .locks_flag_field = crate::ai::AiLockFlags::empty();
+    engine.tick_ai_queued_stimuli(&assets);
+    assert!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .stimulus_queue
+            .is_empty(),
+        "the final unlocked Hourglass phase must replay the old lock queue"
+    );
+}
+
 fn pending_specific_blinks(engine: &EngineInner, npc_id: EntityId) -> Vec<EntityId> {
     engine
         .get_entity(npc_id)
