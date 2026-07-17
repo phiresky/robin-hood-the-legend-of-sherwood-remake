@@ -17,6 +17,115 @@ use super::{
     PANNEL_HEIGHT, SCROLLING_TABLE_SIZE, ZOOM_LEVEL_COUNT,
 };
 
+// ─── Deterministic simulation RNG ─────────────────────────────────────────
+
+/// Engine-owned capability for deterministic gameplay randomness.
+///
+/// At snapshot boundaries this owns the one `fastrand::Rng`. During a
+/// simulation scope the RNG is moved into `crate::sim_rng`, leaving `None`
+/// here. That unavailable state is deliberate: a direct engine-field draw
+/// while ambient simulation consumers are advancing the stream would fork
+/// the RNG timeline. Such access panics instead of silently consuming a
+/// placeholder or a second stream.
+///
+/// Original provenance: `original-code/launcher.cpp:763-765` seeds the one
+/// process-wide C RNG, and gameplay consumers call that shared `rand()`
+/// stream. Rust keeps ownership explicit so replay/save snapshots can carry
+/// the exact corresponding state.
+#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[serde(transparent)]
+pub(crate) struct SimulationRng {
+    #[serde(with = "simulation_rng_serde")]
+    state: Option<fastrand::Rng>,
+}
+
+impl SimulationRng {
+    #[allow(clippy::disallowed_methods)]
+    pub(crate) fn with_seed(seed: u64) -> Self {
+        Self {
+            state: Some(fastrand::Rng::with_seed(seed)),
+        }
+    }
+
+    /// Move the authoritative stream into the ambient simulation scope.
+    pub(crate) fn enter_scope(&mut self) {
+        let rng = self
+            .state
+            .take()
+            .expect("simulation RNG entered while already active");
+        crate::sim_rng::install(rng);
+    }
+
+    /// Reclaim the advanced stream after a simulation scope.
+    pub(crate) fn leave_scope(&mut self) {
+        assert!(
+            self.state.is_none(),
+            "simulation RNG left while engine still owned a stream"
+        );
+        self.state = Some(crate::sim_rng::uninstall());
+    }
+
+    pub(crate) fn seed(&self) -> u64 {
+        self.state
+            .as_ref()
+            .expect("simulation RNG seed requested while stream is active")
+            .get_seed()
+    }
+
+    #[allow(clippy::disallowed_methods)]
+    pub(crate) fn reseed(&mut self, seed: u64) {
+        let state = self
+            .state
+            .as_mut()
+            .expect("simulation RNG reseeded while stream is active");
+        *state = fastrand::Rng::with_seed(seed);
+    }
+}
+
+// TODO(parity): move the remaining pre-simulation bonus-frame draws in
+// `engine/level_loading.rs` into an explicit engine RNG scope. They already
+// advance this same capability, but retaining deref coercion is necessary
+// while level ingestion draws before the normal initialization scope.
+impl std::ops::Deref for SimulationRng {
+    type Target = fastrand::Rng;
+
+    fn deref(&self) -> &Self::Target {
+        self.state
+            .as_ref()
+            .expect("direct simulation RNG access while stream is active")
+    }
+}
+
+impl std::ops::DerefMut for SimulationRng {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.state
+            .as_mut()
+            .expect("direct simulation RNG access while stream is active")
+    }
+}
+
+mod simulation_rng_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        state: &Option<fastrand::Rng>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let rng = state.as_ref().ok_or_else(|| {
+            serde::ser::Error::custom("cannot serialize simulation RNG during an active scope")
+        })?;
+        rng.get_seed().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<fastrand::Rng>, D::Error> {
+        let seed = u64::deserialize(deserializer)?;
+        #[allow(clippy::disallowed_methods)]
+        Ok(Some(fastrand::Rng::with_seed(seed)))
+    }
+}
+
 // ─── Display operation codes ─────────────────────────────────────────
 
 /// What the renderer should do this frame with the background.

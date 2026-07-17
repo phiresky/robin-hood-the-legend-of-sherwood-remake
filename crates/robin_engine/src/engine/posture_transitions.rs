@@ -223,7 +223,6 @@ impl EngineInner {
             &move_box,
             half_diag,
             &self.fast_grid,
-            &mut self.rng,
         );
 
         // Rewrite the walking-order targets on the Move element with

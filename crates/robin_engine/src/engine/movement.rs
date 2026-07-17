@@ -1824,8 +1824,10 @@ impl EngineInner {
                     seq.append_element(w);
                     level += 1;
                 }
-                // Random 0..30 (sum of two rand-and-15 draws).
-                let r: u32 = self.rng.u32(0..16) + self.rng.u32(0..16);
+                // Original: `RHSequence::AppendMoveToSequence` in
+                // `original-code/RHsequence.cpp:484` sums two `rand() & 15`
+                // draws for this building-exit wait.
+                let r: u32 = crate::sim_rng::u32(0..16) + crate::sim_rng::u32(0..16);
                 let mut w = SequenceElement::new_generic(level, wait_command, Some(entity_id));
                 w.set_property(Field::Timer, FieldValue::Integer(r));
                 seq.append_element(w);
@@ -2222,10 +2224,11 @@ impl EngineInner {
                         // Nothing to emit here.
                     } else if far_side_is_building {
                         // Random 0..30 frames wait + CHANGE_POSITION
-                        // teleport into the building interior.  The
+                        // teleport into the building interior. Original:
+                        // `original-code/RHsequence.cpp:905`. The
                         // direction stuffed on the element is the
                         // door's `point_out - point_in` sector-index.
-                        let r: u32 = self.rng.u32(0..16) + self.rng.u32(0..16);
+                        let r: u32 = crate::sim_rng::u32(0..16) + crate::sim_rng::u32(0..16);
                         let mut wait = SequenceElement::new_generic(
                             level,
                             Command::WaitTimer,
@@ -6352,7 +6355,6 @@ impl EngineInner {
                     &move_box,
                     half_diag,
                     &self.fast_grid,
-                    &mut self.rng,
                 );
             }
         }

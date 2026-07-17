@@ -334,14 +334,10 @@ fn rollback_clone_stays_in_sync() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
-    #[allow(clippy::disallowed_methods)]
-    let seed = fastrand::Rng::with_seed(0xDEADBEEF).u64(..);
+    let seed = 0xDEAD_BEEF_CAFE_BABE;
 
     let mut original = EngineInner::new();
-    #[allow(clippy::disallowed_methods)]
-    {
-        original.rng = fastrand::Rng::with_seed(seed);
-    }
+    original.restore_rng_from_seed(seed);
 
     // Warm up a few ticks so the clone is taken from a non-initial state.
     for _ in 0..30 {
@@ -359,7 +355,7 @@ fn rollback_clone_stays_in_sync() {
     }
 
     assert_eq!(original.frame_counter, replay.frame_counter);
-    assert_eq!(original.rng.get_seed(), replay.rng.get_seed());
+    assert_eq!(original.rng_seed(), replay.rng_seed());
     assert_eq!(original.chorus_timer, replay.chorus_timer);
     assert_eq!(original.mission.mission_won, replay.mission.mission_won);
     assert_eq!(original.script_globals, replay.script_globals);
@@ -373,7 +369,7 @@ fn rollback_clone_stays_in_sync() {
         second_replay.perform_hourglass(&mut display, &assets, &mut dev);
     }
     assert_eq!(second_replay.frame_counter, original.frame_counter);
-    assert_eq!(second_replay.rng.get_seed(), original.rng.get_seed());
+    assert_eq!(second_replay.rng_seed(), original.rng_seed());
 }
 
 /// Serialize the engine to JSON, deserialize it back, advance the
@@ -386,14 +382,10 @@ fn serde_roundtrip_stays_in_sync() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
-    #[allow(clippy::disallowed_methods)]
-    let seed = fastrand::Rng::with_seed(0xFEED_FACE).u64(..);
+    let seed = 0xFEED_FACE_0123_4567;
 
     let mut original = EngineInner::new();
-    #[allow(clippy::disallowed_methods)]
-    {
-        original.rng = fastrand::Rng::with_seed(seed);
-    }
+    original.restore_rng_from_seed(seed);
 
     for _ in 0..30 {
         original.perform_hourglass(&mut display, &assets, &mut dev);
@@ -413,7 +405,7 @@ fn serde_roundtrip_stays_in_sync() {
     }
 
     assert_eq!(rehydrated.frame_counter, clone_ref.frame_counter);
-    assert_eq!(rehydrated.rng.get_seed(), clone_ref.rng.get_seed());
+    assert_eq!(rehydrated.rng_seed(), clone_ref.rng_seed());
     assert_eq!(rehydrated.chorus_timer, clone_ref.chorus_timer);
     assert_eq!(
         rehydrated.mission.mission_won,
@@ -650,7 +642,7 @@ fn sprite_serialization_surface_matches_v2_contract() {
         clone.perform_hourglass(&mut display, &assets, &mut dev);
     }
     assert_eq!(rehydrated.frame_counter, clone.frame_counter);
-    assert_eq!(rehydrated.rng.get_seed(), clone.rng.get_seed());
+    assert_eq!(rehydrated.rng_seed(), clone.rng_seed());
 }
 
 #[test]

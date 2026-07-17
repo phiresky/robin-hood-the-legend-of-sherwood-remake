@@ -251,13 +251,10 @@ pub struct EngineInner {
     /// host-owned so the deterministic engine is identical for every seat.
     pub(crate) cutscene_camera: CameraState,
     // ── Simulation RNG ───────────────────────────────────────────
-    /// The authoritative deterministic RNG for every gameplay random roll.
-    /// Installed into [`crate::sim_rng`] for the duration of each tick so
-    /// free helpers (AI, combat, bow scatter, …) can draw from it without
-    /// every call site threading `&mut fastrand::Rng`. Serialized via a
-    /// single `u64` seed — see [`crate::sim_rng::serde_rng`].
-    #[serde(with = "crate::sim_rng::serde_rng")]
-    pub(crate) rng: fastrand::Rng,
+    /// The one deterministic RNG capability for every gameplay random roll.
+    /// It owns the stream at snapshot boundaries and lends it to
+    /// [`crate::sim_rng`] only for an explicit simulation scope.
+    pub(crate) rng: SimulationRng,
 
     // ── Pending side effects ─────────────────────────────────────
     /// Outputs produced by the current tick (sounds, overlay show/hide,
@@ -590,12 +587,12 @@ impl EngineInner {
             mission_stat: MissionStat::default(),
             ground_mark: GroundMark::default(),
 
-            // Seed 0 is a placeholder; multiplayer will replace this with a
-            // value negotiated at match start so every client simulates the
-            // same sequence of rolls. Single-player is fully deterministic
-            // with this fixed seed.
-            #[allow(clippy::disallowed_methods)]
-            rng: fastrand::Rng::with_seed(0),
+            // Original: the `__TEST` path in
+            // `original-code/launcher.cpp:762-766` calls `srand(0)`.
+            // `Engine::new` replaces this bare-engine test seed with the
+            // replay/match seed before level setup draws. This is a real
+            // owned stream, never the temporary replacement used before.
+            rng: SimulationRng::with_seed(0),
             pending_side_effects: SideEffects::default(),
             user_locked: false,
             qa_recording_for: Vec::new(),
@@ -637,16 +634,19 @@ impl EngineInner {
     ///
     /// Called from `Engine::new` after level loading is complete.
     pub(crate) fn initialize(&mut self, assets: &mut LevelAssets) {
-        // Install the deterministic RNG into the thread-local so AI init
-        // (and any other init-time `sim_rng` users) draws from the engine's
-        // owned state. `perform_hourglass` does the same dance for the
-        // per-tick path; level init needs its own scope because it runs
-        // outside the tick.
-        #[allow(clippy::disallowed_methods)]
-        let placeholder = fastrand::Rng::with_seed(0);
-        crate::sim_rng::install(std::mem::replace(&mut self.rng, placeholder));
-        self.initialize_inner(assets);
-        self.rng = crate::sim_rng::uninstall();
+        self.with_sim_rng(|engine| engine.initialize_inner(assets));
+    }
+
+    /// Run non-tick simulation work against the engine's authoritative RNG.
+    ///
+    /// This is also used by focused tests that invoke a normally tick-owned
+    /// subsystem directly. A panic is fatal to the simulation and may leave
+    /// the thread-local installed, matching `perform_hourglass` semantics.
+    pub(crate) fn with_sim_rng<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.rng.enter_scope();
+        let result = f(self);
+        self.rng.leave_scope();
+        result
     }
 
     fn initialize_inner(&mut self, assets: &mut LevelAssets) {
@@ -741,9 +741,11 @@ impl EngineInner {
     /// scroll starts on a random frame of its fluttering animation
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
-        let rng = &mut self.rng;
         for (_, scroll) in self.entities.scrolls_mut() {
-            scroll.element.sprite.force_random_sprite_frame(rng);
+            // Original: `RHElementScroll::Initialize` in
+            // `original-code/RHElementScroll.cpp:153-171` calls
+            // `ForceRandomSpriteFrame` after script initialization.
+            scroll.element.sprite.force_random_sprite_frame_sim();
         }
     }
 
@@ -3373,11 +3375,11 @@ impl EngineInner {
                 break;
             }
 
-            // `rand() % (LIFEPOINTS_PC * 2) < life_points` — healthier
-            // peasants survive into reservists, frailer ones die
-            // outright.  Using the deterministic engine RNG keeps
-            // replays stable.
-            let roll = self.rng.u32(0..LIFEPOINTS_PC_X2) as i32;
+            // Original: `RHGame::ConvertSelectedPeasantsToBlazons` in
+            // `original-code/RHgame.cpp:4202-4251` uses
+            // `rand() % (LIFEPOINTS_PC << 1) < life_points`; healthier
+            // peasants survive into reservists, frailer ones die outright.
+            let roll = crate::sim_rng::u32(0..LIFEPOINTS_PC_X2) as i32;
             let campaign = self.campaign.as_mut().expect("campaign vanished mid-loop");
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);
@@ -3839,7 +3841,7 @@ impl EngineInner {
     /// Current RNG seed.  Used by the replay recorder to stamp the
     /// deterministic seed into the `.rhrec.jsonl` header.  Read-only.
     pub fn rng_seed(&self) -> u64 {
-        self.rng.get_seed()
+        self.rng.seed()
     }
 
     /// Which of the 10 known playable characters a PC entity represents.
@@ -3871,9 +3873,6 @@ impl EngineInner {
     /// loading a replay or a save — replay/load is a mission-lifecycle
     /// boundary, outside the per-tick input pipeline.
     pub fn restore_rng_from_seed(&mut self, seed: u64) {
-        #[allow(clippy::disallowed_methods)]
-        {
-            self.rng = fastrand::Rng::with_seed(seed);
-        }
+        self.rng.reseed(seed);
     }
 }

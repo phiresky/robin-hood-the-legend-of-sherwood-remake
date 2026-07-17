@@ -137,17 +137,14 @@ impl EngineInner {
             return fx;
         }
 
-        // Move the real RNG into the thread-local so sim helpers can pull
-        // from it without threading `&mut fastrand::Rng` through every
-        // signature. A placeholder lives on the struct while the tick runs;
-        // it's replaced with the advanced state after uninstall.
+        // Lend the one engine-owned stream to the simulation scope. The
+        // capability is deliberately unavailable on `EngineInner` until it
+        // is reclaimed, so no direct consumer can fork the timeline.
         //
         // A panic inside the tick will leak the RNG in the thread-local
         // for this thread — acceptable because a sim-tick panic is already
         // fatal to the running game.
-        #[allow(clippy::disallowed_methods)]
-        let placeholder = fastrand::Rng::with_seed(0);
-        crate::sim_rng::install(std::mem::replace(&mut self.rng, placeholder));
+        self.rng.enter_scope();
 
         let code = self.perform_hourglass_inner(display, assets, dev);
 
@@ -227,7 +224,7 @@ impl EngineInner {
         self.cutscene_camera.display.frame_scrolled = [false; 4];
         display.frame_scrolled = [false; 4];
 
-        self.rng = crate::sim_rng::uninstall();
+        self.rng.leave_scope();
 
         let mut fx = std::mem::take(&mut self.pending_side_effects);
         fx.code = code;
@@ -7895,8 +7892,11 @@ impl EngineInner {
 /// use a lower increment + factor (they don't wobble as much per
 /// step) than walking soldiers.
 ///
-/// The RNG is drained deterministically from the installed
-/// `sim_rng`, so replays reproduce the same deviation sequence.
+/// The RNG is drained deterministically from the installed `sim_rng`, so
+/// replays reproduce the same deviation sequence. Original provenance:
+/// `RHElementActorSoldier::PostProcessPath` in
+/// `original-code/RHelementactorsoldier.cpp:1688-1771` uses two draws for
+/// each of up to three candidate deviations per segment.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn apply_drunken_path_deviation(
     mut waypoints: Vec<crate::coordinates::MapPoint>,
@@ -7907,7 +7907,6 @@ pub(super) fn apply_drunken_path_deviation(
     move_box: &crate::coordinates::MoveBox,
     half_diagonal: crate::coordinates::MoveBoxHalfDiagonal,
     grid: &crate::fast_find_grid::FastFindGrid,
-    rng: &mut fastrand::Rng,
 ) -> Vec<crate::coordinates::MapPoint> {
     const DRUNKEN_DEVIATION_FACTOR: f32 = 0.03;
 
@@ -7937,8 +7936,8 @@ pub(super) fn apply_drunken_path_deviation(
             for _try in 0..3 {
                 // `rand() & 15` — pick a random 16-sector direction
                 // and scale by another 0..15 random magnitude.
-                let dir_sector = rng.u32(0..16) as i16;
-                let magnitude = rng.u32(0..16) as f32;
+                let dir_sector = crate::sim_rng::u32(0..16) as i16;
+                let magnitude = crate::sim_rng::u32(0..16) as f32;
                 let (dx, dy) = crate::element_kinds::direction_vector_16(dir_sector);
                 let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
                 let candidate = crate::coordinates::MapPoint::new(
