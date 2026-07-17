@@ -46,6 +46,49 @@ fn push_flight_vector(
     }
 }
 
+/// Select the animation queued by `TranslatePushDamage`.
+///
+/// The dead-rider arm precedes the posture switch in the original, so even a
+/// rider whose current posture would normally suppress a pushed fall receives
+/// `DyingUpright`.
+fn translated_push_damage_animations(
+    posture: Posture,
+    action_state: ActionState,
+    is_rider: bool,
+    is_dead: bool,
+) -> Option<PushDamageAnimations> {
+    if is_rider && is_dead {
+        Some(PushDamageAnimations {
+            falling: crate::order::OrderType::DyingUpright,
+            standing_up: None,
+            stunned: None,
+        })
+    } else {
+        select_push_damage_animations(posture, action_state)
+    }
+}
+
+/// Immediate posture change performed by `TranslatePushDamage` itself.
+///
+/// Animated pushes leave posture untouched until the falling order reports
+/// motion Start. Only the no-animation arm (already lying/dead/carried/etc.)
+/// grounds a dead or unconscious victim during translation.
+fn translated_push_posture(
+    has_falling_animation: bool,
+    is_dead: bool,
+    is_unconscious: bool,
+) -> Option<Posture> {
+    if has_falling_animation {
+        None
+    } else if is_dead {
+        Some(Posture::Dead)
+    } else if is_unconscious {
+        Some(Posture::Lying)
+    } else {
+        None
+    }
+}
+
 impl EngineInner {
     // ─── Push / stumble effects ─────────────────────────────────────
 
@@ -843,19 +886,8 @@ impl EngineInner {
             (posture, action, dead, unconscious, conc)
         };
 
-        // Rider-dead special case: when the victim is both a rider
-        // and already dead, override the falling animation to
-        // `DyingUpright` and bypass the posture switch entirely.
-        let push_anims = if victim_is_rider && is_dead {
-            Some(PushDamageAnimations {
-                falling: crate::order::OrderType::DyingUpright,
-                standing_up: None,
-                stunned: None,
-            })
-        } else {
-            // Select posture-aware push animation
-            select_push_damage_animations(posture, action_state)
-        };
+        let push_anims =
+            translated_push_damage_animations(posture, action_state, victim_is_rider, is_dead);
 
         if let Some(anims) = push_anims {
             // The falling sequence is marked non-interruptable so
@@ -880,13 +912,12 @@ impl EngineInner {
                 }
             }
 
-            // Handle death/KO side effects.  Push-specific work
-            // lives in this helper; the unconscious transition is
-            // centralised in `set_concussion`.
+            // Handle death/KO side effects without changing posture here.
+            // `ExecuteFallingPushed` owns Flying on motion Start and the
+            // DeadBack/Lying landing transition. `DyingUpright` likewise
+            // owns the dead rider's posture transition on animation Start.
             if is_dead {
-                // Simplified death handling for push — sets posture, quits swordfight
                 let is_pc = if let Some(entity) = self.entities.get_mut(victim_id) {
-                    entity.set_posture(Posture::Dead);
                     if let Some(actor) = entity.actor_data_mut() {
                         if actor.action_state.is_sword()
                             || actor.action_state == ActionState::Menacing
@@ -918,11 +949,6 @@ impl EngineInner {
                     .map(|e| e.kind().is_pc())
                     .unwrap_or(false);
                 self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, false);
-            } else if concussion > STUNNING_THRESHOLD && !posture.is_lying() {
-                // Stumble to lying from concussion
-                if let Some(entity) = self.entities.get_mut(victim_id) {
-                    entity.set_posture(Posture::Lying);
-                }
             }
 
             self.try_queue_roll(assets, victim_id, damage_element);
@@ -956,9 +982,6 @@ impl EngineInner {
                 if is_pc {
                     self.apply_pc_kill_cascade(assets, victim_id);
                 }
-                if let Some(entity) = self.entities.get_mut(victim_id) {
-                    entity.set_posture(Posture::Dead);
-                }
             }
             if is_unconscious {
                 let attacker_is_pc = self
@@ -966,6 +989,11 @@ impl EngineInner {
                     .map(|e| e.kind().is_pc())
                     .unwrap_or(false);
                 self.apply_knockout_side_effects(assets, victim_id, attacker_is_pc, true);
+            }
+            if let Some(posture) = translated_push_posture(false, is_dead, is_unconscious)
+                && let Some(entity) = self.entities.get_mut(victim_id)
+            {
+                entity.set_posture(posture);
             }
             tracing::debug!(
                 victim = ?victim_id,
@@ -1382,6 +1410,67 @@ mod tests {
             MapPoint::new(0.0, 0.0),
             MapPoint::new(4.0, 0.0),
             10.0,
+        );
+    }
+
+    #[test]
+    fn fatal_animated_push_defers_dead_posture_to_flight_landing() {
+        let anims = translated_push_damage_animations(
+            Posture::Upright,
+            ActionState::WaitingSword,
+            false,
+            true,
+        );
+
+        assert_eq!(
+            anims.map(|anims| anims.falling),
+            Some(crate::order::OrderType::FallingPushedWithSword)
+        );
+        assert_eq!(translated_push_posture(anims.is_some(), true, false), None);
+    }
+
+    #[test]
+    fn knockout_animated_push_defers_lying_posture_to_flight_landing() {
+        let anims =
+            translated_push_damage_animations(Posture::Upright, ActionState::Waiting, false, false);
+
+        assert_eq!(
+            anims.map(|anims| anims.falling),
+            Some(crate::order::OrderType::FallingPushedUpright)
+        );
+        assert_eq!(translated_push_posture(anims.is_some(), false, true), None);
+    }
+
+    #[test]
+    fn fatal_rider_keeps_dying_upright_override_without_translation_snap() {
+        let anims = translated_push_damage_animations(
+            Posture::Lying,
+            ActionState::WaitingSword,
+            true,
+            true,
+        );
+
+        assert_eq!(
+            anims.map(|anims| anims.falling),
+            Some(crate::order::OrderType::DyingUpright),
+            "the rider-dead override precedes the posture switch"
+        );
+        assert_eq!(translated_push_posture(anims.is_some(), true, false), None);
+    }
+
+    #[test]
+    fn already_lying_push_applies_terminal_posture_during_translation() {
+        let anims =
+            translated_push_damage_animations(Posture::Lying, ActionState::Waiting, false, true);
+
+        assert!(anims.is_none());
+        assert_eq!(
+            translated_push_posture(anims.is_some(), true, false),
+            Some(Posture::Dead)
+        );
+        assert_eq!(
+            translated_push_posture(anims.is_some(), false, true),
+            Some(Posture::Lying)
         );
     }
 }
