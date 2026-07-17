@@ -5016,7 +5016,12 @@ impl HostFunctions for GameHost {
                 }
 
                 // --- entity type checks ---
+                // Original: original-code/RHScript.cpp, RHScript::ThisActor
+                // returns the callback's pScriptThis verbatim.
                 ThisActor => self.script_this,
+                // Original: original-code/RHScript.cpp,
+                // RHScript::GetNumberOfActorsInEngine returns
+                // marrayElementsScript.Size().
                 GetNumberOfActorsInEngine => self.entities.len() as i32,
                 IsActorAnimation => {
                     let handle = stack.pop_i32();
