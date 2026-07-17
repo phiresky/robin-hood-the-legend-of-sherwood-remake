@@ -9,7 +9,7 @@
 //!
 //! Each exposed mutator is either:
 //!
-//! * a tick call (`apply_command(s)`, `perform_hourglass`) — the only
+//! * a tick call (`apply_command(s)`, `perform_hourglass`) — the normal
 //!   per-frame sim-state mutation point,
 //! * a one-shot setup / level-load / lifecycle hook, or
 //! * a drain of a side-effect queue filled during the tick and consumed
@@ -385,6 +385,18 @@ impl Engine {
         dev: &mut DevState,
     ) -> SideEffects {
         self.inner.perform_hourglass(display, assets, dev)
+    }
+
+    /// One-shot lifecycle stage matching `RHGame::GameLoop`: dispatch
+    /// mission `PostInitialize` after the first host refresh and sound
+    /// hourglass.  Replay drivers must run this after reconstructing
+    /// frame zero as well.
+    pub fn perform_post_initialize(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        assets: &LevelAssets,
+    ) -> Option<SideEffects> {
+        self.inner.perform_post_initialize(display, assets)
     }
 
     /// Apply one player command.  Commands are the only host → sim
