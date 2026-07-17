@@ -3322,6 +3322,7 @@ dependencies = [
 [[package]]
 name = "proc-macro-error-attr2"
 version = "2.0.0"
+source = "git+https://github.com/phiresky/proc-macro-error-2.git?rev=095ca9d18e988eabd12a27f3bce08dd8f8a72a97#095ca9d18e988eabd12a27f3bce08dd8f8a72a97"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3330,6 +3331,7 @@ dependencies = [
 [[package]]
 name = "proc-macro-error2"
 version = "2.0.1"
+source = "git+https://github.com/phiresky/proc-macro-error-2.git?rev=095ca9d18e988eabd12a27f3bce08dd8f8a72a97#095ca9d18e988eabd12a27f3bce08dd8f8a72a97"
 dependencies = [
  "proc-macro-error-attr2",
  "proc-macro2",

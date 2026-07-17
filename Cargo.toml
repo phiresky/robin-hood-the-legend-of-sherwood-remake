@@ -29,8 +29,9 @@ image = { version = "0.25.8", features = ["tga", "jpeg", "png", "bmp"], default-
 [patch.crates-io]
 # proc-macro-error2 2.0.1 re-exports a private `extern crate proc_macro`,
 # which is a future hard error. Keep the same crate/version and apply the
-# compiler-suggested visibility fix until upstream publishes it.
-proc-macro-error2 = { path = "third_party/proc-macro-error2" }
+# compiler-suggested visibility fix until upstream publishes it. The fork
+# contains only that fix on top of upstream 2.0.1.
+proc-macro-error2 = { git = "https://github.com/phiresky/proc-macro-error-2.git", rev = "095ca9d18e988eabd12a27f3bce08dd8f8a72a97" }
 
 [profile.release]
 opt-level = 3
