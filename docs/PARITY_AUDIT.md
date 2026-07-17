@@ -1,252 +1,133 @@
 # Gameplay Parity Audit
 
-Audited on 2026-07-16 at Rust revision `15e5ffd6f`. This audit compares the Rust gameplay runtime with the checked-in original
-sources. It covers tick ordering, AI, sequences, scripting/Lua, RNG, snapshots,
-and mission ownership. It is evidence, not a claim that a subsystem is fully
-equivalent merely because a matching symbol exists.
+This document is the review queue for gameplay behavior in the Rust port. The
+goal is not line-for-line translation. The goal is that every gameplay effect
+can be traced to the original game or is explicitly approved as a post-port
+feature.
 
-## Evidence rules
+## Evidence Rules
 
-- **Original** means a path and symbol in `original-code/`. Lua/Spellforge is a
-  post-original extension and cannot be labelled Original provenance.
-- **Confirmed** means the relevant order or state transition can be traced on
-  both sides.
-- **Adapted** means Rust changes the mechanism while preserving a stated
-  observable contract.
-- **Open risk** means no trace test proves the observable order yet.
-- **Mismatch** means the sources show different observable behavior.
+Use one of these statuses:
 
-Line numbers describe the audited revision. Symbols are included because they
-remain useful if nearby comments move.
+- `mismatch`: Rust and original behavior were compared and differ.
+- `incomplete`: the Rust code explicitly implements only part of the original.
+- `unverified`: suspicious or structurally different, but no behavioral
+  difference has been proved yet.
+- `verified`: compared with exact original source and covered by a focused test
+  or deterministic replay where practical.
+- `intentional`: no original equivalent and approved in `docs/NEW_FEATURES.md`.
+- `host-only`: tooling, rendering backend, networking, replay, or platform work
+  that cannot affect authoritative gameplay state.
 
-## Executive findings
+A source comment is not evidence by itself. A reviewed item must name the
+original file and function. If an intentional difference affects gameplay, add
+it to `docs/NEW_FEATURES.md`; do not describe it only as a safeguard, fallback,
+or simplification.
 
-| Priority | Finding | Evidence | Required disposition |
+## Fixed Findings
+
+| ID | Rust behavior | Original evidence | Resolution |
 | --- | --- | --- | --- |
-| P0 | Rollback snapshots omit `HostDisplayState`, although the tick reads it to decide whether to return during zoom. Replay starts from default display state. | Original serializes `mbackgroundTransform` in `RHEngine::Serialize`, `original-code/RHengine.cpp:2463-2531`. Rust reads it in `crates/robin_engine/src/engine/tick.rs:558-564`; `SimSnapshot` stores only frame and `Engine`, then creates scratch display state in `crates/robin_rs/src/sim_timeline.rs:22-41,105-120`. | Put every tick input in the deterministic snapshot or make it a derived immutable input. Add a non-default zoom replay test. |
-| P0 | Lua is unsnapshotted and incompletely dispatched. Comments promise Timer/victory/finalize, but the only live `run_event` calls are Initialize/PostInitialize. | `crates/robin_rs/src/lua_session.rs:16-36`; `crates/robin_rs/src/game_session/mod.rs:898-906`; `Host::lua_session` at `crates/robin_rs/src/host.rs:507-512`. | Reject Spellforge missions in replay/rollback/multiplayer until a tested state policy exists; wire the complete event surface separately. |
-| P0 | Lua Initialize can use `math.random` outside an installed sim-RNG scope. Lua startup/runtime errors also become absence or zero. | RNG shim: `crates/robin_lua/src/state.rs:241-299`; missing scope panics: `crates/robin_engine/src/sim_rng.rs:77-84`; startup calls: `game_session/mod.rs:891-906`; fallback paths: `:783-790` and `lua_session.rs:188-196`. | Pass an explicit Engine RNG context and propagate required-script failures. Missing optional callbacks may remain no-ops; interpreter failures must not become zero. |
-| P1 | Original WAIT-priority sequence elements call `Go()` during launch; Rust queues them for a later sequence-manager hourglass. | `original-code/RHsequence.cpp:235-289`, especially `:280-286`; `crates/robin_engine/src/sequence.rs:2195-2211`. | Fix with a launch-time ordered-trace test. |
-| P1 | Original updates actors in storage order and runs each NPC's AI before the sequence-manager hourglass. Rust uses global subsystem passes, AI snapshots, and deferred drains. | `original-code/RHengine.cpp:3715-3727`; `original-code/RHelementactornpc.cpp:3495-3659`; `crates/robin_engine/src/engine/tick.rs:1088-1136,5360-5650`; `engine/ai/snapshots.rs:13-19`. | Prove same-frame visibility and re-entrant stimulus order with traces. |
-| P1 | Mission exits use `take_campaign().unwrap_or_default()`. A missing required campaign can silently become a fresh campaign. | Original requires `RHCampaign::GetCampaign()`, e.g. `RHEngine::QuitMission`, `original-code/RHengine.cpp:16310-16316`. Rust stores `Option<Campaign>` (`engine/mod.rs:422-425`), swaps it into `GameHost` (`engine/types.rs:1572-1592`), and defaults it in several session/mouse exit paths. | Introduce one mission-runtime owner and checked transfer/lease APIs. |
-| P1 | Restore repairs malformed fast-grid activity arrays by marking every entry active. | `crates/robin_engine/src/engine/rollback_safe.rs:686-701`. | Reject invalid state or rebuild from a documented authoritative source; add corrupt-length tests. |
-| P2 | Replay seed preload failure falls back to multiplayer seed or zero. | `crates/robin_rs/src/game_session/setup.rs:1224-1244`. | Make requested-replay header failure fatal before Engine construction. |
-| P2 | Rust RNG is deterministic and snapshot-safe but deliberately is not the original C RNG stream. | `original-code/launcher.cpp:761-766`, `RHScript.cpp:6492-6505`, `RHartificialintelligence.cpp:3833-3863`; Rust `sim_rng.rs` and `EngineInner::rng`. | Define parity at ranges/call sites, not bit-identical rolls. |
+| PA-001 | PCs automatically collected nearby bonuses every tick. | `RHElementObject::BuildTakeSequence`, `RHelementobject.cpp`; `RHElementActorPC::Execute` Taking completion, `RHelementactorpc.cpp`. | Removed in commit `682dc1f49`; collection now requires the Take sequence. |
+| PA-002 | Unmapped AI stimuli skipped `FilterAIEvent`; comments incorrectly called original stimuli such as `EVENT_ENEMY_NEAR` Rust-only. | `RHArtificialIntelligence::StartThink`, `RHartificialintelligence.cpp`, assigns event code `-2` and still calls the script filter; enum in `RHartificialintelligence.h`. | Rust now calls `FilterAIEvent(source, -2)` through the normal filtered dispatch path and has a regression test. |
+| PA-003 | Default mission loss treated any living, conscious PC as playable and ignored `PcData::playable`. | `RHEngine::PerformHourglass`, `RHengine.cpp`; `RHElementActorPC::IsPlayable`, `RHelementactorpc.h`. | The check now uses the explicit playable flag plus guard state, with a focused test. |
+| PA-004 | Mission exits could replace a missing required campaign with `Campaign::default()`. | `RHCampaign`, `RHCampaign.cpp`, installs one concrete singleton; `launcher.cpp` owns that campaign across mission runs. | `c106f35b1` funnels mission exits through `restore_required_campaign`, which panics with boundary context instead of inventing campaign state. |
+| PA-005 | Restore repaired malformed parallel fast-grid arrays with all-active values absent from the snapshot. | `RHEngine::Serialize`, `RHengine.cpp`, serializes the concrete engine/grid state; it has no all-active corruption-repair path. | `c5e277769` validates lengths before mutation and returns `SnapshotRestoreError`; the compatibility facade rejects corruption loudly. |
+| PA-010 | EnemyNear scanned every PC unconditionally and ran generic trouble/battle decisions. | `RHArtificialMalignity::AttackingReactiontimeEnemyNearTest` and `EVENT_ENEMY_NEAR`, `RHartificialmalignity.cpp`. | `15e5ffd6f` restores the trainer/substate/time gates, ordered `mlistThem` scan, exact box/postures, stimulus target assignment, and `BeginSwordfight`. |
+| PA-011 | `reinitialize_them_list` retained an unseen saved primary target. | `RHArtificialMalignity::ReinitializeThemList`, `RHartificialmalignity.cpp`. | `4350e5092` rebuilds the list solely from visible, living enemies. |
+| PA-012 | FadeToBlack frozen frames advanced the mission clock. | `RHScript::FadeToBlack`, `RHScript.cpp`. | `e3fb1efb0` makes the fade render-only while simulation, RNG, script, display, and sound timers remain frozen. |
+| PA-014 | Rust drained all pending path/move work in one tick. | `RHEngine::ProcessPathRequests`, `RHengine.cpp`, invokes the pathfinder once and resolves at most one queued request per frame. | `7786df3bf` restores frame-paced processing with queue-order, snapshot, and malformed-request tests. |
+| PA-015 | Missing sound/exclamation durations silently fabricated 75-frame completions that could shift AI talk events. | `RHSound::GetSampleLengthMs` returns zero when its cache lookup cannot resolve/load the sample; actor talk completion follows that duration. | `f50d86169` uses decoded metadata and the Original zero-length missing-sample result, warns instead of inventing a duration, and adds focused timing tests. |
+| PA-016 | Rust's NPC subphases did not match `RHElementActorNPC::Hourglass`. | `RHElementActorNPC::Hourglass`, `RHelementactornpc.cpp`. | `48d6d6aa7` restores the actor-owned patrol/human/detection/busy/timer/stimulus order and adds an exact phase trace. |
+| PA-020 | Arrow-watching AI treated `EVENT_DONE` as a return-to-duty signal. | Arrow-watching substate cases in `RHartificialmalignity.cpp`. | `a8dcaaf01` removes the invented fallback and adds a focused regression. |
+| PA-021 | Script native `Sees` omitted ambiance radius adjustment and the forest Royalist 180-degree rule. | `RHScript::Sees`, `RHScript.cpp`, delegates to `RHElementActorNPC::IsDetecting` in `RHelementactornpc.cpp`. | `6a9ec3b11` routes the native through matching NPC visibility rules and adds focused coverage. |
+| PA-024 | `SetPersistentProperty` dropped live PC ammo writes when no campaign existed. | `RHScript::SetPersistentProperty`, `RHScript.cpp`, updates the live actor for arrows and PC ammo properties. | `7029583d6` updates live ammo independently of campaign persistence and tests the no-campaign path. |
+| PA-026 | Shoulder-ceiling checks ran for every `CarryingOnShoulders` posture. | `RHElementActorPC::Execute`, `RHelementactorpc.cpp`, gates the check on `WALKING_CARRYING_ON_SHOULDERS`. | `93f0436` adds the action gate and focused regression coverage. |
+| PA-027 | Messenger, condolence-card, and recursive self-stimulus work was deferred across global phases. | `RHMessenger::ForwardMessage`, `RHMessenger.cpp`; `RHSequenceElement::SetState`, `RHsequenceelement.cpp`. | `6f7907eaf` restores depth-first same-frame re-entry and tests recursive messages, self-stimuli, cascade ordering, and cross-owner cards. |
+| PA-029 | Mission `PostInitialize` ran inside the first engine tick before the host refresh/sound boundary. | `RHGame::GameLoop`, `RHgame.cpp`, invokes it after refresh and sound. | `cdcf5d0fe` moves it to an explicit post-refresh stage shared by live play and replay, with an exact one-shot frame-boundary test. |
 
-## Tick ownership and order
+## Open Findings
 
-`RHGame::GameLoop` calls the engine only when the console is hidden, the
-start/quit window is not transitioning, dummy pause is false, and the operation
-is neither level-next nor level-load (`original-code/RHgame.cpp:1801-1809`). It
-then simulates widgets, refreshes, advances sound, and performs one-shot
-PostInitialize (`:1812-1843`).
+Priority reflects likely gameplay impact, not implementation effort.
 
-`RHEngine::PerformHourglass` has this observable order
-(`original-code/RHengine.cpp:3446-3777`):
+| ID | Priority | Status | Finding and evidence |
+| --- | --- | --- | --- |
+| PA-013 | High | unverified | Rust globally regroups per-entity Hourglass work into movement, animation, script, detection, combat, and ability passes. Original `RHEngine::PerformHourglass` calls each virtual `Element::Hourglass` in entity order before `RHSequenceManager::Hourglass` (`RHengine.cpp`). Cross-entity and same-frame callback ordering needs scenario tests. |
+| PA-022 | Medium | incomplete | Cached door authorization checks only building type, active state, and villain lock. Original `FindDoorEnemyCouldBeBehind` calls `RHGate::IsActorAutorized`, which also checks building capacity and riders (`RHartificialmalignity.cpp`, `RHGate.cpp`). |
+| PA-023 | Medium | mismatch | `SetExperiences` writes the campaign description and persists into later missions. Original `RHScript::SetExperiences` changes only the live PC capacities (`RHScript.cpp`). |
+| PA-025 | Medium | mismatch | Charly-to-officer logic substitutes 360-degree detection. Original calls normal `IsDetecting(mpAntagonist)` and therefore respects the view cone (`RHartificialmalignity.cpp`). |
+| PA-028 | Medium | unverified | Rust dispatches script `SendMessage` after the script call instead of launching the original `RHCOMMAND_SEND_MESSAGE` sequence element. Compare arbitration and same-frame callback order (`RHScript.cpp`, `RHsequenceelement.cpp`). |
+| PA-030 | Low | unverified | Collinear movement-line intersection fabricates impact parameter `t = 0.5`. Find and port the original earliest-overlap behavior or add geometry evidence and focused collision tests. |
+| PA-031 | Low | mismatch | Push handling falls back to radial movement for unexpected thrust kinds. Original push dispatch handles the three supported kinds and asserts otherwise (`RHelementactorhuman.cpp`). |
+| PA-032 | High | mismatch | WAIT-priority sequence elements are appended to `elements_to_go` and do not dispatch until the manager hourglass. Original `RHSequence::Launch` calls `Go()` for WAIT elements before launch returns (`RHsequence.cpp`). Add a launch-return ordering test before changing the barrier. |
+| PA-033 | High | mismatch | `SimSnapshot` excludes `HostDisplayState` and replay constructs a default display, although `EngineInner::perform_hourglass_inner` reads zoom-transition flags to decide whether gameplay phases run. Original `RHEngine::Serialize` persists `mbackgroundTransform` (`RHengine.cpp`). Move the gate input into deterministic state or prove it is derived, then test replay from a non-default zoom transition. |
+| PA-034 | High | incomplete | Spellforge Lua is a post-original feature, not the original SCB VM. Only Initialize/PostInitialize are dispatched; Lua state is absent from snapshots, required startup failure continues without Lua, event errors are discarded, and Initialize can call the sim-RNG shim without an installed Engine RNG scope (`lua_session.rs`, `game_session/mod.rs`, `robin_lua/state.rs`). Reject it in deterministic modes until a versioned Spellforge contract and state policy exist. |
+| PA-035 | High | incomplete | A requested replay whose header cannot be decoded warns and chooses the multiplayer seed or zero before Engine construction (`game_session/setup.rs`). Replay is a Rust extension with no Original equivalent; its deterministic contract requires a fatal preload error, never an invented seed. |
+| PA-036 | Medium | intentional | Rust uses one serialized Engine-owned `fastrand` stream; Original uses the process-global C RNG, seeds production from wall time, and implements script `Rand(max)` as `rand() % max` (`launcher.cpp`, `RHScript.cpp`, `RHartificialintelligence.cpp`). Bit-identical rolls are not the target; every gameplay draw still needs a reviewed range, call-site order, and snapshot test. This intentional architecture is recorded in `NEW_FEATURES.md`. |
+| PA-037 | Medium | unverified | Required campaign fallback is fixed, but mission ownership still moves an `Option<Campaign>` between Engine/session boundaries and temporarily swaps it into `MissionScript::game_host`. Original exposes one required `RHCampaign` singleton (`RHCampaign.cpp`, `RHgame.cpp`). Prove identity preservation and panic-safe restoration across every script call and mission exit. |
 
-1. Guard-widget state, mission exits, and cheats (`:3485-3580`).
-2. Script Hourglass each 25 frames and victory each three seconds or forced
-   check (`:3582-3621`).
-3. Increment the universal frame, then return early for zoom/engine lock
-   (`:3625-3632`).
-4. Default loss, reinforcement, sequence cleanup, paths, collision
-   (`:3634-3703`).
-5. Iterate `marrayElements` in storage order; call Hourglass and remove dead
-   elements inline (`:3715-3724`).
-6. Run `RHSequenceManager::Hourglass` (`:3726-3727`).
-7. Titbits, selection validity, anonymous timers (`:3737-3774`).
+## Tick Provenance
 
-Rust's outer gate is recognizable in `Game::should_run_hourglass` and
-`run_engine_tick` (`crates/robin_rs/src/game.rs:497-541,647-659`). RNG surrounds
-`perform_hourglass_inner` (`engine/tick.rs:117-230`). The inner tick preserves
-script-before-counter-before-lock (`:461-564`) and the default-loss position
-(`:566-627`).
+This is the top-level audit spine. A row marked verified means the phase has a
+clear upstream owner; extracted helper internals and same-frame ordering still
+need their own review.
 
-The rest is **open risk**. Rust expands the original element loop into global
-passes: sequence dispatch begins around `tick.rs:1136`, while movement, AI,
-combat, abilities, titbits, selection, timers, condolations, and PostInitialize
-continue through `:5650`. This is a valid Rust strategy, but may change which
-mutations later entities observe in the same frame.
-
-Rust runs PostInitialize inside the deterministic tick tail
-(`tick.rs:5634-5640`); Original calls it after render and sound
-(`RHgame.cpp:1830-1843`). Treat that as an adaptation requiring a first-frame
-trace, not confirmed parity.
-
-`HostDisplayState` is a correctness boundary: zoom flags alter whether the sim
-runs, so they are sim input even if the pixels are presentation. Default display
-during replay is not equivalent to live zoom state.
-
-## AI
-
-Original NPC AI is actor-owned:
-
-- `RHElementActorNPC::Hourglass` refreshes patrol/human state, view, detection,
-  ambush/deafness, busy/ladder state, shifts deadlines while locked, executes
-  staggered 16th-frame work, and drains stimuli FIFO
-  (`original-code/RHelementactornpc.cpp:3495-3659`).
-- `RefreshDetection` uses `universal frame + creation order`, mutates detectable
-  lists, then calls deferred `Think` stimuli FIFO before returning (`:1371-1675`).
-- `RHArtificialIntelligence::StartThink` filters and queues events under locks
-  (`original-code/RHartificialintelligence.cpp:914-1270`). `EndThink` can recurse
-  synchronously with couldn't-reach, reach-point, or done (`:1468-1519`).
-
-Rust `tick_enemy_ai` builds snapshots, executes detection phases, and drains
-pending work (`crates/robin_engine/src/engine/ai/mod.rs:3814-3915`). The snapshots
-are explicitly read-only (`engine/ai/snapshots.rs:13-19`). Same-tick self-stimuli
-are deliberately drained at `engine/tick.rs:5612-5632`.
-
-Status: **adapted, high-risk**. Required traces include NPC A changing state
-before NPC B's storage-order turn; detection launching an immediately completed
-sequence; entity removal/spawn during the element loop; locked FilterAIEvent
-FIFO; and creation-order phase wrap. Predicate tests do not prove these
-transaction boundaries.
-
-## Sequences
-
-Original launch advances all elements sharing the next command level and
-proceeds when the running count reaches zero (`original-code/RHsequence.cpp:
-199-220,235-314`). The manager drains FIFO (`original-code/RHsequencemanager.cpp:
-931-945`). `ExecutedImmediately` commands run during registration rather than
-entering that queue (`RHsequencemanager.cpp:961-970`; command switch in
-`original-code/RHsequenceelement.cpp:736-779`).
-
-Rust has matching command-level grouping, FIFO work, deterministic IDs, and an
-adapted immediate-action buffer (`crates/robin_engine/src/sequence.rs:2180-2214,
-2437-2647`). Existing tests cover grouping, launch/advance, termination, and
-immediate-before-deferred ordering around `:3928-4485`.
-
-Confirmed gaps:
-
-- Original WAIT calls `Go()` directly; Rust queues WAIT. This is a frame-timing
-  mismatch.
-- `register_element_to_go` silently returns for missing sequence/element refs
-  (`sequence.rs:2437-2443`). A stale required internal reference must error or
-  panic with context, not make an order disappear.
-- Every immediate-action entry point must prove it drains before an observer
-  that Original placed after the immediate side effect.
-
-## Original script VM and Lua
-
-Original mission scripting is the compiled VM, not Lua. Exact global entry
-points are in `original-code/Profile/GEngineScript.cpp:8-146`: Initialize,
-Hourglass, CheckVictoryCondition, ProcessMessage, Finalize, PostInitialize. Tick
-cadence is `original-code/RHengine.cpp:3582-3621`; PostInitialize is
-`RHgame.cpp:1834-1843`; VM globals are serialized at `RHengine.cpp:2787-2818`.
-Lua claims must cite Spellforge/upstream evidence separately.
-
-Rust SCB state is engine-owned and serialized. `MissionScript` swaps entities,
-AI globals, fast grid, campaign, and mission stats into `GameHost` around calls
-(`crates/robin_engine/src/engine/types.rs:1572-1592`). This borrow adapter needs
-an exception-safe ownership invariant.
-
-Lua is host-owned because `mlua::Lua` is not serializable
-(`crates/robin_lua/src/state.rs:14-18`). At this revision only
-Initialize/PostInitialize are called; Lua globals/module cache/callback IDs are
-absent from snapshots; required startup can continue without Lua; runtime errors
-become zero; startup `math.random` has no installed Engine RNG; and comments
-refer to nonexistent `docs/lua.md`.
-
-Status: **incomplete new feature**. Disable it for deterministic modes until its
-contract/state policy is tested, and fail launch when a mission marked
-`requires_spellforge` cannot create its required interpreter.
-
-## RNG
-
-Original uses process-global C RNG. Production seeds from wall time, tests from
-zero (`original-code/launcher.cpp:761-766`). Script `Rand(max)` is
-`rand() % max` (`original-code/RHScript.cpp:6492-6505`). Saving creates a time
-seed and reseeds immediately; loading restores it, repeating the post-save
-sequence (`original-code/RHartificialintelligence.cpp:3833-3863`). Gameplay and
-presentation share this stream, so portable bit-identical reproduction is not a
-useful target.
-
-Rust's Engine-owned `fastrand::Rng` is serialized, installed for the tick, and
-panics on missing/nested scope (`crates/robin_engine/src/sim_rng.rs`; field at
-`engine/mod.rs:253-260`). This is an intentional deterministic extension.
-Preserve one stream, no host feedback, exact next-state snapshots, fatal replay
-decode errors, and explicit Engine RNG context for scripts.
-
-## Saves and rollback snapshots
-
-Original `PerformSnapshot` is only the 160x120 save thumbnail
-(`original-code/RHengine.cpp:11140-11158`). Restart persistence is
-`RHGame::SerializeForRestart`, which takes that thumbnail then serializes
-campaign and engine (`original-code/RHgame.cpp:1265-1297`). Campaign backup then
-restart serialization must be last at mission start (`RHgame.cpp:1463-1466`).
-Full saves serialize campaign separately, then engine (`RHgame.cpp:2325-2380`).
-
-`RHEngine::Serialize` normalizes active zoom then persists camera/background,
-frame/locks, elements, grid, paths, selection, sequences, ground marks, titbits,
-VM globals, timers, and AI (`original-code/RHengine.cpp:2408-2875`). These are
-baseline state categories, not a reason to retain the binary format.
-
-Rust full saves serialize Engine, host sound, and optional Game persistent state
-(`crates/robin_rs/src/save_file.rs:420-475`). Rollback snapshots are narrower:
-`SimSnapshot { frame, engine }`. That is correct only if everything else read by
-commands/tick is immutable assets or deterministically derived. External display
-reads and Lua violate the condition.
-
-Additional risks:
-
-- `game_persistent` is optional for old saves, but the header accepts only the
-  current version. Confirm an old version can reach this fallback; otherwise
-  require the field.
-- `Engine::restore` appropriately reattaches static matching-level data but
-  invents all-active grid state for length mismatches.
-- Rewind, rollback checking, multiplayer history, and EngineManager should use
-  one snapshot schema and replay primitive, with different retention policies.
-
-## Mission ownership
-
-Original uses one required campaign singleton. `RHGame::Serialize` persists it
-separately; `RHEngine::QuitMission` obtains the same object and updates it
-(`original-code/RHgame.cpp:2360-2378`; `RHengine.cpp:16310-16316`).
-
-Rust intends “outer session owns campaign between missions; Engine owns it
-during a mission”:
-
-| State | Current holder | Transfer |
+| Rust phase | Original owner | Status / next check |
 | --- | --- | --- |
-| Between missions | outer `Campaign` | `Engine::install_campaign` |
-| Mission tick | `EngineInner::campaign: Option<Campaign>` | none |
-| SCB call | temporary `MissionScript::game_host.campaign` | `swap_engine_state` |
-| Exit/load | outer `campaign_ref` | `Engine::take_campaign` |
-| Lua call | SCB `GameHost`, borrowed by host-side Lua | no Lua-owned campaign |
+| Mission notices, quit branches, script Hourglass and victory | `RHEngine::PerformHourglass`, `RHengine.cpp` | verified structurally |
+| Frame increment, lock gate, default loss | `RHEngine::PerformHourglass` | playable mismatch fixed; retain regression |
+| Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
+| Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified; retain queue-order regression |
+| Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
+| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; test entity-order observations |
+| NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by exact trace; continue state-specific review |
+| Arrows, purse/coins, wasps, nets, melee, abilities | per-type virtual Hourglass/Execute methods | verify spawn-frame inclusion and ordering per type |
+| Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
+| Condolations and self-stimuli | `RHSequenceElement::SetState` to actor `SendCondolationCard` | synchronous depth-first ordering verified by focused traces |
+| PostInitialize | mission loop in `RHgame.cpp` | post-refresh boundary verified by focused trace |
+| RNG, rollback side effects, minimap/marks/camera | no single original phase | intentional architecture only where documented; audit gameplay state individually |
 
-The `Option` helps a checked transfer but is too weak as the mission invariant.
-Repeated `unwrap_or_default` makes loss of the authoritative object valid.
-`Game::finalize_mission` also uses `std::mem::take` for a test convenience
-(`crates/robin_rs/src/game.rs:617-642`).
+## Coverage Matrix
 
-Target: `MissionRuntime` owns required Campaign and Engine; script hosts receive
-scoped access; consuming teardown returns the same campaign. A normal mission
-method must not observe `None`.
+`queued` means the scanner has produced candidates but no systematic
+source-to-source pass is complete.
 
-## Focused test requirements
-
-This audit slice is restricted to docs and Rust comment/TODO edits, so it does
-not add executable Rust tests. These focused tests gate the implementation
-slices in `REFACTORING.md`:
-
-| Test | Assertion | Covers |
+| Subsystem | State | Required evidence |
 | --- | --- | --- |
-| `rollback_preserves_zoom_lock_gate` | Non-default live/replayed zoom produces identical clock, sequence/timer state, display transition, hash. | Snapshot input closure |
-| `lua_initialize_random_uses_engine_rng` | Initialize random does not panic and advances the snapshotted Engine stream exactly. | Lua/RNG ownership |
-| `lua_required_failure_aborts_launch` | Missing/invalid required Lua returns typed error, never vanilla fallback. | No fake defaults |
-| `lua_event_cadence_and_snapshot_policy` | Trace Initialize, PostInitialize, Timer, victory, Finalize; deterministic mode reproduces or rejects before tick zero. | Lua completeness |
-| `wait_priority_goes_during_launch` | WAIT side effect exists before launch returns. | Sequence mismatch |
-| `sequence_immediate_reentrant_trace` | Immediate completion advances sequence in exact ordered trace. | Immediate barriers |
-| `ai_storage_order_visibility_trace` | NPC A's mutation is visible to later NPC B at the Original boundary. | AI global-pass risk |
-| `ai_detection_reentrant_done_trace` | EVENT_DONE recursion and final substate occur in the same frame. | AI/sequence coupling |
-| `restore_rejects_fast_grid_length_mismatch` | Mismatched arrays return error; no all-active repair. | Snapshot integrity |
-| `mission_teardown_requires_campaign` | Missing campaign errors/panics with context; no default object. | Ownership |
-| `replay_bad_header_never_uses_seed_zero` | Engine construction is not reached on requested replay decode failure. | RNG integrity |
-| `first_tick_post_initialize_trace` | Exact script/entity/sequence/side-effect/PostInitialize order. | Tick adaptation |
+| Main tick and mission state | in progress | Resolve PA-013; retain path, NPC phase, and PostInitialize ordering tests. |
+| Item interaction / pickup | verified for explicit Take | Keep the no-proximity-pickup regression. Audit other interaction shortcuts. |
+| Enemy detection and state machine | in progress, high risk | Resolve PA-025; retain the NPC phase trace and continue state-by-state comparison. |
+| Melee and damage | queued, high risk | Review every remaining simplification against actor-human combat code. |
+| Movement, paths, doors, lifts | in progress, high risk | Resolve PA-022 and PA-030; retain frame-paced path tests. |
+| Script natives and callbacks | in progress, high risk | Resolve PA-023 and PA-028; retain `Sees` and live-ammo regressions. |
+| Sequence manager and messages | queued, high risk | Resolve PA-032 and add arbitration replay tests for PA-028; retain synchronous re-entry traces. |
+| Projectiles and abilities | queued | Per-type Hourglass and spawn-frame comparison. |
+| Audio-driven AI state | verified for missing-duration handling | Retain metadata and missing-required-duration tests; audit remaining sound callbacks. |
+| Deterministic snapshots and replay | in progress, high risk | Resolve PA-033 and PA-035; compare live/replayed zoom and fatal replay preload behavior. |
+| RNG | intentional architecture, audit in progress | Retain one snapshotted stream; review ranges and call order under PA-036. |
+| Spellforge Lua | incomplete post-original feature | Resolve PA-034 before deterministic use; provenance must name versioned Spellforge sources, not Original. |
+| Save/campaign persistence | queued | Resolve PA-037 and compare every persistent native and mission transition. |
+| Rendering, UI, HTTP, replay, multiplayer | exception review | Gameplay state changes require `NEW_FEATURES.md`; pure host behavior is host-only. |
 
-Existing grouping/immediate tests in `sequence.rs`, RNG state tests in
-`sim_rng.rs`, hourglass/lock tests in `engine/tests.rs`, and rewind retention
-tests in `rewind.rs` remain necessary but do not replace cross-subsystem traces.
+## Audit Workflow
 
-This was a static source/ownership audit. No runtime trace is treated as
-evidence until the focused trace tests above are implemented.
+1. Run the scanner and select one gameplay finding, starting with high-priority
+   state mutation, AI, scripts, movement, and combat.
+2. Locate the exact original caller and callee. Record file, function, gates,
+   ordering, and failure behavior.
+3. Classify the ledger item before editing. Do not convert uncertainty into a
+   permissive fallback.
+4. Reproduce observable behavior with the smallest unit/integration test or a
+   recorded replay. For timing issues, assert the exact frame and sequence
+   state, not only the eventual result.
+5. Make one behavioral correction per commit where practical. Update the
+   ledger status and add an `Original:` comment at non-obvious ports.
+6. If the difference is desired, document it in `docs/NEW_FEATURES.md` and add
+   a test that makes the intentional behavior explicit.
+
+Stale comments must be corrected as part of review. In particular,
+`reconsider_enemy_approach` and `tick_enemy_sword_attacks` are no longer the
+small simplified implementations their headings describe, while the
+`is_detecting_360_degrees` distance check mirrors an original method whose own
+name is approximate. Keyword matches for those comments are not evidence of a
+current behavior mismatch.

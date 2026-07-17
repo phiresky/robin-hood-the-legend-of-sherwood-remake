@@ -56,7 +56,10 @@ A list of which additional features we have added, which ones we might still wan
   JSONL, replayed from disk or compact `rhrec-...` strings, and checked with
   per-frame state hashes. The rollback checker periodically replays recent
   frames from a snapshot and compares the reconstructed engine state against
-  the live state to catch nondeterminism.
+  the live state to catch nondeterminism. Gameplay randomness uses one
+  serialized Engine-owned `fastrand` stream instead of Original's
+  process-global C RNG; parity is reviewed at ranges and call-site order rather
+  than bit-identical rolls.
 
 - **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
   seat IDs, input delay, rollback for late inputs, mission seed sync,

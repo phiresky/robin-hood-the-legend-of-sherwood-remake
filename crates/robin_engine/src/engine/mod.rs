@@ -3770,16 +3770,10 @@ impl EngineInner {
         }
     }
 
-    /// Run the mission script's `PostInitialize` hook on the first
-    /// tick after level load, then no-op on every subsequent call.
-    /// Idempotent — driven by a sim-side `post_initialized` flag on
-    /// [`MissionScript`], so the host never has to coordinate with the
-    /// engine on whether the hook has already fired.
-    ///
-    /// Called from the top of [`EngineInner::perform_hourglass_inner`]
-    /// so the one-shot script-side state mutations stay inside the
-    /// hashed tick window — rollback replay runs them exactly once per
-    /// level load too.
+    /// Run the mission script's `PostInitialize` hook once, then no-op.
+    /// The serialized flag keeps both live play and rollback replay
+    /// idempotent; [`EngineInner::perform_post_initialize`] owns the
+    /// original post-refresh host boundary.
     pub(crate) fn run_post_initialize_if_needed(&mut self, assets: &LevelAssets) {
         let Some(script) = self.mission_script.as_mut() else {
             return;
@@ -3952,10 +3946,10 @@ impl EngineInner {
     /// Remove the campaign at mission-end (or shutdown) and return it
     /// to the caller.  Host returns it to the outer owner.  Save/load
     /// boundary — the engine is not ticking when this runs.
-    /// PARITY TODO: mission teardown must require `Some` and return a typed
-    /// error (or panic with context). Callers must never replace `None` with a
-    /// default campaign; the Original mission runtime always has the required
-    /// `RHCampaign::GetCampaign()` object.
+    /// PARITY TODO: encode the active-mission campaign as required state
+    /// instead of `Option`. Original `RHCampaign.cpp` installs one concrete
+    /// singleton, so normal mission code cannot observe a missing campaign;
+    /// Rust currently enforces that only at session teardown boundaries.
     pub fn take_campaign(&mut self) -> Option<crate::campaign::Campaign> {
         self.campaign.take()
     }

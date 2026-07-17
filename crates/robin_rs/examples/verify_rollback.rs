@@ -121,6 +121,7 @@ fn main() {
         }
 
         engine.perform_hourglass(&mut display, &assets, &mut dev);
+        let _ = engine.perform_post_initialize(&mut display, &assets);
 
         if frame >= WARMUP_FRAMES && history.len() == WINDOW {
             // Re-simulate from the oldest snapshot forward WINDOW ticks
@@ -132,6 +133,7 @@ fn main() {
             let mut sim_display = start_display.clone();
             for _ in 0..WINDOW {
                 sim_engine.perform_hourglass(&mut sim_display, &sim_assets, &mut sim_dev);
+                let _ = sim_engine.perform_post_initialize(&mut sim_display, &sim_assets);
             }
 
             let live = state_hash(&engine);
