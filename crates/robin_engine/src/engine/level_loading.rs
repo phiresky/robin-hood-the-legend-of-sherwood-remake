@@ -84,7 +84,83 @@ pub(crate) fn bonus_type_to_sprite_asset(
     }
 }
 
-/// Map a beam-me `actionInitial` value to a `(posture, action_state)`
+/// Put a freshly loaded actor sprite on the mission-authored animation row.
+///
+/// `apply_placement` records the actor's direction in `PositionInterface`, but
+/// it deliberately does not select an animation row. Leaving row selection to
+/// the first `Command::Wait` tick makes a paused frame-zero render show row
+/// zero (north) for every actor. The original startup path calls
+/// `InitializeAction` / `Wait` while constructing actors, before gameplay can
+/// render them.
+///
+/// Keeping `last_action` initialized is also important for blipped NPCs:
+/// `RevealBlip` switches from the silhouette profile to the character profile
+/// and derives that profile's row from `last_action + direction`.
+fn prime_mission_start_sprite(
+    sprite: &mut crate::sprite::Sprite,
+    raw_action: u32,
+    raw_direction: u32,
+    actor_description: &str,
+) {
+    let action = match crate::order::OrderType::try_from(raw_action) {
+        Ok(action) => action,
+        Err(_) => {
+            tracing::warn!(
+                "{actor_description}: unknown mission-start animation ordinal {raw_action}"
+            );
+            return;
+        }
+    };
+    let direction = (raw_direction & 15) as u16;
+    if sprite.force_action_direction(action, direction) {
+        return;
+    }
+
+    // A blip profile may omit an authored character animation. Preserve the
+    // action when it exists in the primary profile so RevealBlip can select
+    // the correct primary row. The silhouette remains on its profile's
+    // default row until then.
+    let resolved = sprite.resolve_animation(action);
+    let primary_has_action = sprite
+        .conversion
+        .get(resolved as usize)
+        .is_some_and(|&row| row != crate::sprite_script::UNMAPPED);
+    if sprite.use_alternate_profile && primary_has_action {
+        sprite.last_action = resolved;
+        tracing::warn!(
+            "{actor_description}: active blip profile has no {resolved:?} animation; \
+             preserving it for reveal"
+        );
+    } else {
+        tracing::warn!(
+            "{actor_description}: sprite profile has no mission-start animation {resolved:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod mission_start_sprite_tests {
+    use super::prime_mission_start_sprite;
+    use crate::order::OrderType;
+    use crate::sprite::Sprite;
+    use crate::sprite_script::UNMAPPED;
+    use std::sync::Arc;
+
+    #[test]
+    fn primes_authored_action_and_direction_before_first_tick() {
+        let action = OrderType::WaitingUprightBored;
+        let mut conversion = vec![UNMAPPED; action as usize + 1];
+        conversion[action as usize] = 32;
+        let mut sprite = Sprite::new(Arc::new(Vec::new()), Arc::new(conversion));
+
+        prime_mission_start_sprite(&mut sprite, action as u32, 11, "test actor");
+
+        assert_eq!(sprite.current_row, 43);
+        assert_eq!(sprite.last_action, action);
+        assert_eq!(sprite.current_frame, 0);
+    }
+}
+
 /// Load the raw mission + proto-level binaries for a campaign's current
 /// mission.  Standalone helper so the host can parse the mission header
 /// (map filename + ambiance) *before* constructing an `Engine`,
@@ -127,7 +203,8 @@ pub fn load_mission_for_campaign(
     .map_err(|e| EngineError::Io(std::io::Error::other(e.to_string())))
 }
 
-/// pair for a PC's initial action.
+/// Map a beam-me `actionInitial` value to a `(posture, action_state)` pair for
+/// a PC's initial action.
 ///
 /// The raw value is an animation ordinal; unknown values fall back to
 /// `(Upright, Waiting)` with a warning log.
@@ -1529,6 +1606,12 @@ impl EngineInner {
                     assets.static_sight_obstacles.as_slice(),
                 ),
             );
+            prime_mission_start_sprite(
+                &mut sprite,
+                raw.action,
+                raw.direction,
+                &format!("civilian profile {}", raw.profile_number),
+            );
             let entity = Entity::Civilian(crate::element::ActorCivilian {
                 element: crate::element::ElementData {
                     kind: crate::element::ElementKind::ActorCivilian,
@@ -1691,6 +1774,12 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
                     assets.static_sight_obstacles.as_slice(),
                 ),
+            );
+            prime_mission_start_sprite(
+                &mut sprite,
+                raw.action,
+                raw.direction,
+                &format!("rescue PC profile {}", raw.profile_index),
             );
             // Seed old position fields so `is_moving()` is false on the
             // first post-spawn tick.
@@ -1931,6 +2020,12 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::new(raw.obstacle_index),
                     assets.static_sight_obstacles.as_slice(),
                 ),
+            );
+            prime_mission_start_sprite(
+                &mut sprite,
+                raw.action,
+                raw.direction,
+                &format!("soldier profile {}", raw.profile_number),
             );
 
             let entity = Entity::Soldier(crate::element::ActorSoldier {
@@ -3025,6 +3120,12 @@ impl EngineInner {
                         crate::position_interface::ObstacleHandle::new(beam_me.projection_area),
                         assets.static_sight_obstacles.as_slice(),
                     ),
+                );
+                prime_mission_start_sprite(
+                    &mut sprite,
+                    beam_me.action,
+                    beam_me.direction,
+                    &format!("beam-me {bm_idx}"),
                 );
                 // Seed old position fields so `is_moving()` is false on
                 // the first post-spawn tick (matches the Target spawn

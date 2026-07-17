@@ -271,6 +271,21 @@ pub struct CliArgs {
     #[clap(skip)]
     #[serde(skip)]
     pub pending_lua_mission: Option<PendingLuaMission>,
+
+    /// Internal one-shot render request used by the `render_mission_map`
+    /// example.  The mission session captures the complete level at its
+    /// initial post-`Initialize` state, writes it here, and exits before the
+    /// first simulation tick.  This is deliberately not a launcher flag:
+    /// the Cargo example is the supported CLI for this specialized tool.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mission_start_map_output: Option<std::path::PathBuf>,
+
+    /// Apply the original `UBIQUITY` / `UNBLIP` reveal-all-NPCs cheat to
+    /// the one-shot mission-start map before it is rendered.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mission_start_reveal_all: bool,
 }
 
 /// Subset of [`crate::main_menu::custom_missions::CustomMissionLaunch`]
@@ -319,6 +334,8 @@ impl Default for CliArgs {
             mp_nickname: String::new(),
             global_options: ApplicationContext::default(),
             pending_lua_mission: None,
+            mission_start_map_output: None,
+            mission_start_reveal_all: false,
         };
         install_global_options(&mut args);
         args

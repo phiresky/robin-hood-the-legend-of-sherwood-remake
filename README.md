@@ -224,6 +224,7 @@ Shipped as examples — built on demand with `cargo run --example <name>`:
     disasm_scb        — disassemble a compiled .scb mission script
     run_script        — run a mission script headlessly
     count_quads       — render diagnostics
+    render_mission_map — render a mission's frame-zero full map to PNG
     batch_run         — run many missions back-to-back (CI/regression)
     verify_rollback   — deterministic replay + state-hash verifier
 

@@ -30,8 +30,9 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    capture_save_thumbnail, drain_print_screen_request, drain_screenshots, drain_wide_print_screen,
-    print_screen_request_from_modifiers, render_frame, update_mouse_and_cursor,
+    capture_save_thumbnail, capture_wide_map_to_path, drain_print_screen_request,
+    drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
+    update_mouse_and_cursor,
 };
 use replay_init::init_replay_and_rollback;
 use robin_assets::res_descr as assets_res_descr;
@@ -1263,7 +1264,7 @@ pub(crate) async fn run_mission(
     // The capture (clone) happens on the main thread; the expensive JSON
     // serialization + disk write is spawned on a background thread so the
     // game loop can start immediately (~9s saved in debug builds).
-    if !game.is_sherwood {
+    if !game.is_sherwood && args.mission_start_map_output.is_none() {
         let campaign = engine
             .campaign()
             .expect("restart snapshot requires the engine campaign");
@@ -1421,6 +1422,100 @@ pub(crate) async fn run_mission(
     // comparisons per frame) and dormant until something actually
     // mutates the ambience.
     let mut last_shadow_color = manager.engine.weather().night_color;
+
+    // One-shot tooling path: render the pristine mission after Initialize
+    // and camera setup, but before the first simulation hourglass or
+    // PostInitialize call.  This matches the original startup boundary in
+    // `original-code/RHgame.cpp` (Initialize around line 1449; the deferred
+    // PostInitialize dispatch around lines 1835-1841).
+    if let Some(output_path) = args.mission_start_map_output.as_deref() {
+        if args.mission_start_reveal_all {
+            manager.engine.apply_commands(
+                &mut host.engine_display,
+                &mut host.input,
+                &assets,
+                &[engine_player_command::PlayerCommand::RevealAllBlips.into()],
+            );
+            tracing::info!("Mission-start map: revealed all blipped NPCs");
+        }
+        host.draw_order = manager.engine.compute_display_order();
+        corner_layout = CornerHudLayout::for_resolution(
+            renderer.screen_width() as u32,
+            renderer.screen_height() as u32,
+            &corner_sprites,
+        );
+        stature_layout = StatureHudLayout::for_resolution(
+            renderer.screen_width() as u32,
+            renderer.screen_height() as u32,
+            &stature_sprites,
+        );
+        pre_render_engine_setup(&mut manager, &mut host, assets.as_ref(), &mut renderer);
+
+        // A map export is not an interactive screenshot. Keep the cursor out
+        // of the top-left map pixel while retaining the normal render path for
+        // terrain, decals, ambiance, sprites, masks, and overlays.
+        host.input.mouse_opacity = 0;
+        let display_snapshot = host.engine_display.clone();
+        let capture_result = {
+            let mut render_ctx = RenderContext {
+                renderer: &mut renderer,
+                cursor_renderer: &mut cursor_renderer,
+                selection_mark_renderer: &mut selection_mark_renderer,
+                titbit_renderer: &mut titbit_renderer,
+                console_overlay: &mut console_overlay,
+                zoom_tooltip: &mut zoom_tooltip,
+                corner_tooltip: &mut corner_tooltip,
+                requirements_tooltip: &mut requirements_tooltip,
+                blazon_tooltip: &mut blazon_tooltip,
+                stature_tooltip: &mut stature_tooltip,
+                sherwood_tooltip: &mut sherwood_tooltip,
+                pc_action_tooltip: &mut pc_action_tooltip,
+                mouse_trail_renderer: mouse_trail_renderer.as_ref(),
+                portrait_cache: &portrait_cache,
+                menu_resources: menu_resources.as_ref(),
+                hud_fonts: hud_fonts.as_ref(),
+                short_briefing_strings: &short_briefing_strings,
+                sherwood_layout: &sherwood_layout,
+                sherwood_sprites: &sherwood_sprites,
+                zoom_layout: &zoom_layout,
+                zoom_sprites: &zoom_sprites,
+                corner_layout: &corner_layout,
+                corner_sprites: &corner_sprites,
+                stature_layout: &stature_layout,
+                stature_sprites: &stature_sprites,
+                threaded_input: &threaded_input,
+                game: &game,
+                pause_menu: pause_menu.as_ref(),
+                sherwood_enable,
+                shift_held: false,
+                rewind_active: false,
+                display_info_elapsed_secs: 0,
+            };
+            capture_wide_map_to_path(
+                &manager.engine,
+                &display_snapshot,
+                &mut host,
+                &assets,
+                &dev,
+                &mut render_ctx,
+                output_path,
+            )
+        };
+
+        restore_engine_campaign(
+            campaign_ref,
+            &mut manager.engine,
+            "mission-start map capture exit",
+        );
+        capture_result.map_err(|err| {
+            format!(
+                "failed to render mission-start map to {}: {err}",
+                output_path.display()
+            )
+        })?;
+        tracing::info!("Mission-start map → {}", output_path.display());
+        return Ok(GameCode::Quit);
+    }
 
     loop {
         let frame_start = crate::window::process_uptime_ms();

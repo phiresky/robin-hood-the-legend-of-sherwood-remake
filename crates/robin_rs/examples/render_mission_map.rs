@@ -1,0 +1,125 @@
+//! Render a mission's complete initial map scene to a PNG.
+//!
+//! This is a CLI wrapper around the regular game loader and renderer: mission
+//! scripts, sprite resources, ambiance, masks, decals, and entities all use
+//! the same code paths as the game.  The capture happens after mission
+//! `Initialize`, before the first simulation tick and `PostInitialize`.
+//!
+//! Usage:
+//!   ROBINHOOD_DATA_DIR=datadirs/demo_leicester_ecoste \
+//!     cargo run --example render_mission_map -- Dem_Lei_MP \
+//!       --proto leicester --reveal-all -o leicester.png
+#![deny(clippy::print_stdout, clippy::print_stderr)]
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use clap::Parser;
+
+#[derive(Debug, Parser)]
+#[command(about = "Render a mission's initial complete map scene to PNG")]
+struct Args {
+    /// Mission filename without the `.rhm` extension.
+    #[arg(value_name = "MISSION")]
+    mission: String,
+
+    /// Proto-level filename without `.rhp`; defaults to the mission name.
+    #[arg(long, value_name = "PROTO")]
+    proto: Option<String>,
+
+    /// Destination PNG. Defaults to `<mission>-start.png` in the invoking directory.
+    #[arg(short, long, value_name = "PNG")]
+    output: Option<PathBuf>,
+
+    /// Reveal every blipped NPC before rendering, like the original
+    /// `UBIQUITY` / `UNBLIP` cheat.
+    #[arg(long, visible_alias = "unblip-all")]
+    reveal_all: bool,
+
+    /// Directory containing the game's `Data` folder. Equivalent to
+    /// `ROBINHOOD_DATA_DIR`.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(0) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        Err(err) => {
+            robin_rs::init_tracing();
+            tracing::error!("{err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<i32, String> {
+    let args = Args::parse();
+    let invocation_dir = std::env::current_dir()
+        .map_err(|err| format!("failed to determine current directory: {err}"))?;
+    let output = absolute_path(
+        &invocation_dir,
+        args.output
+            .unwrap_or_else(|| PathBuf::from(format!("{}-start.png", args.mission))),
+    );
+
+    if let Some(data_dir) = args.data_dir {
+        let data_dir = absolute_path(&invocation_dir, data_dir);
+        // SAFETY: this is the single-threaded start of the example, before
+        // `rust_init` or the winit game thread reads the environment.
+        unsafe { std::env::set_var("ROBINHOOD_DATA_DIR", &data_dir) };
+    }
+
+    // Reuse the launcher's parser so GlobalOptions and ApplicationContext
+    // receive exactly the same settings as a direct `robin --mission` run.
+    let mut launcher_args = vec![
+        OsString::from("render_mission_map"),
+        OsString::from("--mission"),
+        OsString::from(&args.mission),
+        OsString::from("--no-sound"),
+        OsString::from("--http-server=0"),
+        OsString::from("--rollback-check=false"),
+    ];
+    if let Some(proto) = args.proto {
+        launcher_args.push(OsString::from("--proto"));
+        launcher_args.push(OsString::from(proto));
+    }
+    let mut game_args =
+        robin_rs::main_entry::try_parse_cli_from(launcher_args).map_err(|err| err.to_string())?;
+    game_args.mission_start_map_output = Some(output.clone());
+    game_args.mission_start_reveal_all = args.reveal_all;
+
+    let (campaign, profiles, application_context) = robin_rs::main_entry::rust_init()?;
+    robin_rs::window::run_with_game(
+        "Robin Hood — mission map renderer",
+        1024,
+        768,
+        move |mut window| async move {
+            match robin_rs::main_entry::run_rust_game(
+                &mut window,
+                campaign,
+                profiles,
+                application_context,
+                &game_args,
+            )
+            .await
+            {
+                Ok(code) => code,
+                Err(err) => {
+                    tracing::error!("Mission map render failed: {err}");
+                    1
+                }
+            }
+        },
+    )
+}
+
+fn absolute_path(base: &Path, path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    }
+}

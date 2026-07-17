@@ -3,6 +3,13 @@
 A list of which additional features we have added, which ones we might still want to add, and which old ones we will NOT add.
 ## Done
 
+- **Mission-start full-map renderer**
+  (`crates/robin_rs/examples/render_mission_map.rs`). Loads a mission through
+  the regular engine and GPU renderer, captures the complete map after the
+  mission's `Initialize` event but before frame one / `PostInitialize`, and
+  writes a PNG. `--reveal-all` (alias `--unblip-all`) switches every NPC from
+  its blip silhouette to its normal character profile before capture.
+
 - **Pathfinder `LinkSource` relaxed-grid retry**
   (`crates/robin_engine/src/pathfinder.rs`). When the strict pass links zero
   candidate nodes and `object_position_authorized(source)` is true, the

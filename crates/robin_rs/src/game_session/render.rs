@@ -238,24 +238,36 @@ fn write_print_screen_png(w: u32, h: u32, rgba: Vec<u8>) {
         tracing::warn!("PrintScreen: all screen000..screen999 slots are taken");
         return;
     };
-    let file = match std::fs::File::create(&path) {
-        Ok(f) => f,
-        Err(err) => {
-            tracing::warn!("PrintScreen: failed to create {}: {err:#}", path.display());
-            return;
-        }
-    };
+    match write_rgba_png(&path, w, h, &rgba) {
+        Ok(()) => tracing::info!("PrintScreen → {}", path.display()),
+        Err(err) => tracing::warn!("PrintScreen: {err}"),
+    }
+}
+
+fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
+    if rgba.len() != w as usize * h as usize * 4 {
+        return Err(format!(
+            "invalid RGBA buffer for {}x{} PNG: got {} bytes",
+            w,
+            h,
+            rgba.len()
+        ));
+    }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err:#}", parent.display()))?;
+    }
+    let file = std::fs::File::create(path)
+        .map_err(|err| format!("failed to create {}: {err:#}", path.display()))?;
     let mut writer = std::io::BufWriter::new(file);
     let mut enc = png::Encoder::new(&mut writer, w, h);
     enc.set_color(png::ColorType::Rgba);
     enc.set_depth(png::BitDepth::Eight);
-    let write_result = enc
-        .write_header()
-        .and_then(|mut w| w.write_image_data(&rgba));
-    match write_result {
-        Ok(()) => tracing::info!("PrintScreen → {}", path.display()),
-        Err(err) => tracing::warn!("PrintScreen: PNG encode failed: {err:#}"),
-    }
+    enc.write_header()
+        .and_then(|mut png_writer| png_writer.write_image_data(rgba))
+        .map_err(|err| format!("failed to encode {}: {err:#}", path.display()))
 }
 
 pub(super) fn drain_wide_print_screen(
@@ -266,21 +278,55 @@ pub(super) fn drain_wide_print_screen(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> bool {
+    match capture_wide_map_rgba(engine, display, host, assets, dev, ctx) {
+        Ok((w, h, rgba)) => {
+            write_print_screen_png(w, h, rgba);
+            true
+        }
+        Err(err) => {
+            tracing::warn!("PrintScreen Ctrl wide snapshot: {err}");
+            false
+        }
+    }
+}
+
+/// Render the complete level at 1:1 map scale and write it to `path`.
+///
+/// The temporary render target includes the bottom panel so the normal
+/// frame renderer observes its usual geometry; the returned PNG is cropped
+/// to the level bounds and therefore contains the map scene only.
+pub(super) fn capture_wide_map_to_path(
+    engine: &Engine,
+    display: &engine_api::HostDisplayState,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    ctx: &mut RenderContext<'_>,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let (w, h, rgba) = capture_wide_map_rgba(engine, display, host, assets, dev, ctx)?;
+    write_rgba_png(path, w, h, &rgba)
+}
+
+fn capture_wide_map_rgba(
+    engine: &Engine,
+    display: &engine_api::HostDisplayState,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    ctx: &mut RenderContext<'_>,
+) -> Result<(u32, u32, Vec<u8>), String> {
     update_zoom_presentation(engine, display, host, ctx);
 
     let level_w = host.viewport.level_size.x.ceil() as u32;
     let level_h = host.viewport.level_size.y.ceil() as u32;
     if level_w == 0 || level_h == 0 {
-        tracing::warn!("PrintScreen Ctrl wide snapshot: level size is empty");
-        return false;
+        return Err("level size is empty".to_owned());
     }
     if level_w > u16::MAX as u32
         || level_h.saturating_add(engine_api::PANNEL_HEIGHT as u32) > u16::MAX as u32
     {
-        tracing::warn!(
-            "PrintScreen Ctrl wide snapshot: level {level_w}x{level_h} exceeds renderer limits"
-        );
-        return false;
+        return Err(format!("level {level_w}x{level_h} exceeds renderer limits"));
     }
 
     let saved_view = host.viewport.view_position;
@@ -312,20 +358,17 @@ pub(super) fn drain_wide_print_screen(
         .set_screen_size(saved_screen.x, saved_screen.y);
 
     let Some((w, h, rgba)) = captured else {
-        tracing::warn!("PrintScreen Ctrl wide snapshot: renderer returned no framebuffer");
-        return false;
+        return Err("renderer returned no framebuffer".to_owned());
     };
     if w != level_w || h < level_h {
-        tracing::warn!(
-            "PrintScreen Ctrl wide snapshot: captured unexpected frame {w}x{h}, expected at least {level_w}x{level_h}"
-        );
-        return false;
+        return Err(format!(
+            "captured unexpected frame {w}x{h}, expected at least {level_w}x{level_h}"
+        ));
     }
 
     let row_bytes = w as usize * 4;
     let crop_bytes = level_h as usize * row_bytes;
-    write_print_screen_png(level_w, level_h, rgba[..crop_bytes].to_vec());
-    true
+    Ok((level_w, level_h, rgba[..crop_bytes].to_vec()))
 }
 
 fn median_filter_rgba_3x3(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {

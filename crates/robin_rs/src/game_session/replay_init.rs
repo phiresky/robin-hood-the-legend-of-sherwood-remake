@@ -123,7 +123,10 @@ pub(super) fn init_replay_and_rollback(
     // `TeeWriter` below.
     crate::http_server::reset_replay_buffer();
     let rpc_buffer = crate::http_server::replay_buffer_handle();
-    let recorder = if is_playing_back {
+    // One-shot mission-map rendering exits before the first simulation
+    // frame, so producing an empty replay (and its debug log) would only be
+    // an unrelated filesystem side effect of the capture tool.
+    let recorder = if is_playing_back || args.mission_start_map_output.is_some() {
         None
     } else {
         // Native path owns an on-disk `.rhrec.jsonl` file so replays
