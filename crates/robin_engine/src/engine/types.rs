@@ -758,13 +758,10 @@ pub struct LevelAssets {
 /// reads this when an NPC speaks to schedule the deterministic
 /// MYTALK finish — instead of waiting for the audio backend's
 /// wall-clock playback completion, which doesn't replay during
-/// rollback. Missing entries use `EXCLAMATION_DEFAULT_FRAMES`.
+/// rollback. As in the original sound hourglass, a missing sample has
+/// length zero and completes at the next scheduling boundary.
 pub type ExclamationDurations =
     std::sync::Arc<std::collections::BTreeMap<(crate::sound::ExclamationGroup, u32, u16), u32>>;
-
-/// Default number of sim frames an exclamation lasts when its sample
-/// length isn't in the duration table. ~3 s @ 25 fps.
-pub const EXCLAMATION_DEFAULT_FRAMES: u32 = 75;
 
 impl LevelAssets {
     /// Mutable access to sprite_scriptor during initialization.

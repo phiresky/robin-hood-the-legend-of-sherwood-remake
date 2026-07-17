@@ -4,10 +4,52 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::player_profile::DifficultyLevel;
+
+/// Immutable gameplay configuration copied out of application/profile state.
+///
+/// This is deliberately separate from [`GlobalOptions`]: filesystem paths,
+/// audio switches, and host resources are application concerns, while these
+/// values can change deterministic simulation results and must belong to one
+/// game context.  The engine receives a copy before ticking and never reaches
+/// back into the process-global player-profile manager.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct SimConfig {
+    pub difficulty: DifficultyLevel,
+    pub script_enabled: bool,
+    pub highlander2: bool,
+    pub golden_eye: bool,
+    pub ignore_default_loose: bool,
+    pub bypass_fog_sprites_crash: bool,
+}
+
+impl SimConfig {
+    pub fn from_options(options: &GlobalOptions, difficulty: DifficultyLevel) -> Self {
+        Self {
+            difficulty,
+            script_enabled: options.script_enabled,
+            highlander2: options.highlander2,
+            golden_eye: options.golden_eye,
+            ignore_default_loose: options.ignore_default_loose,
+            bypass_fog_sprites_crash: options.bypass_fog_sprites_crash,
+        }
+    }
+}
+
+impl Default for SimConfig {
+    fn default() -> Self {
+        Self::from_options(&GlobalOptions::default(), DifficultyLevel::Medium)
+    }
+}
+
 // ─── Global options ──────────────────────────────────────────────────
 
 /// Application-wide startup options.
-#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
 pub struct GlobalOptions {
     pub major_version: u16,
     pub minor_version: u16,
