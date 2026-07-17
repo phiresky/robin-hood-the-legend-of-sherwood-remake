@@ -1,6 +1,7 @@
 #![allow(unused_mut)]
 
 use super::movement::mercenary_formation_destinations;
+use super::tick::{HourglassPhase, begin_hourglass_phase_capture, end_hourglass_phase_capture};
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
@@ -79,6 +80,61 @@ fn hourglass_returns_in_progress() {
         .code;
     assert_eq!(result, GameCode::LevelInProgress);
     assert_eq!(engine.frame_counter, 1);
+}
+
+#[test]
+fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+
+    begin_hourglass_phase_capture();
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+    let phases = end_hourglass_phase_capture();
+
+    assert_eq!(result, GameCode::LevelInProgress);
+    assert_eq!(
+        phases,
+        vec![
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages,
+            HourglassPhase::NpcOrders,
+            HourglassPhase::Entities,
+            HourglassPhase::Paths,
+            HourglassPhase::Sequences,
+            HourglassPhase::EntitySystems,
+            HourglassPhase::Npcs,
+            HourglassPhase::GameplaySystems,
+            HourglassPhase::DeferredEffectsEnd,
+        ]
+    );
+}
+
+#[test]
+fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.mission.quit_won = true;
+
+    begin_hourglass_phase_capture();
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+    let phases = end_hourglass_phase_capture();
+
+    assert_eq!(result, GameCode::LevelSucceeded);
+    assert_eq!(
+        phases,
+        vec![
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages,
+        ]
+    );
 }
 
 #[test]

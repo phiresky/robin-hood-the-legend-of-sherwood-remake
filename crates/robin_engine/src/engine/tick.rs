@@ -25,6 +25,65 @@ thread_local! {
 /// Number of `perform_hourglass` calls between log lines.
 const HOURGLASS_LOG_INTERVAL: u32 = 100;
 
+/// Coarse, ordered phases of [`EngineInner::perform_hourglass_inner`].
+///
+/// Keep these deliberately broader than individual systems: the phase trace is
+/// an ordering contract for the tick spine, not a second scheduler.  In
+/// particular, `Paths` names the Rust port's retry/refresh maintenance; path
+/// construction itself is synchronous during `Sequences` (see the parity
+/// audit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HourglassPhase {
+    DeferredEffectsStart,
+    MissionAndMessages,
+    NpcOrders,
+    Entities,
+    Paths,
+    Sequences,
+    EntitySystems,
+    Npcs,
+    GameplaySystems,
+    DeferredEffectsEnd,
+}
+
+#[cfg(test)]
+thread_local! {
+    static CAPTURED_HOURGLASS_PHASES: std::cell::RefCell<Option<Vec<HourglassPhase>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn trace_hourglass_phase(phase: HourglassPhase) {
+    tracing::trace!(
+        target: "robin_engine::engine::tick::phases",
+        ?phase,
+        "perform_hourglass phase"
+    );
+    #[cfg(test)]
+    CAPTURED_HOURGLASS_PHASES.with(|captured| {
+        if let Some(phases) = captured.borrow_mut().as_mut() {
+            phases.push(phase);
+        }
+    });
+}
+
+#[cfg(test)]
+pub(super) fn begin_hourglass_phase_capture() {
+    CAPTURED_HOURGLASS_PHASES.with(|captured| {
+        let previous = captured.borrow_mut().replace(Vec::new());
+        assert!(previous.is_none(), "hourglass phase capture already active");
+    });
+}
+
+#[cfg(test)]
+pub(super) fn end_hourglass_phase_capture() -> Vec<HourglassPhase> {
+    CAPTURED_HOURGLASS_PHASES.with(|captured| {
+        captured
+            .borrow_mut()
+            .take()
+            .expect("hourglass phase capture was not active")
+    })
+}
+
 #[derive(Default)]
 struct HourglassStats {
     count: u32,
@@ -313,6 +372,51 @@ impl EngineInner {
         assets: &LevelAssets,
         dev: &mut DevState,
     ) -> GameCode {
+        trace_hourglass_phase(HourglassPhase::DeferredEffectsStart);
+        let pc_guarded = self.hourglass_phase_deferred_effects_start(assets);
+
+        trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+        if let Some(code) =
+            self.hourglass_phase_mission_and_messages(display, assets, dev, pc_guarded)
+        {
+            return code;
+        }
+
+        trace_hourglass_phase(HourglassPhase::NpcOrders);
+        self.hourglass_phase_npc_orders(assets);
+
+        trace_hourglass_phase(HourglassPhase::Entities);
+        let was_swordfighting = self.hourglass_phase_entities();
+
+        trace_hourglass_phase(HourglassPhase::Paths);
+        self.hourglass_phase_paths(assets);
+
+        trace_hourglass_phase(HourglassPhase::Sequences);
+        self.hourglass_phase_sequences(display, assets);
+
+        trace_hourglass_phase(HourglassPhase::EntitySystems);
+        self.hourglass_phase_entity_systems(assets);
+
+        trace_hourglass_phase(HourglassPhase::Npcs);
+        self.hourglass_phase_npcs(assets);
+
+        trace_hourglass_phase(HourglassPhase::GameplaySystems);
+        self.hourglass_phase_gameplay_systems(display, assets);
+
+        trace_hourglass_phase(HourglassPhase::DeferredEffectsEnd);
+        self.hourglass_phase_deferred_effects_end(display, assets, was_swordfighting);
+
+        GameCode::LevelInProgress
+    }
+
+    /// Drain effects deferred by the preceding tick before any mission,
+    /// entity, path, NPC, or sequence work observes this frame's state.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3446-3548` starts
+    /// `RHEngine::PerformHourglass` with host/widget and mission-state work.
+    /// These Rust-owned queues have no one-to-one original equivalent; their
+    /// relative placement is retained from the pre-decomposition Rust tick.
+    fn hourglass_phase_deferred_effects_start(&mut self, assets: &LevelAssets) -> bool {
         // Drain deferred console-cheat / death reinforcement spawns and
         // scroll-reveal amulet spawns. Both used to live in
         // `Game::run_engine_tick` because they needed `&mut LevelAssets`
@@ -408,6 +512,23 @@ impl EngineInner {
         // to do here for (b).
         let pc_guarded = self.is_pc_guarded();
 
+        pc_guarded
+    }
+
+    /// Run mission gates, the once-per-second script, clock advancement, and
+    /// the tick's messenger drain. Returning a code short-circuits every later
+    /// phase exactly where the monolithic implementation did.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3470-3664` performs
+    /// mission/UI gates, script callbacks, counter advancement, lock checks,
+    /// loss checks, and reinforcement notification in this order.
+    fn hourglass_phase_mission_and_messages(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+        dev: &mut DevState,
+        pc_guarded: bool,
+    ) -> Option<GameCode> {
         // ── Projectile cheat rain ────────────────────────────────
         // The original `ProjectileRain` cheat was wired up but never
         // implemented in the shipped build.  Preserve the drain so the
@@ -438,17 +559,17 @@ impl EngineInner {
         if self.mission.quit_won {
             display.minimap.display_map(false, true);
             self.finalize_mission_script(false);
-            return GameCode::LevelSucceeded;
+            return Some(GameCode::LevelSucceeded);
         }
         if self.mission.quit_lost {
             display.minimap.display_map(false, true);
             self.quit_mission();
-            return GameCode::LevelFailed;
+            return Some(GameCode::LevelFailed);
         }
         if self.mission.quit_interrupted {
             display.minimap.display_map(false, true);
             self.finalize_mission_script(true);
-            return GameCode::LevelInterrupted;
+            return Some(GameCode::LevelInterrupted);
         }
 
         // ── Cheat display all dialogs/briefings ──────────────────
@@ -541,7 +662,7 @@ impl EngineInner {
                         Ok(2) => {
                             // Script says mission lost
                             self.quit_mission();
-                            return GameCode::LevelFailed;
+                            return Some(GameCode::LevelFailed);
                         }
                         Ok(_) => {} // 0 or other = still in progress
                         Err(e) => {
@@ -560,7 +681,7 @@ impl EngineInner {
             || display.background_transform.zoom_to_down
             || self.lock_engine
         {
-            return GameCode::LevelInProgress;
+            return Some(GameCode::LevelInProgress);
         }
 
         // ── Default lose condition check ─────────────────────────
@@ -589,7 +710,7 @@ impl EngineInner {
                 if !any_playable_and_free {
                     tracing::info!("No playable, unguarded PC remains; mission lost");
                     self.quit_mission();
-                    return GameCode::LevelFailed;
+                    return Some(GameCode::LevelFailed);
                 }
             }
 
@@ -600,7 +721,7 @@ impl EngineInner {
                     self.center_on_point(0, pos);
                 }
                 self.quit_mission();
-                return GameCode::LevelFailed;
+                return Some(GameCode::LevelFailed);
             }
 
             // Check if any civilian was killed (not by accident) → mission failure
@@ -622,7 +743,7 @@ impl EngineInner {
                     self.center_on_point(0, pos);
                 }
                 self.quit_mission();
-                return GameCode::LevelFailed;
+                return Some(GameCode::LevelFailed);
             }
         }
 
@@ -1021,6 +1142,16 @@ impl EngineInner {
             }
         }
 
+        None
+    }
+
+    /// Promote queued NPC intents before entity refresh and sequence dispatch.
+    ///
+    /// Original provenance: NPC AI was primarily reached through each NPC's
+    /// `RHElement::Hourglass` in the original entity loop
+    /// (`original-code/RHengine.cpp:3715-3723`). The Rust pre-pass is an
+    /// architectural split; its exact parity remains audited separately.
+    fn hourglass_phase_npc_orders(&mut self, assets: &LevelAssets) {
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
         if self.frame_counter.is_multiple_of(256) {
@@ -1070,6 +1201,16 @@ impl EngineInner {
         // sprite animation completes (detected in tick_entity_animations).
         self.process_animation_orders();
 
+        // TODO(original-parity): determine which queued NPC-order effects must
+        // remain inside an individual NPC's creation-ordered Hourglass call.
+    }
+
+    /// Refresh every entity in stable entity-table (creation) order.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3715-3723` iterates
+    /// `marrayElements`, which `SortForEngine` orders by creation order at
+    /// `original-code/RHengine.cpp:7909-7944`, and removes dead elements inline.
+    fn hourglass_phase_entities(&mut self) -> bool {
         // Pathfinding is synchronous now — Move sequence elements
         // call `find_path` directly when their `InstructOwner` action
         // dispatches (see the Move dispatch in this file).  The
@@ -1107,6 +1248,16 @@ impl EngineInner {
         // counter is serde'd `PcData`).
         self.tick_pc_teleport_fades();
 
+        was_swordfighting
+    }
+
+    /// Maintain failed and moving-target path requests before sequence launch.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3697-3702` calls
+    /// `ProcessPathRequests` before collision and entity hourglasses. Rust path
+    /// construction is synchronous in the sequence phase, so only retry and
+    /// seek-refresh maintenance remains here; see the parity TODO below.
+    fn hourglass_phase_paths(&mut self, assets: &LevelAssets) {
         // ── Failed-path retry ────────────────────────────────────
         // Move / Seek elements whose pathfind failed on a previous
         // tick stay in `InProgress` with empty orders for up to 100
@@ -1133,6 +1284,18 @@ impl EngineInner {
         // reaches 0 the element transitions to terminated.
         self.tick_actor_wait_timers();
 
+        // TODO(original-parity): restore/verify the original
+        // ProcessPathRequests -> collision -> entity Hourglass ordering if
+        // asynchronous path requests or collision preprocessing return.
+    }
+
+    /// Launch and dispatch sequence elements, including the inline immediate
+    /// action cascades and message/target callbacks they defer.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3726-3727` calls
+    /// `RHSequenceManager::Hourglass` after the entity loop; its FIFO `Go()`
+    /// drain is in `original-code/RHsequencemanager.cpp:931-943`.
+    fn hourglass_phase_sequences(&mut self, display: &mut HostDisplayState, assets: &LevelAssets) {
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements and dispatch actions.
         // We collect actions and process them here in two passes.
@@ -5157,6 +5320,18 @@ impl EngineInner {
         // calls collected from Command::Activate* sequence elements.
         self.dispatch_target_activations(assets, &pending_target_activations);
 
+        // TODO(original-parity): confirm whether callbacks queued by
+        // SendMessage/ActivatedBy are observable before the first post-sequence
+        // movement refresh in every shipped build.
+    }
+
+    /// Advance movement, animations, scripts, and the NPC-facing state that
+    /// must be refreshed before the main AI pass.
+    ///
+    /// Original provenance: these responsibilities were distributed across
+    /// individual `RHElement::Hourglass` implementations inside the original
+    /// creation-ordered entity loop (`original-code/RHengine.cpp:3715-3723`).
+    fn hourglass_phase_entity_systems(&mut self, assets: &LevelAssets) {
         // ── Per-frame movement tick ─────────────────────────────
         // Advance all entities that have active paths.
         let (arrived_entities, galopp_entities) = self.tick_entity_movement(assets);
@@ -5381,6 +5556,18 @@ impl EngineInner {
         // to the detection pass.
         self.tick_ai_macro_timers(assets);
 
+        // TODO(original-parity): this system-oriented pass cannot yet prove the
+        // original's per-entity interleaving between movement, animation, and
+        // NPC refresh. Keep this order mechanically stable until replay parity
+        // supplies an exact cross-entity oracle.
+    }
+
+    /// Run the main NPC AI and its immediately adjacent notification passes.
+    ///
+    /// Original provenance: NPC detection/AI ran from NPC element hourglasses
+    /// (for example `original-code/RHelementactornpc.cpp:3495-3614`), inside
+    /// the engine's creation-ordered entity pass. Rust batches it here.
+    fn hourglass_phase_npcs(&mut self, assets: &LevelAssets) {
         // ── Per-frame enemy AI tick ─────────────────────────────
         // Vision → alert → pursue.  Stand-in for the full
         // detection / `Think(stimulus)` pipeline until the state
@@ -5420,6 +5607,17 @@ impl EngineInner {
         // for their minions, and dispatch CALL_PATROL_COORDINATE.
         self.tick_patrol_coordination(assets);
 
+        // TODO(original-parity): determine the observable cases where batched
+        // NPC updates differ from creation-ordered per-NPC Hourglass calls.
+    }
+
+    /// Advance combat, projectiles, abilities, and other gameplay systems that
+    /// consume the entity/sequence/NPC state established above.
+    fn hourglass_phase_gameplay_systems(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) {
         // ── Per-frame bow-shot tick ─────────────────────────────
         // Drive the `SHOOTING_WITH_BOW` animation for every actor
         // with an active bow shot; when the animation reports
@@ -5510,6 +5708,24 @@ impl EngineInner {
             abilities::sync_carried_positions(&mut self.entities, &assets.profile_manager);
         }
 
+        // TODO(original-parity): map each batched gameplay system back to its
+        // original element subtype's position within the creation-ordered
+        // `marrayElements` hourglass pass.
+    }
+
+    /// Apply work intentionally deferred until every entity, path, sequence,
+    /// NPC, and gameplay-system update has completed.
+    ///
+    /// Original provenance: `original-code/RHengine.cpp:3729-3775` performs the
+    /// swordfight falling-edge check, titbit update, dead-selection scan, and
+    /// anonymous timers after the sequence manager. Rust adds deterministic
+    /// condolation, self-stimulus, PostInitialize, and immediate-action drains.
+    fn hourglass_phase_deferred_effects_end(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+        was_swordfighting: bool,
+    ) {
         // ── Swordfight-drag IgnoreMouseEvent bracket ────────────
         // If the selected PC was swordfighting at entry to
         // `perform_hourglass` but is no longer swordfighting after
@@ -5648,8 +5864,6 @@ impl EngineInner {
         // renderer so post-tick state reads see the immediate side
         // effects.
         self.drain_pending_immediate_actions_sync(display, assets);
-
-        GameCode::LevelInProgress
     }
 
     // ─── Stealth command dispatch ───────────────────────────────
