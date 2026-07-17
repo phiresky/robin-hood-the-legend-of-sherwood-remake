@@ -520,6 +520,16 @@ fn populate_sound_duration_tables(
     assets.source_durations = Arc::new(source_durations);
 }
 
+/// Frontend-only resources loaded while the interactive loading screen is
+/// still visible.
+///
+/// This process data is consumed by `InteractiveFrontend` and deliberately is
+/// not serialized as part of deterministic mission state.
+pub(super) struct LoadedInteractiveResources {
+    pub(super) level_descriptors: Option<assets_res_descr::LevelDescriptors>,
+    pub(super) hud_fonts: Option<HudFonts>,
+}
+
 /// Pre-decode the background map + minimap and attach the interface /
 /// text resource files while the loading screen is still visible.
 ///
@@ -545,12 +555,7 @@ pub(super) fn pre_decode_maps_and_resources(
     profiles: &engine_profiles::ProfileManager,
     host: &Host,
     game: &Game,
-) -> (
-    Option<engine_api::level_loading::PreDecodedBackground>,
-    Option<engine_api::level_loading::PreDecodedMinimap>,
-    Option<assets_res_descr::LevelDescriptors>,
-    Option<HudFonts>,
-) {
+) -> LoadedInteractiveResources {
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
@@ -609,7 +614,10 @@ pub(super) fn pre_decode_maps_and_resources(
     if let Some(ls) = loading_screen.as_mut() {
         ls.set_status("Finalizing...", 1.0);
     }
-    (None, None, level_descriptors, hud_fonts)
+    LoadedInteractiveResources {
+        level_descriptors,
+        hud_fonts,
+    }
 }
 
 /// Tick the loading-screen progress bar by `delta` and drain any
@@ -1010,14 +1018,19 @@ fn load_peasant_name_pool(text_res: &mut ResourceManager) -> (Vec<String>, Vec<S
 /// happens between `Initialize` and `Close` of the loading screen.
 /// The `progress` closure captures the loading screen + event-pump
 /// fields so each call ticks the bar and drains WM events.
-pub(super) type LoadedLevelAndSpriteBank = (
-    Engine,
-    engine_api::LevelAssets,
-    engine_api::DevState,
-    Option<engine_api::level_loading::PreDecodedBackground>,
-    Option<engine_api::level_loading::PreDecodedMinimap>,
-    u64,
-);
+/// CPU-loaded mission state consumed by the frontend-specific bootstrap.
+///
+/// This is a process-lifetime ownership seam, not persisted game state: the
+/// decoded bitmaps are host upload scratch and `LevelAssets` contains runtime
+/// caches. Consequently it deliberately does not implement serde.
+pub(super) struct LoadedMissionCore {
+    pub(super) engine: Engine,
+    pub(super) assets: engine_api::LevelAssets,
+    pub(super) dev: engine_api::DevState,
+    pub(super) pre_decoded_background: Option<engine_api::level_loading::PreDecodedBackground>,
+    pub(super) pre_decoded_minimap: Option<engine_api::level_loading::PreDecodedMinimap>,
+    pub(super) engine_rng_seed: u64,
+}
 
 fn initial_rng_seed(
     args: &crate::main_entry::CliArgs,
@@ -1036,6 +1049,7 @@ fn initial_rng_seed(
     }
 }
 
+#[cfg(test)]
 fn construct_with_initial_rng_seed<T>(
     args: &crate::main_entry::CliArgs,
     multiplayer_seed: Option<u64>,
@@ -1060,7 +1074,7 @@ pub(super) fn load_level_and_sprite_bank(
     ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
     titbit_row_frame_counts: Vec<u16>,
     minimap_widget: Option<engine_api::MinimapWidgetSetup>,
-) -> Result<LoadedLevelAndSpriteBank, String> {
+) -> Result<LoadedMissionCore, String> {
     let mut assets = engine_api::LevelAssets::new();
     // Stamp the canonical loaded profile manager onto LevelAssets — the
     // engine reads profiles via `&assets.profile_manager` everywhere now
@@ -1119,12 +1133,6 @@ pub(super) fn load_level_and_sprite_bank(
         ls.set_status("Initializing level...", 0.73);
     }
 
-    // Move the campaign out of its cell so we can both seed `assets`
-    // from it and hand ownership to the engine constructor.  All reads
-    // against the campaign happen *before* construction; afterwards it
-    // lives inside the engine and is reached via `engine.campaign()`.
-    let campaign = std::mem::take(campaign_ref);
-
     // Engine LevelAssets already owns profile_manager (loaded at startup);
     // Campaign no longer has its own copy.
 
@@ -1134,8 +1142,8 @@ pub(super) fn load_level_and_sprite_bank(
     // files itself; the host parses them (preferring shipping, falling
     // back to disk for the current mission), decodes immutable bytecode,
     // and stores the programs in `LevelAssets` before level load.
-    let mission_name = campaign.current_mission_idx.map(|i| {
-        campaign.missions[i]
+    let mission_name = campaign_ref.current_mission_idx.map(|i| {
+        campaign_ref.missions[i]
             .profile(&assets.profile_manager)
             .mission_filename
             .clone()
@@ -1172,7 +1180,7 @@ pub(super) fn load_level_and_sprite_bank(
 
     // Initialize Game's per-mission state from the campaign before we
     // hand it off to the engine.
-    game.initialize_for_mission(&campaign, &assets.profile_manager);
+    game.initialize_for_mission(campaign_ref, &assets.profile_manager);
 
     // Construct the engine with campaign install + level load folded
     // in.  The old `Engine::new(w, h)` + `install_campaign` +
@@ -1198,7 +1206,7 @@ pub(super) fn load_level_and_sprite_bank(
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
         engine_api::level_loading::load_mission_for_campaign(
-            &campaign,
+            campaign_ref,
             &assets.profile_manager,
             &level_directory,
             &mut progress,
@@ -1266,27 +1274,37 @@ pub(super) fn load_level_and_sprite_bank(
         );
     }
 
-    let (engine, rng_seed) =
-        construct_with_initial_rng_seed(args, host.mp_mission_seed, |rng_seed| {
-            let mut progress = |delta: f32| {
-                tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-            };
-            Engine::new(engine_api::EngineArgs {
-                campaign,
-                level: engine_api::LevelLoadArgs {
-                    assets: &mut assets,
-                    level_directory: &level_directory,
-                    progress: &mut progress,
-                    loaded,
-                    bg_pixel_dims,
-                },
-                ground_mark_sprite,
-                titbit_row_frame_counts,
-                rng_seed,
-                goldeneye: goldeneye_initial,
-            })
-            .map_err(|e| format!("Level init failed: {e}"))
-        })?;
+    let rng_seed = initial_rng_seed(args, host.mp_mission_seed)?;
+    // This is the only point at which setup transfers campaign ownership.
+    // Every fallible file/decode step above borrows the session campaign, and
+    // the preserving constructor returns the exact allocation on ingestion
+    // failure.
+    let campaign = std::mem::take(campaign_ref);
+    let engine = {
+        let mut progress = |delta: f32| {
+            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
+        };
+        match Engine::new_preserving_campaign(engine_api::EngineArgs {
+            campaign,
+            level: engine_api::LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: &level_directory,
+                progress: &mut progress,
+                loaded,
+                bg_pixel_dims,
+            },
+            ground_mark_sprite,
+            titbit_row_frame_counts,
+            rng_seed,
+            goldeneye: goldeneye_initial,
+        }) {
+            Ok(engine) => engine,
+            Err((error, campaign)) => {
+                *campaign_ref = campaign;
+                return Err(format!("Level init failed: {error}"));
+            }
+        }
+    };
     if rng_seed != 0 {
         tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
     }
@@ -1313,14 +1331,14 @@ pub(super) fn load_level_and_sprite_bank(
     crate::level_loading_host::initialize_sprite_variants(host, &engine);
     tick_progress(loading_screen, event_pump, 1.0);
 
-    Ok((
+    Ok(LoadedMissionCore {
         engine,
         assets,
         dev,
-        pre_decoded_bg,
-        pre_decoded_mm,
-        rng_seed,
-    ))
+        pre_decoded_background: pre_decoded_bg,
+        pre_decoded_minimap: pre_decoded_mm,
+        engine_rng_seed: rng_seed,
+    })
 }
 
 /// Build `ThreadedInput` + `InputTranslator`, load the active profile's

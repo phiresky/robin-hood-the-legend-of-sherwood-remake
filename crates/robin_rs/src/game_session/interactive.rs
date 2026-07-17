@@ -7,6 +7,7 @@
 
 use super::modal_state::ActiveModal;
 use super::render::RenderContext;
+use super::runtime::MissionRuntime;
 use super::setup::MissionSprites;
 use super::tick::tick_audio;
 use crate::Host;
@@ -283,6 +284,15 @@ pub(super) struct InteractiveFrontend {
     pub(super) ui: MissionUi,
     pub(super) hud: MissionHud,
     pub(super) presentation: MissionPresentation,
+}
+
+/// Complete process owner returned by interactive mission bootstrap.
+///
+/// It deliberately does not implement serde because its frontend owns GPU,
+/// input-device, audio, and resource-cache handles.
+pub(super) struct InteractiveMission {
+    pub(super) runtime: MissionRuntime,
+    pub(super) frontend: InteractiveFrontend,
 }
 
 #[cfg(test)]
