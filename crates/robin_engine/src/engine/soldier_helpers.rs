@@ -259,28 +259,36 @@ impl EngineInner {
     /// Notifications are queued (rather than fired inline) to avoid
     /// re-entrant borrows; this method drains the queue.
     pub(super) fn dispatch_condolations(&mut self, assets: &LevelAssets) {
-        let pending = self.sequence_manager.drain_pending_condolations();
-        for card in pending {
-            self.send_condolation_card(card, assets);
+        let mut pending: std::collections::VecDeque<_> =
+            self.sequence_manager.drain_pending_condolations().into();
+        while let Some(dispatch) = pending.pop_front() {
+            let owner = dispatch.card.owner;
+            self.send_condolation_card(dispatch.card, assets);
+            self.drain_self_stimuli_for_npc(owner, assets);
+            self.sequence_manager.finish_pending_condolation(dispatch);
+
+            for nested in self
+                .sequence_manager
+                .drain_pending_condolations()
+                .into_iter()
+                .rev()
+            {
+                pending.push_front(nested);
+            }
         }
     }
 
-    /// Per-owner dispatch of pending condolations.  Only fires cards whose
-    /// owning entity is `npc_id`; other cards remain queued for the
-    /// end-of-tick global [`Self::dispatch_condolations`].
-    ///
-    /// Called from [`Self::dispatch_think_with_drain`] right after an
-    /// NPC's `think()` side effects preempt a sequence (e.g. `Face` ×
-    /// `SetAttentiveMode` → Turn preempted by `EnterAttentiveMode`),
-    /// so the resulting `EventDone` fires inside the same call stack
-    /// — `send_condolation_card` invokes `Think` synchronously.
-    pub(super) fn dispatch_condolations_for_npc(&mut self, npc_id: EntityId, assets: &LevelAssets) {
-        let pending = self
-            .sequence_manager
-            .drain_pending_condolations_for_owner(npc_id);
-        for card in pending {
-            self.send_condolation_card(card, assets);
-        }
+    /// Complete pending condolence stack frames after an NPC Think call.
+    /// Cascading `SetState` calls can cross owners, so filtering by the
+    /// originating NPC would strand a nested `SendCondolationCard` until
+    /// later in the frame.  Once this synchronous boundary is entered, all
+    /// queued cards must therefore drain depth-first.
+    pub(super) fn dispatch_condolations_for_npc(
+        &mut self,
+        _npc_id: EntityId,
+        assets: &LevelAssets,
+    ) {
+        self.dispatch_condolations(assets);
     }
 
     /// Dispatch a single `SendCondolationCard` to the owner entity.
@@ -302,6 +310,7 @@ impl EngineInner {
             seq_id,
             elem_idx,
             from_halt,
+            postponed_successor_pending,
         } = card;
 
         // Orders live on `SequenceElement.orders` and disappear when
@@ -379,6 +388,7 @@ impl EngineInner {
         // actions follow in the chain, or when we're tearing the
         // sequence down from inside a `Halt()` call.
         if from_halt
+            || postponed_successor_pending
             || !self
                 .sequence_manager
                 .is_last_real_action(seq_id, elem_idx as usize)

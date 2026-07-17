@@ -151,7 +151,7 @@ pub struct EngineInner {
     /// rollback clones preserve it, while deserialized saves must have it
     /// reattached before gameplay resumes. `Option` is intentional so a
     /// missing attachment fails loudly instead of inventing Medium difficulty.
-    #[serde(skip, default)]
+    #[state_hash(skip)]
     sim_config: std::cell::Cell<Option<SimConfig>>,
 
     // ── Mission ──────────────────────────────────────────────────
@@ -3568,16 +3568,10 @@ impl EngineInner {
         }
     }
 
-    /// Run the mission script's `PostInitialize` hook on the first
-    /// tick after level load, then no-op on every subsequent call.
-    /// Idempotent — driven by a sim-side `post_initialized` flag on
-    /// [`MissionScript`], so the host never has to coordinate with the
-    /// engine on whether the hook has already fired.
-    ///
-    /// Called from the top of [`EngineInner::perform_hourglass_inner`]
-    /// so the one-shot script-side state mutations stay inside the
-    /// hashed tick window — rollback replay runs them exactly once per
-    /// level load too.
+    /// Run the mission script's `PostInitialize` hook once, then no-op.
+    /// The serialized flag keeps both live play and rollback replay
+    /// idempotent; [`EngineInner::perform_post_initialize`] owns the
+    /// original post-refresh host boundary.
     pub(crate) fn run_post_initialize_if_needed(&mut self, assets: &LevelAssets) {
         let Some(script) = self.mission_script.as_mut() else {
             return;

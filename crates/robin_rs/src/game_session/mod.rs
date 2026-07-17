@@ -7,6 +7,7 @@ mod mouse_input;
 mod multiplayer;
 mod render;
 mod replay_init;
+mod runtime;
 mod setup;
 mod tick;
 
@@ -24,15 +25,15 @@ use mouse_input::{
     handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
 };
 use multiplayer::{
-    MultiplayerRollbackTelemetry, accept_host_frame_schedule, drain_net_inputs,
-    host_scheduled_frame_deadline_ms, setup_multiplayer_session,
+    accept_host_frame_schedule, drain_net_inputs, host_scheduled_frame_deadline_ms,
+    setup_multiplayer_session,
 };
 pub use render::RenderContext;
 use render::{
     capture_save_thumbnail, drain_print_screen_request, drain_screenshots, drain_wide_print_screen,
     print_screen_request_from_modifiers, render_frame, update_mouse_and_cursor,
 };
-use replay_init::{ReplayAndRollback, init_replay_and_rollback};
+use replay_init::init_replay_and_rollback;
 use robin_assets::res_descr as assets_res_descr;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
@@ -46,6 +47,7 @@ use robin_engine::player_command as engine_player_command;
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
+use runtime::{FrameOutcome, FramePacing, MissionRuntime};
 use setup::{
     MissionSprites, extract_ground_mark_sprite_data, extract_minimap_widget_setup,
     extract_titbit_row_frame_counts, init_audio_backend, load_level_and_sprite_bank,
@@ -96,9 +98,6 @@ use crate::save_file::special_slots;
 use crate::sdl_audio::{self};
 use crate::sherwood_hud::{
     SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout, SherwoodTooltipTracker,
-};
-use crate::sim_timeline::{
-    CheckpointPolicy, RECENT_TIMELINE_HISTORY_FRAMES, RetentionPolicy, SnapshotHistory,
 };
 use crate::stature_hud::{
     StatureButton, StatureEnable, StatureHudLayout, StatureSprites, StatureTooltipTracker,
@@ -305,13 +304,7 @@ pub(crate) async fn run_mission_headless(
         })
         .unwrap_or_else(|| format!("mission_{mission_idx}"));
     let assets = Arc::new(assets);
-    let ReplayAndRollback {
-        recorder: mut replay_recorder,
-        player: mut replay_player,
-        mut rollback_checker,
-        mut rewind_buffer,
-        start_paused,
-    } = init_replay_and_rollback(
+    let replay = init_replay_and_rollback(
         &mut engine,
         Arc::clone(&assets),
         args,
@@ -320,24 +313,30 @@ pub(crate) async fn run_mission_headless(
         engine_rng_seed,
         host.net.is_some(),
     );
+    let mut runtime = MissionRuntime::new(
+        replay,
+        // TODO(parity): Teach headless to drain the multiplayer start
+        // barrier. Until then, preserve its existing replay-runner
+        // behavior instead of entering a gate it cannot release.
+        false,
+        host.local_seat == engine_player_command::PlayerId::HOST,
+    );
     let mut manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
-    let mut manual_pause = start_paused;
+    let mut manual_pause = runtime.initially_paused();
 
     loop {
-        let recorder_hash_this_frame = replay_recorder.as_ref().and_then(|r| {
-            let f = r.frame_number();
-            (f % 25 == 0).then(|| crate::replay::state_hash(&manager.engine))
-        });
-        rewind_buffer.begin_frame(manager.sim_frame, &manager.engine, &assets);
-        if let Some(checker) = rollback_checker.as_mut() {
-            checker.begin_frame(manager.sim_frame, &manager.engine);
-        }
+        let recorder_hash_this_frame = runtime.begin_frame(
+            crate::window::process_uptime_ms(),
+            manager.sim_frame,
+            &manager.engine,
+            &assets,
+        );
 
         let mut frame_cmds = Vec::new();
         let mut frame_modal_dismissals = Vec::new();
         let mut replay_modal_dismissals: std::collections::VecDeque<PlayerCommand> =
             std::collections::VecDeque::new();
-        if let Some(player) = replay_player.as_mut()
+        if let Some(player) = runtime.replay_player.as_mut()
             && !player.is_finished()
         {
             for cmd in player.next_frame() {
@@ -356,6 +355,7 @@ pub(crate) async fn run_mission_headless(
         }
 
         let _ = dismiss_pending_modals(&mut host);
+        runtime.begin_simulation();
         let tick_exit_code = if manual_pause {
             None
         } else {
@@ -372,6 +372,7 @@ pub(crate) async fn run_mission_headless(
             host.engine_display = display;
             result
         };
+        runtime.begin_bookkeeping();
 
         let net = host.net.take();
         crate::http_server::drain_global(&mut manager, &mut host, &assets, net.as_ref());
@@ -406,9 +407,9 @@ pub(crate) async fn run_mission_headless(
             &assets,
             &mut dev,
             &mut game,
-            &mut rewind_buffer,
-            &mut rollback_checker,
-            &mut replay_player,
+            &mut runtime.rewind_buffer,
+            &mut runtime.rollback_checker,
+            &mut runtime.replay_player,
             &mut manual_pause,
             &mut headless_active_modal,
         );
@@ -428,48 +429,73 @@ pub(crate) async fn run_mission_headless(
             );
         }
 
+        // Headless has no renderer or audio backend, but it still crosses
+        // the same logical end-of-first-refresh boundary before committing
+        // frame zero.  Keep PostInitialize out of the simulation tick so
+        // replay and interactive play share the original frame ordering.
+        let mut display = std::mem::take(&mut host.engine_display);
+        let _ = crate::sim_timeline::run_post_initialize_stage(
+            &mut host,
+            &mut display,
+            &assets,
+            &mut manager.engine,
+            &mut dev,
+        );
+        host.engine_display = display;
+
         if !manual_pause {
-            if let Some(checker) = rollback_checker.as_mut() {
+            if let Some(checker) = runtime.rollback_checker.as_mut() {
                 checker.end_frame(&mut host, frame_cmds.clone(), &manager.engine);
             }
-            rewind_buffer.end_frame(frame_cmds.clone());
-            if let Some(recorder) = replay_recorder.as_mut() {
-                if let Some(hash) = recorder_hash_this_frame {
-                    recorder.write_hash(recorder.frame_number(), hash);
-                }
-                for cmd in &frame_cmds {
-                    recorder.push(cmd.clone());
-                }
-                for cmd in &frame_modal_dismissals {
-                    recorder.push(cmd.clone());
-                }
-                recorder.end_frame();
-            }
+            runtime.rewind_buffer.end_frame(frame_cmds.clone());
+            runtime.record_commands(recorder_hash_this_frame, &frame_cmds, true);
+            runtime.finish_recording(frame_modal_dismissals, true);
             manager.sim_frame += 1;
         }
 
-        if let Some(code) = tick_exit_code {
-            restore_required_campaign(
-                campaign_ref,
-                manager.engine.take_campaign(),
-                "headless mission exit",
-            );
-            return Ok(code);
-        }
-        if replay_player.as_ref().is_some_and(|p| p.is_finished()) {
+        let replay_finished = runtime
+            .replay_player
+            .as_ref()
+            .is_some_and(|player| player.is_finished());
+        if replay_finished {
             tracing::info!("headless replay finished");
-            restore_required_campaign(
-                campaign_ref,
-                manager.engine.take_campaign(),
-                "headless replay completion",
-            );
-            return Ok(GameCode::Quit);
         }
-
-        if manual_pause {
-            crate::window::sleep_ms(10).await;
+        runtime.begin_presentation();
+        let exit = tick_exit_code.or(replay_finished.then_some(GameCode::Quit));
+        let exit_context = if tick_exit_code.is_some() {
+            Some("headless mission exit")
+        } else if replay_finished {
+            Some("headless replay completion")
         } else {
-            crate::window::yield_to_runtime().await;
+            None
+        };
+        let outcome = runtime.plan_frame_outcome(
+            crate::window::process_uptime_ms(),
+            FramePacing {
+                fast_forward_requested: args.fast_forward,
+                headless: true,
+                engine_fast_forward: manager.engine.is_fast_forward(),
+                slow_motion: host.slow_motion,
+                host_deadline_ms: None,
+            },
+            exit,
+        );
+        match outcome {
+            FrameOutcome::Exit(code) => {
+                restore_required_campaign(
+                    campaign_ref,
+                    manager.engine.take_campaign(),
+                    exit_context.expect("runtime exit must have a campaign restore context"),
+                );
+                return Ok(code);
+            }
+            FrameOutcome::Continue { sleep_ms } if manual_pause => {
+                crate::window::sleep_ms(u64::from(sleep_ms.max(10))).await;
+            }
+            FrameOutcome::Continue { sleep_ms: 0 } => crate::window::yield_to_runtime().await,
+            FrameOutcome::Continue { sleep_ms } => {
+                crate::window::sleep_ms(u64::from(sleep_ms)).await;
+            }
         }
     }
 }
@@ -915,9 +941,10 @@ pub(crate) async fn run_mission(
 
     // ── Spellforge Lua: post-level-load events ──
     //
-    // The engine just finished its `.scb` Initialize / PostInitialize
-    // path inside `load_level_and_sprite_bank`. If a custom mission
-    // shipped a `.lua` companion, fire the matching Lua events now —
+    // The engine just finished its `.scb` Initialize path inside
+    // `load_level_and_sprite_bank`; `.scb` PostInitialize remains armed
+    // for the first post-refresh host boundary. If a custom mission
+    // shipped a `.lua` companion, fire its loading events now —
     // the Lua side defines its own globals (entity name tables, AI
     // patrol assignments, etc.) on top of whatever the `.scb` did.
     //
@@ -1313,13 +1340,7 @@ pub(crate) async fn run_mission(
     // Record-by-default; `--record <path>` overrides the destination,
     // `--replay <path>` disables recording in favour of playback.  See
     // `init_replay_and_rollback` for the full breakdown.
-    let ReplayAndRollback {
-        recorder: mut replay_recorder,
-        player: mut replay_player,
-        mut rollback_checker,
-        mut rewind_buffer,
-        start_paused,
-    } = {
+    let replay = {
         // `campaign_ref` was emptied by `std::mem::take` during level
         // init (see the top of this function) — the real campaign
         // now lives inside the engine.  Pull the `mission_filename`
@@ -1356,12 +1377,10 @@ pub(crate) async fn run_mission(
     // server broadcasts).  Each entry is `(frame → host_hash)`; the
     // client compares its locally-computed hash at the same sampling
     // point.  Drained as frames are reached.
-    let mut peer_hashes: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
-    let mut recent_timeline_history = SnapshotHistory::new(
-        CheckpointPolicy::EveryFrame,
-        RetentionPolicy::Latest {
-            capacity: RECENT_TIMELINE_HISTORY_FRAMES,
-        },
+    let mut runtime = MissionRuntime::new(
+        replay,
+        host.net.is_some(),
+        host.local_seat == engine_player_command::PlayerId::HOST,
     );
 
     // Manual pause toggle, distinct from the pause menu.  Set on mission
@@ -1373,18 +1392,7 @@ pub(crate) async fn run_mission(
     // the HUD / cursor / input stay fully interactive while the sim is
     // frozen.  Also toggled by the in-game step-debug keys: `.` and `,`
     // enable it (and step one frame forward/back), Enter clears it.
-    let mut mp_start_gate = None;
-    let mut mp_waiting_for_initial_snapshot =
-        host.net.is_some() && host.local_seat != engine_player_command::PlayerId::HOST;
-    let mut mp_waiting_for_begin_sim = host.net.is_some();
-    let mut mp_host_frame_schedule: Option<(u32, u32)> = None;
-    let mut last_mp_rollback: Option<MultiplayerRollbackTelemetry> = None;
-    let mut last_mp_clock_ahead_log_ms = 0;
-    let mut last_mp_sleep_correction_log_ms = 0;
-    let mut last_mp_state_hash_frame: Option<u32> = None;
-    let mut manual_pause =
-        start_paused || mp_waiting_for_initial_snapshot || mp_waiting_for_begin_sim;
-    let mut replay_finished_logged = false;
+    let mut manual_pause = runtime.initially_paused();
     let mut step_forward_repeat_at_ms: Option<u32> = None;
     let mut step_back_repeat_at_ms: Option<u32> = None;
 
@@ -1403,10 +1411,10 @@ pub(crate) async fn run_mission(
         let frame_start = crate::window::process_uptime_ms();
         let mut frame_cmds = FrameCommands::new();
         let mut modal_rendered_this_frame = false;
-        if let Some(start_at) = mp_start_gate {
+        if let Some(start_at) = runtime.mp_start_gate {
             if current_epoch_ms() >= start_at {
-                mp_start_gate = None;
-                if !start_paused {
+                runtime.mp_start_gate = None;
+                if !runtime.start_paused {
                     manual_pause = false;
                 }
                 tracing::info!("multiplayer: synchronized lobby start gate opened");
@@ -1424,7 +1432,7 @@ pub(crate) async fn run_mission(
         // - Inputs scheduled for `sim_frame` come back in the return
         //   value; we apply them and append to `frame_cmds`.
         // - Authoritative state hashes from the host land in
-        //   `peer_hashes`, drained below alongside the per-25-frame
+        //   `runtime.peer_hashes`, drained below alongside the per-25-frame
         //   sampling tick.
         // Publishes the current sim_frame to the server's broadcast
         // pump so peer-input target frames are stamped against a
@@ -1436,30 +1444,30 @@ pub(crate) async fn run_mission(
             &mut host,
             &mut manager,
             assets.as_ref(),
-            &mut rewind_buffer,
-            &mut peer_hashes,
-            &mut recent_timeline_history,
+            &mut runtime.rewind_buffer,
+            &mut runtime.peer_hashes,
+            &mut runtime.recent_timeline_history,
         );
         if net_drain.rewrote_sim_state
-            && let Some(ref mut checker) = rollback_checker
+            && let Some(ref mut checker) = runtime.rollback_checker
         {
             checker.reset();
         }
         if let Some(rollback) = net_drain.rollback.clone() {
-            last_mp_rollback = Some(rollback);
+            runtime.last_mp_rollback = Some(rollback);
         }
         if let Some((_frame, start_epoch_ms)) = net_drain.begin_sim {
-            mp_waiting_for_begin_sim = false;
-            mp_start_gate = Some(start_epoch_ms);
+            runtime.mp_waiting_for_begin_sim = false;
+            runtime.mp_start_gate = Some(start_epoch_ms);
             manual_pause = true;
         }
-        if mp_waiting_for_initial_snapshot && net_drain.received_initial_snapshot {
-            mp_waiting_for_initial_snapshot = false;
+        if runtime.mp_waiting_for_initial_snapshot && net_drain.received_initial_snapshot {
+            runtime.mp_waiting_for_initial_snapshot = false;
             tracing::info!(
                 "multiplayer: initial snapshot received; client ready for start barrier"
             );
         }
-        if mp_waiting_for_initial_snapshot || mp_waiting_for_begin_sim {
+        if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
             manual_pause = true;
         }
         if host.net.is_some()
@@ -1467,7 +1475,7 @@ pub(crate) async fn run_mission(
             && let Some((clock_frame, ms_until_next_frame)) = net_drain.latest_host_clock_sample
         {
             accept_host_frame_schedule(
-                &mut mp_host_frame_schedule,
+                &mut runtime.mp_host_frame_schedule,
                 clock_frame,
                 ms_until_next_frame,
                 manager.sim_frame,
@@ -1476,21 +1484,22 @@ pub(crate) async fn run_mission(
         let mut mp_clock_pause = false;
         if host.net.is_some()
             && host.local_seat != engine_player_command::PlayerId::HOST
-            && !mp_waiting_for_initial_snapshot
-            && !mp_waiting_for_begin_sim
-            && mp_start_gate.is_none()
+            && !runtime.mp_waiting_for_initial_snapshot
+            && !runtime.mp_waiting_for_begin_sim
+            && runtime.mp_start_gate.is_none()
         {
             if let Some(deadline_ms) =
-                host_scheduled_frame_deadline_ms(mp_host_frame_schedule, manager.sim_frame)
+                host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
             {
                 let now_ms = crate::window::process_uptime_ms();
                 let until_frame_ms = deadline_ms - i64::from(now_ms);
                 if until_frame_ms > 0 {
                     mp_clock_pause = true;
-                    if now_ms.saturating_sub(last_mp_clock_ahead_log_ms) >= 1000 {
-                        last_mp_clock_ahead_log_ms = now_ms;
+                    if now_ms.saturating_sub(runtime.last_mp_clock_ahead_log_ms) >= 1000 {
+                        runtime.last_mp_clock_ahead_log_ms = now_ms;
                         tracing::info!(
-                            scheduled_frame = mp_host_frame_schedule.map(|(frame, _)| frame),
+                            scheduled_frame =
+                                runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
                             local_frame = manager.sim_frame,
                             until_frame_ms,
                             "multiplayer: local frame is ahead of host schedule; holding sim"
@@ -1503,7 +1512,9 @@ pub(crate) async fn run_mission(
         }
         let net_inputs = net_drain.inputs;
         if host.net.is_some() {
-            recent_timeline_history.checkpoint(manager.sim_frame, &manager.engine);
+            runtime
+                .recent_timeline_history
+                .checkpoint(manager.sim_frame, &manager.engine);
         }
         if !net_inputs.is_empty() {
             manager.engine.apply_commands(
@@ -1516,8 +1527,6 @@ pub(crate) async fn run_mission(
                 frame_cmds.commands.push(inp);
             }
         }
-
-        let mut pending_mp_state_hash: Option<(u32, u64)> = None;
 
         // Re-derive the corner HUD layout every frame so resolution
         // changes triggered from nested menus (options modal, Sherwood
@@ -1544,19 +1553,8 @@ pub(crate) async fn run_mission(
             host.draw_order = manager.engine.compute_display_order();
         }
 
-        // Take the pre-commands snapshot for the rollback checker at
-        // the top of the sim frame, before any input events are
-        // processed and applied inline to the engine.
-        if let Some(ref mut checker) = rollback_checker {
-            checker.begin_frame(manager.sim_frame, &manager.engine);
-        }
-        // Same snapshot point for the rewind buffer — only commits
-        // when this frame aligns to `SNAPSHOT_INTERVAL` — plus the
-        // per-frame command log end_frame records further down.
-        // Populated during replay too so the step-back debug key can
-        // rewind through a recording.
-        rewind_buffer.begin_frame(manager.sim_frame, &manager.engine, &assets);
-        // Replay state-hash: sample the engine at the "start of
+        // Enter the shared runtime's input phase. This captures the
+        // rollback/rewind snapshots and replay state hash at the "start of
         // frame N — after N-1's tick, before N's commands" point,
         // before any event-loop handler (Resized → inline
         // `MinimapResize`, live input → local viewport edits, …)
@@ -1568,26 +1566,8 @@ pub(crate) async fn run_mission(
         // block further down so the existing
         // `!rewind_active && !consumed_buffered` gating stays in
         // one place.
-        let recorder_hash_this_frame: Option<u64> = replay_recorder.as_ref().and_then(|r| {
-            let f = r.frame_number();
-            (f % 25 == 0).then(|| crate::replay::state_hash(&manager.engine))
-        });
-        if let Some(ref player) = replay_player
-            && !player.is_finished()
-        {
-            let frame_idx = player.current_frame();
-            let is_terminal_frame = frame_idx + 1 >= player.total_frames();
-            if !is_terminal_frame && let Some(expected) = player.hash_for_frame(frame_idx) {
-                let actual = crate::replay::state_hash(&manager.engine);
-                if actual != expected {
-                    tracing::error!(
-                        "Replay desync at frame {frame_idx}: expected {expected:016x}, got {actual:016x}"
-                    );
-                } else {
-                    tracing::debug!("Replay hash OK @ frame {frame_idx}: {actual:016x}");
-                }
-            }
-        }
+        let recorder_hash_this_frame =
+            runtime.begin_frame(frame_start, manager.sim_frame, &manager.engine, &assets);
 
         match handle_sherwood_campaign_map_overlay(
             &mut game,
@@ -1649,15 +1629,15 @@ pub(crate) async fn run_mission(
             &mut manager,
             assets.as_ref(),
             &threaded_input,
-            &mut rewind_buffer,
-            &mut rollback_checker,
-            &mut replay_player,
+            &mut runtime.rewind_buffer,
+            &mut runtime.rollback_checker,
+            &mut runtime.replay_player,
         );
 
         // Field-disjoint access to keep `renderer` (holding &mut *window)
         // alive through the event loop.  Skip gamepad command dispatch
         // during replay/rewind — see input_suppressed comment below.
-        if replay_player.is_none() && !rewind_active {
+        if runtime.replay_player.is_none() && !rewind_active {
             handle_gamepad_events(
                 &mut host,
                 &mut manager,
@@ -1770,7 +1750,7 @@ pub(crate) async fn run_mission(
         // shouldn't perturb a reconstructed past state).  Without
         // this the user could click HUD buttons mid-replay and steer
         // the run.
-        let input_suppressed = replay_player.is_some() || rewind_active;
+        let input_suppressed = runtime.replay_player.is_some() || rewind_active;
 
         // Zoom HUD buttons (ZoomUp / ZoomDown).  Maps to
         // `EngineStateRequest::ZoomingUp/Down` — same path the
@@ -2069,7 +2049,7 @@ pub(crate) async fn run_mission(
         // Recorded commands are injected at the tick boundary instead
         // (replay), or suppressed entirely (rewind — live input
         // shouldn't perturb a state reconstructed from the past).
-        if replay_player.is_none() && !rewind_active {
+        if runtime.replay_player.is_none() && !rewind_active {
             // Minimap accelerator key.
             // Suppressed while the console or pause menu has focus so the
             // toggle can't fire underneath modal UI.
@@ -2510,7 +2490,7 @@ pub(crate) async fn run_mission(
                 shift_held,
                 ctrl_held,
             );
-        } // if replay_player.is_none()
+        } // if runtime.replay_player.is_none()
 
         // ── Cross-mission QuickLoad confirmation modal ──
         // Quick-load prompts the
@@ -2627,7 +2607,7 @@ pub(crate) async fn run_mission(
                 profiles,
                 pending_thumbnail.clone(),
             );
-            if save_load_processed && let Some(ref mut checker) = rollback_checker {
+            if save_load_processed && let Some(ref mut checker) = runtime.rollback_checker {
                 checker.reset();
             }
             if let Some(sync) = callbacks.post_load_sync.take() {
@@ -2650,7 +2630,7 @@ pub(crate) async fn run_mission(
             profiles,
             pending_thumbnail,
         );
-        if save_load_processed && let Some(ref mut checker) = rollback_checker {
+        if save_load_processed && let Some(ref mut checker) = runtime.rollback_checker {
             checker.reset();
         }
 
@@ -2737,30 +2717,32 @@ pub(crate) async fn run_mission(
                 &mut host,
                 &mut manager,
                 assets.as_ref(),
-                &mut rewind_buffer,
-                &mut peer_hashes,
-                &mut recent_timeline_history,
+                &mut runtime.rewind_buffer,
+                &mut runtime.peer_hashes,
+                &mut runtime.recent_timeline_history,
             );
             if pre_tick_net_drain.rewrote_sim_state
-                && let Some(ref mut checker) = rollback_checker
+                && let Some(ref mut checker) = runtime.rollback_checker
             {
                 checker.reset();
             }
             if let Some(rollback) = pre_tick_net_drain.rollback.clone() {
-                last_mp_rollback = Some(rollback);
+                runtime.last_mp_rollback = Some(rollback);
             }
             if let Some((_frame, start_epoch_ms)) = pre_tick_net_drain.begin_sim {
-                mp_waiting_for_begin_sim = false;
-                mp_start_gate = Some(start_epoch_ms);
+                runtime.mp_waiting_for_begin_sim = false;
+                runtime.mp_start_gate = Some(start_epoch_ms);
                 manual_pause = true;
             }
-            if mp_waiting_for_initial_snapshot && pre_tick_net_drain.received_initial_snapshot {
-                mp_waiting_for_initial_snapshot = false;
+            if runtime.mp_waiting_for_initial_snapshot
+                && pre_tick_net_drain.received_initial_snapshot
+            {
+                runtime.mp_waiting_for_initial_snapshot = false;
                 tracing::info!(
                     "multiplayer: initial snapshot received; client ready for start barrier"
                 );
             }
-            if mp_waiting_for_initial_snapshot || mp_waiting_for_begin_sim {
+            if runtime.mp_waiting_for_initial_snapshot || runtime.mp_waiting_for_begin_sim {
                 manual_pause = true;
             }
             if host.net.is_some()
@@ -2769,7 +2751,7 @@ pub(crate) async fn run_mission(
                     pre_tick_net_drain.latest_host_clock_sample
             {
                 accept_host_frame_schedule(
-                    &mut mp_host_frame_schedule,
+                    &mut runtime.mp_host_frame_schedule,
                     clock_frame,
                     ms_until_next_frame,
                     manager.sim_frame,
@@ -2777,21 +2759,23 @@ pub(crate) async fn run_mission(
             }
             if host.net.is_some()
                 && host.local_seat != engine_player_command::PlayerId::HOST
-                && !mp_waiting_for_initial_snapshot
-                && !mp_waiting_for_begin_sim
-                && mp_start_gate.is_none()
+                && !runtime.mp_waiting_for_initial_snapshot
+                && !runtime.mp_waiting_for_begin_sim
+                && runtime.mp_start_gate.is_none()
             {
-                if let Some(deadline_ms) =
-                    host_scheduled_frame_deadline_ms(mp_host_frame_schedule, manager.sim_frame)
-                {
+                if let Some(deadline_ms) = host_scheduled_frame_deadline_ms(
+                    runtime.mp_host_frame_schedule,
+                    manager.sim_frame,
+                ) {
                     let now_ms = crate::window::process_uptime_ms();
                     let until_frame_ms = deadline_ms - i64::from(now_ms);
                     if until_frame_ms > 0 {
                         mp_clock_pause = true;
-                        if now_ms.saturating_sub(last_mp_clock_ahead_log_ms) >= 1000 {
-                            last_mp_clock_ahead_log_ms = now_ms;
+                        if now_ms.saturating_sub(runtime.last_mp_clock_ahead_log_ms) >= 1000 {
+                            runtime.last_mp_clock_ahead_log_ms = now_ms;
                             tracing::info!(
-                                scheduled_frame = mp_host_frame_schedule.map(|(frame, _)| frame),
+                                scheduled_frame =
+                                    runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
                                 local_frame = manager.sim_frame,
                                 until_frame_ms,
                                 "multiplayer: local frame is ahead of host schedule; holding sim"
@@ -2803,7 +2787,9 @@ pub(crate) async fn run_mission(
                 }
             }
             if pre_tick_net_drain.rewrote_sim_state && host.net.is_some() {
-                recent_timeline_history.checkpoint(manager.sim_frame, &manager.engine);
+                runtime
+                    .recent_timeline_history
+                    .checkpoint(manager.sim_frame, &manager.engine);
             }
             if !pre_tick_net_drain.inputs.is_empty() {
                 manager.engine.apply_commands(
@@ -2828,14 +2814,14 @@ pub(crate) async fn run_mission(
                 .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL)
         {
             if host.local_seat == engine_player_command::PlayerId::HOST
-                && last_mp_state_hash_frame != Some(manager.sim_frame)
+                && runtime.last_mp_state_hash_frame != Some(manager.sim_frame)
             {
-                last_mp_state_hash_frame = Some(manager.sim_frame);
+                runtime.last_mp_state_hash_frame = Some(manager.sim_frame);
                 let mp_hash_start = web_time::Instant::now();
                 let live_hash_start = web_time::Instant::now();
                 let local_hash = crate::replay::state_hash(&manager.engine);
                 let live_hash_us = live_hash_start.elapsed().as_micros();
-                pending_mp_state_hash = Some((manager.sim_frame, local_hash));
+                runtime.pending_mp_state_hash = Some((manager.sim_frame, local_hash));
 
                 let total_us = mp_hash_start.elapsed().as_micros();
                 tracing::debug!(
@@ -2844,23 +2830,31 @@ pub(crate) async fn run_mission(
                     live_hash_us,
                     "multiplayer hash frame timing"
                 );
-            } else if let Some(&host_hash) = peer_hashes.get(&manager.sim_frame) {
+            } else if let Some(&host_hash) = runtime.peer_hashes.get(&manager.sim_frame) {
                 let local_hash = crate::replay::state_hash(&manager.engine);
                 if local_hash != host_hash {
-                    let last_rollback_path = last_mp_rollback.as_ref().map_or("none", |r| r.path);
-                    let last_rollback_earliest =
-                        last_mp_rollback.as_ref().map_or(0, |r| r.earliest_frame);
-                    let last_rollback_target =
-                        last_mp_rollback.as_ref().map_or(0, |r| r.target_frame);
-                    let last_rollback_replayed =
-                        last_mp_rollback.as_ref().map_or(0, |r| r.replayed_frames);
+                    let last_rollback_path =
+                        runtime.last_mp_rollback.as_ref().map_or("none", |r| r.path);
+                    let last_rollback_earliest = runtime
+                        .last_mp_rollback
+                        .as_ref()
+                        .map_or(0, |r| r.earliest_frame);
+                    let last_rollback_target = runtime
+                        .last_mp_rollback
+                        .as_ref()
+                        .map_or(0, |r| r.target_frame);
+                    let last_rollback_replayed = runtime
+                        .last_mp_rollback
+                        .as_ref()
+                        .map_or(0, |r| r.replayed_frames);
                     let last_rollback_total_us =
-                        last_mp_rollback.as_ref().map_or(0, |r| r.total_us);
+                        runtime.last_mp_rollback.as_ref().map_or(0, |r| r.total_us);
                     tracing::error!(
                         frame = manager.sim_frame,
                         local = format!("{local_hash:016x}"),
                         host = format!("{host_hash:016x}"),
-                        host_schedule_frame = mp_host_frame_schedule.map(|(frame, _)| frame),
+                        host_schedule_frame =
+                            runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
                         pending_input_frames = manager.pending_inputs.len(),
                         last_rollback_path,
                         last_rollback_earliest,
@@ -2876,7 +2870,7 @@ pub(crate) async fn run_mission(
             // Stale entries: drop everything strictly older than
             // sim_frame so the map doesn't grow unbounded if the
             // host sends ahead of our verification.
-            peer_hashes.retain(|&f, _| f > manager.sim_frame);
+            runtime.peer_hashes.retain(|&f, _| f > manager.sim_frame);
         }
 
         let mut paused = pause_menu.is_some() || manual_pause || mp_clock_pause || modal_pause;
@@ -2884,18 +2878,18 @@ pub(crate) async fn run_mission(
         let mut replay_modal_dismissals: std::collections::VecDeque<
             engine_player_command::PlayerCommand,
         > = std::collections::VecDeque::new();
-        if let Some(ref mut player) = replay_player
+        if let Some(ref mut player) = runtime.replay_player
             && !paused
         {
             if player.is_finished() {
-                if !replay_finished_logged {
+                if !runtime.replay_finished_logged {
                     tracing::info!("Replay finished after {} frames", player.current_frame());
-                    replay_finished_logged = true;
+                    runtime.replay_finished_logged = true;
                 }
                 manual_pause = true;
                 paused = true;
             } else {
-                replay_finished_logged = false;
+                runtime.replay_finished_logged = false;
                 // Hash check for this frame was already done at the top of
                 // the loop (see the record/check block after begin_frame),
                 // so the check and the recorder write share the same
@@ -2921,7 +2915,7 @@ pub(crate) async fn run_mission(
                 // per-frame command log captures them — otherwise a later
                 // step-back during replay has nothing to walk forward from
                 // its snapshots.  Recording is still a no-op (the recorder
-                // gate below short-circuits when `replay_recorder` is None,
+                // gate below short-circuits when `runtime.replay_recorder` is None,
                 // which it always is in replay mode).
                 frame_cmds = FrameCommands::new();
                 frame_cmds.commands = sim_cmds;
@@ -2941,15 +2935,15 @@ pub(crate) async fn run_mission(
         // buffered slot repeatedly; skipped here for the same reason
         // the tick below is.  Replay playback (`--replay`) has its
         // own command stream and stays unaffected (guarded below by
-        // the separate `replay_player.is_none()` check).
+        // the separate `runtime.replay_player.is_none()` check).
         let mut consumed_buffered = false;
         if !rewind_active
             && !paused
-            && replay_player.is_none()
-            && manager.sim_frame < rewind_buffer.next_record_frame()
+            && runtime.replay_player.is_none()
+            && manager.sim_frame < runtime.rewind_buffer.next_record_frame()
         {
             if frame_cmds.commands.is_empty() {
-                if let Some(recorded) = rewind_buffer.commands_for(manager.sim_frame) {
+                if let Some(recorded) = runtime.rewind_buffer.commands_for(manager.sim_frame) {
                     let recorded: Vec<PlayerInput> = recorded.to_vec();
                     manager.engine.apply_commands(
                         &mut host.engine_display,
@@ -2966,7 +2960,7 @@ pub(crate) async fn run_mission(
                     "Auto-replay interrupted by live input; truncating buffer at {}",
                     manager.sim_frame
                 );
-                rewind_buffer.truncate_future(manager.sim_frame);
+                runtime.rewind_buffer.truncate_future(manager.sim_frame);
             }
         }
 
@@ -2975,7 +2969,7 @@ pub(crate) async fn run_mission(
         // Keep it in the recorded pre-tick command stream; doing this
         // from the render cursor pass applies it after rollback/rewind
         // have committed the frame and leaves no command to replay.
-        if replay_player.is_none()
+        if runtime.replay_player.is_none()
             && !rewind_active
             && !paused
             && manager.engine.locker_active()
@@ -3004,7 +2998,7 @@ pub(crate) async fn run_mission(
         // it from `host_mouse::update_mouse`: render happens after
         // rollback has committed the frame, and live-only mutation
         // there desynchronizes replay/rollback.
-        if replay_player.is_none()
+        if runtime.replay_player.is_none()
             && !rewind_active
             && !paused
             && let Some(mouse_map) = host.viewport.screen_to_map(threaded_input.position())
@@ -3032,17 +3026,11 @@ pub(crate) async fn run_mission(
         // pass). The hash itself was computed at the top of the
         // frame into `recorder_hash_this_frame` — writing it here
         // keeps the gating in one place.
-        if let Some(ref mut recorder) = replay_recorder
-            && !rewind_active
-            && !consumed_buffered
-        {
-            if let Some(hash) = recorder_hash_this_frame {
-                recorder.write_hash(recorder.frame_number(), hash);
-            }
-            for cmd in &frame_cmds.commands {
-                recorder.push(cmd.clone());
-            }
-        }
+        runtime.record_commands(
+            recorder_hash_this_frame,
+            &frame_cmds.commands,
+            !rewind_active && !consumed_buffered,
+        );
 
         // ── Engine tick ──
         // The pause menu freezes the simulation by skipping the
@@ -3050,6 +3038,7 @@ pub(crate) async fn run_mission(
         // the tick: the engine state was just replaced with a
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
+        runtime.begin_simulation();
         let tick_exit_code = if rewind_active {
             None
         } else {
@@ -3066,6 +3055,7 @@ pub(crate) async fn run_mission(
             host.engine_display = display;
             result
         };
+        runtime.begin_bookkeeping();
 
         // ── Drain pending script-RPC requests ──
         // External tools (HTTP /native, /command, /console, /state, …)
@@ -3085,11 +3075,11 @@ pub(crate) async fn run_mission(
         // rewind buffer also skips commits while consuming its own
         // log — the slot is already populated and would duplicate.
         if !paused && !rewind_active {
-            if let Some(ref mut checker) = rollback_checker {
+            if let Some(ref mut checker) = runtime.rollback_checker {
                 checker.end_frame(&mut host, frame_cmds.commands.clone(), &manager.engine);
             }
             if !consumed_buffered {
-                rewind_buffer.end_frame(frame_cmds.commands.clone());
+                runtime.rewind_buffer.end_frame(frame_cmds.commands.clone());
             }
             manager.sim_frame += 1;
             if let Some(net) = host.net.as_ref()
@@ -3112,9 +3102,9 @@ pub(crate) async fn run_mission(
             assets.as_ref(),
             &mut dev,
             &mut game,
-            &mut rewind_buffer,
-            &mut rollback_checker,
-            &mut replay_player,
+            &mut runtime.rewind_buffer,
+            &mut runtime.rollback_checker,
+            &mut runtime.replay_player,
             &mut manual_pause,
             &mut active_modal,
         );
@@ -3123,7 +3113,7 @@ pub(crate) async fn run_mission(
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        crate::http_server::set_replay_status(replay_player.as_ref().map(|p| {
+        crate::http_server::set_replay_status(runtime.replay_player.as_ref().map(|p| {
             crate::http_server::ReplayStatus {
                 frame: p.current_frame(),
                 total: p.total_frames(),
@@ -3145,7 +3135,7 @@ pub(crate) async fn run_mission(
         // the rewound frame so playback resumes from there.
         if step_forward_pressed && !modal_state_pending(&host) {
             let mut step_frame_cmds: Vec<PlayerInput> = Vec::new();
-            if let Some(ref mut player) = replay_player
+            if let Some(ref mut player) = runtime.replay_player
                 && !player.is_finished()
             {
                 let replay_cmds = player.next_frame();
@@ -3176,38 +3166,45 @@ pub(crate) async fn run_mission(
                 false,
                 false,
             );
+            crate::sim_timeline::run_post_initialize_stage(
+                &mut host,
+                &mut display,
+                &assets,
+                &mut manager.engine,
+                &mut dev,
+            );
             host.engine_display = display;
-            rewind_buffer.end_frame(step_frame_cmds);
+            runtime.rewind_buffer.end_frame(step_frame_cmds);
             manager.sim_frame += 1;
             // Stepping bypasses the checker's begin_frame/end_frame
             // pairing, so its ring buffer is now stale relative to the
             // advanced engine.  Clear it — the checker resumes
             // populating on the next normal frame.
-            if let Some(ref mut checker) = rollback_checker {
+            if let Some(ref mut checker) = runtime.rollback_checker {
                 checker.reset();
             }
         } else if step_back_pressed && !modal_state_pending(&host) {
             if let Some(target) = manager.sim_frame.checked_sub(1)
-                && let Some(oldest) = rewind_buffer.oldest_reachable_frame()
+                && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
                 && target >= oldest
             {
-                rewind_buffer.begin_session();
-                let rewound = rewind_buffer.rewind_to(&assets, target);
-                rewind_buffer.end_session();
+                runtime.rewind_buffer.begin_session();
+                let rewound = runtime.rewind_buffer.rewind_to(&assets, target);
+                runtime.rewind_buffer.end_session();
                 if let Some(new_engine) = rewound {
                     manager.engine = new_engine;
                     manager.sim_frame = target;
                     // Keep the replay cursor in sync with the rewound
                     // sim frame so resuming playback re-applies the
                     // right commands.
-                    if let Some(ref mut player) = replay_player {
+                    if let Some(ref mut player) = runtime.replay_player {
                         player.seek(target);
                     }
                     // The rollback checker's ring now references a
                     // timeline the live engine is no longer on; clear
                     // it so the next normal frame starts a fresh
                     // window.
-                    if let Some(ref mut checker) = rollback_checker {
+                    if let Some(ref mut checker) = runtime.rollback_checker {
                         checker.reset();
                     }
                 } else {
@@ -3300,7 +3297,7 @@ pub(crate) async fn run_mission(
                 &game,
                 &level_descriptors,
                 &mut menu_resources,
-                &mut replay_recorder,
+                &mut runtime.replay_recorder,
                 &mut replay_modal_dismissals,
                 true,
             )
@@ -3328,7 +3325,7 @@ pub(crate) async fn run_mission(
                     &mut audio_backend,
                     &sample_loader,
                     &mut menu_resources,
-                    &mut replay_recorder,
+                    &mut runtime.replay_recorder,
                 );
                 debug_assert_eq!(outcome, ActiveModalOutcome::None);
                 modal_rendered_this_frame = true;
@@ -3347,7 +3344,7 @@ pub(crate) async fn run_mission(
                 &mut text_res,
                 &level_descriptors,
                 &mut menu_resources,
-                &mut replay_recorder,
+                &mut runtime.replay_recorder,
                 &mut replay_modal_dismissals,
                 manager.engine.frame_counter(),
             )
@@ -3363,7 +3360,7 @@ pub(crate) async fn run_mission(
                 &mut audio_backend,
                 &sample_loader,
                 &mut menu_resources,
-                &mut replay_recorder,
+                &mut runtime.replay_recorder,
                 &mut replay_modal_dismissals,
             )
             .await;
@@ -3403,7 +3400,7 @@ pub(crate) async fn run_mission(
                     &mut audio_backend,
                     &sample_loader,
                     &mut menu_resources,
-                    &mut replay_recorder,
+                    &mut runtime.replay_recorder,
                 );
                 debug_assert_eq!(outcome, ActiveModalOutcome::None);
                 modal_rendered_this_frame = true;
@@ -3420,7 +3417,7 @@ pub(crate) async fn run_mission(
                 &mut text_res,
                 &level_descriptors,
                 &menu_resources,
-                &mut replay_recorder,
+                &mut runtime.replay_recorder,
                 &mut replay_modal_dismissals,
             )
             .await;
@@ -3447,7 +3444,7 @@ pub(crate) async fn run_mission(
                     &mut audio_backend,
                     &sample_loader,
                     &mut menu_resources,
-                    &mut replay_recorder,
+                    &mut runtime.replay_recorder,
                 );
                 debug_assert_eq!(outcome, ActiveModalOutcome::None);
                 modal_rendered_this_frame = true;
@@ -3513,7 +3510,7 @@ pub(crate) async fn run_mission(
                     &mut audio_backend,
                     &sample_loader,
                     &mut menu_resources,
-                    &mut replay_recorder,
+                    &mut runtime.replay_recorder,
                 );
                 modal_rendered_this_frame = true;
                 if outcome == ActiveModalOutcome::QuitMissionRequested {
@@ -3647,7 +3644,7 @@ pub(crate) async fn run_mission(
                         }
                     }
                 };
-                if let Some(recorder) = replay_recorder.as_mut() {
+                if let Some(recorder) = runtime.replay_recorder.as_mut() {
                     recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: mission_state_kind,
                         result: mission_state_result,
@@ -3813,7 +3810,7 @@ pub(crate) async fn run_mission(
                         }
                     }
                 };
-                if let Some(recorder) = replay_recorder.as_mut() {
+                if let Some(recorder) = runtime.replay_recorder.as_mut() {
                     recorder.push(engine_player_command::PlayerCommand::ModalDismiss {
                         kind: debriefing_kind,
                         result: final_debriefing_result(&post_load_outcome),
@@ -3856,7 +3853,7 @@ pub(crate) async fn run_mission(
                         // `handle_quit` writes the continue-save and
                         // the outer session returns to the main
                         // menu.
-                        if let Some(ref mut recorder) = replay_recorder
+                        if let Some(ref mut recorder) = runtime.replay_recorder
                             && !rewind_active
                             && !consumed_buffered
                         {
@@ -3878,12 +3875,10 @@ pub(crate) async fn run_mission(
         // including final mission-state/debriefing popups, can append
         // `ModalDismiss` entries to the same frame as the engine tick
         // that queued them.
-        if let Some(ref mut recorder) = replay_recorder
-            && !rewind_active
-            && !consumed_buffered
-        {
-            recorder.end_frame();
-        }
+        runtime.finish_recording(
+            std::iter::empty::<PlayerInput>(),
+            !rewind_active && !consumed_buffered,
+        );
         // Warn if any recorded dismissals went unused — this should not
         // happen for a clean replay; if it does, the replay commands
         // have drifted out of sync with the engine's modal output.
@@ -3921,6 +3916,8 @@ pub(crate) async fn run_mission(
                 &mut sound_rng,
             );
         }
+
+        runtime.begin_presentation();
 
         // ── Render dispatch ──
         // The display-state machine (display_op transitions, scrolling
@@ -4061,12 +4058,39 @@ pub(crate) async fn run_mission(
             }
         }
 
+        // Original RHgame.cpp ordering is Refresh (including Draw/Flip),
+        // then RHSound::Hourglass, then the one-shot engine
+        // PostInitialize call.  Rust's sound/render consumers are split in
+        // the opposite host order above, so dispatch only after both have
+        // completed.  Script mutations and emitted sound/UI effects first
+        // become observable on the next frame, matching the original.
+        let mut display = std::mem::take(&mut host.engine_display);
+        let post_initialized = crate::sim_timeline::run_post_initialize_stage(
+            &mut host,
+            &mut display,
+            &assets,
+            &mut manager.engine,
+            &mut dev,
+        );
+        host.engine_display = display;
+        if post_initialized
+            && let Some(net) = host.net.as_ref()
+            && host.local_seat == engine_player_command::PlayerId::HOST
+        {
+            // The initial authoritative snapshot is published once before
+            // presentation bookkeeping. Replace it with the completed
+            // post-refresh state so joiners start from the same frame-one
+            // boundary as live and rollback replay.
+            net.set_initial_snapshot(manager.sim_frame, &manager.engine);
+        }
+
         // ── Frame timing (25 fps) ──
         // `--fast-forward` CLI flag skips the pacing sleep entirely so
         // the loop runs at full host speed (tests / profiling).  The
         // in-game fast-forward engine flag uses a 1 ms floor instead so
         // other host timers don't starve.
-        let elapsed = crate::window::process_uptime_ms() - frame_start;
+        let frame_end_ms = crate::window::process_uptime_ms();
+        let elapsed = frame_end_ms.saturating_sub(frame_start);
         let target = if args.fast_forward || args.headless {
             0
         } else if manager.engine.is_fast_forward() {
@@ -4078,32 +4102,50 @@ pub(crate) async fn run_mission(
         } else {
             engine_api::FRAME_TIME_MS
         };
-        let mut remaining_sleep_ms = target.saturating_sub(elapsed);
-        if host.net.is_some()
+        let normal_sleep_ms = target.saturating_sub(elapsed);
+        let host_deadline_ms = if host.net.is_some()
             && host.local_seat != engine_player_command::PlayerId::HOST
             && !args.fast_forward
             && !args.headless
-            && let Some(desired_deadline_ms) =
-                host_scheduled_frame_deadline_ms(mp_host_frame_schedule, manager.sim_frame)
         {
-            let now_ms = crate::window::process_uptime_ms();
-            let adjusted_sleep_ms = (desired_deadline_ms - i64::from(now_ms)).max(0) as u32;
-            let correction_ms = i64::from(adjusted_sleep_ms) - i64::from(remaining_sleep_ms);
-            if correction_ms != 0 && now_ms.saturating_sub(last_mp_sleep_correction_log_ms) >= 1000
+            host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, manager.sim_frame)
+        } else {
+            None
+        };
+        let outcome = runtime.plan_frame_outcome(
+            frame_end_ms,
+            FramePacing {
+                fast_forward_requested: args.fast_forward,
+                headless: args.headless,
+                engine_fast_forward: manager.engine.is_fast_forward(),
+                slow_motion: host.slow_motion,
+                host_deadline_ms,
+            },
+            None,
+        );
+        let FrameOutcome::Continue {
+            sleep_ms: remaining_sleep_ms,
+        } = outcome
+        else {
+            unreachable!("native frame pacing cannot request mission exit")
+        };
+        if host_deadline_ms.is_some() {
+            let correction_ms = i64::from(remaining_sleep_ms) - i64::from(normal_sleep_ms);
+            if correction_ms != 0
+                && frame_end_ms.saturating_sub(runtime.last_mp_sleep_correction_log_ms) >= 1000
             {
-                last_mp_sleep_correction_log_ms = now_ms;
+                runtime.last_mp_sleep_correction_log_ms = frame_end_ms;
                 tracing::info!(
-                    scheduled_frame = mp_host_frame_schedule.map(|(frame, _)| frame),
+                    scheduled_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
                     local_frame = manager.sim_frame,
-                    normal_sleep_ms = remaining_sleep_ms,
-                    adjusted_sleep_ms,
+                    normal_sleep_ms,
+                    adjusted_sleep_ms = remaining_sleep_ms,
                     correction_ms,
                     "multiplayer: adjusted frame sleep to host frame schedule"
                 );
             }
-            remaining_sleep_ms = adjusted_sleep_ms;
         }
-        if let Some((hash_frame, hash)) = pending_mp_state_hash
+        if let Some((hash_frame, hash)) = runtime.pending_mp_state_hash
             && let Some(net) = host.net.as_ref()
             && host.local_seat == engine_player_command::PlayerId::HOST
         {

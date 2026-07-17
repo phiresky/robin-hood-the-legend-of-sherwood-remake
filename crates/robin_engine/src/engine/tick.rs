@@ -313,6 +313,44 @@ impl EngineInner {
         fx
     }
 
+    /// Run the one-shot mission-script `PostInitialize` stage.
+    ///
+    /// The original `RHGame::GameLoop` calls this after the first
+    /// `Refresh(true, true)` and `RHSound::Hourglass`, not from inside
+    /// `RHEngine::PerformHourglass`.  The host therefore invokes this
+    /// explicit stage after its first refresh/sound boundary.  Rollback
+    /// replay invokes the same stage after replaying frame zero so the
+    /// resulting pre-frame-one simulation state remains deterministic.
+    pub fn perform_post_initialize(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) -> Option<super::SideEffects> {
+        let needs_post_initialize = self
+            .mission_script
+            .as_ref()
+            .is_some_and(|script| !script.post_initialized);
+        if !needs_post_initialize {
+            return None;
+        }
+
+        // PostInitialize can call randomising natives.  It used to run
+        // under perform_hourglass's RNG installation, so preserve that
+        // deterministic stream while moving only the scheduling boundary.
+        #[allow(clippy::disallowed_methods)]
+        let placeholder = fastrand::Rng::with_seed(0);
+        crate::sim_rng::install(std::mem::replace(&mut self.rng, placeholder));
+
+        self.run_post_initialize_if_needed(assets);
+        self.drain_pending_immediate_actions_sync(display, assets);
+
+        self.rng = crate::sim_rng::uninstall();
+
+        let mut fx = std::mem::take(&mut self.pending_side_effects);
+        fx.code = GameCode::LevelInProgress;
+        Some(fx)
+    }
+
     /// Whether any PC is currently guarded.
     pub fn is_pc_guarded(&self) -> bool {
         for &pc_id in &self.pc_ids {
@@ -724,8 +762,15 @@ impl EngineInner {
         // respective consumers (UI layer, tests, etc.) to observe.
         // We only consume the ones that actually affect engine state.
         {
-            let messages = self.messenger.drain();
-            for msg in messages {
+            // `RHMessenger::ForwardMessage` is synchronous and recursive:
+            // a message emitted while handling another message completes
+            // before the outer call resumes.  Keep host/UI-only messages for
+            // their downstream consumer, but prepend newly emitted messages
+            // to the remaining engine work so their observable state changes
+            // happen depth-first in this frame.
+            let mut messages: std::collections::VecDeque<_> = self.messenger.drain().into();
+            let mut downstream = std::collections::VecDeque::new();
+            while let Some(msg) = messages.pop_front() {
                 match msg.msg_type {
                     MessageType::Simple(SimpleMessage::LockAlt) => {
                         self.seats[0].is_lock_alt = true;
@@ -1079,8 +1124,17 @@ impl EngineInner {
                     // Other messages are consumed by downstream systems
                     // (UI layer, mission flow). Re-enqueue so those
                     // consumers can still observe them.
-                    _ => self.messenger.send(msg),
+                    _ => downstream.push_back(msg),
                 }
+
+                // Preserve the send order of recursive calls while placing
+                // them ahead of pre-existing sibling messages.
+                for nested in self.messenger.drain().into_iter().rev() {
+                    messages.push_front(nested);
+                }
+            }
+            for msg in downstream {
+                self.messenger.send(msg);
             }
         }
 
@@ -5754,18 +5808,10 @@ impl EngineInner {
         // sequence actually completed.
         self.drain_pending_self_stimuli(assets);
 
-        // ── One-shot mission-script `PostInitialize` ──────────────
-        // Fires once on the first tick after level load.  Lives
-        // sim-side, after the rest of the tick's logic, so rollback
-        // replay runs it deterministically and any side effects
-        // PostInit pushes land in this frame's `SideEffects`
-        // bundle rather than leaking a frame late.
-        self.run_post_initialize_if_needed(assets);
-
         // ── End-of-tick immediate-action drain ──────────────────────
         // Catch any `register_element_to_go` calls that happened
         // in post-action passes (condolation fan-out, self-stimulus
-        // drains, PostInitialize, etc.) without piggybacking on the
+        // drains, etc.) without piggybacking on the
         // hourglass action-loop drain.  Close the immediate-side-
         // effect window before returning control to the host
         // renderer so post-tick state reads see the immediate side

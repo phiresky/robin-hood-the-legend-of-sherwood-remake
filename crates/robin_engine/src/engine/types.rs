@@ -968,9 +968,9 @@ pub struct MissionScript {
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
 
-    /// Has the script's `PostInitialize` entry point run yet?  The first
-    /// tick after level-load flips this and fires `PostInitialize`.
-    /// Sim-side so `perform_hourglass` can handle the one-shot call
+    /// Has the script's `PostInitialize` entry point run yet?  The host's
+    /// first post-refresh stage flips this after rendering and sound.
+    /// Serialized so rollback replay reproduces the same frame boundary
     /// without a host-owned companion bool.
     pub post_initialized: bool,
 }

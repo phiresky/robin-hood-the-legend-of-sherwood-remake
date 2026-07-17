@@ -14,6 +14,8 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
+use crate::binary_reader::{self, Reader};
+
 // Sim-side data types live in `robin_engine::scb` so the engine can
 // consume parsed scripts without depending on robin_assets. The parser
 // in this module produces the engine type directly.
@@ -25,10 +27,10 @@ pub use robin_engine::vm::Quad;
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
+    Reader(binary_reader::Error),
     BadMagic { found: [u8; 8] },
     BadVersion { found: f32, expected: f32 },
-    Truncated { wanted: usize, available: usize },
-    BadUtf8,
+    BadUtf8 { field: String, offset: usize },
     UnknownTypeTag(u8),
     TrailingBytes { left: usize },
 }
@@ -37,16 +39,16 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io(e) => write!(f, "I/O error: {e}"),
+            Error::Reader(e) => write!(f, "malformed .scb: {e}"),
             Error::BadMagic { found } => {
                 write!(f, "not a .scb file (magic = {:?})", found)
             }
             Error::BadVersion { found, expected } => {
                 write!(f, ".scb version {found} != expected {expected}")
             }
-            Error::Truncated { wanted, available } => {
-                write!(f, "truncated: wanted {wanted} bytes, {available} left")
+            Error::BadUtf8 { field, offset } => {
+                write!(f, "invalid UTF-8 in {field} at byte {offset}")
             }
-            Error::BadUtf8 => write!(f, "invalid UTF-8 in string field"),
             Error::UnknownTypeTag(b) => write!(f, "unknown type tag 0x{b:02x}"),
             Error::TrailingBytes { left } => {
                 write!(f, "{left} bytes left unparsed after last class")
@@ -63,18 +65,24 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<binary_reader::Error> for Error {
+    fn from(error: binary_reader::Error) -> Self {
+        Self::Reader(error)
+    }
+}
+
 /// Parses a `.scb` file: header, all classes, each class's members,
 /// functions, and quad stream. Opcode semantics are not decoded — quads
 /// are kept as `{u8 op, [u8;8] operands}`.
 pub fn parse_bytes(bytes: &[u8]) -> Result<ScbFile, Error> {
-    let mut r = Cursor::new(bytes);
+    let mut r = Reader::new(bytes);
 
-    let magic = r.take_array::<8>()?;
+    let magic = r.take_array::<8>("SCB magic")?;
     if &magic != SCB_MAGIC {
         return Err(Error::BadMagic { found: magic });
     }
 
-    let version = r.take_f32_le()?;
+    let version = r.f32("SCB version")?;
     if version != SCB_VERSION {
         return Err(Error::BadVersion {
             found: version,
@@ -82,16 +90,19 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<ScbFile, Error> {
         });
     }
 
-    let num_classes = r.take_u32_le()?;
-    let mut classes = Vec::with_capacity(num_classes as usize);
-    for _ in 0..num_classes {
-        classes.push(parse_class(&mut r)?);
+    // Original provenance: `original-code/virtualmachine/SCSerialize.cpp`,
+    // `SCSerialize::Serialize`, writes an LE ULONG class count followed by
+    // exactly that many `ClassInformations` records.
+    let num_classes = r.count_u32("SCB class count", 24)?;
+    let mut classes = Vec::with_capacity(num_classes);
+    for class_index in 0..num_classes {
+        classes.push(parse_class(&mut r, class_index)?);
     }
 
     // Every byte in the file should now be accounted for. Anything left
     // over means either my understanding of the format is off or the
     // file has an unknown trailing section.
-    let left = r.bytes.len() - r.pos;
+    let left = r.remaining();
     if left != 0 {
         return Err(Error::TrailingBytes { left });
     }
@@ -99,33 +110,43 @@ pub fn parse_bytes(bytes: &[u8]) -> Result<ScbFile, Error> {
     Ok(ScbFile { version, classes })
 }
 
-fn parse_class(r: &mut Cursor<'_>) -> Result<ClassEntry, Error> {
-    let source_file = r.take_len_prefixed_string()?;
-    let class_name = r.take_len_prefixed_string()?;
+fn parse_class(r: &mut Reader<'_>, class_index: usize) -> Result<ClassEntry, Error> {
+    let source_file = take_len_prefixed_string(r, format!("class {class_index} source filename"))?;
+    let class_name = take_len_prefixed_string(r, format!("class {class_index} name"))?;
 
     // Member variables: i32 count, i32 total heap size, then N records.
-    let mv_count = r.take_i32_le()?;
-    let size_of_member_variables = r.take_i32_le()?;
-    let mut member_variables = Vec::with_capacity(mv_count.max(0) as usize);
-    for _ in 0..mv_count.max(0) {
-        member_variables.push(parse_member_variable(r)?);
+    // Original provenance: `ClassInformations::Serialize` in the same file
+    // reads both SLONGs before iterating `slMaxCount` member records.
+    let mv_count_offset = r.position();
+    let mv_count = r.count_i32(format!("class {class_index} member count"), 0)?;
+    let size_of_member_variables = r.i32(format!("class {class_index} member storage size"))?;
+    r.validate_count(
+        mv_count,
+        10,
+        format!("class {class_index} member count"),
+        mv_count_offset,
+    )?;
+    let mut member_variables = Vec::with_capacity(mv_count);
+    for member_index in 0..mv_count {
+        member_variables.push(parse_member_variable(r, class_index, member_index)?);
     }
 
     // Functions: i32 count, then N records.
-    let fn_count = r.take_i32_le()?;
-    let mut functions = Vec::with_capacity(fn_count.max(0) as usize);
-    for _ in 0..fn_count.max(0) {
-        functions.push(parse_function(r)?);
+    let fn_count = r.count_i32(format!("class {class_index} function count"), 28)?;
+    let mut functions = Vec::with_capacity(fn_count);
+    for function_index in 0..fn_count {
+        functions.push(parse_function(r, class_index, function_index)?);
     }
 
     // Quads: i32 count, then 9 bytes per quad. Operands are opcode-
     // dependent; we keep the raw bytes. On disk the layout is little-
     // endian; BE hosts would need per-opcode byte-swapping.
-    let quad_count = r.take_i32_le()?;
-    let mut quads = Vec::with_capacity(quad_count.max(0) as usize);
-    for _ in 0..quad_count.max(0) {
-        let operation = r.take_u8()?;
-        let operands = r.take_array::<8>()?;
+    let quad_count = r.count_i32(format!("class {class_index} quad count"), 9)?;
+    let mut quads = Vec::with_capacity(quad_count);
+    for quad_index in 0..quad_count {
+        let operation = r.u8(format!("class {class_index} quad {quad_index} opcode"))?;
+        let operands =
+            r.take_array::<8>(format!("class {class_index} quad {quad_index} operands"))?;
         quads.push(Quad {
             operation,
             operands,
@@ -142,36 +163,50 @@ fn parse_class(r: &mut Cursor<'_>) -> Result<ClassEntry, Error> {
     })
 }
 
-fn parse_type(r: &mut Cursor<'_>) -> Result<ScType, Error> {
-    let tag_byte = r.take_u8()?;
+fn parse_type(r: &mut Reader<'_>, context: &str) -> Result<ScType, Error> {
+    let tag_byte = r.u8(format!("{context} type tag"))?;
     let tag = TypeTag::from_u8(tag_byte).ok_or(Error::UnknownTypeTag(tag_byte))?;
     // Native type name is length-prefixed with a single byte (not 4).
-    let name_len = r.take_u8()? as usize;
-    let name_bytes = r.take(name_len)?;
+    let name_len = r.u8(format!("{context} native type name length"))? as usize;
+    let name_offset = r.position();
+    let name_bytes = r.take(name_len, format!("{context} native type name"))?;
     let native_type_name = std::str::from_utf8(name_bytes)
         .map(|s| s.to_owned())
-        .map_err(|_| Error::BadUtf8)?;
+        .map_err(|_| Error::BadUtf8 {
+            field: format!("{context} native type name"),
+            offset: name_offset,
+        })?;
     Ok(ScType {
         tag,
         native_type_name,
     })
 }
 
-fn parse_member_variable(r: &mut Cursor<'_>) -> Result<MemberVariable, Error> {
-    let ty = parse_type(r)?;
-    let name = r.take_len_prefixed_string()?;
-    let address = r.take_i32_le()?;
+fn parse_member_variable(
+    r: &mut Reader<'_>,
+    class_index: usize,
+    member_index: usize,
+) -> Result<MemberVariable, Error> {
+    let context = format!("class {class_index} member {member_index}");
+    let ty = parse_type(r, &context)?;
+    let name = take_len_prefixed_string(r, format!("{context} name"))?;
+    let address = r.i32(format!("{context} address"))?;
     Ok(MemberVariable { ty, name, address })
 }
 
-fn parse_function(r: &mut Cursor<'_>) -> Result<Function, Error> {
-    let name = r.take_len_prefixed_string()?;
-    let address = r.take_i32_le()?;
-    let num_parameters = r.take_i32_le()?;
-    let size_of_return_value = r.take_i32_le()?;
-    let size_of_parameters = r.take_i32_le()?;
-    let size_of_volatile = r.take_i32_le()?;
-    let size_of_temporary = r.take_i32_le()?;
+fn parse_function(
+    r: &mut Reader<'_>,
+    class_index: usize,
+    function_index: usize,
+) -> Result<Function, Error> {
+    let context = format!("class {class_index} function {function_index}");
+    let name = take_len_prefixed_string(r, format!("{context} name"))?;
+    let address = r.i32(format!("{context} address"))?;
+    let num_parameters = r.i32(format!("{context} parameter count"))?;
+    let size_of_return_value = r.i32(format!("{context} return size"))?;
+    let size_of_parameters = r.i32(format!("{context} parameter size"))?;
+    let size_of_volatile = r.i32(format!("{context} volatile size"))?;
+    let size_of_temporary = r.i32(format!("{context} temporary size"))?;
     Ok(Function {
         name,
         address,
@@ -192,63 +227,19 @@ pub fn parse_file<P: AsRef<Path>>(path: P) -> Result<ScbFile, Error> {
     parse_bytes(&bytes)
 }
 
-// ----- small LE cursor (kept local — no third-party deps) -----
-
-struct Cursor<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Cursor<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
-    }
-
-    fn take(&mut self, n: usize) -> Result<&'a [u8], Error> {
-        if self.pos + n > self.bytes.len() {
-            return Err(Error::Truncated {
-                wanted: n,
-                available: self.bytes.len() - self.pos,
-            });
-        }
-        let slice = &self.bytes[self.pos..self.pos + n];
-        self.pos += n;
-        Ok(slice)
-    }
-
-    fn take_array<const N: usize>(&mut self) -> Result<[u8; N], Error> {
-        let slice = self.take(N)?;
-        let mut arr = [0u8; N];
-        arr.copy_from_slice(slice);
-        Ok(arr)
-    }
-
-    fn take_u8(&mut self) -> Result<u8, Error> {
-        Ok(self.take_array::<1>()?[0])
-    }
-
-    fn take_u32_le(&mut self) -> Result<u32, Error> {
-        Ok(u32::from_le_bytes(self.take_array::<4>()?))
-    }
-
-    fn take_i32_le(&mut self) -> Result<i32, Error> {
-        Ok(i32::from_le_bytes(self.take_array::<4>()?))
-    }
-
-    fn take_f32_le(&mut self) -> Result<f32, Error> {
-        Ok(f32::from_le_bytes(self.take_array::<4>()?))
-    }
-
-    fn take_len_prefixed_string(&mut self) -> Result<String, Error> {
-        let len = self.take_u32_le()? as usize;
-        let bytes = self.take(len)?;
-        // Scripts were authored on Windows; strings are ASCII/Latin-1 in
-        // practice. We accept valid UTF-8 now and can revisit if any
-        // shipped .scb holds high-bit bytes.
-        std::str::from_utf8(bytes)
-            .map(|s| s.to_owned())
-            .map_err(|_| Error::BadUtf8)
-    }
+fn take_len_prefixed_string(r: &mut Reader<'_>, context: String) -> Result<String, Error> {
+    let len = r.u32(format!("{context} length"))? as usize;
+    let offset = r.position();
+    let bytes = r.take(len, context.clone())?;
+    // TODO(parity): shipped SCBs are ASCII/UTF-8 in practice. If an Original
+    // asset contains an 8-bit codepage string, identify that codepage instead
+    // of substituting replacement characters.
+    std::str::from_utf8(bytes)
+        .map(|s| s.to_owned())
+        .map_err(|_| Error::BadUtf8 {
+            field: context,
+            offset,
+        })
 }
 
 // ==================== Tests ====================
@@ -278,7 +269,56 @@ mod tests {
     fn rejects_truncated_header() {
         let bytes = b"SBSCRI";
         let err = parse_bytes(bytes).unwrap_err();
-        assert!(matches!(err, Error::Truncated { .. }));
+        assert!(matches!(err, Error::Reader(_)));
+        assert!(err.to_string().contains("SCB magic at byte 0"));
+    }
+
+    #[test]
+    fn rejects_class_count_that_cannot_fit_remaining_bytes() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(SCB_MAGIC);
+        bytes.extend_from_slice(&SCB_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        let err = parse_bytes(&bytes).unwrap_err();
+        assert!(err.to_string().contains("SCB class count"));
+        assert!(err.to_string().contains("count 4294967295"));
+    }
+
+    #[test]
+    fn rejects_negative_member_count_instead_of_treating_it_as_empty() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(SCB_MAGIC);
+        bytes.extend_from_slice(&SCB_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // source filename
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // class name
+        bytes.extend_from_slice(&(-1i32).to_le_bytes());
+        bytes.extend_from_slice(&0i32.to_le_bytes());
+        bytes.extend_from_slice(&0i32.to_le_bytes());
+        bytes.extend_from_slice(&0i32.to_le_bytes());
+
+        let err = parse_bytes(&bytes).unwrap_err();
+        assert!(err.to_string().contains("class 0 member count"));
+        assert!(err.to_string().contains("negative count -1"));
+    }
+
+    #[test]
+    fn rejects_quad_count_before_allocating_or_advancing_past_input() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(SCB_MAGIC);
+        bytes.extend_from_slice(&SCB_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // source filename
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // class name
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // member count
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // member storage
+        bytes.extend_from_slice(&0i32.to_le_bytes()); // function count
+        bytes.extend_from_slice(&i32::MAX.to_le_bytes()); // quad count
+
+        let err = parse_bytes(&bytes).unwrap_err();
+        assert!(err.to_string().contains("class 0 quad count"));
+        assert!(err.to_string().contains("only 0 remain"));
     }
 
     #[test]
