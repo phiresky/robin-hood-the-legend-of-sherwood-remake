@@ -167,6 +167,7 @@ impl MissionLuaState {
             host,
             script_state,
             robin_engine::natives::AttachedScriptBindings::empty_ref(),
+            robin_engine::natives::NativeQueryViews::default(),
             f,
         )
     }
@@ -176,12 +177,14 @@ impl MissionLuaState {
         host: &mut GameHost,
         script_state: &mut ScriptState,
         bindings: &robin_engine::natives::AttachedScriptBindings,
+        queries: robin_engine::natives::NativeQueryViews<'_>,
         f: impl FnOnce(&Lua) -> mlua::Result<R>,
     ) -> mlua::Result<R> {
         self.lua.set_app_data(HostPtr::new(
             host as *mut _,
             script_state as *mut _,
             bindings as *const _,
+            queries,
         ));
         let result = f(&self.lua);
         // Always remove, even on Err, so the next call starts

@@ -718,13 +718,17 @@ impl EngineInner {
         if self.control.frame_counter.is_multiple_of(FRAMES_PER_SECOND) {
             let game_seconds = self.control.frame_counter / FRAMES_PER_SECOND;
 
-            // Refresh entity active state so IsAnimationActive reads live data.
-            self.refresh_game_host_entity_state();
+            // Refresh only the static/dynamic sight bindings borrowed by Sees.
+            self.refresh_script_sight_bindings();
 
             if let Some(ref mut script) = self.mission_script {
-                if let Some(game_host) = script.game_host_mut() {
-                    game_host.frame_counter = self.control.frame_counter;
-                }
+                let queries = crate::natives::NativeQueryViews::new(
+                    &self.sequence_manager,
+                    &self.players.seats[0].selection,
+                    &self.feedback.sound_sim.sources,
+                    &self.world.weather,
+                    &self.control.frame_counter,
+                );
                 script.swap_engine_state(
                     &mut self.world.entities,
                     &mut self.ai.global,
@@ -732,7 +736,7 @@ impl EngineInner {
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
                 );
-                if let Err(e) = script.hourglass(game_seconds) {
+                if let Err(e) = script.hourglass(game_seconds, queries) {
                     tracing::warn!("Script Hourglass error: {e}");
                 }
                 script.swap_engine_state(
@@ -756,9 +760,7 @@ impl EngineInner {
 
                 // Take the script out to avoid borrow conflicts with `self`.
                 if let Some(mut script) = self.mission_script.take() {
-                    if let Some(game_host) = script.game_host_mut() {
-                        game_host.frame_counter = self.control.frame_counter;
-                    }
+                    let queries = native_query_views!(self);
                     script.swap_engine_state(
                         &mut self.world.entities,
                         &mut self.ai.global,
@@ -766,7 +768,7 @@ impl EngineInner {
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
                     );
-                    let victory_result = script.check_victory_condition(game_seconds);
+                    let victory_result = script.check_victory_condition(game_seconds, queries);
                     script.swap_engine_state(
                         &mut self.world.entities,
                         &mut self.ai.global,

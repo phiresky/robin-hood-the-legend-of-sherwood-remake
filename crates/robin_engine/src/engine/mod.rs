@@ -8,6 +8,21 @@
 //! this module captures the *architecture*: the data structures, control
 //! flow, and state transitions.
 
+/// Borrow the canonical read-only subsystems needed by one native resume.
+/// Field-level expansion lets Rust keep the five mutable script-state leases
+/// disjoint from these views.
+macro_rules! native_query_views {
+    ($engine:expr) => {
+        crate::natives::NativeQueryViews::new(
+            &$engine.sequence_manager,
+            &$engine.players.seats[0].selection,
+            &$engine.feedback.sound_sim.sources,
+            &$engine.world.weather,
+            &$engine.control.frame_counter,
+        )
+    };
+}
+
 mod ai;
 mod ale;
 mod animation;
@@ -3496,7 +3511,8 @@ impl EngineInner {
         }
         script.post_initialized = true;
 
-        self.refresh_game_host_entity_state();
+        self.refresh_script_sight_bindings();
+        let queries = native_query_views!(self);
         let script = self.mission_script.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
@@ -3505,7 +3521,7 @@ impl EngineInner {
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
         );
-        let result = script.post_initialize();
+        let result = script.post_initialize(queries);
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,

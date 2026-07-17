@@ -47,6 +47,23 @@ fn call_host_native(host: &mut GameHost, native: NativeFn, stack: &mut NativeSta
         .expect_return("non-nested native test")
 }
 
+fn call_host_native_with_queries(
+    host: &mut GameHost,
+    native: NativeFn,
+    stack: &mut NativeStack,
+    queries: NativeQueryViews<'_>,
+) -> i32 {
+    let mut state = ScriptState::default();
+    let mut context = NativeContext::with_bindings(
+        host,
+        &mut state,
+        AttachedScriptBindings::empty_ref(),
+        queries,
+    );
+    <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
+        .expect_return("non-nested native query test")
+}
+
 fn call_bound_host_native(
     host: &mut GameHost,
     bindings: &AttachedScriptBindings,
@@ -54,7 +71,8 @@ fn call_bound_host_native(
     stack: &mut NativeStack,
 ) -> i32 {
     let mut state = ScriptState::default();
-    let mut context = NativeContext::with_bindings(host, &mut state, bindings);
+    let mut context =
+        NativeContext::with_bindings(host, &mut state, bindings, NativeQueryViews::default());
     <NativeContext<'_> as HostFunctions>::call(&mut context, native as u32, stack)
         .expect_return("non-nested native test")
 }
@@ -67,8 +85,13 @@ struct BoundGameHost {
 
 impl HostFunctions for BoundGameHost {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
-        NativeContext::with_bindings(&mut self.host, &mut self.state, &self.bindings)
-            .call(index, stack)
+        NativeContext::with_bindings(
+            &mut self.host,
+            &mut self.state,
+            &self.bindings,
+            NativeQueryViews::default(),
+        )
+        .call(index, stack)
     }
 }
 
@@ -764,6 +787,251 @@ fn custom_values_are_isolated_between_script_hosts() {
 }
 
 #[test]
+fn deferred_selection_is_visible_to_later_natives_in_the_same_callback() {
+    let mut host = GameHost::new();
+    host.entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    let actor = GameHost::actor_handle_from_index(0);
+    let sequences = crate::sequence::SequenceManager::new();
+    let selected = Vec::new();
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 17;
+    let queries = NativeQueryViews::new(&sequences, &selected, &sounds, &weather, &frame);
+
+    let mut select = NativeStack::default();
+    select.push_i32(actor);
+    select.push_i32(1);
+    assert_eq!(
+        call_host_native_with_queries(&mut host, NativeFn::SelectActorPC, &mut select, queries),
+        0
+    );
+
+    let mut is_selected = NativeStack::default();
+    is_selected.push_i32(actor);
+    assert_eq!(
+        call_host_native_with_queries(&mut host, NativeFn::IsPCSelected, &mut is_selected, queries,),
+        1
+    );
+    assert!(selected.is_empty(), "the canonical selection drains later");
+    assert!(matches!(
+        host.deferred_commands.as_slice(),
+        [DeferredCommand::SelectPC {
+            actor: queued_actor,
+            select: true,
+        }] if *queued_actor == actor
+    ));
+}
+
+#[test]
+fn deferred_sound_destruction_is_visible_without_mutating_the_source_manager() {
+    let mut host = GameHost::new();
+    let sequences = crate::sequence::SequenceManager::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
+    sounds.sources_push_some(crate::sound_source::SoundSource::default());
+    let weather = crate::engine::WeatherState::default();
+    let frame = 23;
+    let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
+    let handle = GameHost::sound_source_handle_from_index(0);
+
+    let mut destroy = NativeStack::default();
+    destroy.push_i32(handle);
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut host,
+            NativeFn::DestroySoundSource,
+            &mut destroy,
+            queries,
+        ),
+        1
+    );
+
+    let mut lookup = NativeStack::default();
+    lookup.push_i32(0);
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut host,
+            NativeFn::GetSoundSourceScript,
+            &mut lookup,
+            queries,
+        ),
+        0
+    );
+    assert!(sounds.get(0).is_some(), "the source manager drains later");
+    assert!(matches!(
+        host.sound_commands.as_slice(),
+        [SoundCommand::Destroy(queued)] if *queued == handle
+    ));
+}
+
+#[test]
+fn current_action_and_frame_queries_read_canonical_runtime_state() {
+    let pc_id = EntityId::Pc(crate::entity_id::PcId(0));
+    let pc_handle = GameHost::actor_handle(pc_id);
+    let mut pc_host = GameHost::new();
+    pc_host
+        .entities
+        .push(Some(native_test_pc(Vec::new(), Vec::new())));
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let mut element =
+        crate::sequence::SequenceElement::new(1, crate::element::Command::Move, Some(pc_id));
+    element.push_order(crate::order::Order::new(
+        crate::order::OrderType::RunningUpright,
+        0.0,
+        0.0,
+        std::num::NonZeroU32::new(1).unwrap(),
+    ));
+    let sequence_id = sequences.launch_element(element);
+    sequences.element_in_progress(sequence_id, 0);
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 123;
+    let queries = NativeQueryViews::new(&sequences, &[], &sounds, &weather, &frame);
+
+    let mut action = NativeStack::default();
+    action.push_i32(pc_handle);
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut pc_host,
+            NativeFn::GetCurrentAction,
+            &mut action,
+            queries,
+        ),
+        crate::order::OrderType::RunningUpright as i32
+    );
+
+    let mut npc_host = GameHost::new();
+    npc_host.entities.push(Some(native_test_soldier()));
+    let mut emoticon = NativeStack::default();
+    emoticon.push_i32(GameHost::actor_handle_from_index(0));
+    emoticon.push_i32(crate::ai::EmoticonType::QuestionMark as i32);
+    emoticon.push_i32(7);
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut npc_host,
+            NativeFn::SetNPCEmoticon,
+            &mut emoticon,
+            queries,
+        ),
+        0
+    );
+    assert_eq!(
+        npc_host.entities[0]
+            .as_ref()
+            .unwrap()
+            .ai_controller()
+            .unwrap()
+            .emoticon_expiration_date,
+        130
+    );
+}
+
+#[test]
+fn canonical_query_views_are_isolated_between_engine_instances() {
+    let first_sequences = crate::sequence::SequenceManager::new();
+    let first_selection = [EntityId::Pc(crate::entity_id::PcId(0))];
+    let first_sounds = crate::sound_source::SoundSourceManager::new();
+    let first_weather = crate::engine::WeatherState::default();
+    let first_frame = 10;
+    let second_sequences = crate::sequence::SequenceManager::new();
+    let second_selection = [
+        EntityId::Pc(crate::entity_id::PcId(0)),
+        EntityId::Pc(crate::entity_id::PcId(1)),
+    ];
+    let second_sounds = crate::sound_source::SoundSourceManager::new();
+    let second_weather = crate::engine::WeatherState::default();
+    let second_frame = 900;
+    let first_queries = NativeQueryViews::new(
+        &first_sequences,
+        &first_selection,
+        &first_sounds,
+        &first_weather,
+        &first_frame,
+    );
+    let second_queries = NativeQueryViews::new(
+        &second_sequences,
+        &second_selection,
+        &second_sounds,
+        &second_weather,
+        &second_frame,
+    );
+    let mut first_host = GameHost::new();
+    let mut second_host = GameHost::new();
+
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut first_host,
+            NativeFn::GetNumberOfSelectedPCs,
+            &mut NativeStack::default(),
+            first_queries,
+        ),
+        1
+    );
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut second_host,
+            NativeFn::GetNumberOfSelectedPCs,
+            &mut NativeStack::default(),
+            second_queries,
+        ),
+        2
+    );
+}
+
+#[test]
+fn legacy_query_mirrors_are_ignored_when_loading_game_host_json() {
+    let mut value = serde_json::to_value(GameHost::new()).expect("serialize GameHost");
+    let object = value
+        .as_object_mut()
+        .expect("GameHost serializes as an object");
+    for (field, old_value) in [
+        ("current_animations", serde_json::json!({"123": 7})),
+        ("selected_pc_handles", serde_json::json!([123, 456])),
+        ("sound_source_alive", serde_json::json!([true, false])),
+        ("sound_source_count", serde_json::json!(2)),
+        ("ambiance", serde_json::json!("Night")),
+        ("is_forest_level", serde_json::json!(true)),
+        ("frame_counter", serde_json::json!(9876)),
+    ] {
+        object.insert(field.into(), old_value);
+    }
+
+    let mut restored: GameHost =
+        serde_json::from_value(value).expect("unknown legacy mirror fields are ignored");
+    let saved_again = serde_json::to_value(&restored).expect("re-serialize GameHost");
+    for field in [
+        "current_animations",
+        "selected_pc_handles",
+        "sound_source_alive",
+        "sound_source_count",
+        "ambiance",
+        "is_forest_level",
+        "frame_counter",
+    ] {
+        assert!(
+            saved_again.get(field).is_none(),
+            "legacy field {field} returned"
+        );
+    }
+
+    let sequences = crate::sequence::SequenceManager::new();
+    let selection = [EntityId::Pc(crate::entity_id::PcId(4))];
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 4;
+    assert_eq!(
+        call_host_native_with_queries(
+            &mut restored,
+            NativeFn::GetNumberOfSelectedPCs,
+            &mut NativeStack::default(),
+            NativeQueryViews::new(&sequences, &selection, &sounds, &weather, &frame),
+        ),
+        1,
+        "loaded hosts query canonical runtime state, not stale save mirrors"
+    );
+}
+
+#[test]
 fn animation_state_write_is_immediately_visible_from_canonical_entity() {
     let actor = GameHost::actor_handle_from_index(0);
     let mut host = GameHost::new();
@@ -847,9 +1115,7 @@ fn compute_border_point_cardinal_directions() {
 fn game_host_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
     let mut host = GameHost::new();
     host.campaign = Some(crate::campaign::Campaign::default());
-    host.frame_counter = 100;
-
-    host.add_campaign_value(crate::campaign::CampaignValue::Ransom, 250);
+    host.add_campaign_value(crate::campaign::CampaignValue::Ransom, 250, 100);
 
     assert_eq!(
         host.campaign
@@ -871,15 +1137,14 @@ fn game_host_add_campaign_value_ransom_credits_stat_and_queues_jingle() {
 fn game_host_set_campaign_value_ransom_jingle_only_when_growing() {
     let mut host = GameHost::new();
     host.campaign = Some(crate::campaign::Campaign::default());
-    host.frame_counter = 50;
     host.campaign.as_mut().unwrap().values[crate::campaign::CampaignValue::Ransom] = 200;
 
     // Lowering: no jingle.
-    host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100);
+    host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 100, 50);
     assert!(host.commands.is_empty());
 
     // Raising: jingle queued.
-    host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 500);
+    host.set_campaign_value(crate::campaign::CampaignValue::Ransom, 500, 50);
     let jingle_count = host
         .commands
         .iter()
@@ -894,9 +1159,7 @@ fn game_host_set_campaign_value_ransom_jingle_only_when_growing() {
 fn game_host_add_campaign_value_score_credits_added_score_silently() {
     let mut host = GameHost::new();
     host.campaign = Some(crate::campaign::Campaign::default());
-    host.frame_counter = 100;
-
-    host.add_campaign_value(crate::campaign::CampaignValue::Score, 750);
+    host.add_campaign_value(crate::campaign::CampaignValue::Score, 750, 100);
 
     assert_eq!(host.mission_stat.added_score, 750);
     assert!(host.commands.is_empty());
@@ -1086,11 +1349,24 @@ fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
     );
 }
 
-fn native_sees(host: &mut GameHost, npc_index: usize, target_index: usize) -> i32 {
+fn native_sees(
+    host: &mut GameHost,
+    weather: &crate::engine::WeatherState,
+    npc_index: usize,
+    target_index: usize,
+) -> i32 {
+    let sequences = crate::sequence::SequenceManager::new();
+    let sounds = crate::sound_source::SoundSourceManager::new();
+    let frame = 0;
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(npc_index));
     stack.push_i32(GameHost::actor_handle_from_index(target_index));
-    call_host_native(host, NativeFn::Sees, &mut stack)
+    call_host_native_with_queries(
+        host,
+        NativeFn::Sees,
+        &mut stack,
+        NativeQueryViews::new(&sequences, &[], &sounds, weather, &frame),
+    )
 }
 
 fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> GameHost {
@@ -1126,17 +1402,18 @@ fn sees_uses_forest_royalist_180_degree_rule() {
         crate::coordinates::MapPoint::new(0.0, 100.0),
         Camp::Royalists,
     );
+    let mut weather = crate::engine::WeatherState::default();
 
-    assert_eq!(native_sees(&mut host, 0, 1), 0);
+    assert_eq!(native_sees(&mut host, &weather, 0, 1), 0);
 
-    host.is_forest_level = true;
-    assert_eq!(native_sees(&mut host, 0, 1), 1);
+    weather.is_forest_level = true;
+    assert_eq!(native_sees(&mut host, &weather, 0, 1), 1);
 
     let Entity::Soldier(soldier) = host.entities[0].as_mut().unwrap() else {
         unreachable!("observer must remain a soldier")
     };
     soldier.soldier.cached_camp = Camp::Lacklandists;
-    assert_eq!(native_sees(&mut host, 0, 1), 0);
+    assert_eq!(native_sees(&mut host, &weather, 0, 1), 0);
 }
 
 #[test]
@@ -1150,6 +1427,7 @@ fn sees_uses_ambiance_adjusted_view_radius() {
         crate::coordinates::MapPoint::new(450.0, 0.0),
         Camp::Lacklandists,
     );
+    let mut weather = crate::engine::WeatherState::default();
     host.entities[0]
         .as_mut()
         .unwrap()
@@ -1192,11 +1470,11 @@ fn sees_uses_ambiance_adjusted_view_radius() {
         },
     );
 
-    assert_eq!(host.ambiance, crate::engine::Ambiance::Day);
-    assert_eq!(native_sees(&mut host, 0, 1), 1);
+    assert_eq!(weather.ambiance, crate::engine::Ambiance::Day);
+    assert_eq!(native_sees(&mut host, &weather, 0, 1), 1);
 
-    host.ambiance = crate::engine::Ambiance::Night;
-    assert_eq!(native_sees(&mut host, 0, 1), 0);
+    weather.ambiance = crate::engine::Ambiance::Night;
+    assert_eq!(native_sees(&mut host, &weather, 0, 1), 0);
 }
 
 fn set_experiences_test_host() -> (GameHost, i32) {

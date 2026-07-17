@@ -87,7 +87,12 @@ mod tests {
         let mut state = ScriptState::default();
         let mut stack = NativeStack::default();
         stack.push_i32(index);
-        let mut context = NativeContext::with_bindings(&mut host, &mut state, bindings);
+        let mut context = NativeContext::with_bindings(
+            &mut host,
+            &mut state,
+            bindings,
+            crate::natives::NativeQueryViews::default(),
+        );
         HostFunctions::call(&mut context, NativeFn::GetLocationScript as u32, &mut stack)
             .expect_return("GetLocationScript is synchronous")
     }

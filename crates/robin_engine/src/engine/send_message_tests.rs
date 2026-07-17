@@ -139,7 +139,11 @@ fn engine_with_receiver() -> (EngineInner, crate::element::EntityId, i32) {
             .mission_script
             .as_mut()
             .expect("script installed")
-            .bind_actor(handle, "MessageReceiver")
+            .bind_actor(
+                handle,
+                "MessageReceiver",
+                crate::natives::NativeQueryViews::default(),
+            )
     );
     (engine, receiver, handle)
 }

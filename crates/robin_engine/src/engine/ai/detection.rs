@@ -679,7 +679,8 @@ impl EngineInner {
             }
         }
         if !listenable_calls.is_empty() {
-            self.refresh_game_host_entity_state();
+            self.refresh_script_sight_bindings();
+            let queries = native_query_views!(self);
             if let Some(ref mut script) = self.mission_script {
                 script.swap_engine_state(
                     &mut self.world.entities,
@@ -693,6 +694,7 @@ impl EngineInner {
                         target_handle,
                         "ActivatedByListenable",
                         &[pc_handle],
+                        queries,
                     ) {
                         tracing::warn!("ActivatedByListenable (target {target_handle}): {e}");
                     }

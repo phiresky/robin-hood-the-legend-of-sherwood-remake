@@ -78,17 +78,23 @@ fn get_actor_name_lookup() {
     let mut script_state = robin_engine::natives::ScriptState::default();
 
     state
-        .with_host_state_and_bindings(&mut host, &mut script_state, &bindings, |lua: &Lua| {
-            let hit: i32 = lua.load("return GetActor('RobinHood')").eval()?;
-            assert_eq!(hit, 7);
-            let miss: i32 = lua.load("return GetActor('Nobody')").eval()?;
-            assert_eq!(miss, 0);
-            let name: String = lua.load("return GetActorName(7)").eval()?;
-            assert_eq!(name, "RobinHood");
-            let unknown: String = lua.load("return GetActorName(999)").eval()?;
-            assert_eq!(unknown, "<not found>");
-            Ok(())
-        })
+        .with_host_state_and_bindings(
+            &mut host,
+            &mut script_state,
+            &bindings,
+            robin_engine::natives::NativeQueryViews::default(),
+            |lua: &Lua| {
+                let hit: i32 = lua.load("return GetActor('RobinHood')").eval()?;
+                assert_eq!(hit, 7);
+                let miss: i32 = lua.load("return GetActor('Nobody')").eval()?;
+                assert_eq!(miss, 0);
+                let name: String = lua.load("return GetActorName(7)").eval()?;
+                assert_eq!(name, "RobinHood");
+                let unknown: String = lua.load("return GetActorName(999)").eval()?;
+                assert_eq!(unknown, "<not found>");
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -105,13 +111,19 @@ fn get_all_actors_dumps_table() {
     let mut script_state = robin_engine::natives::ScriptState::default();
 
     state
-        .with_host_state_and_bindings(&mut host, &mut script_state, &bindings, |lua: &Lua| {
-            let alice: i32 = lua.load("return GetAllActors().Alice").eval()?;
-            let bob: i32 = lua.load("return GetAllActors().Bob").eval()?;
-            assert_eq!(alice, 1);
-            assert_eq!(bob, 2);
-            Ok(())
-        })
+        .with_host_state_and_bindings(
+            &mut host,
+            &mut script_state,
+            &bindings,
+            robin_engine::natives::NativeQueryViews::default(),
+            |lua: &Lua| {
+                let alice: i32 = lua.load("return GetAllActors().Alice").eval()?;
+                let bob: i32 = lua.load("return GetAllActors().Bob").eval()?;
+                assert_eq!(alice, 1);
+                assert_eq!(bob, 2);
+                Ok(())
+            },
+        )
         .unwrap();
 }
 

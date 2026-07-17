@@ -5267,7 +5267,12 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
 
-    assert!(script.bind_waypoint(crate::ai::PathId::new(2).unwrap(), 3, "TestWaypoint"));
+    assert!(script.bind_waypoint(
+        crate::ai::PathId::new(2).unwrap(),
+        3,
+        "TestWaypoint",
+        crate::natives::NativeQueryViews::default(),
+    ));
     assert!(
         script
             .waypoint_instances
@@ -5275,7 +5280,12 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
     );
 
     // Unknown class is a `false` return + no map insertion.
-    assert!(!script.bind_waypoint(crate::ai::PathId::new(4).unwrap(), 0, "NonExistent"));
+    assert!(!script.bind_waypoint(
+        crate::ai::PathId::new(4).unwrap(),
+        0,
+        "NonExistent",
+        crate::natives::NativeQueryViews::default(),
+    ));
     assert!(
         !script
             .waypoint_instances
@@ -5290,7 +5300,12 @@ fn bind_waypoint_inserts_instance_and_missing_class_no_ops() {
 fn call_waypoint_function_dispatches_and_falls_back() {
     let scb = scripted_waypoint_scb();
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
-    assert!(script.bind_waypoint(crate::ai::PathId::new(0).unwrap(), 0, "TestWaypoint"));
+    assert!(script.bind_waypoint(
+        crate::ai::PathId::new(0).unwrap(),
+        0,
+        "TestWaypoint",
+        crate::natives::NativeQueryViews::default(),
+    ));
 
     // Bound: call dispatches cleanly.
     let actor_handle = 42;
@@ -5300,6 +5315,7 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             0,
             "ReachPoint",
             &[actor_handle],
+            crate::natives::NativeQueryViews::default(),
         )
         .expect("ReachPoint");
     assert_eq!(ret, 0, "empty ReachPoint should return 0");
@@ -5311,13 +5327,20 @@ fn call_waypoint_function_dispatches_and_falls_back() {
             9,
             "ReachPoint",
             &[actor_handle],
+            crate::natives::NativeQueryViews::default(),
         )
         .expect("missing instance should be Ok(0)");
     assert_eq!(ret_missing, 0);
 
     // Missing function on a bound instance: also `Ok(0)`.
     let ret_no_fn = script
-        .call_waypoint_function(crate::ai::PathId::new(0).unwrap(), 0, "NotAFunction", &[])
+        .call_waypoint_function(
+            crate::ai::PathId::new(0).unwrap(),
+            0,
+            "NotAFunction",
+            &[],
+            crate::natives::NativeQueryViews::default(),
+        )
         .expect("missing function should be Ok(0)");
     assert_eq!(ret_no_fn, 0);
 }
@@ -5457,7 +5480,12 @@ fn waypoint_script_heap_round_trips_through_serde() {
     };
 
     let mut script = MissionScript::from_scb(scb).expect("from_scb");
-    assert!(script.bind_waypoint(crate::ai::PathId::new(3).unwrap(), 7, "HeapWaypoint"));
+    assert!(script.bind_waypoint(
+        crate::ai::PathId::new(3).unwrap(),
+        7,
+        "HeapWaypoint",
+        crate::natives::NativeQueryViews::default(),
+    ));
 
     // Poke distinct bytes into the heap so a zero reset is detectable.
     script

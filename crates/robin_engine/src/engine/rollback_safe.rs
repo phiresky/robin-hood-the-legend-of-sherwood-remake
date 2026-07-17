@@ -502,14 +502,20 @@ impl Engine {
                 &mut crate::natives::GameHost,
                 &mut crate::natives::ScriptState,
                 &crate::natives::AttachedScriptBindings,
+                crate::natives::NativeQueryViews<'_>,
             )>,
         ) -> R,
     ) -> R {
         self.inner.with_sim_rng(|inner| {
-            f(inner
-                .mission_script
-                .as_mut()
-                .map(|script| (&mut script.game_host, &mut script.state, &script.bindings)))
+            let queries = native_query_views!(inner);
+            f(inner.mission_script.as_mut().map(|script| {
+                (
+                    &mut script.game_host,
+                    &mut script.state,
+                    &script.bindings,
+                    queries,
+                )
+            }))
         })
     }
 

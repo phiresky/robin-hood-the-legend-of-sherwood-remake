@@ -1073,7 +1073,12 @@ pub(super) fn render_frame(
         let (men_to_blazon, blinking) = engine
             .mission_script()
             .and_then(|s| s.game_host())
-            .map(|h| (h.men_to_blazon_conversion_mode, h.active_blinking_blazons()))
+            .map(|h| {
+                (
+                    h.men_to_blazon_conversion_mode,
+                    h.active_blinking_blazons(engine.frame_counter()),
+                )
+            })
             .unwrap_or((false, 0));
         if let Some(bb) = blazon_bar::build_blazon_bar_state(
             campaign,

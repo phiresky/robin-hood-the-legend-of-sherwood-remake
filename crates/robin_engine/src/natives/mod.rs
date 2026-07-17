@@ -60,7 +60,7 @@ mod tests;
 
 pub use bindings::{AttachedScriptBindings, ScriptBindings, ScriptNameBindings};
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
-pub use context::NativeContext;
+pub use context::{NativeContext, NativeQueryViews};
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
     NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
@@ -144,13 +144,6 @@ pub struct GameHost {
     pub entities: Vec<Option<Entity>>,
     /// Global AI state, swapped in from EngineInner before script execution.
     pub ai_global: AiGlobalState,
-    /// Current mission ambiance, refreshed before each script call so
-    /// synchronous visibility natives use the same light-adjusted radius as
-    /// the engine AI pass.
-    pub ambiance: crate::engine::Ambiance,
-    /// Whether the current mission is a forest level. `Sees` needs this for
-    /// RHElementActorNPC::ComputeVisibility's Royalist 180-degree branch.
-    pub is_forest_level: bool,
     /// FastFindGrid state, swapped in from EngineInner before script execution.
     /// Script-native visibility must use the same `FastFindGrid::is_reachable`
     /// path as engine AI, not a separate obstacle scan.
@@ -165,15 +158,6 @@ pub struct GameHost {
 
     /// Handle of the entity whose script is currently running.
     pub script_this: i32,
-
-    /// Number of sound sources (swapped in from EngineInner).
-    pub sound_source_count: usize,
-    /// Per-sound-source liveness flag (index = script index); `false`
-    /// means the slot was `None` at the last refresh (i.e. destroyed via
-    /// `DestroySoundSource`).  Deletion nulls the slot but keeps the
-    /// array length, so `GetSoundSourceScript` must reject destroyed
-    /// indices with the "already been destroyed" error.
-    pub sound_source_alive: Vec<bool>,
 
     /// Production sector registrations: (type, location_handle, speed).
     /// Populated by RegisterAsProductionSector; consumed by the engine.
@@ -211,18 +195,6 @@ pub struct GameHost {
     /// differs (matters for any titbit-index-bound consumer).
     pub scroll_attachment_dirty: BTreeSet<i32>,
 
-    /// Current animation per entity handle.
-    ///
-    /// For actors, this is `GetAnimation()` = the `OrderType` of the
-    /// front order on the actor's current sequence element. For objects,
-    /// this is the object's currently configured animation.
-    ///
-    /// Populated by [`EngineInner::refresh_game_host_entity_state`]
-    /// before every script call so natives like `GetCurrentAction`
-    /// can read live animation codes without needing a borrow into
-    /// the sequence manager.
-    pub current_animations: BTreeMap<i32, OrderType>,
-
     /// Building occupants. Index = building index. Value = actor handles.
     pub building_occupants: Vec<Vec<i32>>,
     /// Parallel to `building_occupants` (same indexing): whether each
@@ -235,9 +207,6 @@ pub struct GameHost {
     pub actor_building: BTreeMap<i32, i32>,
     /// Script zone occupants. Key = location handle, value = actor handles.
     pub zone_occupants: BTreeMap<i32, Vec<i32>>,
-    // ── PC query state not currently owned by GameHost ──
-    /// Currently selected PC entity handles.
-    pub selected_pc_handles: Vec<i32>,
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
 
@@ -264,11 +233,6 @@ pub struct GameHost {
     /// when no blink is armed.  The blazon-set refresh decrements over
     /// `BLINK_TIMEOUT` (50) ticks.
     pub blink_expire_frame: u32,
-
-    /// EngineInner frame counter, copied in before each script call so
-    /// natives can compute absolute-frame timestamps (e.g. emoticon
-    /// expiration).
-    pub frame_counter: u32,
 
     /// Recursion depth of the nested-script-call stack.  Each actor
     /// script normally has its own VMCore (giving an implicit per-core
@@ -302,16 +266,12 @@ impl GameHost {
             verbose: false,
             entities: Vec::new(),
             ai_global: AiGlobalState::default(),
-            ambiance: crate::engine::Ambiance::default(),
-            is_forest_level: false,
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             campaign: None,
             mission_stat: crate::mission_stat::MissionStat::default(),
             commands: Vec::new(),
             outline_display: false,
             script_this: 0,
-            sound_source_count: 0,
-            sound_source_alive: Vec::new(),
             production_registrations: Vec::new(),
             production_points: Vec::new(),
             completed_sequences: Vec::new(),
@@ -323,12 +283,10 @@ impl GameHost {
             scroll_status: BTreeMap::new(),
             scroll_attachments: BTreeMap::new(),
             scroll_attachment_dirty: BTreeSet::new(),
-            current_animations: BTreeMap::new(),
             building_occupants: Vec::new(),
             arrow_reserves: Vec::new(),
             actor_building: BTreeMap::new(),
             zone_occupants: BTreeMap::new(),
-            selected_pc_handles: Vec::new(),
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
             building_active: Vec::new(),
@@ -336,7 +294,6 @@ impl GameHost {
             men_to_blazon_conversion_mode: false,
             blinking_blazons: 0,
             blink_expire_frame: u32::MAX,
-            frame_counter: 0,
             nested_call_depth: 0,
         }
     }
@@ -354,7 +311,12 @@ impl GameHost {
     /// SCORE credits `mission_stat.added_score` unconditionally.  Both
     /// are swapped in from the engine, so the side effects land on the
     /// same per-mission state the in-mission pickup path writes to.
-    pub fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
+    pub fn add_campaign_value(
+        &mut self,
+        name: crate::campaign::CampaignValue,
+        amount: i32,
+        frame_counter: u32,
+    ) {
         let Some(campaign) = self.campaign.as_mut() else {
             return;
         };
@@ -365,7 +327,7 @@ impl GameHost {
         match name {
             crate::campaign::CampaignValue::Ransom => {
                 self.mission_stat.add_collected_money(amount);
-                if amount > 0 && self.frame_counter > 0 {
+                if amount > 0 && frame_counter > 0 {
                     self.commands
                         .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
                 }
@@ -380,13 +342,18 @@ impl GameHost {
     /// Force a campaign value to a specific number.  RANSOM queues
     /// `CashWon` when the new value exceeds the old (and the universal
     /// frame counter has advanced past 0).
-    pub fn set_campaign_value(&mut self, name: crate::campaign::CampaignValue, value: i32) {
+    pub fn set_campaign_value(
+        &mut self,
+        name: crate::campaign::CampaignValue,
+        value: i32,
+        frame_counter: u32,
+    ) {
         let Some(campaign) = self.campaign.as_mut() else {
             return;
         };
         let old = campaign.values[name];
         campaign.values[name] = value;
-        if name == crate::campaign::CampaignValue::Ransom && value > old && self.frame_counter > 0 {
+        if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
             self.commands
                 .push(EngineCommand::PlayJingle(crate::sound::Jingle::CashWon));
         }
@@ -401,20 +368,20 @@ impl GameHost {
     /// The last `n` castle blazons flash to the "normal" sprite, then
     /// revert once the blazon-set refresh counts the timeout down to
     /// zero.  `n == 0` disarms the latch.
-    pub fn set_blinking_blazons(&mut self, n: u32) {
+    pub fn set_blinking_blazons(&mut self, n: u32, frame_counter: u32) {
         const BLINK_TIMEOUT: u32 = 50;
         self.blinking_blazons = n;
         self.blink_expire_frame = if n == 0 {
             u32::MAX
         } else {
-            self.frame_counter.saturating_add(BLINK_TIMEOUT)
+            frame_counter.saturating_add(BLINK_TIMEOUT)
         };
     }
 
     /// The blink count that the blazon bar should display this frame.
     /// Returns 0 once the blazon-set refresh timeout would have fired.
-    pub fn active_blinking_blazons(&self) -> u32 {
-        if self.frame_counter < self.blink_expire_frame {
+    pub fn active_blinking_blazons(&self, frame_counter: u32) -> u32 {
+        if frame_counter < self.blink_expire_frame {
             self.blinking_blazons
         } else {
             0
@@ -564,6 +531,71 @@ impl GameHost {
 }
 
 impl NativeContext<'_> {
+    fn frame_counter(&self) -> u32 {
+        self.queries.frame_counter()
+    }
+
+    fn selected_pc_handles(&self) -> Vec<i32> {
+        let mut selected: Vec<i32> = self
+            .queries
+            .selected_pcs()
+            .iter()
+            .copied()
+            .map(Self::actor_handle)
+            .collect();
+        for command in &self.deferred_commands {
+            let DeferredCommand::SelectPC { actor, select } = command else {
+                continue;
+            };
+            if *actor == 0 {
+                if *select {
+                    selected = self.pc_handles();
+                } else {
+                    selected.clear();
+                }
+            } else if *select {
+                if !selected.contains(actor) {
+                    selected.push(*actor);
+                }
+            } else {
+                selected.retain(|handle| handle != actor);
+            }
+        }
+        selected
+    }
+
+    fn sound_source_count(&self) -> usize {
+        self.queries.sound_sources().num_sources()
+    }
+
+    fn sound_source_alive(&self, index: usize) -> bool {
+        if index >= self.sound_source_count() {
+            return false;
+        }
+        let handle = Self::sound_source_handle_from_index(index);
+        if self.sound_commands.iter().any(
+            |command| matches!(command, SoundCommand::Destroy(candidate) if *candidate == handle),
+        ) {
+            return false;
+        }
+        self.queries.sound_sources().get(index).is_some()
+    }
+
+    fn current_animation(&self, actor: i32) -> Option<OrderType> {
+        let entity = self.get_entity(actor)?;
+        if let Some(object) = entity.object_data() {
+            return Some(object.animation);
+        }
+        if !entity.is_actor() {
+            return None;
+        }
+        let entity_id = self.actor_id(actor)?;
+        self.queries
+            .sequence_manager()
+            .current_order_for_actor(entity_id)
+            .map(|(_, _, order)| order.order_type)
+    }
+
     /// True iff `handle` resolves to a PC whose profile carries a corpse
     /// carrying action.
     fn is_pc_carrier(&self, handle: i32) -> bool {
@@ -1575,7 +1607,8 @@ impl NativeContext<'_> {
             }
         }
         if let Some(n) = tactical_overflow {
-            self.set_blinking_blazons(n);
+            let frame_counter = self.frame_counter();
+            self.set_blinking_blazons(n, frame_counter);
         }
 
         // `UpdateInformationBars` / `UpdateBlazons` only fire in
@@ -1690,7 +1723,8 @@ impl NativeContext<'_> {
         };
 
         if self.campaign.is_some() {
-            self.add_campaign_value(crate::campaign::CampaignValue::Ransom, money);
+            let frame_counter = self.frame_counter();
+            self.add_campaign_value(crate::campaign::CampaignValue::Ransom, money, frame_counter);
         }
     }
 
@@ -3175,7 +3209,12 @@ impl NativeContext<'_> {
                 SetRansomMoney => {
                     let val = stack.pop_i32();
                     if self.campaign.is_some() {
-                        self.set_campaign_value(crate::campaign::CampaignValue::Ransom, val);
+                        let frame_counter = self.frame_counter();
+                        self.set_campaign_value(
+                            crate::campaign::CampaignValue::Ransom,
+                            val,
+                            frame_counter,
+                        );
                     } else {
                         tracing::warn!("Script Error: SetRansomMoney called outside campaign mode");
                     }
@@ -3299,18 +3338,13 @@ impl NativeContext<'_> {
                     // destroyed" error and return NULL.  The generic
                     // `script_index_to_handle` only bounds-checks
                     // `sources.len()`, which `delete` does not shrink
-                    // — so consult the per-slot `sound_source_alive`
-                    // flag too.
+                    // — so query canonical per-slot liveness and overlay any
+                    // destruction queued earlier in this callback.
                     let idx = stack.pop_i32();
                     if idx == -1 {
                         0
-                    } else if idx >= 0 && (idx as usize) < self.sound_source_count {
-                        if self
-                            .sound_source_alive
-                            .get(idx as usize)
-                            .copied()
-                            .unwrap_or(false)
-                        {
+                    } else if idx >= 0 && (idx as usize) < self.sound_source_count() {
+                        if self.sound_source_alive(idx as usize) {
                             Self::sound_source_handle_from_index(idx as usize)
                         } else {
                             tracing::error!(
@@ -3321,7 +3355,7 @@ impl NativeContext<'_> {
                     } else {
                         tracing::error!(
                             "Script Error: invalid sound source ID {idx} (max={})",
-                            self.sound_source_count
+                            self.sound_source_count()
                         );
                         0
                     }
@@ -3344,8 +3378,8 @@ impl NativeContext<'_> {
                 // There is a separate native per object type, but the
                 // All reverse lookups decode the tagged 0-based payload.
                 // `GetSoundSourceIndex` also gates
-                // on the sound subsystem being ready and on the
-                // per-slot "still alive" flag — split out below.
+                // on the sound subsystem being ready and on canonical
+                // per-slot liveness — split out below.
                 GetActorIndex | GetDoorIndex | GetPatchIndex | GetLocationIndex
                 | GetBuildingIndex | GetWayIndex => {
                     let handle = stack.pop_i32();
@@ -3372,12 +3406,10 @@ impl NativeContext<'_> {
                     };
                     // Proxy for "sound is ready": no slots ⇒ no sound
                     // subsystem in this build/level.
-                    if self.sound_source_count == 0 {
+                    if self.sound_source_count() == 0 {
                         return -1;
                     }
-                    if idx >= self.sound_source_count
-                        || !self.sound_source_alive.get(idx).copied().unwrap_or(false)
-                    {
+                    if idx >= self.sound_source_count() || !self.sound_source_alive(idx) {
                         tracing::error!(
                             "ScriptError: unknown sound source in GetSoundSourceIndex (handle {handle})"
                         );
@@ -5612,11 +5644,8 @@ impl NativeContext<'_> {
                     // (4) Actor → return the front order's
                     //     `order_type`.
                     //
-                    // The cached `current_animations` map carries
-                    // both branches: actors stamped from the front
-                    // order's `order_type`, objects stamped from
-                    // `ObjectData::animation`. Missing handles fall
-                    // back to the warn + 0 paths.
+                    // Actors query the live SequenceManager; objects read
+                    // their canonical animation field directly.
                     let actor = stack.pop_i32();
                     let Some(entity) = self.get_entity(actor) else {
                         tracing::warn!(
@@ -5625,17 +5654,9 @@ impl NativeContext<'_> {
                         return 0;
                     };
                     if entity.is_object() {
-                        self.current_animations
-                            .get(&actor)
-                            .copied()
-                            .map(|a| a as i32)
-                            .unwrap_or(0)
+                        self.current_animation(actor).map_or(0, |a| a as i32)
                     } else if entity.is_actor() {
-                        self.current_animations
-                            .get(&actor)
-                            .copied()
-                            .map(|a| a as i32)
-                            .unwrap_or(0)
+                        self.current_animation(actor).map_or(0, |a| a as i32)
                     } else {
                         tracing::warn!(
                             "Script Error: GetCurrentAction on illegal actor handle {actor} (not actor, not object)"
@@ -5697,7 +5718,7 @@ impl NativeContext<'_> {
                     let actor = stack.pop_i32();
                     let target = val != 0;
                     let mut launch_enter = false;
-                    let frame = self.frame_counter;
+                    let frame = self.frame_counter();
                     if let Some(entity) = self.get_entity_mut(actor) {
                         if let Some(enemy) = entity.enemy_ai_mut() {
                             enemy.forced_attentive = target;
@@ -5960,7 +5981,7 @@ impl NativeContext<'_> {
                                 })
                         });
                     let is_night_or_fog = matches!(
-                        self.ambiance,
+                        self.queries.weather().ambiance,
                         crate::engine::Ambiance::Night | crate::engine::Ambiance::Fog
                     );
                     let effective_view_radius = crate::ai_vision::compute_view_radius(
@@ -5974,8 +5995,8 @@ impl NativeContext<'_> {
                         sight_obstacle_list,
                         target_obstacle,
                     );
-                    let forest_180_degree_view =
-                        self.is_forest_level && npc_entity.camp() == Camp::Royalists;
+                    let forest_180_degree_view = self.queries.weather().is_forest_level
+                        && npc_entity.camp() == Camp::Royalists;
                     if forest_180_degree_view && !npc_entity.is_active() {
                         return 0;
                     }
@@ -6317,7 +6338,7 @@ impl NativeContext<'_> {
                         return 0;
                     }
                     // Must be selected
-                    if !self.selected_pc_handles.contains(&actor) {
+                    if !self.selected_pc_handles().contains(&actor) {
                         return 0;
                     }
                     // Check if any action is selected (non-NoAction)
@@ -6884,7 +6905,7 @@ impl NativeContext<'_> {
                     let duration = stack.pop_i32();
                     let emoticon_type = stack.pop_i32();
                     let actor = stack.pop_i32();
-                    let frame = self.frame_counter;
+                    let frame = self.frame_counter();
                     let Some(entity) = self.get_entity_mut(actor) else {
                         tracing::warn!("Script Error: SetNPCEmoticon invalid actor {actor}");
                         return 0;
@@ -7362,17 +7383,7 @@ impl NativeContext<'_> {
                     1
                 }
                 DestroySoundSource => {
-                    // Flip the liveness flag on `GameHost` eagerly
-                    // so a same-call `GetSoundSourceScript(N)` sees
-                    // the destroy.  The actual slot null-out still
-                    // happens via the queued `SoundCommand::Destroy`
-                    // after the script call.
                     let ss_h = stack.pop_i32();
-                    if let Some(idx) = Self::sound_source_index(ss_h)
-                        && let Some(alive) = self.sound_source_alive.get_mut(idx)
-                    {
-                        *alive = false;
-                    }
                     self.sound_commands.push(SoundCommand::Destroy(ss_h));
                     1
                 }
@@ -8197,29 +8208,27 @@ impl NativeContext<'_> {
                         tracing::warn!("Script Error: The Actor in IsPCSelected is invalid.");
                         return 1;
                     }
-                    if self.selected_pc_handles.contains(&actor) {
+                    if self.selected_pc_handles().contains(&actor) {
                         1
                     } else {
                         0
                     }
                 }
-                GetNumberOfSelectedPCs => self.selected_pc_handles.len() as i32,
+                GetNumberOfSelectedPCs => self.selected_pc_handles().len() as i32,
                 GetSelectedPC => {
                     let idx = stack.pop_i32();
                     // Logs a warning when the index is out of range
                     // before returning NULL.  Treat negative indices
                     // as out-of-range too.
-                    if idx < 0 || (idx as usize) >= self.selected_pc_handles.len() {
+                    let selected = self.selected_pc_handles();
+                    if idx < 0 || (idx as usize) >= selected.len() {
                         tracing::error!(
                             "Script Error: GetSelectedPC index {idx} out of range (count {})",
-                            self.selected_pc_handles.len()
+                            selected.len()
                         );
                         return 0;
                     }
-                    self.selected_pc_handles
-                        .get(idx as usize)
-                        .copied()
-                        .unwrap_or(0)
+                    selected.get(idx as usize).copied().unwrap_or(0)
                 }
                 // ── Spellforge / Lua-only natives ──
                 Reveal => {

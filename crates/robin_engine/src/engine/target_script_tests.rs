@@ -219,7 +219,14 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
     // during per-target Initialize (see `script.rs:568-584`).
     let handle = crate::natives::GameHost::actor_handle(target_id);
     if let Some(ref mut script) = engine.mission_script {
-        assert!(script.bind_target(handle, "TestTarget"), "bind_target");
+        assert!(
+            script.bind_target(
+                handle,
+                "TestTarget",
+                crate::natives::NativeQueryViews::default()
+            ),
+            "bind_target"
+        );
     }
 
     (engine, target_id)

@@ -7469,7 +7469,8 @@ impl EngineInner {
         // Pattern mirrors the target/scroll callback sites (see
         // `listenable_calls` in the target block): one swap pair for
         // the whole batch.
-        self.refresh_game_host_entity_state();
+        self.refresh_script_sight_bindings();
+        let queries = native_query_views!(self);
         if let Some(ref mut script) = self.mission_script {
             script.swap_engine_state(
                 &mut self.world.entities,
@@ -7480,8 +7481,13 @@ impl EngineInner {
             );
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
-                match script.call_waypoint_function(path_idx, wp_idx, "ReachPoint", &[actor_handle])
-                {
+                match script.call_waypoint_function(
+                    path_idx,
+                    wp_idx,
+                    "ReachPoint",
+                    &[actor_handle],
+                    queries,
+                ) {
                     Ok(_) => {}
                     Err(e) => {
                         tracing::warn!(

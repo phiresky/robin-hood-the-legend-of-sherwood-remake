@@ -1461,10 +1461,11 @@ impl MissionScript {
         game_host: &mut GameHost,
         state: &mut ScriptState,
         bindings: &crate::natives::AttachedScriptBindings,
+        queries: crate::natives::NativeQueryViews<'_>,
         inst: &mut ScriptInstance,
         f: impl FnOnce(&mut ScriptInstance, &mut NativeContext<'_>) -> R,
     ) -> R {
-        let mut context = NativeContext::with_bindings(game_host, state, bindings);
+        let mut context = NativeContext::with_bindings(game_host, state, bindings, queries);
         f(inst, &mut context)
     }
 
@@ -1477,27 +1478,48 @@ impl MissionScript {
     ///
     /// Returns `true` when the class was found and the instance was
     /// stored. Missing classes log at debug level and return `false`.
-    pub(crate) fn bind_actor(&mut self, handle: i32, class_name: &str) -> bool {
-        self.bind_and_init(handle, class_name, ScriptBindKind::Actor)
+    pub(crate) fn bind_actor(
+        &mut self,
+        handle: i32,
+        class_name: &str,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> bool {
+        self.bind_and_init(handle, class_name, ScriptBindKind::Actor, queries)
     }
 
     /// Target analogue of [`bind_actor`]. Stores the created instance in
     /// `target_instances`.
-    pub(crate) fn bind_target(&mut self, handle: i32, class_name: &str) -> bool {
-        self.bind_and_init(handle, class_name, ScriptBindKind::Target)
+    pub(crate) fn bind_target(
+        &mut self,
+        handle: i32,
+        class_name: &str,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> bool {
+        self.bind_and_init(handle, class_name, ScriptBindKind::Target, queries)
     }
 
     /// Scroll analogue of [`bind_actor`]. Stores the created instance in
     /// `scroll_instances` and runs `Initialize()` on the bound class.
-    pub(crate) fn bind_scroll(&mut self, handle: i32, class_name: &str) -> bool {
-        self.bind_and_init(handle, class_name, ScriptBindKind::Scroll)
+    pub(crate) fn bind_scroll(
+        &mut self,
+        handle: i32,
+        class_name: &str,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> bool {
+        self.bind_and_init(handle, class_name, ScriptBindKind::Scroll, queries)
     }
 
     /// Shared implementation for [`bind_actor`], [`bind_target`], and
     /// [`bind_scroll`]: look up the class, create an instance, transfer
     /// the game host in, call `Initialize()` if present, transfer the
     /// host back, and insert the instance into the appropriate map.
-    fn bind_and_init(&mut self, handle: i32, class_name: &str, kind: ScriptBindKind) -> bool {
+    fn bind_and_init(
+        &mut self,
+        handle: i32,
+        class_name: &str,
+        kind: ScriptBindKind,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> bool {
         let class_idx = match self.manager.find_class(class_name) {
             Some(idx) => idx,
             None => {
@@ -1520,6 +1542,7 @@ impl MissionScript {
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             &mut inst,
             |inst, host| {
                 if inst.has_function(&self.manager, "Initialize") {
@@ -1601,12 +1624,14 @@ impl MissionScript {
         handle: i32,
         fn_name: &str,
         params: &[i32],
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         self.call_actor_function_with_script_this(
             handle,
             fn_name,
             params,
             crate::interp::NestedCallScriptThis::TargetActor,
+            queries,
         )
     }
 
@@ -1616,6 +1641,7 @@ impl MissionScript {
         fn_name: &str,
         params: &[i32],
         script_this: crate::interp::NestedCallScriptThis,
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         let actor_inst = match self.actor_instances.get_mut(&handle) {
             Some(inst) => inst,
@@ -1651,7 +1677,7 @@ impl MissionScript {
         // recursing into this same function.  The `resolve_nested_call`
         // helper takes ownership of the borrow on `actor_instances` so
         // we can call back into `&mut self`.
-        let result = self.run_actor_with_nested_resume(handle, fn_name);
+        let result = self.run_actor_with_nested_resume(handle, fn_name, queries);
 
         // Restore the saved `script_this`.
         self.game_host.script_this = saved_script_this;
@@ -1669,6 +1695,7 @@ impl MissionScript {
         &mut self,
         handle: i32,
         outer_fn_name: &str,
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         loop {
             let stop = {
@@ -1680,6 +1707,7 @@ impl MissionScript {
                     &mut self.game_host,
                     &mut self.state,
                     &self.bindings,
+                    queries,
                 );
                 actor_inst.resume_run_with_host(
                     &mut self.manager,
@@ -1692,7 +1720,7 @@ impl MissionScript {
                 crate::interp::StopReason::ReturnedValue(v) => return Ok(v),
                 crate::interp::StopReason::Returned => return Ok(0),
                 crate::interp::StopReason::PendingNestedCall(call) => {
-                    self.dispatch_nested_call_from_actor(handle, outer_fn_name, call);
+                    self.dispatch_nested_call_from_actor(handle, outer_fn_name, call, queries);
                     // Loop and resume the outer VM.
                 }
                 crate::interp::StopReason::StepLimit => {
@@ -1719,6 +1747,7 @@ impl MissionScript {
         outer_handle: i32,
         outer_fn_name: &str,
         pc: crate::interp::PendingNestedCall,
+        queries: crate::natives::NativeQueryViews<'_>,
     ) {
         // Bump depth and check the recursion guard.
         self.game_host.nested_call_depth = self.game_host.nested_call_depth.saturating_add(1);
@@ -1746,6 +1775,7 @@ impl MissionScript {
                 &pc.fn_name,
                 &pc.params,
                 pc.script_this,
+                queries,
             ) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1790,6 +1820,7 @@ impl MissionScript {
         zone_idx: usize,
         fn_name: &str,
         params: &[i32],
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         let zone_inst = match self.zone_instances.get_mut(&zone_idx) {
             Some(inst) => inst,
@@ -1804,6 +1835,7 @@ impl MissionScript {
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             zone_inst,
             |zone_inst, host| {
                 for &p in params {
@@ -1837,6 +1869,7 @@ impl MissionScript {
         target_handle: i32,
         fn_name: &str,
         params: &[i32],
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         let target_inst = match self.target_instances.get_mut(&target_handle) {
             Some(inst) => inst,
@@ -1850,6 +1883,7 @@ impl MissionScript {
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             target_inst,
             |target_inst, host| {
                 for &p in params {
@@ -1887,6 +1921,7 @@ impl MissionScript {
         scroll_handle: i32,
         fn_name: &str,
         params: &[i32],
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         let scroll_inst = match self.scroll_instances.get_mut(&scroll_handle) {
             Some(inst) => inst,
@@ -1901,6 +1936,7 @@ impl MissionScript {
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             scroll_inst,
             |scroll_inst, host| {
                 for &p in params {
@@ -1934,6 +1970,7 @@ impl MissionScript {
         path_idx: crate::ai::PathId,
         wp_idx: u8,
         class_name: &str,
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> bool {
         let class_idx = match self.manager.find_class(class_name) {
             Some(idx) => idx,
@@ -1953,6 +1990,7 @@ impl MissionScript {
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             &mut inst,
             |inst, host| {
                 if inst.has_function(&self.manager, "Initialize") {
@@ -2005,6 +2043,7 @@ impl MissionScript {
         wp_idx: u8,
         fn_name: &str,
         params: &[i32],
+        queries: crate::natives::NativeQueryViews<'_>,
     ) -> Result<i32, String> {
         let key = (path_idx, wp_idx);
         let wp_inst = match self.waypoint_instances.get_mut(&key) {
@@ -2018,6 +2057,7 @@ impl MissionScript {
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             wp_inst,
             |wp_inst, host| {
                 for &p in params {
@@ -2085,6 +2125,7 @@ impl MissionScript {
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
         campaign: &'a mut Option<crate::campaign::Campaign>,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
+        queries: crate::natives::NativeQueryViews<'a>,
         script_this: Option<i32>,
     ) -> ScriptContext<'a> {
         ScriptContext::new(
@@ -2096,16 +2137,22 @@ impl MissionScript {
             fast_grid,
             campaign,
             mission_stat,
+            queries,
             script_this,
         )
     }
 
     /// Call the script's `Hourglass` function (once per game-second).
-    pub(crate) fn hourglass(&mut self, game_seconds: u32) -> Result<i32, String> {
+    pub(crate) fn hourglass(
+        &mut self,
+        game_seconds: u32,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> Result<i32, String> {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             &mut self.instance,
             |instance, host| {
                 instance.push_param(game_seconds as i32);
@@ -2119,11 +2166,16 @@ impl MissionScript {
     /// Call the script's `CheckVictoryCondition` function.
     ///
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat.
-    pub(crate) fn check_victory_condition(&mut self, game_seconds: u32) -> Result<i32, String> {
+    pub(crate) fn check_victory_condition(
+        &mut self,
+        game_seconds: u32,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> Result<i32, String> {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             &mut self.instance,
             |instance, host| {
                 instance.push_param(game_seconds as i32);
@@ -2137,11 +2189,16 @@ impl MissionScript {
     /// Call the script's `Finalize` function.
     ///
     /// `abandoned` is true if the player quit, false if won/lost normally.
-    pub(crate) fn finalize(&mut self, abandoned: bool) -> Result<(), String> {
+    pub(crate) fn finalize(
+        &mut self,
+        abandoned: bool,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> Result<(), String> {
         Self::with_game_host_attached(
             &mut self.game_host,
             &mut self.state,
             &self.bindings,
+            queries,
             &mut self.instance,
             |instance, host| {
                 instance.push_param(if abandoned { 1 } else { 0 });
@@ -2154,12 +2211,16 @@ impl MissionScript {
     }
 
     /// Call the script's `PostInitialize` function, if it exists.
-    pub(crate) fn post_initialize(&mut self) -> Result<(), String> {
+    pub(crate) fn post_initialize(
+        &mut self,
+        queries: crate::natives::NativeQueryViews<'_>,
+    ) -> Result<(), String> {
         if self.instance.has_function(&self.manager, "PostInitialize") {
             Self::with_game_host_attached(
                 &mut self.game_host,
                 &mut self.state,
                 &self.bindings,
+                queries,
                 &mut self.instance,
                 |instance, host| {
                     instance
@@ -2207,6 +2268,7 @@ pub(crate) struct ScriptContext<'a> {
     game_host: &'a mut GameHost,
     script_state: &'a mut ScriptState,
     bindings: &'a crate::natives::AttachedScriptBindings,
+    queries: crate::natives::NativeQueryViews<'a>,
     entities: &'a mut crate::entities::Entities,
     ai_global: &'a mut crate::ai::AiGlobalState,
     fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
@@ -2226,6 +2288,7 @@ impl<'a> ScriptContext<'a> {
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
         campaign: &'a mut Option<crate::campaign::Campaign>,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
+        queries: crate::natives::NativeQueryViews<'a>,
         script_this: Option<i32>,
     ) -> Self {
         entities.swap_slots_with(&mut game_host.entities);
@@ -2241,6 +2304,7 @@ impl<'a> ScriptContext<'a> {
             game_host,
             script_state,
             bindings,
+            queries,
             entities,
             ai_global,
             fast_grid,
@@ -2257,7 +2321,12 @@ impl<'a> ScriptContext<'a> {
     }
 
     pub(crate) fn native_context_mut(&mut self) -> NativeContext<'_> {
-        NativeContext::with_bindings(self.game_host, self.script_state, self.bindings)
+        NativeContext::with_bindings(
+            self.game_host,
+            self.script_state,
+            self.bindings,
+            self.queries,
+        )
     }
 }
 
@@ -2309,6 +2378,7 @@ mod campaign_ownership_tests {
             &mut fast_grid,
             campaign,
             &mut mission_stat,
+            crate::natives::NativeQueryViews::default(),
             None,
         );
         f(&mut context)
@@ -2423,6 +2493,7 @@ mod campaign_ownership_tests {
             &mut fast_grid,
             &mut engine_campaign,
             &mut mission_stat,
+            crate::natives::NativeQueryViews::default(),
             None,
         );
         context
