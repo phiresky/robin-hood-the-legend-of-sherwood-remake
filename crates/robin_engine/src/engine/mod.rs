@@ -143,19 +143,18 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// `Clone` is derived so rollback snapshots and the determinism test can
 /// copy the whole world cheaply.
 ///
-/// `Serialize`, `Deserialize`, and `StateHash` use the explicit flat schema in
-/// `snapshot.rs`. Engine-owned state should serialize directly. Static level
-/// attachments and host/runtime state belong outside this struct or behind
-/// explicit snapshot schemas with mandatory reattachment. If you find
-/// yourself fighting serde for a field, that's a signal it doesn't belong on
-/// `EngineInner` — extract it to a host wrapper instead.
-#[derive(Clone)]
+/// `Serialize` and `Deserialize` use the explicit flat compatibility schema in
+/// `snapshot.rs`. `StateHash` follows the current in-memory ownership layout:
+/// multiplayer peers and rollback use the same build, while historical replay
+/// hash compatibility is intentionally not an engine-layout constraint.
+#[derive(Clone, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
     /// Per-session gameplay configuration attached by `Game` before a
     /// tick. This is runtime configuration rather than mutable sim state:
     /// rollback clones preserve it, while deserialized saves must have it
     /// reattached before gameplay resumes. `Option` is intentional so a
     /// missing attachment fails loudly instead of inventing Medium difficulty.
+    #[state_hash(skip)]
     sim_config: std::cell::Cell<Option<SimConfig>>,
 
     // ── Mission ──────────────────────────────────────────────────

@@ -1,11 +1,12 @@
-//! Stable serialization and deterministic-hash boundary for [`EngineInner`].
+//! Stable serialization boundary for [`EngineInner`].
 //!
 //! The in-memory engine is going to be split into cohesive owned state groups.
-//! Save files, multiplayer bincode snapshots, and replay hashes must not change
-//! merely because those fields move. This flat remote-serde schema deliberately
-//! repeats the current field names, types, attributes, and declaration order.
-//! Future in-memory regrouping maps through this boundary instead of deriving a
-//! new external schema from the runtime layout.
+//! Save files and multiplayer bincode snapshots must not change merely because
+//! fields move. This flat schema deliberately repeats the current field names,
+//! types, attributes, and declaration order. Future in-memory regrouping maps
+//! through this boundary instead of deriving a new external schema from the
+//! runtime layout. Deterministic hashing follows the current runtime ownership
+//! layout and is intentionally separate from this compatibility adapter.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStruct};
 
@@ -214,67 +215,5 @@ impl<'de> Deserialize<'de> for EngineInner {
             static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
             campaign: snapshot.campaign,
         })
-    }
-}
-
-/// Hash fields in the pre-split declaration order.
-///
-/// The derive macro does not hash field names or struct boundaries; it invokes
-/// `StateHash` for each field in declaration order and writes a fixed marker for
-/// `#[state_hash(skip)]`. Keeping that exact sequence here preserves recorded
-/// replay hashes while allowing the runtime fields to be grouped later.
-impl robin_util::state_hash::StateHash for EngineInner {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        robin_util::state_hash::hash_skipped_field(state); // sim_config
-        self.mission.state_hash(state);
-        self.control.frame_counter.state_hash(state);
-        self.feedback.sound_sim.state_hash(state);
-        self.control.simulation_gates.state_hash(state);
-        self.control.speed.state_hash(state);
-        self.control.speed_int.state_hash(state);
-        self.weather.state_hash(state);
-        self.shield.state_hash(state);
-        self.script_globals.state_hash(state);
-        self.cheat_used_flags.state_hash(state);
-        self.standard_view_polygon_radius.state_hash(state);
-        self.next_order_id.state_hash(state);
-        self.control.chorus_timer.state_hash(state);
-        self.force_check.state_hash(state);
-        self.messenger.state_hash(state);
-        self.fast_grid.state_hash(state);
-        self.pathfinder.state_hash(state);
-        self.short_briefings.state_hash(state);
-        self.mission_stat.state_hash(state);
-        self.feedback.ground_mark.state_hash(state);
-        self.entities.state_hash(state);
-        self.pc_ids.state_hash(state);
-        self.feedback.titbit_manager.state_hash(state);
-        self.players.seats.state_hash(state);
-        self.feedback.cutscene_camera.state_hash(state);
-        self.control.rng.state_hash(state);
-        self.feedback.pending_side_effects.state_hash(state);
-        self.players.user_locked.state_hash(state);
-        self.players.qa_recording_for.state_hash(state);
-        self.players.qa_recording_slot.state_hash(state);
-        self.players.action_before_recording_macro.state_hash(state);
-        self.control.fast_forward.state_hash(state);
-        self.pending_move_requests.state_hash(state);
-        self.pending_path_requests.state_hash(state);
-        self.failed_path_requests.state_hash(state);
-        self.ai_global.state_hash(state);
-        self.players.macro_store.state_hash(state);
-        self.dead_pc.state_hash(state);
-        self.timer_elements.state_hash(state);
-        self.sequence_manager.state_hash(state);
-        self.pending_reinforcements.state_hash(state);
-        self.pending_scroll_amulets.state_hash(state);
-        self.pending_hero_speeches.state_hash(state);
-        self.pending_hades_kills.state_hash(state);
-        self.pending_concussion_side_effects.state_hash(state);
-        self.mission_script.state_hash(state);
-        self.script_zone_data.state_hash(state);
-        self.dynamic_sight_obstacles.state_hash(state);
-        self.static_sight_obstacle_active.state_hash(state);
-        self.campaign.state_hash(state);
     }
 }

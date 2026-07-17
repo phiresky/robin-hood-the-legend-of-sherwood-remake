@@ -11,7 +11,7 @@ use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
 
 /// Distinctive but internally inert state used to lock the top-level Engine
-/// serde, bincode, and StateHash contracts before reorganizing its fields.
+/// serde and bincode contracts while reorganizing its runtime fields.
 ///
 /// Keep this fixture free of level attachments: it must remain serializable at
 /// the same snapshot boundary as `EngineInner::new()`.
@@ -132,10 +132,26 @@ fn engine_top_level_snapshot_schema_and_bytes_are_stable() {
         encoded_hex,
         "01010101010100010000000111636f6d7061746962696c6974792d6d6170fc40302010fc4433221100000000000101070000e03f090000000100040d0054fcfefffffffc5a5aa5a5fb4101fc88776655170100000000000001000000fbd20400000000000000fb2e160000000000000000000f000000000000010000000000000000000000000000000000cb4200404a43000080bf000080bf0000000000000000000000803f0000803f000000000000000000000000000000000000000000000000000000000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042010000003f0000803f000000400000000000000000000000000000000000000000000000000000803f0000803f000000000000000000000000000000000500000000fd40302010bebafeca0000000001000000000000000000000000000000000000000001000200010000000000000000000000000000000000000000000000000000020000000000000000000000000000000101000100000000000000000301000100"
     );
+}
+
+#[test]
+fn engine_state_hash_is_deterministic_within_the_current_build() {
+    let engine = engine_compatibility_fixture();
+    let clone = engine.clone();
     assert_eq!(
         crate::replay::state_hash(&engine),
-        8_556_489_992_877_124_234,
-        "top-level regrouping must not invalidate recorded replay hashes"
+        crate::replay::state_hash(&clone)
+    );
+
+    let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
+        .expect("encode compatibility fixture");
+    let (restored, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .expect("decode compatibility fixture");
+    assert_eq!(consumed, bytes.len());
+    assert_eq!(
+        crate::replay::state_hash(&engine),
+        crate::replay::state_hash(&restored)
     );
 }
 
