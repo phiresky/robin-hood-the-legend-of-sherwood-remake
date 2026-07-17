@@ -1,7 +1,9 @@
 //! Complete ownership and policy for a loaded true-headless mission.
 
 use super::modal_state::ActiveModal;
-use super::runtime::{FrameOutcome, FramePacing, MissionRuntime, MissionWorld, TickPolicy};
+use super::runtime::{
+    FrameCommitPolicy, FrameOutcome, FramePacing, MissionRuntime, MissionWorld, TickPolicy,
+};
 use super::{dismiss_pending_modals, drain_steps, pop_matching_dismissal};
 use crate::game_operation::GameCode;
 use crate::player_command::{PlayerCommand, PlayerInput};
@@ -220,16 +222,14 @@ impl HeadlessMission {
         let MissionRuntime {
             world, timeline, ..
         } = &mut self.runtime;
-        if let Some(checker) = timeline.rollback_checker.as_mut() {
-            checker.end_frame(
-                &mut world.host,
-                frame.commands.commands.clone(),
-                &world.manager.engine,
-            );
-        }
-        timeline
-            .rewind_buffer
-            .end_frame(frame.commands.commands.clone());
+        timeline.commit_simulation_history(
+            &mut world.host,
+            &mut world.manager,
+            frame,
+            FrameCommitPolicy {
+                store_rewind_commands: true,
+            },
+        );
         timeline.record_commands(frame.recorder_hash, &frame.commands.commands, true);
         timeline.finish_recording(std::mem::take(&mut frame.modal_dismissals), true);
         world.manager.sim_frame += 1;

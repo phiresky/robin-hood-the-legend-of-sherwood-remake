@@ -253,6 +253,13 @@ pub(super) struct TickPolicy {
     pub(super) paused: bool,
 }
 
+/// Driver-owned choices at the deterministic post-tick commit boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct FrameCommitPolicy {
+    /// Buffered auto-replay already owns this frame's rewind slot.
+    pub(super) store_rewind_commands: bool,
+}
+
 /// Coarse stages that both mission-loop implementations pass through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum MissionPhase {
@@ -541,6 +548,34 @@ impl TimelineRuntime {
         let result = action();
         self.begin_bookkeeping();
         result
+    }
+
+    /// Commit rollback and rewind history for a frame which advanced.
+    ///
+    /// Pause/rewind admission and recorder ordering remain driver concerns.
+    /// Once admitted, rollback verification and rewind history are one
+    /// timeline step. Frame-number advancement intentionally stays in each
+    /// driver because headless advances after recorder commit while graphical
+    /// advances before modal/presentation work.
+    pub(super) fn commit_simulation_history(
+        &mut self,
+        host: &mut Host,
+        manager: &mut EngineManager,
+        frame: &MissionFrame,
+        policy: FrameCommitPolicy,
+    ) {
+        assert_eq!(
+            self.phase,
+            MissionPhase::Bookkeeping,
+            "simulation commit requested outside bookkeeping phase"
+        );
+        if let Some(checker) = self.rollback_checker.as_mut() {
+            checker.end_frame(host, frame.commands.commands.clone(), &manager.engine);
+        }
+        if policy.store_rewind_commands {
+            self.rewind_buffer
+                .end_frame(frame.commands.commands.clone());
+        }
     }
 
     pub(super) fn begin_bookkeeping(&mut self) {

@@ -56,7 +56,8 @@ use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
 use runtime::{
-    FrameOutcome, FramePacing, MissionControl, MissionFrame, MissionRuntime, MissionWorld,
+    FrameCommitPolicy, FrameOutcome, FramePacing, MissionControl, MissionFrame, MissionRuntime,
+    MissionWorld,
 };
 use setup::{
     LoadedInteractiveResources, MissionSprites, extract_ground_mark_sprite_data,
@@ -2956,14 +2957,14 @@ pub(crate) async fn run_mission(
         // rewind buffer also skips commits while consuming its own
         // log — the slot is already populated and would duplicate.
         if !paused && !rewind_active {
-            if let Some(ref mut checker) = runtime.rollback_checker {
-                checker.end_frame(host, frame.commands.commands.clone(), &manager.engine);
-            }
-            if !consumed_buffered {
-                runtime
-                    .rewind_buffer
-                    .end_frame(frame.commands.commands.clone());
-            }
+            runtime.commit_simulation_history(
+                host,
+                manager,
+                &frame,
+                FrameCommitPolicy {
+                    store_rewind_commands: !consumed_buffered,
+                },
+            );
             manager.sim_frame += 1;
             if let Some(net) = host.net.as_ref()
                 && host.local_seat == engine_player_command::PlayerId::HOST
