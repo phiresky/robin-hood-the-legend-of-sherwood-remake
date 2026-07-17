@@ -4676,12 +4676,9 @@ impl EnemyAi {
             // to "seen" or retries.
             Substate::SeekingCharlyGoToOfficer => match stimulus_type {
                 StimulusType::EventTimer => {
-                    // If we detect the antagonist (officer who
-                    // summoned charly), fire CallMrOfficerIAmBack;
-                    // else ReturnToDuty.  We have no
-                    // single-target detection primitive accessible
-                    // here, so approximate with the 360° check.
-                    if self.is_detecting_360_degrees(self.base.antagonist as HumanHandle, ctx) {
+                    // Original: mpMe->IsDetecting(mpAntagonist). This is
+                    // the normal live view cone, not the 360° helper.
+                    if self.is_detecting(self.base.antagonist as HumanHandle, ctx) {
                         // Fire the officer-I-am-back stimulus with fallback
                         // to sender so the default-to-ReturnToDuty path
                         // happens when the officer can't accept it.

@@ -3228,6 +3228,15 @@ pub struct AiContext {
     pub frame: u32,
     pub direction: u16,
     pub posture: crate::element::Posture,
+    /// Live eye point and view-cone parameters after `RefreshView`.
+    /// Used by synchronous `IsDetecting(human)` checks inside AI state
+    /// handlers, as distinct from the periodic detectable-list pass.
+    pub self_eye_position: MapPoint,
+    pub self_eye_z: f32,
+    pub self_view_direction: [f32; 2],
+    pub self_view_radius: u16,
+    pub self_real_half_aperture: f32,
+    pub self_eye_status: crate::element::EyeStatus,
     /// `IsVeryVeryBusy`'s sequence-element arm: `true` when the actor's
     /// current in-flight sequence element is `Command::PassDoor` or
     /// `Command::Fall`. The posture arm is covered separately via

@@ -362,6 +362,32 @@ pub(super) fn build_ai_context_from_entity(
         .npc_data()
         .map(|npc| npc.view_radius as f32)
         .unwrap_or(standard_view_polygon_radius as f32);
+    let self_eye = entity.compute_eyes_point(None);
+    let self_eye_position = self_eye
+        .map(|eye| {
+            crate::coordinates::MapPoint::from_world_xyz(
+                eye.x,
+                eye.y,
+                entity.element_data().position().z,
+            )
+        })
+        .unwrap_or_else(|| elem.position_map());
+    let self_eye_z = self_eye.map(|eye| eye.z).unwrap_or(elem.position().z);
+    let self_view_direction = entity
+        .npc_data()
+        .map(|npc| npc.view_direction)
+        .unwrap_or_else(|| {
+            let (x, y) = crate::ai_vision::sector_to_forward(elem.direction());
+            [x, y]
+        });
+    let self_real_half_aperture = entity
+        .npc_data()
+        .map(|npc| npc.real_half_aperture)
+        .unwrap_or(crate::ai_vision::NORMAL_HALF_APERTURE);
+    let self_eye_status = entity
+        .npc_data()
+        .map(|npc| npc.eye_status)
+        .unwrap_or_default();
     AiContext {
         position: crate::ai::Position {
             x: elem.position_map().x,
@@ -372,6 +398,12 @@ pub(super) fn build_ai_context_from_entity(
         frame,
         direction: elem.direction() as u16,
         posture: elem.posture,
+        self_eye_position,
+        self_eye_z,
+        self_view_direction,
+        self_view_radius: self_view_radius as u16,
+        self_real_half_aperture,
+        self_eye_status,
         in_uninterruptible_command: false,
         // `is_inside_building`: the building sector check OR the
         // door-transit branch — true during the few frames an actor is

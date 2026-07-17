@@ -1649,6 +1649,63 @@ impl EnemyAi {
         los_clear
     }
 
+    /// Normal `RHElementActorNPC::IsDetecting(human)` check used by
+    /// synchronous AI state-machine gates. Unlike the 360-degree helper,
+    /// this uses the live post-`RefreshView` cone and opaque line of sight.
+    fn is_detecting(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+        let Some(view) = ctx.entity_view(target) else {
+            tracing::warn!(
+                me = self.base.me,
+                target,
+                "is_detecting: required target entity view is missing"
+            );
+            return false;
+        };
+
+        let target_in_same_building = ctx.in_building
+            && ctx.building_sector.is_some()
+            && ctx.building_sector == view.building_sector;
+        let target_detection_xy = crate::stealth::detection_point_xy(
+            crate::coordinates::MapPoint::new(view.position.x, view.position.y),
+            view.posture,
+            view.direction as i16,
+        );
+        let target_eye_z =
+            view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
+        let radius = ctx.self_view_radius as f32;
+        let plane_distance = ctx.self_eye_z - view.elevation;
+        let effective_view_radius = (radius * radius - plane_distance * plane_distance)
+            .max(0.0)
+            .sqrt();
+
+        crate::ai_vision::compute_visibility(&crate::ai_vision::VisibilityQuery {
+            viewer: ctx.self_eye_position,
+            viewer_direction: ctx.direction as i16,
+            view_forward: (ctx.self_view_direction[0], ctx.self_view_direction[1]),
+            view_radius: ctx.self_view_radius,
+            viewer_eye_status: ctx.self_eye_status,
+            real_half_aperture: ctx.self_real_half_aperture,
+            viewer_in_building: ctx.in_building,
+            target_in_same_building,
+            forest_180_degree_view: ctx.is_forest_level
+                && ctx.camp == crate::element::Camp::Royalists,
+            golden_eye_mode: false,
+            effective_view_radius,
+            target_is_active_and_outside_building: view.is_able_to_fight && !view.in_building,
+            target: target_detection_xy,
+            target_posture: view.posture,
+            target_action_state: crate::element::ActionState::Waiting,
+            target_is_pc: view.is_pc,
+            viewer_eye_z: ctx.self_eye_z,
+            target_eye_z,
+            sight_obstacles: ctx.obstacle_list(),
+            fast_grid: &ctx.fast_grid,
+            layer: ctx.position.level,
+            target_unconscious: view.is_unconscious,
+            target_passing_door: false,
+        }) > 0.0
+    }
+
     /// 180°-detection (the simple-geometry half that can be answered
     /// from AI context alone).
     ///
@@ -3382,8 +3439,9 @@ impl EnemyAi {
 mod tests {
     use super::*;
     use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind, NetCoverInfo};
-    use crate::element::{Camp, Posture};
+    use crate::element::{Camp, EyeStatus, Posture};
     use crate::order::OrderType;
+    use crate::sight_obstacle::{ObstaclePoint, SharedSightObstacles, SightObstacle};
     use std::sync::Arc;
 
     fn test_position(x: f32, y: f32) -> Position {
@@ -3446,6 +3504,167 @@ mod tests {
             report_seen_bodies: Vec::new(),
             report_charly: 0,
         }
+    }
+
+    fn charly_to_officer_context(
+        officer_position: Position,
+        obstacles: Vec<SightObstacle>,
+    ) -> AiContext {
+        let mut officer = soldier_view(officer_position);
+        officer.rank = ProfileRank::Officer;
+        officer.ai_state = AiState::Default;
+        officer.ai_substate = Substate::DefaultOnPost;
+
+        let mut views = AiEntityViewMap::new();
+        views.insert(2, officer);
+        let obstacle_count = obstacles.len();
+        AiContext {
+            position: test_position(0.0, 0.0),
+            frame: 100,
+            direction: 4,
+            posture: Posture::Upright,
+            self_eye_position: crate::coordinates::MapPoint::new(0.0, 0.0),
+            self_eye_z: 45.0,
+            self_view_direction: [1.0, 0.0],
+            self_view_radius: 400,
+            self_real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
+            self_eye_status: EyeStatus::LookForward,
+            sq_self_view_radius: 400.0 * 400.0,
+            entity_views: Arc::new(views),
+            sight_obstacles: SharedSightObstacles {
+                static_obstacles: Arc::new(obstacles),
+                dynamic_obstacles: Arc::new(Vec::new()),
+                static_active: Arc::new(vec![true; obstacle_count]),
+            },
+            ..AiContext::default()
+        }
+    }
+
+    fn charly_heading_to_officer() -> EnemyAi {
+        let mut ai = EnemyAi::new(1);
+        ai.base.antagonist = 2;
+        ai.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
+        ai
+    }
+
+    fn opaque_wall_across_x_axis() -> SightObstacle {
+        let mut wall = SightObstacle::new_default(0);
+        wall.obstacle_points = vec![
+            ObstaclePoint {
+                x: 95.0,
+                y: -10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 105.0,
+                y: -10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 105.0,
+                y: 10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 95.0,
+                y: 10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+        ];
+        wall.top_plane_points = [
+            [95.0, -10.0, 80.0],
+            [105.0, -10.0, 80.0],
+            [95.0, 10.0, 80.0],
+        ];
+        wall.bottom_plane_points = [[95.0, -10.0, 0.0], [105.0, -10.0, 0.0], [95.0, 10.0, 0.0]];
+        wall.rebuild_geometry();
+        wall
+    }
+
+    #[test]
+    fn charly_inside_view_cone_reports_to_officer_then_arms_ten_frame_timer() {
+        let mut ai = charly_heading_to_officer();
+        let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
+
+        ai.think_expected_event(
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingCharlyGoToOfficerSeen
+        );
+        assert!(matches!(
+            ai.base.pending_cross_npc_actions.as_slice(),
+            [CrossNpcAction::SendStimulus {
+                target: 2,
+                stimulus_type: StimulusType::CallMrOfficerIAmBack,
+                ..
+            }]
+        ));
+        assert_eq!(ai.base.when_does_timer_ring, 110);
+        assert_eq!(
+            ai.base.substate_at_last_timer_launch,
+            Substate::SeekingCharlyGoToOfficerSeen
+        );
+    }
+
+    #[test]
+    fn charly_outside_view_cone_retries_after_ten_frames() {
+        let mut ai = charly_heading_to_officer();
+        // Within the 360-degree radius and unobstructed, but behind Charly.
+        let ctx = charly_to_officer_context(test_position(-200.0, 0.0), Vec::new());
+
+        ai.think_expected_event(
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
+        assert!(ai.base.pending_cross_npc_actions.is_empty());
+        assert_eq!(
+            ai.base.pending_unalert_near_charly_seekers,
+            Some(CharlySeekerTarget::SelfNpc)
+        );
+        assert_eq!(ai.base.when_does_timer_ring, 110);
+        assert_eq!(
+            ai.base.substate_at_last_timer_launch,
+            Substate::SeekingCharlyGoToOfficer
+        );
+    }
+
+    #[test]
+    fn charly_cannot_report_through_opaque_obstruction_and_retries() {
+        let mut ai = charly_heading_to_officer();
+        let ctx =
+            charly_to_officer_context(test_position(200.0, 0.0), vec![opaque_wall_across_x_axis()]);
+
+        ai.think_expected_event(
+            &Stimulus::new(StimulusType::EventTimer),
+            &mut AiGlobalState::default(),
+            &ctx,
+            &AiPerTickData::stub(),
+            None,
+        );
+
+        assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
+        assert!(ai.base.pending_cross_npc_actions.is_empty());
+        assert_eq!(ai.base.when_does_timer_ring, 110);
+        assert_eq!(
+            ai.base.substate_at_last_timer_launch,
+            Substate::SeekingCharlyGoToOfficer
+        );
     }
 
     #[test]
