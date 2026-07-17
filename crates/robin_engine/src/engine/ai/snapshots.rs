@@ -521,7 +521,7 @@ impl EngineInner {
                 Posture::Dead | Posture::DeadBack | Posture::StuckUnderNet | Posture::Tied
             );
             let active =
-                !is_unconscious && !is_passing_door && !posture_inactive && !self.freeze_all;
+                !is_unconscious && !is_passing_door && !posture_inactive && !self.actors_frozen();
             let noise_volume = Self::pc_noise_volume(
                 order_type,
                 material,
