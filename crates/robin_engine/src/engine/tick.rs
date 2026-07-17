@@ -139,6 +139,30 @@ pub(super) fn end_hourglass_phase_capture() -> Vec<HourglassPhase> {
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: std::cell::RefCell<Option<Vec<EntityId>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn capture_ordered_gameplay_entities<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+        assert!(
+            captured.borrow_mut().replace(Vec::new()).is_none(),
+            "ordered gameplay capture is not re-entrant"
+        );
+    });
+    let result = f();
+    let entities = CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+        captured
+            .borrow_mut()
+            .take()
+            .expect("ordered gameplay capture must remain active")
+    });
+    (result, entities)
+}
+
 /// Move exclamations whose decoded-duration deadline has arrived into
 /// the callback queue consumed by `process_npc_speech` later this tick.
 pub(super) fn drain_matured_exclamations(
@@ -5785,54 +5809,69 @@ impl EngineInner {
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that
     /// consume the entity/sequence/NPC state established above.
-    fn hourglass_phase_gameplay_systems(
+    pub(super) fn hourglass_phase_gameplay_systems(
         &mut self,
         display: &mut HostDisplayState,
         assets: &LevelAssets,
     ) {
-        // ── Per-frame bow-shot tick ─────────────────────────────
-        // Drive the `SHOOTING_WITH_BOW` animation for every actor
-        // with an active bow shot; when the animation reports
-        // `Done`, spawn an arrow projectile and notify the sequence
-        // manager.
-        let _spawned_projectiles = self.tick_bow_shots(assets);
+        // The original loop is literally:
+        //
+        // `for (i = 0; i < marrayElements.Size(); ++i) element[i]->Hourglass()`
+        //
+        // so both cross-type effects and entities appended during a virtual
+        // call are observable in creation order. These are the gameplay
+        // systems with proven cross-batch differences; keep the slot count
+        // live rather than snapshotting ids.
+        let mut slot = 0;
+        while slot < self.entities.len() {
+            let Some(entity_id) = self.entities.id_at_legacy_slot(slot as u32) else {
+                slot += 1;
+                continue;
+            };
 
-        // ── Per-frame arrow tick ────────────────────────────────
-        // C++ `ShootWithBowAt` calls `pArrow->Hourglass()` before
-        // `AddElement`. When bow release happens inside an actor's virtual
-        // Hourglass, the appended arrow is subsequently reached by
-        // RHEngine's size-checked element loop and receives its registered
-        // entity Hourglass too.
-        // The original does not batch projectile Hourglass calls ahead of
-        // every PC Hourglass. Both virtual calls occur at their respective
-        // positions in RHEngine's creation-ordered element array. Preserve
-        // that relative order for their observable damage/auto-heal effects.
-        let creation_ordered_pc_and_projectiles: Vec<EntityId> = self
-            .entities
-            .occupied()
-            .filter_map(|(id, entity)| {
-                matches!(entity, Entity::Pc(_) | Entity::Projectile(_)).then_some(id)
-            })
-            .collect();
-        for entity_id in creation_ordered_pc_and_projectiles {
-            match entity_id {
-                EntityId::Pc(_) => self.tick_pc_auto_heal_for(entity_id),
-                EntityId::Projectile(_) => {
-                    self.tick_existing_projectile(assets, entity_id);
+            #[cfg(test)]
+            CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
+                if let Some(entities) = captured.borrow_mut().as_mut() {
+                    entities.push(entity_id);
                 }
-                _ => unreachable!("filtered to PCs and projectiles"),
-            }
-        }
+            });
 
-        // ── Per-frame purse / coin tick ─────────────────────────
-        // Drive purse trajectories until impact (then burst into
-        // child coins), coin trajectories until landing (then
-        // broadcast DETECTABLE_OBJECT for the AI distraction hook),
-        // and the purse Hourglass that despawns a purse once all
-        // its child coins are taken.
-        self.tick_purses_and_coins(assets);
-        // NOTE: tick_purses_and_coins takes &LevelAssets (not &mut) because
-        // accessory sprite attach now clones from preloaded prototypes.
+            match entity_id {
+                EntityId::Pc(_) | EntityId::Soldier(_) | EntityId::Civilian(_) => {
+                    // `RHElementActor::Hourglass` executes the actor's active
+                    // order before `RHElementActorPC::Hourglass` applies its
+                    // auto-heal tail. Only one of bow/melee/ability can own
+                    // that active order, but dispatching each narrow driver
+                    // keeps stale-state cleanup behavior intact.
+                    self.tick_bow_shot_for(assets, entity_id);
+                    self.tick_melee_completion_for(assets, entity_id);
+                    self.tick_ability_for(display, assets, entity_id);
+                    if matches!(entity_id, EntityId::Pc(_)) {
+                        self.tick_pc_auto_heal_for(entity_id);
+                    }
+                }
+                EntityId::Projectile(_) => {
+                    let object_type = match self.get_entity(entity_id) {
+                        Some(Entity::Projectile(projectile)) => projectile.object.object_type,
+                        _ => unreachable!("projectile id must resolve to a projectile entity"),
+                    };
+                    match object_type {
+                        crate::element::ObjectType::Purse | crate::element::ObjectType::Coin => {
+                            self.tick_purse_or_coin(assets, entity_id)
+                        }
+                        crate::element::ObjectType::WaspNest
+                        | crate::element::ObjectType::BonusWaspNest
+                        | crate::element::ObjectType::Wasp => {
+                            self.tick_wasp_nest_or_wasp(assets, entity_id)
+                        }
+                        _ => self.tick_existing_projectile(assets, entity_id),
+                    }
+                }
+                EntityId::Net(_) => self.tick_net(assets, entity_id),
+                _ => {}
+            }
+            slot += 1;
+        }
 
         // ── Beggar-solicitation tick ────────────────────────────
         // For each PC currently in `SimulatingBeggar` posture,
@@ -5840,30 +5879,10 @@ impl EngineInner {
         // donor passes the full predicate chain.
         self.tick_beggar_bids(assets);
 
-        // ── Per-frame wasp-nest tick ────────────────────────────
-        // Advance wasp-nest trajectories, burst them on impact
-        // (spawning inert wasps + seeding `flying_wasp_count`),
-        // emit the buzz FX each tick while wasps fly, and expire
-        // each wasp after its lifetime elapses.
-        self.tick_wasp_nests(assets);
-
-        // ── Per-frame net tick ──────────────────────────────────
-        // Drive falling nets along their trajectory, fire the
-        // capture sweep on landing, and release victims when the
-        // net expires.  See `engine/nets.rs` for what's
-        // intentionally out of scope.
-        self.tick_nets(assets);
-
-        // ── Per-frame melee combat tick ─────────────────────────
-        // Process sword strikes (sequence-driven and AI-driven),
-        // apply damage, handle death/KO/wakeup transitions, and
-        // tick concussion healing.
+        // Combat progression without a proven cross-subsystem ordering
+        // discrepancy remains batched. Fallback-timed completions already
+        // cleared at their owning actor slots above and are skipped here.
         self.tick_melee_combat(assets);
-
-        // ── Per-frame ability tick ─────────────────────────────
-        // Drive hero ability animations (carry, tie, heal, whistle,
-        // traps) and apply cross-entity effects on completion.
-        self.tick_abilities(display, assets);
 
         // ── Per-actor `Order::done` propagation ────────────────
         // Runs after every per-system sprite-advance tick this frame
@@ -5886,9 +5905,8 @@ impl EngineInner {
             abilities::sync_carried_positions(&mut self.entities, &assets.profile_manager);
         }
 
-        // TODO(original-parity): map each batched gameplay system back to its
-        // original element subtype's position within the creation-ordered
-        // `marrayElements` hourglass pass.
+        // TODO(original-parity): move further gameplay maintenance into the
+        // ordered pass only when a concrete observable discrepancy is proven.
     }
 
     /// Apply work intentionally deferred until every entity, path, sequence,

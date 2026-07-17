@@ -220,6 +220,45 @@ impl EngineInner {
         }
     }
 
+    /// Advance one actor's bow state without advancing later-created
+    /// shooters. `bow_shot::tick_bow_shots` predates the ordered hourglass
+    /// spine and is all-actor; temporarily detaching the other active shots
+    /// narrows that existing implementation without duplicating its state
+    /// machine.
+    pub(super) fn tick_bow_shot_for(
+        &mut self,
+        assets: &LevelAssets,
+        shooter_id: EntityId,
+    ) -> Vec<EntityId> {
+        let mut detached = Vec::new();
+        for (actor_id, entity) in self.entities.actors_mut() {
+            let actor_id: EntityId = actor_id.into();
+            let Some(actor) = entity.actor_data_mut() else {
+                continue;
+            };
+            if actor_id != shooter_id && actor.active_shot.is_active() {
+                detached.push((actor_id, actor.active_shot));
+                actor.active_shot.clear();
+            }
+        }
+
+        let spawned = self.tick_bow_shots(assets);
+
+        for (actor_id, active_shot) in detached {
+            let actor = self
+                .get_entity_mut(actor_id)
+                .and_then(|entity| entity.actor_data_mut())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "active bow shooter {actor_id:?} disappeared during another actor's Hourglass"
+                    )
+                });
+            debug_assert!(!actor.active_shot.is_active());
+            actor.active_shot = active_shot;
+        }
+        spawned
+    }
+
     /// Advance the shoot animation for every actor with an active bow
     /// shot.  Computes ballistic trajectory, rolls hit chance, and
     /// spawns arrows on the done frame.  Called from the main
@@ -2736,22 +2775,109 @@ impl EngineInner {
 
     // ─── Hero ability tick ──────────────────────────────────────
 
-    /// Drive ability animations and apply cross-entity effects.
+    /// Complete a fallback-timed melee strike at its actor's creation-order
+    /// position when its hit was already applied on an earlier frame.
     ///
-    /// Called once per frame from `perform_hourglass`.  Drives the
-    /// carry, tie, heal, whistle, and trap ability paths.
-    pub(super) fn tick_abilities(
+    /// Other melee progression stays in the existing batched driver below;
+    /// this narrow extraction covers the proven cross-subsystem completion
+    /// edge without moving unproven sweep/AI maintenance.
+    pub(super) fn tick_melee_completion_for(
         &mut self,
-        display: &mut super::HostDisplayState,
         assets: &LevelAssets,
+        attacker_id: EntityId,
     ) {
         if self.actors_frozen() {
             return;
         }
-        let results = crate::abilities::tick_abilities(
+        let completion = self.get_entity(attacker_id).and_then(|entity| {
+            let melee = entity.actor_data()?.active_melee;
+            (melee.is_active()
+                && !melee.sprite_driving_hit
+                && melee.frames_remaining == 1
+                && melee.hit_applied
+                && entity
+                    .actor_data()
+                    .is_some_and(|actor| actor.sweep_state.is_none()))
+            .then_some((
+                melee.sequence_id,
+                melee.element_index,
+                melee.strike,
+                crate::engine::melee::get_hth_weapon_id_full(entity, &assets.profile_manager),
+            ))
+        });
+        let Some((sequence_id, element_index, strike, profile_idx)) = completion else {
+            return;
+        };
+
+        let pending_swordfights = {
+            let entity = self
+                .get_entity_mut(attacker_id)
+                .expect("melee completion attacker disappeared");
+            let actor = entity
+                .actor_data_mut()
+                .expect("melee completion attacker must be an actor");
+            actor.active_melee.clear();
+            actor.sweep_state = None;
+            std::mem::take(&mut actor.pending_push_swordfight)
+        };
+        for victim_id in pending_swordfights {
+            self.enter_swordfight(assets, victim_id, attacker_id, true);
+        }
+
+        match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
+            Some(profile) => {
+                let energy = crate::combat::strike_energy_cost(profile, strike);
+                if let Some(human) = self
+                    .get_entity_mut(attacker_id)
+                    .and_then(|entity| entity.human_data_mut())
+                {
+                    human.tiredness = human.tiredness.saturating_add(energy);
+                }
+            }
+            None => tracing::warn!(
+                ?attacker_id,
+                ?strike,
+                ?profile_idx,
+                "completed sword strike has no attacker weapon profile; tiredness unchanged"
+            ),
+        }
+
+        if let Some(sequence_id) = sequence_id {
+            let stale = self
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .is_some_and(|element| {
+                    matches!(
+                        element.state,
+                        crate::sequence::SequenceState::Interrupted
+                            | crate::sequence::SequenceState::Impossible
+                            | crate::sequence::SequenceState::Terminated
+                            | crate::sequence::SequenceState::Done
+                    )
+                });
+            if !stale {
+                self.sequence_manager
+                    .element_terminated(sequence_id, element_index);
+            }
+        }
+    }
+
+    /// Drive one actor's ability and apply its completion effects inline at
+    /// that actor's creation-order position.
+    pub(super) fn tick_ability_for(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) {
+        if self.actors_frozen() {
+            return;
+        }
+        let results = crate::abilities::tick_ability(
             &mut self.entities,
             &self.sequence_manager,
             &mut self.next_order_id,
+            actor_id,
         );
         for result in results {
             use crate::abilities::AbilityTickResult;

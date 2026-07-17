@@ -57,7 +57,23 @@ impl EngineInner {
     /// * **Purse Hourglass** post-burst — prunes dead/taken child handles
     ///   off the purse's `child_coins` list (the empty pouch stays alive
     ///   forever as decoration).
+    #[cfg(test)]
     pub(super) fn tick_purses_and_coins(&mut self, assets: &crate::engine::LevelAssets) {
+        let mut slot = 0;
+        while slot < self.entities.len() {
+            if let Some(id) = self.entities.id_at_legacy_slot(slot as u32) {
+                self.tick_purse_or_coin(assets, id);
+            }
+            slot += 1;
+        }
+    }
+
+    /// Advance one purse or coin at its creation-order position.
+    ///
+    /// `RHEngine::PerformHourglass` rechecks `marrayElements.Size()` after
+    /// every virtual call. Keeping this operation per entity lets the main
+    /// tick reach coins appended by a purse impact later in the same pass.
+    pub(super) fn tick_purse_or_coin(&mut self, assets: &crate::engine::LevelAssets, id: EntityId) {
         if self.actors_frozen() {
             return;
         }
@@ -70,52 +86,48 @@ impl EngineInner {
         // already filters us out by `object_type != Arrow`, so no double
         // motion update.
 
-        struct Impact {
-            id: EntityId,
-            kind: ImpactKind,
-        }
         enum ImpactKind {
             PurseLanded { pos: WorldPoint3D, layer: u16 },
             CoinLanded { pos: WorldPoint3D, layer: u16 },
         }
-        let mut impacts: Vec<Impact> = Vec::new();
-
-        for (id, proj) in self.entities.projectiles_mut() {
+        let impact = {
+            let Some(Entity::Projectile(proj)) = self.entities.get_mut(id) else {
+                return;
+            };
             if !proj.element.active {
-                continue;
+                return;
             }
             let object_type = proj.object.object_type;
             if !matches!(object_type, ObjectType::Purse | ObjectType::Coin) {
-                continue;
+                return;
             }
             if !proj.projectile.flying {
-                continue;
-            }
-
-            // Advance trajectory by one frame via the shared helper that
-            // also drives arrow ticks.  Returns true when the trajectory
-            // ran out — the projectile has landed.
-            let exhausted = proj.advance_trajectory_one_frame();
-            if exhausted {
-                let pos = proj.element.position();
-                let layer = proj.element.layer();
-                impacts.push(Impact {
-                    id: id.into(),
-                    kind: match object_type {
-                        ObjectType::Purse => ImpactKind::PurseLanded { pos, layer },
-                        ObjectType::Coin => ImpactKind::CoinLanded { pos, layer },
-                        _ => unreachable!(),
+                None
+            } else {
+                // Advance trajectory by one frame via the shared helper that
+                // also drives arrow ticks. Returns true when the trajectory
+                // ran out — the projectile has landed.
+                let exhausted = proj.advance_trajectory_one_frame();
+                exhausted.then(|| match object_type {
+                    ObjectType::Purse => ImpactKind::PurseLanded {
+                        pos: proj.element.position(),
+                        layer: proj.element.layer(),
                     },
-                });
+                    ObjectType::Coin => ImpactKind::CoinLanded {
+                        pos: proj.element.position(),
+                        layer: proj.element.layer(),
+                    },
+                    _ => unreachable!(),
+                })
             }
-        }
+        };
 
         // ── Phase 2: handle impacts ────────────────────────────────
         //
         // The mutable-borrow on `self.entities` is released; we can now
         // call back into `&mut self` for noise broadcasts, detectable
         // dispatch, and child-coin spawning.
-        for Impact { id, kind } in impacts {
+        if let Some(kind) = impact {
             let resolution = self.apply_projectile_landing_resolution(assets, id);
             let landed_layer = resolution
                 .filter(|r| !r.blocked_by_motion_obstacle)
@@ -140,26 +152,18 @@ impl EngineInner {
         // click-to-take-all path can iterate the live ones.  The only
         // despawn paths are `take_purse` (clicking the purse) and level
         // unload.
-        let purses_to_check: Vec<EntityId> = self
-            .entities
-            .projectiles()
-            .filter_map(|(id, p)| {
+        let should_prune = matches!(
+            self.get_entity(id),
+            Some(Entity::Projectile(p))
                 if p.element.active
                     && p.object.object_type == ObjectType::Purse
                     && p.projectile.purse.burst
                     && !p.projectile.purse.child_coins.is_empty()
-                {
-                    Some(id.into())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for purse_id in purses_to_check {
-            let children: Vec<EntityId> = match self.get_entity(purse_id) {
+        );
+        if should_prune {
+            let children: Vec<EntityId> = match self.get_entity(id) {
                 Some(Entity::Projectile(p)) => p.projectile.purse.child_coins.clone(),
-                _ => continue,
+                _ => unreachable!("purse prune predicate guaranteed a projectile"),
             };
             let alive: Vec<EntityId> = children
                 .into_iter()
@@ -175,7 +179,7 @@ impl EngineInner {
                         .unwrap_or(false)
                 })
                 .collect();
-            if let Some(Entity::Projectile(purse)) = self.entities.get_mut(purse_id) {
+            if let Some(Entity::Projectile(purse)) = self.entities.get_mut(id) {
                 purse.projectile.purse.child_coins = alive;
             }
         }
@@ -578,6 +582,48 @@ mod tests {
             };
             assert_eq!(c.object.object_type, ObjectType::Coin);
             assert_eq!(c.projectile.purse.source_purse, Some(purse_id));
+        }
+    }
+
+    #[test]
+    fn live_purse_pass_reaches_newly_appended_coins_in_the_same_frame() {
+        let mut parent_only = EngineInner::new();
+        let purse_id = spawn_landing_purse(
+            &mut parent_only,
+            WorldPoint3D {
+                x: 100.0,
+                y: 200.0,
+                z: 0.0,
+            },
+            0,
+            None,
+        );
+        let mut live_pass = parent_only.clone();
+        let assets = crate::engine::LevelAssets::new();
+
+        crate::sim_rng::with_seed(0xC01A, || parent_only.tick_purse_or_coin(&assets, purse_id));
+        crate::sim_rng::with_seed(0xC01A, || live_pass.tick_purses_and_coins(&assets));
+
+        let child_ids = match parent_only.get_entity(purse_id) {
+            Some(Entity::Projectile(purse)) => purse.projectile.purse.child_coins.clone(),
+            _ => panic!("parent-only purse missing after burst"),
+        };
+        assert_eq!(child_ids.len(), NUMBER_OF_COINS_IN_PURSE as usize);
+        for child_id in child_ids {
+            let primed_position = parent_only
+                .get_entity(child_id)
+                .expect("primed coin missing")
+                .element_data()
+                .position();
+            let same_frame_position = live_pass
+                .get_entity(child_id)
+                .expect("same-frame coin missing")
+                .element_data()
+                .position();
+            assert_ne!(
+                same_frame_position, primed_position,
+                "coin {child_id:?} must receive its element-array Hourglass after the explicit pre-insertion primer"
+            );
         }
     }
 

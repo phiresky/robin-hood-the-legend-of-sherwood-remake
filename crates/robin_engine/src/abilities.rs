@@ -1930,10 +1930,37 @@ pub fn tick_abilities(
     sequence_manager: &SequenceManager,
     order_id_counter: &mut u32,
 ) -> Vec<AbilityTickResult> {
+    let actor_ids: Vec<EntityId> = entities.actors().map(|(id, _)| id.into()).collect();
+    let mut results = Vec::new();
+    for actor_id in actor_ids {
+        results.extend(tick_ability(
+            entities,
+            sequence_manager,
+            order_id_counter,
+            actor_id,
+        ));
+    }
+    results
+}
+
+/// Advance the active ability for one actor.
+///
+/// This is the unit used by the engine's creation-ordered element pass. The
+/// all-actor wrapper remains for focused subsystem tests and non-hourglass
+/// callers.
+pub fn tick_ability(
+    entities: &mut Entities,
+    sequence_manager: &SequenceManager,
+    order_id_counter: &mut u32,
+    requested_actor: EntityId,
+) -> Vec<AbilityTickResult> {
     let mut results = Vec::new();
 
     for (actor_id, entity) in entities.actors_mut() {
         let entity_id: EntityId = actor_id.into();
+        if entity_id != requested_actor {
+            continue;
+        }
         let actor = match entity.actor_data() {
             Some(a) => a,
             None => continue,

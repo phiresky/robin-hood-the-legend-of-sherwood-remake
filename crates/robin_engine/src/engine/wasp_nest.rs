@@ -66,46 +66,49 @@ const CHANGE_DIRECTION_TRIES: u32 = 10;
 
 impl EngineInner {
     /// Per-frame tick for wasp nests and their spawned wasps.
+    #[cfg(test)]
     pub(super) fn tick_wasp_nests(&mut self, assets: &LevelAssets) {
+        let mut slot = 0;
+        while slot < self.entities.len() {
+            if let Some(id) = self.entities.id_at_legacy_slot(slot as u32) {
+                self.tick_wasp_nest_or_wasp(assets, id);
+            }
+            slot += 1;
+        }
+    }
+
+    /// Advance one wasp nest or wasp at its creation-order position.
+    pub(super) fn tick_wasp_nest_or_wasp(&mut self, assets: &LevelAssets, id: EntityId) {
         if self.actors_frozen() {
             return;
         }
 
-        // ── Phase 1: advance nest trajectories; collect impacts ─────
-        struct NestImpact {
-            id: EntityId,
-            pos: WorldPoint3D,
-            layer: u16,
+        let object_type = match self.get_entity(id) {
+            Some(Entity::Projectile(projectile)) if projectile.element.active => {
+                projectile.object.object_type
+            }
+            _ => return,
+        };
+        if object_type == ObjectType::Wasp {
+            self.tick_single_wasp(assets, id);
+            return;
         }
-        let mut impacts: Vec<NestImpact> = Vec::new();
-
-        for (id, proj) in self.entities.projectiles_mut() {
-            if !proj.element.active {
-                continue;
-            }
-            let object_type = proj.object.object_type;
-            if !matches!(
-                object_type,
-                ObjectType::WaspNest | ObjectType::BonusWaspNest
-            ) {
-                continue;
-            }
-            if !proj.projectile.flying {
-                continue;
-            }
-
-            let exhausted = proj.advance_trajectory_one_frame();
-            if exhausted {
-                impacts.push(NestImpact {
-                    id: id.into(),
-                    pos: proj.element.position(),
-                    layer: proj.element.layer(),
-                });
-            }
+        if !matches!(
+            object_type,
+            ObjectType::WaspNest | ObjectType::BonusWaspNest
+        ) {
+            return;
         }
 
-        // ── Phase 2: burst each impacted nest ──────────────────────
-        for NestImpact { id, pos, layer } in impacts {
+        // The nest's projectile base runs first. HitObstacle may append the
+        // wasps; the live outer entity loop reaches those new slots later.
+        let impact = match self.get_entity_mut(id) {
+            Some(Entity::Projectile(projectile)) if projectile.projectile.flying => projectile
+                .advance_trajectory_one_frame()
+                .then(|| (projectile.element.position(), projectile.element.layer())),
+            _ => None,
+        };
+        if let Some((pos, layer)) = impact {
             let resolution = self.apply_projectile_landing_resolution(assets, id);
             let landed_layer = resolution
                 .filter(|r| !r.blocked_by_motion_obstacle)
@@ -114,30 +117,18 @@ impl EngineInner {
             self.burst_wasp_nest(id, pos, landed_layer);
         }
 
-        // ── Phase 3: per-wasp AI ───────────────────────────────────
-        self.tick_wasps(assets);
-
-        // ── Phase 4: nest Hourglass — emit buzz while wasps fly ────
-        let nest_buzzes: Vec<WorldPoint3D> = self
-            .entities
-            .projectiles()
-            .filter_map(|(_, p)| {
+        // Nest-specific tail follows its projectile base Hourglass.
+        let buzz_pos = match self.get_entity(id) {
+            Some(Entity::Projectile(p))
                 if p.element.active
-                    && matches!(
-                        p.object.object_type,
-                        ObjectType::WaspNest | ObjectType::BonusWaspNest
-                    )
                     && p.projectile.wasp.burst
-                    && p.projectile.wasp.flying_wasp_count > 0
-                {
-                    Some(p.element.position())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for pos in nest_buzzes {
+                    && p.projectile.wasp.flying_wasp_count > 0 =>
+            {
+                Some(p.element.position())
+            }
+            _ => None,
+        };
+        if let Some(pos) = buzz_pos {
             self.pending_side_effects
                 .sounds
                 .push(super::SoundCommand::Fx {
@@ -177,33 +168,6 @@ impl EngineInner {
             wasps = NUMBER_OF_WASPS,
             "WaspNest: burst on impact, spawned wasp swarm"
         );
-    }
-
-    /// Per-frame AI pass for every active wasp.
-    ///
-    /// Covers victim tracking, random-walk movement with nest tether,
-    /// charge-to-victim, sting commit, and sting-sequence launch.  We
-    /// fan these phases out into helpers that take the wasp by id so
-    /// the borrow checker doesn't fight us when each phase needs to
-    /// call back into `&mut self`.
-    fn tick_wasps(&mut self, assets: &LevelAssets) {
-        // Snapshot wasp ids up-front so we can mutate `self.entities`
-        // from inside the per-wasp loop without iterator invalidation.
-        let wasp_ids: Vec<EntityId> = self
-            .entities
-            .projectiles()
-            .filter_map(|(id, projectile)| {
-                if projectile.element.active && projectile.object.object_type == ObjectType::Wasp {
-                    Some(id.into())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for wasp_id in wasp_ids {
-            self.tick_single_wasp(assets, wasp_id);
-        }
     }
 
     /// Advance a single wasp by one frame.
@@ -786,6 +750,41 @@ mod tests {
                 })
                 .count();
             assert_eq!(wasp_count as u16, NUMBER_OF_WASPS);
+        });
+    }
+
+    #[test]
+    fn live_nest_pass_reaches_newly_appended_wasps_in_the_same_frame() {
+        crate::sim_rng::with_seed(0x5A5A, || {
+            let mut parent_only = EngineInner::new();
+            let nest_id = make_nest_at(&mut parent_only);
+            let mut live_pass = parent_only.clone();
+            let assets = empty_assets();
+
+            parent_only.tick_wasp_nest_or_wasp(&assets, nest_id);
+            live_pass.tick_wasp_nests(&assets);
+
+            let parent_wasps: Vec<_> = parent_only
+                .entities
+                .projectiles()
+                .filter(|(_, projectile)| projectile.object.object_type == ObjectType::Wasp)
+                .map(|(id, projectile)| (EntityId::from(id), projectile.projectile.wasp.timeout))
+                .collect();
+            assert_eq!(parent_wasps.len(), NUMBER_OF_WASPS as usize);
+            assert!(
+                parent_wasps.iter().all(|(_, timeout)| *timeout == 0),
+                "dispatching only the nest must leave appended wasps untouched"
+            );
+            for (wasp_id, _) in parent_wasps {
+                let timeout = match live_pass.get_entity(wasp_id) {
+                    Some(Entity::Projectile(wasp)) => wasp.projectile.wasp.timeout,
+                    _ => panic!("same-frame wasp {wasp_id:?} missing"),
+                };
+                assert!(
+                    (DIRECTION_CHANGE_TIMEOUT..=DIRECTION_CHANGE_TIMEOUT + 2).contains(&timeout),
+                    "same-frame wasp {wasp_id:?} did not run its first Hourglass"
+                );
+            }
         });
     }
 
