@@ -15,7 +15,9 @@ use crate::ai::{AiContext, AiPerTickData, StimulusType};
 use crate::ai_entity_view::{self, AiEntityViewMap, SharedAiEntityViews};
 use crate::ai_vision;
 use crate::coordinates::MapPoint;
-use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, PcId, SoldierId};
+use crate::element::{
+    Camp, Detectable, DetectableType, Entity, EntityId, Human as _, PcId, SoldierId,
+};
 use crate::engine::SimScratch;
 use crate::entities::Entities;
 
@@ -1343,12 +1345,13 @@ impl EngineInner {
         const SWORDFIGHT_RADIUS: f32 = 500.0;
 
         // Build a friendly soldier snapshot for `handle` (which may be self).
-        let build_soldier = |handle: u32| -> Option<FighterSnapshot> {
+        // The original fighter registry retains inactive and out-of-order
+        // soldiers, and `FillListWithAllNearFighters` inserts self before it
+        // applies `IsAbleToFight` to the remaining registry entries.
+        let build_soldier = |handle: u32, require_able: bool| -> Option<FighterSnapshot> {
             let s = self.entities.get_soldier(SoldierId(handle))?;
-            if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
-                // Detection-pass builder only feeds soldier_snapshots
-                // through the alive+conscious filter (see
-                // `snapshots.rs`).  Apply the same filter here.
+            let is_able_to_fight = s.is_able_to_fight();
+            if require_able && !is_able_to_fight {
                 return None;
             }
             let pos = s.element.position_map();
@@ -1456,11 +1459,11 @@ impl EngineInner {
                 direction: s.element.direction() as u16,
                 is_friendly,
                 is_swordfighting: !s.human.opponents.is_empty(),
-                is_able_to_fight: true, // filtered above
+                is_able_to_fight,
                 is_tied: s.element.posture == Posture::Tied,
-                is_unconscious: false, // filtered above
-                is_dead: false,        // filtered above
-                is_carried: false,
+                is_unconscious: s.human.unconscious,
+                is_dead: s.npc.life_points <= 0,
+                is_carried: s.human.carrier.is_some(),
                 is_pc: false,
                 is_soldier: true,
                 rank: enemy_ai_other.soldier_profile_rank,
@@ -1606,8 +1609,8 @@ impl EngineInner {
         let mut out: Vec<FighterSnapshot> = Vec::with_capacity(1 + self.pc_ids.len() + 4);
 
         // Self entry first — no radius filter (the AI is at distance 0).
-        out.push(build_soldier(me_handle).unwrap_or_else(|| {
-            panic!("enemy AI self {me_handle} is absent from the live fighter registry")
+        out.push(build_soldier(me_handle, false).unwrap_or_else(|| {
+            panic!("enemy AI self {me_handle} is absent from the fighter registry")
         }));
 
         // All live soldiers in the same combat radius. Scan the global
@@ -1627,7 +1630,7 @@ impl EngineInner {
             if dx.abs().max(dy.abs()) > SWORDFIGHT_RADIUS {
                 continue;
             }
-            if let Some(snap) = build_soldier(other_id.index()) {
+            if let Some(snap) = build_soldier(other_id.index(), true) {
                 out.push(snap);
             }
         }

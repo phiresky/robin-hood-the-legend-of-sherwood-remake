@@ -3017,6 +3017,57 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     entity
 }
 
+#[test]
+fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
+    use crate::element::Posture;
+
+    let mut engine = EngineInner::new();
+    let self_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let other_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+
+    for id in [self_id, other_id] {
+        let Entity::Soldier(soldier) = engine.get_entity_mut(id).expect("test fighter exists")
+        else {
+            panic!("test fighter changed kind")
+        };
+        soldier.element.active = true;
+        soldier.npc.life_points = 100;
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test fighter has enemy AI")
+            .base
+            .me = id.index();
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Soldier(self_soldier) =
+        engine.get_entity_mut(self_id).expect("self fighter exists")
+    else {
+        panic!("self fighter changed kind")
+    };
+    self_soldier.element.active = false;
+
+    let Entity::Soldier(other_soldier) = engine
+        .get_entity_mut(other_id)
+        .expect("other fighter exists")
+    else {
+        panic!("other fighter changed kind")
+    };
+    other_soldier.element.posture = Posture::Tied;
+
+    let fighters = engine.build_nearby_fighters_for(self_id, &assets);
+    assert_eq!(fighters.len(), 1);
+    assert_eq!(fighters[0].handle, self_id.index());
+    assert!(!fighters[0].is_able_to_fight);
+    assert!(!fighters[0].is_dead);
+    assert!(!fighters[0].is_unconscious);
+    assert!(!fighters[0].is_carried);
+}
+
 fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInner {
     use crate::ai::{AiState, Stimulus, StimulusType, Substate};
     use crate::element::EyeStatus;
