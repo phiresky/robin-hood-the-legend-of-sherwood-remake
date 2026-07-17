@@ -25,6 +25,25 @@ thread_local! {
 /// Number of `perform_hourglass` calls between log lines.
 const HOURGLASS_LOG_INTERVAL: u32 = 100;
 
+/// Move exclamations whose decoded-duration deadline has arrived into
+/// the callback queue consumed by `process_npc_speech` later this tick.
+pub(super) fn drain_matured_exclamations(
+    sound_sim: &mut crate::sound::SoundSimState,
+    cur_frame: u32,
+) {
+    let mut still_playing = Vec::new();
+    let mut finished = Vec::new();
+    for p in sound_sim.playing_exclamations.drain(..) {
+        if p.finish_frame <= cur_frame {
+            finished.push((p.actor_id, p.exclamation_id));
+        } else {
+            still_playing.push(p);
+        }
+    }
+    sound_sim.playing_exclamations = still_playing;
+    sound_sim.finished_exclamations = finished;
+}
+
 #[derive(Default)]
 struct HourglassStats {
     count: u32,
@@ -335,17 +354,7 @@ impl EngineInner {
         // emit time using the host-supplied `exclamation_durations`
         // table.
         let cur_frame = self.frame_counter;
-        let mut still_playing = Vec::new();
-        let mut finished = Vec::new();
-        for p in self.sound_sim.playing_exclamations.drain(..) {
-            if p.finish_frame <= cur_frame {
-                finished.push((p.actor_id, p.exclamation_id));
-            } else {
-                still_playing.push(p);
-            }
-        }
-        self.sound_sim.playing_exclamations = still_playing;
-        self.sound_sim.finished_exclamations = finished;
+        drain_matured_exclamations(&mut self.sound_sim, cur_frame);
 
         // Drain matured sound-source finishes.  Replaces the
         // `stop_sound_source` logic the Rust host used to run on

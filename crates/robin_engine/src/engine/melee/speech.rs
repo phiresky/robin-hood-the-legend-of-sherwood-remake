@@ -208,11 +208,8 @@ impl EngineInner {
                 position,
                 actor_id: Some(entity_id),
             });
-        let duration = assets
-            .exclamation_durations
-            .get(&(group, profile_id, remark))
-            .copied()
-            .unwrap_or(super::EXCLAMATION_DEFAULT_FRAMES);
+        let duration =
+            exclamation_duration_frames(&assets.exclamation_durations, group, profile_id, remark);
         self.sound_sim
             .playing_exclamations
             .push(crate::sound::PlayingExclamation {
@@ -359,11 +356,12 @@ impl EngineInner {
                 position,
                 actor_id: Some(pc_id),
             });
-        let duration = assets
-            .exclamation_durations
-            .get(&(ExclamationGroup::Pc, profile_id, expression))
-            .copied()
-            .unwrap_or(super::EXCLAMATION_DEFAULT_FRAMES);
+        let duration = exclamation_duration_frames(
+            &assets.exclamation_durations,
+            ExclamationGroup::Pc,
+            profile_id,
+            expression,
+        );
         self.sound_sim
             .playing_exclamations
             .push(crate::sound::PlayingExclamation {

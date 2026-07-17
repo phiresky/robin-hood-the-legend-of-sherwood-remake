@@ -2056,6 +2056,114 @@ fn make_test_soldier(posture: crate::element::Posture) -> Entity {
     })
 }
 
+const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
+
+fn build_mytalk_timing_test(duration_frames: Option<u32>) -> (EngineInner, EntityId, LevelAssets) {
+    use crate::ai::{Remark, SpeechFlags};
+    use crate::element::AiBrain;
+    use crate::profiles::SoldierProfile;
+    use crate::sound::ExclamationGroup;
+
+    let mut engine = EngineInner::new();
+    engine.frame_counter = 100;
+
+    let mut soldier_entity = make_test_soldier(crate::element::Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let ai = soldier.npc.ai_brain.base_mut().unwrap();
+    ai.current_remark = Remark::Arrow;
+    ai.current_remark_flags = (SpeechFlags::MYTALK_1 | SpeechFlags::ALWAYS).bits();
+    let soldier_id = engine.add_entity(soldier_entity);
+
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .push(SoldierProfile {
+            profile_name: "timing-test-soldier".into(),
+            exclamation_id: SPEECH_TIMING_PROFILE_ID,
+            ..Default::default()
+        });
+    if let Some(frames) = duration_frames {
+        std::sync::Arc::make_mut(&mut assets.exclamation_durations).insert(
+            (
+                ExclamationGroup::Civilian,
+                SPEECH_TIMING_PROFILE_ID,
+                Remark::Arrow as u16,
+            ),
+            frames,
+        );
+    }
+
+    (engine, soldier_id, assets)
+}
+
+fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiController {
+    engine
+        .get_entity(soldier_id)
+        .and_then(Entity::ai_controller)
+        .expect("timing-test soldier has an AI controller")
+}
+
+#[test]
+fn mytalk_completion_obeys_exact_asset_duration_frame() {
+    use crate::ai::{Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(Some(3));
+    engine.process_npc_speech(&assets);
+
+    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(engine.sound_sim.playing_exclamations[0].finish_frame, 103);
+    assert!(mytalk_ai(&engine, soldier_id).speech_in_flight);
+
+    for frame in [101, 102] {
+        engine.frame_counter = frame;
+        super::tick::drain_matured_exclamations(&mut engine.sound_sim, frame);
+        engine.process_npc_speech(&assets);
+        let ai = mytalk_ai(&engine, soldier_id);
+        assert!(ai.speech_in_flight);
+        assert_eq!(ai.current_remark, Remark::Arrow);
+        assert!(ai.pending_self_stimuli.is_empty());
+    }
+
+    engine.frame_counter = 103;
+    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 103);
+    engine.process_npc_speech(&assets);
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert!(!ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+}
+
+#[test]
+fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
+    use crate::ai::{Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(None);
+    engine.process_npc_speech(&assets);
+
+    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(
+        engine.sound_sim.playing_exclamations[0].finish_frame, 100,
+        "missing metadata must not fabricate a 75-frame speech"
+    );
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert!(ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::Arrow);
+
+    engine.frame_counter = 101;
+    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 101);
+    engine.process_npc_speech(&assets);
+
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert_eq!(engine.frame_counter, 101);
+    assert!(!ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+    assert_eq!(ai.pending_mytalk_flags, 0);
+    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+}
+
 /// Build a minimal civilian entity for NPC-translate tests.
 fn make_test_civilian(posture: crate::element::Posture) -> Entity {
     Entity::Civilian(crate::element::ActorCivilian {

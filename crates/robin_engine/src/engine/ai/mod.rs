@@ -3545,14 +3545,15 @@ impl EngineInner {
                     actor_id: Some(snap.entity_id),
                 });
             // Schedule the deterministic MYTALK finish from the
-            // host-populated sample-duration table. Missing entries fall
-            // back to `EXCLAMATION_DEFAULT_FRAMES`; sound backend presence
-            // is deliberately not part of sim state.
-            let duration = assets
-                .exclamation_durations
-                .get(&(group, snap.speech_id, excl_id))
-                .copied()
-                .unwrap_or(super::EXCLAMATION_DEFAULT_FRAMES);
+            // host-populated sample-duration table. Missing samples use
+            // the original zero-length completion path; sound backend
+            // presence is deliberately not part of sim state.
+            let duration = super::exclamation_duration_frames(
+                &assets.exclamation_durations,
+                group,
+                snap.speech_id,
+                excl_id,
+            );
             self.sound_sim
                 .playing_exclamations
                 .push(crate::sound::PlayingExclamation {
