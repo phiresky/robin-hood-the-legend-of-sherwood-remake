@@ -6,7 +6,7 @@
 mod support;
 
 use robin_assets::scb;
-use robin_engine::natives::GameHost;
+use robin_engine::natives::{GameHost, NativeContext, ScriptState};
 use robin_engine::script_manager::{ScriptError, ScriptManager};
 use support::{data_directory, data_file};
 
@@ -187,11 +187,16 @@ fn static_area_shared_between_instances() {
     let mut mgr = load_manager(&bytes);
 
     let mut host = GameHost::new();
+    let mut script_state = ScriptState::default();
     let mut inst = mgr.create_instance("Test").unwrap();
 
-    let _ = inst
-        .call_function_with_host(&mut mgr, "SetGlobal42", &mut host)
-        .unwrap();
+    {
+        let mut context = NativeContext::new(&mut host, &mut script_state);
+        let _ = inst
+            .call_function_with_host(&mut mgr, "SetGlobal42", &mut context)
+            .unwrap();
+    }
+    assert_eq!(script_state.globals.get(&0), Some(&42));
 }
 
 #[test]
@@ -211,9 +216,11 @@ fn native_calls_through_instance() {
     let mut mgr = load_manager(&bytes);
     let mut inst = mgr.create_instance("Test").unwrap();
     let mut host = GameHost::new();
+    let mut script_state = ScriptState::default();
+    let mut context = NativeContext::new(&mut host, &mut script_state);
 
     let result = inst
-        .call_function_with_host(&mut mgr, "Go", &mut host)
+        .call_function_with_host(&mut mgr, "Go", &mut context)
         .unwrap();
     assert_eq!(result, 0x0F);
 }
@@ -287,6 +294,7 @@ fn demo_script_via_manager() {
     assert!(inst.has_function(&mgr, "Initialize"));
 
     let mut host = GameHost::new();
+    let mut script_state = ScriptState::default();
 
     // Run PutActorInBuilding (addr 0, the first function).
     // It won't do much with stub natives, but shouldn't crash.
@@ -299,7 +307,8 @@ fn demo_script_via_manager() {
 
     // Just verify we can call without panicking.
     // Most functions need real engine state, so errors are expected.
-    let _ = inst.call_function_with_host(&mut mgr, &first_fn, &mut host);
+    let mut context = NativeContext::new(&mut host, &mut script_state);
+    let _ = inst.call_function_with_host(&mut mgr, &first_fn, &mut context);
 }
 
 /// Exercises all fullgame scripts through the manager: load each .scb,
