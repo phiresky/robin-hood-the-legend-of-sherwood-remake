@@ -89,6 +89,15 @@ pub struct PendingNestedCall {
     pub fn_name: String,
     /// i32 parameters to push onto the target VM before the call.
     pub params: Vec<i32>,
+    /// Whether the nested callback binds `ThisActor` to its target or keeps
+    /// the caller's current script receiver.
+    pub script_this: NestedCallScriptThis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NestedCallScriptThis {
+    TargetActor,
+    PreserveCaller,
 }
 
 /// Result of one native dispatch.
@@ -1172,6 +1181,7 @@ mod tests {
                 actor_handle: 23,
                 fn_name: "FilterAIEvent".to_owned(),
                 params: vec![7, 11],
+                script_this: NestedCallScriptThis::TargetActor,
             })
         }
     }

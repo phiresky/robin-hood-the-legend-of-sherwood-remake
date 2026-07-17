@@ -72,7 +72,9 @@ use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
 use crate::gate::Door;
-use crate::interp::{HostFunctions, NativeCallOutcome, NativeStack, PendingNestedCall};
+use crate::interp::{
+    HostFunctions, NativeCallOutcome, NativeStack, NestedCallScriptThis, PendingNestedCall,
+};
 use crate::order::OrderType;
 use crate::patch::Patch;
 use crate::profiles::Action;
@@ -8464,6 +8466,11 @@ impl HostFunctions for GameHost {
                 actor_handle: prototype,
                 fn_name: "FilterAIEvent".into(),
                 params: vec![actor_source, i_event],
+                // Original: RHScript::PrototypeFilterEvent deliberately does
+                // not change pScriptThis, allowing the prototype callback to
+                // inspect the event's actual receiver via ThisActor.
+                // original-code/RHScript.cpp:6508-6535.
+                script_this: NestedCallScriptThis::PreserveCaller,
             });
         }
 

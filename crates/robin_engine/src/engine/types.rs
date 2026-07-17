@@ -1340,14 +1340,14 @@ impl MissionScript {
 
     /// Call a named function on a per-actor script instance.
     ///
-    /// Transfers the `GameHost` from the global instance to the actor
-    /// instance for the duration of the call, sets `script_this`, and
-    /// restores everything afterwards.
+    /// Runs the actor instance with the shared `GameHost`, binds
+    /// `script_this` to the actor, and restores the previous receiver
+    /// afterwards.
     ///
-    /// If the running script invokes a native that queues a nested
+    /// If the running script invokes a native that requests a nested
     /// script call (currently only `PrototypeFilterEvent`), the VM
     /// yields with [`StopReason::PendingNestedCall`].  We dispatch the
-    /// queued call recursively (re-using this same function), patch
+    /// requested call recursively, patch
     /// the result into `vm.native_return_value`, and resume — so the
     /// outer caller sees a single transparent `Ok(i32)`.
     ///
@@ -1359,6 +1359,21 @@ impl MissionScript {
         fn_name: &str,
         params: &[i32],
     ) -> Result<i32, String> {
+        self.call_actor_function_with_script_this(
+            handle,
+            fn_name,
+            params,
+            crate::interp::NestedCallScriptThis::TargetActor,
+        )
+    }
+
+    fn call_actor_function_with_script_this(
+        &mut self,
+        handle: i32,
+        fn_name: &str,
+        params: &[i32],
+        script_this: crate::interp::NestedCallScriptThis,
+    ) -> Result<i32, String> {
         let actor_inst = match self.actor_instances.get_mut(&handle) {
             Some(inst) => inst,
             None => return Ok(0),
@@ -1368,11 +1383,13 @@ impl MissionScript {
             return Ok(0);
         }
 
-        // Set `script_this`.
-        // Save the previous value so nested calls restore the outer
-        // call's actor instead of clobbering it to zero.
+        // Save the previous receiver so ordinary calls bind to their target
+        // while PrototypeFilterEvent can explicitly preserve its caller's
+        // ThisActor, matching RHScript.cpp:6508-6535.
         let saved_script_this = self.game_host.script_this;
-        self.game_host.script_this = handle;
+        if script_this == crate::interp::NestedCallScriptThis::TargetActor {
+            self.game_host.script_this = handle;
+        }
 
         // Push parameters.
         for &p in params {
@@ -1476,7 +1493,12 @@ impl MissionScript {
             );
             if pc.fn_name == "FilterAIEvent" { 1 } else { 0 }
         } else {
-            match self.call_actor_function(pc.actor_handle, &pc.fn_name, &pc.params) {
+            match self.call_actor_function_with_script_this(
+                pc.actor_handle,
+                &pc.fn_name,
+                &pc.params,
+                pc.script_this,
+            ) {
                 Ok(v) => v,
                 Err(e) => {
                     tracing::warn!(
