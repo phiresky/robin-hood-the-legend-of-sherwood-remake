@@ -1190,6 +1190,79 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct NestedCallHost {
+        pending: Option<PendingNestedCall>,
+    }
+
+    impl HostFunctions for NestedCallHost {
+        fn call(&mut self, _index: u32, _stack: &mut NativeStack) -> i32 {
+            // This placeholder must never be observed by the script. The
+            // nested-call driver replaces it before resuming at
+            // Aff1NativeGetReturn.
+            17
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn clone_dyn(&self) -> Box<dyn HostFunctions> {
+            Box::new(self.clone())
+        }
+
+        fn take_pending_nested_call(&mut self) -> Option<PendingNestedCall> {
+            self.pending.take()
+        }
+    }
+
+    #[test]
+    fn nested_native_yields_after_advancing_ip_and_resumes_with_resolved_value() {
+        let program = [
+            BeginFunction {
+                volatile_count: 0,
+                temp_count: 1,
+            },
+            NativeCall { index: 108 },
+            Aff1NativeGetReturn { sym: tmp(0) },
+            ReturnVal { sym: tmp(0) },
+        ];
+        let mut vm = Vm::new();
+        let mut host = NestedCallHost {
+            pending: Some(PendingNestedCall {
+                actor_handle: 23,
+                fn_name: "FilterAIEvent".to_owned(),
+                params: vec![7, 11],
+            }),
+        };
+
+        assert_eq!(
+            vm.run_up_to_with_host(&program, 10, &mut host),
+            StopReason::PendingNestedCall
+        );
+        assert_eq!(vm.ip, 2, "resume must start after NativeCall");
+        assert_eq!(vm.native_return_value, 17, "host placeholder is staged");
+
+        let pending = vm
+            .pending_nested_call
+            .take()
+            .expect("yield must carry the nested request");
+        assert_eq!(pending.actor_handle, 23);
+        assert_eq!(pending.fn_name, "FilterAIEvent");
+        assert_eq!(pending.params, [7, 11]);
+
+        vm.native_return_value = 42;
+        assert_eq!(
+            vm.run_up_to_with_host(&program, 10, &mut host),
+            StopReason::ReturnedValue(42),
+            "Aff1NativeGetReturn must observe the resolved nested result"
+        );
+    }
+
     #[test]
     fn native_call_adds() {
         // tmp[0] = 3; tmp[4] = 4; native_call 0 (add); return result
