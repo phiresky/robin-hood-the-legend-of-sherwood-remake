@@ -3709,37 +3709,55 @@ pub struct AiPerTickData {
     /// exit door is reachable.
     pub my_exit_door: Option<MyExitDoorInfo>,
 
-    /// Per-NPC `list_them` snapshots for every member of this NPC's
-    /// phalanx right-chain (excluding self). Populated by the engine
-    /// builder when the evaluating NPC has a non-zero
-    /// `right_combat_neighbour`. Consumed by
-    /// `PhalanxReinitializeThemList` so the leftmost member can union
-    /// each neighbour's enemies into `list_them_all_phalanx` without
-    /// round-tripping through cross-NPC AI state. The snapshots are
-    /// pulled up-front to avoid mutating sibling AI brains mid-tick.
+    /// Current detection snapshots for every member of this NPC's
+    /// phalanx right-chain, including self. Consumed by
+    /// `PhalanxReinitializeThemList` so every recursive step uses that
+    /// member's own radius, viewer geometry, and live enemy inputs.
+    /// The snapshots are pulled up-front to avoid mutating sibling AI
+    /// brains mid-tick.
     pub phalanx_member_them_lists: Vec<PhalanxMemberThemList>,
 }
 
-/// One phalanx member's `list_them` snapshot, plus their position and
-/// direction so the leftmost can re-evaluate step-1 keep-filter
-/// predicates on their behalf. Equivalent to recursing into
+/// One human target needed by a phalanx member's step-1 or step-2
+/// detection pass. These are explicit live values rather than a bare
+/// persistent handle so stale `list_them` entries still have to pass
+/// the member's current LOS/radius test.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhalanxEnemySnapshot {
+    pub handle: HumanHandle,
+    pub position: Position,
+    pub direction: u16,
+    pub posture: crate::element::Posture,
+    pub elevation: f32,
+    pub is_rider: bool,
+    pub active: bool,
+    pub able_to_fight: bool,
+    pub dead: bool,
+    pub unconscious: bool,
+    pub friend: bool,
+    pub in_building: bool,
+}
+
+/// One phalanx member's live viewer state and enemy inputs. Equivalent
+/// to recursing into
 /// `right_combat_neighbour->PhalanxReinitializeThemList`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PhalanxMemberThemList {
     /// Member's element handle (matches `FighterSnapshot::handle`).
     pub handle: HumanHandle,
-    /// Member's `list_them` as captured at tick-data build time —
-    /// i.e. the persistent enemy list this member's own AI updates
-    /// every detection cycle. Represents step-1's "input to clean
-    /// up": entries that survive `IsAbleToFight && IsDetecting360 &&
-    /// !IsFriend` are kept.
-    pub current_them_list: Vec<HumanHandle>,
-    /// Member's position (for step-2 180° checks evaluated from
-    /// their stance).
+    /// Persistent `mlistThem` entries evaluated by step 1.
+    pub current_them_list: Vec<PhalanxEnemySnapshot>,
+    /// Live `GetEnemy(i)` entries evaluated by step 2.
+    pub detectable_enemies: Vec<PhalanxEnemySnapshot>,
+    /// Member viewer state used by both detection variants.
     pub position: Position,
-    /// Member's facing sector (0-15). Needed by step-2's
-    /// `IsDetecting180Degrees` cone check.
     pub direction: u16,
+    pub posture: crate::element::Posture,
+    pub elevation: f32,
+    pub is_rider: bool,
+    pub in_building: bool,
+    /// Square of this member's live `mViewParameters.uwRealRadius`.
+    pub sq_view_radius: f32,
 }
 
 /// Snapshot of the door an NPC inside a building would use to step

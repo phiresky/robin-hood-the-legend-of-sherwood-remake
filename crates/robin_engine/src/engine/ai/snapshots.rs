@@ -11,6 +11,12 @@ use crate::coordinates::MapPoint;
 use crate::element::{Camp, Entity, EntityId};
 use serde::{Deserialize, Serialize};
 
+/// `RHArtificialMalignity::IsArcher` is exactly `GetBow() != NULL`.
+/// A loaded bow remains a bow even when its normal-shot range is zero.
+pub(super) fn is_archer_from_bow(bow: Option<&crate::profiles::BowProfile>) -> bool {
+    bow.is_some()
+}
+
 // ── Per-tick scratch types for `tick_enemy_ai`. ─────────────────────
 //
 // These structs are private read-only views built once per detection
@@ -768,11 +774,10 @@ impl EngineInner {
                     base
                 }
             };
-            // `is_archer` = has a bow.  Approximated here by checking
-            // that the soldier profile references a bow profile with
-            // a non-zero normal-shoot range.  Soldiers whose profile
-            // points at an empty bow entry (e.g. shield bearers) fall
-            // through to false.
+            // `RHArtificialMalignity::IsArcher` is exactly
+            // `mpMe->GetBow() != NULL`. `InitializeWeapons` creates the
+            // bow whenever the one-based shooting-weapon id is non-zero;
+            // the bow profile's ranges do not participate in identity.
             let bow_profile = if soldier_profile.shooting_weapon_id == 0 {
                 None
             } else {
@@ -789,9 +794,7 @@ impl EngineInner {
                         }),
                 )
             };
-            let is_archer_unit = bow_profile
-                .map(|bow| bow.normal_shoot.range > 0)
-                .unwrap_or(false);
+            let is_archer_unit = is_archer_from_bow(bow_profile);
             let bow_max_range = bow_profile
                 .map(|bow| {
                     if bow.has_long_shoot {
@@ -1210,5 +1213,18 @@ impl EngineInner {
         }
 
         (human_targets, object_targets)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_archer_from_bow;
+
+    #[test]
+    fn bow_presence_defines_archer_even_with_zero_normal_range() {
+        let bow = crate::profiles::BowProfile::default();
+        assert_eq!(bow.normal_shoot.range, 0);
+        assert!(is_archer_from_bow(Some(&bow)));
+        assert!(!is_archer_from_bow(None));
     }
 }
