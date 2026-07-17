@@ -70,11 +70,23 @@ pub struct AiEntityView {
     /// Alive, conscious, not in the middle of a stagger / dying
     /// animation.
     pub is_able_to_fight: bool,
+    /// Raw `ElementData::active`. Normal `IsDetecting(human)` uses this
+    /// for its outside-building target gate; it must not be approximated
+    /// by `is_able_to_fight` because unconscious actors remain active.
+    pub active: bool,
     /// Human's unconscious flag.  Distinct from
     /// [`Self::is_able_to_fight`] which also requires
     /// `active && life_points > 0`; this is the raw KO flag used by
     /// the alerting-event view handler for sleeping-enemy substates.
     pub is_unconscious: bool,
+    /// Raw actor action state used by normal visibility sharpness.
+    pub action_state: crate::element::ActionState,
+    /// True while the actor is executing a door pass. The original only
+    /// applies this gate when viewer and target share a building sector.
+    pub passing_door: bool,
+    /// Projection obstacle the actor is standing on. Normal visibility
+    /// passes it to `ComputeViewRadius` for the obstacle top-plane slice.
+    pub obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
     /// Inside a building sector.
     pub in_building: bool,
     /// Building sector handle (`None` if `in_building` is false).
@@ -440,6 +452,10 @@ pub fn entity_view_from_entity(
         Entity::Pc(pc) => pc.human.unconscious,
         _ => false,
     };
+    let active = elem.active;
+    let action_state = actor.map(|a| a.action_state).unwrap_or_default();
+    let passing_door = actor.is_some_and(|a| a.active_door_pass.is_some());
+    let obstacle_idx = elem.obstacle_index();
 
     let (ai_state, ai_substate) = match entity {
         Entity::Soldier(s) => (s.npc.ai_state(), s.npc.ai_substate()),
@@ -729,7 +745,11 @@ pub fn entity_view_from_entity(
         is_tower_guard,
         is_swordfighting,
         is_able_to_fight,
+        active,
         is_unconscious,
+        action_state,
+        passing_door,
+        obstacle_idx,
         in_building,
         building_sector,
         ai_state,

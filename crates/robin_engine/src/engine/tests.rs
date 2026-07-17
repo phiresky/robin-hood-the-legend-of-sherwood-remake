@@ -2680,6 +2680,149 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
     entity
 }
 
+fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInner {
+    use crate::ai::{AiState, Stimulus, StimulusType, Substate};
+    use crate::element::EyeStatus;
+
+    let mut engine = EngineInner::new();
+    engine.frame_counter = 100;
+    engine.weather.ambiance = crate::engine::types::Ambiance::Night;
+    let charly_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    for (id, x) in [(charly_id, 0.0), (officer_id, 200.0)] {
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(id)
+            .expect("test report soldier exists")
+        else {
+            panic!("test report entity changed kind")
+        };
+        soldier.element.active = true;
+        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        soldier.element.set_direction_instantly(4);
+        soldier.npc.view_direction = [1.0, 0.0];
+        soldier.npc.view_radius = 400;
+        soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        soldier.npc.eye_status = EyeStatus::LookForward;
+        soldier
+            .npc
+            .ai_brain
+            .enemy_mut()
+            .expect("test report soldier has enemy AI")
+            .base
+            .me = id.index();
+    }
+
+    {
+        let charly = engine
+            .get_entity_mut(charly_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test Charly has enemy AI");
+        charly.base.antagonist = officer_id.index();
+        charly.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
+        charly.base.launch_timer(0, 100);
+        charly.base.timer_is_running = false;
+    }
+    {
+        let officer = engine
+            .get_entity_mut(officer_id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test officer has enemy AI");
+        officer.set_state(officer_state, Substate::DefaultOnPost);
+    }
+
+    let scratch = engine.build_sim_scratch(&assets);
+    let ctx = {
+        let entity = engine
+            .get_entity(charly_id)
+            .expect("test Charly exists for context");
+        crate::engine::ai::build_ai_context_from_entity(
+            entity,
+            engine.frame_counter,
+            None,
+            engine.weather.is_forest_level,
+            engine.weather.ambiance,
+            engine.standard_view_polygon_radius,
+            &scratch.ai_entity_views,
+            &scratch.ai_sight_obstacles,
+            &engine.fast_grid,
+            &assets.hiking_paths,
+            &engine.ai_global.all_soldier_handles,
+        )
+    };
+    assert!(ctx.is_night_or_fog);
+    let tick = engine.build_npc_tick_data(charly_id, &scratch, &assets);
+    engine.dispatch_think_with_drain(
+        charly_id,
+        &Stimulus::new(StimulusType::EventTimer),
+        &ctx,
+        &tick,
+        &assets,
+    );
+    engine
+}
+
+#[test]
+fn charly_report_uses_synchronous_officer_acceptance_and_refusal() {
+    use crate::ai::{AiState, Substate};
+
+    let accepted = run_synchronous_charly_report(AiState::Default);
+    let charly = accepted
+        .entities
+        .soldiers()
+        .next()
+        .expect("accepted Charly exists")
+        .1
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("accepted Charly has enemy AI");
+    assert_eq!(
+        charly.base.current_substate,
+        Substate::SeekingCharlyGoToOfficerSeen
+    );
+    assert_eq!(charly.base.when_does_timer_ring, 110);
+
+    let refused = run_synchronous_charly_report(AiState::Attacking);
+    let charly = refused
+        .entities
+        .soldiers()
+        .next()
+        .expect("refused Charly exists")
+        .1
+        .npc
+        .ai_brain
+        .enemy()
+        .expect("refused Charly has enemy AI");
+    assert_eq!(charly.base.current_state, AiState::Default);
+    assert_ne!(
+        charly.base.current_substate,
+        Substate::SeekingCharlyGoToOfficerSeen
+    );
+}
+
+#[test]
+fn ai_entity_views_keep_inactive_humans_for_same_building_detection() {
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("inactive snapshot soldier exists")
+    else {
+        panic!("inactive snapshot entity changed kind")
+    };
+    soldier.element.active = false;
+
+    let scratch = engine.build_sim_scratch(&LevelAssets::new());
+    let view = scratch
+        .ai_entity_views
+        .get(&soldier_id.index())
+        .expect("inactive human must remain available to same-building IsDetecting");
+    assert!(!view.active);
+}
+
 #[test]
 fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     use crate::messenger::{Message, MessageType, PcMessage};

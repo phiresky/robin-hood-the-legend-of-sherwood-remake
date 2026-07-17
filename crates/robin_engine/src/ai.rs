@@ -2343,6 +2343,13 @@ pub enum CrossNpcAction {
     /// `EventSeesCharlyStandardProcedure` when the reuniting soldier
     /// still needs to wait at the sync waypoint for its macro friend.
     RegisterSynchronizingActor { target: NpcHandle, actor: NpcHandle },
+    /// Synchronously deliver `CALL_MR_OFFICER_I_AM_BACK` and feed the
+    /// target officer's actual `Think` return value back into Charly's
+    /// state machine before the originating dispatch completes.
+    ReportBackToOfficer {
+        officer: NpcHandle,
+        charly: NpcHandle,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -3271,6 +3278,10 @@ pub struct AiContext {
     pub self_view_radius: u16,
     pub self_real_half_aperture: f32,
     pub self_eye_status: crate::element::EyeStatus,
+    /// Current ambiance is Night or Fog. Used by synchronous normal
+    /// `IsDetecting(human)` calls to run the authoritative light-sector
+    /// modulation in `ComputeViewRadius`.
+    pub is_night_or_fog: bool,
     /// `IsVeryVeryBusy`'s sequence-element arm: `true` when the actor's
     /// current in-flight sequence element is `Command::PassDoor` or
     /// `Command::Fall`. The posture arm is covered separately via
@@ -5619,6 +5630,22 @@ impl AiController {
     /// Called by the engine after each think() to dispatch them.
     pub fn take_pending_cross_npc_actions(&mut self) -> Vec<CrossNpcAction> {
         std::mem::take(&mut self.pending_cross_npc_actions)
+    }
+
+    /// Drain only result-bearing officer reports, leaving ordinary deferred
+    /// cross-NPC actions queued for the end-of-frame batch.
+    pub fn take_pending_officer_reports(&mut self) -> Vec<CrossNpcAction> {
+        let mut reports = Vec::new();
+        let mut deferred = Vec::with_capacity(self.pending_cross_npc_actions.len());
+        for action in self.pending_cross_npc_actions.drain(..) {
+            if matches!(action, CrossNpcAction::ReportBackToOfficer { .. }) {
+                reports.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.pending_cross_npc_actions = deferred;
+        reports
     }
 
     /// Drain self-directed stimuli queued by `say()`.

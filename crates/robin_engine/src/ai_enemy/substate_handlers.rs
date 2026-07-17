@@ -4679,20 +4679,15 @@ impl EnemyAi {
                     // Original: mpMe->IsDetecting(mpAntagonist). This is
                     // the normal live view cone, not the 360° helper.
                     if self.is_detecting(self.base.antagonist as HumanHandle, ctx) {
-                        // Fire the officer-I-am-back stimulus with fallback
-                        // to sender so the default-to-ReturnToDuty path
-                        // happens when the officer can't accept it.
-                        self.base
-                            .pending_cross_npc_actions
-                            .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
-                                stimulus_type: StimulusType::CallMrOfficerIAmBack,
-                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
-                                fallback_to_sender: None,
-                                to_whole_patrol: false,
-                            });
-                        self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
-                        self.base.launch_timer(10, ctx.frame);
+                        // The engine delivers this action synchronously and
+                        // feeds the officer's actual Think return value into
+                        // `resolve_charly_officer_report`.
+                        self.base.pending_cross_npc_actions.push(
+                            CrossNpcAction::ReportBackToOfficer {
+                                officer: self.base.antagonist,
+                                charly: self.base.me,
+                            },
+                        );
                     } else {
                         // unalert_all_near_charly_seekers(me).
                         self.base.pending_unalert_near_charly_seekers =
