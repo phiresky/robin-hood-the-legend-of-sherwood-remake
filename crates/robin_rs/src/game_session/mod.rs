@@ -82,7 +82,7 @@ use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
 use crate::lua_session::LuaSession;
 use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, detect_demo_mode,
-    flush_pending_callbacks, perform_pending_save_load, resolve_loading_pak,
+    flush_pending_callbacks, perform_pending_save_load, required_mission_id, resolve_loading_pak,
 };
 use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::menu::CampaignMapState;
@@ -183,6 +183,34 @@ pub(super) enum HandlerAction {
     Proceed,
     /// Caller should `return Ok(code)` from `run_mission`.
     Exit(GameCode),
+}
+
+/// Move the campaign back out of an engine at a mission-loop boundary.
+///
+/// Original: `original-code/RHCampaign.cpp:38-55` installs the concrete
+/// campaign as a singleton, while `original-code/launcher.cpp:956-958` owns
+/// that campaign across mission runs. There is no empty/default campaign to
+/// substitute if the engine loses ownership unexpectedly.
+pub(super) fn restore_required_campaign(
+    campaign_ref: &mut Campaign,
+    campaign: Option<Campaign>,
+    context: &str,
+) {
+    *campaign_ref = campaign.unwrap_or_else(|| panic!("{context}: engine campaign is missing"));
+}
+
+/// Borrow menu resources required by a confirmation or pause-menu action.
+///
+/// Original: `original-code/RHMenuIngame.cpp:297-310` constructs the Really
+/// Quit Yes/No menu and changes the game operation only for `YES`; resource
+/// absence cannot be interpreted as confirmation.
+pub(super) fn required_menu_resources<'a>(
+    resources: &'a Option<IngameMenuResources>,
+    context: &str,
+) -> &'a IngameMenuResources {
+    resources
+        .as_ref()
+        .unwrap_or_else(|| panic!("{context}: in-game menu resources are missing"))
 }
 
 pub(super) fn selected_pc_profile_indices(
@@ -421,12 +449,20 @@ pub(crate) async fn run_mission_headless(
         }
 
         if let Some(code) = tick_exit_code {
-            *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
+            restore_required_campaign(
+                campaign_ref,
+                manager.engine.take_campaign(),
+                "headless mission exit",
+            );
             return Ok(code);
         }
         if replay_player.as_ref().is_some_and(|p| p.is_finished()) {
             tracing::info!("headless replay finished");
-            *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
+            restore_required_campaign(
+                campaign_ref,
+                manager.engine.take_campaign(),
+                "headless replay completion",
+            );
             return Ok(GameCode::Quit);
         }
 
@@ -651,27 +687,18 @@ async fn confirm_quickload_cross_mission(
     if !callbacks.save_manager.slot_file_exists(idx) {
         return;
     }
-    let Some(target_mission_id) = callbacks.save_manager.slot_mission_id(idx) else {
-        tracing::warn!(
-            "QuickLoad cross-mission confirm: slot {idx} has no cached mission id — \
-             falling through without prompt"
-        );
-        return;
-    };
-    let current = engine
+    let target_mission_id = required_mission_id(
+        callbacks.save_manager.slot_mission_id(idx),
+        "QuickLoad confirmation slot must have a cached mission ID",
+    );
+    let campaign = engine
         .campaign()
-        .map(|c| current_mission_id(c, profiles))
-        .unwrap_or(0);
-    if current == 0 || target_mission_id == current {
+        .expect("QuickLoad confirmation requires the engine campaign");
+    let current = current_mission_id(campaign, profiles);
+    if target_mission_id == current {
         return;
     }
-    let Some(resources) = menu_resources.as_ref() else {
-        tracing::warn!(
-            "QuickLoad cross-mission confirm: menu resources unavailable — falling through \
-             without prompt"
-        );
-        return;
-    };
+    let resources = required_menu_resources(menu_resources, "cross-mission QuickLoad confirmation");
     let msg = resources.menu_text.get(MT_MSG_REALLY_LOAD_QUICKSAVE);
     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
     let confirmed = show_yesno(event_pump, renderer, resources, cursor, &msg).await;
@@ -1056,7 +1083,9 @@ pub(crate) async fn run_mission(
     // can render without reloading.
     let mut menu_resources = IngameMenuResources::new(&mut renderer, host.shipping.as_deref());
     if menu_resources.is_none() {
-        tracing::warn!("In-game menu resources unavailable — pause menu will use fallback rects");
+        tracing::error!(
+            "In-game menu resources unavailable — pause actions require a successful reload"
+        );
     }
 
     // Restart is disabled when the current mission is Sherwood,
@@ -1168,7 +1197,11 @@ pub(crate) async fn run_mission(
         }
 
         tracing::info!("Sherwood entry with ARES=0 (lost campaign) — returning to main menu");
-        *campaign_ref = engine.take_campaign().unwrap_or_default();
+        restore_required_campaign(
+            campaign_ref,
+            engine.take_campaign(),
+            "lost-campaign Sherwood exit",
+        );
         return Ok(GameCode::Quit);
     }
 
@@ -1189,10 +1222,10 @@ pub(crate) async fn run_mission(
     // serialization + disk write is spawned on a background thread so the
     // game loop can start immediately (~9s saved in debug builds).
     if !game.is_sherwood {
-        let mission_id = engine
+        let campaign = engine
             .campaign()
-            .map(|c| current_mission_id(c, &assets.profile_manager))
-            .unwrap_or(0);
+            .expect("restart snapshot requires the engine campaign");
+        let mission_id = current_mission_id(campaign, &assets.profile_manager);
         callbacks.save_manager.write_restart_save_background(
             &mut host,
             &game,
@@ -1698,7 +1731,11 @@ pub(crate) async fn run_mission(
         }
 
         if threaded_input.is_ended() {
-            *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
+            restore_required_campaign(
+                campaign_ref,
+                manager.engine.take_campaign(),
+                "window-close mission exit",
+            );
             return Ok(GameCode::Quit);
         }
 
@@ -2091,14 +2128,18 @@ pub(crate) async fn run_mission(
                             if let Some(ref resources) = menu_resources {
                                 pause_menu = Some(PauseMenu::new(resources, restart_allowed));
                             } else {
-                                // Fallback — still open the menu with synthetic sizes.
+                                // Retry the resource load in case a transient renderer state
+                                // prevented mission-start initialization. A pause menu still
+                                // requires the real resources after this retry.
                                 let fallback = IngameMenuResources::new(
                                     &mut renderer,
                                     host.shipping.as_deref(),
                                 );
-                                if let Some(res) = fallback.as_ref() {
-                                    pause_menu = Some(PauseMenu::new(res, restart_allowed));
-                                }
+                                let res = required_menu_resources(
+                                    &fallback,
+                                    "opening the pause menu after resource reload",
+                                );
+                                pause_menu = Some(PauseMenu::new(res, restart_allowed));
                                 menu_resources = fallback;
                             }
                             if pause_menu.is_some() {
@@ -2221,11 +2262,12 @@ pub(crate) async fn run_mission(
                                 if !manager.engine.is_zoom_possible(&host.engine_display) {
                                     game.quick_save_after_zoom = true;
                                 } else {
-                                    let mission_id = manager
+                                    let campaign = manager
                                         .engine
                                         .campaign()
-                                        .map(|c| current_mission_id(c, &assets.profile_manager))
-                                        .unwrap_or(0);
+                                        .expect("QuickSave requires the engine campaign");
+                                    let mission_id =
+                                        current_mission_id(campaign, &assets.profile_manager);
                                     callbacks.pending =
                                         Some(SaveLoadRequest::QuickSave { mission_id });
                                 }
@@ -2592,7 +2634,11 @@ pub(crate) async fn run_mission(
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
             }
-            *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
+            restore_required_campaign(
+                campaign_ref,
+                manager.engine.take_campaign(),
+                "completed mission exit",
+            );
             return Ok(exit_code);
         }
         let save_load_processed = perform_pending_save_load(
@@ -2616,7 +2662,11 @@ pub(crate) async fn run_mission(
         // and re-queue the Load on the fresh engine.
         if callbacks.pending_level_load.is_some() {
             game.operation.set(GameCode::LevelLoad);
-            *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
+            restore_required_campaign(
+                campaign_ref,
+                manager.engine.take_campaign(),
+                "cross-mission load exit",
+            );
             return Ok(GameCode::LevelLoad);
         }
 
@@ -3493,11 +3543,11 @@ pub(crate) async fn run_mission(
         if manager.engine.is_zoom_possible(&host.engine_display) {
             if game.quick_save_after_zoom {
                 game.quick_save_after_zoom = false;
-                let mission_id = manager
+                let campaign = manager
                     .engine
                     .campaign()
-                    .map(|c| current_mission_id(c, &assets.profile_manager))
-                    .unwrap_or(0);
+                    .expect("deferred QuickSave requires the engine campaign");
+                let mission_id = current_mission_id(campaign, &assets.profile_manager);
                 callbacks.pending = Some(SaveLoadRequest::QuickSave { mission_id });
             }
             if game.quick_load_after_zoom {
@@ -3663,11 +3713,11 @@ pub(crate) async fn run_mission(
                 // Restart click to "skip body, show stat".
                 let restart_snapshot_exists =
                     restart_allowed && callbacks.save_manager.has_restart_save();
-                let mission_id = manager
+                let campaign = manager
                     .engine
                     .campaign()
-                    .map(|c| current_mission_id(c, &assets.profile_manager))
-                    .unwrap_or(0);
+                    .expect("mission debriefing requires the engine campaign");
+                let mission_id = current_mission_id(campaign, &assets.profile_manager);
 
                 // Re-entry loop for the Load button: clicking Load
                 // chains into the save-load picker; if the picker is
@@ -3812,7 +3862,11 @@ pub(crate) async fn run_mission(
                         {
                             recorder.end_frame();
                         }
-                        *campaign_ref = manager.engine.take_campaign().unwrap_or_default();
+                        restore_required_campaign(
+                            campaign_ref,
+                            manager.engine.take_campaign(),
+                            "emergency debriefing exit",
+                        );
                         return Ok(GameCode::Quit);
                     }
                 }
@@ -4067,5 +4121,26 @@ pub(crate) async fn run_mission(
         if remaining_sleep_ms > 0 {
             crate::window::sleep_ms(remaining_sleep_ms as u64).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod required_state_tests {
+    use super::{required_menu_resources, restore_required_campaign};
+    use crate::campaign::Campaign;
+    use crate::ingame_menu::IngameMenuResources;
+
+    #[test]
+    #[should_panic(expected = "test campaign restore: engine campaign is missing")]
+    fn campaign_restore_rejects_missing_engine_campaign() {
+        let mut campaign = Campaign::default();
+        restore_required_campaign(&mut campaign, None, "test campaign restore");
+    }
+
+    #[test]
+    #[should_panic(expected = "test confirmation: in-game menu resources are missing")]
+    fn confirmation_rejects_missing_menu_resources() {
+        let resources: Option<IngameMenuResources> = None;
+        required_menu_resources(&resources, "test confirmation");
     }
 }

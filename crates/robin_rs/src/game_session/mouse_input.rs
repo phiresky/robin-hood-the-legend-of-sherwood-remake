@@ -7,7 +7,7 @@
 
 use super::{
     HandlerAction, center_on_reselected_portrait_pc, dispatch_local_command,
-    dispatch_local_commands,
+    dispatch_local_commands, required_menu_resources, restore_required_campaign,
 };
 use crate::Host;
 use crate::campaign::Campaign;
@@ -1283,46 +1283,46 @@ pub(super) async fn handle_pause_menu_events(
                     SaveLoadMode::Save
                 };
                 let mut close_pause_menu = false;
-                if let Some(resources) = menu_resources.as_ref() {
-                    let mission_id = engine
-                        .campaign()
-                        .map(|c| current_mission_id(c, &assets.profile_manager))
-                        .unwrap_or(0);
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let picker_outcome = ingame_menu::show_save_load(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor,
-                        &mut callbacks.save_manager,
-                        mission_id,
-                        Some(&assets.profile_manager),
-                        mode,
-                        Some(&mut host.sound),
-                        audio_backend
-                            .as_mut()
-                            .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                        Some(sample_loader),
-                    )
-                    .await;
-                    if let SaveLoadOutcome::Slot(slot) = picker_outcome {
-                        callbacks.pending = Some(match mode {
-                            SaveLoadMode::Save => SaveLoadRequest::Save {
-                                slot: Some(slot),
-                                mission_id,
-                            },
-                            SaveLoadMode::Load => SaveLoadRequest::Load {
-                                slot: Some(slot),
-                                mission_id,
-                            },
-                        });
-                        // When the picker returns a slot, close the
-                        // pause-menu modal so the outer game loop
-                        // processes the save/load and resumes.  Only
-                        // the cancel branch falls through to restore
-                        // the menu.
-                        close_pause_menu = true;
-                    }
+                let resources =
+                    required_menu_resources(menu_resources, "pause-menu save/load picker");
+                let campaign = engine
+                    .campaign()
+                    .expect("pause-menu save/load picker requires the engine campaign");
+                let mission_id = current_mission_id(campaign, &assets.profile_manager);
+                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let picker_outcome = ingame_menu::show_save_load(
+                    event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                    &mut callbacks.save_manager,
+                    mission_id,
+                    Some(&assets.profile_manager),
+                    mode,
+                    Some(&mut host.sound),
+                    audio_backend
+                        .as_mut()
+                        .map(|b| b as &mut dyn crate::sound::AudioBackend),
+                    Some(sample_loader),
+                )
+                .await;
+                if let SaveLoadOutcome::Slot(slot) = picker_outcome {
+                    callbacks.pending = Some(match mode {
+                        SaveLoadMode::Save => SaveLoadRequest::Save {
+                            slot: Some(slot),
+                            mission_id,
+                        },
+                        SaveLoadMode::Load => SaveLoadRequest::Load {
+                            slot: Some(slot),
+                            mission_id,
+                        },
+                    });
+                    // When the picker returns a slot, close the
+                    // pause-menu modal so the outer game loop
+                    // processes the save/load and resumes.  Only
+                    // the cancel branch falls through to restore
+                    // the menu.
+                    close_pause_menu = true;
                 }
                 if close_pause_menu {
                     *pause_menu = None;
@@ -1341,21 +1341,28 @@ pub(super) async fn handle_pause_menu_events(
             PauseMenuOutcome::Restart => {
                 // Reload the same mission.
                 callbacks.set_sound_mode(SoundMode::Mission);
-                *campaign_ref = engine.take_campaign().unwrap_or_default();
+                restore_required_campaign(
+                    campaign_ref,
+                    engine.take_campaign(),
+                    "pause-menu restart",
+                );
                 return HandlerAction::Exit(GameCode::LevelRestart);
             }
             PauseMenuOutcome::Quit => {
                 // Show the "really quit?" Yes/No prompt.
-                let confirmed = if let Some(resources) = menu_resources.as_ref() {
-                    let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
-                } else {
-                    true
-                };
+                let resources =
+                    required_menu_resources(menu_resources, "pause-menu Quit confirmation");
+                let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
+                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let confirmed =
+                    ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
                 if confirmed {
                     callbacks.set_sound_mode(SoundMode::Mission);
-                    *campaign_ref = engine.take_campaign().unwrap_or_default();
+                    restore_required_campaign(
+                        campaign_ref,
+                        engine.take_campaign(),
+                        "confirmed pause-menu Quit",
+                    );
                     return HandlerAction::Exit(GameCode::Quit);
                 }
                 if let Some(menu) = pause_menu.as_mut() {
@@ -1696,7 +1703,11 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         &PlayerCommand::CampaignHarvestProductionSectorState,
                     );
                     callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
-                    *campaign_ref = engine.take_campaign().unwrap_or_default();
+                    restore_required_campaign(
+                        campaign_ref,
+                        engine.take_campaign(),
+                        "Sherwood mission launch",
+                    );
                     return HandlerAction::Exit(GameCode::LevelInterrupted);
                 }
                 SherwoodButton::GoToExit => {
@@ -1907,7 +1918,11 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 engine.campaign_reset_last_pseudo_mission_status();
                 let ares_after = engine.campaign().expect("campaign").get_ares();
                 if ares_after == 0 {
-                    *campaign_ref = engine.take_campaign().unwrap_or_default();
+                    restore_required_campaign(
+                        campaign_ref,
+                        engine.take_campaign(),
+                        "lost pseudo-mission exit",
+                    );
                     return Ok(HandlerAction::Exit(GameCode::Quit));
                 }
                 game.show_campaign_map();
@@ -2029,7 +2044,11 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 // mission committed: exit Sherwood to the main menu.
                 // We deliberately leave `campaign_map_displayed` set
                 // so a save-on-exit would restore the overlay.
-                *campaign_ref = engine.take_campaign().unwrap_or_default();
+                restore_required_campaign(
+                    campaign_ref,
+                    engine.take_campaign(),
+                    "campaign-map Quit",
+                );
                 return Ok(HandlerAction::Exit(GameCode::Quit));
             }
             CampaignMapChoice::Redisplay => {
