@@ -46,6 +46,7 @@ mod selection;
 mod send_message_tests;
 mod sequence_validity;
 mod simulation_gate;
+mod snapshot;
 mod soldier_helpers;
 mod special_motion;
 pub mod target_interaction;
@@ -140,20 +141,19 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// `Clone` is derived so rollback snapshots and the determinism test can
 /// copy the whole world cheaply.
 ///
-/// `Serialize` / `Deserialize` are derived. Engine-owned state should
-/// serialize directly. Static level attachments and host/runtime state belong
-/// outside this struct or behind explicit snapshot schemas with mandatory
-/// reattachment. If you find yourself fighting serde for a field, that's a
-/// signal it doesn't belong on `EngineInner` — extract it to a host wrapper
-/// instead.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+/// `Serialize`, `Deserialize`, and `StateHash` use the explicit flat schema in
+/// `snapshot.rs`. Engine-owned state should serialize directly. Static level
+/// attachments and host/runtime state belong outside this struct or behind
+/// explicit snapshot schemas with mandatory reattachment. If you find
+/// yourself fighting serde for a field, that's a signal it doesn't belong on
+/// `EngineInner` — extract it to a host wrapper instead.
+#[derive(Clone)]
 pub struct EngineInner {
     /// Per-session gameplay configuration attached by `Game` before a
     /// tick. This is runtime configuration rather than mutable sim state:
     /// rollback clones preserve it, while deserialized saves must have it
     /// reattached before gameplay resumes. `Option` is intentional so a
     /// missing attachment fails loudly instead of inventing Medium difficulty.
-    #[state_hash(skip)]
     sim_config: std::cell::Cell<Option<SimConfig>>,
 
     // ── Mission ──────────────────────────────────────────────────
@@ -302,7 +302,6 @@ pub struct EngineInner {
 
     /// A*-requiring movement elements waiting for the legacy once-per-frame
     /// path-request processing point.  Direct moves bypass this queue.
-    #[serde(default)]
     pub(crate) pending_path_requests: crate::engine::movement::PendingPathRequestQueue,
 
     /// Timeout queue for Move / Seek elements whose path request failed.
