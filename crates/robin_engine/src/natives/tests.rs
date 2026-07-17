@@ -42,16 +42,17 @@ fn run_native(index: u32, args: &[i32]) -> StopReason {
     vm.run(&prog)
 }
 
+fn call_host_native(host: &mut GameHost, native: NativeFn, stack: &mut NativeStack) -> i32 {
+    <GameHost as HostFunctions>::call(host, native as u32, stack)
+        .expect_return("non-nested native test")
+}
+
 /// Run a native and return the queued deferred commands for inspection.
 fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCommand>) {
     let prog = call_native_return(index, args);
-    let mut vm = Vm::new().with_host(Box::new(GameHost::new()));
+    let mut vm = Vm::new().with_host(GameHost::new());
     let stop = vm.run(&prog);
-    let mut host_box = vm.take_host().unwrap();
-    let host = host_box
-        .as_any_mut()
-        .downcast_mut::<GameHost>()
-        .expect("host is GameHost");
+    let mut host = vm.take_host();
     (stop, std::mem::take(&mut host.deferred_commands))
 }
 
@@ -843,14 +844,14 @@ fn call_set_persistent_property(host: &mut GameHost, actor: i32, prop: i32, amou
     stack.push_i32(actor);
     stack.push_i32(prop);
     stack.push_i32(amount);
-    <GameHost as HostFunctions>::call(host, NativeFn::SetPersistentProperty as u32, &mut stack)
+    call_host_native(host, NativeFn::SetPersistentProperty, &mut stack)
 }
 
 fn call_get_persistent_property(host: &mut GameHost, actor: i32, prop: i32) -> i32 {
     let mut stack = NativeStack::default();
     stack.push_i32(actor);
     stack.push_i32(prop);
-    <GameHost as HostFunctions>::call(host, NativeFn::GetPersistentProperty as u32, &mut stack)
+    call_host_native(host, NativeFn::GetPersistentProperty, &mut stack)
 }
 
 #[test]
@@ -920,7 +921,7 @@ fn native_sees(host: &mut GameHost, npc_index: usize, target_index: usize) -> i3
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(npc_index));
     stack.push_i32(GameHost::actor_handle_from_index(target_index));
-    <GameHost as HostFunctions>::call(host, NativeFn::Sees as u32, &mut stack)
+    call_host_native(host, NativeFn::Sees, &mut stack)
 }
 
 fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> GameHost {
@@ -1062,7 +1063,7 @@ fn call_set_experiences(host: &mut GameHost, actor: i32, sword: i32, bow: i32) {
     stack.push_i32(sword);
     stack.push_i32(bow);
     assert_eq!(
-        <GameHost as HostFunctions>::call(host, NativeFn::SetExperiences as u32, &mut stack),
+        call_host_native(host, NativeFn::SetExperiences, &mut stack),
         0
     );
 }
@@ -1109,11 +1110,7 @@ fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
     stack.push_i32(GameHost::actor_handle_from_index(0));
     stack.push_i32(0);
     stack.push_i32(0);
-    let ret = <GameHost as HostFunctions>::call(
-        &mut host,
-        NativeFn::SetActionAvailable as u32,
-        &mut stack,
-    );
+    let ret = call_host_native(&mut host, NativeFn::SetActionAvailable, &mut stack);
     assert_eq!(ret, 1);
     let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
     assert_eq!(pc.disabled_actions, [false, false, false]);
@@ -1130,11 +1127,7 @@ fn is_action_available_rejects_out_of_range_slot() {
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(0));
     stack.push_i32(-1);
-    let ret = <GameHost as HostFunctions>::call(
-        &mut host,
-        NativeFn::IsActionAvailable as u32,
-        &mut stack,
-    );
+    let ret = call_host_native(&mut host, NativeFn::IsActionAvailable, &mut stack);
     assert_eq!(ret, 0);
 }
 
@@ -1151,11 +1144,7 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
     stack.push_i32(actor);
     stack.push_i32(0);
     assert_eq!(
-        <GameHost as HostFunctions>::call(
-            &mut host,
-            NativeFn::IsActionAvailable as u32,
-            &mut stack
-        ),
+        call_host_native(&mut host, NativeFn::IsActionAvailable, &mut stack),
         1
     );
 
@@ -1163,11 +1152,7 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
     stack.push_i32(actor);
     stack.push_i32(1);
     assert_eq!(
-        <GameHost as HostFunctions>::call(
-            &mut host,
-            NativeFn::IsActionAvailable as u32,
-            &mut stack
-        ),
+        call_host_native(&mut host, NativeFn::IsActionAvailable, &mut stack),
         0
     );
 
@@ -1175,11 +1160,7 @@ fn is_action_available_reads_persistent_and_temp_slot_masks() {
     stack.push_i32(actor);
     stack.push_i32(2);
     assert_eq!(
-        <GameHost as HostFunctions>::call(
-            &mut host,
-            NativeFn::IsActionAvailable as u32,
-            &mut stack
-        ),
+        call_host_native(&mut host, NativeFn::IsActionAvailable, &mut stack),
         0
     );
 }
@@ -1192,8 +1173,7 @@ fn add_as_subordinate_requests_patrol_reinit() {
     let mut stack = NativeStack::default();
     stack.push_i32(GameHost::actor_handle_from_index(0));
     stack.push_i32(GameHost::actor_handle_from_index(1));
-    let ret =
-        <GameHost as HostFunctions>::call(&mut host, NativeFn::AddAsSubordinate as u32, &mut stack);
+    let ret = call_host_native(&mut host, NativeFn::AddAsSubordinate, &mut stack);
     assert_eq!(ret, 0);
 
     let chief_ai = host.entities[0]

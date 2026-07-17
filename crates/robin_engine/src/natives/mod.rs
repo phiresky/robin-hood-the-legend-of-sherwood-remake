@@ -72,7 +72,7 @@ use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
 use crate::element_kinds::ElementKind;
 use crate::gate::Door;
-use crate::interp::{HostFunctions, NativeStack};
+use crate::interp::{HostFunctions, NativeCallOutcome, NativeStack, PendingNestedCall};
 use crate::order::OrderType;
 use crate::patch::Patch;
 use crate::profiles::Action;
@@ -401,18 +401,6 @@ pub struct GameHost {
     /// Key: sector number (`u16`).
     pub sector_kinds: BTreeMap<u16, SectorKindInfo>,
 
-    /// Nested-script call queued by a native (currently only
-    /// `PrototypeFilterEvent`) during a running VM.  Drained by the
-    /// interpreter on the same step that queued it: the
-    /// [`HostFunctions::take_pending_nested_call`] override returns
-    /// this, the interpreter then yields with
-    /// [`StopReason::PendingNestedCall`], and
-    /// `MissionScript::call_actor_function`'s loop dispatches the
-    /// call before resuming the outer VM.  See
-    /// `PrototypeFilterEvent` arm of `call()` and the resume loop
-    /// in `engine/types.rs` for details.
-    pub pending_nested_call: Option<crate::interp::PendingNestedCall>,
-
     /// Recursion depth of the nested-script-call stack.  Each actor
     /// script normally has its own VMCore (giving an implicit per-core
     /// stack-depth limit); we cap explicitly (see
@@ -532,7 +520,6 @@ impl GameHost {
             frame_counter: 0,
             map_bbox: MapBBox::new(),
             sector_kinds: BTreeMap::new(),
-            pending_nested_call: None,
             nested_call_depth: 0,
         }
     }
@@ -2789,21 +2776,8 @@ impl GameHost {
     }
 }
 
-impl HostFunctions for GameHost {
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn clone_dyn(&self) -> Box<dyn HostFunctions> {
-        Box::new(self.clone())
-    }
-    fn take_pending_nested_call(&mut self) -> Option<crate::interp::PendingNestedCall> {
-        self.pending_nested_call.take()
-    }
-
-    fn call(&mut self, index: u32, stack: &mut NativeStack) -> i32 {
+impl GameHost {
+    fn call_immediate(&mut self, index: u32, stack: &mut NativeStack) -> i32 {
         use NativeFn::*;
 
         if let Ok(f) = NativeFn::try_from(index) {
@@ -6160,33 +6134,7 @@ impl HostFunctions for GameHost {
                     0
                 }
                 PrototypeFilterEvent => {
-                    // Delegates to the prototype's per-actor script
-                    // `FilterAIEvent(source, event)`, which runs in
-                    // the *prototype's* per-actor VMCore and returns
-                    // whatever int the script computes.
-                    //
-                    // We can't re-enter the script subsystem inline here:
-                    // `&mut self` is the `GameHost` swapped into the
-                    // currently-running VM, with no back-pointer to
-                    // `MissionScript`.  Instead, queue a `PendingNestedCall`
-                    // — the interpreter will yield with
-                    // `StopReason::PendingNestedCall` (see
-                    // `interp.rs::NativeCall`), and
-                    // `MissionScript::call_actor_function`'s loop will
-                    // dispatch the prototype's `FilterAIEvent`, then write
-                    // its real return into `vm.native_return_value` and
-                    // resume this VM.  The `0` we return here is a
-                    // placeholder that's overwritten before any script
-                    // instruction reads `native_return_value`.
-                    let i_event = stack.pop_i32();
-                    let actor_source = stack.pop_i32();
-                    let prototype = stack.pop_i32();
-                    self.pending_nested_call = Some(crate::interp::PendingNestedCall {
-                        actor_handle: prototype,
-                        fn_name: "FilterAIEvent".into(),
-                        params: vec![actor_source, i_event],
-                    });
-                    0
+                    unreachable!("PrototypeFilterEvent is handled as explicit VM control flow")
                 }
                 SendMessage => {
                     let msg = stack.pop_i32();
@@ -8499,5 +8447,26 @@ impl HostFunctions for GameHost {
             tracing::error!("Unknown native function index {index}");
             0
         }
+    }
+}
+
+impl HostFunctions for GameHost {
+    fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        if index == NativeFn::PrototypeFilterEvent as u32 {
+            // The VM must yield before the outer script can observe a return
+            // value. MissionScript resolves this call synchronously and
+            // writes the result into native_return_value before resuming at
+            // Aff1NativeGetReturn.
+            let i_event = stack.pop_i32();
+            let actor_source = stack.pop_i32();
+            let prototype = stack.pop_i32();
+            return NativeCallOutcome::PendingNestedCall(PendingNestedCall {
+                actor_handle: prototype,
+                fn_name: "FilterAIEvent".into(),
+                params: vec![actor_source, i_event],
+            });
+        }
+
+        NativeCallOutcome::Return(self.call_immediate(index, stack))
     }
 }

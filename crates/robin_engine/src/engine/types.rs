@@ -1426,8 +1426,8 @@ impl MissionScript {
             match stop {
                 crate::interp::StopReason::ReturnedValue(v) => return Ok(v),
                 crate::interp::StopReason::Returned => return Ok(0),
-                crate::interp::StopReason::PendingNestedCall => {
-                    self.dispatch_nested_call_from_actor(handle, outer_fn_name);
+                crate::interp::StopReason::PendingNestedCall(call) => {
+                    self.dispatch_nested_call_from_actor(handle, outer_fn_name, call);
                     // Loop and resume the outer VM.
                 }
                 crate::interp::StopReason::StepLimit => {
@@ -1449,20 +1449,12 @@ impl MissionScript {
     /// `outer_handle`, recurses through `call_actor_function`, then
     /// writes the resolved result into `native_return_value` so the
     /// next opcode picks it up.
-    fn dispatch_nested_call_from_actor(&mut self, outer_handle: i32, outer_fn_name: &str) {
-        let pc = {
-            let outer_inst = self
-                .actor_instances
-                .get_mut(&outer_handle)
-                .expect("outer actor instance missing");
-
-            outer_inst
-                .vm
-                .pending_nested_call
-                .take()
-                .expect("PendingNestedCall yield without queued call")
-        };
-
+    fn dispatch_nested_call_from_actor(
+        &mut self,
+        outer_handle: i32,
+        outer_fn_name: &str,
+        pc: crate::interp::PendingNestedCall,
+    ) {
         // Bump depth and check the recursion guard.
         self.game_host.nested_call_depth = self.game_host.nested_call_depth.saturating_add(1);
         let depth = self.game_host.nested_call_depth;
