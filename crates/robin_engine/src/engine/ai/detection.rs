@@ -26,13 +26,21 @@ struct NpcTarget {
     /// 16-sector facing.  Only used for `LeaningOut`: the detection
     /// point projects `direction × 40` forward.
     direction: i16,
+    active: bool,
     unconscious: bool,
+    carried: bool,
     /// Whether the target is currently passing through a door — used
     /// by the same-building visibility short-circuit.
     passing_door: bool,
     /// The projection obstacle this NPC target is currently standing
     /// on.  Used by the per-target `compute_view_radius` re-call.
     obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
+}
+
+struct RoyalistDetectionResult {
+    stimuli: Vec<crate::ai::Stimulus>,
+    reveal_targets: Vec<EntityId>,
+    tick_data: AiPerTickData,
 }
 
 fn human_eye_point_for_visibility(entity: &Entity) -> (MapPoint, f32) {
@@ -1010,12 +1018,10 @@ impl EngineInner {
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): Royalist Enemy handling still selects one best rising VIEW
-    // instead of walking every rising/falling edge in detectable-list order.
-    // Script-driven mutation of an Enemy list between FIFO Think calls also
-    // remains outside the frozen final-scan aggregate. The Lacklandist branch
-    // still skips its scan while AI-locked; original RefreshDetection scans
-    // and lets StartThink retain/refuse the resulting stimulus instead.
+    // TODO(parity): Script-driven mutation of an Enemy list between FIFO Think
+    // calls remains outside the frozen final-scan aggregate. The Lacklandist
+    // branch still skips its scan while AI-locked; original RefreshDetection
+    // scans and lets StartThink retain/refuse the resulting stimulus instead.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
@@ -1042,7 +1048,7 @@ impl EngineInner {
                 is_forest_level,
                 &mut transitions,
             );
-            let royalist_commit = if self
+            let royalist_result = if self
                 .entities
                 .get(npc_id)
                 .is_some_and(|entity| matches!(entity, Entity::Soldier(s) if s.soldier.cached_camp == Camp::Royalists))
@@ -1059,21 +1065,39 @@ impl EngineInner {
             } else {
                 None
             };
-            // Royalist HandleDetection reveals a newly detected blipped NPC
-            // immediately, before this Royalist's queued Think calls and
-            // before the next creation slot.
-            if let Some((target_id, _)) = royalist_commit
-                && let Some(target) = self.entities.get_mut(target_id)
-                && target.element_data().blipped
-            {
-                target.reveal_blip();
+            // Royalist HandleDetection reveals every newly detected blipped
+            // NPC while building the complete Enemy FIFO, before the first
+            // queued Think and before the next creation slot.
+            if let Some(result) = royalist_result.as_ref() {
+                for &target_id in &result.reveal_targets {
+                    let target = self.entities.get_mut(target_id).unwrap_or_else(|| {
+                        panic!(
+                            "Royalist rising detection target {} disappeared before reveal",
+                            target_id.index()
+                        )
+                    });
+                    if target.element_data().blipped {
+                        target.reveal_blip();
+                    }
+                }
             }
             // Enemy HandlePredetection may already have queued shadows. Append
             // the ordered Enemy VIEW / OUTOFVIEW block now, before later
             // detectable types, preserving the original
             // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
             // MISSED_FRIEND → BEGGAR FIFO.
-            let enemy_detection_tick_data = if let Some((stimuli, tick_data)) = think_input {
+            let enemy_block = match (think_input, royalist_result) {
+                (Some(block), None) => Some(block),
+                (None, Some(result)) if !result.stimuli.is_empty() => {
+                    Some((result.stimuli, result.tick_data))
+                }
+                (None, Some(_)) | (None, None) => None,
+                (Some(_), Some(_)) => panic!(
+                    "NPC {} produced both Lacklandist and Royalist Enemy detection blocks",
+                    npc_id.index()
+                ),
+            };
+            let enemy_detection_tick_data = if let Some((stimuli, tick_data)) = enemy_block {
                 let entity = self.entities.get_mut(npc_id).unwrap_or_else(|| {
                     panic!(
                         "detected NPC {} disappeared before its same-phase stimulus queue",
@@ -2583,9 +2607,7 @@ impl EngineInner {
         self.entities
             .soldiers()
             .filter_map(|(id, soldier)| {
-                if soldier.soldier.cached_camp != Camp::Lacklandists
-                    || !soldier.element.active
-                    || soldier.npc.life_points <= 0
+                if soldier.soldier.cached_camp != Camp::Lacklandists || soldier.npc.life_points <= 0
                 {
                     return None;
                 }
@@ -2601,7 +2623,9 @@ impl EngineInner {
                     eye_z: soldier.element.position().z
                         + crate::stealth::detection_z_for_posture(posture, is_rider),
                     direction: soldier.element.direction() as i16,
+                    active: soldier.element.active,
                     unconscious: soldier.human.unconscious,
+                    carried: soldier.human.carrier.is_some(),
                     passing_door: soldier.actor.active_door_pass.is_some(),
                     obstacle_idx: soldier.element.obstacle_index(),
                 })
@@ -2620,7 +2644,7 @@ impl EngineInner {
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
-    ) -> Option<(EntityId, MapPoint)> {
+    ) -> Option<RoyalistDetectionResult> {
         // -- Read royalist soldier viewer state --
         let viewer = {
             let Some(entity) = self.entities.get(npc_id) else {
@@ -2637,7 +2661,6 @@ impl EngineInner {
         let layer = viewer.layer;
         let view_radius = viewer.view_radius;
         let eye_status = viewer.eye_status;
-        let current_state = viewer.current_state;
         let view_forward = viewer.view_forward;
         let real_half_aperture = viewer.real_half_aperture;
         let npc_posture = viewer.posture;
@@ -2710,10 +2733,10 @@ impl EngineInner {
         // royalist soldiers at peace commit a sighting immediately
         // rather than waiting for the `suspects >= 1000` slow path.
         let instant_detection = true;
-        let _ = current_state; // (state no longer gates Royalist detection)
-
         // -- Mutating pass: detectable list + suspects --
-        let mut commit_target: Option<(EntityId, MapPoint)> = None;
+        let mut stimuli = Vec::new();
+        let mut reveal_targets = Vec::new();
+        let mut tick_data = AiPerTickData::stub();
         {
             // Build the obstacle view from individual fields
             // so the borrow checker can disjoint-split it
@@ -2752,7 +2775,6 @@ impl EngineInner {
 
             let mut sum_sharpness_new: u32 = 0;
             let mut any_seen_now = false;
-            let mut best_target: Option<(EntityId, MapPoint)> = None;
 
             for det in detectables.iter_mut() {
                 let Some(target_id) = det.element else {
@@ -2792,10 +2814,8 @@ impl EngineInner {
                         forest_180_degree_view: is_forest_level && !is_rider_npc,
                         golden_eye_mode: golden_eye,
                         effective_view_radius,
-                        // Lacklandist targets in npc_targets
-                        // are filtered to active/alive above,
-                        // so this reduces to "not in a building".
-                        target_is_active_and_outside_building: target.building_sector.is_none(),
+                        target_is_active_and_outside_building: target.active
+                            && target.building_sector.is_none(),
                         target: crate::stealth::detection_point_xy(
                             target.position,
                             target.posture,
@@ -2837,9 +2857,6 @@ impl EngineInner {
                 }
                 if is_visible {
                     any_seen_now = true;
-                    if best_target.is_none() {
-                        best_target = Some((target_id, target.position));
-                    }
                 }
 
                 det.seen_now = is_visible;
@@ -2868,30 +2885,6 @@ impl EngineInner {
 
             if threshold_hit || instant_hit {
                 *suspects = 0;
-
-                if let Some((target_id, target_pos)) = best_target {
-                    // ── Dispatch EVENT_VIEW to royalist AI ──
-                    // On commit, fire EVENT_VIEW so the royalist AI
-                    // can react (attack, chase, etc.).
-                    soldier.npc.alerted = true;
-
-                    if let Some(enemy_ai) = soldier.npc.ai_brain.enemy_mut() {
-                        enemy_ai.base.seek_position = crate::ai::Position {
-                            x: target_pos.x,
-                            y: target_pos.y,
-                            sector: None,
-                            level: 0,
-                        };
-                        let stimulus = crate::ai::Stimulus::with_human(
-                            crate::ai::StimulusType::EventView,
-                            target_id.index(),
-                        );
-                        // Queue for this NPC's post-detection FIFO drain.
-                        enemy_ai.base.pending_stimuli.push(stimulus);
-                    }
-
-                    commit_target = Some((target_id, target_pos));
-                }
             } else if !any_seen_now
                 && *suspects > 0
                 && universal_frame.is_multiple_of(ai_vision::UNSUSPECT_FREQUENCY)
@@ -2906,22 +2899,105 @@ impl EngineInner {
                 soldier.npc.worst_detected_type = DetectableType::None;
             }
 
-            // Maintain `seen_last_frame` so the sharpness
-            // accumulator above keeps firing every frame the target
-            // stays visible, instead of once per visibility edge.
-            // See the matching block in the enemy→PC detection path
-            // above.
+            // HandleDetection's second pass intersperses rising VIEW and
+            // falling OUTOFVIEW in detectable-list order. Every latch and
+            // reveal target is settled before the outer coordinator drains
+            // the first Think.
             let committed = threshold_hit || instant_hit;
             for det in soldier.npc.detectable_lists[enemy_idx].iter_mut() {
-                if committed {
-                    det.seen_last_frame = det.seen_now;
-                } else if !det.seen_now && det.seen_last_frame {
+                let was_seen = det.seen_last_frame;
+                let is_seen = det.seen_now;
+                if committed && is_seen && !was_seen {
+                    let target_id = det.element.unwrap_or_else(|| {
+                        panic!(
+                            "rising Royalist Enemy detectable for NPC {} has no target",
+                            npc_id.index()
+                        )
+                    });
+                    stimuli.push(crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventView,
+                        target_id.index(),
+                    ));
+                    reveal_targets.push(target_id);
+                    det.seen_last_frame = true;
+                } else if !is_seen && was_seen {
+                    let target_id = det.element.unwrap_or_else(|| {
+                        panic!(
+                            "falling Royalist Enemy detectable for NPC {} has no target",
+                            npc_id.index()
+                        )
+                    });
+                    stimuli.push(crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventOutOfView,
+                        target_id.index(),
+                    ));
                     det.seen_last_frame = false;
                 }
             }
+
+            if !reveal_targets.is_empty() {
+                soldier.npc.alerted = true;
+            }
+
+            // Preserve the final RefreshDetection scan products for every
+            // stimulus in this contiguous Enemy block. Volatile target and
+            // combat inputs are rebuilt separately at each Think boundary.
+            tick_data.min_sq_enemy_distance = i32::MAX;
+            for det in soldier.npc.detectable_lists[enemy_idx].iter() {
+                let Some(target_id) = det.element else {
+                    continue;
+                };
+                if det.seen_last_frame {
+                    tick_data.seen_last_frame_enemies.push(target_id.index());
+                }
+                if !det.seen_now {
+                    continue;
+                }
+                let target = npc_targets
+                    .iter()
+                    .find(|target| target.id == target_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "visible Royalist detection target {} is absent from its live snapshot",
+                            target_id.index()
+                        )
+                    });
+                if target.unconscious {
+                    if !target.carried {
+                        tick_data
+                            .unconscious_enemies
+                            .push(crate::ai::SleepingEnemyInfo {
+                                handle: target_id.index(),
+                                position: crate::ai::Position {
+                                    x: target.position.x,
+                                    y: target.position.y,
+                                    sector: None,
+                                    level: target.layer,
+                                },
+                                is_pc: false,
+                                is_robin: false,
+                                is_vip: false,
+                            });
+                    }
+                    continue;
+                }
+                let dx = target.position.x - eye.x;
+                let dy =
+                    (target.position.y - eye.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
+                let sq_dist = (dx * dx + dy * dy) as i32;
+                tick_data
+                    .enemy_sq_distances
+                    .push((target_id.index(), sq_dist));
+                tick_data.min_sq_enemy_distance = tick_data.min_sq_enemy_distance.min(sq_dist);
+            }
+            tick_data.personally_visible_enemies = tick_data.enemy_sq_distances.len() as u16;
         }
 
-        commit_target
+        Some(RoyalistDetectionResult {
+            stimuli,
+            reveal_targets,
+            tick_data,
+        })
     }
 
     // ── P3c. Per-NPC non-Enemy detection (Body / Object /

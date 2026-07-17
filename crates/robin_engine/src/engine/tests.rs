@@ -4587,6 +4587,159 @@ fn royalist_detection_think_opens_a_later_royalists_same_frame_view() {
 }
 
 #[test]
+fn royalist_detection_retains_every_ordered_view_edge_while_ai_locked() {
+    use crate::ai::{AiLockFlags, AiState, StimulusInfo, StimulusType, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, Entity};
+
+    let mut engine = EngineInner::new();
+    let observer_id = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
+    let first_visible_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let lost_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let last_visible_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+    for (id, x) in [
+        (observer_id, 0.0),
+        (first_visible_id, 80.0),
+        (lost_id, 100.0),
+        (last_visible_id, 120.0),
+    ] {
+        let Entity::Soldier(soldier) = engine
+            .get_entity_mut(id)
+            .expect("Royalist multi-edge soldier exists")
+        else {
+            panic!("Royalist multi-edge actor changed kind")
+        };
+        soldier.element.active = true;
+        soldier
+            .element
+            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+        soldier.element.set_position_map(MapPoint::new(x, 0.0));
+        soldier.npc.life_points = 100;
+        soldier.element.blipped = id != observer_id;
+    }
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("Royalist multi-edge observer exists")
+    else {
+        panic!("Royalist multi-edge observer changed kind")
+    };
+    observer.element.set_direction_instantly(4);
+    observer.npc.view_direction = [1.0, 0.0];
+    observer.npc.view_radius = 300;
+    observer.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    observer.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let Entity::Soldier(lost) = engine
+        .get_entity_mut(lost_id)
+        .expect("lost Royalist target exists after fixture")
+    else {
+        panic!("lost Royalist target changed kind after fixture")
+    };
+    // Original CleanUpDetectables removes dead enemies, not inactive living
+    // ones. An inactive outdoor target remains in the list and emits the
+    // falling OUTOFVIEW edge.
+    lost.element.active = false;
+
+    let Entity::Soldier(observer) = engine
+        .get_entity_mut(observer_id)
+        .expect("Royalist multi-edge observer exists after fixture")
+    else {
+        panic!("Royalist multi-edge observer changed kind after fixture")
+    };
+    let ai = observer
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("Royalist multi-edge observer has enemy AI");
+    ai.base.me = observer_id.index();
+    ai.base.current_state = AiState::Default;
+    ai.base.current_substate = Substate::DefaultOnPost;
+    ai.base.current_music_alert_status = crate::ai::AlertLevel::Green;
+    ai.current_task_priority = task_priority::NONE;
+    ai.base.locks_flag_field = AiLockFlags::BUSY;
+
+    observer.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    for (target_id, seen_last_frame) in [
+        (first_visible_id, false),
+        (lost_id, true),
+        (last_visible_id, false),
+    ] {
+        observer.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+            element: Some(target_id),
+            detectable_type: DetectableType::Enemy,
+            seen_last_frame,
+            ..Detectable::default()
+        });
+    }
+
+    crate::sim_rng::with_seed(0xA013_0B21, || engine.tick_enemy_ai(&assets));
+
+    let observer = engine
+        .get_entity(observer_id)
+        .and_then(Entity::npc_data)
+        .expect("Royalist multi-edge observer remains an NPC");
+    assert_eq!(
+        observer.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .map(|det| det.seen_last_frame)
+            .collect::<Vec<_>>(),
+        vec![true, false, true],
+        "HandleDetection must settle every Royalist Enemy latch before Think"
+    );
+    assert!(
+        !engine
+            .get_entity(first_visible_id)
+            .expect("first visible Royalist target remains present")
+            .element_data()
+            .blipped
+            && !engine
+                .get_entity(last_visible_id)
+                .expect("last visible Royalist target remains present")
+                .element_data()
+                .blipped,
+        "every rising Royalist Enemy edge must reveal its target before Think"
+    );
+    assert!(
+        engine
+            .get_entity(lost_id)
+            .expect("lost Royalist target remains present")
+            .element_data()
+            .blipped,
+        "a falling Royalist Enemy edge must not reveal its target"
+    );
+    let ai = engine
+        .get_entity(observer_id)
+        .and_then(Entity::enemy_ai)
+        .expect("Royalist multi-edge observer retains enemy AI");
+    assert!(ai.base.pending_stimuli.is_empty());
+    assert_eq!(ai.base.current_state, AiState::Default);
+    assert_eq!(ai.base.last_stimulus_actor, Some(last_visible_id.index()));
+    assert_eq!(
+        ai.base
+            .stimulus_queue
+            .iter()
+            .map(|stimulus| {
+                let StimulusInfo::Human(target) = stimulus.info else {
+                    panic!("Royalist Enemy edge lost its human payload")
+                };
+                (stimulus.stimulus_type, target)
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (StimulusType::EventView, first_visible_id.index()),
+            (StimulusType::EventOutOfView, lost_id.index()),
+            (StimulusType::EventView, last_visible_id.index()),
+        ],
+        "Royalist HandleDetection must retain interleaved edges in detectable-list order"
+    );
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {
