@@ -19,6 +19,77 @@ fn engine_creation() {
 }
 
 #[test]
+fn simulation_gate_extraction_preserves_snapshot_schema_and_hash() {
+    use std::hash::{Hash, Hasher};
+
+    let engine = EngineInner::new();
+    assert_eq!(
+        crate::replay::state_hash(&engine),
+        14_280_078_644_944_828_275
+    );
+
+    let json = serde_json::to_value(&engine).expect("serialize engine");
+    let object = json
+        .as_object()
+        .expect("EngineInner should serialize as a map");
+    assert_eq!(
+        object.get("lock_engine"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        object.get("freeze_all"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        object.get("fade_freeze_frames_remaining"),
+        Some(&serde_json::Value::from(0))
+    );
+    assert!(!object.contains_key("simulation_gates"));
+
+    let bytes =
+        bincode::serde::encode_to_vec(&engine, bincode::config::standard()).expect("encode");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    assert_eq!(bytes.len(), 549);
+    assert_eq!(hasher.finish(), 11_550_366_599_421_462_693);
+}
+
+#[test]
+fn simulation_gates_survive_rollback_restore_and_replay() {
+    let assets = LevelAssets::new();
+    let mut original = EngineInner::new();
+    original.lock_engine = true;
+    original.freeze_all = true;
+    original.fade_freeze_frames_remaining = 2;
+
+    let bytes =
+        bincode::serde::encode_to_vec(&original, bincode::config::standard()).expect("encode");
+    let (mut replay, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).expect("decode");
+    assert_eq!(consumed, bytes.len());
+    assert!(replay.lock_engine);
+    assert!(replay.freeze_all);
+    assert_eq!(replay.fade_freeze_frames_remaining, 2);
+    assert_eq!(
+        crate::replay::state_hash(&original),
+        crate::replay::state_hash(&replay)
+    );
+
+    let mut original_display = HostDisplayState::default();
+    let mut replay_display = original_display.clone();
+    let mut original_dev = DevState::default();
+    let mut replay_dev = DevState::default();
+    for _ in 0..4 {
+        original.perform_hourglass(&mut original_display, &assets, &mut original_dev);
+        replay.perform_hourglass(&mut replay_display, &assets, &mut replay_dev);
+        assert_eq!(
+            crate::replay::state_hash(&original),
+            crate::replay::state_hash(&replay)
+        );
+    }
+}
+
+#[test]
 fn scrolling_table_generation() {
     let bg = BackgroundTransform::default();
     assert_eq!(bg.x_scrolling_values[0], 0.0);
