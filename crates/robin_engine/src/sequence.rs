@@ -2066,8 +2066,8 @@ pub struct SequenceManager {
     /// the deferred-dispatch queue.
     elements_to_go: VecDeque<(SequenceId, usize)>,
 
-    /// Synchronous immediate-dispatch buffer for the
-    /// [`SequenceElement::executed_immediately`] command groups
+    /// Ordered synchronous-dispatch buffer for WAIT-priority elements and
+    /// the [`SequenceElement::executed_immediately`] command groups
     /// (Teleport, LockAi, UnlockAi, ReplaceAnim, RestoreAnim, Speak,
     /// StartMobile, StopMobile, ActivateMobile, DeactivateMobile,
     /// Unblip, LockUser, UnlockUser, CameraJumpTo, Timer,
@@ -2076,17 +2076,15 @@ pub struct SequenceManager {
     /// `executed_immediately()` is a pure predicate, and
     /// `register_element_to_go` queues the `SequenceAction` for
     /// engine-side dispatch onto this buffer.  Inside `hourglass`, the
-    /// buffer is drained alongside `elements_to_go` as a single
-    /// ordered stream of actions.  Outside `hourglass`, engine-side
-    /// wrappers call
-    /// [`take_pending_immediate_actions`](Self::take_pending_immediate_actions)
-    /// after any external entry point (`launch_sequence`,
-    /// `launch_element`, `element_terminated`, `element_impossible`,
-    /// `element_in_progress`, `element_interrupted`,
-    /// `terminate_sequence`, `stop_owner`, `stop_pending_elements*`,
-    /// `cancel_pending_move_commands`) to fire the synchronous
-    /// dispatch this same frame: registration = dispatch.
-    pending_immediate_actions: VecDeque<SequenceAction>,
+    /// buffer is drained alongside `elements_to_go` as a single ordered
+    /// stream of actions. The engine action loop calls
+    /// [`take_pending_synchronous_actions`](Self::take_pending_synchronous_actions)
+    /// after each callback so re-entrant WAIT successors run before older
+    /// siblings. External entry-point wrappers can continue to drain only
+    /// the immediate subset through
+    /// [`take_pending_immediate_actions`](Self::take_pending_immediate_actions).
+    #[serde(alias = "pending_immediate_actions")]
+    pending_synchronous_actions: VecDeque<SequenceAction>,
 
     /// Pending `SendCondolationCard` notifications.  Populated whenever
     /// a sequence element transitions to Terminated / Interrupted /
@@ -2186,7 +2184,7 @@ impl SequenceManager {
             actor_live: BTreeMap::new(),
             actor_in_progress: BTreeMap::new(),
             elements_to_go: VecDeque::new(),
-            pending_immediate_actions: VecDeque::new(),
+            pending_synchronous_actions: VecDeque::new(),
             pending_condolations: Vec::new(),
             next_sequence_id: 1,
             next_element_id: 1,
@@ -2368,9 +2366,7 @@ impl SequenceManager {
         // Register elements for dispatch
         for (elem_idx, is_wait) in to_go {
             if is_wait {
-                // WAIT priority elements are dispatched directly (not deferred)
-                // They'll be handled in the next hourglass call
-                self.elements_to_go.push_back((id, elem_idx));
+                self.register_wait_element_to_go(id, elem_idx);
             } else {
                 self.register_element_to_go(id, elem_idx);
             }
@@ -2578,7 +2574,7 @@ impl SequenceManager {
     /// If the element's command is in the `executed_immediately()`
     /// group, the element is *not* queued — instead, the corresponding
     /// `SequenceAction` is pushed onto
-    /// [`pending_immediate_actions`](Self::pending_immediate_actions)
+    /// [`pending_synchronous_actions`](Self::pending_synchronous_actions)
     /// for synchronous engine-side dispatch.  Non-immediate elements
     /// land on `elements_to_go` for the next `hourglass` pass.
     ///
@@ -2587,7 +2583,7 @@ impl SequenceManager {
     /// `element_impossible`, `element_in_progress`,
     /// `element_interrupted`, `terminate_sequence`, `stop_owner`,
     /// `stop_pending_elements*`, `cancel_pending_move_commands`)
-    /// drain `pending_immediate_actions` after each call so the
+    /// drain pending immediate actions after each call so the
     /// immediate side effect fires this same frame: registration =
     /// dispatch.  The hourglass-internal cascade callsites in
     /// [`Self::process_effects`] need no extra drain — `hourglass`
@@ -2627,7 +2623,7 @@ impl SequenceManager {
             // `SequenceAction` is queued here for the engine-side
             // dispatcher to drain inline.
             if let Some(action) = Self::immediate_action_for(seq_id, elem_idx, elem) {
-                self.pending_immediate_actions.push_back(action);
+                self.pending_synchronous_actions.push_back(action);
             } else {
                 tracing::error!(
                     ?seq_id,
@@ -2639,7 +2635,7 @@ impl SequenceManager {
                 );
                 // Fall through to `elements_to_go` so the hourglass
                 // diagnostic arm logs and terminates.  The element is
-                // deliberately never put on `pending_immediate_actions`
+                // deliberately never put on `pending_synchronous_actions`
                 // because we have no action to fire.
                 self.elements_to_go.push_back((seq_id, elem_idx));
             }
@@ -2647,6 +2643,59 @@ impl SequenceManager {
         }
 
         self.elements_to_go.push_back((seq_id, elem_idx));
+    }
+
+    /// Emit the `Go()` action for a WAIT-priority element at registration
+    /// time instead of placing it behind the next manager hourglass.
+    ///
+    /// Original provenance: `RHSequence::NextSequenceElementsGo` calls
+    /// `RHSequenceElement::Go()` directly for `RHPRIORITY_WAIT`
+    /// (`original-code/RHsequence.cpp:272-288`).  Other priorities call
+    /// `RHSequenceManager::RegisterSequenceElementToGo`, whose non-immediate
+    /// path appends to the manager FIFO
+    /// (`original-code/RHsequencemanager.cpp:951-970`).
+    fn register_wait_element_to_go(&mut self, seq_id: SequenceId, elem_idx: usize) {
+        let seq = self
+            .sequences
+            .get(&seq_id)
+            .unwrap_or_else(|| panic!("register_wait_element_to_go: missing sequence {seq_id:?}"));
+        let elem = seq.elements.get(elem_idx).unwrap_or_else(|| {
+            panic!("register_wait_element_to_go: missing element ({seq_id:?}, {elem_idx})")
+        });
+
+        if !matches!(elem.state, SequenceState::Todo | SequenceState::Postponed) {
+            tracing::trace!(
+                ?seq_id,
+                elem_idx,
+                state = ?elem.state,
+                command = ?elem.command,
+                owner = ?elem.owner,
+                "register_wait_element_to_go: Go is a no-op for non-live element"
+            );
+            return;
+        }
+
+        let action = if elem.executed_immediately() {
+            Self::immediate_action_for(seq_id, elem_idx, elem).unwrap_or_else(|| {
+                panic!(
+                    "register_wait_element_to_go: immediate command {:?} at ({seq_id:?}, \
+                     {elem_idx}) has no valid dispatch target",
+                    elem.command
+                )
+            })
+        } else if let Some(owner) = elem.owner {
+            SequenceAction::InstructOwner {
+                owner,
+                sequence_id: seq_id,
+                element_index: elem_idx,
+            }
+        } else {
+            SequenceAction::EngineCommand {
+                sequence_id: seq_id,
+                element_index: elem_idx,
+            }
+        };
+        self.pending_synchronous_actions.push_back(action);
     }
 
     /// Build the `SequenceAction` for an immediate-dispatch element.
@@ -2708,7 +2757,7 @@ impl SequenceManager {
         }
     }
 
-    /// Drain pending synchronous immediate-dispatch actions accumulated
+    /// Drain pending immediate-dispatch actions accumulated
     /// since the last call.  Engine-side wrappers around external entry
     /// points call this after invoking `launch_sequence`,
     /// `launch_element`, `element_terminated`, `element_impossible`,
@@ -2721,7 +2770,34 @@ impl SequenceManager {
     /// stream, so callers inside the hourglass dispatch loop need not
     /// drain separately.
     pub fn take_pending_immediate_actions(&mut self) -> Vec<SequenceAction> {
-        self.pending_immediate_actions.drain(..).collect()
+        let mut immediate = Vec::new();
+        let mut retained = VecDeque::new();
+        while let Some(action) = self.pending_synchronous_actions.pop_front() {
+            if matches!(
+                action,
+                SequenceAction::ExecuteImmediateOwner { .. }
+                    | SequenceAction::ExecuteImmediateEngine { .. }
+            ) {
+                immediate.push(action);
+            } else {
+                retained.push_back(action);
+            }
+        }
+        self.pending_synchronous_actions = retained;
+        immediate
+    }
+
+    /// Drain the complete ordered stream emitted synchronously by sequence
+    /// registration: direct WAIT `Go()` actions interleaved with
+    /// `ExecutedImmediately()` actions.
+    ///
+    /// The engine action loop uses this after every callback.  If that
+    /// callback completes an element and `Ready()` advances to a WAIT
+    /// successor, the successor is inserted at the front of the remaining
+    /// work before an older sibling action runs, matching the original
+    /// re-entrant call stack.
+    pub fn take_pending_synchronous_actions(&mut self) -> Vec<SequenceAction> {
+        self.pending_synchronous_actions.drain(..).collect()
     }
 
     /// Remove the pending immediate action for one freshly-launched
@@ -2738,7 +2814,7 @@ impl SequenceManager {
         element_index: usize,
     ) -> Option<SequenceAction> {
         let position = self
-            .pending_immediate_actions
+            .pending_synchronous_actions
             .iter()
             .position(|action| match action {
                 SequenceAction::ExecuteImmediateOwner {
@@ -2752,14 +2828,20 @@ impl SequenceManager {
                 } => *action_sequence_id == sequence_id && *action_element_index == element_index,
                 _ => false,
             })?;
-        self.pending_immediate_actions.remove(position)
+        self.pending_synchronous_actions.remove(position)
     }
 
     /// `true` iff there is at least one immediate-dispatch action
     /// awaiting drain.  Used by the engine's drain loop to know when
     /// to stop calling [`Self::take_pending_immediate_actions`].
     pub fn has_pending_immediate_actions(&self) -> bool {
-        !self.pending_immediate_actions.is_empty()
+        self.pending_synchronous_actions.iter().any(|action| {
+            matches!(
+                action,
+                SequenceAction::ExecuteImmediateOwner { .. }
+                    | SequenceAction::ExecuteImmediateEngine { .. }
+            )
+        })
     }
 
     // ─── Per-frame processing ───────────────────────────────────
@@ -2768,19 +2850,19 @@ impl SequenceManager {
     /// Returns actions the engine must dispatch.
     ///
     /// Drains both the deferred `elements_to_go` queue and the
-    /// synchronous `pending_immediate_actions` buffer (populated by
-    /// [`Self::register_element_to_go`]).  Cascade callsites in
+    /// synchronous registration buffer (populated by
+    /// [`Self::register_element_to_go`] and
+    /// [`Self::register_wait_element_to_go`]). Cascade callsites in
     /// [`Self::process_effects`] re-register elements during the loop —
-    /// any new immediates land on `pending_immediate_actions` and are
+    /// any new synchronous actions land on that buffer and are
     /// drained here this same frame.
     pub fn hourglass(&mut self) -> Vec<SequenceAction> {
         let mut actions = Vec::new();
 
         loop {
-            // Drain pending immediates first — registration = dispatch
-            // for these, so they always come before whatever
-            // non-immediate work is queued behind them.
-            while let Some(action) = self.pending_immediate_actions.pop_front() {
+            // WAIT Go() and ExecutedImmediately() run at registration,
+            // before deferred non-WAIT work reaches the manager hourglass.
+            while let Some(action) = self.pending_synchronous_actions.pop_front() {
                 actions.push(action);
             }
 
@@ -2805,13 +2887,10 @@ impl SequenceManager {
             }
 
             // The `register_element_to_go` path routes immediate
-            // commands directly to `pending_immediate_actions`, so
+            // commands directly to `pending_synchronous_actions`, so
             // anything coming out of `elements_to_go` should normally
-            // be non-immediate.  WAIT-priority elements bypass
-            // `register_element_to_go` (see `launch_sequence` /
-            // `process_effects`), so an immediate-class WAIT element
-            // can still land here — handle it via the same 3-way
-            // switch as a defensive backstop.
+            // be non-immediate. WAIT-priority elements also bypass this
+            // queue via `pending_synchronous_actions`.
             if elem.executed_immediately() {
                 if let Some(action) = Self::immediate_action_for(seq_id, elem_idx, elem) {
                     actions.push(action);
@@ -3289,7 +3368,7 @@ impl SequenceManager {
             };
             for (elem_idx, is_wait) in to_go {
                 if is_wait {
-                    self.elements_to_go.push_back((seq_id, elem_idx));
+                    self.register_wait_element_to_go(seq_id, elem_idx);
                 } else {
                     self.register_element_to_go(seq_id, elem_idx);
                 }
@@ -4408,6 +4487,133 @@ mod tests {
         // No more pending
         let actions = mgr.hourglass();
         assert!(actions.is_empty());
+    }
+
+    /// Original `RHSequence::NextSequenceElementsGo`
+    /// (`original-code/RHsequence.cpp:235-289`) advances the cursor and
+    /// running count first, then walks that stable range in element order:
+    /// WAIT calls `Go()` inline, NORMAL is registered on the manager FIFO,
+    /// and an immediate command executes inside that registration. A WAIT
+    /// callback may terminate synchronously, enter `Ready()`, and dispatch a
+    /// WAIT successor before the outer launch/callback chain unwinds.
+    #[test]
+    fn wait_go_is_emitted_at_launch_return_in_registration_order_and_reentrant() {
+        let mut mgr = SequenceManager::new();
+        let wait_owner = EntityId::Pc(crate::entity_id::PcId(1));
+
+        let mut sequence = Sequence::new();
+        let mut normal = make_simple_element(
+            1,
+            Command::Move,
+            Some(EntityId::Pc(crate::entity_id::PcId(0))),
+        );
+        normal.priority = SequencePriority::Normal;
+        sequence.append_element(normal);
+
+        let mut wait = make_simple_element(1, Command::Wait, Some(wait_owner));
+        wait.priority = SequencePriority::Wait;
+        sequence.append_element(wait);
+
+        let mut immediate = make_simple_element(1, Command::LockUser, None);
+        immediate.priority = SequencePriority::Normal;
+        sequence.append_element(immediate);
+
+        let sequence_id = mgr.launch_sequence(sequence);
+
+        let launched = mgr
+            .get_sequence(sequence_id)
+            .expect("sequence is registered");
+        assert!(launched.started);
+        assert_eq!(launched.cursor, 3);
+        assert_eq!(launched.running_elements, 3);
+        assert!(
+            launched
+                .elements
+                .iter()
+                .all(|element| element.state == SequenceState::Todo),
+            "emitting Go must not invent the callback's state transition"
+        );
+        assert_eq!(
+            mgr.elements_to_go.iter().copied().collect::<Vec<_>>(),
+            vec![(sequence_id, 0)],
+            "only NORMAL non-immediate work belongs on the hourglass FIFO"
+        );
+
+        let synchronous = mgr.take_pending_synchronous_actions();
+        assert_eq!(synchronous.len(), 2);
+        assert!(matches!(
+            synchronous[0],
+            SequenceAction::InstructOwner {
+                owner,
+                sequence_id: action_sequence_id,
+                element_index: 1,
+            } if owner == wait_owner && action_sequence_id == sequence_id
+        ));
+        assert!(matches!(
+            synchronous[1],
+            SequenceAction::ExecuteImmediateEngine {
+                sequence_id: action_sequence_id,
+                element_index: 2,
+            } if action_sequence_id == sequence_id
+        ));
+        let deferred = mgr.hourglass();
+        assert_eq!(deferred.len(), 1);
+        assert!(matches!(
+            deferred[0],
+            SequenceAction::InstructOwner {
+                sequence_id: action_sequence_id,
+                element_index: 0,
+                ..
+            } if action_sequence_id == sequence_id
+        ));
+
+        // Re-entrant completion: the callback for level 1 reaches Ready(),
+        // which must emit the level-2 WAIT into the synchronous stream. It
+        // must not fall back onto `elements_to_go` for another hourglass.
+        let mut mgr = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        let mut first = make_simple_element(1, Command::Wait, None);
+        first.priority = SequencePriority::Wait;
+        sequence.append_element(first);
+        let mut successor = make_simple_element(2, Command::Wait, None);
+        successor.priority = SequencePriority::Wait;
+        sequence.append_element(successor);
+
+        let sequence_id = mgr.launch_sequence(sequence);
+        let first_action = mgr.take_pending_synchronous_actions();
+        assert!(matches!(
+            first_action.as_slice(),
+            [SequenceAction::EngineCommand {
+                sequence_id: action_sequence_id,
+                element_index: 0,
+            }] if *action_sequence_id == sequence_id
+        ));
+
+        mgr.element_in_progress(sequence_id, 0);
+        mgr.element_terminated(sequence_id, 0);
+
+        let successor_action = mgr.take_pending_synchronous_actions();
+        assert!(matches!(
+            successor_action.as_slice(),
+            [SequenceAction::EngineCommand {
+                sequence_id: action_sequence_id,
+                element_index: 1,
+            }] if *action_sequence_id == sequence_id
+        ));
+        assert!(mgr.elements_to_go.is_empty());
+        assert!(mgr.hourglass().is_empty());
+        assert_eq!(
+            mgr.get_element(sequence_id, 0)
+                .expect("first element")
+                .state,
+            SequenceState::Terminated
+        );
+        assert_eq!(
+            mgr.get_element(sequence_id, 1)
+                .expect("successor element")
+                .state,
+            SequenceState::Todo
+        );
     }
 
     #[test]

@@ -5428,14 +5428,11 @@ impl EngineInner {
                 }
             }
 
-            // After-action drain: any `register_element_to_go` calls
-            // triggered by the action's cascade may have queued
-            // immediate-dispatch actions onto
-            // `pending_immediate_actions`.  Splice them onto the
-            // FRONT of the work queue so they fire before the next
-            // action in the batch — registration's immediate side
-            // effect must fire inline.
-            let pending = self.sequence_manager.take_pending_immediate_actions();
+            // After-action drain: callbacks can synchronously register an
+            // immediate command or complete a level whose successor is WAIT.
+            // Splice that ordered registration stream onto the FRONT so the
+            // re-entrant work fires before the next older action in the batch.
+            let pending = self.sequence_manager.take_pending_synchronous_actions();
             for action in pending.into_iter().rev() {
                 actions.push_front(action);
             }
