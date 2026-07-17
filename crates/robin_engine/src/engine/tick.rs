@@ -5541,7 +5541,7 @@ impl EngineInner {
             // as a stand-in (we don't compute display order yet).
             self.titbit_manager.prepare_refresh(|handle| {
                 self.entities
-                    .id_at_index(handle.0)
+                    .id_at_legacy_slot(handle.0)
                     .and_then(|entity_id| self.entities.get(entity_id))
                     .map(|e| e.element_data().position_map().y)
             });
@@ -7986,7 +7986,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         use crate::ai::Substate;
         use crate::order::OrderType;
 
-        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+        let Some(entity_id) = self.entities.id_at_legacy_slot(element.0) else {
             return false;
         };
         let Some(entity) = self.entities.get(entity_id) else {
@@ -8012,7 +8012,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
     }
 
     fn is_unconscious_and_alive(&self, element: crate::titbit::ElementHandle) -> bool {
-        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+        let Some(entity_id) = self.entities.id_at_legacy_slot(element.0) else {
             return false;
         };
         let Some(entity) = self.entities.get(entity_id) else {
@@ -8035,7 +8035,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 
     fn is_hidden_posture(&self, element: crate::titbit::ElementHandle) -> bool {
         use crate::element::Posture;
-        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+        let Some(entity_id) = self.entities.id_at_legacy_slot(element.0) else {
             return false;
         };
         let Some(entity) = self.entities.get(entity_id) else {

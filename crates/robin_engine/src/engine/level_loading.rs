@@ -3353,7 +3353,7 @@ impl EngineInner {
         for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
             let first_door = building_first_door_info.get(bld_idx).copied();
             for &elem_idx in &tenants.tenant_element_indices {
-                let Some(entity_id) = self.entities.id_at_index(u32::from(elem_idx)) else {
+                let Some(entity_id) = self.entities.id_at_legacy_slot(u32::from(elem_idx)) else {
                     continue;
                 };
                 let Some(entity) = self.entities.get_mut(entity_id) else {

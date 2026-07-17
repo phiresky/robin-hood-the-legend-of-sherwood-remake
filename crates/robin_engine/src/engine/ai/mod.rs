@@ -1303,8 +1303,7 @@ impl EngineInner {
 
         // Build a friendly soldier snapshot for `handle` (which may be self).
         let build_soldier = |handle: u32| -> Option<FighterSnapshot> {
-            let Some(Entity::Soldier(s)) = self.entities.get(EntityId::Soldier(SoldierId(handle)))
-            else {
+            let Some(s) = self.entities.get_soldier(SoldierId(handle)) else {
                 return None;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -1439,7 +1438,7 @@ impl EngineInner {
 
         // Build an enemy PC snapshot for `handle`.
         let build_pc = |handle: u32| -> Option<FighterSnapshot> {
-            let Some(Entity::Pc(pc)) = self.entities.get(EntityId::Pc(PcId(handle))) else {
+            let Some(pc) = self.entities.get_pc(PcId(handle)) else {
                 return None;
             };
             if !pc.element.active || pc.pc.life_points <= 0 {
@@ -1617,8 +1616,7 @@ impl EngineInner {
             if current == 0 {
                 break;
             }
-            let Some(Entity::Soldier(s)) = self.entities.get(EntityId::Soldier(SoldierId(current)))
-            else {
+            let Some(s) = self.entities.get_soldier(SoldierId(current)) else {
                 break;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -3639,7 +3637,7 @@ impl EngineInner {
         // `sound_is_finished` callback: clear current_remark and fire
         // the MYTALK event (`inform_ai_on_finished_remark`).
         for &(actor_handle, _excl_id) in &self.sound_sim.finished_exclamations {
-            if let Some(actor_id) = self.entities.id_at_index(actor_handle)
+            if let Some(actor_id) = self.entities.id_at_legacy_slot(actor_handle)
                 && let Some(entity) = self.entities.get_mut(actor_id)
             {
                 // PC branch: nothing to do here — the C++ "currently
@@ -4438,7 +4436,7 @@ impl EngineInner {
             };
             let charly_pos = self
                 .entities
-                .id_at_index(charly_handle)
+                .id_at_legacy_slot(charly_handle)
                 .and_then(|charly_id| self.entities.get(charly_id))
                 .map(|e| {
                     let pm = e.element_data().position_map();
