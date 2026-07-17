@@ -98,7 +98,7 @@ impl SequenceElementRef {
 
 bitflags! {
     /// Controls how state changes propagate through the sequence element chain.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct CascadeFlags: u16 {
         /// Cascade to the first element at the next command level.
         const NEXT_LEVEL = 0x0001;
@@ -1650,7 +1650,7 @@ impl Default for Sequence {
 
 /// Result of a state change on a sequence element.
 /// The caller (SequenceManager) must process these effects.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct StateChangeEffects {
     /// Elements whose state should also be changed (cascade).
     pub cascade: Vec<(usize, SequenceState, CascadeFlags)>,
@@ -1765,6 +1765,7 @@ impl Sequence {
                         seq_id: self.id,
                         elem_idx: elem_idx as u16,
                         from_halt: false,
+                        postponed_successor_pending: false,
                     });
                 }
                 // Cascade
@@ -1794,6 +1795,7 @@ impl Sequence {
                         seq_id: self.id,
                         elem_idx: elem_idx as u16,
                         from_halt: false,
+                        postponed_successor_pending: false,
                     });
                 }
                 // Cascade
@@ -1819,6 +1821,7 @@ impl Sequence {
                                 seq_id: self.id,
                                 elem_idx: elem_idx as u16,
                                 from_halt: false,
+                                postponed_successor_pending: false,
                             });
                         }
                         // Tell the sequence this element is done
@@ -2090,7 +2093,7 @@ pub struct SequenceManager {
     /// Impossible; drained by the engine after `hourglass` so
     /// per-entity cleanup (wasp-victim reset, carrier cleanup, etc.)
     /// fires in a single pass.
-    pending_condolations: Vec<PendingCondolation>,
+    pending_condolations: Vec<PendingCondolationDispatch>,
 
     /// Per-engine sequence-id counter. Replaces the previous global
     /// atomic so id allocation is part of the rollback snapshot —
@@ -2133,6 +2136,21 @@ pub struct PendingCondolation {
     /// `Think(EVENT_IMPOSSIBLE)` / `Think(EVENT_COULDNT_REACHPOINT)`
     /// dispatches for these.
     pub from_halt: bool,
+    /// The state change detached a cross-sequence postponed successor,
+    /// but the original `StartPostponedSequenceElement` point is after
+    /// this card.  Such a successor makes `IsLastRealAction` false while
+    /// `SendCondolationCard` is running.
+    pub postponed_successor_pending: bool,
+}
+
+/// A condolence card plus the portion of `SetState` that the original
+/// performs only after `SendCondolationCard` returns.  Keeping the
+/// continuation beside the card preserves the depth-first order across
+/// Rust's borrow-safe dispatch boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub struct PendingCondolationDispatch {
+    pub card: PendingCondolation,
+    effects_after_card: StateChangeEffects,
 }
 
 impl Default for SequenceManager {
@@ -2216,7 +2234,7 @@ impl SequenceManager {
     /// Drain all pending SendCondolationCard notifications accumulated
     /// since the last call.  EngineInner calls this after each `hourglass`
     /// and dispatches to per-entity cleanup handlers.
-    pub fn drain_pending_condolations(&mut self) -> Vec<PendingCondolation> {
+    pub fn drain_pending_condolations(&mut self) -> Vec<PendingCondolationDispatch> {
         std::mem::take(&mut self.pending_condolations)
     }
 
@@ -2230,17 +2248,28 @@ impl SequenceManager {
     pub fn drain_pending_condolations_for_owner(
         &mut self,
         owner: EntityId,
-    ) -> Vec<PendingCondolation> {
+    ) -> Vec<PendingCondolationDispatch> {
         let mut matching = Vec::new();
         self.pending_condolations.retain(|c| {
-            if c.owner == owner {
-                matching.push(*c);
+            if c.card.owner == owner {
+                matching.push(c.clone());
                 false
             } else {
                 true
             }
         });
         matching
+    }
+
+    /// Resume the part of `RHSequenceElement::SetState` that follows
+    /// `SendCondolationCard`: cascade, `Ready`, and postponed-element
+    /// activation.  The engine calls this only after the card's recursive
+    /// `Think` and its same-frame side effects have reached a fixed point.
+    pub fn finish_pending_condolation(&mut self, pending: PendingCondolationDispatch) {
+        let was_halt_pending = self.halt_pending;
+        self.halt_pending |= pending.card.from_halt;
+        self.process_effects_after_condolation(pending.card.seq_id, pending.effects_after_card);
+        self.halt_pending = was_halt_pending;
     }
 
     /// Number of active sequences.
@@ -3098,7 +3127,7 @@ impl SequenceManager {
     }
 
     /// Process effects from a state change.
-    fn process_effects(&mut self, seq_id: SequenceId, effects: StateChangeEffects) {
+    fn process_effects(&mut self, seq_id: SequenceId, mut effects: StateChangeEffects) {
         if let Some(seq) = self.sequences.get_mut(&seq_id) {
             if effects.increment_in_progress {
                 seq.increase_elements_in_progress();
@@ -3140,18 +3169,46 @@ impl SequenceManager {
             }
         }
 
-        // Enqueue pending owner condolations — drained by
-        // `EngineInner::dispatch_condolations` after `hourglass`.
-        if let Some(mut card) = effects.condolation {
+        // `RHSequenceElement::SetState` calls SendCondolationCard before
+        // cascading or calling Ready.  Suspend those trailing effects at
+        // exactly that boundary; the engine resumes them after the card's
+        // recursive Think has completed.  Impossible is the one exception:
+        // the original calls StartPostponedSequenceElement before falling
+        // through to the Interrupted/card branch.
+        if let Some(mut card) = effects.condolation.take() {
             // If this sequence tear-down came from an in-flight
             // `Halt()` call, mark the card so the `SendCondolationCard`
             // handler knows to skip the Think dispatch.
             if self.halt_pending {
                 card.from_halt = true;
             }
-            self.pending_condolations.push(card);
+
+            card.postponed_successor_pending = card.terminal_state != SequenceState::Impossible
+                && effects.resume_cross_postponed.is_some();
+
+            if card.terminal_state == SequenceState::Impossible {
+                self.resume_postponed_effects(
+                    seq_id,
+                    effects.start_postponed.take(),
+                    effects.resume_cross_postponed.take(),
+                );
+            }
+
+            self.pending_condolations.push(PendingCondolationDispatch {
+                card,
+                effects_after_card: effects,
+            });
+            return;
         }
 
+        self.process_effects_after_condolation(seq_id, effects);
+    }
+
+    fn process_effects_after_condolation(
+        &mut self,
+        seq_id: SequenceId,
+        effects: StateChangeEffects,
+    ) {
         // Process cascading state changes
         for (cascade_elem_idx, cascade_state, cascade_flags) in effects.cascade {
             let sub_effects = {
@@ -3223,14 +3280,27 @@ impl SequenceManager {
         //      `element_priority::actor_branch` priority resolution).
         //      So no element is ever in a `MoveOk` state that would
         //      need a posture-aware revert; the branch is moot.
-        if let Some(postponed_idx) = effects.start_postponed {
+        self.resume_postponed_effects(
+            seq_id,
+            effects.start_postponed,
+            effects.resume_cross_postponed,
+        );
+    }
+
+    fn resume_postponed_effects(
+        &mut self,
+        seq_id: SequenceId,
+        start_postponed: Option<usize>,
+        resume_cross_postponed: Option<(SequenceId, usize)>,
+    ) {
+        if let Some(postponed_idx) = start_postponed {
             self.register_element_to_go(seq_id, postponed_idx);
         }
 
         // Release the cross-sequence postponed successor — switch it
         // back to `Todo` and register it for dispatch on the next
         // `hourglass` pass.
-        if let Some((succ_seq_id, succ_idx)) = effects.resume_cross_postponed
+        if let Some((succ_seq_id, succ_idx)) = resume_cross_postponed
             && let Some(succ_seq) = self.sequences.get_mut(&succ_seq_id)
             && let Some(succ_elem) = succ_seq.elements.get_mut(succ_idx)
             && succ_elem.state == SequenceState::Postponed
@@ -4062,6 +4132,21 @@ mod tests {
         SequenceElement::new(level, cmd, owner)
     }
 
+    /// SequenceManager unit tests have no EngineInner owner callback. Resume the
+    /// synchronous SetState continuation at the point where that callback would
+    /// have returned.
+    fn finish_test_condolations(mgr: &mut SequenceManager) {
+        loop {
+            let pending = mgr.drain_pending_condolations();
+            if pending.is_empty() {
+                break;
+            }
+            for dispatch in pending {
+                mgr.finish_pending_condolation(dispatch);
+            }
+        }
+    }
+
     #[test]
     fn sequence_command_level_grouping() {
         let mut seq = Sequence::new();
@@ -4320,6 +4405,7 @@ mod tests {
         // Mark element 0 as in-progress then terminated
         mgr.element_in_progress(seq_id, 0);
         mgr.element_terminated(seq_id, 0);
+        finish_test_condolations(&mut mgr);
 
         // The next level's element should now be queued
         let actions = mgr.hourglass();
@@ -4328,6 +4414,39 @@ mod tests {
             SequenceAction::InstructOwner { element_index, .. } => assert_eq!(*element_index, 1),
             other => panic!("expected InstructOwner for element 1, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn finishing_condolation_stops_at_nested_card_before_cascade_continues() {
+        let mut mgr = SequenceManager::new();
+        let owner = Some(EntityId::Pc(crate::entity_id::PcId(0)));
+        let mut seq = Sequence::new();
+        seq.append_element(make_simple_element(1, Command::Move, owner));
+        seq.append_element(make_simple_element(2, Command::Turn, owner));
+        seq.append_element(make_simple_element(3, Command::LookLeft, owner));
+        let seq_id = mgr.launch_sequence(seq);
+
+        mgr.element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
+        let mut pending = mgr.drain_pending_condolations();
+        assert_eq!(pending.len(), 1);
+
+        // In RHSequenceElement::SetState, the outer card returns and the
+        // cascade enters element 1, whose own SendCondolationCard must run
+        // before CASCADE_FOLLOWING is allowed to touch element 2.
+        mgr.finish_pending_condolation(pending.remove(0));
+
+        assert_eq!(
+            mgr.get_element(seq_id, 1).unwrap().state,
+            SequenceState::Interrupted
+        );
+        assert_eq!(
+            mgr.get_element(seq_id, 2).unwrap().state,
+            SequenceState::Todo,
+            "the nested owner callback is a synchronous boundary in the cascade"
+        );
+        let nested = mgr.drain_pending_condolations();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].card.elem_idx, 1);
     }
 
     #[test]
@@ -4838,12 +4957,14 @@ mod tests {
         mgr.element_in_progress(seq_id, 0);
         mgr.element_in_progress(seq_id, 1);
         mgr.element_terminated(seq_id, 0);
+        finish_test_condolations(&mut mgr);
 
         // Level 2 not yet started — one still running
         let actions = mgr.hourglass();
         assert!(actions.is_empty());
 
         mgr.element_terminated(seq_id, 1);
+        finish_test_condolations(&mut mgr);
 
         // Now level 2 should start
         let actions = mgr.hourglass();
