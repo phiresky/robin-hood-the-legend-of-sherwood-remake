@@ -1082,6 +1082,110 @@ pub struct MissionScript {
     /// Serialized so rollback replay reproduces the same frame boundary
     /// without a host-owned companion bool.
     pub post_initialized: bool,
+
+    /// Identity of the campaign temporarily installed on `game_host` by the
+    /// legacy paired swap API.  This is a transient ownership token, not
+    /// simulation state: snapshots are only valid between script calls, when
+    /// the campaign is back on `EngineInner` and this is `None`.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    campaign_lease: Option<CampaignIdentity>,
+}
+
+/// Allocation identity of the campaign singleton while it crosses the
+/// engine/GameHost call adapter.
+///
+/// Script natives may mutate campaign contents, so a value hash cannot prove
+/// identity.  The mission and production-sector vectors are created with the
+/// campaign and retain their allocations throughout an active mission; moving
+/// the campaign between owners preserves these addresses, while replacing it
+/// with another (even a clone with identical values) does not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CampaignIdentity {
+    missions: (usize, usize),
+    production_sectors: (usize, usize),
+}
+
+impl CampaignIdentity {
+    #[cfg(test)]
+    const ABSENT_TEST_FIXTURE: Self = Self {
+        missions: (0, 0),
+        production_sectors: (0, 0),
+    };
+
+    fn of(campaign: &crate::campaign::Campaign) -> Self {
+        Self {
+            missions: (
+                campaign.missions.as_ptr() as usize,
+                campaign.missions.capacity(),
+            ),
+            production_sectors: (
+                campaign.production_sectors.as_ptr() as usize,
+                campaign.production_sectors.capacity(),
+            ),
+        }
+    }
+
+    fn assert_matches(self, campaign: &crate::campaign::Campaign) {
+        assert_eq!(
+            self,
+            Self::of(campaign),
+            "script host replaced the active campaign singleton"
+        );
+    }
+}
+
+fn lend_required_campaign(
+    engine_campaign: &mut Option<crate::campaign::Campaign>,
+    host_campaign: &mut Option<crate::campaign::Campaign>,
+) -> CampaignIdentity {
+    // A number of lower-level VM tests intentionally construct a bare script
+    // adapter rather than an active mission. Keep that test fixture possible
+    // without weakening production's required-campaign invariant or
+    // fabricating a default campaign for it.
+    #[cfg(test)]
+    if engine_campaign.is_none() && host_campaign.is_none() {
+        return CampaignIdentity::ABSENT_TEST_FIXTURE;
+    }
+
+    assert!(
+        host_campaign.is_none(),
+        "script host already owns a campaign before script entry"
+    );
+    let campaign = engine_campaign
+        .take()
+        .expect("active mission entered a script call without its campaign");
+    let identity = CampaignIdentity::of(&campaign);
+    *host_campaign = Some(campaign);
+    identity
+}
+
+fn reclaim_required_campaign(
+    engine_campaign: &mut Option<crate::campaign::Campaign>,
+    host_campaign: &mut Option<crate::campaign::Campaign>,
+    identity: CampaignIdentity,
+) {
+    #[cfg(test)]
+    if identity == CampaignIdentity::ABSENT_TEST_FIXTURE {
+        assert!(
+            engine_campaign.is_none() && host_campaign.is_none(),
+            "bare script test fixture unexpectedly acquired a campaign"
+        );
+        return;
+    }
+
+    assert!(
+        engine_campaign.is_none(),
+        "engine reacquired a campaign before script exit"
+    );
+    let campaign = host_campaign
+        .as_ref()
+        .expect("script host lost the active campaign singleton");
+    identity.assert_matches(campaign);
+    let campaign = host_campaign
+        .take()
+        .expect("validated script-host campaign disappeared");
+    *engine_campaign = Some(campaign);
 }
 
 /// Which instance map a bound script class belongs to.
@@ -1136,6 +1240,7 @@ impl MissionScript {
             scroll_instances: BTreeMap::new(),
             waypoint_instances: BTreeMap::new(),
             post_initialized: false,
+            campaign_lease: None,
         })
     }
 
@@ -1683,10 +1788,20 @@ impl MissionScript {
         campaign: &mut Option<crate::campaign::Campaign>,
         mission_stat: &mut crate::mission_stat::MissionStat,
     ) {
+        match self.campaign_lease.take() {
+            None => {
+                self.campaign_lease = Some(lend_required_campaign(
+                    campaign,
+                    &mut self.game_host.campaign,
+                ));
+            }
+            Some(identity) => {
+                reclaim_required_campaign(campaign, &mut self.game_host.campaign, identity);
+            }
+        }
         entities.swap_slots_with(&mut self.game_host.entities);
         std::mem::swap(&mut self.game_host.ai_global, ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
-        std::mem::swap(&mut self.game_host.campaign, campaign);
         std::mem::swap(&mut self.game_host.mission_stat, mission_stat);
     }
 
@@ -1806,6 +1921,7 @@ pub(crate) struct ScriptContext<'a> {
     ai_global: &'a mut crate::ai::AiGlobalState,
     fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
     campaign: &'a mut Option<crate::campaign::Campaign>,
+    campaign_identity: CampaignIdentity,
     mission_stat: &'a mut crate::mission_stat::MissionStat,
     saved_script_this: Option<i32>,
 }
@@ -1823,7 +1939,7 @@ impl<'a> ScriptContext<'a> {
         entities.swap_slots_with(&mut game_host.entities);
         std::mem::swap(&mut game_host.ai_global, ai_global);
         std::mem::swap(&mut game_host.fast_grid, fast_grid);
-        std::mem::swap(&mut game_host.campaign, campaign);
+        let campaign_identity = lend_required_campaign(campaign, &mut game_host.campaign);
         std::mem::swap(&mut game_host.mission_stat, mission_stat);
 
         let saved_script_this =
@@ -1835,6 +1951,7 @@ impl<'a> ScriptContext<'a> {
             ai_global,
             fast_grid,
             campaign,
+            campaign_identity,
             mission_stat,
             saved_script_this,
         }
@@ -1853,8 +1970,161 @@ impl Drop for ScriptContext<'_> {
         self.entities.swap_slots_with(&mut self.game_host.entities);
         std::mem::swap(&mut self.game_host.ai_global, self.ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, self.fast_grid);
-        std::mem::swap(&mut self.game_host.campaign, self.campaign);
         std::mem::swap(&mut self.game_host.mission_stat, self.mission_stat);
+        reclaim_required_campaign(
+            self.campaign,
+            &mut self.game_host.campaign,
+            self.campaign_identity,
+        );
+    }
+}
+
+#[cfg(test)]
+mod campaign_ownership_tests {
+    use super::*;
+    use crate::campaign::{Campaign, CampaignValue};
+
+    fn marked_campaign() -> Campaign {
+        let mut campaign = Campaign::default();
+        campaign.values[CampaignValue::Custom20] = 0x25_25_25;
+        campaign
+    }
+
+    fn with_context<R>(
+        campaign: &mut Option<Campaign>,
+        host: &mut GameHost,
+        f: impl FnOnce(&mut ScriptContext<'_>) -> R,
+    ) -> R {
+        let mut entities = crate::entities::Entities::new();
+        let mut ai_global = crate::ai::AiGlobalState::default();
+        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut context = ScriptContext::new(
+            host,
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+            campaign,
+            &mut mission_stat,
+            None,
+        );
+        f(&mut context)
+    }
+
+    #[test]
+    fn native_call_returns_the_exact_campaign_allocation() {
+        let campaign = marked_campaign();
+        let identity = CampaignIdentity::of(&campaign);
+        let mut engine_campaign = Some(campaign);
+        let mut host = GameHost::new();
+
+        with_context(&mut engine_campaign, &mut host, |context| {
+            let campaign = context
+                .game_host_mut()
+                .campaign
+                .as_mut()
+                .expect("script host owns the campaign during the call");
+            campaign.values[CampaignValue::Custom19] = 37;
+        });
+
+        let campaign = engine_campaign
+            .as_ref()
+            .expect("engine reacquires campaign after native call");
+        assert_eq!(CampaignIdentity::of(campaign), identity);
+        assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
+        assert_eq!(campaign.values[CampaignValue::Custom19], 37);
+        assert!(host.campaign.is_none());
+    }
+
+    fn fail_in_context(
+        campaign: &mut Option<Campaign>,
+        host: &mut GameHost,
+    ) -> Result<(), &'static str> {
+        with_context(campaign, host, |context| {
+            context
+                .game_host_mut()
+                .campaign
+                .as_mut()
+                .expect("script host owns the campaign during the call")
+                .values[CampaignValue::Custom19] = 38;
+            Err("native error")
+        })
+    }
+
+    #[test]
+    fn native_error_returns_the_exact_campaign_allocation() {
+        let campaign = marked_campaign();
+        let identity = CampaignIdentity::of(&campaign);
+        let mut engine_campaign = Some(campaign);
+        let mut host = GameHost::new();
+
+        assert_eq!(
+            fail_in_context(&mut engine_campaign, &mut host),
+            Err("native error")
+        );
+
+        let campaign = engine_campaign
+            .as_ref()
+            .expect("engine reacquires campaign after native error");
+        assert_eq!(CampaignIdentity::of(campaign), identity);
+        assert_eq!(campaign.values[CampaignValue::Custom19], 38);
+        assert!(host.campaign.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "simulated native panic")]
+    fn native_unwind_returns_the_exact_campaign_allocation() {
+        struct VerifyRestoredOnUnwind {
+            engine_campaign: *const Option<Campaign>,
+            host: *const GameHost,
+            identity: CampaignIdentity,
+        }
+
+        impl Drop for VerifyRestoredOnUnwind {
+            fn drop(&mut self) {
+                // SAFETY: both pointers refer to locals declared before this
+                // verifier. `ScriptContext` is declared after the verifier, so
+                // its Drop restores the campaign before this Drop inspects it.
+                let engine_campaign = unsafe { &*self.engine_campaign };
+                let host = unsafe { &*self.host };
+                let campaign = engine_campaign
+                    .as_ref()
+                    .expect("engine reacquires campaign while unwinding");
+                assert_eq!(CampaignIdentity::of(campaign), self.identity);
+                assert_eq!(campaign.values[CampaignValue::Custom19], 39);
+                assert!(host.campaign.is_none());
+            }
+        }
+
+        let campaign = marked_campaign();
+        let identity = CampaignIdentity::of(&campaign);
+        let mut engine_campaign = Some(campaign);
+        let mut host = GameHost::new();
+        let _verify = VerifyRestoredOnUnwind {
+            engine_campaign: &engine_campaign,
+            host: &host,
+            identity,
+        };
+        let mut entities = crate::entities::Entities::new();
+        let mut ai_global = crate::ai::AiGlobalState::default();
+        let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
+        let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut context = ScriptContext::new(
+            &mut host,
+            &mut entities,
+            &mut ai_global,
+            &mut fast_grid,
+            &mut engine_campaign,
+            &mut mission_stat,
+            None,
+        );
+        context
+            .game_host_mut()
+            .campaign
+            .as_mut()
+            .expect("script host owns the campaign during the call")
+            .values[CampaignValue::Custom19] = 39;
+        panic!("simulated native panic");
     }
 }
 

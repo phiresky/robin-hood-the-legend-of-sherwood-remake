@@ -196,7 +196,25 @@ pub(super) fn restore_required_campaign(
     campaign: Option<Campaign>,
     context: &str,
 ) {
-    *campaign_ref = campaign.unwrap_or_else(|| panic!("{context}: engine campaign is missing"));
+    let campaign = campaign.unwrap_or_else(|| panic!("{context}: engine campaign is missing"));
+    restore_campaign_value(campaign_ref, campaign);
+}
+
+fn restore_campaign_value(campaign_ref: &mut Campaign, campaign: Campaign) {
+    *campaign_ref = campaign;
+}
+
+/// End an active mission's campaign lease and restore the one concrete
+/// campaign to the session owner.
+fn restore_engine_campaign(
+    campaign_ref: &mut Campaign,
+    engine: &mut engine_api::Engine,
+    context: &str,
+) {
+    let campaign = engine
+        .take_campaign()
+        .unwrap_or_else(|| panic!("{context}: engine campaign is missing"));
+    restore_campaign_value(campaign_ref, campaign);
 }
 
 /// Borrow menu resources required by a confirmation or pause-menu action.
@@ -483,9 +501,9 @@ pub(crate) async fn run_mission_headless(
         );
         match outcome {
             FrameOutcome::Exit(code) => {
-                restore_required_campaign(
+                restore_engine_campaign(
                     campaign_ref,
-                    manager.engine.take_campaign(),
+                    &mut manager.engine,
                     exit_context.expect("runtime exit must have a campaign restore context"),
                 );
                 return Ok(code);
@@ -1225,11 +1243,7 @@ pub(crate) async fn run_mission(
         }
 
         tracing::info!("Sherwood entry with ARES=0 (lost campaign) — returning to main menu");
-        restore_required_campaign(
-            campaign_ref,
-            engine.take_campaign(),
-            "lost-campaign Sherwood exit",
-        );
+        restore_engine_campaign(campaign_ref, &mut engine, "lost-campaign Sherwood exit");
         return Ok(GameCode::Quit);
     }
 
@@ -1712,9 +1726,9 @@ pub(crate) async fn run_mission(
         }
 
         if threaded_input.is_ended() {
-            restore_required_campaign(
+            restore_engine_campaign(
                 campaign_ref,
-                manager.engine.take_campaign(),
+                &mut manager.engine,
                 "window-close mission exit",
             );
             return Ok(GameCode::Quit);
@@ -2636,11 +2650,7 @@ pub(crate) async fn run_mission(
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
             }
-            restore_required_campaign(
-                campaign_ref,
-                manager.engine.take_campaign(),
-                "completed mission exit",
-            );
+            restore_engine_campaign(campaign_ref, &mut manager.engine, "completed mission exit");
             return Ok(exit_code);
         }
         let save_load_processed = perform_pending_save_load(
@@ -2664,11 +2674,7 @@ pub(crate) async fn run_mission(
         // and re-queue the Load on the fresh engine.
         if callbacks.pending_level_load.is_some() {
             game.operation.set(GameCode::LevelLoad);
-            restore_required_campaign(
-                campaign_ref,
-                manager.engine.take_campaign(),
-                "cross-mission load exit",
-            );
+            restore_engine_campaign(campaign_ref, &mut manager.engine, "cross-mission load exit");
             return Ok(GameCode::LevelLoad);
         }
 
@@ -3881,9 +3887,9 @@ pub(crate) async fn run_mission(
                         {
                             recorder.end_frame();
                         }
-                        restore_required_campaign(
+                        restore_engine_campaign(
                             campaign_ref,
-                            manager.engine.take_campaign(),
+                            &mut manager.engine,
                             "emergency debriefing exit",
                         );
                         return Ok(GameCode::Quit);
@@ -4189,9 +4195,25 @@ pub(crate) async fn run_mission(
 
 #[cfg(test)]
 mod required_state_tests {
-    use super::{required_menu_resources, restore_required_campaign};
-    use crate::campaign::Campaign;
+    use super::{required_menu_resources, restore_campaign_value, restore_required_campaign};
+    use crate::campaign::{Campaign, CampaignValue};
     use crate::ingame_menu::IngameMenuResources;
+
+    #[test]
+    fn mission_exit_restores_the_exact_campaign_allocation() {
+        let mut outer_campaign = Campaign::default();
+        let mut engine_campaign = Campaign::default();
+        engine_campaign.values[CampaignValue::Custom20] = 0x25_25_25;
+        let production_sectors = engine_campaign.production_sectors.as_ptr();
+
+        restore_campaign_value(&mut outer_campaign, engine_campaign);
+
+        assert_eq!(outer_campaign.values[CampaignValue::Custom20], 0x25_25_25);
+        assert_eq!(
+            outer_campaign.production_sectors.as_ptr(),
+            production_sectors
+        );
+    }
 
     #[test]
     #[should_panic(expected = "test campaign restore: engine campaign is missing")]

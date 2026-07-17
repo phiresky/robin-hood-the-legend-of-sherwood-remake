@@ -430,6 +430,50 @@ pub struct EngineInner {
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
 
+/// Unwind guard for operations that must temporarily take the campaign out of
+/// `EngineInner` to satisfy Rust's disjoint-borrow rules.
+struct RequiredCampaignGuard {
+    owner: *mut Option<crate::campaign::Campaign>,
+    campaign: Option<crate::campaign::Campaign>,
+    context: String,
+}
+
+impl RequiredCampaignGuard {
+    fn new(owner: &mut Option<crate::campaign::Campaign>, context: &str) -> Self {
+        let campaign = owner
+            .take()
+            .unwrap_or_else(|| panic!("{context}: active campaign is missing"));
+        Self {
+            owner,
+            campaign: Some(campaign),
+            context: context.to_owned(),
+        }
+    }
+
+    fn campaign_mut(&mut self) -> &mut crate::campaign::Campaign {
+        self.campaign
+            .as_mut()
+            .expect("required campaign guard already restored its campaign")
+    }
+}
+
+impl Drop for RequiredCampaignGuard {
+    fn drop(&mut self) {
+        // SAFETY: `owner` points to the `EngineInner::campaign` field that
+        // created this guard. The guard never dereferences it while the
+        // closure's `&mut EngineInner` is live; Drop runs only after that call
+        // has returned or started unwinding, and the borrowed EngineInner
+        // cannot move during the call.
+        let owner = unsafe { &mut *self.owner };
+        assert!(
+            owner.is_none(),
+            "{}: operation installed a second campaign",
+            self.context
+        );
+        *owner = self.campaign.take();
+    }
+}
+
 /// Sample duration in sim frames (40 ms each), keyed by sound-source
 /// sample id.  Populated host-side from the decoded WAV length in the
 /// sound cache; consulted by [`EngineInner`] when an `Activate` /
@@ -956,10 +1000,25 @@ impl EngineInner {
         assets: &LevelAssets,
         exit_code: crate::game_operation::GameCode,
     ) {
-        if let Some(mut campaign) = self.campaign.take() {
-            self.apply_quit_mission_updates_inner(assets, exit_code, &mut campaign);
-            self.campaign = Some(campaign);
-        }
+        self.with_required_campaign("quit-mission updates", |engine, campaign| {
+            engine.apply_quit_mission_updates_inner(assets, exit_code, campaign);
+        });
+    }
+
+    /// Temporarily move the required active campaign aside while an operation
+    /// needs both `&mut EngineInner` and `&mut Campaign`.
+    ///
+    /// The campaign is put back before an error panic resumes unwinding.  This
+    /// is the Rust ownership equivalent of the original process-wide
+    /// `RHCampaign::mpCampaign`, which remains the same object throughout
+    /// `RHGame` calls.
+    fn with_required_campaign<R>(
+        &mut self,
+        context: &str,
+        f: impl FnOnce(&mut Self, &mut crate::campaign::Campaign) -> R,
+    ) -> R {
+        let mut campaign = RequiredCampaignGuard::new(&mut self.campaign, context);
+        f(self, campaign.campaign_mut())
     }
 
     pub fn score_tied_unconscious_soldiers(&self) -> i32 {
@@ -3751,6 +3810,10 @@ impl EngineInner {
     /// outside any active tick; mirrors `std::mem::take(campaign_ref)`
     /// followed by assignment.
     pub fn install_campaign(&mut self, campaign: crate::campaign::Campaign) {
+        assert!(
+            self.campaign.is_none(),
+            "cannot replace an installed campaign"
+        );
         self.campaign = Some(campaign);
     }
 
@@ -3758,12 +3821,19 @@ impl EngineInner {
     /// to the caller.  Host returns it to the outer owner.  Save/load
     /// boundary — the engine is not ticking when this runs.
     ///
-    /// PARITY TODO: encode the active-mission campaign as required state
-    /// instead of `Option`. Original `RHCampaign.cpp` installs one concrete
-    /// singleton, so normal mission code cannot observe a missing campaign;
-    /// Rust currently enforces that only at session teardown boundaries.
-    pub fn take_campaign(&mut self) -> Option<crate::campaign::Campaign> {
-        self.campaign.take()
+    /// Absence is an invariant violation, not a normal mission outcome.  The
+    /// generic conversion keeps the existing facade ABI (`Option<Campaign>`)
+    /// source-compatible while ensuring `EngineInner` itself only extracts a
+    /// concrete required campaign; `Campaign: Into<Option<Campaign>>` wraps a
+    /// present value and can never manufacture `None`.
+    pub fn take_campaign<T>(&mut self) -> T
+    where
+        T: From<crate::campaign::Campaign>,
+    {
+        self.campaign
+            .take()
+            .expect("active engine campaign is missing")
+            .into()
     }
 
     /// Reset transient runtime state that isn't — or shouldn't be —
@@ -3948,6 +4018,89 @@ impl EngineInner {
     /// boundary, outside the per-tick input pipeline.
     pub fn restore_rng_from_seed(&mut self, seed: u64) {
         self.rng.reseed(seed);
+    }
+}
+
+#[cfg(test)]
+mod campaign_lifecycle_tests {
+    use super::EngineInner;
+    use crate::campaign::{Campaign, CampaignValue};
+
+    fn marked_campaign() -> Campaign {
+        let mut campaign = Campaign::default();
+        campaign.values[CampaignValue::Custom20] = 0x25_25_25;
+        campaign
+    }
+
+    #[test]
+    #[should_panic(expected = "active engine campaign is missing")]
+    fn taking_an_active_campaign_rejects_absence() {
+        let mut engine = EngineInner::new();
+        let _: Campaign = engine.take_campaign();
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot replace an installed campaign")]
+    fn installing_a_campaign_rejects_replacement() {
+        let mut engine = EngineInner::new();
+        engine.install_campaign(marked_campaign());
+        engine.install_campaign(Campaign::default());
+    }
+
+    #[test]
+    #[should_panic(expected = "simulated operation panic")]
+    fn temporary_engine_ownership_restores_campaign_during_unwind() {
+        struct VerifyRestoredOnUnwind {
+            engine: *const EngineInner,
+            production_sectors: *const crate::sector_production::SectorProduction,
+        }
+
+        impl Drop for VerifyRestoredOnUnwind {
+            fn drop(&mut self) {
+                // SAFETY: `engine` is a local declared before this verifier.
+                // `RequiredCampaignGuard` is created later inside
+                // `with_required_campaign`, so it restores first during
+                // reverse-order unwinding.
+                let engine = unsafe { &*self.engine };
+                let campaign = engine
+                    .campaign()
+                    .expect("campaign restored before panic resumes");
+                assert_eq!(
+                    campaign.production_sectors.as_ptr(),
+                    self.production_sectors
+                );
+                assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
+                assert_eq!(campaign.values[CampaignValue::Custom19], 41);
+            }
+        }
+
+        let mut engine = EngineInner::new();
+        let campaign = marked_campaign();
+        let production_sectors = campaign.production_sectors.as_ptr();
+        engine.install_campaign(campaign);
+        let _verify = VerifyRestoredOnUnwind {
+            engine: &engine,
+            production_sectors,
+        };
+        engine.with_required_campaign("test operation", |_engine, campaign| {
+            campaign.values[CampaignValue::Custom19] = 41;
+            panic!("simulated operation panic");
+        });
+    }
+
+    #[test]
+    fn save_load_round_trip_preserves_the_required_campaign() {
+        let mut engine = EngineInner::new();
+        engine.install_campaign(marked_campaign());
+
+        let json = serde_json::to_string(&engine).expect("serialize active engine");
+        let mut loaded: EngineInner =
+            serde_json::from_str(&json).expect("deserialize active engine");
+        let campaign: Campaign = loaded.take_campaign();
+
+        assert_eq!(campaign.values[CampaignValue::Custom20], 0x25_25_25);
+        assert_eq!(campaign.production_sectors.len(), 13);
+        assert!(loaded.campaign().is_none());
     }
 }
 
