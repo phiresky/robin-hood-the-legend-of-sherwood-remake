@@ -376,6 +376,77 @@ fn rollback_clone_stays_in_sync() {
     assert_eq!(second_replay.rng.get_seed(), original.rng.get_seed());
 }
 
+/// `RHGame::GameLoop` calls mission `PostInitialize` only after its
+/// first `Refresh(true, true)` and `RHSound::Hourglass` calls.  Keep the
+/// engine tick and that host-owned boundary observably separate: frame
+/// zero must finish without flipping the serialized one-shot flag, and
+/// the explicit post-refresh stage must flip it without advancing time.
+#[test]
+fn post_initialize_waits_for_post_refresh_stage() {
+    use crate::scb::{ClassEntry, Function, ScbFile};
+    use crate::vm::{Opcode, Quad};
+
+    let begin = Quad {
+        operation: Opcode::BeginFunction as u8,
+        operands: [0; 8],
+    };
+    let ret = Quad {
+        operation: Opcode::Return as u8,
+        operands: [0; 8],
+    };
+    let startup = ClassEntry {
+        source_file: "post_initialize_ordering_test.scs".into(),
+        class_name: "StartUp".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "PostInitialize".into(),
+            address: 0,
+            num_parameters: 0,
+            size_of_return_value: 0,
+            size_of_parameters: 0,
+            size_of_volatile: 0,
+            size_of_temporary: 0,
+        }],
+        quads: vec![begin, ret],
+    };
+
+    let mut engine = EngineInner::new();
+    engine.mission_script = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("synthetic StartUp script"),
+    );
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    assert_eq!(engine.frame_counter, 1, "the first simulation frame ran");
+    assert!(
+        !engine.mission_script.as_ref().unwrap().post_initialized,
+        "PostInitialize must not run before the first host refresh and sound hourglass"
+    );
+
+    let first_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
+    assert!(first_post_initialize_effects.is_some());
+    assert_eq!(
+        engine.frame_counter, 1,
+        "the post-refresh stage must not advance simulation time"
+    );
+    assert!(
+        engine.mission_script.as_ref().unwrap().post_initialized,
+        "the post-refresh stage must dispatch PostInitialize exactly at the frame-one boundary"
+    );
+
+    let second_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
+    assert!(second_post_initialize_effects.is_none());
+    assert_eq!(engine.frame_counter, 1);
+    assert!(engine.mission_script.as_ref().unwrap().post_initialized);
+}
+
 /// Serialize the engine to JSON, deserialize it back, advance the
 /// re-hydrated copy, and check it keeps in sync with an equivalent
 /// Clone-only copy. This proves the serde audit is complete enough for

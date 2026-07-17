@@ -465,6 +465,13 @@ fn rewind_from_recent_timeline_history(
             &mut snapshot.engine,
             &mut scratch_dev,
         );
+        crate::sim_timeline::run_post_initialize_stage(
+            &mut scratch_host,
+            &mut scratch_display,
+            assets,
+            &mut snapshot.engine,
+            &mut scratch_dev,
+        );
         replay_tick_us += tick_start.elapsed().as_micros();
         snapshot.frame += 1;
     }

@@ -358,6 +358,7 @@ pub(super) fn run_forward_ticks(
         // point of the endpoint.
         let mut display = std::mem::take(&mut host.engine_display);
         game.run_engine_tick(host, &mut display, assets, engine, dev, false, false);
+        crate::sim_timeline::run_post_initialize_stage(host, &mut display, assets, engine, dev);
         host.engine_display = display;
         if let Some(checker) = rollback_checker.as_mut() {
             checker.end_frame(host, frame_cmds.clone(), engine);

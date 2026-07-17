@@ -155,6 +155,13 @@ pub fn replay_one_frame(
         &mut snapshot.engine,
         scratch_dev,
     );
+    run_post_initialize_stage(
+        scratch_host,
+        display,
+        assets,
+        &mut snapshot.engine,
+        scratch_dev,
+    );
     snapshot.frame += 1;
 }
 
@@ -172,7 +179,38 @@ pub fn run_engine_tick_core(
     dev: &mut DevState,
 ) -> GameCode {
     host.sync_sound_listener();
-    let mut side_effects = engine.perform_hourglass(display, assets, dev);
+    let side_effects = engine.perform_hourglass(display, assets, dev);
+    apply_engine_side_effects(host, display, dev, side_effects)
+}
+
+/// Dispatch the one-shot mission `PostInitialize` hook at the host's
+/// post-refresh boundary.
+///
+/// Live play calls this after the first sound and render passes. Replay
+/// has no presentation work, so [`replay_one_frame`] calls it immediately
+/// after reconstructing frame zero, producing the same pre-frame-one
+/// authoritative engine state.
+pub fn run_post_initialize_stage(
+    host: &mut Host,
+    display: &mut HostDisplayState,
+    assets: &LevelAssets,
+    engine: &mut Engine,
+    dev: &mut DevState,
+) -> bool {
+    if let Some(side_effects) = engine.perform_post_initialize(display, assets) {
+        apply_engine_side_effects(host, display, dev, side_effects);
+        true
+    } else {
+        false
+    }
+}
+
+fn apply_engine_side_effects(
+    host: &mut Host,
+    display: &mut HostDisplayState,
+    dev: &mut DevState,
+    mut side_effects: crate::engine::SideEffects,
+) -> GameCode {
     if side_effects.ui_has_focus {
         host.input.has_focus = false;
     }
