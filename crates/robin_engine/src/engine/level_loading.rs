@@ -477,7 +477,7 @@ impl EngineInner {
         bg_pixel_dims: (f32, f32),
         progress: &mut dyn FnMut(f32),
     ) -> Result<(), EngineError> {
-        self.script_globals.clear();
+        self.scripts.globals.clear();
         self.mission_domain.mission_stat.reset();
         self.mission_domain.short_briefings.clear();
 
@@ -3341,7 +3341,7 @@ impl EngineInner {
             // The out-of-map sector is sentinel #-1.
             let sector_out_of_map = crate::sector::SectorNumber::new(-1);
             let mut installed = 0usize;
-            if let Some(script) = self.mission_script.as_mut()
+            if let Some(script) = self.scripts.mission.as_mut()
                 && let Some(game_host) = script.game_host_mut()
             {
                 for raw in &tactic.reinforcement_points {
@@ -3520,7 +3520,8 @@ impl EngineInner {
         // Cache door geometry for `FindDoorEnemyCouldBeBehind`, which
         // walks the door list owned by the building/sector graph.
         let door_infos: Vec<crate::ai::DoorSeekInfo> = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .and_then(|s| s.game_host_mut())
             .map(|game_host| {
@@ -3564,7 +3565,8 @@ impl EngineInner {
 
         // Populate reinforcement door info for MerryManForestCassos.
         self.ai.global.reinforcement_doors = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .and_then(|s| s.game_host_mut())
             .map(|game_host| {
@@ -4741,7 +4743,12 @@ impl EngineInner {
         if specs.is_empty() {
             return;
         }
-        let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) else {
+        let Some(game_host) = self
+            .scripts
+            .mission
+            .as_mut()
+            .and_then(|s| s.game_host_mut())
+        else {
             tracing::warn!(
                 "register_pending_jump_gates: no game_host — {} jump-gate Door(s) dropped",
                 specs.len(),
@@ -4788,7 +4795,12 @@ impl EngineInner {
         if refs.is_empty() {
             return;
         }
-        let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) else {
+        let Some(game_host) = self
+            .scripts
+            .mission
+            .as_mut()
+            .and_then(|s| s.game_host_mut())
+        else {
             return;
         };
         let mut missing_old = 0u32;
@@ -4855,7 +4867,8 @@ impl EngineInner {
     /// by `populate_game_host_from_level`.
     pub(crate) fn populate_sector_gates_from_doors(&mut self) {
         let door_count = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .map(|h| h.doors.len())
@@ -4868,7 +4881,8 @@ impl EngineInner {
         // without also holding a reference into the script host.
         let endpoints: Vec<(u32, crate::sector::SectorNumber)> = {
             let game_host = self
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .expect("door_count > 0 implies game host present");
@@ -4925,7 +4939,7 @@ impl EngineInner {
         pending: &mut PendingLevelData,
         loaded: &crate::level_data::LoadedLevel,
     ) {
-        let script = match self.mission_script.as_mut() {
+        let script = match self.scripts.mission.as_mut() {
             Some(s) => s,
             None => return,
         };

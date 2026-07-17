@@ -160,8 +160,11 @@ impl EngineInner {
                 // information-bars command so script-side consumers and
                 // the blazon-bar state recomputation see the hook —
                 // same pattern as the `WinMission` branch below.
-                if let Some(game_host) =
-                    self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+                if let Some(game_host) = self
+                    .scripts
+                    .mission
+                    .as_mut()
+                    .and_then(|s| s.game_host_mut())
                 {
                     game_host
                         .commands
@@ -240,8 +243,11 @@ impl EngineInner {
                 // Rust's HUD is immediate-mode so no widget rebuild is
                 // needed, but we still push the information-bars
                 // command so script-side consumers see the hook.
-                if let Some(game_host) =
-                    self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+                if let Some(game_host) = self
+                    .scripts
+                    .mission
+                    .as_mut()
+                    .and_then(|s| s.game_host_mut())
                 {
                     game_host
                         .commands

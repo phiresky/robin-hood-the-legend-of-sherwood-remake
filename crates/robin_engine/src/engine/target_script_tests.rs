@@ -196,7 +196,8 @@ fn build_test_scb() -> ScbFile {
 fn build_engine_with_target() -> (EngineInner, EntityId) {
     let mut engine = EngineInner::new();
     let script = MissionScript::from_scb(build_test_scb()).expect("mission script builds");
-    engine.mission_script = Some(script);
+    engine.scripts.mission = Some(script);
+    engine.attach_script_bindings(&LevelAssets::new());
 
     // FX target with a script_class of "TestTarget".
     let target = Entity::Target(ElementTarget {
@@ -218,7 +219,7 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
     // Bind the target to its script class.  In production this runs
     // during per-target Initialize (see `script.rs:568-584`).
     let handle = crate::natives::GameHost::actor_handle(target_id);
-    if let Some(ref mut script) = engine.mission_script {
+    if let Some(ref mut script) = engine.scripts.mission {
         assert!(
             script.bind_target(
                 handle,
@@ -236,7 +237,8 @@ fn build_engine_with_target() -> (EngineInner, EntityId) {
 /// default (0) if the global wasn't written.
 fn host_global(engine: &EngineInner, id: i32) -> i32 {
     engine
-        .mission_script
+        .scripts
+        .mission
         .as_ref()
         .and_then(|script| script.state.globals.get(&id).copied())
         .unwrap_or(0)

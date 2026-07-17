@@ -13,8 +13,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStru
 use super::{
     EngineInner,
     state::{
-        AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, SimulationControl,
-        WorldState,
+        AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, ScriptRuntime,
+        SimulationControl, WorldState,
     },
 };
 
@@ -95,7 +95,7 @@ impl Serialize for EngineInner {
         snapshot.serialize_field("speed_int", &self.control.speed_int)?;
         snapshot.serialize_field("weather", &self.world.weather)?;
         snapshot.serialize_field("shield", &self.world.shield)?;
-        snapshot.serialize_field("script_globals", &self.script_globals)?;
+        snapshot.serialize_field("script_globals", &self.scripts.globals)?;
         snapshot.serialize_field("cheat_used_flags", &self.mission_domain.cheat_used_flags)?;
         snapshot.serialize_field(
             "standard_view_polygon_radius",
@@ -147,7 +147,7 @@ impl Serialize for EngineInner {
             "pending_concussion_side_effects",
             &self.orders.pending_concussion_side_effects,
         )?;
-        snapshot.serialize_field("mission_script", &self.mission_script)?;
+        snapshot.serialize_field("mission_script", &self.scripts.mission)?;
         snapshot.serialize_field("script_zone_data", &self.world.script_zones)?;
         snapshot.serialize_field(
             "dynamic_sight_obstacles",
@@ -203,7 +203,7 @@ impl<'de> Deserialize<'de> for EngineInner {
                 dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
                 static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
             },
-            script_globals: snapshot.script_globals,
+            scripts: ScriptRuntime::from_snapshot(snapshot.script_globals, snapshot.mission_script),
             orders: OrderRuntime {
                 next_order_id: snapshot.next_order_id,
                 messenger: snapshot.messenger,
@@ -233,7 +233,6 @@ impl<'de> Deserialize<'de> for EngineInner {
                 cutscene_camera: snapshot.cutscene_camera,
                 pending_side_effects: snapshot.pending_side_effects,
             },
-            mission_script: snapshot.mission_script,
         })
     }
 }

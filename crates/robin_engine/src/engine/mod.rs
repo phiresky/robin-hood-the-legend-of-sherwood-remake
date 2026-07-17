@@ -12,7 +12,8 @@
 /// Field-level expansion lets Rust keep the five mutable script-state leases
 /// disjoint from these views.
 macro_rules! native_query_views {
-    ($engine:expr) => {
+    ($engine:expr) => {{
+        $engine.scripts.assert_native_attachments_ready();
         crate::natives::NativeQueryViews::new(
             &$engine.orders.sequence_manager,
             &$engine.players.seats[0].selection,
@@ -20,7 +21,7 @@ macro_rules! native_query_views {
             &$engine.world.weather,
             &$engine.control.frame_counter,
         )
-    };
+    }};
 }
 
 mod ai;
@@ -103,8 +104,8 @@ use crate::profiles::MissionType;
 use crate::short_briefings::ShortBriefings;
 use simulation_gate::SimulationGateState;
 use state::{
-    AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, SimulationControl,
-    WorldState,
+    AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, ScriptRuntime,
+    SimulationControl, WorldState,
 };
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -189,9 +190,8 @@ pub struct EngineInner {
     /// deferred-gameplay queues.
     pub(crate) orders: OrderRuntime,
 
-    // ── Script globals ───────────────────────────────────────────
-    /// Script global variables array. [Serialized]
-    pub(crate) script_globals: Vec<i32>,
+    /// Deterministic mission VM state and script global variables.
+    pub(crate) scripts: ScriptRuntime,
 
     // ── Ported subsystems (real Rust types) ─────────────────────
     /// Deterministic per-player selection, input-mode, and macro state.
@@ -199,18 +199,6 @@ pub struct EngineInner {
 
     /// Deterministic sound, marker, director-camera, and tick-output state.
     pub(crate) feedback: FeedbackRuntime,
-
-    // ── Mission script ──────────────────────────────────────────
-    /// Loaded `.scb` mission script and its VM instance.
-    /// `None` if scripts are disabled or the level has no script.
-    ///
-    /// The mutable VM state (heaps, static_area, stack frames, per-actor
-    /// instances) is serialized. The immutable bytecode lives behind an
-    /// `Arc<ScriptProgram>` inside the `ScriptManager` and is a level asset;
-    /// the host re-attaches it after deserialization via
-    /// [`crate::script_manager::ScriptManager::attach_program`] with the
-    /// bytecode loaded from the level's `.scb`.
-    pub(crate) mission_script: Option<MissionScript>,
     // (Deferred bg-blits live on `pending_side_effects.bg_blits` now;
     // load-once index tables live on `LevelAssets::{source_durations,
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
@@ -393,21 +381,11 @@ impl EngineInner {
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
         self.world.attach_level_assets(assets);
-        if let Some(script) = self.mission_script.as_mut() {
-            if !script.script_name.is_empty() {
-                let program = assets
-                    .mission_script_programs
-                    .get(&script.script_name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "missing mission script program '{}' while attaching level assets",
-                            script.script_name
-                        )
-                    });
-                script.attach_program(std::sync::Arc::clone(program));
-            }
-        }
-        self.attach_script_bindings(assets);
+        self.scripts.attach_level_assets(
+            assets,
+            &self.world.dynamic_sight_obstacles,
+            &self.world.static_sight_obstacle_active,
+        );
         self.migrate_legacy_script_custom_values();
     }
 
@@ -435,12 +413,10 @@ impl EngineInner {
             world: WorldState::new(),
             orders: OrderRuntime::new(),
 
-            script_globals: Vec::new(),
+            scripts: ScriptRuntime::new(),
 
             players: PlayerRuntime::new(),
             feedback: FeedbackRuntime::new(),
-
-            mission_script: None,
         }
     }
 
@@ -961,10 +937,10 @@ impl EngineInner {
         // giving scripts a 16-slot slack window of valid reads/writes
         // past the last initialised index. Any script that pokes within
         // this window sees `0` defaults.
-        if id + 16 > self.script_globals.len() {
-            self.script_globals.resize(id + 16, 0);
+        if id + 16 > self.scripts.globals.len() {
+            self.scripts.globals.resize(id + 16, 0);
         }
-        self.script_globals[id] = value;
+        self.scripts.globals[id] = value;
     }
 
     //
@@ -974,20 +950,21 @@ impl EngineInner {
     // `script_global_set_out_of_range_panics`.
     #[allow(dead_code)] // port-in-progress: awaiting `ISetGlobal` native plumbing
     pub(crate) fn set_script_global(&mut self, id: usize, value: i32) {
-        if id < self.script_globals.len() {
-            self.script_globals[id] = value;
+        if id < self.scripts.globals.len() {
+            self.scripts.globals[id] = value;
         } else {
             panic!(
                 "Script global ID {} out of range (max {})",
                 id,
-                self.script_globals.len()
+                self.scripts.globals.len()
             );
         }
     }
 
     /// Get a script global variable.
     pub fn get_script_global(&self, id: usize) -> i32 {
-        self.script_globals
+        self.scripts
+            .globals
             .get(id)
             .copied()
             .unwrap_or_else(|| panic!("Script global ID {} out of range", id))
@@ -995,7 +972,7 @@ impl EngineInner {
 
     /// Check if a script global ID is valid.
     pub fn is_valid_script_global_id(&self, id: usize) -> bool {
-        id < self.script_globals.len()
+        id < self.scripts.globals.len()
     }
 
     // ─── Entity management ──────────────────────────────────────
@@ -3421,7 +3398,7 @@ impl EngineInner {
     /// disabled or the level has no script.  Host renderers and the
     /// console read the script VM state for inspection.
     pub fn mission_script(&self) -> Option<&MissionScript> {
-        self.mission_script.as_ref()
+        self.scripts.mission.as_ref()
     }
 
     /// Mutable access to the script host — the `GameHost` that sits on
@@ -3439,14 +3416,15 @@ impl EngineInner {
     /// single-player only (see `docs/lua.md`) and never run during
     /// rollback resimulation.
     pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
-        self.mission_script.as_mut()?.game_host_mut()
+        self.scripts.mission.as_mut()?.game_host_mut()
     }
 
     /// True iff the script host's `men_to_blazon_conversion_mode` flag
     /// is set.  Read by titbit rendering to suppress the per-PC
     /// WorkIcon while the conversion screen is up.
     pub fn is_men_to_blazon_conversion_mode(&self) -> bool {
-        self.mission_script
+        self.scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .map(|h| h.men_to_blazon_conversion_mode)
@@ -3499,7 +3477,7 @@ impl EngineInner {
     /// idempotent; [`EngineInner::perform_post_initialize`] owns the
     /// original post-refresh host boundary.
     pub(crate) fn run_post_initialize_if_needed(&mut self, assets: &LevelAssets) {
-        let Some(script) = self.mission_script.as_mut() else {
+        let Some(script) = self.scripts.mission.as_mut() else {
             return;
         };
         if script.post_initialized {
@@ -3509,7 +3487,7 @@ impl EngineInner {
 
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        let script = self.mission_script.as_mut().unwrap();
+        let script = self.scripts.mission.as_mut().unwrap();
         script.swap_engine_state(
             &mut self.world.entities,
             &mut self.ai.global,
@@ -3827,7 +3805,7 @@ impl EngineInner {
         self.control.speed_int = speed_int;
         self.set_engine_locked(lock_engine);
         self.set_actors_frozen(freeze_all);
-        self.script_globals = script_globals;
+        self.scripts.globals = script_globals;
     }
 
     /// Test helper: seed the mission stat without running a mission.

@@ -570,7 +570,7 @@ impl EngineInner {
     ) -> Option<BuiltDoorPass> {
         // Snapshot door geometry and type (releases borrow on mission_script).
         let (door_type, pt_mid, pt_in, pt_out, sector_in, door_sector_out) = {
-            let game_host = self.mission_script.as_mut()?.game_host_mut()?;
+            let game_host = self.scripts.mission.as_mut()?.game_host_mut()?;
             let door = game_host.doors.get(usize::from(door_index))?;
             (
                 door.door_type,
@@ -776,7 +776,12 @@ impl EngineInner {
 
         // Snapshot door data before mutable borrows.
         let (target_layer, target_sector_num, _door_type, _is_lift_high, door_point_out) = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let game_host = match self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut())
+            {
                 Some(h) => h,
                 None => return,
             };
@@ -821,7 +826,7 @@ impl EngineInner {
                 // Leaving a building — remove from occupant list.
                 let bld_idx = gs.and_then(|s| s.building_index);
                 if let Some(bi) = bld_idx
-                    && let Some(ref mut script) = self.mission_script
+                    && let Some(ref mut script) = self.scripts.mission
                     && let Some(game_host) = script.game_host_mut()
                 {
                     if let Some(occupants) = game_host.building_occupants.get_mut(usize::from(bi)) {
@@ -863,7 +868,7 @@ impl EngineInner {
                 if is_pc && let Some(bi) = bld_idx {
                     if let Some(carried_id) = carried_to_unhide {
                         let carried_h = crate::natives::GameHost::actor_handle(carried_id);
-                        if let Some(ref mut script) = self.mission_script
+                        if let Some(ref mut script) = self.scripts.mission
                             && let Some(game_host) = script.game_host_mut()
                         {
                             if let Some(occupants) =
@@ -877,7 +882,8 @@ impl EngineInner {
                     // Snapshot the post-removal occupant list so we can
                     // probe each occupant without holding the script borrow.
                     let occupants: Vec<i32> = self
-                        .mission_script
+                        .scripts
+                        .mission
                         .as_ref()
                         .and_then(|s| s.game_host())
                         .and_then(|gh| gh.building_occupants.get(usize::from(bi)))
@@ -1011,7 +1017,7 @@ impl EngineInner {
             if let Some(bi) = bld_idx {
                 let bld_handle =
                     crate::natives::GameHost::building_handle_from_index(usize::from(bi));
-                if let Some(ref mut script) = self.mission_script
+                if let Some(ref mut script) = self.scripts.mission
                     && let Some(game_host) = script.game_host_mut()
                 {
                     if usize::from(bi) >= game_host.building_occupants.len() {
@@ -1062,7 +1068,7 @@ impl EngineInner {
                     let carried_h = crate::natives::GameHost::actor_handle(carried_id);
                     let bld_handle =
                         crate::natives::GameHost::building_handle_from_index(usize::from(bi));
-                    if let Some(ref mut script) = self.mission_script
+                    if let Some(ref mut script) = self.scripts.mission
                         && let Some(game_host) = script.game_host_mut()
                     {
                         if usize::from(bi) >= game_host.building_occupants.len() {
@@ -1078,7 +1084,8 @@ impl EngineInner {
                 // the occupant list and unhide humans that are
                 // (dead || unconscious) && not currently carried.
                 let occupants: Vec<i32> = self
-                    .mission_script
+                    .scripts
+                    .mission
                     .as_ref()
                     .and_then(|s| s.game_host())
                     .and_then(|gh| gh.building_occupants.get(usize::from(bi)))
@@ -1134,7 +1141,7 @@ impl EngineInner {
         direct: bool,
     ) {
         let Some((target_sector, lift_type, lift_direction)) = (|| {
-            let game_host = self.mission_script.as_ref()?.game_host()?;
+            let game_host = self.scripts.mission.as_ref()?.game_host()?;
             let door = game_host.doors.get(usize::from(door_index))?;
             let target_sector = if direct {
                 door.sector_in
@@ -1264,7 +1271,12 @@ impl EngineInner {
     fn apply_door_patch(&mut self, assets: &LevelAssets, door_index: crate::gate::DoorIndex) {
         // Snapshot the patch_index from the door (avoid overlapping borrows).
         let patch_index = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let game_host = match self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut())
+            {
                 Some(h) => h,
                 None => return,
             };
@@ -1287,7 +1299,7 @@ impl EngineInner {
         // closing.  The matching `finish_transition` fires when the
         // patch's FX animation ends (see `tick_entity_animations`).
         let was_applied = {
-            let game_host = match self.mission_script.as_ref().and_then(|s| s.game_host()) {
+            let game_host = match self.scripts.mission.as_ref().and_then(|s| s.game_host()) {
                 Some(h) => h,
                 None => return,
             };
@@ -1296,7 +1308,11 @@ impl EngineInner {
                 None => return,
             }
         };
-        if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+        if let Some(game_host) = self
+            .scripts
+            .mission
+            .as_mut()
+            .and_then(|s| s.game_host_mut())
             && let Some(door) = game_host.doors.get_mut(usize::from(door_index))
         {
             if was_applied {
@@ -1308,7 +1324,12 @@ impl EngineInner {
 
         // Apply the patch and collect effects.
         let effects = {
-            let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            let game_host = match self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut())
+            {
                 Some(h) => h,
                 None => return,
             };

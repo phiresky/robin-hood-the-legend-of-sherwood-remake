@@ -2328,7 +2328,7 @@ impl EngineInner {
         &self,
         sector_idx: crate::fast_find_grid::SectorIndex,
     ) -> Option<u32> {
-        let game_host = self.mission_script.as_ref()?.game_host()?;
+        let game_host = self.scripts.mission.as_ref()?.game_host()?;
         let raw = u32::from(sector_idx);
         let pos = game_host.patches.iter().position(|p| {
             p.old_sector_indices.contains(&raw) || p.new_sector_indices.contains(&raw)
@@ -2355,7 +2355,7 @@ impl EngineInner {
     /// path on either side of the wiring.  Returns `None` when no
     /// mission script / game host is loaded.
     pub fn find_patch_for_door(&self, door_idx: u32) -> Option<u32> {
-        let game_host = self.mission_script.as_ref()?.game_host()?;
+        let game_host = self.scripts.mission.as_ref()?.game_host()?;
         // Fast path: door_triggered link cached on the door.
         if let Some(door) = game_host.doors.get(door_idx as usize)
             && let Some(p) = door.patch_index
@@ -2389,7 +2389,8 @@ impl EngineInner {
                     "choose_door_cursor: no door and no patch — selected patch must be set",
                 );
                 let patch_locked = self
-                    .mission_script
+                    .scripts
+                    .mission
                     .as_ref()
                     .and_then(|s| s.game_host())
                     .and_then(|h| h.patches.get(patch_idx as usize))
@@ -2405,7 +2406,8 @@ impl EngineInner {
 
         // Snapshot door state to avoid borrow conflicts with entity access.
         let door_state = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .and_then(|h| h.doors.get(door_idx as usize))

@@ -2133,7 +2133,8 @@ impl EngineInner {
         // `scroll_attachments` map is keyed by actor script handle.
         let npc_handle = crate::natives::GameHost::actor_handle(target);
         let scroll_handle: Option<i32> = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .and_then(|h| h.scroll_attachments.get(&npc_handle).copied());
@@ -2486,7 +2487,11 @@ impl EngineInner {
                 .map(|p| (p.get_door(), p.get_door_direction()))
                 .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
             let (adj_src_pos, adj_src_sector) = {
-                let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
+                let host = self
+                    .scripts
+                    .mission
+                    .as_mut()
+                    .and_then(|s| s.game_host_mut());
                 let adapted = host.and_then(|h| {
                     crate::engine::movement::adapt_source_to_current_door(
                         &h.doors,
@@ -2504,7 +2509,11 @@ impl EngineInner {
             let pc_auth = self.get_entity(pc_id).map(|e| e.actor_auth_info());
             let level = self.world.fast_grid.level.clone();
             let gate_path = {
-                let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
+                let host = self
+                    .scripts
+                    .mission
+                    .as_mut()
+                    .and_then(|s| s.game_host_mut());
                 host.and_then(|h| {
                     crate::gate::find_path_gates(
                         &h.doors,
@@ -3912,7 +3921,7 @@ mod tests {
 
     fn setup_scroll_read_scene() -> (EngineInner, LevelAssets, EntityId, EntityId, EntityId) {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Search, 0)]);
-        engine.mission_script = Some(minimal_script());
+        engine.scripts.mission = Some(minimal_script());
         {
             let pc = engine.get_entity_mut(pc_id).unwrap().element_data_mut();
             pc.set_position_map(crate::coordinates::MapPoint { x: 100.0, y: 100.0 });
@@ -3947,7 +3956,8 @@ mod tests {
 
         let scroll_id = spawn_scroll(&mut engine, true);
         engine
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .unwrap()
             .game_host

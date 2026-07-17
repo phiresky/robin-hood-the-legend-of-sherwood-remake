@@ -681,7 +681,7 @@ impl EngineInner {
         if !listenable_calls.is_empty() {
             self.refresh_script_sight_bindings();
             let queries = native_query_views!(self);
-            if let Some(ref mut script) = self.mission_script {
+            if let Some(ref mut script) = self.scripts.mission {
                 script.swap_engine_state(
                     &mut self.world.entities,
                     &mut self.ai.global,

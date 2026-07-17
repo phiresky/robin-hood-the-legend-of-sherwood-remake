@@ -2728,7 +2728,8 @@ impl EngineInner {
         // for patch FX entities, but can't borrow GameHost during the
         // mutable entity loop.
         let patch_states: Vec<(bool, bool)> = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .and_then(|s| s.game_host_mut())
             .map(|game_host| {
@@ -2757,7 +2758,8 @@ impl EngineInner {
                     _ => return None,
                 };
                 let sector_in = self
-                    .mission_script
+                    .scripts
+                    .mission
                     .as_ref()
                     .and_then(|script| script.game_host())
                     .and_then(|host| host.doors.get(usize::from(dp.door_index)))
@@ -3606,7 +3608,12 @@ impl EngineInner {
         // flag and apply the patch's final effects.
         for patch_idx in completed_patch_transitions {
             let effects = {
-                let game_host = match self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+                let game_host = match self
+                    .scripts
+                    .mission
+                    .as_mut()
+                    .and_then(|s| s.game_host_mut())
+                {
                     Some(h) => h,
                     None => continue,
                 };
@@ -3626,7 +3633,12 @@ impl EngineInner {
             // passable/impassable answer instead of inspecting patch
             // internals.  "Applied" == "Open"; the state changes
             // atomically at apply-final time.
-            if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut()) {
+            if let Some(game_host) = self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut())
+            {
                 for door in game_host.doors.iter_mut() {
                     if door.patch_index == Some(patch_idx) {
                         door.gate_state.finish_transition();

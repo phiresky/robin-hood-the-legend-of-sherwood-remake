@@ -55,7 +55,7 @@ impl EngineInner {
         // Snapshot door geometry — we'll drop the host borrow before
         // touching entities / the campaign.
         let door_snap = {
-            let Some(script) = self.mission_script.as_mut() else {
+            let Some(script) = self.scripts.mission.as_mut() else {
                 return;
             };
             let Some(game_host) = script.game_host_mut() else {

@@ -873,7 +873,8 @@ impl EngineInner {
             std::collections::HashSet<i32>,
             std::collections::HashSet<i32>,
         ) = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .and_then(|s| s.game_host_mut())
             .map(|h| {

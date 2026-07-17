@@ -140,7 +140,8 @@ impl EngineInner {
     pub fn scroll_status(&self, scroll: EntityId) -> ScrollStatus {
         let handle = crate::natives::GameHost::actor_handle(scroll);
         let raw = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .and_then(|s| s.game_host())
             .and_then(|gh| gh.scroll_status.get(&handle).copied())
@@ -151,7 +152,7 @@ impl EngineInner {
     /// Update a scroll's status and refresh its minimap dot.
     pub(crate) fn set_scroll_status(&mut self, scroll: EntityId, status: ScrollStatus) {
         let handle = crate::natives::GameHost::actor_handle(scroll);
-        if let Some(script) = self.mission_script.as_mut()
+        if let Some(script) = self.scripts.mission.as_mut()
             && let Some(gh) = script.game_host_mut()
         {
             gh.scroll_status.insert(handle, status as i32);
@@ -195,7 +196,8 @@ impl EngineInner {
         let pc_handle = crate::natives::GameHost::actor_handle(pc);
         let queries = native_query_views!(self);
         let script_result = self
-            .mission_script
+            .scripts
+            .mission
             .as_mut()
             .map(|script| {
                 script.call_scroll_function(scroll_handle, "IsTaken", &[pc_handle], queries)

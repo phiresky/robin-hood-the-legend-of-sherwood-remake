@@ -417,7 +417,8 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> Option<super::SideEffects> {
         let needs_post_initialize = self
-            .mission_script
+            .scripts
+            .mission
             .as_ref()
             .is_some_and(|script| !script.post_initialized);
         if !needs_post_initialize {
@@ -725,7 +726,7 @@ impl EngineInner {
             // Refresh only the static/dynamic sight bindings borrowed by Sees.
             self.refresh_script_sight_bindings();
 
-            if let Some(ref mut script) = self.mission_script {
+            if let Some(ref mut script) = self.scripts.mission {
                 let queries = crate::natives::NativeQueryViews::new(
                     &self.orders.sequence_manager,
                     &self.players.seats[0].selection,
@@ -763,7 +764,7 @@ impl EngineInner {
                 self.mission_domain.force_check = false;
 
                 // Take the script out to avoid borrow conflicts with `self`.
-                if let Some(mut script) = self.mission_script.take() {
+                if let Some(mut script) = self.scripts.mission.take() {
                     let queries = native_query_views!(self);
                     script.swap_engine_state(
                         &mut self.world.entities,
@@ -782,7 +783,7 @@ impl EngineInner {
                     );
 
                     // Put the script back before syncing side-effects.
-                    self.mission_script = Some(script);
+                    self.scripts.mission = Some(script);
                     self.sync_game_host_post_script(assets);
 
                     match victory_result {
@@ -2066,7 +2067,8 @@ impl EngineInner {
                                     // Snapshot door's sector_out to avoid
                                     // overlapping borrows.
                                     let door_sector_out = self
-                                        .mission_script
+                                        .scripts
+                                        .mission
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
                                         .and_then(|h| h.doors.get(usize::from(door_idx)))
@@ -2104,7 +2106,8 @@ impl EngineInner {
                                 // struct's shape but has no live
                                 // consumer.
                                 let authorized = self
-                                    .mission_script
+                                    .scripts
+                                    .mission
                                     .as_mut()
                                     .and_then(|s| s.game_host_mut())
                                     .and_then(|h| h.doors.get(usize::from(door_idx)))
@@ -2135,7 +2138,8 @@ impl EngineInner {
                                 // restrictions) get a separate gate.
                                 {
                                     let lift_sector_in = self
-                                        .mission_script
+                                        .scripts
+                                        .mission
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
                                         .and_then(|h| h.doors.get(usize::from(door_idx)))
@@ -2395,7 +2399,8 @@ impl EngineInner {
                                     ..
                                 } = &elem.data
                                 {
-                                    self.mission_script
+                                    self.scripts
+                                        .mission
                                         .as_mut()
                                         .and_then(|s| s.game_host_mut())
                                         .and_then(|h| h.doors.get(usize::from(*di)))
@@ -5473,7 +5478,8 @@ impl EngineInner {
                             // Pick UnlockingDoor vs UnlockingTrap
                             // by door type.
                             let anim_type = self
-                                .mission_script
+                                .scripts
+                                .mission
                                 .as_ref()
                                 .and_then(|s| s.game_host())
                                 .and_then(|h| h.doors.get(usize::from(id)))
@@ -6884,7 +6890,8 @@ impl EngineInner {
         };
 
         let Some((layer_in, layer_out, sector_in, sector_out, point_in, point_mid, point_out)) =
-            self.mission_script
+            self.scripts
+                .mission
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .and_then(|host| host.doors.get(usize::from(door_index)))
@@ -7069,7 +7076,8 @@ impl EngineInner {
 
         let Some((snap_point, posture, action_state, sector_in)) = (|| {
             let game_host = self
-                .mission_script
+                .scripts
+                .mission
                 .as_mut()
                 .and_then(|s| s.game_host_mut())?;
             let door = game_host.doors.get(usize::from(door_index))?;
@@ -7215,7 +7223,11 @@ impl EngineInner {
         }
 
         for (door_id, seq_id, elem_idx) in outcomes.unlock_door {
-            if let Some(game_host) = self.mission_script.as_mut().and_then(|s| s.game_host_mut())
+            if let Some(game_host) = self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut())
                 && let Some(door) = game_host.doors.get_mut(usize::from(door_id))
             {
                 door.locked_pc = false;

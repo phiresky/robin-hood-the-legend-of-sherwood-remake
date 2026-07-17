@@ -510,7 +510,7 @@ impl Engine {
     ) -> R {
         self.inner.with_sim_rng(|inner| {
             let queries = native_query_views!(inner);
-            f(inner.mission_script.as_mut().map(|script| {
+            f(inner.scripts.mission.as_mut().map(|script| {
                 (
                     &mut script.game_host,
                     &mut script.state,
@@ -799,17 +799,9 @@ impl Engine {
             .fast_grid
             .attach_level_grid(prev.world.fast_grid.level.clone());
 
-        // Re-attach the script bytecode Arc to the deserialised mission
-        // script. The concrete GameHost is now serialised on
-        // MissionScript; `vm.host` is only a temporary call adapter.
-        if let (Some(new_ms), Some(prev_ms)) =
-            (inner.mission_script.as_mut(), prev.mission_script.as_ref())
-        {
-            new_ms
-                .manager
-                .attach_program(prev_ms.manager.program.clone());
-            new_ms.bindings = prev_ms.bindings.clone();
-        }
+        // The decoded VM owns all mutable script state. Reattach only the
+        // immutable bytecode and native capabilities from the live level.
+        inner.scripts.reattach_from(&prev.scripts);
         inner.migrate_legacy_script_custom_values();
 
         // Rebuild `SequenceManager` lookup indices after replacing the

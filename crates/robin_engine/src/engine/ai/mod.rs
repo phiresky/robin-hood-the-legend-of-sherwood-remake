@@ -703,7 +703,8 @@ pub(super) fn build_my_exit_door_info(
 /// inactive bonuses and projectile entities remain excluded.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     let doors_ref = engine
-        .mission_script
+        .scripts
+        .mission
         .as_ref()
         .and_then(|s| s.game_host())
         .map(|gh| gh.doors.as_slice())
@@ -1126,7 +1127,8 @@ impl EngineInner {
         let stashed = soldier.npc.ai_brain.enemy().and_then(|e| e.my_door_index);
         if stashed.is_some() {
             let doors_slice: &[crate::gate::Door] = self
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .map(|h| h.doors.as_slice())
@@ -1138,7 +1140,8 @@ impl EngineInner {
         // set the `couldnt_reachpoint` flag.
         if couldnt_reachpoint {
             let doors_slice: &[crate::gate::Door] = self
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .map(|h| h.doors.as_slice())
@@ -1195,7 +1198,8 @@ impl EngineInner {
             let in_building = self.entity_data_inside_building(&s.element);
             let forecast_destination = {
                 let doors = self
-                    .mission_script
+                    .scripts
+                    .mission
                     .as_ref()
                     .and_then(|ms| ms.game_host())
                     .map(|h| h.doors.as_slice())
@@ -2396,7 +2400,7 @@ impl EngineInner {
         // it.  Trap doors (`BuildingTrap`) remain excluded — those
         // sectors aren't regular building interiors and shouldn't
         // carry rally points.
-        if let Some(game_host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
+        if let Some(game_host) = self.scripts.mission.as_ref().and_then(|s| s.game_host()) {
             for (idx, door) in game_host.doors.iter().enumerate() {
                 if !matches!(door.door_type, crate::gate::DoorType::Building) {
                     continue;
@@ -2483,7 +2487,8 @@ impl EngineInner {
             // `BuildingData::default()`.
             let arrow_reserve = building_index
                 .and_then(|bi| {
-                    self.mission_script
+                    self.scripts
+                        .mission
                         .as_ref()
                         .and_then(|s| s.game_host())
                         .and_then(|h| h.arrow_reserves.get(usize::from(bi)).copied())
@@ -7476,7 +7481,7 @@ impl EngineInner {
         // the whole batch.
         self.refresh_script_sight_bindings();
         let queries = native_query_views!(self);
-        if let Some(ref mut script) = self.mission_script {
+        if let Some(ref mut script) = self.scripts.mission {
             script.swap_engine_state(
                 &mut self.world.entities,
                 &mut self.ai.global,

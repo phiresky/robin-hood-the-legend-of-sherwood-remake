@@ -89,7 +89,8 @@ impl EngineInner {
             .unwrap_or(false);
         if is_vip {
             let men_to_blazon = self
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .map(|h| h.men_to_blazon_conversion_mode)

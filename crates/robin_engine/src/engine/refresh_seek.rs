@@ -514,7 +514,11 @@ impl crate::engine::EngineInner {
         };
 
         let (path_src_pos, path_src_sector) = {
-            let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
+            let host = self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut());
             let adapted = host.and_then(|h| {
                 crate::engine::movement::adapt_source_to_current_door(
                     &h.doors,
@@ -531,7 +535,11 @@ impl crate::engine::EngineInner {
         let owner_auth = self.get_entity(owner).map(|e| e.actor_auth_info());
         let level = self.world.fast_grid.level.clone();
         let gate_path = {
-            let host = self.mission_script.as_mut().and_then(|s| s.game_host_mut());
+            let host = self
+                .scripts
+                .mission
+                .as_mut()
+                .and_then(|s| s.game_host_mut());
             host.and_then(|h| {
                 crate::gate::find_path_gates(
                     &h.doors,

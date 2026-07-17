@@ -120,7 +120,7 @@ impl EngineInner {
             .get(&crate::sector::SectorNumber::new(lift_sector as i16))?;
         let gs = self.world.fast_grid.level.sectors.get(grid_idx)?;
         let door_idx = gs.lowest_door_index?;
-        let game_host = self.mission_script.as_ref()?.game_host()?;
+        let game_host = self.scripts.mission.as_ref()?.game_host()?;
         let door = game_host.doors.get(door_idx as usize)?;
         Some((door.point_out.x, door.point_out.y, door.layer_out))
     }

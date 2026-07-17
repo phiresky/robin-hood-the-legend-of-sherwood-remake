@@ -805,7 +805,8 @@ fn build_ctx(
     let (door_type, door_lift_kind) = match (elem.command, gate_id, actor_sector_num) {
         (Command::PassDoor, Some(idx), actor_sector) => {
             let door = engine
-                .mission_script
+                .scripts
+                .mission
                 .as_ref()
                 .and_then(|s| s.game_host())
                 .and_then(|h| h.doors.get(usize::from(idx)));

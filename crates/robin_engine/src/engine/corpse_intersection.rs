@@ -234,7 +234,7 @@ impl EngineInner {
         };
 
         let mut blocks = false;
-        if let Some(host) = self.mission_script.as_ref().and_then(|s| s.game_host()) {
+        if let Some(host) = self.scripts.mission.as_ref().and_then(|s| s.game_host()) {
             for door in &host.doors {
                 if !door.is_door() {
                     continue;
