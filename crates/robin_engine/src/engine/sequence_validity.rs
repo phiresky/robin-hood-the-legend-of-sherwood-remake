@@ -818,6 +818,7 @@ impl EngineInner {
                     return false;
                 }
                 let ransom = self
+                    .mission_domain
                     .campaign
                     .as_ref()
                     .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
@@ -913,6 +914,7 @@ impl EngineInner {
                     return true;
                 }
                 let ransom = self
+                    .mission_domain
                     .campaign
                     .as_ref()
                     .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
@@ -1115,7 +1117,7 @@ impl EngineInner {
         let Some(pc) = entity.pc_data() else {
             return false;
         };
-        let Some(campaign) = self.campaign.as_ref() else {
+        let Some(campaign) = self.mission_domain.campaign.as_ref() else {
             return false;
         };
         campaign

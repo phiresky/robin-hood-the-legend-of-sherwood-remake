@@ -43,13 +43,13 @@ impl EngineInner {
 
     fn create_reinforcement(&mut self, assets: &LevelAssets, dead_pc: Option<EntityId>) {
         // Pick a random reinforcement door.
-        let door_count = self.ai_global.reinforcement_doors.len();
+        let door_count = self.ai.global.reinforcement_doors.len();
         if door_count == 0 {
             tracing::warn!("REINFORCEMENT: no reinforcement doors on this level.");
             return;
         }
         let pick = crate::sim_rng::usize(crate::sim_rng::RngSite::ReinforcementDoor, 0..door_count);
-        let door_index = self.ai_global.reinforcement_doors[pick].door_index;
+        let door_index = self.ai.global.reinforcement_doors[pick].door_index;
 
         // Snapshot door geometry — we'll drop the host borrow before
         // touching entities / the campaign.
@@ -79,7 +79,7 @@ impl EngineInner {
             .map(|pc| pc.profile_index);
 
         // Pick the peasant via the campaign helper.
-        let Some(campaign) = self.campaign.as_mut() else {
+        let Some(campaign) = self.mission_domain.campaign.as_mut() else {
             return;
         };
         let Some(char_idx) =

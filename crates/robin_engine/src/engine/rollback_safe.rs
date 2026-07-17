@@ -600,6 +600,7 @@ impl Engine {
         profiles: &crate::profiles::ProfileManager,
     ) -> Option<bool> {
         self.inner
+            .mission_domain
             .campaign
             .as_mut()
             .map(|c| c.buy_blazon(mission_index, profiles))
@@ -610,7 +611,7 @@ impl Engine {
     /// Runs on a mission-lifecycle boundary (sim paused) — `Campaign` is
     /// part of the rollback hash.  No-op when no campaign is installed.
     pub fn campaign_reset_last_pseudo_mission_status(&mut self) {
-        if let Some(c) = self.inner.campaign.as_mut() {
+        if let Some(c) = self.inner.mission_domain.campaign.as_mut() {
             c.reset_last_pseudo_mission_status();
         }
     }
@@ -618,7 +619,7 @@ impl Engine {
     /// Reset the campaign's `MissionLength` accumulator to 0 before
     /// the mission begins.
     pub fn campaign_reset_mission_length(&mut self) {
-        if let Some(c) = self.inner.campaign.as_mut() {
+        if let Some(c) = self.inner.mission_domain.campaign.as_mut() {
             c.set_value(crate::campaign::CampaignValue::MissionLength, 0);
         }
     }

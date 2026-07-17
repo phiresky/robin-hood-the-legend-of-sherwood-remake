@@ -289,7 +289,8 @@ impl EngineInner {
         // Tear down the net's pathfinding repulsion points so the
         // pathfinder stops seeing them next tick.
         if !repulsive_ids.is_empty() {
-            self.ai_global
+            self.ai
+                .global
                 .repulsive_points
                 .retain(|p| !repulsive_ids.contains(&p.id));
         }
@@ -647,9 +648,10 @@ impl EngineInner {
         let configs = [(40.0_f32, 15.0_f32), (15.0_f32, 30.0_f32)];
         let mut ids: Vec<i32> = Vec::with_capacity(2);
         for (radius, action_radius) in configs {
-            let id = self.ai_global.next_repulsive_point_id;
-            self.ai_global.next_repulsive_point_id += 1;
-            self.ai_global
+            let id = self.ai.global.next_repulsive_point_id;
+            self.ai.global.next_repulsive_point_id += 1;
+            self.ai
+                .global
                 .repulsive_points
                 .push(crate::ai::RepulsivePoint {
                     id,
@@ -1577,7 +1579,8 @@ mod tests {
         assert_eq!(net.net.repulsive_point_ids.len(), 2);
         // Two RepulsivePoints should be registered on AiGlobalState.
         let registered_ids: Vec<i32> = engine
-            .ai_global
+            .ai
+            .global
             .repulsive_points
             .iter()
             .map(|p| p.id)
@@ -1588,7 +1591,7 @@ mod tests {
 
         engine.unapply_net_effect(net_id);
         // After unapply: zero repulsive points left.
-        assert!(engine.ai_global.repulsive_points.is_empty());
+        assert!(engine.ai.global.repulsive_points.is_empty());
     }
 
     #[test]

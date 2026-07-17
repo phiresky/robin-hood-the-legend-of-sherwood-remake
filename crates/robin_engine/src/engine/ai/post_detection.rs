@@ -174,7 +174,7 @@ impl EngineInner {
     /// `Think(EVENT_TIMER)`. Soldiers that enter swordfight receive the
     /// original post-dispatch combat-stance and civilian-panic effects.
     pub(crate) fn tick_ai_normal_timers(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
 
@@ -357,12 +357,12 @@ impl EngineInner {
                 None,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
-                self.standard_view_polygon_radius,
+                self.ai.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.fast_grid,
                 &assets.hiking_paths,
-                &self.ai_global.all_soldier_handles,
+                &self.ai.global.all_soldier_handles,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx.enter_swordfight_pending = self
@@ -462,12 +462,12 @@ impl EngineInner {
                     building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
-                    self.standard_view_polygon_radius,
+                    self.ai.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.fast_grid,
                     &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
+                    &self.ai.global.all_soldier_handles,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 ctx
@@ -510,7 +510,7 @@ impl EngineInner {
     /// script-locked. This is the final unlocked phase of
     /// `RHElementActorNPC::Hourglass`, after both timer kinds.
     pub(crate) fn tick_ai_queued_stimuli(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai.global.freeze {
             return;
         }
 
@@ -549,12 +549,12 @@ impl EngineInner {
                         building_sector,
                         self.weather.is_forest_level,
                         self.weather.ambiance,
-                        self.standard_view_polygon_radius,
+                        self.ai.standard_view_polygon_radius,
                         &scratch.ai_entity_views,
                         &scratch.ai_sight_obstacles,
                         &self.fast_grid,
                         &assets.hiking_paths,
-                        &self.ai_global.all_soldier_handles,
+                        &self.ai.global.all_soldier_handles,
                     );
                     ctx.in_uninterruptible_command = in_uninterruptible_command;
                     ctx

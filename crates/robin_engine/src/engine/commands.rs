@@ -711,12 +711,12 @@ impl EngineInner {
                 self.reveal_all_blips();
             }
             CampaignSelectNextMission { mission_idx } => {
-                if let Some(campaign) = self.campaign.as_mut() {
+                if let Some(campaign) = self.mission_domain.campaign.as_mut() {
                     campaign.select_next_mission(*mission_idx, &assets.profile_manager);
                 }
             }
             CampaignSwapPendingToAccessibleMissions => {
-                if let Some(campaign) = self.campaign.as_mut() {
+                if let Some(campaign) = self.mission_domain.campaign.as_mut() {
                     campaign.swap_pending_to_accessible_missions();
                 }
             }
@@ -733,10 +733,10 @@ impl EngineInner {
                 // The flag to set depends on whether the mission is
                 // already won.  The tick's mission-end arms at
                 // `tick.rs:354-368` consume these flags next frame.
-                if self.mission.mission_won {
-                    self.mission.quit_won = true;
+                if self.mission_domain.state.mission_won {
+                    self.mission_domain.state.quit_won = true;
                 } else {
-                    self.mission.quit_interrupted = true;
+                    self.mission_domain.state.quit_interrupted = true;
                 }
             }
             TeleportSelectedToPoint {
@@ -3185,7 +3185,7 @@ pub(super) fn is_pc_takable(
     // Runs before the `NoAction → true` fast-path because amulets
     // themselves carry `Action::NoAction`.
     if obj.object_type == crate::element::ObjectType::BonusAmulet
-        && let Some(campaign) = engine.campaign.as_ref()
+        && let Some(campaign) = engine.mission_domain.campaign.as_ref()
         && campaign.get_value(crate::campaign::CampaignValue::Amulets)
             >= crate::campaign::MAXIMUM_AMULETS_NUMBER
     {
@@ -3417,6 +3417,7 @@ fn determine_use_command(
                 && !c.npc.scroll_attached)
     {
         let ransom = engine
+            .mission_domain
             .campaign
             .as_ref()
             .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
@@ -3629,7 +3630,7 @@ mod tests {
             instanced: true,
             ..Default::default()
         });
-        engine.campaign = Some(campaign);
+        engine.mission_domain.campaign = Some(campaign);
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {
@@ -3686,7 +3687,7 @@ mod tests {
             instanced: true,
             ..Default::default()
         });
-        engine.campaign = Some(campaign);
+        engine.mission_domain.campaign = Some(campaign);
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
             element: ElementData {
@@ -4288,7 +4289,7 @@ mod tests {
     fn pickup_dispatch_bonus_returns_none_when_storage_full() {
         // PC has the action but current ammo == max → reject.
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Heal, 3)]);
-        if let Some(campaign) = engine.campaign.as_mut()
+        if let Some(campaign) = engine.mission_domain.campaign.as_mut()
             && let Some(pc_desc) = campaign.characters.get_mut(0)
         {
             pc_desc.status.set_ammo(Action::Heal, 3);

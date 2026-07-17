@@ -130,7 +130,7 @@ impl EngineInner {
                 // Panic on missing campaign — matches `campaign_mut_or_panic`'s
                 // contract for cheats issued outside a mission.
                 assert!(
-                    self.campaign.is_some(),
+                    self.mission_domain.campaign.is_some(),
                     "console: no active campaign to mutate"
                 );
                 self.add_campaign_value(CampaignValue::Ransom, *amount as i32);
@@ -187,7 +187,7 @@ impl EngineInner {
 
             // ── Mission flow ─────────────────────────────────────
             LoseMission => {
-                self.mission.quit_lost = true;
+                self.mission_domain.state.quit_lost = true;
                 ConsoleResponse::Ok("Mission lost !".to_string())
             }
             WinMission => {
@@ -196,6 +196,7 @@ impl EngineInner {
                 // bonus-blazon pickups to the campaign totals before
                 // calling `engine.win(true)`.
                 let in_sherwood = self
+                    .mission_domain
                     .campaign
                     .as_ref()
                     .and_then(|c| {
@@ -211,9 +212,9 @@ impl EngineInner {
                     return ConsoleResponse::Ok(String::new());
                 }
 
-                let money_delta = self.mission_stat.soldier_money as i32
-                    + self.mission_stat.bonus_money as i32
-                    - self.mission_stat.collected_money as i32;
+                let money_delta = self.mission_domain.mission_stat.soldier_money as i32
+                    + self.mission_domain.mission_stat.bonus_money as i32
+                    - self.mission_domain.mission_stat.collected_money as i32;
 
                 // Sum quantities of still-active BONUS_BLAZON pickups
                 // left on the map.
@@ -225,7 +226,7 @@ impl EngineInner {
                 }
 
                 self.add_campaign_value(CampaignValue::Ransom, money_delta);
-                if let Some(campaign) = self.campaign.as_mut() {
+                if let Some(campaign) = self.mission_domain.campaign.as_mut() {
                     // Per-mission rescue-PC table — adds recruits
                     // matching the current mission filename (e.g.
                     // S01_Not_VL → Stutely + Paysan A/B/C).
@@ -247,7 +248,7 @@ impl EngineInner {
                         .push(EngineCommand::UpdateInformationBars);
                 }
                 self.win(true);
-                self.mission.quit_won = true;
+                self.mission_domain.state.quit_won = true;
                 ConsoleResponse::Ok("Mission won !".to_string())
             }
             WinCampaign => {
@@ -255,13 +256,13 @@ impl EngineInner {
                 // profile.  Rust profiles are `Arc`-shared, so we stash
                 // the override on `Mission::ares_state_override` — read
                 // by `Campaign::set_mission_done` when the win lands.
-                if let Some(campaign) = self.campaign.as_mut()
+                if let Some(campaign) = self.mission_domain.campaign.as_mut()
                     && let Some(idx) = campaign.current_mission_idx
                 {
                     campaign.missions[idx].ares_state_override = Some(9);
                 }
                 self.win(true);
-                self.mission.quit_won = true;
+                self.mission_domain.state.quit_won = true;
                 ConsoleResponse::Ok("Campaign won !".to_string())
             }
             LoadCampaign { filename } => {
@@ -280,8 +281,8 @@ impl EngineInner {
             Freeze => {
                 // Prints a leading "freeze" banner line, then the
                 // frozen/defrosted status line.
-                self.ai_global.freeze = !self.ai_global.freeze;
-                let status = if self.ai_global.freeze {
+                self.ai.global.freeze = !self.ai.global.freeze;
+                let status = if self.ai.global.freeze {
                     "Enemies frozen."
                 } else {
                     "Enemies defrosted."
@@ -291,8 +292,8 @@ impl EngineInner {
             StupidSoldiers => {
                 // Prints a leading "Pamela Anderson" banner line before
                 // the stupid/smart status line.
-                self.ai_global.stupid_soldiers_cheat = !self.ai_global.stupid_soldiers_cheat;
-                let status = if self.ai_global.stupid_soldiers_cheat {
+                self.ai.global.stupid_soldiers_cheat = !self.ai.global.stupid_soldiers_cheat;
+                let status = if self.ai.global.stupid_soldiers_cheat {
                     "Soldiers are stupid !"
                 } else {
                     "Soldiers are smart !"
@@ -300,9 +301,9 @@ impl EngineInner {
                 ConsoleResponse::Ok(format!("Pamela Anderson\n{status}"))
             }
             Goldeneye => {
-                self.ai_global.golden_eye_mode = !self.ai_global.golden_eye_mode;
+                self.ai.global.golden_eye_mode = !self.ai.global.golden_eye_mode;
                 ConsoleResponse::Ok(
-                    if self.ai_global.golden_eye_mode {
+                    if self.ai.global.golden_eye_mode {
                         "Invisibility On."
                     } else {
                         "Invisibility Off."
@@ -311,9 +312,9 @@ impl EngineInner {
                 )
             }
             Babylon => {
-                self.ai_global.speech_display = !self.ai_global.speech_display;
+                self.ai.global.speech_display = !self.ai.global.speech_display;
                 ConsoleResponse::Ok(
-                    if self.ai_global.speech_display {
+                    if self.ai.global.speech_display {
                         "Patati Patata Bla Bla Laber Rhabarber Patatitata..."
                     } else {
                         "Shht !"
@@ -322,9 +323,9 @@ impl EngineInner {
                 )
             }
             Ai => {
-                self.ai_global.attribute_display = !self.ai_global.attribute_display;
+                self.ai.global.attribute_display = !self.ai.global.attribute_display;
                 ConsoleResponse::Ok(
-                    if self.ai_global.attribute_display {
+                    if self.ai.global.attribute_display {
                         "Attributes displayed"
                     } else {
                         "Attributes hidden"
@@ -751,8 +752,8 @@ impl EngineInner {
                 // the vengeance, says the Lord !" or "The Lord pardons...".
                 // The flag is consumed by view-cone selection and script
                 // `EnableViewCone`, matching the original cheat hook.
-                self.ai_global.ezekiel_2517 = !self.ai_global.ezekiel_2517;
-                let status = if self.ai_global.ezekiel_2517 {
+                self.ai.global.ezekiel_2517 = !self.ai.global.ezekiel_2517;
+                let status = if self.ai.global.ezekiel_2517 {
                     "Mine is the vengeance, says the Lord !"
                 } else {
                     "The Lord pardons..."
@@ -786,6 +787,7 @@ impl EngineInner {
                 // selected PC.
                 let selected = self.players.seats[0].selection.first().copied();
                 let amulets = self
+                    .mission_domain
                     .campaign
                     .as_ref()
                     .map(|c| c.get_value(CampaignValue::Amulets))
@@ -832,7 +834,7 @@ impl EngineInner {
                             .get_entity(id)
                             .and_then(|e| e.pc_data())
                             .map(|pc| pc.profile_index);
-                        match (profile_idx, self.campaign.as_ref()) {
+                        match (profile_idx, self.mission_domain.campaign.as_ref()) {
                             (Some(idx), Some(_)) => assets
                                 .profile_manager
                                 .get_character(idx)
@@ -894,7 +896,7 @@ impl EngineInner {
                     })
                     .collect();
                 for (id, profile_idx, status_idx) in pcs {
-                    let Some(campaign) = self.campaign.as_mut() else {
+                    let Some(campaign) = self.mission_domain.campaign.as_mut() else {
                         continue;
                     };
                     let actions = match assets.profile_manager.get_character(profile_idx) {
@@ -1120,7 +1122,7 @@ impl EngineInner {
                     .map(|pc| (id, pc.profile_index))
             })
             .collect();
-        if let Some(campaign) = self.campaign.as_mut() {
+        if let Some(campaign) = self.mission_domain.campaign.as_mut() {
             for (_id, idx) in &profile_indices {
                 if let Some(desc) = campaign.characters.get_mut(usize::from(*idx)) {
                     desc.status.force_set_ammo(action, amount);
@@ -1160,7 +1162,7 @@ impl EngineInner {
     /// RJTSWMABC) !".
     fn resolve_pcs_by_initials(&self, assets: &LevelAssets, initials: &str) -> Vec<EntityId> {
         let mut out = Vec::new();
-        if self.campaign.is_none() {
+        if self.mission_domain.campaign.is_none() {
             return out;
         }
         for ch in initials.chars() {
@@ -1212,7 +1214,8 @@ impl EngineInner {
     /// state outside of a mission.  Matches the "don't fabricate data"
     /// project rule — failing loudly is better than silently no-opping.
     fn campaign_mut_or_panic(&mut self) -> &mut crate::campaign::Campaign {
-        self.campaign
+        self.mission_domain
+            .campaign
             .as_mut()
             .expect("console: no active campaign to mutate")
     }
@@ -1334,7 +1337,7 @@ mod tests {
     fn engine_with_campaign() -> (EngineInner, DevState) {
         let dev = DevState::default();
         let mut engine = EngineInner::new();
-        engine.campaign = Some(Campaign::new());
+        engine.mission_domain.campaign = Some(Campaign::new());
         (engine, dev)
     }
 
@@ -1411,6 +1414,7 @@ mod tests {
     fn give_money_mutates_campaign() {
         let (mut engine, mut dev) = engine_with_campaign();
         let before = engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
@@ -1421,6 +1425,7 @@ mod tests {
             ConsoleResponse::Ok("Money !\n500 gold added.".to_string())
         );
         let after = engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
@@ -1431,21 +1436,21 @@ mod tests {
     #[test]
     fn lose_mission_sets_quit_lost() {
         let (mut engine, mut dev) = engine_with_campaign();
-        assert!(!engine.mission.quit_lost);
+        assert!(!engine.mission_domain.state.quit_lost);
         let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "LOOSE");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
-        assert!(engine.mission.quit_lost);
+        assert!(engine.mission_domain.state.quit_lost);
     }
 
     #[test]
     fn freeze_toggles_ai_global_flag() {
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        assert!(!engine.ai_global.freeze);
+        assert!(!engine.ai.global.freeze);
         engine.run_console_command(&assets(), &mut dev, &mut None, "FREEZE");
-        assert!(engine.ai_global.freeze);
+        assert!(engine.ai.global.freeze);
         engine.run_console_command(&assets(), &mut dev, &mut None, "FREEZE");
-        assert!(!engine.ai_global.freeze);
+        assert!(!engine.ai.global.freeze);
     }
 
     #[test]

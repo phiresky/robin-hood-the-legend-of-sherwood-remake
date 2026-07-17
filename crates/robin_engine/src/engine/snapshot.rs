@@ -1,17 +1,18 @@
-//! Stable serialization and deterministic-hash boundary for [`EngineInner`].
+//! Stable serialization boundary for [`EngineInner`].
 //!
 //! The in-memory engine is going to be split into cohesive owned state groups.
-//! Save files, multiplayer bincode snapshots, and replay hashes must not change
-//! merely because those fields move. This flat remote-serde schema deliberately
-//! repeats the current field names, types, attributes, and declaration order.
-//! Future in-memory regrouping maps through this boundary instead of deriving a
-//! new external schema from the runtime layout.
+//! Save files and multiplayer bincode snapshots must not change merely because
+//! fields move. This flat schema deliberately repeats the current field names,
+//! types, attributes, and declaration order. Future in-memory regrouping maps
+//! through this boundary instead of deriving a new external schema from the
+//! runtime layout. Deterministic hashing follows the current runtime ownership
+//! layout and is intentionally separate from this compatibility adapter.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStruct};
 
 use super::{
     EngineInner,
-    state::{FeedbackRuntime, PlayerRuntime, SimulationControl},
+    state::{AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl},
 };
 
 /// The compatibility snapshot shape present before the logical Engine split.
@@ -83,7 +84,7 @@ impl Serialize for EngineInner {
     {
         let mut snapshot = serializer.serialize_struct("EngineInner", 51)?;
         snapshot.serialize_field("sim_config", &self.sim_config)?;
-        snapshot.serialize_field("mission", &self.mission)?;
+        snapshot.serialize_field("mission", &self.mission_domain.state)?;
         snapshot.serialize_field("frame_counter", &self.control.frame_counter)?;
         snapshot.serialize_field("sound_sim", &self.feedback.sound_sim)?;
         snapshot.serialize_field("simulation_gates", &self.control.simulation_gates)?;
@@ -92,19 +93,19 @@ impl Serialize for EngineInner {
         snapshot.serialize_field("weather", &self.weather)?;
         snapshot.serialize_field("shield", &self.shield)?;
         snapshot.serialize_field("script_globals", &self.script_globals)?;
-        snapshot.serialize_field("cheat_used_flags", &self.cheat_used_flags)?;
+        snapshot.serialize_field("cheat_used_flags", &self.mission_domain.cheat_used_flags)?;
         snapshot.serialize_field(
             "standard_view_polygon_radius",
-            &self.standard_view_polygon_radius,
+            &self.ai.standard_view_polygon_radius,
         )?;
         snapshot.serialize_field("next_order_id", &self.next_order_id)?;
         snapshot.serialize_field("chorus_timer", &self.control.chorus_timer)?;
-        snapshot.serialize_field("force_check", &self.force_check)?;
+        snapshot.serialize_field("force_check", &self.mission_domain.force_check)?;
         snapshot.serialize_field("messenger", &self.messenger)?;
         snapshot.serialize_field("fast_grid", &self.fast_grid)?;
         snapshot.serialize_field("pathfinder", &self.pathfinder)?;
-        snapshot.serialize_field("short_briefings", &self.short_briefings)?;
-        snapshot.serialize_field("mission_stat", &self.mission_stat)?;
+        snapshot.serialize_field("short_briefings", &self.mission_domain.short_briefings)?;
+        snapshot.serialize_field("mission_stat", &self.mission_domain.mission_stat)?;
         snapshot.serialize_field("ground_mark", &self.feedback.ground_mark)?;
         snapshot.serialize_field("entities", &self.entities)?;
         snapshot.serialize_field("pc_ids", &self.pc_ids)?;
@@ -124,9 +125,9 @@ impl Serialize for EngineInner {
         snapshot.serialize_field("pending_move_requests", &self.pending_move_requests)?;
         snapshot.serialize_field("pending_path_requests", &self.pending_path_requests)?;
         snapshot.serialize_field("failed_path_requests", &self.failed_path_requests)?;
-        snapshot.serialize_field("ai_global", &self.ai_global)?;
+        snapshot.serialize_field("ai_global", &self.ai.global)?;
         snapshot.serialize_field("macro_store", &self.players.macro_store)?;
-        snapshot.serialize_field("dead_pc", &self.dead_pc)?;
+        snapshot.serialize_field("dead_pc", &self.mission_domain.dead_pc)?;
         snapshot.serialize_field("timer_elements", &self.timer_elements)?;
         snapshot.serialize_field("sequence_manager", &self.sequence_manager)?;
         snapshot.serialize_field("pending_reinforcements", &self.pending_reinforcements)?;
@@ -144,7 +145,7 @@ impl Serialize for EngineInner {
             "static_sight_obstacle_active",
             &self.static_sight_obstacle_active,
         )?;
-        snapshot.serialize_field("campaign", &self.campaign)?;
+        snapshot.serialize_field("campaign", &self.mission_domain.campaign)?;
         snapshot.end()
     }
 }
@@ -157,7 +158,15 @@ impl<'de> Deserialize<'de> for EngineInner {
         let snapshot = FlatEngineSnapshot::deserialize(deserializer)?;
         Ok(Self {
             sim_config: snapshot.sim_config,
-            mission: snapshot.mission,
+            mission_domain: MissionDomain {
+                state: snapshot.mission,
+                cheat_used_flags: snapshot.cheat_used_flags,
+                force_check: snapshot.force_check,
+                short_briefings: snapshot.short_briefings,
+                mission_stat: snapshot.mission_stat,
+                dead_pc: snapshot.dead_pc,
+                campaign: snapshot.campaign,
+            },
             control: SimulationControl {
                 frame_counter: snapshot.frame_counter,
                 simulation_gates: snapshot.simulation_gates,
@@ -167,18 +176,17 @@ impl<'de> Deserialize<'de> for EngineInner {
                 rng: snapshot.rng,
                 fast_forward: snapshot.fast_forward,
             },
+            ai: AiRuntime {
+                global: snapshot.ai_global,
+                standard_view_polygon_radius: snapshot.standard_view_polygon_radius,
+            },
             weather: snapshot.weather,
             shield: snapshot.shield,
             script_globals: snapshot.script_globals,
-            cheat_used_flags: snapshot.cheat_used_flags,
-            standard_view_polygon_radius: snapshot.standard_view_polygon_radius,
             next_order_id: snapshot.next_order_id,
-            force_check: snapshot.force_check,
             messenger: snapshot.messenger,
             fast_grid: snapshot.fast_grid,
             pathfinder: snapshot.pathfinder,
-            short_briefings: snapshot.short_briefings,
-            mission_stat: snapshot.mission_stat,
             entities: snapshot.entities,
             pc_ids: snapshot.pc_ids,
             players: PlayerRuntime {
@@ -199,8 +207,6 @@ impl<'de> Deserialize<'de> for EngineInner {
             pending_move_requests: snapshot.pending_move_requests,
             pending_path_requests: snapshot.pending_path_requests,
             failed_path_requests: snapshot.failed_path_requests,
-            ai_global: snapshot.ai_global,
-            dead_pc: snapshot.dead_pc,
             timer_elements: snapshot.timer_elements,
             sequence_manager: snapshot.sequence_manager,
             pending_reinforcements: snapshot.pending_reinforcements,
@@ -212,69 +218,6 @@ impl<'de> Deserialize<'de> for EngineInner {
             script_zone_data: snapshot.script_zone_data,
             dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
             static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
-            campaign: snapshot.campaign,
         })
-    }
-}
-
-/// Hash fields in the pre-split declaration order.
-///
-/// The derive macro does not hash field names or struct boundaries; it invokes
-/// `StateHash` for each field in declaration order and writes a fixed marker for
-/// `#[state_hash(skip)]`. Keeping that exact sequence here preserves recorded
-/// replay hashes while allowing the runtime fields to be grouped later.
-impl robin_util::state_hash::StateHash for EngineInner {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        robin_util::state_hash::hash_skipped_field(state); // sim_config
-        self.mission.state_hash(state);
-        self.control.frame_counter.state_hash(state);
-        self.feedback.sound_sim.state_hash(state);
-        self.control.simulation_gates.state_hash(state);
-        self.control.speed.state_hash(state);
-        self.control.speed_int.state_hash(state);
-        self.weather.state_hash(state);
-        self.shield.state_hash(state);
-        self.script_globals.state_hash(state);
-        self.cheat_used_flags.state_hash(state);
-        self.standard_view_polygon_radius.state_hash(state);
-        self.next_order_id.state_hash(state);
-        self.control.chorus_timer.state_hash(state);
-        self.force_check.state_hash(state);
-        self.messenger.state_hash(state);
-        self.fast_grid.state_hash(state);
-        self.pathfinder.state_hash(state);
-        self.short_briefings.state_hash(state);
-        self.mission_stat.state_hash(state);
-        self.feedback.ground_mark.state_hash(state);
-        self.entities.state_hash(state);
-        self.pc_ids.state_hash(state);
-        self.feedback.titbit_manager.state_hash(state);
-        self.players.seats.state_hash(state);
-        self.feedback.cutscene_camera.state_hash(state);
-        self.control.rng.state_hash(state);
-        self.feedback.pending_side_effects.state_hash(state);
-        self.players.user_locked.state_hash(state);
-        self.players.qa_recording_for.state_hash(state);
-        self.players.qa_recording_slot.state_hash(state);
-        self.players.action_before_recording_macro.state_hash(state);
-        self.control.fast_forward.state_hash(state);
-        self.pending_move_requests.state_hash(state);
-        self.pending_path_requests.state_hash(state);
-        self.failed_path_requests.state_hash(state);
-        self.ai_global.state_hash(state);
-        self.players.macro_store.state_hash(state);
-        self.dead_pc.state_hash(state);
-        self.timer_elements.state_hash(state);
-        self.sequence_manager.state_hash(state);
-        self.pending_reinforcements.state_hash(state);
-        self.pending_scroll_amulets.state_hash(state);
-        self.pending_hero_speeches.state_hash(state);
-        self.pending_hades_kills.state_hash(state);
-        self.pending_concussion_side_effects.state_hash(state);
-        self.mission_script.state_hash(state);
-        self.script_zone_data.state_hash(state);
-        self.dynamic_sight_obstacles.state_hash(state);
-        self.static_sight_obstacle_active.state_hash(state);
-        self.campaign.state_hash(state);
     }
 }

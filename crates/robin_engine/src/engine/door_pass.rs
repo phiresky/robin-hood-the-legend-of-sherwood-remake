@@ -833,7 +833,7 @@ impl EngineInner {
                 // house's live occupant list.  Keyed by sector number
                 // (the `House::sector_index` field), not building
                 // index.
-                for house in self.ai_global.houses.iter_mut() {
+                for house in self.ai.global.houses.iter_mut() {
                     if house.sector_index == cur_sector_num as u32 {
                         house.occupant_ids.retain(|&e| e != entity_id);
                         break;
@@ -1027,7 +1027,7 @@ impl EngineInner {
             // `Building` doors (e.g. mission-scripted portal
             // entries), or the init scan missed it — we skip the
             // update rather than synthesising a door-less house.
-            for house in self.ai_global.houses.iter_mut() {
+            for house in self.ai.global.houses.iter_mut() {
                 if house.sector_index == u32::from(u16::from(target_sector_num)) {
                     if !house.occupant_ids.contains(&entity_id) {
                         house.occupant_ids.push(entity_id);

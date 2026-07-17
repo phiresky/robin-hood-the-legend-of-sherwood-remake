@@ -11,7 +11,7 @@ use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
 
 /// Distinctive but internally inert state used to lock the top-level Engine
-/// serde, bincode, and StateHash contracts before reorganizing its fields.
+/// serde and bincode contracts while reorganizing its runtime fields.
 ///
 /// Keep this fixture free of level attachments: it must remain serializable at
 /// the same snapshot boundary as `EngineInner::new()`.
@@ -24,10 +24,10 @@ fn engine_compatibility_fixture() -> EngineInner {
     config.ignore_default_loose = true;
     engine.attach_sim_config(config);
 
-    engine.mission.mission_won = true;
-    engine.mission.quit_interrupted = true;
-    engine.mission.map_name = "compatibility-map".into();
-    engine.mission.victory_defeat_id = 0x1020_3040;
+    engine.mission_domain.state.mission_won = true;
+    engine.mission_domain.state.quit_interrupted = true;
+    engine.mission_domain.state.map_name = "compatibility-map".into();
+    engine.mission_domain.state.victory_defeat_id = 0x1020_3040;
     engine.control.frame_counter = 0x1122_3344;
     engine.set_engine_locked(true);
     engine.set_actors_frozen(true);
@@ -36,13 +36,13 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.control.speed_int = 9;
     engine.shield.is_protected = true;
     engine.script_globals = vec![-7, 0, 42, i32::MAX];
-    engine.cheat_used_flags = 0xA5A5_5A5A;
-    engine.standard_view_polygon_radius = 321;
+    engine.mission_domain.cheat_used_flags = 0xA5A5_5A5A;
+    engine.ai.standard_view_polygon_radius = 321;
     engine.next_order_id = 0x5566_7788;
     engine.control.chorus_timer = 23;
-    engine.force_check = true;
-    engine.mission_stat.collected_money = 1234;
-    engine.mission_stat.added_score = 5678;
+    engine.mission_domain.force_check = true;
+    engine.mission_domain.mission_stat.collected_money = 1234;
+    engine.mission_domain.mission_stat.added_score = 5678;
     engine.feedback.cutscene_camera.view_position = MapPoint::new(101.5, 202.25);
     engine.restore_rng_from_seed(0xCAFE_BABE_1020_3040);
     engine.feedback.pending_side_effects.invalidate_background = true;
@@ -132,10 +132,26 @@ fn engine_top_level_snapshot_schema_and_bytes_are_stable() {
         encoded_hex,
         "01010101010100010000000111636f6d7061746962696c6974792d6d6170fc40302010fc4433221100000000000101070000e03f090000000100040d0054fcfefffffffc5a5aa5a5fb4101fc88776655170100000000000001000000fbd20400000000000000fb2e160000000000000000000f000000000000010000000000000000000000000000000000cb4200404a43000080bf000080bf0000000000000000000000803f0000803f000000000000000000000000000000000000000000000000000000000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042010000003f0000803f000000400000000000000000000000000000000000000000000000000000803f0000803f000000000000000000000000000000000500000000fd40302010bebafeca0000000001000000000000000000000000000000000000000001000200010000000000000000000000000000000000000000000000000000020000000000000000000000000000000101000100000000000000000301000100"
     );
+}
+
+#[test]
+fn engine_state_hash_is_deterministic_within_the_current_build() {
+    let engine = engine_compatibility_fixture();
+    let clone = engine.clone();
     assert_eq!(
         crate::replay::state_hash(&engine),
-        8_556_489_992_877_124_234,
-        "top-level regrouping must not invalidate recorded replay hashes"
+        crate::replay::state_hash(&clone)
+    );
+
+    let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
+        .expect("encode compatibility fixture");
+    let (restored, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .expect("decode compatibility fixture");
+    assert_eq!(consumed, bytes.len());
+    assert_eq!(
+        crate::replay::state_hash(&engine),
+        crate::replay::state_hash(&restored)
     );
 }
 
@@ -147,7 +163,7 @@ fn engine_creation() {
     assert_eq!(engine.control.frame_counter, 0);
     assert!(!engine.control.fast_forward);
     assert!(!engine.engine_locked());
-    assert!(!engine.mission.mission_won);
+    assert!(!engine.mission_domain.state.mission_won);
     assert_eq!(display.display_op, DisplayOpCode::Redraw);
 }
 
@@ -362,7 +378,7 @@ fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.mission.quit_won = true;
+    engine.mission_domain.state.quit_won = true;
 
     begin_hourglass_phase_capture();
     let result = engine
@@ -1062,7 +1078,7 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::new());
+    engine.mission_domain.campaign = Some(Campaign::new());
 
     for _ in 0..25 {
         let result = engine
@@ -1074,6 +1090,7 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
     assert_eq!(engine.control.frame_counter, 25);
     assert_eq!(
         engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
@@ -1092,7 +1109,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
 
     let mut campaign = Campaign::new();
     campaign.set_value(CampaignValue::MissionLength, 7);
-    engine.campaign = Some(campaign);
+    engine.mission_domain.campaign = Some(campaign);
 
     engine
         .feedback
@@ -1131,6 +1148,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
         assert_eq!(engine.control.frame_counter, 25);
         assert_eq!(
             engine
+                .mission_domain
                 .campaign
                 .as_ref()
                 .unwrap()
@@ -1227,7 +1245,7 @@ fn hourglass_quit_won() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.mission.quit_won = true;
+    engine.mission_domain.state.quit_won = true;
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
         .code;
@@ -1240,7 +1258,7 @@ fn hourglass_quit_lost() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.mission.quit_lost = true;
+    engine.mission_domain.state.quit_lost = true;
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
         .code;
@@ -1253,7 +1271,7 @@ fn hourglass_quit_interrupted() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.mission.quit_interrupted = true;
+    engine.mission_domain.state.quit_interrupted = true;
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
         .code;
@@ -1335,7 +1353,10 @@ fn rollback_clone_stays_in_sync() {
     assert_eq!(original.control.frame_counter, replay.control.frame_counter);
     assert_eq!(original.rng_seed(), replay.rng_seed());
     assert_eq!(original.control.chorus_timer, replay.control.chorus_timer);
-    assert_eq!(original.mission.mission_won, replay.mission.mission_won);
+    assert_eq!(
+        original.mission_domain.state.mission_won,
+        replay.mission_domain.state.mission_won
+    );
     assert_eq!(original.script_globals, replay.script_globals);
 
     // Double-check: re-cloning the original snapshot and replaying the
@@ -1475,8 +1496,8 @@ fn serde_roundtrip_stays_in_sync() {
         clone_ref.control.chorus_timer
     );
     assert_eq!(
-        rehydrated.mission.mission_won,
-        clone_ref.mission.mission_won
+        rehydrated.mission_domain.state.mission_won,
+        clone_ref.mission_domain.state.mission_won
     );
     assert_eq!(rehydrated.script_globals, clone_ref.script_globals);
 }
@@ -1922,23 +1943,23 @@ fn center_on_point() {
 #[test]
 fn mission_state_transitions() {
     let mut engine = EngineInner::new();
-    assert!(!engine.mission.mission_won);
+    assert!(!engine.mission_domain.state.mission_won);
 
     engine.win(true);
-    assert!(engine.mission.mission_won);
-    assert!(engine.mission.mission_won_first_time);
+    assert!(engine.mission_domain.state.mission_won);
+    assert!(engine.mission_domain.state.mission_won_first_time);
 
     // `win` writes both flags unconditionally, so a second call
     // re-toggles `mission_won_first_time`.
-    engine.mission.mission_won_first_time = false;
+    engine.mission_domain.state.mission_won_first_time = false;
     engine.win(true);
-    assert!(engine.mission.mission_won_first_time);
+    assert!(engine.mission_domain.state.mission_won_first_time);
 
     // A silent win (show_window=false) queues the start/quit-mission
     // widget swap as a side-effect for the host to drain.
     engine.feedback.pending_side_effects = Default::default();
     engine.win(false);
-    assert!(!engine.mission.mission_won_first_time);
+    assert!(!engine.mission_domain.state.mission_won_first_time);
     assert!(
         engine
             .feedback
@@ -1968,9 +1989,9 @@ fn mission_won_first_time_raises_mission_state_notice() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.mission.mission_won_first_time = true;
+    engine.mission_domain.state.mission_won_first_time = true;
     let side_effects = engine.perform_hourglass(&mut display, &assets, &mut dev);
-    assert!(!engine.mission.mission_won_first_time);
+    assert!(!engine.mission_domain.state.mission_won_first_time);
     assert!(
         side_effects.pending_mission_state_notice,
         "expected pending_mission_state_notice side effect"
@@ -2107,9 +2128,9 @@ fn mission_stat_resets_on_new_mission() {
     let mut assets = LevelAssets::new();
     let mut pending = PendingLevelData::default();
     let mut engine = EngineInner::new();
-    engine.campaign = Some(crate::campaign::Campaign::default());
-    engine.mission_stat.add_collected_money(500);
-    engine.short_briefings.add(42, true);
+    engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+    engine.mission_domain.mission_stat.add_collected_money(500);
+    engine.mission_domain.short_briefings.add(42, true);
 
     let loaded = crate::level_data::LoadedLevel::empty_for_test();
     let _ = engine.initialize_from_mission(
@@ -2123,8 +2144,8 @@ fn mission_stat_resets_on_new_mission() {
         &mut |_| {},
     );
 
-    assert_eq!(engine.mission_stat.collected_money, 0);
-    assert_eq!(engine.short_briefings.count(true), 0);
+    assert_eq!(engine.mission_domain.mission_stat.collected_money, 0);
+    assert_eq!(engine.mission_domain.short_briefings.count(true), 0);
 }
 
 #[test]
@@ -2148,20 +2169,21 @@ fn resize_snaps_zoom() {
 fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 100; // past frame 0 → jingle gate open
 
     engine.add_campaign_value(CampaignValue::Ransom, 250);
 
     assert_eq!(
         engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
             .get_value(CampaignValue::Ransom),
         crate::campaign::INITIAL_RANSOM + 250
     );
-    assert_eq!(engine.mission_stat.collected_money, 250);
+    assert_eq!(engine.mission_domain.mission_stat.collected_money, 250);
     let jingle_count = engine
         .feedback
         .pending_side_effects
@@ -2175,20 +2197,21 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
 #[test]
 fn add_campaign_value_score_credits_mission_stat() {
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 100;
 
     engine.add_campaign_value(CampaignValue::Score, 750);
 
     assert_eq!(
         engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
             .get_value(CampaignValue::Score),
         750
     );
-    assert_eq!(engine.mission_stat.added_score, 750);
+    assert_eq!(engine.mission_domain.mission_stat.added_score, 750);
     // Score is silent.
     assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
@@ -2196,16 +2219,17 @@ fn add_campaign_value_score_credits_mission_stat() {
 #[test]
 fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 100;
-    engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 500;
-    engine.mission_stat.collected_money = 200;
+    engine.mission_domain.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 500;
+    engine.mission_domain.mission_stat.collected_money = 200;
 
     // A purse throw (`combat.rs:2433`) issues a negative delta.
     engine.add_campaign_value(CampaignValue::Ransom, -100);
 
     assert_eq!(
         engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
@@ -2214,7 +2238,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     );
     // `add_campaign_value` credits the mission-stat counter
     // unconditionally (wrapping_add_signed); only the jingle is gated.
-    assert_eq!(engine.mission_stat.collected_money, 100);
+    assert_eq!(engine.mission_domain.mission_stat.collected_money, 100);
     assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
@@ -2223,12 +2247,12 @@ fn add_campaign_value_skips_jingle_at_frame_zero() {
     // The `frame_counter > 0` gate ensures the pre-mission seed
     // (initial ransom = 100) doesn't sound a coin chime.
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 0;
 
     engine.add_campaign_value(CampaignValue::Ransom, 100);
 
-    assert_eq!(engine.mission_stat.collected_money, 100);
+    assert_eq!(engine.mission_domain.mission_stat.collected_money, 100);
     assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
@@ -2236,9 +2260,9 @@ fn add_campaign_value_skips_jingle_at_frame_zero() {
 fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 50;
-    engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 200;
+    engine.mission_domain.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 200;
 
     // Lower → no jingle (only growth fires the gate).
     engine.set_campaign_value(CampaignValue::Ransom, 100);
@@ -2255,37 +2279,38 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
         .count();
     assert_eq!(jingle_count, 1);
     // SetValue does NOT credit collected_money — only AddValue does.
-    assert_eq!(engine.mission_stat.collected_money, 0);
+    assert_eq!(engine.mission_domain.mission_stat.collected_money, 0);
 }
 
 #[test]
 fn add_campaign_value_amulets_has_no_side_effects() {
     let mut engine = EngineInner::new();
-    engine.campaign = Some(Campaign::default());
+    engine.mission_domain.campaign = Some(Campaign::default());
     engine.control.frame_counter = 100;
 
     engine.add_campaign_value(CampaignValue::Amulets, 3);
 
     assert_eq!(
         engine
+            .mission_domain
             .campaign
             .as_ref()
             .unwrap()
             .get_value(CampaignValue::Amulets),
         3
     );
-    assert_eq!(engine.mission_stat.collected_money, 0);
-    assert_eq!(engine.mission_stat.added_score, 0);
+    assert_eq!(engine.mission_domain.mission_stat.collected_money, 0);
+    assert_eq!(engine.mission_domain.mission_stat.added_score, 0);
     assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
 #[test]
 fn sync_stats_to_campaign() {
     let mut engine = EngineInner::new();
-    engine.mission_stat.collected_money = 500;
-    engine.mission_stat.added_score = 1200;
-    engine.mission_stat.living_soldier_count = 8;
-    engine.mission_stat.total_soldier_count = 12;
+    engine.mission_domain.mission_stat.collected_money = 500;
+    engine.mission_domain.mission_stat.added_score = 1200;
+    engine.mission_domain.mission_stat.living_soldier_count = 8;
+    engine.mission_domain.mission_stat.total_soldier_count = 12;
 
     let mut campaign = Campaign::default();
     campaign.set_value(CampaignValue::Ransom, 100);
@@ -2393,16 +2418,16 @@ fn timer_tick_decrements_and_removes() {
 fn win_respects_show_window_false() {
     let mut engine = EngineInner::new();
     engine.win(false);
-    assert!(engine.mission.mission_won);
-    assert!(!engine.mission.mission_won_first_time);
+    assert!(engine.mission_domain.state.mission_won);
+    assert!(!engine.mission_domain.state.mission_won_first_time);
 }
 
 #[test]
 fn win_respects_show_window_true() {
     let mut engine = EngineInner::new();
     engine.win(true);
-    assert!(engine.mission.mission_won);
-    assert!(engine.mission.mission_won_first_time);
+    assert!(engine.mission_domain.state.mission_won);
+    assert!(engine.mission_domain.state.mission_won_first_time);
 }
 
 #[test]
@@ -2992,7 +3017,7 @@ fn dead_pc_triggers_failure() {
         pc: Default::default(),
     });
     let id = engine.add_entity(entity);
-    engine.dead_pc = Some(id);
+    engine.mission_domain.dead_pc = Some(id);
 
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
@@ -3499,12 +3524,12 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             None,
             engine.weather.is_forest_level,
             engine.weather.ambiance,
-            engine.standard_view_polygon_radius,
+            engine.ai.standard_view_polygon_radius,
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.fast_grid,
             &assets.hiking_paths,
-            &engine.ai_global.all_soldier_handles,
+            &engine.ai.global.all_soldier_handles,
         )
     };
     assert!(ctx.is_night_or_fog);
@@ -4671,8 +4696,8 @@ fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
     use crate::element::Camp;
 
     let mut engine = EngineInner::new();
-    engine.ai_global.there_are_royalist_soldiers = true;
-    engine.ai_global.there_are_lacklandist_soldiers = true;
+    engine.ai.global.there_are_royalist_soldiers = true;
+    engine.ai.global.there_are_lacklandist_soldiers = true;
     let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));

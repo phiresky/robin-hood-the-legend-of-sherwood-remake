@@ -4821,7 +4821,7 @@ impl EngineInner {
                     super::anti_collision::apply_anti_collision_step(
                         mover_snap,
                         anti_snapshots.as_slice(),
-                        &self.ai_global.repulsive_points,
+                        &self.ai.global.repulsive_points,
                         Some(&self.fast_grid),
                         Some(&mut state),
                         nx,
