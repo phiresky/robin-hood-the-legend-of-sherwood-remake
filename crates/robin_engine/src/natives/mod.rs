@@ -39,8 +39,8 @@
 //!   - 138/139: Freeze/FreezeAll — per-actor or engine-wide tick freeze
 //!   - 159: NoWhere, 160: GetDistance, 161: Rand, 162: PrintConsole
 //!   - 176–181: SetCompanyNumber, SetAlwaysAttentive, SetInvisible, IsInvisible
-//!   - 195/196: GetCustomCampaignValue/SetCustomCampaignValue — second BTreeMap
-//!   - 197/198: GetCustomNPCValue/SetCustomNPCValue — BTreeMap keyed by (actor, id)
+//!   - 195/196: GetCustomCampaignValue/SetCustomCampaignValue — canonical campaign slots
+//!   - 197/198: GetCustomNPCValue/SetCustomNPCValue — canonical NPC slots
 //!   - 206/207/208: BitwiseAnd/Or/Xor
 //!   - 214: DeclareAsCombatTrainer — flag soldier as trainer
 //!   - 221/222: IsActorRider, IsUnblipped — entity state checks
@@ -128,11 +128,6 @@ pub struct GameHost {
     #[serde(skip)]
     #[state_hash(skip)]
     test_script_state: ScriptState,
-    /// Campaign-level custom values (GetCustomCampaignValue/SetCustomCampaignValue).
-    pub campaign_values: BTreeMap<i32, i32>,
-    /// Per-NPC custom values keyed by (actor_handle, id).
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
-    pub npc_values: BTreeMap<(i32, i32), i32>,
     /// Set by `ForceCheckVictory` native — tells the engine to run
     /// `CheckVictoryCondition` on the next frame instead of waiting
     /// for the 3-second interval.
@@ -216,9 +211,6 @@ pub struct GameHost {
     /// differs (matters for any titbit-index-bound consumer).
     pub scroll_attachment_dirty: BTreeSet<i32>,
 
-    /// Entity active state (for FX animations). Key = entity handle.
-    pub entity_active: BTreeMap<i32, bool>,
-
     /// Current animation per entity handle.
     ///
     /// For actors, this is `GetAnimation()` = the `OrderType` of the
@@ -243,27 +235,9 @@ pub struct GameHost {
     pub actor_building: BTreeMap<i32, i32>,
     /// Script zone occupants. Key = location handle, value = actor handles.
     pub zone_occupants: BTreeMap<i32, Vec<i32>>,
-    /// PC auth bits per actor handle (for door special authorisation).
-    pub pc_auth_bits: BTreeMap<i32, u16>,
-
-    // ── PC / NPC snapshot state (populated by engine before script) ──
-    /// All PC actor handles, in spawn order.
-    pub pc_handles: Vec<i32>,
+    // ── PC query state not currently owned by GameHost ──
     /// Currently selected PC entity handles.
     pub selected_pc_handles: Vec<i32>,
-    /// Robin Hood's entity handle (0 = not yet spawned).
-    pub robin_handle: i32,
-    /// PC entity handle → character profile index.
-    pub pc_profile_map: BTreeMap<i32, crate::profiles::CharacterProfileIdx>,
-    /// Whether any civilian NPC is dead (snapshot).
-    pub any_civilian_dead: bool,
-    /// Whether any enemy (soldier) NPC is dead (snapshot).
-    pub any_enemy_dead: bool,
-    /// Maximum alert level among living soldiers (0=green, 1=yellow, 2=red).
-    pub overall_enemy_alert: i32,
-    /// Maximum alert level among living civilians.
-    pub overall_civilian_alert: i32,
-
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
 
@@ -324,8 +298,6 @@ impl GameHost {
         Self {
             #[cfg(test)]
             test_script_state: ScriptState::default(),
-            campaign_values: BTreeMap::new(),
-            npc_values: BTreeMap::new(),
             force_check: false,
             verbose: false,
             entities: Vec::new(),
@@ -351,21 +323,12 @@ impl GameHost {
             scroll_status: BTreeMap::new(),
             scroll_attachments: BTreeMap::new(),
             scroll_attachment_dirty: BTreeSet::new(),
-            entity_active: BTreeMap::new(),
             current_animations: BTreeMap::new(),
             building_occupants: Vec::new(),
             arrow_reserves: Vec::new(),
             actor_building: BTreeMap::new(),
             zone_occupants: BTreeMap::new(),
-            pc_auth_bits: BTreeMap::new(),
-            pc_handles: Vec::new(),
             selected_pc_handles: Vec::new(),
-            robin_handle: 0,
-            pc_profile_map: BTreeMap::new(),
-            any_civilian_dead: false,
-            any_enemy_dead: false,
-            overall_enemy_alert: 0,
-            overall_civilian_alert: 0,
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
             building_active: Vec::new(),
@@ -485,6 +448,69 @@ impl GameHost {
                 slot.as_mut()
                     .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
             })
+    }
+
+    fn pc_handles(&self) -> Vec<i32> {
+        self.occupied_entities()
+            .filter_map(|(id, entity)| entity.is_pc().then_some(Self::actor_handle(id)))
+            .collect()
+    }
+
+    fn pc_profile_index(&self, actor: i32) -> Option<crate::profiles::CharacterProfileIdx> {
+        self.get_entity(actor)?.pc_data().map(|pc| pc.profile_index)
+    }
+
+    fn robin_handle(&self) -> i32 {
+        self.occupied_entities()
+            .find_map(|(id, entity)| {
+                entity
+                    .pc_data()
+                    .is_some_and(|pc| pc.robin)
+                    .then_some(Self::actor_handle(id))
+            })
+            .unwrap_or(0)
+    }
+
+    fn pc_authorisation_bit(&self, actor: i32) -> u16 {
+        self.occupied_entities()
+            .filter(|(_, entity)| entity.is_pc())
+            .enumerate()
+            .find_map(|(index, (id, _))| {
+                (Self::actor_handle(id) == actor).then(|| {
+                    1u16.checked_shl(index as u32).unwrap_or_else(|| {
+                        panic!("PC authorization index {index} exceeds the 16-bit door mask")
+                    })
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    /// `(any civilian dead, any soldier dead, max living soldier alert,
+    /// max living civilian alert)` derived from the live NPC entities.
+    fn npc_status_aggregates(&self) -> (bool, bool, i32, i32) {
+        let mut result = (false, false, 0, 0);
+        for (_, entity) in self
+            .occupied_entities()
+            .filter(|(_, entity)| entity.is_npc())
+        {
+            let dead = entity.is_dead();
+            let alert = entity
+                .ai_controller()
+                .map(|ai| ai.current_music_alert_status as i32)
+                .unwrap_or(0);
+            if entity.is_soldier() {
+                result.1 |= dead;
+                if !dead {
+                    result.2 = result.2.max(alert);
+                }
+            } else {
+                result.0 |= dead;
+                if !dead {
+                    result.3 = result.3.max(alert);
+                }
+            }
+        }
+        result
     }
 
     /// Check whether an actor handle refers to a valid entity.
@@ -1676,7 +1702,7 @@ impl NativeContext<'_> {
     fn move_beam_me(&mut self, idx: i32, loc: i32) {
         // Find PC with matching beam_me_index
         let target_handle = self
-            .pc_handles
+            .pc_handles()
             .iter()
             .find(|&h| {
                 self.get_entity(*h)
@@ -1713,7 +1739,7 @@ impl NativeContext<'_> {
 
     /// GetActorForBeamMe: find the PC entity handle at beam-me index `idx`.
     fn get_actor_for_beam_me(&self, idx: i32) -> i32 {
-        self.pc_handles
+        self.pc_handles()
             .iter()
             .find(|&h| {
                 self.get_entity(*h)
@@ -2380,7 +2406,7 @@ impl NativeContext<'_> {
     }
 
     fn resolve_profile(&self, actor: i32) -> Option<crate::profiles::CharacterProfileIdx> {
-        self.pc_profile_map.get(&actor).copied().or_else(|| {
+        self.pc_profile_index(actor).or_else(|| {
             self.campaign.as_ref()?;
             let idx = crate::profiles::CharacterProfileIdx(actor as u32);
             self.bindings
@@ -2967,24 +2993,30 @@ impl NativeContext<'_> {
                 // on out-of-range.
                 GetCustomCampaignValue => {
                     let id = stack.pop_i32();
-                    if !(0..=19).contains(&id) {
+                    let Some(value) = crate::campaign::CampaignValue::custom(id) else {
                         tracing::warn!(
                             "GetCustomCampaignValue: invalid index {id} (must be 0..=19)"
                         );
                         return 0;
-                    }
-                    *self.campaign_values.get(&id).unwrap_or(&0)
+                    };
+                    self.campaign
+                        .as_ref()
+                        .expect("GetCustomCampaignValue requires an active campaign")
+                        .values[value]
                 }
                 SetCustomCampaignValue => {
                     let value = stack.pop_i32();
                     let id = stack.pop_i32();
-                    if !(0..=19).contains(&id) {
+                    let Some(slot) = crate::campaign::CampaignValue::custom(id) else {
                         tracing::warn!(
                             "SetCustomCampaignValue: invalid index {id} (must be 0..=19)"
                         );
                         return 0;
-                    }
-                    self.campaign_values.insert(id, value);
+                    };
+                    self.campaign
+                        .as_mut()
+                        .expect("SetCustomCampaignValue requires an active campaign")
+                        .values[slot] = value;
                     0
                 }
                 // Validate id in script-side range 0..=9
@@ -3007,7 +3039,12 @@ impl NativeContext<'_> {
                             tracing::warn!("GetCustomNPCValue: actor {actor} is not an NPC");
                             -1
                         }
-                        Some(_) => *self.npc_values.get(&(actor, id)).unwrap_or(&0),
+                        Some(entity) => {
+                            entity
+                                .npc_data()
+                                .expect("GetCustomNPCValue validated an NPC")
+                                .custom_values[id as usize]
+                        }
                     }
                 }
                 SetCustomNPCValue => {
@@ -3018,15 +3055,18 @@ impl NativeContext<'_> {
                         tracing::warn!("SetCustomNPCValue: invalid index {id} (must be 0..=9)");
                         return 0;
                     }
-                    match self.get_entity(actor) {
+                    match self.get_entity_mut(actor) {
                         None => {
                             tracing::warn!("SetCustomNPCValue: actor {actor} does not exist");
                         }
                         Some(e) if !e.is_npc() => {
                             tracing::warn!("SetCustomNPCValue: actor {actor} is not an NPC");
                         }
-                        Some(_) => {
-                            self.npc_values.insert((actor, id), value);
+                        Some(entity) => {
+                            entity
+                                .npc_data_mut()
+                                .expect("SetCustomNPCValue validated an NPC")
+                                .custom_values[id as usize] = value;
                         }
                     }
                     0
@@ -3061,8 +3101,8 @@ impl NativeContext<'_> {
                     // active in the UI" — i.e. the PC entity is still
                     // spawned in the level.  Iterating `pc_handles`
                     // (live PC entities, alive or corpse) is the
-                    // natural mirror: once the corpse is despawned
-                    // the PC drops out of the snapshot.
+                    // natural source: once the corpse is despawned
+                    // the PC drops out of entity storage.
                     let action_code = stack.pop_i32();
                     let Ok(script_action) =
                         crate::profiles::ScriptAction::try_from(action_code as u32)
@@ -3079,8 +3119,8 @@ impl NativeContext<'_> {
                     };
                     let profiles = &self.bindings.profile_manager;
 
-                    for handle in &self.pc_handles {
-                        let Some(&profile_idx) = self.pc_profile_map.get(handle) else {
+                    for handle in self.pc_handles() {
+                        let Some(profile_idx) = self.pc_profile_index(handle) else {
                             continue;
                         };
                         let Some(cp) = profiles.get_character(profile_idx) else {
@@ -3093,7 +3133,7 @@ impl NativeContext<'_> {
                             continue;
                         }
 
-                        let is_dead = self.get_entity(*handle).is_some_and(|e| e.is_dead());
+                        let is_dead = self.get_entity(handle).is_some_and(|e| e.is_dead());
 
                         if !is_dead {
                             return 1;
@@ -3112,16 +3152,16 @@ impl NativeContext<'_> {
                 // --- profile/campaign-backed queries (reading real data) ---
                 // Returns the count of PC actors currently spawned in
                 // the running mission, not the campaign roster.
-                GetNumberOfPCs => self.pc_handles.len() as i32,
+                GetNumberOfPCs => self.pc_handles().len() as i32,
                 GetPC => {
                     // Returns a live PC actor handle that scripts pass
                     // straight into other natives.  Indexes the
-                    // per-tick `pc_handles` snapshot.
+                    // canonical entity storage.
                     let idx = stack.pop_i32();
                     if idx < 0 {
                         0
                     } else {
-                        self.pc_handles.get(idx as usize).copied().unwrap_or(0)
+                        self.pc_handles().get(idx as usize).copied().unwrap_or(0)
                     }
                 }
                 GetRansomMoney => self
@@ -3165,10 +3205,9 @@ impl NativeContext<'_> {
                 GetNumberOfPCsAlive => {
                     // Iterate the loaded PC roster and count those
                     // with life-points > 0 — a per-mission, per-tick
-                    // aliveness count.  Use the host-side
-                    // `pc_handles` snapshot and the life-points-based
-                    // `Entity::is_dead`.
-                    self.pc_handles
+                    // aliveness count, using canonical entity storage and
+                    // the life-points-based `Entity::is_dead`.
+                    self.pc_handles()
                         .iter()
                         .filter(|&&h| self.get_entity(h).is_some_and(|e| !e.is_dead()))
                         .count() as i32
@@ -6139,21 +6178,21 @@ impl NativeContext<'_> {
                     self.get_persistent_property(actor, prop)
                 }
                 IsAnyCivilianDead => {
-                    if self.any_civilian_dead {
+                    if self.npc_status_aggregates().0 {
                         1
                     } else {
                         0
                     }
                 }
                 IsAnyEnemyDead => {
-                    if self.any_enemy_dead {
+                    if self.npc_status_aggregates().1 {
                         1
                     } else {
                         0
                     }
                 }
-                GetOverallEnemyAlert => self.overall_enemy_alert,
-                GetOverallCivilianAlert => self.overall_civilian_alert,
+                GetOverallEnemyAlert => self.npc_status_aggregates().2,
+                GetOverallCivilianAlert => self.npc_status_aggregates().3,
                 HasPCAction => {
                     let action_code = stack.pop_i32();
                     let actor = stack.pop_i32();
@@ -6179,7 +6218,7 @@ impl NativeContext<'_> {
                     };
                     let action = script_action.to_action();
                     // Direct PC->profile lookup (no raw-profile-index fallback for this native).
-                    let Some(&profile_idx) = self.pc_profile_map.get(&actor) else {
+                    let Some(profile_idx) = self.pc_profile_index(actor) else {
                         return 0;
                     };
                     self.campaign.as_ref().expect("campaign required");
@@ -6204,11 +6243,11 @@ impl NativeContext<'_> {
                     };
                     let action = script_action.to_action();
                     // Iterate the spawned-PC array (not the
-                    // campaign-wide gang list).  `pc_handles` is
-                    // populated from the engine each script tick.
+                    // campaign-wide gang list). Handles are derived from the
+                    // canonical entity slots for every query.
                     let profiles = &self.bindings.profile_manager;
-                    for handle in &self.pc_handles {
-                        let Some(&profile_idx) = self.pc_profile_map.get(handle) else {
+                    for handle in self.pc_handles() {
+                        let Some(profile_idx) = self.pc_profile_index(handle) else {
                             continue;
                         };
                         let Some(cp) = profiles.get_character(profile_idx) else {
@@ -7139,7 +7178,8 @@ impl NativeContext<'_> {
                         tracing::warn!("Script error: IsAnimationActive with null handle");
                         0
                     } else {
-                        i32::from(self.entity_active.get(&actor_h).copied().unwrap_or(false))
+                        self.get_entity(actor_h)
+                            .map_or(0, |entity| i32::from(entity.element_data().active))
                     }
                 }
                 SetAnimationState => {
@@ -7155,10 +7195,6 @@ impl NativeContext<'_> {
                         0
                     } else {
                         let on = state != 0;
-                        self.entity_active.insert(actor_h, on);
-                        // Mirror onto the entity so intra-tick
-                        // `IsActorActive` reads (which go through
-                        // `is_active()` directly) reflect the write.
                         if let Some(entity) = self.get_entity_mut(actor_h) {
                             entity.element_data_mut().active = on;
                         }
@@ -7232,7 +7268,12 @@ impl NativeContext<'_> {
                             .copied()
                             .flatten()
                     }) {
-                        self.entity_active.insert(animation_h, active != 0);
+                        let entity = self.get_entity_mut(animation_h).unwrap_or_else(|| {
+                            panic!(
+                                "SetPatchAnimationActive: patch animation handle {animation_h} is missing"
+                            )
+                        });
+                        entity.element_data_mut().active = active != 0;
                     }
                     // If no animation entity is mapped, this is a no-op (patch has no animation)
                     0
@@ -7460,7 +7501,7 @@ impl NativeContext<'_> {
                     if loc_h == 0 {
                         return 0;
                     }
-                    let all_inside = self.pc_handles.iter().all(|&pc| {
+                    let all_inside = self.pc_handles().iter().all(|&pc| {
                         self.zone_occupants
                             .get(&loc_h)
                             .is_some_and(|occ| occ.contains(&pc))
@@ -7498,7 +7539,7 @@ impl NativeContext<'_> {
                     if loc_h == 0 {
                         return 0;
                     }
-                    let all_alive_inside = self.pc_handles.iter().all(|&pc| {
+                    let all_alive_inside = self.pc_handles().iter().all(|&pc| {
                         // Dead PCs are exempt (the check is
                         // `!is_dead before is_inside`).  Use the
                         // life-points-based `is_dead` (= life_points
@@ -7585,7 +7626,7 @@ impl NativeContext<'_> {
                     let direct = stack.pop_i32();
                     let actor_h = stack.pop_i32();
                     let door_h = stack.pop_i32();
-                    let pc_bit = self.pc_auth_bits.get(&actor_h).copied().unwrap_or(0);
+                    let pc_bit = self.pc_authorisation_bit(actor_h);
                     if let Some(door) = self.get_door_mut(door_h) {
                         door.grant_special_authorisation(pc_bit, direct != 0);
                     }
@@ -7797,7 +7838,7 @@ impl NativeContext<'_> {
                     // Returns a live PC actor handle (not a profile
                     // index) for the indexed required-character
                     // slot.  Resolve via the inverse of
-                    // `pc_profile_map`.
+                    // canonical PC entity profile fields.
                     let profile_manager = self.bindings.profile_manager.clone();
                     let required_profile: Option<u32> = self.campaign.as_ref().and_then(|c| {
                         c.next_mission_idx
@@ -7809,10 +7850,10 @@ impl NativeContext<'_> {
                     });
                     if let Some(char_profile_idx) = required_profile {
                         let needle = crate::profiles::CharacterProfileIdx(char_profile_idx);
-                        if let Some(&handle) = self
-                            .pc_profile_map
-                            .iter()
-                            .find_map(|(h, pi)| if *pi == needle { Some(h) } else { None })
+                        if let Some(handle) = self
+                            .pc_handles()
+                            .into_iter()
+                            .find(|&handle| self.pc_profile_index(handle) == Some(needle))
                         {
                             handle
                         } else {
@@ -8089,7 +8130,7 @@ impl NativeContext<'_> {
                     // Returns the first spawned PC where `is_robin`
                     // is true, else 0.  The result is a live Actor
                     // handle — never a profile index.
-                    self.robin_handle
+                    self.robin_handle()
                 }
                 GetRelic => {
                     let idx = stack.pop_i32();

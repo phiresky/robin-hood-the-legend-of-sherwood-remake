@@ -88,6 +88,37 @@ pub enum CampaignValue {
     Custom20 = 26,
 }
 
+impl CampaignValue {
+    /// Map the script-facing custom-value ordinal (`0..20`) onto the
+    /// campaign's canonical custom slots.
+    pub fn custom(index: i32) -> Option<Self> {
+        use CampaignValue::*;
+        Some(match index {
+            0 => Custom1,
+            1 => Custom2,
+            2 => Custom3,
+            3 => Custom4,
+            4 => Custom5,
+            5 => Custom6,
+            6 => Custom7,
+            7 => Custom8,
+            8 => Custom9,
+            9 => Custom10,
+            10 => Custom11,
+            11 => Custom12,
+            12 => Custom13,
+            13 => Custom14,
+            14 => Custom15,
+            15 => Custom16,
+            16 => Custom17,
+            17 => Custom18,
+            18 => Custom19,
+            19 => Custom20,
+            _ => return None,
+        })
+    }
+}
+
 pub const INITIAL_RANSOM: i32 = 100;
 
 /// Maximum number of amulets a campaign can accumulate.  Once the

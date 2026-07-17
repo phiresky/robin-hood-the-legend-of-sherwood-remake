@@ -781,6 +781,7 @@ impl Engine {
                 .attach_program(prev_ms.manager.program.clone());
             new_ms.bindings = prev_ms.bindings.clone();
         }
+        inner.migrate_legacy_script_custom_values();
 
         // Rebuild `SequenceManager` lookup indices after replacing the
         // sequence list.

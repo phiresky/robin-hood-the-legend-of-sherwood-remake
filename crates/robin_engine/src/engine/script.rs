@@ -8,9 +8,64 @@ use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
 impl EngineInner {
-    /// Refresh entity-active map in GameHost from the real entity storage.
-    /// Called before script execution so IsAnimationActive reads live state.
-    /// Also populates PC/NPC snapshot state used by misc native functions.
+    /// Normalize custom values from the pre-v3 GameHost save shape into their
+    /// canonical campaign/entity owners. Contradictory duplicate values are a
+    /// corrupt save and must not be resolved by silently choosing one side.
+    pub(super) fn migrate_legacy_script_custom_values(&mut self) {
+        let Some(legacy) = self
+            .mission_script
+            .as_mut()
+            .and_then(|script| script.legacy_custom_values.take())
+        else {
+            return;
+        };
+
+        if !legacy.campaign.is_empty() {
+            let campaign = self
+                .mission_domain
+                .campaign
+                .as_mut()
+                .expect("legacy script campaign values require an active campaign");
+            for (index, value) in legacy.campaign {
+                let slot = CampaignValue::custom(index).unwrap_or_else(|| {
+                    panic!("legacy script save has invalid campaign custom-value index {index}")
+                });
+                let canonical = campaign.values[slot];
+                assert!(
+                    canonical == 0 || canonical == value,
+                    "legacy script campaign value {index} contradicts canonical value: legacy={value}, canonical={canonical}"
+                );
+                campaign.values[slot] = value;
+            }
+        }
+
+        for ((actor_handle, index), value) in legacy.npc {
+            assert!(
+                (0..crate::element_kinds::NpcCustomValue::COUNT as i32).contains(&index),
+                "legacy script save has invalid NPC custom-value index {index} for actor {actor_handle}"
+            );
+            let entity_id = self
+                .entity_id_for_actor_handle(actor_handle)
+                .unwrap_or_else(|| {
+                    panic!("legacy script save references missing NPC actor {actor_handle}")
+                });
+            let npc = self
+                .entities
+                .get_mut(entity_id)
+                .and_then(|entity| entity.npc_data_mut())
+                .unwrap_or_else(|| {
+                    panic!("legacy script save references non-NPC actor {actor_handle}")
+                });
+            let canonical = npc.custom_values[index as usize];
+            assert!(
+                canonical == 0 || canonical == value,
+                "legacy script NPC value ({actor_handle}, {index}) contradicts canonical value: legacy={value}, canonical={canonical}"
+            );
+            npc.custom_values[index as usize] = value;
+        }
+    }
+
+    /// Refresh script query data that is not temporarily owned by GameHost.
     pub(super) fn refresh_game_host_entity_state(&mut self) {
         if let Some(script) = self.mission_script.as_mut() {
             script.bindings.sight_obstacles.dynamic_obstacles =
@@ -21,15 +76,6 @@ impl EngineInner {
         // Collect data first, then write to host (avoids borrow issues).
         let ambiance = self.weather.ambiance;
         let is_forest_level = self.weather.is_forest_level;
-        let mut entity_active_map: Vec<(i32, bool)> = Vec::with_capacity(self.entities.len());
-        let mut pc_handles = Vec::with_capacity(self.pc_ids.len());
-        let mut robin_handle: i32 = 0;
-        let mut pc_profile_map: Vec<(i32, crate::profiles::CharacterProfileIdx)> =
-            Vec::with_capacity(self.pc_ids.len());
-        let mut any_civilian_dead = false;
-        let mut any_enemy_dead = false;
-        let mut overall_enemy_alert: i32 = 0;
-        let mut overall_civilian_alert: i32 = 0;
 
         // Sound-source liveness snapshot — destroyed slots must be
         // distinguishable from valid indices so `GetSoundSourceScript`
@@ -38,53 +84,6 @@ impl EngineInner {
         let sound_source_alive: Vec<bool> = (0..self.feedback.sound_sim.sources.num_sources())
             .map(|i| self.feedback.sound_sim.sources.get(i).is_some())
             .collect();
-
-        for (id, fx) in self.entities.fxs() {
-            let handle = crate::natives::GameHost::actor_handle(id);
-            entity_active_map.push((handle, fx.element.active));
-        }
-        for (id, target) in self.entities.targets() {
-            let handle = crate::natives::GameHost::actor_handle(id);
-            entity_active_map.push((handle, target.element.active));
-        }
-
-        for (id, pc) in self.entities.pcs() {
-            let handle = crate::natives::GameHost::actor_handle(id);
-            pc_handles.push(handle);
-            pc_profile_map.push((handle, pc.pc.profile_index));
-            if pc.pc.robin {
-                robin_handle = handle;
-            }
-        }
-
-        // NPC aggregate state.  Alert sourced from the NPC's
-        // `current_music_alert_status`, which `SetAlertStatus`
-        // writes independently of the AI state machine.  Do not
-        // collapse with `AiState` — the two fields drift.
-        for (_, entity) in self.entities.npcs() {
-            let dead = entity.is_dead();
-            let alert = entity
-                .ai_controller()
-                .map(|ai| ai.current_music_alert_status as i32)
-                .unwrap_or(0);
-            // Civilian filter is `!is_soldier()` (all non-soldier
-            // NPCs), not a narrower civilian category.
-            if entity.is_soldier() {
-                if dead {
-                    any_enemy_dead = true;
-                }
-                if !dead && alert > overall_enemy_alert {
-                    overall_enemy_alert = alert;
-                }
-            } else {
-                if dead {
-                    any_civilian_dead = true;
-                }
-                if !dead && alert > overall_civilian_alert {
-                    overall_civilian_alert = alert;
-                }
-            }
-        }
 
         // Selected PCs
         let selected_pc_handles: Vec<i32> = self.players.seats[0]
@@ -123,47 +122,15 @@ impl EngineInner {
             None => return,
         };
 
-        game_host.entity_active.clear();
-        for (h, active) in entity_active_map {
-            game_host.entity_active.insert(h, active);
-        }
-
         game_host.current_animations.clear();
         for (h, anim) in current_animations {
             game_host.current_animations.insert(h, anim);
         }
 
-        game_host.pc_handles = pc_handles;
         game_host.selected_pc_handles = selected_pc_handles;
-        game_host.robin_handle = robin_handle;
-        game_host.pc_profile_map.clear();
-        for (h, pi) in pc_profile_map {
-            game_host.pc_profile_map.insert(h, pi);
-        }
-        game_host.any_civilian_dead = any_civilian_dead;
-        game_host.any_enemy_dead = any_enemy_dead;
-        game_host.overall_enemy_alert = overall_enemy_alert;
-        game_host.overall_civilian_alert = overall_civilian_alert;
         game_host.sound_source_alive = sound_source_alive;
         game_host.ambiance = ambiance;
         game_host.is_forest_level = is_forest_level;
-    }
-
-    /// Populate PC authorisation bits in GameHost from spawned PC entities.
-    pub(super) fn refresh_game_host_pc_auth_bits(&mut self) {
-        let mut bits: Vec<(i32, u16)> = Vec::new();
-        for (pc_bit_idx, (id, _)) in self.entities.pcs().enumerate() {
-            let handle = crate::natives::GameHost::actor_handle(id);
-            let bit = 1u16 << pc_bit_idx;
-            bits.push((handle, bit));
-        }
-        if let Some(ref mut script) = self.mission_script
-            && let Some(game_host) = script.game_host_mut()
-        {
-            for (handle, bit) in bits {
-                game_host.pc_auth_bits.insert(handle, bit);
-            }
-        }
     }
 
     /// Attach immutable level data to the script-native dispatcher.
@@ -220,16 +187,6 @@ impl EngineInner {
         let mut script_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
 
         if let Some(game_host) = script.game_host_mut() {
-            // ── Entity active state → real entities ──
-            for (&handle, &active) in &game_host.entity_active {
-                if let Some(entity_id) = self.entity_id_for_actor_handle(handle)
-                    && let Some(entity) = self.entities.get_mut(entity_id)
-                    && (entity.kind().is_fx() || entity.kind().is_fx_target())
-                {
-                    entity.element_data_mut().active = active;
-                }
-            }
-
             // ── Sound commands ──
             // Commands that don't need an AudioBackend are processed now.
             // The remaining ones are queued for main_entry to flush.
@@ -3288,7 +3245,7 @@ mod script_context_tests {
     }
 
     #[test]
-    fn mission_script_v2_snapshot_round_trips_state_and_reattaches_program() {
+    fn mission_script_v3_snapshot_round_trips_state_and_reattaches_program() {
         let mut script = empty_mission_script();
         script.state.globals.insert(7, 91);
         script
@@ -3309,16 +3266,16 @@ mod script_context_tests {
 
         let hash_before = robin_util::state_hash::compute(&script);
         let program = script.manager.program.clone();
-        let json = serde_json::to_string(&script).expect("serialize v2 MissionScript");
+        let json = serde_json::to_string(&script).expect("serialize v3 MissionScript");
         let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
-        assert_eq!(value["snapshot_version"], 2);
+        assert_eq!(value["snapshot_version"], 3);
         assert!(value["game_host"].get("globals").is_none());
         assert!(value["game_host"].get("computed_locations").is_none());
         assert!(value["game_host"].get("recording").is_none());
         assert!(value.get("bindings").is_none());
 
         let mut decoded: MissionScript =
-            serde_json::from_str(&json).expect("deserialize v2 MissionScript");
+            serde_json::from_str(&json).expect("deserialize v3 MissionScript");
         assert_eq!(decoded.bindings.script_location_count, 0);
         decoded.attach_program(program);
         decoded.attach_bindings(crate::natives::AttachedScriptBindings {
@@ -3407,6 +3364,66 @@ mod script_context_tests {
         let error = serde_json::from_value::<MissionScript>(snapshot)
             .expect_err("contradictory ScriptState must fail");
         assert!(error.to_string().contains("contradictory"), "{error}");
+    }
+
+    #[test]
+    fn legacy_custom_campaign_value_migrates_once() {
+        let mut engine = EngineInner::new();
+        engine.mission_domain.campaign = Some(crate::campaign::Campaign::default());
+        let mut script = empty_mission_script();
+        script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
+            campaign: std::collections::BTreeMap::from([(7, 42)]),
+            npc: std::collections::BTreeMap::new(),
+        });
+        engine.mission_script = Some(script);
+
+        engine.migrate_legacy_script_custom_values();
+
+        let slot = CampaignValue::custom(7).unwrap();
+        assert_eq!(engine.campaign().unwrap().values[slot], 42);
+        assert!(
+            engine
+                .mission_script
+                .as_ref()
+                .unwrap()
+                .legacy_custom_values
+                .is_none()
+        );
+        engine.migrate_legacy_script_custom_values();
+        assert_eq!(engine.campaign().unwrap().values[slot], 42);
+    }
+
+    #[test]
+    fn v2_game_host_custom_values_are_preserved_for_migration() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        snapshot["snapshot_version"] = serde_json::json!(2);
+        snapshot["game_host"]["campaign_values"] = serde_json::json!({"7": 42});
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("deserialize v2 custom values");
+        let legacy = decoded
+            .legacy_custom_values
+            .expect("v2 custom values must survive until engine attachment");
+        assert_eq!(legacy.campaign.get(&7), Some(&42));
+    }
+
+    #[test]
+    #[should_panic(expected = "contradicts canonical value")]
+    fn contradictory_legacy_custom_campaign_value_is_rejected() {
+        let mut engine = EngineInner::new();
+        let slot = CampaignValue::custom(7).unwrap();
+        let mut campaign = crate::campaign::Campaign::default();
+        campaign.values[slot] = 41;
+        engine.mission_domain.campaign = Some(campaign);
+        let mut script = empty_mission_script();
+        script.legacy_custom_values = Some(crate::engine::types::LegacyScriptCustomValues {
+            campaign: std::collections::BTreeMap::from([(7, 42)]),
+            npc: std::collections::BTreeMap::new(),
+        });
+        engine.mission_script = Some(script);
+
+        engine.migrate_legacy_script_custom_values();
     }
 
     #[test]

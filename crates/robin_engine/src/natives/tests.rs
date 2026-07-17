@@ -178,15 +178,23 @@ fn name_lookup() {
 #[test]
 fn npc_custom_values_round_trip_through_json() {
     let mut host = GameHost::new();
-    host.npc_values.insert((123, 7), 456);
-    host.npc_values.insert((-5, 99), -12);
+    let mut npc = native_test_soldier();
+    npc.npc_data_mut().unwrap().custom_values[7] = 456;
+    host.entities.push(Some(npc));
 
     serde_json::to_value(&host).expect("save/rollback JSON value");
     let json = serde_json::to_string(&host).expect("serialize GameHost");
     let decoded: GameHost = serde_json::from_str(&json).expect("deserialize GameHost");
 
-    assert_eq!(decoded.npc_values.get(&(123, 7)), Some(&456));
-    assert_eq!(decoded.npc_values.get(&(-5, 99)), Some(&-12));
+    assert_eq!(
+        decoded.entities[0]
+            .as_ref()
+            .unwrap()
+            .npc_data()
+            .unwrap()
+            .custom_values[7],
+        456
+    );
 }
 
 #[test]
@@ -194,9 +202,11 @@ fn npc_custom_values_participate_in_state_hash() {
     let mut baseline = GameHost::new();
     let mut same = GameHost::new();
     let mut changed = GameHost::new();
-    baseline.npc_values.insert((123, 7), 456);
-    same.npc_values.insert((123, 7), 456);
-    changed.npc_values.insert((123, 7), 457);
+    for (host, value) in [(&mut baseline, 456), (&mut same, 456), (&mut changed, 457)] {
+        let mut npc = native_test_soldier();
+        npc.npc_data_mut().unwrap().custom_values[7] = value;
+        host.entities.push(Some(npc));
+    }
 
     assert_eq!(
         robin_util::state_hash::compute(&baseline),
@@ -611,8 +621,13 @@ fn compute_location_between() {
 #[test]
 fn are_all_pcs_inside() {
     let mut host = GameHost::new();
-    host.pc_handles = vec![1, 2, 3];
-    host.zone_occupants.insert(5, vec![1, 2, 3]);
+    host.entities = vec![
+        Some(native_test_pc(Vec::new(), Vec::new())),
+        Some(native_test_pc(Vec::new(), Vec::new())),
+        Some(native_test_pc(Vec::new(), Vec::new())),
+    ];
+    host.zone_occupants
+        .insert(5, (0..3).map(GameHost::actor_handle_from_index).collect());
     let prog = call_native_return(230, &[5]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
@@ -621,8 +636,13 @@ fn are_all_pcs_inside() {
 #[test]
 fn are_all_pcs_inside_not_all() {
     let mut host = GameHost::new();
-    host.pc_handles = vec![1, 2, 3];
-    host.zone_occupants.insert(5, vec![1, 3]); // PC 2 missing
+    host.entities = vec![
+        Some(native_test_pc(Vec::new(), Vec::new())),
+        Some(native_test_pc(Vec::new(), Vec::new())),
+        Some(native_test_pc(Vec::new(), Vec::new())),
+    ];
+    let handles: Vec<_> = (0..3).map(GameHost::actor_handle_from_index).collect();
+    host.zone_occupants.insert(5, vec![handles[0], handles[2]]); // PC 2 missing
     let prog = call_native_return(230, &[5]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
@@ -663,7 +683,8 @@ fn campaign_values_set_get() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = GameHost::new();
+    let mut host = GameHost::new();
+    host.campaign = Some(crate::campaign::Campaign::default());
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&program), StopReason::ReturnedValue(42));
 }
@@ -676,12 +697,9 @@ fn campaign_value_default_zero() {
 // --- Custom NPC values ---
 
 #[test]
-fn npc_values_set_get_nonexistent_actor() {
-    // SetCustomNPCValue(actor=3, id=5, value=77); return GetCustomNPCValue(actor=3, id=5).
-    // Actor 3 doesn't exist in the bare GameHost, so Set warns + skips
-    // the store and Get returns -1.  Round-trip with a real NPC entity
-    // would need entity-setup plumbing — covered in engine integration
-    // tests, not natives unit tests.
+fn npc_values_set_then_get_from_canonical_entity() {
+    let actor = GameHost::actor_handle_from_index(0);
+    // SetCustomNPCValue(actor, id=5, value=77); return GetCustomNPCValue(actor, id=5).
     let program = vec![
         BeginFunction {
             volatile_count: 0,
@@ -689,7 +707,7 @@ fn npc_values_set_get_nonexistent_actor() {
         },
         Aff0IConstant {
             dst: TMP0,
-            constant: 3,
+            constant: actor,
         }, // actor
         Aff0IConstant {
             dst: TMP4,
@@ -709,9 +727,70 @@ fn npc_values_set_get_nonexistent_actor() {
         Aff1NativeGetReturn { sym: TMP8 },
         ReturnVal { sym: TMP8 },
     ];
-    let host = GameHost::new();
+    let mut host = GameHost::new();
+    host.entities.push(Some(native_test_soldier()));
     let mut vm = Vm::new().with_host(Box::new(host));
-    assert_eq!(vm.run(&program), StopReason::ReturnedValue(-1));
+    assert_eq!(vm.run(&program), StopReason::ReturnedValue(77));
+}
+
+#[test]
+fn custom_values_are_isolated_between_script_hosts() {
+    fn set_campaign(host: &mut GameHost, value: i32) {
+        let mut stack = NativeStack::default();
+        stack.push_i32(3);
+        stack.push_i32(value);
+        assert_eq!(
+            call_host_native(host, NativeFn::SetCustomCampaignValue, &mut stack),
+            0
+        );
+    }
+
+    fn get_campaign(host: &mut GameHost) -> i32 {
+        let mut stack = NativeStack::default();
+        stack.push_i32(3);
+        call_host_native(host, NativeFn::GetCustomCampaignValue, &mut stack)
+    }
+
+    let mut first = GameHost::new();
+    first.campaign = Some(crate::campaign::Campaign::default());
+    let mut second = GameHost::new();
+    second.campaign = Some(crate::campaign::Campaign::default());
+
+    set_campaign(&mut first, 11);
+    set_campaign(&mut second, 22);
+
+    assert_eq!(get_campaign(&mut first), 11);
+    assert_eq!(get_campaign(&mut second), 22);
+}
+
+#[test]
+fn animation_state_write_is_immediately_visible_from_canonical_entity() {
+    let actor = GameHost::actor_handle_from_index(0);
+    let mut host = GameHost::new();
+    host.entities
+        .push(Some(Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                ..Default::default()
+            },
+            fx: crate::element::FxData::default(),
+        })));
+
+    let mut set = NativeStack::default();
+    set.push_i32(actor);
+    set.push_i32(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::SetAnimationState, &mut set),
+        1
+    );
+
+    let mut get = NativeStack::default();
+    get.push_i32(actor);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::IsAnimationActive, &mut get),
+        1
+    );
+    assert!(host.entities[0].as_ref().unwrap().element_data().active);
 }
 
 #[test]
@@ -1142,7 +1221,6 @@ fn set_experiences_test_host() -> (GameHost, i32) {
 
     let mut host = GameHost::new();
     host.entities = vec![Some(native_test_pc(Vec::new(), Vec::new()))];
-    host.pc_profile_map.insert(actor, profile_idx);
     host.campaign = Some(campaign);
     (host, actor)
 }

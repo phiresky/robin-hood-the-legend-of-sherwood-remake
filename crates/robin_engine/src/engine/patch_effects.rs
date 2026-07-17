@@ -492,13 +492,6 @@ impl EngineInner {
             }
         }
 
-        // Also update entity_active on GameHost so script queries see it.
-        if let Some(ref mut script) = self.mission_script
-            && let Some(game_host) = script.game_host_mut()
-        {
-            game_host.entity_active.insert(handle, true);
-        }
-
         tracing::trace!(handle, ?anim, "patch_effects: StartAnimation");
     }
 
@@ -515,13 +508,6 @@ impl EngineInner {
         };
         if let Some(entity) = self.entities.get_mut(entity_id) {
             entity.element_data_mut().active = false;
-        }
-
-        // Also update entity_active on GameHost.
-        if let Some(ref mut script) = self.mission_script
-            && let Some(game_host) = script.game_host_mut()
-        {
-            game_host.entity_active.insert(handle, false);
         }
 
         tracing::trace!(handle, "patch_effects: DeactivateAnimation");

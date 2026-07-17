@@ -1020,6 +1020,11 @@ pub struct MissionScript {
     /// before the VM can resume.
     #[state_hash(skip)]
     pub(crate) bindings: crate::natives::AttachedScriptBindings,
+    /// One-shot compatibility payload for saves written while custom values
+    /// were incorrectly serialized on `GameHost`. Engine attachment moves
+    /// these values into Campaign/NPC storage and clears this field.
+    #[state_hash(skip)]
+    pub(crate) legacy_custom_values: Option<LegacyScriptCustomValues>,
     /// Concrete script-native state. VMs borrow this through their
     /// transient trait-object host field only while a script call is
     /// executing, so snapshots keep the real state instead of losing it
@@ -1079,7 +1084,7 @@ pub struct MissionScript {
     campaign_lease: Option<CampaignIdentity>,
 }
 
-const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 2;
+const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 3;
 
 #[derive(Serialize)]
 struct MissionScriptSnapshotRef<'a> {
@@ -1146,12 +1151,26 @@ struct MissionScriptSnapshot {
 struct CompatibleGameHost {
     #[serde(flatten)]
     current: GameHost,
+    campaign_values: Option<BTreeMap<i32, i32>>,
+    npc_values: Option<LegacyNpcValues>,
     globals: Option<BTreeMap<i32, i32>>,
     computed_locations: Option<Vec<(f32, f32)>>,
     computed_location_layers: Option<Vec<Option<(u16, u16)>>>,
     recording: Option<crate::sequence::RecordingSession>,
     sequence_id: Option<i32>,
 }
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LegacyScriptCustomValues {
+    pub campaign: BTreeMap<i32, i32>,
+    pub npc: BTreeMap<(i32, i32), i32>,
+}
+
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct LegacyNpcValues(
+    #[serde(with = "serde_json_any_key::any_key_map")] BTreeMap<(i32, i32), i32>,
+);
 
 impl CompatibleGameHost {
     fn legacy_state<E: serde::de::Error>(&self) -> Result<Option<ScriptState>, E> {
@@ -1224,7 +1243,7 @@ impl<'de> Deserialize<'de> for MissionScript {
                     )
                 })?
             }
-            Some(MISSION_SCRIPT_SNAPSHOT_VERSION) => {
+            Some(2 | MISSION_SCRIPT_SNAPSHOT_VERSION) => {
                 let state = snapshot.state.ok_or_else(|| {
                     serde::de::Error::custom("v2 MissionScript snapshot is missing ScriptState")
                 })?;
@@ -1250,6 +1269,15 @@ impl<'de> Deserialize<'de> for MissionScript {
             manager: snapshot.manager,
             state,
             bindings: crate::natives::AttachedScriptBindings::default(),
+            legacy_custom_values: {
+                let campaign = snapshot.game_host.campaign_values.unwrap_or_default();
+                let npc = snapshot
+                    .game_host
+                    .npc_values
+                    .map_or_else(BTreeMap::new, |values| values.0);
+                (!campaign.is_empty() || !npc.is_empty())
+                    .then_some(LegacyScriptCustomValues { campaign, npc })
+            },
             game_host: snapshot.game_host.current,
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
@@ -1405,6 +1433,7 @@ impl MissionScript {
             manager,
             state: ScriptState::default(),
             bindings: crate::natives::AttachedScriptBindings::default(),
+            legacy_custom_values: None,
             game_host: GameHost::new(),
             instance,
             actor_instances: BTreeMap::new(),

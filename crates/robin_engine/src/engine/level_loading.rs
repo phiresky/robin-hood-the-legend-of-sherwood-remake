@@ -5533,9 +5533,6 @@ impl EngineInner {
         // ── Entity active state (FX animations) ──
         // Populated here once; kept in sync by sync_game_host_post_script.
         self.refresh_game_host_entity_state();
-
-        // ── PC auth bits ──
-        self.refresh_game_host_pc_auth_bits();
     }
 
     /// Harvest the Sherwood engine state into the campaign's production

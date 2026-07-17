@@ -520,6 +520,7 @@ impl EngineInner {
             }
         }
         self.attach_script_bindings(assets);
+        self.migrate_legacy_script_custom_values();
         for (id, entity) in self.entities.occupied_mut() {
             entity
                 .sprite_mut()
