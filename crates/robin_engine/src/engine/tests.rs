@@ -3572,6 +3572,114 @@ fn npc_hourglass_observes_exact_original_phase_order() {
 }
 
 #[test]
+fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
+    #[derive(Debug, PartialEq)]
+    struct Observation {
+        frame: u32,
+        observer_slot: u32,
+        target_slot: u32,
+        target_before_movement: MapPoint,
+        target_after_movement: MapPoint,
+        target_position_observed_by_follow: MapPoint,
+    }
+
+    fn observe(observer_before_target: bool) -> Observation {
+        use crate::element::{Camp, Entity, Posture};
+
+        let mut engine = EngineInner::new();
+        engine.frame_counter = 73;
+
+        let mut observer = make_test_ai_soldier(Camp::Lacklandists);
+        observer.element_data_mut().active = true;
+        observer
+            .element_data_mut()
+            .set_position_map(MapPoint::new(100.0, 100.0));
+        observer.element_data_mut().set_direction_instantly(0);
+
+        let mut target = make_test_pc(Posture::Upright);
+        target.element_data_mut().active = true;
+        let target_before_movement = MapPoint::new(80.0, 20.0);
+        let target_after_movement = MapPoint::new(120.0, 20.0);
+        target
+            .element_data_mut()
+            .set_position_map(target_before_movement);
+
+        let (observer_id, target_id) = if observer_before_target {
+            let observer_id = engine.add_entity(observer);
+            let target_id = engine.add_entity(target);
+            (observer_id, target_id)
+        } else {
+            let target_id = engine.add_entity(target);
+            let observer_id = engine.add_entity(observer);
+            (observer_id, target_id)
+        };
+
+        let mut positions_before_movement =
+            crate::entities::EntitySlots::filled(engine.entities.len(), None);
+        for (entity_id, entity) in engine.entities.occupied() {
+            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+        }
+
+        // This mutation is the smallest deterministic stand-in for the
+        // globally batched tick_entity_movement between the captured input
+        // boundary and refresh_npc_views. The oracle is the position copied
+        // into EYES_FOLLOW's stare point, not movement-distance mechanics.
+        engine
+            .get_entity_mut(target_id)
+            .expect("follow target exists")
+            .element_data_mut()
+            .set_position_map(target_after_movement);
+        let Entity::Soldier(observer) = engine
+            .get_entity_mut(observer_id)
+            .expect("follow observer exists")
+        else {
+            panic!("follow observer changed entity kind");
+        };
+        crate::ai_vision::focus_entity(&mut observer.npc, target_id);
+
+        engine.refresh_npc_views(&positions_before_movement);
+
+        let Entity::Soldier(observer) = engine
+            .get_entity(observer_id)
+            .expect("follow observer remains")
+        else {
+            panic!("follow observer changed entity kind");
+        };
+        Observation {
+            frame: engine.frame_counter,
+            observer_slot: observer_id.index(),
+            target_slot: target_id.index(),
+            target_before_movement,
+            target_after_movement,
+            target_position_observed_by_follow: observer.npc.stare_point,
+        }
+    }
+
+    assert_eq!(
+        [observe(true), observe(false)],
+        [
+            Observation {
+                frame: 73,
+                observer_slot: 0,
+                target_slot: 1,
+                target_before_movement: MapPoint::new(80.0, 20.0),
+                target_after_movement: MapPoint::new(120.0, 20.0),
+                target_position_observed_by_follow: MapPoint::new(80.0, 20.0),
+            },
+            Observation {
+                frame: 73,
+                observer_slot: 1,
+                target_slot: 0,
+                target_before_movement: MapPoint::new(80.0, 20.0),
+                target_after_movement: MapPoint::new(120.0, 20.0),
+                target_position_observed_by_follow: MapPoint::new(120.0, 20.0),
+            },
+        ],
+        "original per-element virtual calls expose pre-move state to an earlier observer and post-move state to a later observer"
+    );
+}
+
+#[test]
 fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
     use super::ai::npc_hourglass_frame_phase;
 
