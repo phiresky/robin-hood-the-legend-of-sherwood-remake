@@ -336,16 +336,20 @@ impl EngineInner {
             // Mark NonInterruptable for OnShoulders only — carrier
             // wobble runs at normal priority.
             if matches!(posture, Posture::OnShoulders) {
-                self.sequence_manager.set_element_priority(
+                self.orders.sequence_manager.set_element_priority(
                     seq_id,
                     elem_idx,
                     crate::sequence::SequencePriority::NonInterruptable,
                 );
             }
             self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
     }
 
@@ -504,7 +508,8 @@ impl EngineInner {
                 crate::sequence::SequencePriority::NonInterruptable
             ) {
                 let (dseq, didx) = damage_element;
-                self.sequence_manager
+                self.orders
+                    .sequence_manager
                     .set_element_priority(dseq, didx, priority);
             }
             self.queue_damage_anim(victim_id, damage_element, fall_anim);
@@ -566,7 +571,7 @@ impl EngineInner {
         // current InProgress sequence element.
         let current_priority = self
             .current_sequence_element_for_actor(victim_id)
-            .and_then(|(s, i)| self.sequence_manager.get_element(s, i))
+            .and_then(|(s, i)| self.orders.sequence_manager.get_element(s, i))
             .map(|e| e.priority)
             .unwrap_or_default();
         if current_priority.is_non_interruptable()
@@ -1180,7 +1185,9 @@ impl EngineInner {
         let mut roll_order =
             crate::order::Order::new(OrderType::Rolling, dest.x, dest.y, self.alloc_order_id());
         roll_order.compute_direction = false;
-        self.sequence_manager.push_order_on(dseq, didx, roll_order);
+        self.orders
+            .sequence_manager
+            .push_order_on(dseq, didx, roll_order);
     }
 
     // ─── Multi-target strike execution ──────────────────────────────

@@ -161,6 +161,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
     let assets = LevelAssets::new();
 
     let active_id = engine
+        .orders
         .sequence_manager
         .launch_element(SequenceElement::new_movement(
             1,
@@ -168,9 +169,15 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
             Some(receiver),
             OrderType::RunningUpright,
         ));
-    engine.sequence_manager.element_in_progress(active_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(active_id, 0);
     assert_eq!(
-        engine.sequence_manager.current_element_for_actor(receiver),
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(receiver),
         Some((active_id, 0))
     );
 
@@ -194,12 +201,16 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
         "SendMessage is zero-frame"
     );
     assert_eq!(
-        engine.sequence_manager.current_element_for_actor(receiver),
+        engine
+            .orders
+            .sequence_manager
+            .current_element_for_actor(receiver),
         Some((active_id, 0)),
         "ExecutedImmediately bypasses Instruct contention and preserves the current element"
     );
 
     let send = engine
+        .orders
         .sequence_manager
         .sequences_iter()
         .flat_map(|sequence| sequence.elements.iter())
@@ -254,6 +265,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
         "ProcessMessage callbacks must run in SendMessage launch order"
     );
     let states: Vec<_> = engine
+        .orders
         .sequence_manager
         .sequences_iter()
         .flat_map(|sequence| sequence.elements.iter())

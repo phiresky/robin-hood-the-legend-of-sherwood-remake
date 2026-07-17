@@ -172,7 +172,8 @@ impl EngineInner {
             // Zoom reached target, release the latched ZoomLevel
             // sequence element.
             if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-                self.sequence_manager
+                self.orders
+                    .sequence_manager
                     .element_terminated(r.sequence_id, r.element_index);
             }
         }
@@ -189,7 +190,7 @@ impl EngineInner {
             {
                 if self.is_zoom_up_possible() {
                     self.feedback.cutscene_camera.mechanized_zoom = true;
-                    self.messenger.send(Message::with_value(
+                    self.orders.messenger.send(Message::with_value(
                         MessageType::Simple(SimpleMessage::ZoomUp),
                         1,
                     ));
@@ -199,7 +200,7 @@ impl EngineInner {
                 }
             } else if self.is_zoom_down_possible() {
                 self.feedback.cutscene_camera.mechanized_zoom = true;
-                self.messenger.send(Message::with_value(
+                self.orders.messenger.send(Message::with_value(
                     MessageType::Simple(SimpleMessage::ZoomDown),
                     1,
                 ));
@@ -212,12 +213,14 @@ impl EngineInner {
         // ── Delayed zoom requests ────────────────────────────────
         if display.background_transform.required_zoom_down {
             display.background_transform.required_zoom_down = false;
-            self.messenger
+            self.orders
+                .messenger
                 .send(Message::new(MessageType::Simple(SimpleMessage::ZoomDown)));
         }
         if display.background_transform.required_zoom_up {
             display.background_transform.required_zoom_up = false;
-            self.messenger
+            self.orders
+                .messenger
                 .send(Message::new(MessageType::Simple(SimpleMessage::ZoomUp)));
         }
 
@@ -274,7 +277,8 @@ impl EngineInner {
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
                     if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-                        self.sequence_manager
+                        self.orders
+                            .sequence_manager
                             .element_terminated(r.sequence_id, r.element_index);
                     }
                 } else {
@@ -302,7 +306,8 @@ impl EngineInner {
                 // Slide reached target, release the latched
                 // CameraGoto element.
                 if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_terminated(r.sequence_id, r.element_index);
                 }
             }
@@ -624,13 +629,13 @@ impl EngineInner {
             self.feedback.cutscene_camera.zoom_init_done = false;
 
             if display.background_transform.zoom_to_up {
-                self.messenger.send(Message::with_value(
+                self.orders.messenger.send(Message::with_value(
                     MessageType::Simple(SimpleMessage::ZoomUpEnd),
                     (zoom_up << 16) | zoom_down,
                 ));
                 display.background_transform.zoom_to_up = false;
             } else {
-                self.messenger.send(Message::with_value(
+                self.orders.messenger.send(Message::with_value(
                     MessageType::Simple(SimpleMessage::ZoomDownEnd),
                     (zoom_up << 16) | zoom_down,
                 ));

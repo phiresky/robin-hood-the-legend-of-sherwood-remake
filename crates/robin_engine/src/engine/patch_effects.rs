@@ -355,7 +355,7 @@ impl EngineInner {
                 .and_then(|am| {
                     let seq_id = am.sequence_id?;
                     let elem_idx = am.element_index;
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx)?;
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
                     if elem.owner != Some(id) {
                         return None;
                     }
@@ -399,7 +399,11 @@ impl EngineInner {
                 // Clear orders and the actor's active-movement link
                 // so `try_dispatch_move_path` can re-establish them
                 // from a clean slate.
-                if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+                if let Some(elem) = self
+                    .orders
+                    .sequence_manager
+                    .get_element_mut(seq_id, elem_idx)
+                {
                     elem.orders.clear();
                 }
                 if let Some(entity) = self.get_entity_mut(id)
@@ -411,7 +415,9 @@ impl EngineInner {
                     MovePathOutcome::Success => {}
                     MovePathOutcome::Pending => {}
                     MovePathOutcome::ActorGone => {
-                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
                     }
                     MovePathOutcome::Failed => {
                         tracing::warn!(
@@ -425,7 +431,7 @@ impl EngineInner {
                             "Patch-triggered move retranslation failed; queuing failed_path timeout"
                         );
                         // Re-translate failed — slide into MOVE_WAITING.
-                        self.failed_path_requests.push(
+                        self.orders.failed_path_requests.push(
                             crate::engine::movement::FailedPathRequest {
                                 owner: id,
                                 seq_id,

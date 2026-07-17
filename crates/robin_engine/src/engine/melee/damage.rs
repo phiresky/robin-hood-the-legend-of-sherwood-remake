@@ -793,7 +793,7 @@ impl EngineInner {
             );
             if !is_rider && !still_alive {
                 let (dseq, didx) = damage_element;
-                self.sequence_manager.element_terminated(dseq, didx);
+                self.orders.sequence_manager.element_terminated(dseq, didx);
                 return;
             }
         }
@@ -963,7 +963,7 @@ impl EngineInner {
             );
             if !is_rider || !post_dead {
                 let (dseq, didx) = damage_element;
-                self.sequence_manager.element_terminated(dseq, didx);
+                self.orders.sequence_manager.element_terminated(dseq, didx);
                 return;
             }
             // Sleeping-rider-dying special case falls through to the
@@ -1796,6 +1796,7 @@ impl EngineInner {
         // PC).  Done before `kill_owner_sequences` so we still have
         // the damage-element data handy.
         let killer_is_pc = self
+            .orders
             .sequence_manager
             .get_element(damage_element.0, damage_element.1)
             .and_then(|e| match &e.data {
@@ -1816,7 +1817,8 @@ impl EngineInner {
         // a hard interrupt instead, so the only InProgress element
         // `current_element_for_actor` finds is the damage element, and
         // its `DyingSword` order becomes the actor's current order.
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .kill_owner_sequences(victim_id, damage_element.0);
 
         // Remove the dying soldier from every other NPC's
@@ -1938,6 +1940,7 @@ impl EngineInner {
         // call site.
         const SCORE_SOLDIER_KILLED_DURING_FIGHT: i32 = 50;
         let projectile_death = self
+            .orders
             .sequence_manager
             .get_element(damage_element.0, damage_element.1)
             .map(|e| {

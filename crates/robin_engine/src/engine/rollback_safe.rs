@@ -60,6 +60,8 @@ pub enum SnapshotRestoreError {
     },
     #[error("snapshot world invariant failed: {detail}")]
     WorldInvariantViolation { detail: String },
+    #[error("snapshot order invariant failed: {detail}")]
+    OrderInvariantViolation { detail: String },
 }
 
 /// Cross-crate owner of the simulation engine.
@@ -812,7 +814,7 @@ impl Engine {
 
         // Rebuild `SequenceManager` lookup indices after replacing the
         // sequence list.
-        inner.sequence_manager.rebuild_indices();
+        inner.orders.sequence_manager.rebuild_indices();
 
         // ── Engine-owned transient reset + HUD refresh ───────────
         inner.post_load_fixups(display);
@@ -858,6 +860,11 @@ impl Engine {
             .world
             .validate_snapshot_compatibility(&self.inner.world)
             .map_err(|detail| SnapshotRestoreError::WorldInvariantViolation { detail })?;
+        saved
+            .inner
+            .orders
+            .validate_invariants()
+            .map_err(|detail| SnapshotRestoreError::OrderInvariantViolation { detail })?;
         Ok(())
     }
 }

@@ -134,7 +134,9 @@ impl EngineInner {
         order.reverse = reverse;
         order.compute_direction = compute_direction;
         order.tolerance = tolerance;
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
 
         self.apply_door_pass_continue_state(entity_id, action);
 

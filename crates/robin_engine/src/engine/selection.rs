@@ -416,7 +416,8 @@ impl EngineInner {
             pc.pc.trumpet_enabled = false;
         }
 
-        self.messenger
+        self.orders
+            .messenger
             .send(Message::pc(PcMessage::SendReinforcement, Some(pc_id)));
     }
 
@@ -775,6 +776,7 @@ impl EngineInner {
         }
 
         let current_anim = self
+            .orders
             .sequence_manager
             .current_order_for_actor(pc_id)
             .map(|(_, _, order)| order.order_type);
@@ -787,6 +789,7 @@ impl EngineInner {
                     | crate::order::OrderType::TransitionLoadingBowAnonymous
             )
         ) || self
+            .orders
             .sequence_manager
             .element_is_about_to_be_launched(pc_id, Command::EquipBow)
         {

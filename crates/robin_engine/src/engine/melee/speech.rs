@@ -423,9 +423,10 @@ impl EngineInner {
             let mut m = std::collections::HashMap::new();
             for &pc_id in &self.world.pc_ids {
                 if let Some((seq_id, elem_idx, o)) =
-                    self.sequence_manager.current_order_for_actor(pc_id)
+                    self.orders.sequence_manager.current_order_for_actor(pc_id)
                 {
                     let command = self
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .map(|elem| elem.command)

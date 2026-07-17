@@ -160,6 +160,7 @@ impl EngineInner {
                 continue;
             }
             let current_parry_hold = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(entity_id)
                 .map(|(_, _, order)| order.order_type)
@@ -180,6 +181,7 @@ impl EngineInner {
                     launch_stop_parry.push(entity_id.into());
                 } else if matches!(state, Some(ActionState::ParryingSwordLow))
                     && let Some(elem_ref) = self
+                        .orders
                         .sequence_manager
                         .in_progress_element_for_actor_matching(entity_id, |elem| {
                             elem.command == Command::ParrySwordLow
@@ -204,6 +206,7 @@ impl EngineInner {
                     }
                     Some(ActionState::ParryingSwordLow) => {
                         if let Some(elem_ref) = self
+                            .orders
                             .sequence_manager
                             .in_progress_element_for_actor_matching(entity_id, |elem| {
                                 elem.command == Command::ParrySwordLow
@@ -224,6 +227,7 @@ impl EngineInner {
 
         for owner in launch_stop_parry {
             if self
+                .orders
                 .sequence_manager
                 .has_unpostponed_element_for_actor_matching(owner, |cmd| {
                     cmd == Command::StopParrySword
@@ -237,7 +241,9 @@ impl EngineInner {
         }
 
         for (seq_id, elem_idx, owner) in terminate_low_parry {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
             if let Some(entity) = self.world.entities.get_mut(owner)
                 && let Some(actor) = entity.actor_data_mut()
             {
@@ -268,6 +274,7 @@ impl EngineInner {
             return false;
         }
         if self
+            .orders
             .sequence_manager
             .has_live_element_for_actor_matching(entity_id, |command| {
                 matches!(
@@ -288,6 +295,7 @@ impl EngineInner {
             .and_then(|h| h.opponents.first().copied());
 
         !self
+            .orders
             .sequence_manager
             .has_unpostponed_element_for_actor_matching_element(entity_id, |elem| {
                 let blocks_waiting_sword = matches!(
@@ -860,6 +868,7 @@ impl EngineInner {
 
         if let Some(sequence_id) = sequence_id {
             let stale = self
+                .orders
                 .sequence_manager
                 .get_element(sequence_id, element_index)
                 .is_some_and(|element| {
@@ -880,7 +889,8 @@ impl EngineInner {
                     "tick_melee_strikes: skipping stale completed strike callback"
                 );
             } else {
-                self.sequence_manager
+                self.orders
+                    .sequence_manager
                     .element_terminated(sequence_id, element_index);
             }
         }
@@ -1561,6 +1571,7 @@ impl EngineInner {
             // computed flight eagerly, so hold it until the queued falling
             // order reports Start and has changed posture to Flying.
             let waiting_for_fall_start = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(entity_id)
                 .is_some_and(|(_, _, order)| is_falling_flight_order(order.order_type))
@@ -1833,6 +1844,7 @@ impl EngineInner {
     pub(crate) fn update_roll_after_crossing(&mut self, assets: &LevelAssets, entity_id: EntityId) {
         // Cheap early-out: only act while the actor is rolling.
         let is_rolling = self
+            .orders
             .sequence_manager
             .current_order_for_actor(entity_id)
             .map(|(_, _, o)| o.order_type == OrderType::Rolling)
@@ -1951,6 +1963,7 @@ impl EngineInner {
                 // sets the order to RiderCharging, which puts the
                 // entity in MovingFast with active path.
                 let has_charge = self
+                    .orders
                     .sequence_manager
                     .get_element(move_seq_id, move_elem_idx)
                     .and_then(|e| match &e.data {
@@ -2094,7 +2107,8 @@ impl EngineInner {
                 .active_movement
                 .sequence_id
                 .map(|s| {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .get_element(s, actor.active_movement.element_index)
                         .map(|e| e.orders.is_empty())
                         .unwrap_or(true)
@@ -2273,6 +2287,7 @@ impl EngineInner {
         }
         for npc_id in flagged {
             let has_active = self
+                .orders
                 .sequence_manager
                 .has_live_element_for_actor_matching(npc_id, |cmd| {
                     cmd.is_swordstrike() || cmd == crate::element::Command::WaitTimer
@@ -2366,9 +2381,10 @@ impl EngineInner {
             if soldier.human.tiredness >= TIREDNESS_WEAK_THRESHOLD {
                 pending_weak_stunned.push(npc_id.into());
                 let already_busy = self
+                    .orders
                     .sequence_manager
                     .current_element_for_actor(npc_id)
-                    .and_then(|(s, e)| self.sequence_manager.get_element(s, e))
+                    .and_then(|(s, e)| self.orders.sequence_manager.get_element(s, e))
                     .map(|el| {
                         !matches!(
                             el.command,
@@ -2814,7 +2830,7 @@ impl EngineInner {
         // the inner loop can stamp fresh ids via
         // `crate::order::alloc_order_id` while still holding
         // `self.world.entities.humans_mut()`.
-        let next_order_id = &mut self.next_order_id;
+        let next_order_id = &mut self.orders.next_order_id;
         for (entity_id, entity) in self.world.entities.humans_mut() {
             if entity.is_dead() {
                 continue;

@@ -490,7 +490,7 @@ impl EngineInner {
                 // Drop the queued shoot list — pending
                 // `Command::ShootBow` elements in `elements_to_go`.
                 let resolver = Self::priority_resolver(&self.world.entities);
-                self.sequence_manager.stop_pending_elements_matching(
+                self.orders.sequence_manager.stop_pending_elements_matching(
                     *pc_id,
                     Command::ShootBow,
                     crate::sequence::SequencePriority::Preference,
@@ -769,7 +769,7 @@ impl EngineInner {
                     // (the continuing-drag arm).  The first call only
                     // records the anchor.
                     if was_dragging {
-                        self.messenger.send(crate::messenger::Message::new(
+                        self.orders.messenger.send(crate::messenger::Message::new(
                             crate::messenger::MessageType::Simple(
                                 crate::messenger::SimpleMessage::UiHasFocus,
                             ),
@@ -815,7 +815,7 @@ impl EngineInner {
                     // drain (hides the PC-info popup next tick) and
                     // clear `input.has_focus` synchronously so the rest
                     // of this frame's mouse events skip dispatch.
-                    self.messenger.send(crate::messenger::Message::new(
+                    self.orders.messenger.send(crate::messenger::Message::new(
                         crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::UiHasFocus,
                         ),
@@ -3861,7 +3861,12 @@ mod tests {
     }
 
     fn first_seek_tolerance(engine: &EngineInner) -> f32 {
-        let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .unwrap();
         let seek = sequence.get(0).unwrap();
         match &seek.data {
             SequenceElementData::Movement { tolerance, .. } => *tolerance,
@@ -4017,7 +4022,7 @@ mod tests {
             },
         );
 
-        assert_eq!(engine.sequence_manager.sequence_count(), 0);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
         assert!(!engine.is_recording_macro());
         let state = engine
             .players
@@ -4063,8 +4068,13 @@ mod tests {
             },
         );
 
-        assert_eq!(engine.sequence_manager.sequence_count(), 1);
-        let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .unwrap();
         assert_scroll_read_composite(sequence, pc_id, npc_id, scroll_id);
     }
 
@@ -4136,7 +4146,12 @@ mod tests {
             false,
         );
 
-        let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .unwrap();
         let seek = sequence.get(0).unwrap();
         match &seek.data {
             SequenceElementData::Movement { tolerance, .. } => {
@@ -4179,8 +4194,13 @@ mod tests {
 
         engine.apply_interaction_with_seek(pc_id, target_id, Command::ShootBow, false);
 
-        assert_eq!(engine.sequence_manager.sequence_count(), 1);
-        let sequence = engine.sequence_manager.sequences_iter().next().unwrap();
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
+        let sequence = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .next()
+            .unwrap();
         let element = sequence.get(0).unwrap();
         assert_eq!(element.command, Command::ShootBow);
         assert!(matches!(
@@ -4196,7 +4216,14 @@ mod tests {
 
         engine.apply_interaction_with_seek(pc_id, target_id, Command::HitCmd, false);
 
-        assert!(engine.sequence_manager.sequences_iter().next().is_none());
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .next()
+                .is_none()
+        );
     }
 
     #[test]

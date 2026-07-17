@@ -1584,7 +1584,7 @@ impl EngineInner {
         // bookkeeping (QA HUD reset, macro-slot commit) consistent
         // with other stop points.
         if self.is_recording_macro() {
-            self.messenger.send(crate::messenger::Message::pc(
+            self.orders.messenger.send(crate::messenger::Message::pc(
                 crate::messenger::PcMessage::StopRecordingMacro,
                 None,
             ));
@@ -2798,18 +2798,22 @@ impl EngineInner {
         // the latest intent — "last intent wins", since the second
         // Halt invalidates anything the first request queued.
         let replaced = self
+            .orders
             .pending_move_requests
             .iter()
             .any(|(eid, _)| *eid == entity_id);
         if replaced {
-            self.pending_move_requests
+            self.orders
+                .pending_move_requests
                 .retain(|(eid, _)| *eid != entity_id);
             tracing::trace!(
                 entity = ?entity_id,
                 "launch_ai_move: replacing prior pending Move (AI re-issued GoTo this tick)"
             );
         }
-        self.pending_move_requests.push((entity_id, intent.clone()));
+        self.orders
+            .pending_move_requests
+            .push((entity_id, intent.clone()));
     }
 
     /// Drain the pending-move-request queue and launch a Move
@@ -2818,7 +2822,7 @@ impl EngineInner {
     /// of enqueue (a `Vec` with `retain`+`push` on launch preserves
     /// this).
     pub(super) fn drain_pending_move_requests(&mut self) {
-        let requests = std::mem::take(&mut self.pending_move_requests);
+        let requests = std::mem::take(&mut self.orders.pending_move_requests);
         for (entity_id, intent) in requests {
             self.do_launch_ai_move(entity_id, &intent);
         }
@@ -3048,7 +3052,7 @@ impl EngineInner {
         // (`distance *= speed_factor` during the per-frame motion
         // update). Pre-computed here so the main loop can borrow
         // `self.world.entities` mutably while consulting
-        // `self.sequence_manager` for the factor.
+        // `self.orders.sequence_manager` for the factor.
         let mut speed_factors = EntitySlots::filled(self.world.entities.len(), 1.0);
         // Per-entity line-snap info: `(line_index, tolerance)` set
         // when the active movement element carries `MoveFlags::LINE`
@@ -3115,12 +3119,13 @@ impl EngineInner {
                 continue;
             };
             let Some((seq_id, elem_idx)) = self
+                .orders
                 .sequence_manager
                 .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement())
             else {
                 continue;
             };
-            if let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) {
+            if let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                 speed_factors[actor_id] = elem.speed_factor();
                 if let crate::sequence::SequenceElementData::Movement {
                     flags,
@@ -3220,7 +3225,10 @@ impl EngineInner {
             let Some(_) = actor.active_movement.sequence_id else {
                 continue;
             };
-            let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(soldier_id)
+            let Some((_, _, order)) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(soldier_id)
             else {
                 continue;
             };
@@ -3409,7 +3417,7 @@ impl EngineInner {
         // reads live positions from earlier-processed actors.
         let mut anti_snapshots = super::anti_collision::snapshot_all(
             &self.world.entities,
-            &self.sequence_manager,
+            &self.orders.sequence_manager,
             &assets.profile_manager,
         );
 
@@ -3586,6 +3594,7 @@ impl EngineInner {
                 // element specifically by picking the InProgress
                 // element whose data is a `Movement`.
                 let move_elem = self
+                    .orders
                     .sequence_manager
                     .in_progress_element_for_actor_matching(actor_id, |e| e.data.is_movement());
                 let Some((seq_id, elem_idx)) = move_elem else {
@@ -3615,6 +3624,7 @@ impl EngineInner {
                     continue;
                 };
                 let Some(order) = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.current_order())
@@ -3628,12 +3638,14 @@ impl EngineInner {
                 let order_compute_direction = order.compute_direction;
                 let order_reverse = order.reverse;
                 let next_destination_same_action = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.next_order())
                     .filter(|next| next.order_type == order_action)
                     .map(|next| MapPoint::new(next.target_x, next.target_y));
                 let active_move_flags = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| match &e.data {
@@ -3660,6 +3672,7 @@ impl EngineInner {
                 // walking phase, played the stop transition in place
                 // and never covered any ground.
                 let is_final_waypoint = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .map(|e| e.orders.len() <= 1)
@@ -4299,7 +4312,7 @@ impl EngineInner {
                                 eid,
                                 &mut door_triggers,
                                 &mut select_triggers,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             )
                         } else {
                             DoorPassAdvance::Done { completed: None }
@@ -4313,7 +4326,7 @@ impl EngineInner {
                                 tolerance,
                             } => {
                                 let order_id =
-                                    crate::order::alloc_order_id(&mut self.next_order_id);
+                                    crate::order::alloc_order_id(&mut self.orders.next_order_id);
                                 let mut order = crate::order::Order::new(
                                     action,
                                     destination.x,
@@ -4619,6 +4632,7 @@ impl EngineInner {
                         let seq_id = move_seq_id;
                         let elem_idx = move_elem_idx;
                         let next_anim = self
+                            .orders
                             .sequence_manager
                             .get_element(seq_id, elem_idx)
                             .and_then(|e| e.orders.get(1).map(|o| o.order_type));
@@ -4728,7 +4742,7 @@ impl EngineInner {
                             eid,
                             &mut door_triggers,
                             &mut select_triggers,
-                            &mut self.next_order_id,
+                            &mut self.orders.next_order_id,
                         )
                     } else {
                         DoorPassAdvance::Done { completed: None }
@@ -4747,7 +4761,8 @@ impl EngineInner {
                             // element, to be installed after the
                             // entity loop closes (same deferred
                             // mechanism as Transition steps).
-                            let order_id = crate::order::alloc_order_id(&mut self.next_order_id);
+                            let order_id =
+                                crate::order::alloc_order_id(&mut self.orders.next_order_id);
                             let mut order = crate::order::Order::new(
                                 action,
                                 destination.x,
@@ -5015,10 +5030,12 @@ impl EngineInner {
                     self.update_roll_after_crossing(assets, entity_id);
                 }
                 let compute_direction = self
+                    .orders
                     .sequence_manager
                     .in_progress_element_for_actor_matching(entity_id, |e| e.data.is_movement())
                     .and_then(|(seq_id, elem_idx)| {
-                        self.sequence_manager
+                        self.orders
+                            .sequence_manager
                             .get_element(seq_id, elem_idx)
                             .and_then(|e| e.current_order())
                     })
@@ -5055,6 +5072,7 @@ impl EngineInner {
             // state on adjacent elements.  When the element no longer
             // looks like an entity-target seek, skip silently.
             let snapshot = self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .and_then(|e| match &e.data {
@@ -5116,17 +5134,21 @@ impl EngineInner {
         // animation completes.
         for (seq_id, elem_idx, order) in transition_pushes {
             if self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .is_some_and(|elem| elem.command == crate::element::Command::PassDoor)
                 && let Some(owner) = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|elem| elem.owner)
             {
                 self.apply_door_pass_continue_state(owner, order.order_type);
             }
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
         }
 
         // Fire pending Select hulk flashes.
@@ -5171,7 +5193,9 @@ impl EngineInner {
             );
         }
         for (seq_id, elem_idx) in blocked_impossible {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
         }
 
         // RHElementActorPC::Execute calls CanCarryOnShoulders only from the
@@ -6079,11 +6103,13 @@ impl EngineInner {
         // directional picker can substitute WalkingBackwardsSword /
         // Strafing*Sword.
         let (posture_after, mut action_after) = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| (e.posture_after_transition, e.action_state_after_transition))
             .unwrap_or_default();
         let elem_flags = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|e| match &e.data {
@@ -6102,7 +6128,11 @@ impl EngineInner {
             } else {
                 crate::element::ActionState::MovingSword
             };
-            if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+            if let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+            {
                 elem.action_state_after_transition = action_after;
             }
         }
@@ -6272,7 +6302,10 @@ impl EngineInner {
         // element so downstream consumers (refresh-seek, post-process,
         // NPC AI re-reads) see it.  Apply both the action rewrite and
         // the CARRYING_ON_SHOULDERS REVERSED-flag mutation here.
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx)
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
             && let crate::sequence::SequenceElementData::Movement { flags, action, .. } =
                 &mut elem.data
         {
@@ -6368,6 +6401,7 @@ impl EngineInner {
         // `PassAroundLastNode`) and produce the "keeps moving old
         // direction briefly" click-walk regression.
         let move_flags = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|e| match &e.data {
@@ -6376,6 +6410,7 @@ impl EngineInner {
             })
             .unwrap_or(crate::sequence::MoveFlags::empty());
         let is_pass_door = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.command == crate::element::Command::PassDoor);
@@ -6494,17 +6529,23 @@ impl EngineInner {
         // immediately, but converts only A*-requiring moves to MOVE_WAITING
         // and queues an `RHpathRequest`.
         if !straight_ok {
-            if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+            if let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+            {
                 elem.command = crate::element::Command::MoveWaiting;
                 elem.push_order(crate::order::Order::new(
                     OrderType::Freezing,
                     source.x,
                     source.y,
-                    crate::order::alloc_order_id(&mut self.next_order_id),
+                    crate::order::alloc_order_id(&mut self.orders.next_order_id),
                 ));
             }
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
-            self.pending_path_requests.enqueue(request);
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+            self.orders.pending_path_requests.enqueue(request);
             return MovePathOutcome::Pending;
         }
 
@@ -6518,9 +6559,10 @@ impl EngineInner {
     /// result. This preserves both the per-frame cap and the original
     /// one-call latency despite Rust's synchronous A* implementation.
     pub(super) fn process_next_path_request(&mut self, assets: &LevelAssets) {
-        if let Some(processed) = self.pending_path_requests.take_completed() {
+        if let Some(processed) = self.orders.pending_path_requests.take_completed() {
             let request = processed.request;
             let still_live = self
+                .orders
                 .sequence_manager
                 .get_element(request.seq_id, request.elem_idx)
                 .is_some_and(|elem| {
@@ -6532,6 +6574,7 @@ impl EngineInner {
                 match processed.waypoints {
                     Some(waypoints) => {
                         if let Some(elem) = self
+                            .orders
                             .sequence_manager
                             .get_element_mut(request.seq_id, request.elem_idx)
                         {
@@ -6552,7 +6595,7 @@ impl EngineInner {
                             sector = request.sector,
                             "process_next_path_request: pathfind FAILED",
                         );
-                        self.failed_path_requests.push(FailedPathRequest {
+                        self.orders.failed_path_requests.push(FailedPathRequest {
                             owner: request.owner,
                             seq_id: request.seq_id,
                             elem_idx: request.elem_idx,
@@ -6563,8 +6606,9 @@ impl EngineInner {
             }
         }
 
-        if let Some(request) = self.pending_path_requests.pop_to_start() {
+        if let Some(request) = self.orders.pending_path_requests.pop_to_start() {
             let still_live = self
+                .orders
                 .sequence_manager
                 .get_element(request.seq_id, request.elem_idx)
                 .is_some_and(|elem| {
@@ -6585,7 +6629,9 @@ impl EngineInner {
                 request.dest,
                 request.use_first_point,
             );
-            self.pending_path_requests.set_in_flight(request, waypoints);
+            self.orders
+                .pending_path_requests
+                .set_in_flight(request, waypoints);
         }
     }
 
@@ -6670,6 +6716,7 @@ impl EngineInner {
         // `element` (antagonist) rides along on the final order so
         // downstream consumers (touch-on-Done etc.) can resolve it.
         let (elem_tolerance, elem_flags, elem_antagonist) = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|e| match &e.data {
@@ -6718,8 +6765,12 @@ impl EngineInner {
             }
         }
         {
-            let next_order_id = &mut self.next_order_id;
-            if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+            let next_order_id = &mut self.orders.next_order_id;
+            if let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+            {
                 crate::movement::build_orders_from_path(
                     elem,
                     &waypoints,
@@ -6735,21 +6786,25 @@ impl EngineInner {
         // Splice startup / end transitions into the order queue
         // based on the actor's posture + action state.
         let orders_before = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.orders.len())
             .unwrap_or(0);
         let first_order_before = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|e| e.orders.front())
             .map(|o| o.order_type);
         let had_launch_transition = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .is_some_and(|e| e.num_transition_orders > 0 && e.orders.front().is_some());
         self.post_process_path(seq_id, elem_idx);
         let (orders_after, first_order_after) = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| (e.orders.len(), e.orders.front().map(|o| o.order_type)))
@@ -6823,7 +6878,9 @@ impl EngineInner {
         }
 
         // Transition element to InProgress.
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
 
         MovePathOutcome::Success
     }
@@ -6846,9 +6903,10 @@ impl EngineInner {
     pub(super) fn process_failed_path_timeouts(&mut self, assets: &LevelAssets) {
         let now = self.control.frame_counter;
         let mut still_waiting = Vec::new();
-        for req in std::mem::take(&mut self.failed_path_requests) {
+        for req in std::mem::take(&mut self.orders.failed_path_requests) {
             // Element cancelled / finished / reused — drop silently.
             let still_live = self
+                .orders
                 .sequence_manager
                 .get_element(req.seq_id, req.elem_idx)
                 .map(|e| {
@@ -6882,12 +6940,14 @@ impl EngineInner {
             }
 
             if let Some(elem) = self
+                .orders
                 .sequence_manager
                 .get_element_mut(req.seq_id, req.elem_idx)
             {
                 elem.command = crate::element::Command::MoveOk;
             }
-            self.sequence_manager
+            self.orders
+                .sequence_manager
                 .element_impossible(req.seq_id, req.elem_idx);
             tracing::debug!(
                 actor = ?req.owner,
@@ -6897,7 +6957,7 @@ impl EngineInner {
                 "failed_path: 100-frame timeout expired — marking Impossible",
             );
         }
-        self.failed_path_requests = still_waiting;
+        self.orders.failed_path_requests = still_waiting;
     }
 }
 

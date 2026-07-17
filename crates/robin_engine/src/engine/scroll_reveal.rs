@@ -293,15 +293,17 @@ impl EngineInner {
                     ed.material(),
                 )
             };
-            self.pending_scroll_amulets.push(PendingScrollAmulet {
-                position_map: pos,
-                layer,
-                sector,
-                direction,
-                obstacle_index,
-                material,
-                replaces: eid,
-            });
+            self.orders
+                .pending_scroll_amulets
+                .push(PendingScrollAmulet {
+                    position_map: pos,
+                    layer,
+                    sector,
+                    direction,
+                    obstacle_index,
+                    material,
+                    replaces: eid,
+                });
             self.set_scroll_status(eid, ScrollStatus::Taken);
         } else {
             self.set_scroll_status(eid, ScrollStatus::Visible);
@@ -423,10 +425,11 @@ impl EngineInner {
     /// level-load by [`EngineInner::preload_scroll_amulet_sprite`],
     /// so this path only reads the scriptor cache (`&LevelAssets`).
     pub(crate) fn drain_pending_scroll_amulets(&mut self, assets: &LevelAssets) {
-        if self.pending_scroll_amulets.is_empty() {
+        if self.orders.pending_scroll_amulets.is_empty() {
             return;
         }
-        let requests: Vec<PendingScrollAmulet> = std::mem::take(&mut self.pending_scroll_amulets);
+        let requests: Vec<PendingScrollAmulet> =
+            std::mem::take(&mut self.orders.pending_scroll_amulets);
         for req in requests {
             self.spawn_scroll_amulet(assets, req);
         }

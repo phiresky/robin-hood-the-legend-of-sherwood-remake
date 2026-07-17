@@ -966,8 +966,11 @@ impl EngineInner {
 
         // Primary target metadata (position, posture, animation,
         // carrier) from the live entity store.
-        let target_meta =
-            lookup_primary_target_metadata(&self.world.entities, &self.sequence_manager, target_id);
+        let target_meta = lookup_primary_target_metadata(
+            &self.world.entities,
+            &self.orders.sequence_manager,
+            target_id,
+        );
 
         if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
             tick.primary_target_position = Some(pos);
@@ -2680,7 +2683,8 @@ impl EngineInner {
         // running).
         let mut updates: Vec<(crate::element::EntityId, i16)> = Vec::new();
         for (npc_id, entity) in self.world.entities.npcs() {
-            let Some((_, _, front)) = self.sequence_manager.current_order_for_actor(npc_id) else {
+            let Some((_, _, front)) = self.orders.sequence_manager.current_order_for_actor(npc_id)
+            else {
                 continue;
             };
             if front.order_type != OrderType::Turning {
@@ -3275,6 +3279,7 @@ impl EngineInner {
                     edata.active && !self.entity_data_inside_building(edata);
 
                 let animation = self
+                    .orders
                     .sequence_manager
                     .current_order_for_actor(npc_id)
                     .map(|(_, _, o)| o.order_type);
@@ -7603,6 +7608,7 @@ impl EngineInner {
             // without holding a sequence-manager borrow across the
             // AI tick.
             let sequence_null_about_to_launch = self
+                .orders
                 .sequence_manager
                 .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
 

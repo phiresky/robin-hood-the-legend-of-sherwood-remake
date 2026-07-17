@@ -723,7 +723,7 @@ impl EngineInner {
                     );
                 }
                 let id = selected_view_element.expect("NPC-selected implies id present");
-                self.pending_hades_kills.push(id);
+                self.orders.pending_hades_kills.push(id);
                 *selected_view_element = None;
                 ConsoleResponse::Ok("HADES\nSleep well... forever!".to_string())
             }
@@ -823,7 +823,7 @@ impl EngineInner {
                 // Silent cheat: queue a reinforcement request here,
                 // and let `drain_pending_reinforcements` perform the
                 // actual PC spawn during `perform_hourglass`.
-                self.pending_reinforcements.push(None);
+                self.orders.pending_reinforcements.push(None);
                 ConsoleResponse::Ok(String::new())
             }
             SanPetrus => {
@@ -1542,7 +1542,7 @@ mod tests {
             assert!(!e.attentive);
             assert!(!e.will_be_attentive);
         }
-        assert_eq!(engine.sequence_manager.sequence_count(), 0);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
         let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "ROTER ALARM");
         // ROTER ALARM is a silent cheat — emits no console text.
         assert_eq!(resp, ConsoleResponse::Ok(String::new()));
@@ -1551,7 +1551,7 @@ mod tests {
         // (see `engine::animation` for the anim-done handler).
         let e = engine.get_entity(id).unwrap().enemy_ai().unwrap();
         assert!(e.will_be_attentive);
-        assert_eq!(engine.sequence_manager.sequence_count(), 1);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 1);
     }
 
     #[test]
@@ -1560,13 +1560,13 @@ mod tests {
         let mut engine = EngineInner::new();
         engine.add_entity(soldier(false));
         engine.add_entity(soldier(false));
-        assert_eq!(engine.sequence_manager.sequence_count(), 0);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
         let resp = engine.run_console_command(&assets(), &mut dev, &mut None, "NUKE");
         assert_eq!(
             resp,
             ConsoleResponse::Ok("Nuking ...\nNuked 2 soldiers".to_string())
         );
-        assert_eq!(engine.sequence_manager.sequence_count(), 2);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 2);
     }
 
     #[test]
