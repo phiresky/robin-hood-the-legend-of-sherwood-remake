@@ -110,9 +110,10 @@ impl EngineInner {
             // element is the low-priority wait element (no active action
             // order driving the sprite).
             let idle = self
+                .orders
                 .sequence_manager
                 .current_element_for_actor(owner)
-                .and_then(|(s, e)| self.sequence_manager.get_element(s, e))
+                .and_then(|(s, e)| self.orders.sequence_manager.get_element(s, e))
                 .map(|el| el.command == Command::Wait)
                 .unwrap_or(true);
             (cur, idle)
@@ -169,11 +170,15 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         };
         if !entity.is_soldier() {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         }
 
@@ -243,12 +248,16 @@ impl EngineInner {
         .with_completion(crate::order::OrderCompletion::WaspStruggleCycle {
             cycles_remaining: bee_time,
         });
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
 
         // Queue the EventWasp AI stimulus.
         self.dispatch_ai_stimulus(owner, Stimulus::new(StimulusType::EventWasp));
 
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
     }
 
     /// Drain and dispatch `SendCondolationCard` notifications queued by
@@ -260,15 +269,21 @@ impl EngineInner {
     /// Notifications are queued (rather than fired inline) to avoid
     /// re-entrant borrows; this method drains the queue.
     pub(super) fn dispatch_condolations(&mut self, assets: &LevelAssets) {
-        let mut pending: std::collections::VecDeque<_> =
-            self.sequence_manager.drain_pending_condolations().into();
+        let mut pending: std::collections::VecDeque<_> = self
+            .orders
+            .sequence_manager
+            .drain_pending_condolations()
+            .into();
         while let Some(dispatch) = pending.pop_front() {
             let owner = dispatch.card.owner;
             self.send_condolation_card(dispatch.card, assets);
             self.drain_self_stimuli_for_npc(owner, assets);
-            self.sequence_manager.finish_pending_condolation(dispatch);
+            self.orders
+                .sequence_manager
+                .finish_pending_condolation(dispatch);
 
             for nested in self
+                .orders
                 .sequence_manager
                 .drain_pending_condolations()
                 .into_iter()
@@ -323,7 +338,7 @@ impl EngineInner {
 
         // Snapshot the owner's posture for the `is_very_very_busy` check
         // below without holding a mutable borrow on `self.world.entities` — so
-        // the Impossible arm can read `self.sequence_manager` without a
+        // the Impossible arm can read `self.orders.sequence_manager` without a
         // split-borrow conflict, and the final state mutation below can
         // use a fresh `get_mut`.
         if !self.world.entities.get(owner).is_some() {
@@ -361,6 +376,7 @@ impl EngineInner {
         // regardless of `from_halt` / the `is_last_real_action` Think
         // gate below.
         let map_flag_terminated = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx as usize)
             .map(|e| {
@@ -391,6 +407,7 @@ impl EngineInner {
         if from_halt
             || postponed_successor_pending
             || !self
+                .orders
                 .sequence_manager
                 .is_last_real_action(seq_id, elem_idx as usize)
         {
@@ -557,6 +574,7 @@ impl EngineInner {
                 // element's `Interaction` data.  Accept any non-PC
                 // living human.
                 let Some(elem) = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, _elem_idx as usize)
                 else {

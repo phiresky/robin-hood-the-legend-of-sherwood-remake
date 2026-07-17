@@ -208,7 +208,7 @@ impl crate::engine::EngineInner {
                 continue;
             };
             let elem_idx = actor.active_movement.element_index;
-            let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
                 continue;
             };
             if !matches!(
@@ -334,7 +334,9 @@ impl crate::engine::EngineInner {
 
         let Some(resolved) = self.resolve_entity_seek(owner, target, flags, tolerance) else {
             self.stop_owner_active_mechanics(owner);
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         };
         if resolved.stop_npc {
@@ -433,7 +435,9 @@ impl crate::engine::EngineInner {
                     .sequence_id
                     .map(|seq_id| (seq_id, a.active_movement.element_index))
             })
-            .and_then(|(seq_id, elem_idx)| self.sequence_manager.get_element(seq_id, elem_idx))
+            .and_then(|(seq_id, elem_idx)| {
+                self.orders.sequence_manager.get_element(seq_id, elem_idx)
+            })
             .is_some_and(|elem| elem.command == crate::element::Command::PassDoor);
         if target_passing_door {
             return true;
@@ -472,7 +476,9 @@ impl crate::engine::EngineInner {
                 )
             }
             None => {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return true;
             }
         };
@@ -482,7 +488,9 @@ impl crate::engine::EngineInner {
                 (elem.position_map(), elem.sector(), elem.layer())
             }
             None => {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return true;
             }
         };
@@ -499,7 +507,9 @@ impl crate::engine::EngineInner {
             // The unable-to-do bark belongs to AppendMoveToSequence's
             // gate-path failure below.
             self.stop_owner_active_mechanics(owner);
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return true;
         };
 
@@ -549,7 +559,9 @@ impl crate::engine::EngineInner {
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
             self.stop_owner_active_mechanics(owner);
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return true;
         };
 
@@ -561,8 +573,11 @@ impl crate::engine::EngineInner {
             .unwrap_or_default();
 
         self.stop_owner_active_mechanics(owner);
-        self.sequence_manager
-            .element_interrupted(seq_id, elem_idx, CascadeFlags::NEXT_LEVEL);
+        self.orders.sequence_manager.element_interrupted(
+            seq_id,
+            elem_idx,
+            CascadeFlags::NEXT_LEVEL,
+        );
 
         self.build_gate_movement_sequence(
             owner,
@@ -612,8 +627,11 @@ impl crate::engine::EngineInner {
         new_elem: SequenceElement,
     ) {
         self.stop_owner_active_mechanics(owner);
-        self.sequence_manager
-            .element_interrupted(seq_id, elem_idx, CascadeFlags::NEXT_LEVEL);
+        self.orders.sequence_manager.element_interrupted(
+            seq_id,
+            elem_idx,
+            CascadeFlags::NEXT_LEVEL,
+        );
 
         let mut seq = Sequence::new();
         seq.append_element(new_elem);
@@ -669,8 +687,11 @@ mod tests {
             *element = Some(target);
             *tolerance = 10.0;
         }
-        let seek_seq = engine.sequence_manager.launch_element(seek);
-        engine.sequence_manager.element_in_progress(seek_seq, 0);
+        let seek_seq = engine.orders.sequence_manager.launch_element(seek);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(seek_seq, 0);
         engine
             .get_entity_mut(owner)
             .unwrap()
@@ -684,8 +705,11 @@ mod tests {
             Some(target),
             OrderType::WalkingUpright,
         );
-        let pass_seq = engine.sequence_manager.launch_element(pass);
-        engine.sequence_manager.element_in_progress(pass_seq, 0);
+        let pass_seq = engine.orders.sequence_manager.launch_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(pass_seq, 0);
         engine
             .get_entity_mut(target)
             .unwrap()
@@ -705,9 +729,10 @@ mod tests {
             crate::coordinates::MapPoint { x: 90.0, y: 10.0 },
         );
 
-        assert_eq!(engine.sequence_manager.sequence_count(), 2);
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), 2);
         assert_eq!(
             engine
+                .orders
                 .sequence_manager
                 .get_element(seek_seq, 0)
                 .unwrap()

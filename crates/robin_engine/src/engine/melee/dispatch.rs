@@ -33,7 +33,9 @@ impl EngineInner {
             .map(|e| e.is_human() && !e.is_dead())
             .unwrap_or(false);
         if !owner_ok {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         }
 
@@ -43,7 +45,9 @@ impl EngineInner {
             .map(|e| e.is_human() && !e.is_dead())
             .unwrap_or(false);
         if !target_ok {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         }
 
@@ -58,7 +62,9 @@ impl EngineInner {
                 self.set_as_new_principal_opponent(assets, owner, target);
                 self.set_as_new_principal_opponent(assets, target, owner);
             } else {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return;
             }
         }
@@ -99,14 +105,18 @@ impl EngineInner {
         order.target_actor = Some(target.index());
         order.compute_direction = false;
         let order_id = order.order_id;
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
             actor.active_melee.order_id = Some(order_id);
         }
 
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
 
         // Warn potential victims so they can auto-parry, and
         // dispatch EventSwordstrike to NPC AI for the
@@ -147,11 +157,15 @@ impl EngineInner {
     ) {
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return;
             };
             if entity.is_dead() || entity.human_data().map(|h| h.unconscious).unwrap_or(true) {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return;
             }
         }
@@ -166,6 +180,7 @@ impl EngineInner {
         if let Some(opp) = opponent
             && opp != owner
             && let Some(jl_idx) = self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .and_then(|e| e.get_property(crate::sequence::Field::JumplineDestination))
@@ -176,7 +191,9 @@ impl EngineInner {
         {
             match self.try_launch_table_swordfight_move(owner, opp, jl_idx.get()) {
                 TableFightMove::Abort => {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(seq_id, elem_idx);
                     return;
                 }
                 TableFightMove::Ok | TableFightMove::Launched => {}
@@ -193,7 +210,9 @@ impl EngineInner {
 
         let queue_raise = {
             let Some(entity) = self.world.entities.get_mut(owner) else {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return;
             };
             // Queue transition animation based on current action state.
@@ -235,7 +254,9 @@ impl EngineInner {
             if let Some(opp) = opponent_for_facing {
                 order = order.with_antagonist(opp);
             }
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
         }
         // The EnterSwordfight sequence element carries the
         // opponent (set by apply_enter_swordfight when the player
@@ -253,6 +274,7 @@ impl EngineInner {
             // in the opponent list as the aggressor's table-swordfight
             // line.
             let aggressor_jl = self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .and_then(|e| e.get_property(crate::sequence::Field::JumplineDestination))
@@ -262,7 +284,9 @@ impl EngineInner {
                 });
             self.enter_swordfight_with_jump_line(assets, owner, opp, false, aggressor_jl);
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
     }
 
     /// Handle the table-swordfight position check on entering a
@@ -398,7 +422,7 @@ impl EngineInner {
         };
         if queue_lower {
             let id = self.alloc_order_id();
-            self.sequence_manager.push_order_on(
+            self.orders.sequence_manager.push_order_on(
                 seq_id,
                 elem_idx,
                 crate::order::Order::new(
@@ -409,7 +433,9 @@ impl EngineInner {
                 ),
             );
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
     }
 
     // ─── Parry ──────────────────────────────────────────────────────
@@ -423,11 +449,15 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         };
         let Some(actor) = entity.actor_data() else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         };
 
@@ -439,7 +469,9 @@ impl EngineInner {
                 | ActionState::ParryingSword
                 | ActionState::ParryingSwordLow
         ) {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         }
 
@@ -453,7 +485,7 @@ impl EngineInner {
                 crate::order::OrderType::TransitionWaitingSwordParryingSword
             };
             let id = self.alloc_order_id();
-            self.sequence_manager.push_order_on(
+            self.orders.sequence_manager.push_order_on(
                 seq_id,
                 elem_idx,
                 crate::order::Order::new(transition, 0.0, 0.0, id),
@@ -466,12 +498,14 @@ impl EngineInner {
             crate::order::OrderType::ParryingSword
         };
         let id = self.alloc_order_id();
-        self.sequence_manager.push_order_on(
+        self.orders.sequence_manager.push_order_on(
             seq_id,
             elem_idx,
             crate::order::Order::new(hold, 0.0, 0.0, id),
         );
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
     }
 
     /// Dispatch a StopParrySword command.
@@ -482,23 +516,29 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let Some(entity) = self.world.entities.get(owner) else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         };
         let Some(actor) = entity.actor_data() else {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         };
         if !matches!(
             actor.action_state,
             ActionState::ParryingSword | ActionState::ParryingSwordLow
         ) {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
             return;
         }
 
         let id = self.alloc_order_id();
-        self.sequence_manager.push_order_on(
+        self.orders.sequence_manager.push_order_on(
             seq_id,
             elem_idx,
             crate::order::Order::new(
@@ -508,7 +548,9 @@ impl EngineInner {
                 id,
             ),
         );
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
     }
 
     // ─── Shield commands ────────────────────────────────────────────
@@ -534,6 +576,7 @@ impl EngineInner {
         // "already holding shield" actor still gets its danger point
         // and protection link refreshed by the new command.
         let (danger_pt, danger_pt3d, danger_layer, new_protected) = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| match &e.data {
@@ -606,7 +649,9 @@ impl EngineInner {
             .map(|a| a.action_state);
         match action_state {
             Some(ActionState::HoldingShield) | Some(ActionState::MovingShield) => {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
                 let protected_now = self
                     .get_entity(owner)
                     .and_then(|e| e.pc_data())
@@ -653,11 +698,15 @@ impl EngineInner {
                 // shield): the transition machine should already have
                 // rejected this, but terminate cleanly if it slips
                 // through.
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
                 return;
             }
             None => {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
                 return;
             }
             _ => {} // Waiting, Bored, ParryingShield, etc. — proceed.
@@ -708,9 +757,13 @@ impl EngineInner {
                 0.0,
                 0.0,
             );
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
     }
 
@@ -737,7 +790,9 @@ impl EngineInner {
             0.0,
             0.0,
         );
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
     }
 
     /// Dispatch a LowerShield command.
@@ -778,9 +833,13 @@ impl EngineInner {
                 0.0,
                 0.0,
             );
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
     }
 
@@ -819,9 +878,13 @@ impl EngineInner {
                 0.0,
                 0.0,
             );
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
         } else {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
     }
 
@@ -840,7 +903,7 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         // Read damage data from the sequence element
-        let elem = match self.sequence_manager.get_element(seq_id, elem_idx) {
+        let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
             Some(e) => e,
             None => return,
         };
@@ -869,7 +932,9 @@ impl EngineInner {
                         ?command,
                         "dispatch_receive_damage: element is not Damage"
                     );
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
                     return;
                 }
             };
@@ -919,7 +984,9 @@ impl EngineInner {
                             ?posture,
                             "arrow blocked: target in stealth posture"
                         );
-                        self.sequence_manager.element_terminated(seq_id, elem_idx);
+                        self.orders
+                            .sequence_manager
+                            .element_terminated(seq_id, elem_idx);
                         return;
                     }
                 }
@@ -961,15 +1028,20 @@ impl EngineInner {
         // requires `NonZeroU32`), so no batch fixup is needed here.
         // Otherwise terminate now.
         let order_count = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.orders.len())
             .unwrap_or(0);
         if order_count > 0 && self.get_entity(victim_id).is_some() {
-            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
             return;
         }
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
     }
 }
 

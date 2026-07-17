@@ -460,7 +460,7 @@ impl EngineInner {
             return;
         }
         // Two-pass to avoid overlapping borrows of `self.world.entities`
-        // and `self.sequence_manager`.
+        // and `self.orders.sequence_manager`.
         struct Pending {
             owner: EntityId,
             seq_id: crate::sequence::SequenceId,
@@ -470,11 +470,14 @@ impl EngineInner {
         let mut pending: Vec<Pending> = Vec::new();
         for (owner, _) in self.world.entities.actors() {
             let owner = owner.into();
-            let Some((seq_id, elem_idx)) = self.sequence_manager.current_element_for_actor(owner)
+            let Some((seq_id, elem_idx)) = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner)
             else {
                 continue;
             };
-            let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
                 continue;
             };
             if elem.command != crate::element::Command::WaitTimer {
@@ -500,7 +503,8 @@ impl EngineInner {
         }
         for p in pending {
             if p.terminate {
-                self.sequence_manager
+                self.orders
+                    .sequence_manager
                     .element_terminated(p.seq_id, p.elem_idx);
             }
         }
@@ -905,7 +909,7 @@ impl EngineInner {
                 }
             };
             if arrived {
-                self.pending_reinforcements.push(Some(pc_id));
+                self.orders.pending_reinforcements.push(Some(pc_id));
             }
         }
 
@@ -921,7 +925,7 @@ impl EngineInner {
             // their downstream consumer, but prepend newly emitted messages
             // to the remaining engine work so their observable state changes
             // happen depth-first in this frame.
-            let mut messages: std::collections::VecDeque<_> = self.messenger.drain().into();
+            let mut messages: std::collections::VecDeque<_> = self.orders.messenger.drain().into();
             let mut downstream = std::collections::VecDeque::new();
             while let Some(msg) = messages.pop_front() {
                 match msg.msg_type {
@@ -982,7 +986,8 @@ impl EngineInner {
                             }
                             // Emit the message for script /
                             // edge-subscriber observation.
-                            self.messenger
+                            self.orders
+                                .messenger
                                 .send(crate::messenger::Message::pc_with_value(
                                     crate::messenger::PcMessage::SelectAction,
                                     None,
@@ -1289,12 +1294,12 @@ impl EngineInner {
 
                 // Preserve the send order of recursive calls while placing
                 // them ahead of pre-existing sibling messages.
-                for nested in self.messenger.drain().into_iter().rev() {
+                for nested in self.orders.messenger.drain().into_iter().rev() {
                     messages.push_front(nested);
                 }
             }
             for msg in downstream {
-                self.messenger.send(msg);
+                self.orders.messenger.send(msg);
             }
         }
 
@@ -1311,7 +1316,7 @@ impl EngineInner {
         // ── Sequence manager cleanup ─────────────────────────────
         // Run every 256 frames (or every frame in debug).
         if self.control.frame_counter.is_multiple_of(256) {
-            self.sequence_manager.friday_evening_cleanup();
+            self.orders.sequence_manager.friday_evening_cleanup();
         }
 
         // ── Process pending AI orders ─────────────────────────────
@@ -1477,7 +1482,7 @@ impl EngineInner {
         // ── Sequence manager dispatch ────────────────────────────
         // Process pending sequence elements and dispatch actions.
         // We collect actions and process them here in two passes.
-        let actions = self.sequence_manager.hourglass();
+        let actions = self.orders.sequence_manager.hourglass();
 
         // First pass: extract Move command data (to avoid borrow conflicts).
         // (owner, seq_id, elem_idx, destination, layer, action_animation)
@@ -1515,6 +1520,7 @@ impl EngineInner {
                 }
 
                 let needs_transition = self
+                    .orders
                     .sequence_manager
                     .get_element(*sequence_id, *element_index)
                     .is_some_and(|elem| {
@@ -1527,7 +1533,8 @@ impl EngineInner {
                 if needs_transition
                     && !self.generate_transition(*owner, *sequence_id, *element_index)
                 {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_impossible(*sequence_id, *element_index);
                     abandoned_or_postponed.insert((*sequence_id, *element_index));
                 }
@@ -1542,7 +1549,7 @@ impl EngineInner {
             } = action
                 && !abandoned_or_postponed.contains(&(*sequence_id, *element_index))
                 && let Some(elem) = self
-                    .sequence_manager
+                    .orders.sequence_manager
                     .get_element(*sequence_id, *element_index)
                 // `Command::Seek` shares the pathfinder dispatch with
                 // `Command::Move`.  Without this fall-through, Seek
@@ -1596,7 +1603,8 @@ impl EngineInner {
                         *owner,
                         crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                     );
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_impossible(*sequence_id, *element_index);
                     continue;
                 }
@@ -1607,6 +1615,7 @@ impl EngineInner {
                 // Plain Move uses the stored `destination` point.
                 let dest_pt = if is_seek {
                     let post_seek = self
+                        .orders
                         .sequence_manager
                         .get_element_mut(*sequence_id, *element_index)
                         .and_then(|elem| match &mut elem.data {
@@ -1626,7 +1635,8 @@ impl EngineInner {
                     match target_element {
                         Some(target) => {
                             if target == *owner {
-                                self.sequence_manager
+                                self.orders
+                                    .sequence_manager
                                     .element_terminated(*sequence_id, *element_index);
                                 self.start_post_seek_sequence(*owner, None);
                                 continue;
@@ -1670,6 +1680,7 @@ impl EngineInner {
                                 continue;
                             };
                             if let Some(elem_mut) = self
+                                .orders
                                 .sequence_manager
                                 .get_element_mut(*sequence_id, *element_index)
                                 && let crate::sequence::SequenceElementData::Movement {
@@ -1729,6 +1740,7 @@ impl EngineInner {
                     .and_then(|e| e.element_data().sector());
                 let owner_in_building = self.sector_is_building(owner_sector);
                 let is_last_of_seq = self
+                    .orders
                     .sequence_manager
                     .get_sequence(*sequence_id)
                     .map(|s| *element_index + 1 >= s.elements.len())
@@ -1743,7 +1755,8 @@ impl EngineInner {
                         Some(dest_pt),
                         "building interior move",
                     );
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_terminated(*sequence_id, *element_index);
                     continue;
                 }
@@ -1758,7 +1771,9 @@ impl EngineInner {
             }
         }
         for (seq_id, elem_idx) in beggar_rejects_pass1 {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
         }
 
         // Process Move instructions: pathfind and set up entity movement.
@@ -1779,7 +1794,9 @@ impl EngineInner {
                 MovePathOutcome::Success => {}
                 MovePathOutcome::Pending => {}
                 MovePathOutcome::ActorGone => {
-                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(seq_id, elem_idx);
                 }
                 MovePathOutcome::Failed => {
                     let source = self.get_entity(owner).map(|e| {
@@ -1791,6 +1808,7 @@ impl EngineInner {
                         )
                     });
                     let movement_meta = self
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .and_then(|elem| match &elem.data {
@@ -1831,14 +1849,17 @@ impl EngineInner {
                     // `process_failed_path_timeouts` then transitions
                     // the element to `Impossible` (and, for PCs,
                     // fires `HERO_UNABLE_TO_DO_SOMETHING`).
-                    self.failed_path_requests
-                        .push(crate::engine::movement::FailedPathRequest {
+                    self.orders.failed_path_requests.push(
+                        crate::engine::movement::FailedPathRequest {
                             owner,
                             seq_id,
                             elem_idx,
                             first_fail_frame: self.control.frame_counter,
-                        });
-                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                        },
+                    );
+                    self.orders
+                        .sequence_manager
+                        .element_in_progress(seq_id, elem_idx);
                 }
             }
         }
@@ -1886,7 +1907,7 @@ impl EngineInner {
                     // pass 2 would try to dispatch a non-live element
                     // and hit `set_element_state: Terminated from
                     // illegal state Interrupted`.
-                    let cmd = match self.sequence_manager.get_element(seq_id, elem_idx) {
+                    let cmd = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                         Some(e) => {
                             use crate::sequence::SequenceState;
                             if !matches!(e.state, SequenceState::Todo | SequenceState::Postponed) {
@@ -1900,7 +1921,9 @@ impl EngineInner {
                     // than RECEIVE_PURSE / BEGGAR_SHOW_FACE / WAIT on
                     // beggar civilians.
                     if self.beggar_rejects_command(owner, cmd) {
-                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
                         continue;
                     }
                     // Posture transitions (leave-disguise, stand-up, …)
@@ -1911,7 +1934,7 @@ impl EngineInner {
                     // InstructOwner admission pass above.
                     //
                     // Re-borrow element for data access.
-                    let elem = match self.sequence_manager.get_element(seq_id, elem_idx) {
+                    let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                         Some(e) => e,
                         None => continue,
                     };
@@ -1927,7 +1950,9 @@ impl EngineInner {
                     if owner_is_human
                         && !self.check_sequence_element_validity(assets, owner, elem, true)
                     {
-                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
                         continue;
                     }
                     match cmd {
@@ -1948,7 +1973,9 @@ impl EngineInner {
                                 Some(t) => t,
                                 None => {
                                     // No target — nothing we can do.
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                     continue;
                                 }
                             };
@@ -1958,7 +1985,9 @@ impl EngineInner {
                             // counter).
                             let ammo_count = self.get_bow_ammo_count(owner);
                             if ammo_count == 0 {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             }
 
@@ -1974,13 +2003,15 @@ impl EngineInner {
                                     ?bow_target,
                                     "ShootBow command rejected during dispatch"
                                 );
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             }
 
                             match bow_shot::begin_bow_shot(
                                 &mut self.world.entities,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 target,
                                 seq_id,
@@ -1988,13 +2019,17 @@ impl EngineInner {
                                 shoot_once,
                                 ammo_count,
                                 Some(shoot_mode),
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 BeginShotResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                 }
                                 BeginShotResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -2016,7 +2051,9 @@ impl EngineInner {
                                 let door_idx = match gate_id {
                                     Some(idx) => *idx,
                                     None => {
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                         continue;
                                     }
                                 };
@@ -2047,7 +2084,9 @@ impl EngineInner {
                                 let auth_info = match self.get_entity(owner) {
                                     Some(e) => e.actor_auth_info(),
                                     None => {
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                         continue;
                                     }
                                 };
@@ -2083,7 +2122,9 @@ impl EngineInner {
                                         ?direct,
                                         "PassDoor: actor not authorized"
                                     );
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                     continue;
                                 }
 
@@ -2118,7 +2159,8 @@ impl EngineInner {
                                                 "PassDoor: actor not authorized \
                                                  for lift type"
                                             );
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                             continue;
                                         }
@@ -2156,7 +2198,7 @@ impl EngineInner {
                                         // non-direct ladder / wall +
                                         // forced-crouch exit sector).
                                         if let Some(override_action) = post_chain_action_recursive {
-                                            self.sequence_manager.set_action_recursive(
+                                            self.orders.sequence_manager.set_action_recursive(
                                                 seq_id,
                                                 elem_idx,
                                                 override_action,
@@ -2199,7 +2241,8 @@ impl EngineInner {
                                                 entity = ?owner,
                                                 "PassDoor: no Walk step in chain"
                                             );
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                             continue;
                                         }
@@ -2210,12 +2253,16 @@ impl EngineInner {
                                             door = %door_idx,
                                             "PassDoor: failed to build step chain"
                                         );
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                         continue;
                                     }
                                 }
                             }
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
                         // ── CHANGE_POSITION ────────────────────────
                         // Instant teleport to a new position.
@@ -2238,7 +2285,7 @@ impl EngineInner {
                                     .and_then(|e| e.element_data().sector());
 
                                 if tgt_sector.is_some() && actor_sector != tgt_sector {
-                                    self.sequence_manager.element_interrupted(
+                                    self.orders.sequence_manager.element_interrupted(
                                         seq_id,
                                         elem_idx,
                                         crate::sequence::CascadeFlags::NEXT_LEVEL,
@@ -2265,7 +2312,9 @@ impl EngineInner {
                                         .set_direction_instantly(tgt_direction);
                                 }
                             }
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
                         // ── ASSERT_POSITION ────────────────────────
                         // Check actor is at expected position/sector.
@@ -2290,13 +2339,15 @@ impl EngineInner {
                                     let dx = pos.x - dest.x;
                                     let dy = pos.y - dest.y;
                                     if dx.abs().max(dy.abs()) >= tol {
-                                        self.sequence_manager.element_interrupted(
+                                        self.orders.sequence_manager.element_interrupted(
                                             seq_id,
                                             elem_idx,
                                             crate::sequence::CascadeFlags::NEXT_LEVEL,
                                         );
                                     } else {
-                                        self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_terminated(seq_id, elem_idx);
                                     }
                                 } else {
                                     // Sector check
@@ -2304,17 +2355,21 @@ impl EngineInner {
                                         .get_entity(owner)
                                         .and_then(|e| e.element_data().sector());
                                     if actor_sector != tgt_sector {
-                                        self.sequence_manager.element_interrupted(
+                                        self.orders.sequence_manager.element_interrupted(
                                             seq_id,
                                             elem_idx,
                                             crate::sequence::CascadeFlags::NEXT_LEVEL,
                                         );
                                     } else {
-                                        self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_terminated(seq_id, elem_idx);
                                     }
                                 }
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
                         // ── WAIT_FREE_LIFT ──────────────────────
@@ -2411,13 +2466,17 @@ impl EngineInner {
                                         });
                                     }
                                 }
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             } else {
                                 // Still occupied or cooldown active —
                                 // keep waiting; the authorization
                                 // check already decremented
                                 // `wait_time` above.
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             }
                         }
                         // ── Sword strike commands ────────────────
@@ -2455,7 +2514,9 @@ impl EngineInner {
                                     );
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -2571,9 +2632,13 @@ impl EngineInner {
                                 false
                             };
                             if queued {
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
 
@@ -2590,9 +2655,13 @@ impl EngineInner {
                                 elem_idx,
                             );
                             if queued_anim {
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
 
@@ -2646,6 +2715,7 @@ impl EngineInner {
                         | Command::RaiseBow
                         | Command::LowerBow => {
                             let command_body_already_queued = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .is_some_and(|e| {
@@ -2699,7 +2769,9 @@ impl EngineInner {
                                     // C++ `Translate(EQUIP_BOW*)` terminates
                                     // non-transition command bodies when the
                                     // actor is already aiming with the bow.
-                                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_terminated(seq_id, elem_idx);
                                     continue;
                                 }
                                 let anonymous = posture == crate::element::Posture::AnonymousArcher;
@@ -2711,10 +2783,12 @@ impl EngineInner {
                                     let mut order = crate::order::Order::new(ot, x, y, id);
                                     order.compute_direction = false;
                                     engine
+                                        .orders
                                         .sequence_manager
                                         .push_order_on(seq_id, elem_idx, order);
                                 };
                                 let target_xy = self
+                                    .orders
                                     .sequence_manager
                                     .get_element(seq_id, elem_idx)
                                     .and_then(|e| e.orders.back())
@@ -2742,8 +2816,10 @@ impl EngineInner {
                                             push(self, OrderType::TransitionEquipBow, 0.0, 0.0);
                                             push(self, OrderType::TransitionLoadingBow, 0.0, 0.0);
                                         }
-                                        if let Some(elem) =
-                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        if let Some(elem) = self
+                                            .orders
+                                            .sequence_manager
+                                            .get_element_mut(seq_id, elem_idx)
                                         {
                                             elem.action_state_after_transition =
                                                 ActionState::AimingWithBow;
@@ -2758,8 +2834,10 @@ impl EngineInner {
                                             0.0,
                                             0.0,
                                         );
-                                        if let Some(elem) =
-                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        if let Some(elem) = self
+                                            .orders
+                                            .sequence_manager
+                                            .get_element_mut(seq_id, elem_idx)
                                         {
                                             elem.action_state_after_transition =
                                                 ActionState::AimingWithBowDown;
@@ -2784,8 +2862,10 @@ impl EngineInner {
                                             push(self, OrderType::TransitionUnloadBow, x, y);
                                             push(self, OrderType::TransitionUnequipBow, x, y);
                                         }
-                                        if let Some(elem) =
-                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        if let Some(elem) = self
+                                            .orders
+                                            .sequence_manager
+                                            .get_element_mut(seq_id, elem_idx)
                                         {
                                             elem.action_state_after_transition =
                                                 ActionState::Waiting;
@@ -2802,8 +2882,10 @@ impl EngineInner {
                                         } else {
                                             push(self, OrderType::TransitionRaisingBow, 0.0, 0.0);
                                         }
-                                        if let Some(elem) =
-                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        if let Some(elem) = self
+                                            .orders
+                                            .sequence_manager
+                                            .get_element_mut(seq_id, elem_idx)
                                         {
                                             elem.action_state_after_transition =
                                                 ActionState::AimingWithBowUp;
@@ -2820,8 +2902,10 @@ impl EngineInner {
                                         } else {
                                             push(self, OrderType::TransitionLoweringBow, 0.0, 0.0);
                                         }
-                                        if let Some(elem) =
-                                            self.sequence_manager.get_element_mut(seq_id, elem_idx)
+                                        if let Some(elem) = self
+                                            .orders
+                                            .sequence_manager
+                                            .get_element_mut(seq_id, elem_idx)
                                         {
                                             elem.action_state_after_transition =
                                                 ActionState::AimingWithBow;
@@ -2832,13 +2916,18 @@ impl EngineInner {
                             }
 
                             let has_orders = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .is_some_and(|e| !e.orders.is_empty());
                             if has_orders {
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
                         // ── Hide behind shield ──────────────────
@@ -2863,7 +2952,9 @@ impl EngineInner {
                             };
                             let posture_after = elem.posture_after_transition;
                             let Some(holder) = antagonist else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let (is_holding, holder_protected) = self
@@ -2878,7 +2969,7 @@ impl EngineInner {
                                 })
                                 .unwrap_or((false, None));
                             if !is_holding || holder_protected.is_some() {
-                                self.sequence_manager.element_interrupted(
+                                self.orders.sequence_manager.element_interrupted(
                                     seq_id,
                                     elem_idx,
                                     crate::sequence::CascadeFlags::NEXT_LEVEL,
@@ -2894,7 +2985,9 @@ impl EngineInner {
                                     id,
                                 );
                                 order.compute_direction = false;
-                                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+                                self.orders
+                                    .sequence_manager
+                                    .push_order_on(seq_id, elem_idx, order);
                             }
                             let id = self.alloc_order_id();
                             let mut order = crate::order::Order::new(
@@ -2905,13 +2998,18 @@ impl EngineInner {
                             )
                             .with_antagonist(holder);
                             order.compute_direction = false;
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // ── Other sword-related commands ────────
                         Command::SwordstrikeDown => {
                             let antagonist = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|elem| match &elem.data {
@@ -2926,7 +3024,9 @@ impl EngineInner {
                                     elem_idx,
                                     "SwordstrikeDown missing antagonist"
                                 );
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let (tx, ty, dir) =
@@ -2948,7 +3048,9 @@ impl EngineInner {
                                             ?target,
                                             "SwordstrikeDown owner or target missing"
                                         );
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                         continue;
                                     }
                                 };
@@ -2966,11 +3068,16 @@ impl EngineInner {
                             )
                             .with_antagonist(target);
                             order.compute_direction = false;
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
                         Command::GetKilledAtBottom => {
                             let killer = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|elem| match elem.data {
@@ -2980,7 +3087,9 @@ impl EngineInner {
                                     _ => None,
                                 });
                             let Some(victim) = self.world.entities.get_mut(owner) else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let damage = victim
@@ -2992,7 +3101,9 @@ impl EngineInner {
                                     ?killer,
                                     "GetKilledAtBottom owner is not a human"
                                 );
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let max_life_points = match victim {
@@ -3033,12 +3144,16 @@ impl EngineInner {
                                     })
                                     .unwrap_or(crate::order::OrderType::DyingUpright);
                                 self.push_new_order(seq_id, elem_idx, anim, 0.0, 0.0);
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
                                 if victim.is_dead() {
                                     victim.set_posture(crate::element::Posture::DeadBack);
                                 }
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
                         // SwordstrikeTired pushes a `BeingWeakSword`
@@ -3056,9 +3171,13 @@ impl EngineInner {
                                     0.0,
                                     0.0,
                                 );
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
                         // ── Smalltalk strikes / parries (Wait priority) ─
@@ -3074,6 +3193,7 @@ impl EngineInner {
                         | Command::ParrySmalltalkLeft
                         | Command::ParrySmalltalkRight => {
                             let antagonist = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|elem| match elem.data {
@@ -3129,9 +3249,13 @@ impl EngineInner {
                                 .unwrap_or(true);
                             if !blocked {
                                 self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
 
@@ -3158,8 +3282,12 @@ impl EngineInner {
                                 self.alloc_order_id(),
                             );
                             order.compute_direction = false;
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
                         Command::Fainted => {
                             // Queue the faint/knockout animation on the owning
@@ -3173,7 +3301,9 @@ impl EngineInner {
                                 0.0,
                                 0.0,
                             );
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
                         Command::Recover | Command::StandUp => {
                             // STAND_UP picks the standup animation by
@@ -3187,6 +3317,7 @@ impl EngineInner {
                             // and `do_next_order` chains through the
                             // rest.
                             let already_queued = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .map(|e| !e.orders.is_empty())
@@ -3226,18 +3357,24 @@ impl EngineInner {
                                 entity.set_posture(crate::element::Posture::Upright);
                             }
                             let has_front = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|e| e.orders.front())
                                 .is_some();
                             if has_front {
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
                         Command::WakeUp => {
                             let antagonist = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|elem| match elem.data {
@@ -3253,7 +3390,9 @@ impl EngineInner {
                                     elem_idx,
                                     "WakeUp element has no antagonist target"
                                 );
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let Some(target_pos) = self
@@ -3267,7 +3406,9 @@ impl EngineInner {
                                     elem_idx,
                                     "WakeUp antagonist target is missing"
                                 );
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let mut order = crate::order::Order::new(
@@ -3278,8 +3419,12 @@ impl EngineInner {
                             )
                             .with_antagonist(target_id);
                             order.compute_direction = false;
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
                         Command::Knee => {
                             // Queue the falling-to-knees animation.
@@ -3290,7 +3435,9 @@ impl EngineInner {
                                 0.0,
                                 0.0,
                             );
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
 
                         // ── Ability commands ─────────────────────
@@ -3305,15 +3452,16 @@ impl EngineInner {
                                 Some(target_id) => {
                                     match abilities::begin_carry(
                                         &mut self.world.entities,
-                                        &mut self.sequence_manager,
+                                        &mut self.orders.sequence_manager,
                                         owner,
                                         target_id,
                                         seq_id,
                                         elem_idx,
-                                        &mut self.next_order_id,
+                                        &mut self.orders.next_order_id,
                                     ) {
                                         AbilityBeginResult::Started => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_in_progress(seq_id, elem_idx);
                                             // Freeze the target's
                                             // execution, cascading
@@ -3332,27 +3480,32 @@ impl EngineInner {
                                             self.apply_carry_building_hulk(owner, target_id);
                                         }
                                         AbilityBeginResult::Impossible => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
                         Command::DropCorpse => {
                             match abilities::begin_drop(
                                 &mut self.world.entities,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                     // Drop-transition init twin of
                                     // the pickup building flash.
                                     let carried_id = self
@@ -3376,7 +3529,9 @@ impl EngineInner {
                                     }
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3391,25 +3546,29 @@ impl EngineInner {
                                 Some(target_id) => {
                                     match abilities::begin_tie(
                                         &mut self.world.entities,
-                                        &mut self.sequence_manager,
+                                        &mut self.orders.sequence_manager,
                                         owner,
                                         target_id,
                                         seq_id,
                                         elem_idx,
-                                        &mut self.next_order_id,
+                                        &mut self.orders.next_order_id,
                                     ) {
                                         AbilityBeginResult::Started => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_in_progress(seq_id, elem_idx);
                                         }
                                         AbilityBeginResult::Impossible => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3424,14 +3583,16 @@ impl EngineInner {
                                 .and_then(|h| h.carrier);
                             match abilities::begin_climb_down_from_shoulders(
                                 &mut self.world.entities,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                     // Helper is frozen for the
                                     // duration of the climb-down so
                                     // it can't acquire a fresh
@@ -3443,7 +3604,9 @@ impl EngineInner {
                                     }
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3457,7 +3620,9 @@ impl EngineInner {
                                 _ => None,
                             };
                             let Some(helper_id) = helper else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             // Disjoint-field obstacle list so the headroom
@@ -3471,22 +3636,26 @@ impl EngineInner {
                             };
                             match abilities::begin_climb_on_shoulders(
                                 &mut self.world.entities,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 helper_id,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                                 obstacles,
                             ) {
                                 crate::abilities::ClimbResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                     // Helper is frozen for the
                                     // duration of the climb.
                                     self.actor_freeze_execution(helper_id);
                                 }
                                 crate::abilities::ClimbResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                                 crate::abilities::ClimbResult::NoHeadroom { helper_id } => {
                                     // Low ceiling → helper stands
@@ -3499,7 +3668,9 @@ impl EngineInner {
                                         Some(helper_id),
                                     );
                                     self.launch_element(leave_elem);
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3513,47 +3684,57 @@ impl EngineInner {
                             match target {
                                 Some(target_id) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::Heal) {
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_heal(
                                             &mut self.world.entities,
-                                            &mut self.sequence_manager,
+                                            &mut self.orders.sequence_manager,
                                             owner,
                                             target_id,
                                             seq_id,
                                             elem_idx,
-                                            &mut self.next_order_id,
+                                            &mut self.orders.next_order_id,
                                         ) {
                                             AbilityBeginResult::Started => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_in_progress(seq_id, elem_idx);
                                             }
                                             AbilityBeginResult::Impossible => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_impossible(seq_id, elem_idx);
                                             }
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
                         Command::WhistleCmd => {
                             match abilities::begin_whistle(
                                 &mut self.world.entities,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3574,22 +3755,28 @@ impl EngineInner {
                                 .map(|d| d.status.get_ammo(crate::profiles::Action::Eat))
                                 .unwrap_or(0);
                             if ammo == 0 {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             }
                             match abilities::begin_eat(
                                 &mut self.world.entities,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3604,25 +3791,29 @@ impl EngineInner {
                                 Some(target_id) => {
                                     match abilities::begin_hit(
                                         &mut self.world.entities,
-                                        &mut self.sequence_manager,
+                                        &mut self.orders.sequence_manager,
                                         owner,
                                         target_id,
                                         seq_id,
                                         elem_idx,
-                                        &mut self.next_order_id,
+                                        &mut self.orders.next_order_id,
                                     ) {
                                         AbilityBeginResult::Started => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_in_progress(seq_id, elem_idx);
                                         }
                                         AbilityBeginResult::Impossible => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3637,25 +3828,29 @@ impl EngineInner {
                                 Some(target_id) => {
                                     match abilities::begin_strangle(
                                         &mut self.world.entities,
-                                        &mut self.sequence_manager,
+                                        &mut self.orders.sequence_manager,
                                         owner,
                                         target_id,
                                         seq_id,
                                         elem_idx,
-                                        &mut self.next_order_id,
+                                        &mut self.orders.next_order_id,
                                     ) {
                                         AbilityBeginResult::Started => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_in_progress(seq_id, elem_idx);
                                         }
                                         AbilityBeginResult::Impossible => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3679,12 +3874,12 @@ impl EngineInner {
                                 Some(beggar_id) => {
                                     match abilities::begin_pay(
                                         &mut self.world.entities,
-                                        &mut self.sequence_manager,
+                                        &mut self.orders.sequence_manager,
                                         owner,
                                         beggar_id,
                                         seq_id,
                                         elem_idx,
-                                        &mut self.next_order_id,
+                                        &mut self.orders.next_order_id,
                                     ) {
                                         AbilityBeginResult::Started => {
                                             // HERO_GIVE_MONEY speech
@@ -3694,17 +3889,21 @@ impl EngineInner {
                                                 owner,
                                                 crate::engine::melee::HERO_GIVE_MONEY,
                                             );
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_in_progress(seq_id, elem_idx);
                                         }
                                         AbilityBeginResult::Impossible => {
-                                            self.sequence_manager
+                                            self.orders
+                                                .sequence_manager
                                                 .element_impossible(seq_id, elem_idx);
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3714,13 +3913,17 @@ impl EngineInner {
                                 owner,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3734,17 +3937,21 @@ impl EngineInner {
                             match abilities::begin_listen(
                                 &mut self.world.entities,
                                 &assets.profile_manager,
-                                &mut self.sequence_manager,
+                                &mut self.orders.sequence_manager,
                                 owner,
                                 seq_id,
                                 elem_idx,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -3759,14 +3966,16 @@ impl EngineInner {
                             if abilities::begin_leave_listen(
                                 &mut self.world.entities,
                                 owner,
-                                &mut self.next_order_id,
+                                &mut self.orders.next_order_id,
                             ) {
                                 tracing::debug!(
                                     ?owner,
                                     "Listen: LeaveListen flipped phase to ExitTransition"
                                 );
                             }
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
                         Command::DropAmmo => {
                             // Decrement the PC's ammo for the action,
@@ -3813,7 +4022,9 @@ impl EngineInner {
                                 _ => (None, None),
                             };
                             let Some(action_id) = action_id else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let requested = amount.unwrap_or(1) as u16;
@@ -3825,7 +4036,9 @@ impl EngineInner {
                             // sentinel test.  Treat this as terminate,
                             // not impossible.
                             if !crate::inventory::action_uses_ammo(action) {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             }
                             // Refuse the drop when no walkable cell
@@ -3833,7 +4046,9 @@ impl EngineInner {
                             // `DROPPING_AMMO[_CROUCHED]` order and
                             // terminate.
                             if self.try_get_drop_position(owner).is_none() {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             }
                             // Capture PC
@@ -3852,7 +4067,9 @@ impl EngineInner {
                             });
                             let Some((pos, layer, sector, obstacle, direction, material)) = pc_snap
                             else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             // Decrement PC ammo, clamped to current
@@ -3864,7 +4081,9 @@ impl EngineInner {
                                 _ => None,
                             });
                             let Some(status_idx) = status_idx else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let dropped = if let Some(campaign) =
@@ -3879,7 +4098,9 @@ impl EngineInner {
                                 0
                             };
                             if dropped == 0 {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             }
                             // Auto-disable the action slot when ammo
@@ -4048,7 +4269,9 @@ impl EngineInner {
                                 }
                             }
 
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
                         // ── Drop ale bottle ───────────────────────
                         // Spawn a fresh ale at the PC's position,
@@ -4081,7 +4304,9 @@ impl EngineInner {
                             });
                             let Some((pos, layer, sector, obstacle, direction, material)) = pc_snap
                             else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
 
@@ -4093,7 +4318,9 @@ impl EngineInner {
                                 _ => None,
                             });
                             let Some(status_idx) = status_idx else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             let dropped = if let Some(campaign) =
@@ -4108,7 +4335,9 @@ impl EngineInner {
                                 0
                             };
                             if dropped == 0 {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             }
                             // Auto-disable when empty.
@@ -4182,7 +4411,9 @@ impl EngineInner {
                                 ?ale_id,
                                 "DropAle: decremented PC ale ammo and spawned ale bottle"
                             );
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
                         Command::ThrowNet => {
                             let target_pos = read_sequence_map_point_property(
@@ -4192,30 +4423,36 @@ impl EngineInner {
                             match target_pos {
                                 Some(pos) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::Net) {
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_net(
                                             &mut self.world.entities,
-                                            &mut self.sequence_manager,
+                                            &mut self.orders.sequence_manager,
                                             owner,
                                             pos,
                                             seq_id,
                                             elem_idx,
-                                            &mut self.next_order_id,
+                                            &mut self.orders.next_order_id,
                                         ) {
                                             AbilityBeginResult::Started => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_in_progress(seq_id, elem_idx);
                                             }
                                             AbilityBeginResult::Impossible => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_impossible(seq_id, elem_idx);
                                             }
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -4227,30 +4464,36 @@ impl EngineInner {
                             match target_pos {
                                 Some(pos) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::Purse) {
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_purse(
                                             &mut self.world.entities,
-                                            &mut self.sequence_manager,
+                                            &mut self.orders.sequence_manager,
                                             owner,
                                             pos,
                                             seq_id,
                                             elem_idx,
-                                            &mut self.next_order_id,
+                                            &mut self.orders.next_order_id,
                                         ) {
                                             AbilityBeginResult::Started => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_in_progress(seq_id, elem_idx);
                                             }
                                             AbilityBeginResult::Impossible => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_impossible(seq_id, elem_idx);
                                             }
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -4262,30 +4505,36 @@ impl EngineInner {
                             match target_pos {
                                 Some(pos) => {
                                     if !self.has_ammo(owner, crate::profiles::Action::WaspNest) {
-                                        self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                        self.orders
+                                            .sequence_manager
+                                            .element_impossible(seq_id, elem_idx);
                                     } else {
                                         match abilities::begin_throw_wasp_nest(
                                             &mut self.world.entities,
-                                            &mut self.sequence_manager,
+                                            &mut self.orders.sequence_manager,
                                             owner,
                                             pos,
                                             seq_id,
                                             elem_idx,
-                                            &mut self.next_order_id,
+                                            &mut self.orders.next_order_id,
                                         ) {
                                             AbilityBeginResult::Started => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_in_progress(seq_id, elem_idx);
                                             }
                                             AbilityBeginResult::Impossible => {
-                                                self.sequence_manager
+                                                self.orders
+                                                    .sequence_manager
                                                     .element_impossible(seq_id, elem_idx);
                                             }
                                         }
                                     }
                                 }
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -4320,41 +4569,49 @@ impl EngineInner {
                             let target = match target_opt {
                                 Some(t) => t,
                                 None => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                     continue;
                                 }
                             };
                             if !self.has_ammo(owner, action) {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             }
                             let begin = match cmd {
                                 Command::ThrowApple => abilities::begin_throw_apple(
                                     &mut self.world.entities,
-                                    &mut self.sequence_manager,
+                                    &mut self.orders.sequence_manager,
                                     owner,
                                     target,
                                     seq_id,
                                     elem_idx,
-                                    &mut self.next_order_id,
+                                    &mut self.orders.next_order_id,
                                 ),
                                 Command::ThrowStone => abilities::begin_throw_stone(
                                     &mut self.world.entities,
-                                    &mut self.sequence_manager,
+                                    &mut self.orders.sequence_manager,
                                     owner,
                                     target,
                                     seq_id,
                                     elem_idx,
-                                    &mut self.next_order_id,
+                                    &mut self.orders.next_order_id,
                                 ),
                                 _ => unreachable!(),
                             };
                             match begin {
                                 AbilityBeginResult::Started => {
-                                    self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_in_progress(seq_id, elem_idx);
                                 }
                                 AbilityBeginResult::Impossible => {
-                                    self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                    self.orders
+                                        .sequence_manager
+                                        .element_impossible(seq_id, elem_idx);
                                 }
                             }
                         }
@@ -4370,7 +4627,8 @@ impl EngineInner {
                         // element and push Turning onto the order
                         // queue; only Upright posture is legal.
                         Command::Turn | Command::TurnFast => {
-                            let elem_props = self.sequence_manager.get_element(seq_id, elem_idx);
+                            let elem_props =
+                                self.orders.sequence_manager.get_element(seq_id, elem_idx);
                             let camera_point = elem_props
                                 .and_then(|e| {
                                     read_sequence_map_point_property(
@@ -4426,7 +4684,9 @@ impl EngineInner {
                                 0.0,
                                 0.0,
                             );
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // Face the element's antagonist, then push
@@ -4462,7 +4722,9 @@ impl EngineInner {
                                 0.0,
                                 0.0,
                             );
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // Owner-ful Freeze pushes a `Freezing` order
@@ -4478,7 +4740,9 @@ impl EngineInner {
                                 0.0,
                                 0.0,
                             );
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // ── Point / GatherSoldiers ─────────────
@@ -4499,7 +4763,8 @@ impl EngineInner {
                                 _ => unreachable!(),
                             };
                             let explicit_direction = if elem.command == Command::Point {
-                                self.sequence_manager
+                                self.orders
+                                    .sequence_manager
                                     .get_element(seq_id, elem_idx)
                                     .and_then(|e| e.get_property(crate::sequence::Field::Direction))
                                     .and_then(|v| match v {
@@ -4521,8 +4786,12 @@ impl EngineInner {
                                 self.alloc_order_id(),
                             );
                             order.compute_direction = false;
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // ── Wait (soldier-specific override) ───
@@ -4604,6 +4873,7 @@ impl EngineInner {
                             // posture-based fallback covers everyone
                             // else.
                             let after_state = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .map(|e| e.action_state_after_transition)
@@ -4811,6 +5081,7 @@ impl EngineInner {
                             // decrement it.
                             if elem.command == Command::WaitTimer {
                                 let timer_val = self
+                                    .orders
                                     .sequence_manager
                                     .get_element(seq_id, elem_idx)
                                     .and_then(|e| e.get_property(crate::sequence::Field::Timer))
@@ -4868,13 +5139,19 @@ impl EngineInner {
                                 // `dispatch_arm_completion`
                                 // (engine/animation.rs) — no order-
                                 // level flag required here.
-                                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .push_order_on(seq_id, elem_idx, order);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
                                 // No starting order — nothing visible to
                                 // drive.  Terminate so the element
                                 // doesn't sit idle.
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
 
@@ -4918,8 +5195,12 @@ impl EngineInner {
                             let id = self.alloc_order_id();
                             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
                             order.compute_direction = false;
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // ── Menace / Sleep transitions ─────────
@@ -4947,6 +5228,7 @@ impl EngineInner {
                                 let mut order = crate::order::Order::new(ot, 0.0, 0.0, id);
                                 order.compute_direction = false;
                                 engine
+                                    .orders
                                     .sequence_manager
                                     .push_order_on(seq_id, elem_idx, order);
                             };
@@ -4991,9 +5273,13 @@ impl EngineInner {
                                 command,
                                 Command::LowerBowLeanOut | Command::RaiseBowLeanOut
                             ) {
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
 
@@ -5012,6 +5298,7 @@ impl EngineInner {
                             let command = elem.command;
                             let owner_is_pc = self.get_entity(owner).is_some_and(|e| e.is_pc());
                             let antagonist = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|e| match &e.data {
@@ -5141,8 +5428,12 @@ impl EngineInner {
                             if let Some(a) = antagonist {
                                 order = order.with_antagonist(a);
                             }
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // ── UnlockDoor ─────────────────────────
@@ -5158,6 +5449,7 @@ impl EngineInner {
                         // by `build_gate_movement_sequence`.
                         Command::UnlockDoor => {
                             let door_id = self
+                                .orders
                                 .sequence_manager
                                 .get_element(seq_id, elem_idx)
                                 .and_then(|e| e.get_property(crate::sequence::Field::Door))
@@ -5171,7 +5463,9 @@ impl EngineInner {
                             let Some(id) = door_id else {
                                 // No target door — can't proceed; just
                                 // terminate so the sequence doesn't stall.
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             };
                             // Pick UnlockingDoor vs UnlockingTrap
@@ -5203,8 +5497,12 @@ impl EngineInner {
                             .with_completion(
                                 crate::order::OrderCompletion::UnlockDoor { door_id: id },
                             );
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         // ── Jump ────────────────────────────────
@@ -5217,7 +5515,9 @@ impl EngineInner {
                         // doesn't stall.
                         Command::Jump => {
                             if self.start_jump(assets, owner, seq_id, elem_idx) {
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                             } else {
                                 tracing::warn!(
                                     entity = ?owner,
@@ -5225,7 +5525,9 @@ impl EngineInner {
                                     elem = elem_idx,
                                     "Jump: failed to install ActiveJump — terminating element"
                                 );
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                             }
                         }
 
@@ -5281,7 +5583,9 @@ impl EngineInner {
                                 .map(crate::natives::GameHost::actor_handle)
                                 .unwrap_or(0);
                             pending_target_activations.push((target_handle, pc_handle, method));
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
 
                         // Script-recorded PlayAnim / PlayAnimLoop /
@@ -5308,26 +5612,36 @@ impl EngineInner {
                                     cmd = ?cmd,
                                     "PlayAnim*: missing/invalid AnimationId — terminating",
                                 );
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             };
 
                             let Some(owner_entity) = self.get_entity(owner) else {
-                                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_impossible(seq_id, elem_idx);
                                 continue;
                             };
                             if owner_entity.is_human() {
                                 let mut order =
                                     crate::order::Order::new(anim, 0.0, 0.0, self.alloc_order_id());
                                 order.compute_direction = false;
-                                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .push_order_on(seq_id, elem_idx, order);
+                                self.orders
+                                    .sequence_manager
+                                    .element_in_progress(seq_id, elem_idx);
                                 continue;
                             }
 
                             let is_fx_target = owner_entity.kind().is_fx_target();
                             if !is_fx_target {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             }
 
@@ -5372,7 +5686,9 @@ impl EngineInner {
                                     );
                                 }
                             }
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
 
                         // PC-side target interaction commands.  Each
@@ -5399,7 +5715,9 @@ impl EngineInner {
                                 _ => None,
                             };
                             let Some(target_id) = antagonist else {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             };
                             // Only FX targets route through the
@@ -5410,7 +5728,9 @@ impl EngineInner {
                                 .get_entity(target_id)
                                 .is_some_and(|e| e.kind().is_fx_target());
                             if !antag_is_fx_target {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 continue;
                             }
                             let anim_type = match cmd {
@@ -5428,8 +5748,12 @@ impl EngineInner {
                                 self.alloc_order_id(),
                             )
                             .with_antagonist(target_id);
-                            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-                            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .push_order_on(seq_id, elem_idx, order);
+                            self.orders
+                                .sequence_manager
+                                .element_in_progress(seq_id, elem_idx);
                         }
 
                         _ => {
@@ -5450,7 +5774,9 @@ impl EngineInner {
                                 elem_idx,
                                 "InstructOwner: no dispatch for command; terminating element"
                             );
-                            self.sequence_manager.element_terminated(seq_id, elem_idx);
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
                         }
                     }
                 }
@@ -5489,7 +5815,10 @@ impl EngineInner {
             // immediate command or complete a level whose successor is WAIT.
             // Splice that ordered registration stream onto the FRONT so the
             // re-entrant work fires before the next older action in the batch.
-            let pending = self.sequence_manager.take_pending_synchronous_actions();
+            let pending = self
+                .orders
+                .sequence_manager
+                .take_pending_synchronous_actions();
             for action in pending.into_iter().rev() {
                 actions.push_front(action);
             }
@@ -5609,7 +5938,9 @@ impl EngineInner {
                 })
                 .collect();
             for (seq_id, elem_idx) in pinch_aborts {
-                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
             }
         }
 
@@ -6005,7 +6336,7 @@ impl EngineInner {
         {
             let query = EntityTitbitQuery {
                 entities: &self.world.entities,
-                sequence_manager: &self.sequence_manager,
+                sequence_manager: &self.orders.sequence_manager,
                 follow_element: self.players.seats[0].follow_element,
             };
             self.feedback.titbit_manager.update(&query);
@@ -6048,7 +6379,7 @@ impl EngineInner {
                 }
             }
             for pc_id in deselect {
-                self.messenger.send(Message::pc(
+                self.orders.messenger.send(Message::pc(
                     crate::messenger::PcMessage::UnselectCharacter,
                     Some(pc_id),
                 ));
@@ -6060,7 +6391,7 @@ impl EngineInner {
         // mark the backing sequence element `Terminated` so the
         // sequence advances.
         let mut expired: Vec<crate::sequence::SequenceElementRef> = Vec::new();
-        self.timer_elements.retain_mut(|timer| {
+        self.orders.timer_elements.retain_mut(|timer| {
             if timer.remaining <= 1 {
                 expired.push(timer.element_ref);
                 false
@@ -6070,7 +6401,8 @@ impl EngineInner {
             }
         });
         for r in expired {
-            self.sequence_manager
+            self.orders
+                .sequence_manager
                 .element_terminated(r.sequence_id, r.element_index);
         }
 
@@ -6135,7 +6467,9 @@ impl EngineInner {
         let entity = match self.world.entities.get(owner) {
             Some(e) => e,
             None => {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
                 return;
             }
         };
@@ -6158,14 +6492,18 @@ impl EngineInner {
                 ?action_state,
                 "stealth command rejected: preconditions not met"
             );
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return;
         }
 
         let transition = match stealth::stealth_transition(command) {
             Some(t) => t,
             None => {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
                 return;
             }
         };
@@ -6174,7 +6512,9 @@ impl EngineInner {
         // before we take a mutable borrow on `self.world.entities`.
         let hidden_phase = if transition.result_posture.is_hidden() {
             let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get(owner) else {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
                 return;
             };
             self.mission_domain.campaign.as_ref().unwrap_or_else(|| {
@@ -6257,7 +6597,9 @@ impl EngineInner {
             }
         }
 
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
     }
 
     /// Auto-leave disguise/stealth posture if the entity is in one and
@@ -6368,7 +6710,9 @@ impl EngineInner {
                 crate::order::Order::new(transition.animation, 0.0, 0.0, self.alloc_order_id());
             order.compute_direction = false;
             if let Some((seq_id, elem_idx)) = dispatching {
-                self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+                self.orders
+                    .sequence_manager
+                    .push_order_on(seq_id, elem_idx, order);
             } else {
                 // No dispatching element found — spawn a single-
                 // order generic sequence so the visible unstick
@@ -6382,7 +6726,10 @@ impl EngineInner {
         // (e.g. `dispatch_attentive_transition`) decides whether to
         // run the command's real transition or snap.
         if let Some((seq_id, elem_idx)) = dispatching
-            && let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx)
+            && let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
         {
             elem.posture_after_transition = transition.result_posture;
             elem.action_state_after_transition = transition.result_action_state;
@@ -6419,7 +6766,8 @@ impl EngineInner {
         command: Command,
     ) -> Option<(crate::sequence::SequenceId, usize)> {
         use crate::sequence::SequenceState;
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .live_element_for_actor_matching(owner, |elem| {
                 elem.command == command
                     && matches!(elem.state, SequenceState::Todo | SequenceState::InProgress)
@@ -6831,12 +7179,16 @@ impl EngineInner {
                 self.alloc_order_id(),
             )
             .with_completion(crate::order::OrderCompletion::WaspStruggleCycle { cycles_remaining });
-            self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
             self.do_next_order(seq_id, elem_idx);
         }
 
         for (seq_id, elem_idx) in outcomes.seq_terminate {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
 
         for (actor, command_level, anim) in outcomes.play_anim_frozen {
@@ -6849,13 +7201,15 @@ impl EngineInner {
                 crate::sequence::Field::AnimationId,
                 crate::sequence::FieldValue::Animation(anim),
             );
-            self.sequence_manager.launch_element(elem);
+            self.orders.sequence_manager.launch_element(elem);
         }
 
         // ABORTED motion result: set the sequence element to
         // IMPOSSIBLE.
         for (seq_id, elem_idx) in outcomes.seq_impossible {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
         }
 
         for (door_id, seq_id, elem_idx) in outcomes.unlock_door {
@@ -6868,7 +7222,9 @@ impl EngineInner {
                     "UnlockDoor: lockpick animation complete, door unlocked"
                 );
             }
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
 
         for entity_id in outcomes.next_jump_step {
@@ -6895,7 +7251,7 @@ impl EngineInner {
                     entity_id,
                     &mut door_triggers,
                     &mut select_triggers,
-                    &mut self.next_order_id,
+                    &mut self.orders.next_order_id,
                 );
                 // If the door pass is done (no more steps), mirror the
                 // arrival teardown performed by the movement tick.
@@ -6942,8 +7298,10 @@ impl EngineInner {
             // front order.  This mirrors the movement-tick door-pass
             // path, where `transition_pushes` are drained before
             // `order_pops`.
-            if let Some((seq_id, elem_idx)) =
-                self.sequence_manager.current_element_for_actor(entity_id)
+            if let Some((seq_id, elem_idx)) = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(entity_id)
             {
                 match advance.clone() {
                     DoorPassAdvance::Continue {
@@ -6975,8 +7333,11 @@ impl EngineInner {
                         self.do_next_order(seq_id, elem_idx);
                     }
                     DoorPassAdvance::Paused { transition_order } => {
-                        self.sequence_manager
-                            .push_order_on(seq_id, elem_idx, transition_order);
+                        self.orders.sequence_manager.push_order_on(
+                            seq_id,
+                            elem_idx,
+                            transition_order,
+                        );
                         self.do_next_order(seq_id, elem_idx);
                     }
                     DoorPassAdvance::NoActive => {
@@ -6995,7 +7356,8 @@ impl EngineInner {
             // `tick_entity_movement` for normal arrival.
             if let Some(am) = arrived_movement {
                 if let Some(seq_id) = am.sequence_id {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_terminated(seq_id, am.element_index);
                 }
                 self.dispatch_reach_point_events(assets, &[entity_id]);
@@ -7471,13 +7833,16 @@ impl EngineInner {
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
     ) {
-        if !self.sequence_manager.has_pending_immediate_actions() {
+        if !self.orders.sequence_manager.has_pending_immediate_actions() {
             return;
         }
         let mut deferred_process_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
         let mut deferred_engine_messages: Vec<(i32, i32, i32)> = Vec::new();
         loop {
-            let actions = self.sequence_manager.take_pending_immediate_actions();
+            let actions = self
+                .orders
+                .sequence_manager
+                .take_pending_immediate_actions();
             if actions.is_empty() {
                 break;
             }
@@ -7513,7 +7878,7 @@ impl EngineInner {
         elem_idx: usize,
         deferred_process_messages: &mut Vec<(i32, i32, i32, i32)>,
     ) {
-        let cmd = match self.sequence_manager.get_element(seq_id, elem_idx) {
+        let cmd = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
             Some(e) => e.command,
             None => return,
         };
@@ -7524,7 +7889,9 @@ impl EngineInner {
                 {
                     entity.reveal_blip();
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Command::SendMessage => {
                 // Dispatch ProcessMessage to the owner's per-actor
@@ -7532,14 +7899,16 @@ impl EngineInner {
                 let (msg, arg1, arg2) = self.extract_message_properties(seq_id, elem_idx);
                 let handle = crate::natives::GameHost::actor_handle(owner);
                 deferred_process_messages.push((handle, msg, arg1, arg2));
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Command::ReplaceAnim => {
                 // Scripts use this to register per-sprite animation
                 // fallbacks (e.g. Robin has no RunningWithSword,
                 // so it's remapped to WalkingWithSword).
                 let (old_anim, new_anim) = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     let old = elem.and_then(|e| {
                         match e.get_property(crate::sequence::Field::OldAnimation) {
                             Some(crate::sequence::FieldValue::Integer(v)) => {
@@ -7563,11 +7932,13 @@ impl EngineInner {
                 {
                     entity.element_data_mut().sprite.replace_anim(old, new);
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Command::RestoreAnim => {
                 let old_anim = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     elem.and_then(
                         |e| match e.get_property(crate::sequence::Field::OldAnimation) {
                             Some(crate::sequence::FieldValue::Integer(v)) => {
@@ -7582,14 +7953,16 @@ impl EngineInner {
                 {
                     entity.element_data_mut().sprite.restore_anim(old);
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Command::Speak => {
                 // NPC: `say_remark(speak_id, speak_flags)`.
                 // PC:  `hero_speaking(speak_id, SPEECH_SCRIPT,
                 //                     speak_variant)`.
                 let (speak_id, speak_flags, speak_variant) = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     let id =
                         elem.and_then(|e| match e.get_property(crate::sequence::Field::SpeakId) {
                             Some(crate::sequence::FieldValue::Integer(v)) => Some(*v),
@@ -7611,7 +7984,9 @@ impl EngineInner {
                 };
                 let Some(speak_id) = speak_id else {
                     tracing::warn!(?owner, "Speak: missing SpeakId property — terminating");
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
                     return;
                 };
                 let owner_is_pc = self.get_entity(owner).is_some_and(|e| e.is_pc());
@@ -7636,7 +8011,9 @@ impl EngineInner {
                         "Speak: invalid remark id or missing AI controller"
                     );
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Command::Teleport => {
                 // Read destination + layer + sector off the
@@ -7650,7 +8027,7 @@ impl EngineInner {
                 // new-side star burst when the validation step
                 // gives up.
                 let (dest, dest_layer) = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     match elem.map(|e| &e.data) {
                         Some(crate::sequence::SequenceElementData::Movement {
                             destination,
@@ -7676,7 +8053,9 @@ impl EngineInner {
                         let entity = match self.get_entity(owner) {
                             Some(e) => e,
                             None => {
-                                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                                self.orders
+                                    .sequence_manager
+                                    .element_terminated(seq_id, elem_idx);
                                 return;
                             }
                         };
@@ -7955,7 +8334,9 @@ impl EngineInner {
                         }
                     }
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
                 // `actor_wait` parks the actor in a low-priority
                 // idle element after the teleport so the AI
                 // re-enters its default loop instead of resuming
@@ -7984,10 +8365,14 @@ impl EngineInner {
                         }
                     }
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             _ => {
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
         }
     }
@@ -8011,6 +8396,7 @@ impl EngineInner {
     ) {
         // Check for SendMessage targeting the global script.
         let cmd = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.command);
@@ -8020,13 +8406,17 @@ impl EngineInner {
                 // `IEngineScript::ProcessMessage` (global).
                 let (msg, arg1, arg2) = self.extract_message_properties(seq_id, elem_idx);
                 deferred_engine_messages.push((msg, arg1, arg2));
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::LockUser) => {
                 // Set `user_locked` and start dropping mouse/key
                 // events.
                 self.players.user_locked = true;
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::UnlockUser) => {
                 self.players.user_locked = false;
@@ -8035,13 +8425,16 @@ impl EngineInner {
                 // drain clears ThreadedInput's pressed-key cache
                 // plus the UI latch state.
                 self.feedback.pending_side_effects.pending_reset_input = true;
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::Timer) => {
                 // Park the element on the timer-element list; the
                 // per-frame scan in `perform_hourglass` terminates
                 // it when the Timer property reaches zero.
                 let frames = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.get_property(crate::sequence::Field::Timer))
@@ -8063,6 +8456,7 @@ impl EngineInner {
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
                 let point = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| {
@@ -8076,7 +8470,9 @@ impl EngineInner {
                         self.check_location_is_valid_for_camera(pos);
                     self.feedback.pending_side_effects.invalidate_background = true;
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::CameraGoto) => {
                 // Terminate any previous camera sequence element,
@@ -8087,7 +8483,7 @@ impl EngineInner {
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
                 let (point, speed) = {
-                    let e = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let e = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     let p = e.and_then(|e| {
                         read_sequence_map_point_property(e, crate::sequence::Field::CameraPoint)
                     });
@@ -8105,7 +8501,9 @@ impl EngineInner {
                         self.feedback.cutscene_camera.view_position =
                             self.check_location_is_valid_for_camera(pos);
                     }
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
                 } else if let Some(pos) = point {
                     // Store the raw script point as
                     // `camera_wanted`, store the centered+clamped
@@ -8119,7 +8517,9 @@ impl EngineInner {
                     self.feedback.cutscene_camera.sequence_element =
                         Some(crate::sequence::SequenceElementRef::new(seq_id, elem_idx));
                 } else {
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
                 }
             }
             Some(Command::ZoomLevel) => {
@@ -8129,6 +8529,7 @@ impl EngineInner {
                 // the zoom transition finishes.
                 self.terminate_prev_camera_sequence_element();
                 let zoom = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.get_property(crate::sequence::Field::CameraZoomLevel))
@@ -8141,7 +8542,9 @@ impl EngineInner {
                     self.feedback.cutscene_camera.sequence_element =
                         Some(crate::sequence::SequenceElementRef::new(seq_id, elem_idx));
                 } else {
-                    self.sequence_manager.element_terminated(seq_id, elem_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
                 }
             }
             Some(Command::LockCameraOn) => {
@@ -8150,6 +8553,7 @@ impl EngineInner {
                 // locks, and terminate self.
                 self.terminate_prev_camera_sequence_element();
                 let target = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| match &e.data {
@@ -8166,17 +8570,22 @@ impl EngineInner {
                     self.players.seats[0].locker_active = false;
                 }
                 self.feedback.titbit_manager.remove_lock();
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::LockCameraStop) => {
                 self.terminate_prev_camera_sequence_element();
                 self.players.seats[0].follow_element = None;
                 self.players.seats[0].locker_active = false;
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::DisplayMap) => {
                 // Forwards to `Minimap::display_map(show)`.
                 let show = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.get_property(crate::sequence::Field::MapDisplay))
@@ -8186,13 +8595,16 @@ impl EngineInner {
                     })
                     .unwrap_or(false);
                 display.minimap.display_map(show, false);
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::PlayDialog) => {
                 // Dialog display is skipped in fast-forward;
                 // always send MSG_RESET_INPUT.
                 if !self.control.fast_forward {
                     let dialog_id = self
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .and_then(|e| e.get_property(crate::sequence::Field::DialogId))
@@ -8206,15 +8618,19 @@ impl EngineInner {
                         .pending_dialogues
                         .push(dialog_id);
                 }
-                self.messenger
+                self.orders
+                    .messenger
                     .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::DisplayPopupText) => {
                 // Popup-scroll display is skipped in fast-forward;
                 // always send MSG_RESET_INPUT.
                 if !self.control.fast_forward {
                     let text_id = self
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .and_then(|e| e.get_property(crate::sequence::Field::PopupTextId))
@@ -8228,12 +8644,16 @@ impl EngineInner {
                         .pending_popup_texts
                         .push(text_id);
                 }
-                self.messenger
+                self.orders
+                    .messenger
                     .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::Freeze | Command::FreezeAll) => {
                 let freeze = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .and_then(|e| e.get_property(crate::sequence::Field::Freeze))
@@ -8243,7 +8663,9 @@ impl EngineInner {
                     })
                     .unwrap_or(false);
                 self.set_actors_frozen(freeze);
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::CharacterAvailable) => {
                 // `SetPlayable` writes `playable` AND fires
@@ -8254,7 +8676,7 @@ impl EngineInner {
                 // + interface-hidden path as the `Deactivate`
                 // native.
                 let (owner, playable) = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     let owner = elem.and_then(|e| e.owner);
                     let playable = elem
                         .and_then(|e| e.get_property(crate::sequence::Field::CharacterAvailable))
@@ -8275,10 +8697,13 @@ impl EngineInner {
                     } else {
                         crate::messenger::PcMessage::DisableCharacter
                     };
-                    self.messenger
+                    self.orders
+                        .messenger
                         .send(crate::messenger::Message::pc(msg_type, Some(o)));
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::ActionAvailable) => {
                 // Owner PC receives `EnableAction` /
@@ -8287,7 +8712,7 @@ impl EngineInner {
                 // downstream flips the portrait widget and clears
                 // `valid_trajectory`.
                 let (owner, action_id, available) = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     let owner = elem.and_then(|e| e.owner);
                     let action_id = elem
                         .and_then(|e| e.get_property(crate::sequence::Field::ActionId))
@@ -8311,10 +8736,13 @@ impl EngineInner {
                     } else {
                         crate::messenger::PcMessage::DisableAction
                     };
-                    self.messenger
+                    self.orders
+                        .messenger
                         .send(Message::pc_with_value(sub, Some(o), action_id));
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             Some(Command::OpenScroll) => {
                 // Call `scroll_is_taken` on the scroll referenced
@@ -8322,7 +8750,7 @@ impl EngineInner {
                 // Opens the scroll and, if a script is bound,
                 // dispatches its `IsTaken` handler.
                 let (scroll_id, reader_id) = {
-                    let elem = self.sequence_manager.get_element(seq_id, elem_idx);
+                    let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx);
                     let scroll = elem
                         .and_then(|e| e.get_property(crate::sequence::Field::Scroll))
                         .and_then(|v| match v {
@@ -8346,7 +8774,9 @@ impl EngineInner {
                         "OpenScroll sequence command missing Scroll/ScrollReader property"
                     );
                 }
-                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_terminated(seq_id, elem_idx);
             }
             _ => {
                 // Unknown commands fall through without being
@@ -8593,6 +9023,7 @@ mod bow_command_body_parity_tests {
 
     fn command_order_types(engine: &EngineInner) -> Vec<OrderType> {
         engine
+            .orders
             .sequence_manager
             .get_element(SequenceId(1), 0)
             .unwrap()
@@ -8639,7 +9070,11 @@ mod bow_command_body_parity_tests {
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.perform_hourglass(&mut display, &assets, &mut dev);
 
-        let elem = engine.sequence_manager.get_element(seq_id, 0).unwrap();
+        let elem = engine
+            .orders
+            .sequence_manager
+            .get_element(seq_id, 0)
+            .unwrap();
         assert_eq!(
             elem.state,
             SequenceState::InProgress,
@@ -8655,6 +9090,7 @@ mod bow_command_body_parity_tests {
     fn equip_bow_terminates_when_actor_is_already_aiming() {
         let engine = launch_bow_command_and_tick(Command::EquipBow, ActionState::AimingWithBow);
         let elem = engine
+            .orders
             .sequence_manager
             .get_element(SequenceId(1), 0)
             .unwrap();
@@ -8671,6 +9107,7 @@ mod bow_command_body_parity_tests {
         let engine =
             launch_bow_command_and_tick(Command::EquipBowDown, ActionState::AimingWithBowUp);
         let elem = engine
+            .orders
             .sequence_manager
             .get_element(SequenceId(1), 0)
             .unwrap();

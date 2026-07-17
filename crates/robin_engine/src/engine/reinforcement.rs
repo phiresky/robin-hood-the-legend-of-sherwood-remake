@@ -32,10 +32,11 @@ impl EngineInner {
     /// [`EngineInner::preload_campaign_peasant_sprites`], so this path
     /// only reads the scriptor cache (`&LevelAssets`).
     pub(crate) fn drain_pending_reinforcements(&mut self, assets: &LevelAssets) {
-        if self.pending_reinforcements.is_empty() {
+        if self.orders.pending_reinforcements.is_empty() {
             return;
         }
-        let requests: Vec<Option<EntityId>> = std::mem::take(&mut self.pending_reinforcements);
+        let requests: Vec<Option<EntityId>> =
+            std::mem::take(&mut self.orders.pending_reinforcements);
         for dead_pc in requests {
             self.create_reinforcement(assets, dead_pc);
         }

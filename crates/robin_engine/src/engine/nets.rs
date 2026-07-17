@@ -682,7 +682,7 @@ impl EngineInner {
             }
             // The victim's currently-active order animation on the
             // owning sequence element.
-            if let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(v)
+            if let Some((_, _, order)) = self.orders.sequence_manager.current_order_for_actor(v)
                 && order.order_type == crate::order::OrderType::WriggleUnderNet
             {
                 return true;
@@ -1083,6 +1083,7 @@ mod tests {
 
     fn count_receive_net_for(engine: &EngineInner, victim_id: EntityId) -> usize {
         engine
+            .orders
             .sequence_manager
             .sequences_iter()
             .flat_map(|s| s.elements.iter())
@@ -1634,6 +1635,7 @@ mod tests {
         engine.perform_hourglass(&mut display, &assets, &mut dev);
 
         let active_anim = engine
+            .orders
             .sequence_manager
             .current_order_for_actor(pc_id)
             .map(|(_, _, o)| o.order_type);

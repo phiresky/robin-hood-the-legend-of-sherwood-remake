@@ -506,7 +506,7 @@ impl EngineInner {
         // as pending/postponed `ShootBow` sequence elements.
         {
             let resolver = Self::priority_resolver(&self.world.entities);
-            self.sequence_manager.stop_pending_elements_matching(
+            self.orders.sequence_manager.stop_pending_elements_matching(
                 initiator,
                 crate::element::Command::ShootBow,
                 crate::sequence::SequencePriority::Preference,
@@ -933,10 +933,14 @@ impl EngineInner {
         // interruption tears down in-flight requests), so we only
         // retain the failed-path cleanup.
         if initiator_fresh {
-            self.failed_path_requests.retain(|r| r.owner != initiator);
+            self.orders
+                .failed_path_requests
+                .retain(|r| r.owner != initiator);
         }
         if opponent_fresh {
-            self.failed_path_requests.retain(|r| r.owner != opponent);
+            self.orders
+                .failed_path_requests
+                .retain(|r| r.owner != opponent);
         }
 
         // Set both to combat action state and update PC melee_target

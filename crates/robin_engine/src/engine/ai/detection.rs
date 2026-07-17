@@ -356,7 +356,7 @@ impl EngineInner {
             pc_id: EntityId,
         }
         let mut firing_listeners: Vec<FiringListener> = Vec::new();
-        let next_order_id = &mut self.next_order_id;
+        let next_order_id = &mut self.orders.next_order_id;
         for &pc_id in &self.world.pc_ids {
             let Some(Entity::Pc(pc)) = self.world.entities.get_mut(pc_id) else {
                 continue;

@@ -564,11 +564,13 @@ impl EngineInner {
                     }
                 }
 
-                self.pending_concussion_side_effects
+                self.orders
+                    .pending_concussion_side_effects
                     .push((entity_id, outcome));
             }
             ConcussionOutcome::WokeUp => {
-                self.pending_concussion_side_effects
+                self.orders
+                    .pending_concussion_side_effects
                     .push((entity_id, outcome));
             }
             ConcussionOutcome::NoChange => {}
@@ -668,10 +670,10 @@ impl EngineInner {
     pub(crate) fn drain_pending_concussion_side_effects(&mut self, assets: &LevelAssets) {
         use crate::combat::ConcussionOutcome;
 
-        if self.pending_concussion_side_effects.is_empty() {
+        if self.orders.pending_concussion_side_effects.is_empty() {
             return;
         }
-        let entries = std::mem::take(&mut self.pending_concussion_side_effects);
+        let entries = std::mem::take(&mut self.orders.pending_concussion_side_effects);
         for (entity_id, outcome) in entries {
             match outcome {
                 ConcussionOutcome::WentUnconscious => {
@@ -736,10 +738,10 @@ impl EngineInner {
     /// missed-friend detectable removal, emoticon clear, and the
     /// dying animation.
     pub(crate) fn drain_pending_hades_kills(&mut self, assets: &LevelAssets) {
-        if self.pending_hades_kills.is_empty() {
+        if self.orders.pending_hades_kills.is_empty() {
             return;
         }
-        let victims: Vec<EntityId> = std::mem::take(&mut self.pending_hades_kills);
+        let victims: Vec<EntityId> = std::mem::take(&mut self.orders.pending_hades_kills);
         for victim_id in victims {
             self.handle_death(assets, victim_id);
         }
@@ -2229,6 +2231,7 @@ mod tests {
 
     fn count_domino_hits_for(engine: &EngineInner, victim: EntityId, hitter: EntityId) -> usize {
         engine
+            .orders
             .sequence_manager
             .sequences_iter()
             .flat_map(|s| s.elements.iter())
@@ -2743,6 +2746,7 @@ mod tests {
         engine.tick_push_flights(&LevelAssets::default());
 
         let any_hit = engine
+            .orders
             .sequence_manager
             .sequences_iter()
             .flat_map(|s| s.elements.iter())

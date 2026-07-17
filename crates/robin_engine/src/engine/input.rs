@@ -2662,6 +2662,7 @@ impl EngineInner {
             }
 
             let current_anim = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(pc_id)
                 .map(|(_, _, o)| o.order_type);
@@ -2678,6 +2679,7 @@ impl EngineInner {
             }
 
             if self
+                .orders
                 .sequence_manager
                 .element_is_about_to_be_launched(pc_id, Command::ShootBow)
             {
@@ -2739,6 +2741,7 @@ impl EngineInner {
             // Skip when a throw animation is the front order of the
             // actor's current sequence element.
             let current_anim = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(pc_id)
                 .map(|(_, _, o)| o.order_type);
@@ -2798,6 +2801,7 @@ impl EngineInner {
             let action_state = pc.actor.action_state;
             let raw_dir = vector_to_sector_0_to_15(dx, dy);
             let transition_active = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(pc_id)
                 .map(|(_, _, o)| {

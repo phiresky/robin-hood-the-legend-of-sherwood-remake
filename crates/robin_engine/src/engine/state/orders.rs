@@ -1,0 +1,104 @@
+use crate::element::EntityId;
+use crate::messenger::Messenger;
+use crate::sequence::SequenceManager;
+
+use super::super::{PendingScrollAmulet, TimerEntry, movement};
+
+/// Deterministic scheduled gameplay work and its existing drain barriers.
+///
+/// Owning these values together does not make their effects asynchronous:
+/// every queue is still drained at its pre-existing point in the ten-phase
+/// tick, and sequence/script callbacks remain same-call operations.
+#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct OrderRuntime {
+    pub(crate) next_order_id: u32,
+    pub(crate) messenger: Messenger,
+    pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
+    pub(crate) pending_path_requests: movement::PendingPathRequestQueue,
+    pub(crate) failed_path_requests: Vec<movement::FailedPathRequest>,
+    pub(crate) timer_elements: Vec<TimerEntry>,
+    pub(crate) sequence_manager: SequenceManager,
+    pub(crate) pending_reinforcements: Vec<Option<EntityId>>,
+    pub(crate) pending_scroll_amulets: Vec<PendingScrollAmulet>,
+    pub(crate) pending_hero_speeches: Vec<(EntityId, u16)>,
+    pub(crate) pending_hades_kills: Vec<EntityId>,
+    pub(crate) pending_concussion_side_effects: Vec<(EntityId, crate::combat::ConcussionOutcome)>,
+}
+
+impl OrderRuntime {
+    pub(crate) fn new() -> Self {
+        Self {
+            next_order_id: 1,
+            messenger: Messenger::new(),
+            pending_move_requests: Vec::new(),
+            pending_path_requests: Default::default(),
+            failed_path_requests: Vec::new(),
+            timer_elements: Vec::new(),
+            sequence_manager: SequenceManager::new(),
+            pending_reinforcements: Vec::new(),
+            pending_scroll_amulets: Vec::new(),
+            pending_hero_speeches: Vec::new(),
+            pending_hades_kills: Vec::new(),
+            pending_concussion_side_effects: Vec::new(),
+        }
+    }
+
+    pub(crate) fn allocate_order_id(&mut self) -> std::num::NonZeroU32 {
+        crate::order::alloc_order_id(&mut self.next_order_id)
+    }
+
+    /// Validate invariants that must survive queueing and snapshot restore.
+    pub(crate) fn validate_invariants(&self) -> Result<(), String> {
+        let mut owners = std::collections::HashSet::new();
+        for (owner, _) in &self.pending_move_requests {
+            if !owners.insert(*owner) {
+                return Err(format!(
+                    "pending move queue contains duplicate owner {owner:?}; last-intent-wins enqueue invariant was bypassed"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_runtime_starts_with_empty_barrier_queues() {
+        let mut orders = OrderRuntime::new();
+
+        assert_eq!(orders.next_order_id, 1);
+        assert_eq!(orders.allocate_order_id().get(), 1);
+        assert_eq!(orders.next_order_id, 2);
+        assert_eq!(orders.messenger.count(), 0);
+        assert!(orders.pending_move_requests.is_empty());
+        assert!(orders.failed_path_requests.is_empty());
+        assert!(orders.timer_elements.is_empty());
+        assert!(orders.pending_reinforcements.is_empty());
+        assert!(orders.pending_scroll_amulets.is_empty());
+        assert!(orders.pending_hero_speeches.is_empty());
+        assert!(orders.pending_hades_kills.is_empty());
+        assert!(orders.pending_concussion_side_effects.is_empty());
+        assert!(orders.validate_invariants().is_ok());
+    }
+
+    #[test]
+    fn duplicate_pending_move_owner_violates_last_intent_wins_invariant() {
+        let mut orders = OrderRuntime::new();
+        let owner = EntityId::new(7, crate::element::EntityIdKind::Pc);
+        let intent =
+            crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
+
+        orders.pending_move_requests.push((owner, intent.clone()));
+        orders.pending_move_requests.push((owner, intent));
+
+        assert!(
+            orders
+                .validate_invariants()
+                .expect_err("duplicate owner must be rejected")
+                .contains("duplicate owner")
+        );
+    }
+}

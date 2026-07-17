@@ -38,7 +38,7 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.script_globals = vec![-7, 0, 42, i32::MAX];
     engine.mission_domain.cheat_used_flags = 0xA5A5_5A5A;
     engine.ai.standard_view_polygon_radius = 321;
-    engine.next_order_id = 0x5566_7788;
+    engine.orders.next_order_id = 0x5566_7788;
     engine.control.chorus_timer = 23;
     engine.mission_domain.force_check = true;
     engine.mission_domain.mission_stat.collected_money = 1234;
@@ -49,7 +49,7 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.players.user_locked = true;
     engine.players.qa_recording_slot = 2;
     engine.control.fast_forward = true;
-    engine.pending_reinforcements.push(None);
+    engine.orders.pending_reinforcements.push(None);
     engine.world.static_sight_obstacle_active = vec![true, false, true];
 
     engine
@@ -403,6 +403,10 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.set_engine_locked(true);
+    engine
+        .orders
+        .pending_hades_kills
+        .push(EntityId::new(99, crate::element::EntityIdKind::Soldier));
 
     begin_hourglass_phase_capture();
     let result = engine
@@ -414,6 +418,10 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     assert_eq!(
         engine.control.frame_counter, 1,
         "the lock gate follows clock advance"
+    );
+    assert!(
+        engine.orders.pending_hades_kills.is_empty(),
+        "deferred order work must drain before the locked mission gate"
     );
     assert_eq!(
         phases,
@@ -466,7 +474,7 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
     // already waiting in RHSequenceManager's FIFO at frame start.
     let mut element = SequenceElement::new(1, Command::SitDown, Some(soldier_id));
     element.posture_after_transition = Posture::Upright;
-    let sequence_id = engine.sequence_manager.launch_element(element);
+    let sequence_id = engine.orders.sequence_manager.launch_element(element);
 
     let mut display = HostDisplayState::default();
     let mut assets = LevelAssets::new();
@@ -475,6 +483,7 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let element = engine
+        .orders
         .sequence_manager
         .get_element(sequence_id, 0)
         .expect("pending element should have dispatched");
@@ -678,8 +687,9 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
     let order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
     let order_id = order.order_id;
     shot_element.orders.push_back(order);
-    let shot_sequence = engine.sequence_manager.launch_element(shot_element);
+    let shot_sequence = engine.orders.sequence_manager.launch_element(shot_element);
     engine
+        .orders
         .sequence_manager
         .element_in_progress(shot_sequence, 0);
     {
@@ -807,23 +817,25 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
             crate::coordinates::SpriteLocalPoint::ZERO,
             crate::coordinates::SpriteAnchor::ZERO,
         );
-        let sequence_id = engine.sequence_manager.launch_element(SequenceElement::new(
-            1,
-            Command::EatCmd,
-            Some(actor_id),
-        ));
+        let sequence_id = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(1, Command::EatCmd, Some(actor_id)));
         assert_eq!(
             crate::abilities::begin_eat(
                 &mut engine.world.entities,
-                &mut engine.sequence_manager,
+                &mut engine.orders.sequence_manager,
                 actor_id,
                 sequence_id,
                 0,
-                &mut engine.next_order_id,
+                &mut engine.orders.next_order_id,
             ),
             crate::abilities::BeginResult::Started
         );
-        engine.sequence_manager.element_in_progress(sequence_id, 0);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
     }
 
     let mut display = HostDisplayState::default();
@@ -863,12 +875,16 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
     let attacker = engine.add_entity(make_test_pc(Posture::Upright));
     let later_actor = engine.add_entity(make_test_pc(Posture::Upright));
 
-    let melee_sequence = engine.sequence_manager.launch_element(SequenceElement::new(
-        1,
-        Command::SwordstrikeThrustA,
-        Some(attacker),
-    ));
+    let melee_sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(
+            1,
+            Command::SwordstrikeThrustA,
+            Some(attacker),
+        ));
     engine
+        .orders
         .sequence_manager
         .element_in_progress(melee_sequence, 0);
     let mut active_melee =
@@ -889,23 +905,23 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
         crate::coordinates::SpriteLocalPoint::ZERO,
         crate::coordinates::SpriteAnchor::ZERO,
     );
-    let ability_sequence = engine.sequence_manager.launch_element(SequenceElement::new(
-        1,
-        Command::EatCmd,
-        Some(later_actor),
-    ));
+    let ability_sequence = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::EatCmd, Some(later_actor)));
     assert_eq!(
         crate::abilities::begin_eat(
             &mut engine.world.entities,
-            &mut engine.sequence_manager,
+            &mut engine.orders.sequence_manager,
             later_actor,
             ability_sequence,
             0,
-            &mut engine.next_order_id,
+            &mut engine.orders.next_order_id,
         ),
         crate::abilities::BeginResult::Started
     );
     engine
+        .orders
         .sequence_manager
         .element_in_progress(ability_sequence, 0);
 
@@ -914,6 +930,7 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
 
     assert_eq!(
         engine
+            .orders
             .sequence_manager
             .get_element(melee_sequence, 0)
             .expect("melee sequence present")
@@ -1975,10 +1992,14 @@ fn mission_state_transitions() {
 fn initialize_sends_stature_message() {
     let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    assert_eq!(engine.messenger.count(), 0);
+    assert_eq!(engine.orders.messenger.count(), 0);
     engine.initialize(&mut assets);
     // Should have sent a Stature message
-    let msg = engine.messenger.poll().expect("expected stature message");
+    let msg = engine
+        .orders
+        .messenger
+        .poll()
+        .expect("expected stature message");
     assert_eq!(msg.msg_type, MessageType::Simple(SimpleMessage::Stature));
 }
 
@@ -2030,7 +2051,11 @@ fn post_load_fixups_aborts_midzoom() {
             .zoom_to_up
     );
     assert!(!engine.feedback.cutscene_camera.zoom_init_done);
-    let msg = engine.messenger.poll().expect("expected zoom end message");
+    let msg = engine
+        .orders
+        .messenger
+        .poll()
+        .expect("expected zoom end message");
     assert_eq!(msg.msg_type, MessageType::Simple(SimpleMessage::ZoomUpEnd));
 }
 
@@ -2402,19 +2427,19 @@ fn timer_tick_decrements_and_removes() {
     let ref_b = SequenceElementRef::new(SequenceId(200), 0);
     engine.add_timer(3, ref_a);
     engine.add_timer(1, ref_b);
-    assert_eq!(engine.timer_elements.len(), 2);
+    assert_eq!(engine.orders.timer_elements.len(), 2);
 
     engine.perform_hourglass(&mut display, &assets, &mut dev);
     // Timer 200 (remaining=1) should be removed, timer 100 decremented to 2
-    assert_eq!(engine.timer_elements.len(), 1);
-    assert_eq!(engine.timer_elements[0].remaining, 2);
-    assert_eq!(engine.timer_elements[0].element_ref, ref_a);
+    assert_eq!(engine.orders.timer_elements.len(), 1);
+    assert_eq!(engine.orders.timer_elements[0].remaining, 2);
+    assert_eq!(engine.orders.timer_elements[0].element_ref, ref_a);
 
     engine.perform_hourglass(&mut display, &assets, &mut dev);
-    assert_eq!(engine.timer_elements[0].remaining, 1);
+    assert_eq!(engine.orders.timer_elements[0].remaining, 1);
 
     engine.perform_hourglass(&mut display, &assets, &mut dev);
-    assert!(engine.timer_elements.is_empty());
+    assert!(engine.orders.timer_elements.is_empty());
 }
 
 #[test]
@@ -2605,13 +2630,13 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     assert_eq!(defender_human.smalltalk_hint_opponent, Some(attacker_id));
 
     assert!(
-        !engine.sequence_manager.has_live_element_for_actor_matching(
-            defender_id,
-            |command| matches!(
+        !engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(defender_id, |command| matches!(
                 command,
                 Command::ParrySmalltalkLeft | Command::ParrySmalltalkRight
-            )
-        )
+            ))
     );
 }
 
@@ -2685,6 +2710,7 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
     assert_eq!(pc_human.smalltalk_hint_opponent, None);
     assert!(
         !engine
+            .orders
             .sequence_manager
             .has_live_element_for_actor_matching(pc_id, |command| {
                 command == Command::SwordstrikeTired
@@ -2816,6 +2842,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
     assert_eq!(consumed_smalltalk_hint_actors, vec![hinted_id]);
     assert!(
         engine
+            .orders
             .sequence_manager
             .has_live_element_for_actor_matching(hinted_id, |command| {
                 matches!(
@@ -2826,6 +2853,7 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
     );
     assert!(
         !engine
+            .orders
             .sequence_manager
             .has_live_element_for_actor_matching(hinted_id, |command| {
                 matches!(
@@ -2834,15 +2862,17 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
                 )
             })
     );
-    assert!(engine.sequence_manager.has_live_element_for_actor_matching(
-        free_attacker_id,
-        |command| {
-            matches!(
-                command,
-                Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
-            )
-        }
-    ));
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .has_live_element_for_actor_matching(free_attacker_id, |command| {
+                matches!(
+                    command,
+                    Command::SwordstrikeSmalltalkLeft | Command::SwordstrikeSmalltalkRight
+                )
+            })
+    );
     assert_ne!(
         engine
             .get_entity(free_defender_id)
@@ -3383,13 +3413,14 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
         Some(opponent),
     );
     shot.priority = crate::sequence::SequencePriority::Preference;
-    let shot_seq = engine.sequence_manager.launch_element(shot);
+    let shot_seq = engine.orders.sequence_manager.launch_element(shot);
     assert!(engine.pc_has_pending_shoot_bow(pc));
 
     let _ = engine.enter_swordfight(&LevelAssets::new(), pc, opponent, false);
 
     assert_eq!(
         engine
+            .orders
             .sequence_manager
             .get_element(shot_seq, 0)
             .unwrap()
@@ -3622,9 +3653,11 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     // run before ForwardMessage returns, so the recording target changes
     // in this frame rather than surviving as queued work for the next one.
     engine
+        .orders
         .messenger
         .send(Message::pc(PcMessage::StartRecordingMacro, Some(first)));
     engine
+        .orders
         .messenger
         .send(Message::pc(PcMessage::SelectCharacter, Some(second)));
 
@@ -3642,6 +3675,7 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     );
     assert!(
         engine
+            .orders
             .messenger
             .drain()
             .into_iter()
@@ -3695,7 +3729,7 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
     );
     assert!(ai.pending_look_sidewards.is_none());
     assert!(
-        engine.sequence_manager.sequences_iter().any(|seq| {
+        engine.orders.sequence_manager.sequences_iter().any(|seq| {
             seq.elements.iter().any(|elem| {
                 matches!(
                     elem.command,
@@ -3717,13 +3751,15 @@ fn condolation_reenters_think_before_dispatch_returns() {
     let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
     set_test_soldier_brawl_got_hit(&mut engine, soldier);
 
-    let seq_id = engine.sequence_manager.launch_element(SequenceElement::new(
-        1,
-        Command::LookLeft,
-        Some(soldier),
-    ));
-    engine.sequence_manager.element_in_progress(seq_id, 0);
-    engine.sequence_manager.element_terminated(seq_id, 0);
+    let seq_id = engine
+        .orders
+        .sequence_manager
+        .launch_element(SequenceElement::new(1, Command::LookLeft, Some(soldier)));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(seq_id, 0);
+    engine.orders.sequence_manager.element_terminated(seq_id, 0);
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.dispatch_condolations(&assets);
@@ -3737,7 +3773,7 @@ fn condolation_reenters_think_before_dispatch_returns() {
     assert!(ai.pending_self_stimuli.is_empty());
     assert!(ai.pending_look_sidewards.is_none());
     assert!(
-        engine.sequence_manager.sequences_iter().any(|seq| {
+        engine.orders.sequence_manager.sequences_iter().any(|seq| {
             seq.elements.iter().any(|elem| {
                 matches!(
                     elem.command,
@@ -3764,17 +3800,24 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     // IsLastRealAction explicitly skips Wait/AssertPosition successors,
     // so the LookLeft condolence still fires before Ready queues this.
     parent.append_element(SequenceElement::new(2, Command::Wait, Some(soldier)));
-    let parent_id = engine.sequence_manager.launch_sequence(parent);
+    let parent_id = engine.orders.sequence_manager.launch_sequence(parent);
 
-    let initial = engine.sequence_manager.hourglass();
+    let initial = engine.orders.sequence_manager.hourglass();
     assert_eq!(initial.len(), 1);
-    engine.sequence_manager.element_in_progress(parent_id, 0);
-    engine.sequence_manager.element_terminated(parent_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(parent_id, 0);
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(parent_id, 0);
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.dispatch_condolations(&assets);
 
     let commands: Vec<_> = engine
+        .orders
         .sequence_manager
         .hourglass()
         .into_iter()
@@ -3800,6 +3843,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
                 } => (sequence_id, element_index),
             };
             engine
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .expect("queued action still has an element")
@@ -3852,9 +3896,10 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
         Command::ReceiveWaspSting,
         Some(third),
     ));
-    let seq_id = engine.sequence_manager.launch_sequence(seq);
+    let seq_id = engine.orders.sequence_manager.launch_sequence(seq);
 
     engine
+        .orders
         .sequence_manager
         .element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
     engine.dispatch_condolations_for_npc(first, &LevelAssets::new());
@@ -3862,6 +3907,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
     for (idx, owner) in [(1, second), (2, third)] {
         assert_eq!(
             engine
+                .orders
                 .sequence_manager
                 .get_element(seq_id, idx)
                 .unwrap()
@@ -3880,6 +3926,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
     }
     assert!(
         engine
+            .orders
             .sequence_manager
             .drain_pending_condolations()
             .is_empty()
@@ -4211,8 +4258,9 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
     movement
         .orders
         .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
-    let movement_sequence = engine.sequence_manager.launch_element(movement);
+    let movement_sequence = engine.orders.sequence_manager.launch_element(movement);
     engine
+        .orders
         .sequence_manager
         .element_in_progress(movement_sequence, 0);
 
@@ -4477,8 +4525,11 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             *tolerance = 15.0;
         }
 
-        let sequence_id = engine.sequence_manager.launch_element(element);
-        engine.sequence_manager.element_in_progress(sequence_id, 0);
+        let sequence_id = engine.orders.sequence_manager.launch_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence_id, 0);
         let actor = engine
             .get_entity_mut(owner)
             .expect("movement owner exists")
@@ -4545,6 +4596,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
                 .element_data()
                 .position_map(),
             seeker_state: engine
+                .orders
                 .sequence_manager
                 .get_element(seeker_sequence, 0)
                 .expect("seeker movement element remains inspectable")
@@ -4681,6 +4733,7 @@ fn deferred_wakeup_pc_queues_specific_blink_for_opposite_camp_npcs() {
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
 
     engine
+        .orders
         .pending_concussion_side_effects
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(&LevelAssets::new());
@@ -4708,6 +4761,7 @@ fn deferred_wakeup_soldier_queues_specific_blink_for_opposite_camp_npcs() {
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
 
     engine
+        .orders
         .pending_concussion_side_effects
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(&LevelAssets::new());
@@ -4736,6 +4790,7 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
     let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
 
     engine
+        .orders
         .pending_concussion_side_effects
         .push((waker, ConcussionOutcome::WokeUp));
     engine.drain_pending_concussion_side_effects(&LevelAssets::new());
@@ -4825,16 +4880,19 @@ fn parry_sword_queues_transition_and_hold_orders() {
         .unwrap()
         .action_state = ActionState::WaitingSword;
 
-    let seq_id = engine
-        .sequence_manager
-        .launch_element(crate::sequence::SequenceElement::new(
-            1,
-            Command::ParrySword,
-            Some(soldier),
-        ));
+    let seq_id =
+        engine
+            .orders
+            .sequence_manager
+            .launch_element(crate::sequence::SequenceElement::new(
+                1,
+                Command::ParrySword,
+                Some(soldier),
+            ));
     engine.dispatch_parry_sword(soldier, false, seq_id, 0);
 
     let elem = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, 0)
         .expect("parry element should remain live");
@@ -4865,16 +4923,19 @@ fn stop_parry_sword_queues_exit_transition() {
         .unwrap()
         .action_state = ActionState::ParryingSword;
 
-    let seq_id = engine
-        .sequence_manager
-        .launch_element(crate::sequence::SequenceElement::new(
-            1,
-            Command::StopParrySword,
-            Some(soldier),
-        ));
+    let seq_id =
+        engine
+            .orders
+            .sequence_manager
+            .launch_element(crate::sequence::SequenceElement::new(
+                1,
+                Command::StopParrySword,
+                Some(soldier),
+            ));
     engine.dispatch_stop_parry(soldier, seq_id, 0);
 
     let elem = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, 0)
         .expect("stop-parry element should remain live");
@@ -4911,6 +4972,7 @@ fn soldier_leaning_out_to_upright_on_move() {
     );
 
     let next_order = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(soldier_id)
         .map(|(_, _, o)| o.order_type);
@@ -4937,6 +4999,7 @@ fn soldier_upright_move_skips_auto_leave() {
     assert_eq!(entity.element_data().posture, Posture::Upright);
     assert!(
         engine
+            .orders
             .sequence_manager
             .current_order_for_actor(soldier_id)
             .is_none(),
@@ -4973,6 +5036,7 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let active = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(soldier_id)
         .map(|(_, _, o)| o.order_type);
@@ -5015,6 +5079,7 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let active = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(soldier_id)
         .map(|(_, _, o)| o.order_type);
@@ -5043,12 +5108,15 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
         .orders
         .push_back(Order::test_new(OrderType::WalkingUpright, 20.0, 0.0));
     current.orders.front_mut().unwrap().lock_ai = true;
-    let current_seq = engine.sequence_manager.launch_element(current);
-    engine.sequence_manager.element_in_progress(current_seq, 0);
+    let current_seq = engine.orders.sequence_manager.launch_element(current);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(current_seq, 0);
 
     let mut incoming = SequenceElement::new(1, Command::Turn, Some(owner));
     incoming.priority = SequencePriority::Preference;
-    let incoming_seq = engine.sequence_manager.launch_element(incoming);
+    let incoming_seq = engine.orders.sequence_manager.launch_element(incoming);
 
     let accepted = engine.arbitrate_instruct(incoming_seq, 0);
     assert!(
@@ -5056,11 +5124,16 @@ fn arbitration_postpone_current_splits_when_current_cannot_interrupt_now() {
         "locked current order should finish before incoming element dispatches"
     );
 
-    let current = engine.sequence_manager.get_element(current_seq, 0).unwrap();
+    let current = engine
+        .orders
+        .sequence_manager
+        .get_element(current_seq, 0)
+        .unwrap();
     assert_eq!(current.orders.len(), 1);
     assert_eq!(current.cross_postponed, Some((incoming_seq, 0)));
 
     let incoming = engine
+        .orders
         .sequence_manager
         .get_element(incoming_seq, 0)
         .unwrap();
@@ -5087,8 +5160,11 @@ fn pc_shoot_bow_queues_behind_live_bow_animation_order() {
     current
         .orders
         .push_back(Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0));
-    let current_seq = engine.sequence_manager.launch_element(current);
-    engine.sequence_manager.element_in_progress(current_seq, 0);
+    let current_seq = engine.orders.sequence_manager.launch_element(current);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(current_seq, 0);
     engine
         .get_entity_mut(pc)
         .unwrap()
@@ -5099,10 +5175,15 @@ fn pc_shoot_bow_queues_behind_live_bow_animation_order() {
     let incoming = SequenceElement::new_interaction(1, Command::ShootBow, Some(pc), Some(target));
     let incoming_seq = engine.launch_element_for_owner(incoming);
 
-    let current = engine.sequence_manager.get_element(current_seq, 0).unwrap();
+    let current = engine
+        .orders
+        .sequence_manager
+        .get_element(current_seq, 0)
+        .unwrap();
     assert_eq!(current.cross_postponed, Some((incoming_seq, 0)));
 
     let incoming = engine
+        .orders
         .sequence_manager
         .get_element(incoming_seq, 0)
         .unwrap();
@@ -5121,8 +5202,11 @@ fn started_pass_door_rejects_new_move() {
     let mut current_pass =
         SequenceElement::new_movement(1, Command::PassDoor, Some(owner), OrderType::WalkingUpright);
     current_pass.priority = SequencePriority::NonInterruptable;
-    let pass_seq = engine.sequence_manager.launch_element(current_pass);
-    engine.sequence_manager.element_in_progress(pass_seq, 0);
+    let pass_seq = engine.orders.sequence_manager.launch_element(current_pass);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(pass_seq, 0);
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -5134,10 +5218,15 @@ fn started_pass_door_rejects_new_move() {
         SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
     let incoming_seq = engine.launch_element_for_owner(incoming);
 
-    let pass = engine.sequence_manager.get_element(pass_seq, 0).unwrap();
+    let pass = engine
+        .orders
+        .sequence_manager
+        .get_element(pass_seq, 0)
+        .unwrap();
     assert_eq!(pass.state, SequenceState::InProgress);
 
     let incoming = engine
+        .orders
         .sequence_manager
         .get_element(incoming_seq, 0)
         .unwrap();
@@ -5181,6 +5270,7 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     // actor's current order is whatever sits at the front of the order
     // queue — the crouch-up animation runs first.
     let front = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(soldier_id)
         .map(|(_, _, o)| o.order_type);
@@ -5504,6 +5594,7 @@ fn soldier_leaning_out_keeps_pose_for_shoot_bow() {
     assert_eq!(entity.element_data().posture, Posture::LeaningOut);
     assert!(
         engine
+            .orders
             .sequence_manager
             .current_order_for_actor(soldier_id)
             .is_none(),
@@ -5536,6 +5627,7 @@ fn soldier_leaning_out_updates_sequence_element_fields() {
 
     // Locate the element and verify the post-transition fields snap.
     let found = engine
+        .orders
         .sequence_manager
         .sequences_iter()
         .find(|s| s.id == seq_id)
@@ -5576,6 +5668,7 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let elem_state = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, 0)
         .expect("element still present")
@@ -5607,6 +5700,7 @@ fn equip_bow_translate_plays_transition_orders() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let elem = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, 0)
         .expect("EquipBow element still present");
@@ -5663,6 +5757,7 @@ fn assert_npc_translate_books(
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let (order_seq, _, order_type) = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(actor)
         .map(|(s, e, o)| (s, e, o.order_type))
@@ -5676,6 +5771,7 @@ fn assert_npc_translate_books(
         "wrong animation queued for {command:?}",
     );
     let elem_state = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, 0)
         .expect("element present")
@@ -5716,6 +5812,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let (order_seq, _, order) = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(rescuer)
         .expect("WakeUp should queue an animation order");
@@ -5765,11 +5862,12 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         ActionState::Waiting
     );
     let current = engine
+        .orders
         .sequence_manager
         .live_element_for_actor_matching(target, |elem| {
             elem.command == crate::element::Command::Wait
         })
-        .and_then(|(seq_id, elem_idx)| engine.sequence_manager.get_element(seq_id, elem_idx))
+        .and_then(|(seq_id, elem_idx)| engine.orders.sequence_manager.get_element(seq_id, elem_idx))
         .map(|elem| elem.command);
     assert_eq!(current, Some(crate::element::Command::Wait));
 }
@@ -5887,6 +5985,7 @@ fn sitting_npc_point_auto_stands_up() {
     assert_eq!(entity.element_data().posture, Posture::Upright);
 
     let next_order = engine
+        .orders
         .sequence_manager
         .current_order_for_actor(actor)
         .map(|(_, _, o)| o.order_type);
@@ -5917,6 +6016,7 @@ fn enter_leisure_on_leisuring_npc_skips_auto_leave() {
     assert_eq!(entity.element_data().posture, Posture::Leisure);
     assert!(
         engine
+            .orders
             .sequence_manager
             .current_order_for_actor(actor)
             .is_none(),

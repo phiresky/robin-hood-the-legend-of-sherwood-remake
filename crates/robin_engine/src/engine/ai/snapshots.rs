@@ -450,6 +450,7 @@ impl EngineInner {
             // enum default and behaves as "no animation running"
             // (silent) in the noise lookup table.
             let order_type = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(pc_id)
                 .map(|(_, _, o)| o.order_type)

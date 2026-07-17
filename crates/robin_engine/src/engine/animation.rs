@@ -2719,7 +2719,7 @@ impl EngineInner {
         // motion Start and is one of the always-non-interruptable
         // families (see `anim_forces_non_interruptable_on_start`).
         // Applied after the entity loop so we don't double-borrow
-        // `self.sequence_manager` while iterating `self.world.entities`.
+        // `self.orders.sequence_manager` while iterating `self.world.entities`.
         let mut non_interruptable_lifts: Vec<(crate::sequence::SequenceId, usize)> = Vec::new();
         let mut completion_outcomes = AnimCompletionOutcomes::default();
 
@@ -2843,11 +2843,14 @@ impl EngineInner {
                 // this — dispatch is on the current element's front
                 // order.
                 //
-                // Disjoint-borrow: `self.sequence_manager` is a field of
+                // Disjoint-borrow: `self.orders.sequence_manager` is a field of
                 // `self` distinct from `self.world.entities`, so the compiler
-                // accepts holding `&self.sequence_manager` while iterating
+                // accepts holding `&self.orders.sequence_manager` while iterating
                 // mutable occupied entity slots.
-                let order_snapshot = self.sequence_manager.current_order_for_actor(entity_id);
+                let order_snapshot = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(entity_id);
                 let (order_seq_elem, anim_type, order_id, antagonist, completion) =
                     if let Some((seq_id, elem_idx, order)) = order_snapshot {
                         (
@@ -2876,10 +2879,14 @@ impl EngineInner {
                 // sprite row on the corpse/KO hold row used by
                 // body-point calculations (e.g. compute-stars-point).
                 let cur_command = order_seq_elem.and_then(|(s, e)| {
-                    self.sequence_manager.get_element(s, e).map(|el| el.command)
+                    self.orders
+                        .sequence_manager
+                        .get_element(s, e)
+                        .map(|el| el.command)
                 });
                 let cur_command_level = order_seq_elem.and_then(|(s, e)| {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .get_element(s, e)
                         .map(|el| el.command_level)
                 });
@@ -3360,7 +3367,7 @@ impl EngineInner {
                             entity,
                             anim_type,
                             motion_state,
-                            &mut self.next_order_id,
+                            &mut self.orders.next_order_id,
                         );
                         apply_combat_injury_side_effect(
                             entity,
@@ -3418,8 +3425,8 @@ impl EngineInner {
                         is_unconscious,
                         seq_id,
                         elem_idx,
-                        sequence_manager: &mut self.sequence_manager,
-                        next_order_id: &mut self.next_order_id,
+                        sequence_manager: &mut self.orders.sequence_manager,
+                        next_order_id: &mut self.orders.next_order_id,
                         side_outcomes: &mut completion_outcomes.execute_sides,
                     };
                     let outcome =
@@ -3647,7 +3654,7 @@ impl EngineInner {
         // FALLING_HIT_*/ROLLING/FALLING_LADDER_WALL/FALLING_PUSHED
         // anim families.
         for (seq_id, elem_idx) in non_interruptable_lifts {
-            self.sequence_manager.set_element_priority(
+            self.orders.sequence_manager.set_element_priority(
                 seq_id,
                 elem_idx,
                 crate::sequence::SequencePriority::NonInterruptable,

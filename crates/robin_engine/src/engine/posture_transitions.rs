@@ -61,7 +61,7 @@ impl EngineInner {
 
         let touched = self.sequence_manager_has_movement(entity);
         if touched {
-            self.sequence_manager.make_fast(entity);
+            self.orders.sequence_manager.make_fast(entity);
             self.after_make_rewrite(entity);
         }
     }
@@ -69,7 +69,7 @@ impl EngineInner {
     /// Downgrade running to walking for `entity`.
     pub(crate) fn actor_make_slow(&mut self, entity: EntityId) {
         if self.sequence_manager_has_movement(entity) {
-            self.sequence_manager.make_slow(entity);
+            self.orders.sequence_manager.make_slow(entity);
             self.after_make_rewrite(entity);
         }
     }
@@ -85,7 +85,7 @@ impl EngineInner {
     /// (`after_make_rewrite`) instead.
     pub(crate) fn actor_make_upright(&mut self, entity: EntityId) {
         if self.sequence_manager_has_active_element(entity) {
-            self.sequence_manager.make_upright(entity);
+            self.orders.sequence_manager.make_upright(entity);
             if self.sequence_manager_has_movement(entity) {
                 self.after_make_rewrite(entity);
                 return;
@@ -101,7 +101,7 @@ impl EngineInner {
     /// Crouch the actor down.
     pub(crate) fn actor_make_crouched(&mut self, entity: EntityId) {
         if self.sequence_manager_has_movement(entity) {
-            self.sequence_manager.make_crouched(entity);
+            self.orders.sequence_manager.make_crouched(entity);
             self.after_make_rewrite(entity);
         } else {
             let elem = SequenceElement::new(1, Command::CrouchDown, Some(entity));
@@ -152,6 +152,7 @@ impl EngineInner {
 
         // Skip PassDoor.
         let command = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.command);
@@ -161,6 +162,7 @@ impl EngineInner {
 
         // Read the movement action and filter to walking / running.
         let action = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .and_then(|e| match e.data {
@@ -184,6 +186,7 @@ impl EngineInner {
                 return;
             };
             let remaining: Vec<crate::coordinates::MapPoint> = self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .map(|e| {
@@ -232,13 +235,17 @@ impl EngineInner {
         // ComputeIncrementAll. Rust rewrites targets in place here;
         // reroll the id for any changed target to preserve that
         // PerformMotion invariant.
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        {
             // Skip any non-walking orders at the front (startup
             // transition or end transition — their geometry is not
             // part of the drunken-rewrite path).  Replace subsequent
             // walking orders' targets with the deviated waypoints.
             let mut dev_iter = deviated.iter();
-            let next_order_id = &mut self.next_order_id;
+            let next_order_id = &mut self.orders.next_order_id;
             for order in elem.orders.iter_mut() {
                 if matches!(
                     order.order_type,
@@ -299,7 +306,7 @@ impl EngineInner {
         // sequence element. The element's posture/actionstate-after-
         // transition are read from its stored fields when the element
         // is not currently in progress.
-        let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+        let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
             return;
         };
         let command = elem.command;
@@ -338,7 +345,7 @@ impl EngineInner {
 
         // Re-read the element after `post_process_path_to_line`
         // potentially mutated its order list.
-        let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+        let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
             return;
         };
         let state = elem.state;
@@ -406,7 +413,8 @@ impl EngineInner {
                 flags,
                 // `is_next_movement_or_jump` uses the same-sequence
                 // walker; good enough for the end-transition gate.
-                self.sequence_manager
+                self.orders
+                    .sequence_manager
                     .is_next_movement_or_jump(seq_id, elem_idx),
             );
 
@@ -423,8 +431,12 @@ impl EngineInner {
         let _ = tolerance; // `tolerance` is folded into insert_transition_end internally
 
         // ── Apply transitions in order ──────────────────────────
-        let next_order_id = &mut self.next_order_id;
-        let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) else {
+        let next_order_id = &mut self.orders.next_order_id;
+        let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        else {
             return;
         };
         if matches!(
@@ -505,7 +517,11 @@ impl EngineInner {
         }
 
         // Clean up consecutive duplicate orders.
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        {
             elem.cleanup_duplicate_orders();
             if tracing::enabled!(tracing::Level::TRACE) {
                 let post: Vec<(crate::order::OrderType, f32, f32)> = elem
@@ -538,7 +554,7 @@ impl EngineInner {
         //    there is more than one non-transition order) or the
         //    actor's current map position.
         let (line_id, num_transition_orders, source_from_prev) = {
-            let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
                 return;
             };
             let line_id = match &elem.data {
@@ -590,7 +606,7 @@ impl EngineInner {
         // Fetch actor-side context: layer, half-diagonal, and (as a
         // fallback source point) current map position.
         let (position, layer, half_diagonal) = {
-            let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
                 return;
             };
             let Some(owner) = elem.owner else {
@@ -645,7 +661,11 @@ impl EngineInner {
 
         // Rewrite the last order's destination to the new goal.
         {
-            let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) else {
+            let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+            else {
                 return;
             };
             let Some(last) = elem.orders.back_mut() else {
@@ -663,6 +683,7 @@ impl EngineInner {
         // intermediate orders between the loop cursor and the final
         // order are deleted.
         let n_orders_start = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.orders.len())
@@ -673,7 +694,7 @@ impl EngineInner {
         let mut i: i64 = n_orders_start as i64 - 3;
         while i >= num_transition_orders as i64 {
             let src_pt = {
-                let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+                let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
                     return;
                 };
                 let Some(order) = elem.orders.get(i as usize) else {
@@ -700,12 +721,17 @@ impl EngineInner {
             ) {
                 // Delete the order at i+1.
                 {
-                    let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) else {
+                    let Some(elem) = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(seq_id, elem_idx)
+                    else {
                         return;
                     };
                     elem.orders.remove((i + 1) as usize);
                 }
                 let remaining = self
+                    .orders
                     .sequence_manager
                     .get_element(seq_id, elem_idx)
                     .map(|e| e.orders.len())
@@ -724,7 +750,8 @@ impl EngineInner {
     /// whose state is `InProgress` (or `Todo`).  An actor has at most
     /// one active element at a time.
     fn find_active_movement_element(&self, entity: EntityId) -> Option<(SequenceId, usize)> {
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .live_element_for_actor_matching(entity, |elem| {
                 elem.data.is_movement()
                     && matches!(elem.state, SequenceState::InProgress | SequenceState::Todo)
@@ -742,7 +769,8 @@ impl EngineInner {
     /// decide whether to recurse into the chain rewrite before
     /// deciding on a `CROUCH_*` fallback.
     fn sequence_manager_has_active_element(&self, entity: EntityId) -> bool {
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .has_unpostponed_element_for_actor_matching(entity, |_| true)
     }
 

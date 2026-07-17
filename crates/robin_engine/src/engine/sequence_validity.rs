@@ -1010,6 +1010,7 @@ impl EngineInner {
             }
 
             let snapshot = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(entity_id)
                 .map(|(s, i, o)| (s, i, o.order_type, o.order_id.get()));
@@ -1033,7 +1034,7 @@ impl EngineInner {
 
             // Look up the element so we can run the per-command
             // validity rule.
-            let Some(elem) = self.sequence_manager.get_element(seq_id, elem_idx) else {
+            let Some(elem) = self.orders.sequence_manager.get_element(seq_id, elem_idx) else {
                 continue;
             };
             if self.check_sequence_element_validity(assets, entity_id.into(), elem, check_position)
@@ -1072,11 +1073,13 @@ impl EngineInner {
             );
             match p.terminal {
                 ValidityArmTerminal::Aborted => {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_impossible(p.seq_id, p.elem_idx);
                 }
                 ValidityArmTerminal::Terminated => {
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_terminated(p.seq_id, p.elem_idx);
                 }
                 ValidityArmTerminal::TerminatedWithDrop { needs_drop } => {
@@ -1084,7 +1087,8 @@ impl EngineInner {
                         // Instant drop.
                         self.force_drop_carried_corpse_instant(p.entity_id);
                     }
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_terminated(p.seq_id, p.elem_idx);
                 }
                 // Unresolved variant — should never reach apply phase
@@ -1096,7 +1100,8 @@ impl EngineInner {
                         ?p.entity_id,
                         "pc_execute_validity: unresolved TerminatedDropCorpseUnlessDrop"
                     );
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_terminated(p.seq_id, p.elem_idx);
                 }
             }

@@ -102,7 +102,11 @@ impl EngineInner {
             Vec::with_capacity(self.world.entities.len());
         for (entity_id, _) in self.world.entities.actors() {
             let handle = crate::natives::GameHost::actor_handle(entity_id);
-            if let Some((_, _, order)) = self.sequence_manager.current_order_for_actor(entity_id) {
+            if let Some((_, _, order)) = self
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+            {
                 current_animations.push((handle, order.order_type));
             }
         }
@@ -433,7 +437,7 @@ impl EngineInner {
                             crate::messenger::PcMessage::DisableCharacter
                         };
                         let pc_id = self.entity_id_for_actor_handle(actor);
-                        self.messenger.send(Message::pc(msg_type, pc_id));
+                        self.orders.messenger.send(Message::pc(msg_type, pc_id));
                         tracing::debug!("SetPlayable: actor {actor} → playable={playable}");
                     }
                     crate::natives::DeferredCommand::ScriptLockAI { actor, send_back } => {
@@ -449,10 +453,11 @@ impl EngineInner {
                         // manager for the actor's in-flight command.
                         if let Some(owner) = self.entity_id_for_actor_handle(actor) {
                             let from_lockai_command = self
+                                .orders
                                 .sequence_manager
                                 .current_element_for_actor(owner)
                                 .and_then(|(seq_id, elem_idx)| {
-                                    self.sequence_manager.get_element(seq_id, elem_idx)
+                                    self.orders.sequence_manager.get_element(seq_id, elem_idx)
                                 })
                                 .is_some_and(|elem| {
                                     elem.command == crate::element::Command::LockAi
@@ -506,7 +511,7 @@ impl EngineInner {
                                 Some(owner),
                             );
                             elem.priority = crate::sequence::SequencePriority::Wait;
-                            self.sequence_manager.launch_element(elem);
+                            self.orders.sequence_manager.launch_element(elem);
                         } else {
                             tracing::warn!("LaunchWait: invalid actor handle {actor}");
                         }
@@ -722,6 +727,7 @@ impl EngineInner {
         // element.
         let sequence_id = self.launch_sequence(sequence);
         let action = self
+            .orders
             .sequence_manager
             .take_pending_immediate_action_for(sequence_id, 0)
             .unwrap_or_else(|| {
@@ -757,7 +763,9 @@ impl EngineInner {
 
         // RHEngine/RHElementActor set RHSEQ_TERMINATED only after
         // ProcessMessage returns.
-        self.sequence_manager.element_terminated(sequence_id, 0);
+        self.orders
+            .sequence_manager
+            .element_terminated(sequence_id, 0);
     }
 
     /// Load a mission script from the level directory.
@@ -1100,6 +1108,7 @@ impl EngineInner {
             }
 
             let current_anim = self
+                .orders
                 .sequence_manager
                 .current_order_for_actor(entity_id)
                 .map(|(_, _, o)| o.order_type)
@@ -1889,7 +1898,7 @@ impl EngineInner {
         elem_idx: usize,
     ) -> (i32, i32, i32) {
         use crate::sequence::{Field, FieldValue};
-        let elem = match self.sequence_manager.get_element(seq_id, elem_idx) {
+        let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
             Some(e) => e,
             None => return (0, 0, 0),
         };
@@ -2447,7 +2456,8 @@ impl EngineInner {
                         .pending_side_effects
                         .pending_dialogues
                         .push(dialog_id);
-                    self.messenger
+                    self.orders
+                        .messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
                 }
                 EngineCommand::DisplayMap { show } => {
@@ -2459,7 +2469,7 @@ impl EngineInner {
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
                     self.feedback.pending_side_effects.pending_show_console = true;
-                    self.messenger.send(Message::new(MessageType::Simple(
+                    self.orders.messenger.send(Message::new(MessageType::Simple(
                         SimpleMessage::DisplayConsole,
                     )));
                 }
@@ -2641,13 +2651,15 @@ impl EngineInner {
                         .pending_side_effects
                         .pending_popup_texts
                         .push(text_id);
-                    self.messenger
+                    self.orders
+                        .messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
                     self.feedback.pending_side_effects.pending_sherwood_report = true;
-                    self.messenger
+                    self.orders
+                        .messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
                 }
                 EngineCommand::FadeToBlack { speed } => {
@@ -3159,7 +3171,7 @@ impl EngineInner {
         if is_pc {
             // Forward MSG_DISABLE_ALL_ACTIONS — counterpart to
             // DisableAllActionsTemp.
-            self.messenger.send(Message::pc(
+            self.orders.messenger.send(Message::pc(
                 crate::messenger::PcMessage::DisableAllActionsTemp,
                 None,
             ));

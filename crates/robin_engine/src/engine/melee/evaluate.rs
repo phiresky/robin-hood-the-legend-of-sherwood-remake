@@ -1172,9 +1172,10 @@ impl EngineInner {
             // current sequence command and skip if it's any
             // sword-strike command.
             let already_striking = self
+                .orders
                 .sequence_manager
                 .current_element_for_actor(victim_id)
-                .and_then(|(seq, idx)| self.sequence_manager.get_element(seq, idx))
+                .and_then(|(seq, idx)| self.orders.sequence_manager.get_element(seq, idx))
                 .map(|e| e.command.is_swordstrike())
                 .unwrap_or(false);
             if already_striking {

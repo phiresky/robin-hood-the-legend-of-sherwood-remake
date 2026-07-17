@@ -786,7 +786,7 @@ impl EngineInner {
     ) -> bool {
         // Read jump-line IDs from the element.
         let (src_id, dst_id) = {
-            let elem = match self.sequence_manager.get_element(seq_id, elem_idx) {
+            let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
                 Some(e) => e,
                 None => return false,
             };
@@ -967,10 +967,10 @@ impl EngineInner {
         // after the entity loop closes.
         let mut pending_init_messages: Vec<EntityId> = Vec::new();
         // Disjoint-borrow trick: we need `&mut self.world.entities` for the
-        // loop AND `&mut self.next_order_id` for the new step's order
+        // loop AND `&mut self.orders.next_order_id` for the new step's order
         // tag. Splitting them through a local re-borrow.
-        let next_order_id = &mut self.next_order_id;
-        let sequence_manager = &self.sequence_manager;
+        let next_order_id = &mut self.orders.next_order_id;
+        let sequence_manager = &self.orders.sequence_manager;
         for (entity_id, entity) in self.world.entities.actors_mut() {
             let Some(actor) = entity.actor_data_mut() else {
                 continue;
@@ -1051,7 +1051,11 @@ impl EngineInner {
         // Push each new-step order onto the jump's sequence element
         // after the entity-loop borrow closes.
         for (seq_id, elem_idx, order) in jump_orders {
-            if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+            if let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+            {
                 elem.orders.clear();
                 elem.orders.push_back(order);
             }
@@ -1063,7 +1067,7 @@ impl EngineInner {
         // dispatch in `tick.rs` targets the specific PC rather than
         // fanning over the selection.
         for pc_id in pending_init_messages {
-            self.messenger.send(crate::messenger::Message::pc(
+            self.orders.messenger.send(crate::messenger::Message::pc(
                 crate::messenger::PcMessage::DisableAllActionsTemp,
                 Some(pc_id),
             ));
@@ -1112,7 +1116,9 @@ impl EngineInner {
             }
         }
         for (seq_id, elem_idx) in to_terminate {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
     }
 
@@ -1235,9 +1241,10 @@ impl EngineInner {
             } else {
                 crate::messenger::PcMessage::EnableAllActionsTemp
             };
-            self.messenger
+            self.orders
+                .messenger
                 .send(crate::messenger::Message::pc(pc_msg, Some(entity_id)));
-            self.messenger.send(crate::messenger::Message::new(
+            self.orders.messenger.send(crate::messenger::Message::new(
                 crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
             ));
         }

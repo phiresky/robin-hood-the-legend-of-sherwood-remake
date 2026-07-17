@@ -658,6 +658,7 @@ fn push_anim_order(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize
     let id = engine.alloc_order_id();
     let order = crate::order::Order::new(anim, 0.0, 0.0, id);
     engine
+        .orders
         .sequence_manager
         .push_order_on(seq_id, elem_idx, order);
 }
@@ -674,6 +675,7 @@ fn push_anim_order_no_dir(
     let mut order = crate::order::Order::new(anim, 0.0, 0.0, id);
     order.compute_direction = false;
     engine
+        .orders
         .sequence_manager
         .push_order_on(seq_id, elem_idx, order);
 }
@@ -689,7 +691,11 @@ fn stand_up_order_for_action_state(action_state: ActionState) -> OrderType {
 }
 
 fn set_posture_after(engine: &mut EngineInner, seq_id: SequenceId, elem_idx: usize, p: Posture) {
-    if let Some(e) = engine.sequence_manager.get_element_mut(seq_id, elem_idx) {
+    if let Some(e) = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(seq_id, elem_idx)
+    {
         e.posture_after_transition = p;
     }
 }
@@ -700,7 +706,11 @@ fn set_action_state_after(
     elem_idx: usize,
     a: ActionState,
 ) {
-    if let Some(e) = engine.sequence_manager.get_element_mut(seq_id, elem_idx) {
+    if let Some(e) = engine
+        .orders
+        .sequence_manager
+        .get_element_mut(seq_id, elem_idx)
+    {
         e.action_state_after_transition = a;
     }
 }
@@ -735,7 +745,10 @@ fn build_ctx(
     elem_idx: usize,
 ) -> Option<TransitionCtx> {
     let entity = engine.get_entity(owner)?;
-    let elem = engine.sequence_manager.get_element(seq_id, elem_idx)?;
+    let elem = engine
+        .orders
+        .sequence_manager
+        .get_element(seq_id, elem_idx)?;
 
     let actor_action_state = entity
         .actor_data()
@@ -875,7 +888,7 @@ fn make_action_transition_actor(
         return true;
     }
 
-    let elem = engine.sequence_manager.get_element(seq_id, elem_idx);
+    let elem = engine.orders.sequence_manager.get_element(seq_id, elem_idx);
     let command = elem.map(|e| e.command).unwrap_or(Command::Null);
     // When true, skip the transition-order insertion for MOVING /
     // MOVING_FAST arms to avoid injecting spurious stop-walking
@@ -922,7 +935,10 @@ fn make_action_transition_actor(
                     if command == Command::RaiseShield {
                         // The command is refused because the shield is
                         // already up with no auto-lower path.
-                        engine.sequence_manager.element_terminated(seq_id, elem_idx);
+                        engine
+                            .orders
+                            .sequence_manager
+                            .element_terminated(seq_id, elem_idx);
                         return false;
                     }
                     push_anim_order(engine, seq_id, elem_idx, OrderType::LoweringShield);
@@ -1161,6 +1177,7 @@ fn make_action_transition_pc(
         // PC requires ListeningState; refuse if the scheduled state
         // doesn't already match.
         let action_state_after = engine
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.action_state_after_transition)
@@ -1212,11 +1229,13 @@ fn make_posture_transition_actor(
     flags: CP,
 ) -> bool {
     let posture_after = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, elem_idx)
         .map(|e| e.posture_after_transition)
         .unwrap_or_default();
     let command = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, elem_idx)
         .map(|e| e.command)
@@ -1234,7 +1253,7 @@ fn make_posture_transition_actor(
                         tracing::debug!(
                             "MakePostureTransition: CROUCH_DOWN from Crouched — refused"
                         );
-                        engine.messenger.send(crate::messenger::Message::new(
+                        engine.orders.messenger.send(crate::messenger::Message::new(
                             crate::messenger::MessageType::Simple(
                                 crate::messenger::SimpleMessage::StatureChangeEnd,
                             ),
@@ -1252,6 +1271,7 @@ fn make_posture_transition_actor(
                     // animation (`bComputeDirection = false`) chosen from
                     // the post-transition action state.
                     let action_state_after = engine
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .map(|e| e.action_state_after_transition)
@@ -1315,7 +1335,7 @@ fn make_posture_transition_actor(
                     tracing::debug!(
                         "MakePostureTransition: CROUCH_UP from Upright — refused (double-crouch)"
                     );
-                    engine.messenger.send(crate::messenger::Message::new(
+                    engine.orders.messenger.send(crate::messenger::Message::new(
                         crate::messenger::MessageType::Simple(
                             crate::messenger::SimpleMessage::StatureChangeEnd,
                         ),
@@ -1436,6 +1456,7 @@ fn make_posture_transition_pc(
 ) -> bool {
     if flags.contains(CP::MUST_BE_CARRYING_CORPSE) {
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.posture_after_transition)
@@ -1445,6 +1466,7 @@ fn make_posture_transition_pc(
 
     if flags.contains(CP::MUST_BE_UPRIGHT) {
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.posture_after_transition)
@@ -1528,6 +1550,7 @@ fn make_posture_transition_pc(
                     // transition order entirely so the carrier lands in
                     // Upright/Waiting ready to begin swording.
                     let driving_command = engine
+                        .orders
                         .sequence_manager
                         .get_element(seq_id, elem_idx)
                         .map(|e| e.command);
@@ -1621,6 +1644,7 @@ fn make_posture_transition_pc(
 
     if flags.contains(CP::MUST_BE_ON_SHOULDERS) {
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.posture_after_transition)
@@ -1666,7 +1690,7 @@ fn make_final_action_transition_actor(
     elem_idx: usize,
     flags: EA,
 ) -> bool {
-    let elem_snapshot = engine.sequence_manager.get_element(seq_id, elem_idx);
+    let elem_snapshot = engine.orders.sequence_manager.get_element(seq_id, elem_idx);
     let (posture_after, action_after) = match elem_snapshot {
         Some(e) => (e.posture_after_transition, e.action_state_after_transition),
         None => {
@@ -1775,6 +1799,7 @@ fn make_final_action_transition_human(
     flags: EA,
 ) -> bool {
     let (action_after, owner) = engine
+        .orders
         .sequence_manager
         .get_element(seq_id, elem_idx)
         .map(|e| (e.action_state_after_transition, e.owner))
@@ -1926,6 +1951,7 @@ fn make_final_action_transition_soldier(
 
     if flags.contains(EA::MUST_BE_AIMING_BOW_DOWN) {
         let action_after = engine
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.action_state_after_transition)
@@ -2025,7 +2051,10 @@ impl EngineInner {
             return false;
         };
 
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx)
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
             && elem.posture_after_transition == Posture::Undefined
         {
             elem.posture_after_transition = actor_posture;
@@ -2059,7 +2088,11 @@ impl EngineInner {
         // Stamp the transition-order count to the current order list
         // length so subsequent code can distinguish transition orders
         // from the orders queued by the command itself.
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        {
             elem.initialize_transition_orders();
         }
         true
@@ -2133,7 +2166,7 @@ mod tests {
             elem.action_state_after_transition =
                 ent.actor_data().map(|a| a.action_state).unwrap_or_default();
         }
-        let seq_id = engine.sequence_manager.launch_element(elem);
+        let seq_id = engine.orders.sequence_manager.launch_element(elem);
         (seq_id, 0)
     }
 
@@ -2150,12 +2183,13 @@ mod tests {
             elem.action_state_after_transition =
                 ent.actor_data().map(|a| a.action_state).unwrap_or_default();
         }
-        let seq_id = engine.sequence_manager.launch_element(elem);
+        let seq_id = engine.orders.sequence_manager.launch_element(elem);
         (seq_id, 0)
     }
 
     fn orders_for(engine: &EngineInner, seq: SequenceId, idx: usize) -> Vec<OrderType> {
         engine
+            .orders
             .sequence_manager
             .get_element(seq, idx)
             .map(|e| e.orders.iter().map(|o| o.order_type).collect())
@@ -2168,12 +2202,16 @@ mod tests {
         idx: usize,
         order_type: OrderType,
     ) -> Option<bool> {
-        engine.sequence_manager.get_element(seq, idx).and_then(|e| {
-            e.orders
-                .iter()
-                .find(|o| o.order_type == order_type)
-                .map(|o| o.compute_direction)
-        })
+        engine
+            .orders
+            .sequence_manager
+            .get_element(seq, idx)
+            .and_then(|e| {
+                e.orders
+                    .iter()
+                    .find(|o| o.order_type == order_type)
+                    .map(|o| o.compute_direction)
+            })
     }
 
     #[test]
@@ -2216,6 +2254,7 @@ mod tests {
             Some(false)
         );
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq, idx)
             .unwrap()
@@ -2335,6 +2374,7 @@ mod tests {
         // posture_after_transition stays Crouched since no posture
         // change was required.
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq, idx)
             .unwrap()
@@ -2361,6 +2401,7 @@ mod tests {
             orders
         );
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq, idx)
             .unwrap()
@@ -2390,6 +2431,7 @@ mod tests {
             ]
         );
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq, idx)
             .unwrap()
@@ -2430,6 +2472,7 @@ mod tests {
         // From Crouched, MUST_BE_CROUCHED is set and posture_after
         // stays Crouched — no animation is queued.
         let posture_after = engine
+            .orders
             .sequence_manager
             .get_element(seq, idx)
             .unwrap()

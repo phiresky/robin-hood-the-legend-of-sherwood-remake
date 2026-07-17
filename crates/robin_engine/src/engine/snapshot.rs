@@ -13,7 +13,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeStru
 use super::{
     EngineInner,
     state::{
-        AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl, WorldState,
+        AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, SimulationControl,
+        WorldState,
     },
 };
 
@@ -100,10 +101,10 @@ impl Serialize for EngineInner {
             "standard_view_polygon_radius",
             &self.ai.standard_view_polygon_radius,
         )?;
-        snapshot.serialize_field("next_order_id", &self.next_order_id)?;
+        snapshot.serialize_field("next_order_id", &self.orders.next_order_id)?;
         snapshot.serialize_field("chorus_timer", &self.control.chorus_timer)?;
         snapshot.serialize_field("force_check", &self.mission_domain.force_check)?;
-        snapshot.serialize_field("messenger", &self.messenger)?;
+        snapshot.serialize_field("messenger", &self.orders.messenger)?;
         snapshot.serialize_field("fast_grid", &self.world.fast_grid)?;
         snapshot.serialize_field("pathfinder", &self.world.pathfinder)?;
         snapshot.serialize_field("short_briefings", &self.mission_domain.short_briefings)?;
@@ -124,21 +125,27 @@ impl Serialize for EngineInner {
             &self.players.action_before_recording_macro,
         )?;
         snapshot.serialize_field("fast_forward", &self.control.fast_forward)?;
-        snapshot.serialize_field("pending_move_requests", &self.pending_move_requests)?;
-        snapshot.serialize_field("pending_path_requests", &self.pending_path_requests)?;
-        snapshot.serialize_field("failed_path_requests", &self.failed_path_requests)?;
+        snapshot.serialize_field("pending_move_requests", &self.orders.pending_move_requests)?;
+        snapshot.serialize_field("pending_path_requests", &self.orders.pending_path_requests)?;
+        snapshot.serialize_field("failed_path_requests", &self.orders.failed_path_requests)?;
         snapshot.serialize_field("ai_global", &self.ai.global)?;
         snapshot.serialize_field("macro_store", &self.players.macro_store)?;
         snapshot.serialize_field("dead_pc", &self.mission_domain.dead_pc)?;
-        snapshot.serialize_field("timer_elements", &self.timer_elements)?;
-        snapshot.serialize_field("sequence_manager", &self.sequence_manager)?;
-        snapshot.serialize_field("pending_reinforcements", &self.pending_reinforcements)?;
-        snapshot.serialize_field("pending_scroll_amulets", &self.pending_scroll_amulets)?;
-        snapshot.serialize_field("pending_hero_speeches", &self.pending_hero_speeches)?;
-        snapshot.serialize_field("pending_hades_kills", &self.pending_hades_kills)?;
+        snapshot.serialize_field("timer_elements", &self.orders.timer_elements)?;
+        snapshot.serialize_field("sequence_manager", &self.orders.sequence_manager)?;
+        snapshot.serialize_field(
+            "pending_reinforcements",
+            &self.orders.pending_reinforcements,
+        )?;
+        snapshot.serialize_field(
+            "pending_scroll_amulets",
+            &self.orders.pending_scroll_amulets,
+        )?;
+        snapshot.serialize_field("pending_hero_speeches", &self.orders.pending_hero_speeches)?;
+        snapshot.serialize_field("pending_hades_kills", &self.orders.pending_hades_kills)?;
         snapshot.serialize_field(
             "pending_concussion_side_effects",
-            &self.pending_concussion_side_effects,
+            &self.orders.pending_concussion_side_effects,
         )?;
         snapshot.serialize_field("mission_script", &self.mission_script)?;
         snapshot.serialize_field("script_zone_data", &self.world.script_zones)?;
@@ -197,8 +204,20 @@ impl<'de> Deserialize<'de> for EngineInner {
                 static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
             },
             script_globals: snapshot.script_globals,
-            next_order_id: snapshot.next_order_id,
-            messenger: snapshot.messenger,
+            orders: OrderRuntime {
+                next_order_id: snapshot.next_order_id,
+                messenger: snapshot.messenger,
+                pending_move_requests: snapshot.pending_move_requests,
+                pending_path_requests: snapshot.pending_path_requests,
+                failed_path_requests: snapshot.failed_path_requests,
+                timer_elements: snapshot.timer_elements,
+                sequence_manager: snapshot.sequence_manager,
+                pending_reinforcements: snapshot.pending_reinforcements,
+                pending_scroll_amulets: snapshot.pending_scroll_amulets,
+                pending_hero_speeches: snapshot.pending_hero_speeches,
+                pending_hades_kills: snapshot.pending_hades_kills,
+                pending_concussion_side_effects: snapshot.pending_concussion_side_effects,
+            },
             players: PlayerRuntime {
                 seats: snapshot.seats,
                 macro_store: snapshot.macro_store,
@@ -214,16 +233,6 @@ impl<'de> Deserialize<'de> for EngineInner {
                 cutscene_camera: snapshot.cutscene_camera,
                 pending_side_effects: snapshot.pending_side_effects,
             },
-            pending_move_requests: snapshot.pending_move_requests,
-            pending_path_requests: snapshot.pending_path_requests,
-            failed_path_requests: snapshot.failed_path_requests,
-            timer_elements: snapshot.timer_elements,
-            sequence_manager: snapshot.sequence_manager,
-            pending_reinforcements: snapshot.pending_reinforcements,
-            pending_scroll_amulets: snapshot.pending_scroll_amulets,
-            pending_hero_speeches: snapshot.pending_hero_speeches,
-            pending_hades_kills: snapshot.pending_hades_kills,
-            pending_concussion_side_effects: snapshot.pending_concussion_side_effects,
             mission_script: snapshot.mission_script,
         })
     }

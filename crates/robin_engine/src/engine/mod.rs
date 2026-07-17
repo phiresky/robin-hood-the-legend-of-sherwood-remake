@@ -80,16 +80,16 @@ use crate::ai::AiGlobalState;
 use crate::element::{Entity, EntityId};
 use crate::fast_find_grid::FastFindGrid;
 use crate::markers::GroundMark;
-use crate::messenger::{Message, MessageType, Messenger, SimpleMessage};
+use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::mission_stat::MissionStat;
 use crate::order::OrderType;
 use crate::pathfinder::PathFinder;
 use crate::profiles::MissionType;
-use crate::sequence::SequenceManager;
 use crate::short_briefings::ShortBriefings;
 use simulation_gate::SimulationGateState;
 use state::{
-    AiRuntime, FeedbackRuntime, MissionDomain, PlayerRuntime, SimulationControl, WorldState,
+    AiRuntime, FeedbackRuntime, MissionDomain, OrderRuntime, PlayerRuntime, SimulationControl,
+    WorldState,
 };
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -170,108 +170,20 @@ pub struct EngineInner {
     /// Authoritative entities and the spatial state indexed alongside them.
     pub(crate) world: WorldState,
 
+    /// Deterministic orders, sequences, timers, messages, and existing
+    /// deferred-gameplay queues.
+    pub(crate) orders: OrderRuntime,
+
     // ── Script globals ───────────────────────────────────────────
     /// Script global variables array. [Serialized]
     pub(crate) script_globals: Vec<i32>,
 
-    /// Monotonically increasing tag handed out for AI animation /
-    /// movement / jump / unlock orders. Each `actor.active_ai_anim` /
-    /// `active_movement.sequence_id` carries one of these so completion
-    /// callbacks can match the order they booked. Used to live in a set
-    /// of process-wide `static AtomicU32` counters which broke rollback
-    /// determinism — now sits inside the engine snapshot.
-    pub(crate) next_order_id: u32,
-
     // ── Ported subsystems (real Rust types) ─────────────────────
-    /// Message/event queue. [Serialized]  Host-side callers use the
-    /// dedicated engine methods ([`EngineInner::stop_recording_macro`],
-    /// [`EngineInner::request_pc_info_overlay`]) rather than pushing raw
-    /// messages; sim-side code still uses this queue directly.
-    pub(crate) messenger: Messenger,
     /// Deterministic per-player selection, input-mode, and macro state.
     pub(crate) players: PlayerRuntime,
 
     /// Deterministic sound, marker, director-camera, and tick-output state.
     pub(crate) feedback: FeedbackRuntime,
-
-    /// Pending AI-initiated Move intents, drained once per tick by
-    /// `drain_pending_move_requests`.  Deduped per actor: a later call
-    /// for the same actor replaces the earlier entry — without this
-    /// gate, high-frequency AI re-fires (patrol macro-GoTo, pursuit
-    /// re-pathfind) each spawn a fresh `Command::Move` element that
-    /// `InterruptCurrent`'s the previous one at the same Normal
-    /// priority, preventing the actor from completing a startup
-    /// transition or covering any ground.  Serialized so rollback /
-    /// replay stay deterministic.  [Sim state]
-    pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
-
-    /// A*-requiring movement elements waiting for the legacy once-per-frame
-    /// path-request processing point.  Direct moves bypass this queue.
-    pub(crate) pending_path_requests: crate::engine::movement::PendingPathRequestQueue,
-
-    /// Timeout queue for Move / Seek elements whose path request failed.
-    /// Entries stay here for 100 frames without retrying; after that window
-    /// the owning element transitions to `Impossible` (and PCs hear
-    /// `HERO_UNABLE_TO_DO_SOMETHING`).
-    ///
-    /// See [`movement::FailedPathRequest`] for field-level docs.
-    /// Drained each tick by
-    /// [`EngineInner::process_failed_path_timeouts`].  [Sim state]
-    pub(crate) failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
-
-    /// Anonymous countdown timers (tick each frame, removed at 0).
-    pub(crate) timer_elements: Vec<TimerEntry>,
-
-    // ── Sequence system ──────────────────────────────────────────
-    /// Manages all active command sequences (movement, combat, cutscenes).
-    /// Host-side callers drive it exclusively through [`PlayerCommand`]
-    /// variants routed via [`EngineInner::apply_command`].
-    pub(crate) sequence_manager: SequenceManager,
-
-    /// Deferred reinforcement-spawn requests (the `ALARM` console
-    /// cheat / `CreateReinforcement`).  Each entry is the dead PC's
-    /// `EntityId` to reinforce, or `None` when no preferred profile.
-    /// Drained at the top of `perform_hourglass` so the spawned PC is
-    /// part of the same tick's sim state.  Participates in rollback
-    /// hashing because pushes can originate mid-tick (PC death handler)
-    /// and therefore survive across tick boundaries.
-    pub(crate) pending_reinforcements: Vec<Option<EntityId>>,
-
-    /// Deferred amulet spawns queued by [`EngineInner::reveal_scroll`] when
-    /// a scroll resolves as "replace with amulet" (Easy difficulty +
-    /// scroll absent for that difficulty).  Drained at the top of
-    /// `perform_hourglass` alongside
-    /// [`EngineInner::drain_pending_reinforcements`]; sprite is
-    /// preloaded at level load so the drain only reads the scriptor
-    /// cache via `&LevelAssets`.  Participates in rollback hashing
-    /// (can survive across tick boundaries when `reveal_scroll` pushes
-    /// mid-tick).
-    pub(crate) pending_scroll_amulets: Vec<PendingScrollAmulet>,
-
-    /// Deferred PC hero-speech triggers queued by the Instruct-equivalent
-    /// path.  `arbitrate_instruct` short-circuits a few PC commands
-    /// (`SpeakHeroReachDestination`, `SpeakVipsAreForRobin`) with
-    /// immediate TERMINATE + `HeroSpeaking`, but the arbitrate path
-    /// doesn't carry `&LevelAssets`, so the speech dispatch is queued
-    /// here and drained by `drain_pending_hero_speeches` at the top of
-    /// `perform_hourglass`.
-    pub(crate) pending_hero_speeches: Vec<(EntityId, u16)>,
-
-    /// Deferred console-cheat `HADES` kill requests.  Hades needs the
-    /// full NPC-kill cascade (alert-green / sleeping-forever / eye-close
-    /// / detectable cleanup / dying sequence) from `handle_death`, which
-    /// requires `&LevelAssets`.  The console dispatcher queues the
-    /// victim id here and `perform_hourglass` drains it.  Funnels to
-    /// the full NPC `Kill` cascade.
-    pub(crate) pending_hades_kills: Vec<EntityId>,
-
-    /// Deferred non-damage-path concussion side-effects (cheats, scripts).
-    /// `apply_concussion` queues entries here when `set_concussion`
-    /// returned `WentUnconscious` or `WokeUp` outside the regular damage
-    /// pipeline.  Drained from `perform_hourglass` with `&LevelAssets`.
-    /// Side-effects: `QuitSwordFight` + `AddTitbit(UNCONSCIOUS_STAR)` on
-    /// KO, `Think(EVENT_FITAGAIN)` + enemy redetect on wake.
-    pub(crate) pending_concussion_side_effects: Vec<(EntityId, crate::combat::ConcussionOutcome)>,
 
     // ── Mission script ──────────────────────────────────────────
     /// Loaded `.scb` mission script and its VM instance.
@@ -506,27 +418,12 @@ impl EngineInner {
             control: SimulationControl::new(0),
             ai: AiRuntime::new(),
             world: WorldState::new(),
+            orders: OrderRuntime::new(),
 
             script_globals: Vec::new(),
 
-            next_order_id: 1,
-
-            messenger: Messenger::new(),
-            pending_move_requests: Vec::new(),
-            pending_path_requests: Default::default(),
-            failed_path_requests: Vec::new(),
-
             players: PlayerRuntime::new(),
             feedback: FeedbackRuntime::new(),
-            timer_elements: Vec::new(),
-
-            sequence_manager: SequenceManager::new(),
-
-            pending_reinforcements: Vec::new(),
-            pending_scroll_amulets: Vec::new(),
-            pending_hero_speeches: Vec::new(),
-            pending_hades_kills: Vec::new(),
-            pending_concussion_side_effects: Vec::new(),
 
             mission_script: None,
         }
@@ -580,7 +477,8 @@ impl EngineInner {
         }
 
         // Notify UI to update stature display
-        self.messenger
+        self.orders
+            .messenger
             .send(Message::new(MessageType::Simple(SimpleMessage::Stature)));
 
         // Initialize AI for all NPCs and global AI state.  Runs here —
@@ -666,7 +564,7 @@ impl EngineInner {
         remaining_frames: u32,
         element_ref: crate::sequence::SequenceElementRef,
     ) {
-        self.timer_elements.push(TimerEntry {
+        self.orders.timer_elements.push(TimerEntry {
             remaining: remaining_frames,
             element_ref,
         });
@@ -678,7 +576,8 @@ impl EngineInner {
     /// transitioned to `Terminated` and the slot nulled.
     pub(super) fn terminate_prev_camera_sequence_element(&mut self) {
         if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
-            self.sequence_manager
+            self.orders
+                .sequence_manager
                 .element_terminated(r.sequence_id, r.element_index);
         }
     }
@@ -1166,8 +1065,13 @@ impl EngineInner {
     /// element drives `action_state = Waiting` but the actor reports
     /// the actual command, not WAIT).
     pub fn actor_command(&self, actor: EntityId) -> crate::element::Command {
-        match self.sequence_manager.current_element_for_actor(actor) {
+        match self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(actor)
+        {
             Some((seq_id, idx)) => self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, idx)
                 .map(|e| e.command)
@@ -1201,7 +1105,7 @@ impl EngineInner {
     /// `Normal`.
     ///
     /// Takes the entity slice by reference so callers can split-borrow
-    /// this alongside `&mut self.sequence_manager`.
+    /// this alongside `&mut self.orders.sequence_manager`.
     pub(crate) fn priority_resolver(
         entities: &crate::entities::Entities,
     ) -> impl Fn(&crate::sequence::SequenceElement) -> crate::sequence::SequencePriority + '_ {
@@ -1268,7 +1172,7 @@ impl EngineInner {
         } else {
             let mut elem = elem;
             self.resolve_element_priority(&mut elem);
-            self.sequence_manager.launch_element(elem)
+            self.orders.sequence_manager.launch_element(elem)
         }
     }
 
@@ -1313,13 +1217,13 @@ impl EngineInner {
         // `Command::Null` short-circuits to Terminated without running
         // priority / transition / translate.
         if elem.command == crate::element::Command::Null {
-            let seq_id = self.sequence_manager.launch_element(elem);
-            self.sequence_manager.element_terminated(seq_id, 0);
+            let seq_id = self.orders.sequence_manager.launch_element(elem);
+            self.orders.sequence_manager.element_terminated(seq_id, 0);
             return seq_id;
         }
 
         self.resolve_element_priority(&mut elem);
-        let seq_id = self.sequence_manager.launch_element(elem);
+        let seq_id = self.orders.sequence_manager.launch_element(elem);
         let elem_idx = 0;
 
         // Stamp posture / action-state as the after-transition defaults
@@ -1339,7 +1243,9 @@ impl EngineInner {
         // means no valid transition exists — set the element Impossible
         // and skip arbitration.
         if !self.generate_transition(owner, seq_id, elem_idx) {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return seq_id;
         }
 
@@ -1410,9 +1316,10 @@ impl EngineInner {
         // (return-true semantics).
         if command == crate::element::Command::Null {
             let seq_id = self
+                .orders
                 .sequence_manager
                 .launch_single_order_sequence_unchecked(owner, command);
-            self.sequence_manager.element_terminated(seq_id, 0);
+            self.orders.sequence_manager.element_terminated(seq_id, 0);
             return seq_id;
         }
 
@@ -1423,10 +1330,15 @@ impl EngineInner {
         // BEFORE Translate pushes the command's own order, so those
         // transitions play before the command's main animation.
         let seq_id = self
+            .orders
             .sequence_manager
             .launch_single_order_sequence_unchecked(owner, command);
         let elem_idx = 0;
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        {
             let resolver = Self::priority_resolver(&self.world.entities);
             if elem.priority == crate::sequence::SequencePriority::NotYetSet {
                 elem.priority = resolver(elem);
@@ -1447,13 +1359,17 @@ impl EngineInner {
         // `LaunchSequence`-equivalent paths (`FaceTo`, etc.) that bypass
         // `Instruct`.
         if with_transitions && !self.generate_transition(owner, seq_id, elem_idx) {
-            self.sequence_manager.element_impossible(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
             return seq_id;
         }
 
         // NOW append the pre-baked command order — transitions are
         // already in front of it (when enabled).
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
 
         let accepted = self.arbitrate_instruct(seq_id, elem_idx);
         // Synchronously promote to `InProgress` so same-frame consumers
@@ -1462,6 +1378,7 @@ impl EngineInner {
         // Skip when arbitration rejected the element (Abandon /
         // Postpone) — downstream scanners filter on state.
         let state = self
+            .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
             .map(|e| e.state);
@@ -1476,7 +1393,9 @@ impl EngineInner {
                 None => true, // no current — we're free to promote
             };
             if still_current {
-                self.sequence_manager.element_in_progress(seq_id, elem_idx);
+                self.orders
+                    .sequence_manager
+                    .element_in_progress(seq_id, elem_idx);
                 // Set `sequence_element_started = true` once the element
                 // transitions to InProgress.  Read by
                 // `non_interruptable_guard` to gate the PASS_DOOR+MOVE
@@ -1514,7 +1433,11 @@ impl EngineInner {
                 (posture, action_state)
             })
             .unwrap_or_default();
-        if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(seq_id, elem_idx)
+        {
             elem.posture_after_transition = actor_posture;
             elem.action_state_after_transition = actor_action_state;
         }
@@ -1587,7 +1510,7 @@ impl EngineInner {
         let Some((cur_seq, cur_idx)) = self.current_sequence_element_for_actor(owner) else {
             return false;
         };
-        let Some(cur_elem) = self.sequence_manager.get_element(cur_seq, cur_idx) else {
+        let Some(cur_elem) = self.orders.sequence_manager.get_element(cur_seq, cur_idx) else {
             return false;
         };
         if cur_elem.priority != SequencePriority::NonInterruptable {
@@ -1601,7 +1524,10 @@ impl EngineInner {
             .unwrap_or(false);
 
         // Ensure new element has a resolved priority before postponing.
-        if let Some(elem) = self.sequence_manager.get_element_mut(new_seq, new_idx)
+        if let Some(elem) = self
+            .orders
+            .sequence_manager
+            .get_element_mut(new_seq, new_idx)
             && elem.priority == SequencePriority::NotYetSet
         {
             let resolver = Self::priority_resolver(&self.world.entities);
@@ -1609,6 +1535,7 @@ impl EngineInner {
         }
 
         let new_command = self
+            .orders
             .sequence_manager
             .get_element(new_seq, new_idx)
             .map(|e| e.command)
@@ -1616,7 +1543,9 @@ impl EngineInner {
 
         if cur_started && cur_command == Command::PassDoor && new_command == Command::Move {
             // The move won't be possible after passing that door.
-            self.sequence_manager.element_impossible(new_seq, new_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(new_seq, new_idx);
         } else {
             // `new.Postpone(current)` — current is the blocker, new is
             // the waiter.
@@ -1663,8 +1592,11 @@ impl EngineInner {
             // 100-frame retry queue can fire `element_impossible` /
             // hero-speech on an actor that has been frozen / killed.
             self.stop_owner_active_mechanics(owner);
-            self.sequence_manager
-                .element_interrupted(cur_seq, cur_idx, CascadeFlags::NEXT_LEVEL);
+            self.orders.sequence_manager.element_interrupted(
+                cur_seq,
+                cur_idx,
+                CascadeFlags::NEXT_LEVEL,
+            );
         }
     }
 
@@ -1676,7 +1608,7 @@ impl EngineInner {
     /// top of `perform_hourglass` alongside the other `drain_pending_*`
     /// helpers).
     pub(crate) fn drain_pending_hero_speeches(&mut self, assets: &crate::engine::LevelAssets) {
-        let queued = std::mem::take(&mut self.pending_hero_speeches);
+        let queued = std::mem::take(&mut self.orders.pending_hero_speeches);
         for (pc_id, expression) in queued {
             self.hero_speaking(assets, pc_id, expression);
         }
@@ -1697,7 +1629,7 @@ impl EngineInner {
             }
         }
         drop(resolver);
-        self.sequence_manager.launch_sequence(seq)
+        self.orders.sequence_manager.launch_sequence(seq)
     }
 
     /// Find the actor's currently-executing sequence element.  An
@@ -1711,7 +1643,9 @@ impl EngineInner {
         &self,
         actor: EntityId,
     ) -> Option<(crate::sequence::SequenceId, usize)> {
-        self.sequence_manager.current_element_for_actor(actor)
+        self.orders
+            .sequence_manager
+            .current_element_for_actor(actor)
     }
 
     /// Arbitrate a new sequence-element dispatch against the actor's
@@ -1745,7 +1679,7 @@ impl EngineInner {
         use crate::element::Command;
         use crate::sequence::{PriorityDecision, SequenceState};
 
-        let Some(new_elem) = self.sequence_manager.get_element(new_seq, new_idx) else {
+        let Some(new_elem) = self.orders.sequence_manager.get_element(new_seq, new_idx) else {
             return false;
         };
         let Some(owner) = new_elem.owner else {
@@ -1799,7 +1733,9 @@ impl EngineInner {
         // Civilian Instruct refuses everything except RECEIVE_PURSE /
         // BEGGAR_SHOW_FACE / WAIT when the civilian is a beggar.
         if self.beggar_rejects_command(owner, new_command) {
-            self.sequence_manager.element_impossible(new_seq, new_idx);
+            self.orders
+                .sequence_manager
+                .element_impossible(new_seq, new_idx);
             return false;
         }
 
@@ -1816,14 +1752,20 @@ impl EngineInner {
                 // because `arbitrate_instruct` doesn't carry
                 // `&LevelAssets`.
                 Command::SpeakHeroReachDestination => {
-                    self.sequence_manager.element_terminated(new_seq, new_idx);
-                    self.pending_hero_speeches
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(new_seq, new_idx);
+                    self.orders
+                        .pending_hero_speeches
                         .push((owner, crate::engine::melee::HERO_DONE_COMMAND));
                     return false;
                 }
                 Command::SpeakVipsAreForRobin => {
-                    self.sequence_manager.element_terminated(new_seq, new_idx);
-                    self.pending_hero_speeches
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(new_seq, new_idx);
+                    self.orders
+                        .pending_hero_speeches
                         .push((owner, crate::engine::melee::HERO_PROVOKE_VIP));
                     return false;
                 }
@@ -1841,12 +1783,14 @@ impl EngineInner {
                         // is being rejected.  Without this the stature
                         // arrow stays visually pressed until some other
                         // actor's stature changes.
-                        self.messenger.send(crate::messenger::Message::new(
+                        self.orders.messenger.send(crate::messenger::Message::new(
                             crate::messenger::MessageType::Simple(
                                 crate::messenger::SimpleMessage::StatureChangeEnd,
                             ),
                         ));
-                        self.sequence_manager.element_impossible(new_seq, new_idx);
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(new_seq, new_idx);
                         return false;
                     }
                     // `is_part_of_movement` covers
@@ -1858,7 +1802,7 @@ impl EngineInner {
                     // a spurious `Stop(PREFERENCE)`.
                     let cur_is_movement = self
                         .current_sequence_element_for_actor(owner)
-                        .and_then(|(s, i)| self.sequence_manager.get_element(s, i))
+                        .and_then(|(s, i)| self.orders.sequence_manager.get_element(s, i))
                         .map(|e| e.command.is_part_of_movement())
                         .unwrap_or(true);
                     if !cur_is_movement {
@@ -1878,7 +1822,7 @@ impl EngineInner {
             && let Some(entity) = self.get_entity(owner)
             && entity.is_pc()
             && let Some((cur_seq, cur_idx, current_order)) =
-                self.sequence_manager.current_order_for_actor(owner)
+                self.orders.sequence_manager.current_order_for_actor(owner)
         {
             use crate::order::OrderType;
             // C++ checks `mpSprite->GetLastAnimation()`. The live front
@@ -1933,7 +1877,9 @@ impl EngineInner {
                     && !is_unconscious
                     && stuck_ctr == 1);
                 if !allowed {
-                    self.sequence_manager.element_impossible(new_seq, new_idx);
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(new_seq, new_idx);
                     return false;
                 }
             }
@@ -1945,6 +1891,7 @@ impl EngineInner {
         };
 
         let cur_priority = self
+            .orders
             .sequence_manager
             .get_element(cur_seq, cur_idx)
             .map(|e| e.priority)
@@ -1969,9 +1916,12 @@ impl EngineInner {
                 // Hand the new element's postponed successor (if any)
                 // over to the current element before marking new
                 // Impossible, so the successor doesn't get orphaned.
-                self.sequence_manager
+                self.orders
+                    .sequence_manager
                     .take_over_postponed(cur_seq, cur_idx, new_seq, new_idx);
-                self.sequence_manager.element_impossible(new_seq, new_idx);
+                self.orders
+                    .sequence_manager
+                    .element_impossible(new_seq, new_idx);
                 false
             }
             PriorityDecision::Postpone => {
@@ -1981,7 +1931,11 @@ impl EngineInner {
                 false
             }
             PriorityDecision::PostponeCurrent => {
-                if self.sequence_manager.can_interrupt_now(cur_seq, cur_idx) {
+                if self
+                    .orders
+                    .sequence_manager
+                    .can_interrupt_now(cur_seq, cur_idx)
+                {
                     // `current.Postpone(new)` — postpone current behind new.
                     // Current is in-progress, so we first tear down its
                     // active machinery before flipping it to Postponed.
@@ -1993,19 +1947,25 @@ impl EngineInner {
                     // Current's front order finishes first; the new
                     // element runs next; a continuation of current is
                     // resumed afterwards.
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .split_and_insert(cur_seq, cur_idx, new_seq, new_idx);
                     false
                 }
             }
             PriorityDecision::InterruptCurrent => {
-                if self.sequence_manager.can_interrupt_now(cur_seq, cur_idx) {
+                if self
+                    .orders
+                    .sequence_manager
+                    .can_interrupt_now(cur_seq, cur_idx)
+                {
                     // New takes over current's postponed chain, current
                     // becomes Interrupted.
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .take_over_postponed(new_seq, new_idx, cur_seq, cur_idx);
                     self.stop_owner_active_mechanics(owner);
-                    self.sequence_manager.element_interrupted(
+                    self.orders.sequence_manager.element_interrupted(
                         cur_seq,
                         cur_idx,
                         crate::sequence::CascadeFlags::NEXT_LEVEL,
@@ -2017,7 +1977,8 @@ impl EngineInner {
                     // front order is allowed to finish, then the new
                     // element resumes; the rest of current is
                     // intentionally discarded.
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .truncate_to_first_order(cur_seq, cur_idx);
                     self.engine_postpone(cur_seq, cur_idx, new_seq, new_idx);
                     false
@@ -2060,12 +2021,17 @@ impl EngineInner {
             .collect();
 
         for entity_id in done_actors {
-            let Some((seq_id, elem_idx)) =
-                self.sequence_manager.current_element_for_actor(entity_id)
+            let Some((seq_id, elem_idx)) = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(entity_id)
             else {
                 continue;
             };
-            if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx)
+            if let Some(elem) = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
                 && let Some(order) = elem.orders.front_mut()
             {
                 order.done = true;
@@ -2096,16 +2062,19 @@ impl EngineInner {
         // If blocker already has a postponed successor, arbitrate
         // between that existing successor and the new waiter.
         let existing_postponed = self
+            .orders
             .sequence_manager
             .get_element(blocker_seq, blocker_idx)
             .and_then(|e| e.cross_postponed);
         if let Some((existing_seq, existing_idx)) = existing_postponed {
             let existing_priority = self
+                .orders
                 .sequence_manager
                 .get_element(existing_seq, existing_idx)
                 .map(|e| e.priority)
                 .unwrap_or(crate::sequence::SequencePriority::None);
             let waiter_priority = self
+                .orders
                 .sequence_manager
                 .get_element(waiter_seq, waiter_idx)
                 .map(|e| e.priority)
@@ -2116,13 +2085,14 @@ impl EngineInner {
                 PriorityDecision::Abandon => {
                     // existing wins — take over waiter's postponed
                     // chain and abandon waiter.
-                    self.sequence_manager.take_over_postponed(
+                    self.orders.sequence_manager.take_over_postponed(
                         existing_seq,
                         existing_idx,
                         waiter_seq,
                         waiter_idx,
                     );
-                    self.sequence_manager
+                    self.orders
+                        .sequence_manager
                         .element_impossible(waiter_seq, waiter_idx);
                     return;
                 }
@@ -2138,6 +2108,7 @@ impl EngineInner {
                     // First detach existing from blocker's slot so we
                     // don't leave a dangling link while recursing.
                     if let Some(b) = self
+                        .orders
                         .sequence_manager
                         .get_element_mut(blocker_seq, blocker_idx)
                     {
@@ -2150,18 +2121,19 @@ impl EngineInner {
                     // waiter inherits existing's postponed chain;
                     // existing becomes Interrupted.  Then install
                     // waiter in blocker's slot.
-                    self.sequence_manager.take_over_postponed(
+                    self.orders.sequence_manager.take_over_postponed(
                         waiter_seq,
                         waiter_idx,
                         existing_seq,
                         existing_idx,
                     );
-                    self.sequence_manager.element_interrupted(
+                    self.orders.sequence_manager.element_interrupted(
                         existing_seq,
                         existing_idx,
                         crate::sequence::CascadeFlags::NEXT_LEVEL,
                     );
                     if let Some(b) = self
+                        .orders
                         .sequence_manager
                         .get_element_mut(blocker_seq, blocker_idx)
                     {
@@ -2175,6 +2147,7 @@ impl EngineInner {
         // done, just terminate it instead of postponing.  Otherwise
         // install it in the blocker's postponed slot.
         let should_terminate_instead = self
+            .orders
             .sequence_manager
             .get_element(waiter_seq, waiter_idx)
             .map(|e| {
@@ -2185,29 +2158,34 @@ impl EngineInner {
 
         if should_terminate_instead {
             if let Some(e) = self
+                .orders
                 .sequence_manager
                 .get_element_mut(waiter_seq, waiter_idx)
             {
                 e.orders.clear();
             }
-            self.sequence_manager
+            self.orders
+                .sequence_manager
                 .element_terminated(waiter_seq, waiter_idx);
             return;
         }
 
         if let Some(b) = self
+            .orders
             .sequence_manager
             .get_element_mut(blocker_seq, blocker_idx)
         {
             b.cross_postponed = Some((waiter_seq, waiter_idx));
         }
         if let Some(w) = self
+            .orders
             .sequence_manager
             .get_element_mut(waiter_seq, waiter_idx)
         {
             w.orders.clear();
         }
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .postpone_element(waiter_seq, waiter_idx);
     }
 
@@ -2218,14 +2196,16 @@ impl EngineInner {
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
         self.world.pathfinder.cancel_requests_for(owner);
-        self.pending_path_requests.retain_not_owned_by(owner);
+        self.orders.pending_path_requests.retain_not_owned_by(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
         // drops stale retry entries for the actor.  Mirror that here so
         // cross-postpone (higher-priority blocker) also evicts pending
         // failed-path retries — otherwise the entry would stay in the
         // queue until the element resumes or times out.
-        self.failed_path_requests.retain(|r| r.owner != owner);
+        self.orders
+            .failed_path_requests
+            .retain(|r| r.owner != owner);
         if let Some(entity) = self.world.entities.get_mut(owner)
             && let Some(actor) = entity.actor_data_mut()
         {
@@ -2250,7 +2230,7 @@ impl EngineInner {
     /// This is the full `Stop()` path — combining the actor stop, the
     /// sequence-manager not-yet-launched stop, the movement-element
     /// StopMovement, and MaybeCancelPathRequest.  Callers that
-    /// previously invoked `self.sequence_manager.stop_owner(...)`
+    /// previously invoked `self.orders.sequence_manager.stop_owner(...)`
     /// directly should use this wrapper so the actor's movement doesn't
     /// keep running on a stale path.
     pub(crate) fn stop_owner(
@@ -2263,9 +2243,9 @@ impl EngineInner {
             .map(|e| e.element_data().position_map())
             .unwrap_or_default();
         let pathfinder = &mut self.world.pathfinder;
-        let next_order_id = &mut self.next_order_id;
+        let next_order_id = &mut self.orders.next_order_id;
         let resolver = Self::priority_resolver(&self.world.entities);
-        self.sequence_manager.stop_movement_for_owner(
+        self.orders.sequence_manager.stop_movement_for_owner(
             owner,
             owner_pos,
             stop_priority,
@@ -2282,9 +2262,12 @@ impl EngineInner {
         // for this actor — otherwise the 100-frame timeout would fire
         // `element_impossible` / hero-speech on a sequence that no
         // longer cares.
-        self.failed_path_requests.retain(|r| r.owner != owner);
-        self.pending_path_requests.retain_not_owned_by(owner);
-        self.sequence_manager
+        self.orders
+            .failed_path_requests
+            .retain(|r| r.owner != owner);
+        self.orders.pending_path_requests.retain_not_owned_by(owner);
+        self.orders
+            .sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
     }
 
@@ -2308,9 +2291,10 @@ impl EngineInner {
         ) {
             return true;
         }
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .current_element_for_actor(owner)
-            .and_then(|(sid, eidx)| self.sequence_manager.get_element(sid, eidx))
+            .and_then(|(sid, eidx)| self.orders.sequence_manager.get_element(sid, eidx))
             .is_some_and(|el| {
                 matches!(
                     el.command,
@@ -2384,7 +2368,9 @@ impl EngineInner {
             self.stop_owner(target_id, crate::sequence::SequencePriority::Normal);
         }
         if let Some((seq_id, elem_idx)) = seek_element {
-            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
         }
         self.launch_sequence(*post_seek);
         true
@@ -2417,7 +2403,7 @@ impl EngineInner {
         {
             ai.inside_halt_method = true;
         }
-        self.sequence_manager.set_halt_pending(true);
+        self.orders.sequence_manager.set_halt_pending(true);
 
         self.stop_owner(owner, crate::sequence::SequencePriority::Preference);
 
@@ -2430,9 +2416,11 @@ impl EngineInner {
         // that could e.g. fire `HERO_UNABLE_TO_DO_SOMETHING` for a Move
         // the player already cancelled).  Also drops the pending intent
         // so a newly-arriving Move doesn't race with a stale enqueue.
-        self.failed_path_requests.retain(|r| r.owner != owner);
+        self.orders
+            .failed_path_requests
+            .retain(|r| r.owner != owner);
 
-        self.sequence_manager.set_halt_pending(false);
+        self.orders.sequence_manager.set_halt_pending(false);
         if let Some(entity) = self.get_entity_mut(owner)
             && let Some(ai) = entity.ai_controller_mut()
         {
@@ -2612,7 +2600,8 @@ impl EngineInner {
     /// drain the shoot-list (queue non-empty) or cancel the Bow action
     /// (queue empty).
     pub fn pc_has_pending_shoot_bow(&self, pc_id: EntityId) -> bool {
-        self.sequence_manager
+        self.orders
+            .sequence_manager
             .queued_element_exists(pc_id, crate::element::Command::ShootBow)
     }
 
@@ -2778,7 +2767,7 @@ impl EngineInner {
         let actor_data = entity.actor_data()?;
         let seq_id = actor_data.active_movement.sequence_id?;
         let elem_idx = actor_data.active_movement.element_index;
-        let elem = self.sequence_manager.get_element(seq_id, elem_idx)?;
+        let elem = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
         Some(
             elem.orders
                 .iter()
@@ -2863,11 +2852,11 @@ impl EngineInner {
     ///
     /// Host-side producers of messenger events (console overlay,
     /// switch-task handler, alt-tab watchdog) use this instead of
-    /// touching `self.messenger` directly — the field is `pub(crate)`
+    /// touching `self.orders.messenger` directly — the field is `pub(crate)`
     /// to keep the drain loop authoritative over which variants are
     /// observed.
     pub fn send_simple_message(&mut self, msg: crate::messenger::SimpleMessage) {
-        self.messenger.send(crate::messenger::Message::new(
+        self.orders.messenger.send(crate::messenger::Message::new(
             crate::messenger::MessageType::Simple(msg),
         ));
     }
@@ -2900,10 +2889,10 @@ impl EngineInner {
     /// "restore-on-stop-recording" snapshot so a later
     /// `MSG_STOP_RECORDING_MACRO` doesn't rearm a stale action.
     pub(crate) fn emit_character_selection_followups(&mut self) {
-        self.messenger.send(crate::messenger::Message::new(
+        self.orders.messenger.send(crate::messenger::Message::new(
             crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
         ));
-        self.messenger.send(crate::messenger::Message::pc(
+        self.orders.messenger.send(crate::messenger::Message::pc(
             crate::messenger::PcMessage::UpdateRecordingMacro,
             None,
         ));
@@ -2975,7 +2964,7 @@ impl EngineInner {
     /// process-wide `static AtomicU32` counters that diverged across
     /// live and replayed timelines).
     pub(crate) fn alloc_order_id(&mut self) -> std::num::NonZeroU32 {
-        crate::order::alloc_order_id(&mut self.next_order_id)
+        self.orders.allocate_order_id()
     }
 
     /// Build a fresh `Order` (via `alloc_order_id` for the id) and push
@@ -2994,7 +2983,7 @@ impl EngineInner {
         y: f32,
     ) -> std::num::NonZeroU32 {
         let id = self.alloc_order_id();
-        self.sequence_manager.push_order_on(
+        self.orders.sequence_manager.push_order_on(
             seq_id,
             elem_idx,
             crate::order::Order::new(order_type, x, y, id),
@@ -3022,6 +3011,7 @@ impl EngineInner {
     pub(crate) fn do_next_order(&mut self, seq_id: crate::sequence::SequenceId, elem_idx: usize) {
         // Pop the just-completed front order, capture context.
         let Some((owner, next_exists)) = self
+            .orders
             .sequence_manager
             .get_element_mut(seq_id, elem_idx)
             .map(|elem| {
@@ -3056,6 +3046,7 @@ impl EngineInner {
 
         if let Some(owner_id) = owner
             && self
+                .orders
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
                 .is_some_and(|elem| {
@@ -3079,7 +3070,9 @@ impl EngineInner {
 
         // Queue exhausted.  Terminate the element + ensure the owner
         // has a live wait element.
-        self.sequence_manager.element_terminated(seq_id, elem_idx);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
         if let Some(owner) = owner {
             self.ensure_wait_element(owner);
         }
@@ -3104,6 +3097,7 @@ impl EngineInner {
         // whenever the actor has no current order, i.e. "no other
         // element is active".
         if self
+            .orders
             .sequence_manager
             .has_live_element_for_actor_matching(entity_id, |_| true)
         {
@@ -3161,7 +3155,7 @@ impl EngineInner {
         elem.priority = SequencePriority::Wait;
         elem.posture_after_transition = posture;
         elem.action_state_after_transition = action_state;
-        self.sequence_manager.launch_element(elem);
+        self.orders.sequence_manager.launch_element(elem);
     }
 
     /// Restore the lazy `Wait()` invariant for actors that have no
@@ -3226,9 +3220,11 @@ impl EngineInner {
         // elements die, so drop the retry-queue entries eagerly
         // instead of waiting for the next retry pass to notice the
         // owner is gone.
-        self.failed_path_requests.retain(|r| r.owner != id);
-        self.pending_move_requests.retain(|(eid, _)| *eid != id);
-        self.pending_path_requests.retain_not_owned_by(id);
+        self.orders.failed_path_requests.retain(|r| r.owner != id);
+        self.orders
+            .pending_move_requests
+            .retain(|(eid, _)| *eid != id);
+        self.orders.pending_path_requests.retain_not_owned_by(id);
     }
 
     /// Number of live entities.
@@ -3691,9 +3687,9 @@ impl EngineInner {
         self.mission_domain.force_check = false;
         self.control.chorus_timer = 0;
         self.control.fast_forward = false;
-        self.pending_move_requests.clear();
-        self.pending_path_requests.clear();
-        self.failed_path_requests.clear();
+        self.orders.pending_move_requests.clear();
+        self.orders.pending_path_requests.clear();
+        self.orders.failed_path_requests.clear();
 
         // Force a full redraw on the next frame — the background cache
         // from the pre-load session is no longer valid for the restored
@@ -3707,10 +3703,14 @@ impl EngineInner {
         if self.is_zooming(display) {
             let zoom_up = self.is_zoom_up_possible() as u32;
             let zoom_down = self.is_zoom_down_possible() as u32;
-            self.messenger.send(crate::messenger::Message::with_value(
-                crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::ZoomUpEnd),
-                (zoom_up << 16) | zoom_down,
-            ));
+            self.orders
+                .messenger
+                .send(crate::messenger::Message::with_value(
+                    crate::messenger::MessageType::Simple(
+                        crate::messenger::SimpleMessage::ZoomUpEnd,
+                    ),
+                    (zoom_up << 16) | zoom_down,
+                ));
             let bg = &mut self.feedback.cutscene_camera.display.background_transform;
             bg.zoom_to_up = false;
             bg.zoom_to_down = false;
@@ -3729,7 +3729,7 @@ impl EngineInner {
         // Anonymous sequence-timer entries are tied to `SequenceManager`
         // state that was just replaced; the reloaded manager rebuilds
         // its own timer list as sequences resume.
-        self.timer_elements.clear();
+        self.orders.timer_elements.clear();
 
         // Walk every PC and reconcile the loaded selection list
         // against the per-PC `interface_hidden` / `playable` /
@@ -3758,12 +3758,13 @@ impl EngineInner {
         // engine state each frame so these are belt-and-braces —
         // needed for script subscribers that only react to message
         // edges rather than polling.
-        self.messenger.send(crate::messenger::Message::new(
+        self.orders.messenger.send(crate::messenger::Message::new(
             crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
         ));
         let action = self.get_selected_action();
         let pc_id = self.players.seats[0].selection.first().copied();
-        self.messenger
+        self.orders
+            .messenger
             .send(crate::messenger::Message::pc_with_value(
                 crate::messenger::PcMessage::SelectAction,
                 pc_id,

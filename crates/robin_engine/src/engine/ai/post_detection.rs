@@ -367,6 +367,7 @@ impl EngineInner {
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx.enter_swordfight_pending = self
+                .orders
                 .sequence_manager
                 .element_is_about_to_be_launched(npc_id, crate::element::Command::EnterSwordfight);
             // Clear `timer_is_running` before dispatching

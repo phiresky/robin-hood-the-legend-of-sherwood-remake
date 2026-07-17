@@ -223,7 +223,7 @@ impl EngineInner {
                     display.background_transform.view_from = view_from;
                     display.background_transform.view_to = view_to;
 
-                    self.messenger.send(Message::new(MessageType::Simple(
+                    self.orders.messenger.send(Message::new(MessageType::Simple(
                         SimpleMessage::ZoomUpStart,
                     )));
                 } else {
@@ -271,7 +271,7 @@ impl EngineInner {
                     display.background_transform.view_from = view_from;
                     display.background_transform.view_to = target;
 
-                    self.messenger.send(Message::new(MessageType::Simple(
+                    self.orders.messenger.send(Message::new(MessageType::Simple(
                         SimpleMessage::ZoomDownStart,
                     )));
                 }
