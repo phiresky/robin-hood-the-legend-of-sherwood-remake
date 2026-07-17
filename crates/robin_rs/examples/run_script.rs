@@ -65,7 +65,7 @@ fn main() -> std::process::ExitCode {
     );
 
     let host = GameHost::new().verbose();
-    let mut vm_state = Vm::new().with_host(Box::new(host));
+    let mut vm_state = Vm::new().with_host(host);
     vm_state
         .vm
         .heap
@@ -96,11 +96,7 @@ fn main() -> std::process::ExitCode {
     tracing::info!("frames depth: {}", vm_state.vm.frames.len());
 
     // Recover host and print summary
-    let host_any = vm_state.take_host().unwrap();
-    let host: &GameHost = host_any
-        .as_any()
-        .downcast_ref::<GameHost>()
-        .expect("host was not GameHost");
+    let host = vm_state.take_host();
 
     tracing::info!("--- {} deferred engine commands ---", host.commands.len());
 

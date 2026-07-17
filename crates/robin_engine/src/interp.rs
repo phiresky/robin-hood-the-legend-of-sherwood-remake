@@ -51,7 +51,7 @@ pub struct Frame {
 }
 
 /// Execution result when the interpreter stops.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum StopReason {
     /// `Return` hit — top-of-stack return propagates out.
     Returned,
@@ -65,25 +65,23 @@ pub enum StopReason {
     HitEmpty,
     /// Hit the step-limit guard.
     StepLimit,
-    /// A native called by `NativeCall` queued a nested-script call
+    /// A native called by `NativeCall` requested a nested-script call
     /// (see [`PendingNestedCall`]).  The interpreter has advanced the
     /// IP past the `NativeCall` instruction; the engine must dispatch
-    /// the queued call, write its result into `vm.native_return_value`,
+    /// the requested call, write its result into `vm.native_return_value`,
     /// and call `vm.run_up_to(...)` again to resume.  The script's
     /// next `Aff1NativeGetReturn` then reads the resolved value.
-    PendingNestedCall,
+    PendingNestedCall(PendingNestedCall),
 }
 
-/// A nested-script call queued by a native (e.g. `PrototypeFilterEvent`)
-/// during a running VM.  Drained by the engine layer after the outer
+/// A nested-script call requested by a native (e.g. `PrototypeFilterEvent`)
+/// during a running VM. Carried by value to the engine layer when the outer
 /// VM yields with [`StopReason::PendingNestedCall`].
 ///
 /// `fn_name` is owned `String` rather than `&'static str` so the same
 /// type can carry both literal native-side dispatch names and (in the
 /// future) script-supplied function names.
-#[derive(
-    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
-)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingNestedCall {
     /// Actor script handle of the script instance to invoke against.
     pub actor_handle: i32,
@@ -91,6 +89,41 @@ pub struct PendingNestedCall {
     pub fn_name: String,
     /// i32 parameters to push onto the target VM before the call.
     pub params: Vec<i32>,
+    /// Whether the nested callback binds `ThisActor` to its target or keeps
+    /// the caller's current script receiver.
+    pub script_this: NestedCallScriptThis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NestedCallScriptThis {
+    TargetActor,
+    PreserveCaller,
+}
+
+/// Result of one native dispatch.
+///
+/// A nested script call is control flow, not an integer return value. Keeping
+/// it explicit prevents the VM from briefly staging a fake return and lets a
+/// borrowed host hand the request directly back to the script driver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeCallOutcome {
+    Return(i32),
+    PendingNestedCall(PendingNestedCall),
+}
+
+impl NativeCallOutcome {
+    /// Extract an ordinary native return for call sites which cannot drive a
+    /// nested script request (primarily focused tests and standalone tools).
+    /// Failing loudly here prevents those adapters from reviving the old fake
+    /// zero return for `PrototypeFilterEvent`.
+    pub fn expect_return(self, context: &str) -> i32 {
+        match self {
+            Self::Return(value) => value,
+            Self::PendingNestedCall(call) => {
+                panic!("{context}: nested script call requires a MissionScript driver: {call:?}")
+            }
+        }
+    }
 }
 
 /// Parameter stack for native calls. `NativeParam` pushes 4 bytes
@@ -141,30 +174,19 @@ impl NativeStack {
 /// Host functions invoked by `NativeCall`. Each index corresponds to
 /// an entry in the native-function registry. The host reads
 /// parameters off the stack (pop them — the VM doesn't auto-clear)
-/// and returns a 32-bit value the script picks up with
-/// `Aff1NativeGetReturn`.
-pub trait HostFunctions: std::any::Any + Send {
-    fn call(&mut self, index: u32, stack: &mut NativeStack) -> i32;
-    /// Downcast helper for accessing concrete host state after script execution.
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
-    /// Immutable downcast helper.
-    fn as_any(&self) -> &dyn std::any::Any;
-    /// Clone-via-trait-object helper for host implementations that need
-    /// boxed test fixtures.
-    fn clone_dyn(&self) -> Box<dyn HostFunctions>;
-    /// Drain a nested-script-call request queued during the most recent
-    /// `call`.  Default implementation returns `None`; hosts that
-    /// support re-entering the script subsystem from inside a native
-    /// (e.g. `GameHost`'s prototype filter-event path) override this.
-    /// When the interpreter sees a `Some(_)` return, it stops with
-    /// [`StopReason::PendingNestedCall`] so the engine layer can
-    /// dispatch the call and resume the VM.
-    fn take_pending_nested_call(&mut self) -> Option<PendingNestedCall> {
-        None
+/// and either returns a 32-bit value the script picks up with
+/// `Aff1NativeGetReturn` or requests synchronous nested script dispatch.
+pub trait HostFunctions {
+    fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome;
+}
+
+impl<T: HostFunctions + ?Sized> HostFunctions for Box<T> {
+    fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        (**self).call(index, stack)
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct Vm {
     /// Static area, shared across VM instances in the real engine. For
     /// single-function test harnesses we give each Vm its own.
@@ -186,38 +208,6 @@ pub struct Vm {
     pub return_value: i32,
     /// Instruction pointer (index into the quad stream).
     pub ip: u32,
-    /// Set by the [`NativeCall`] step when the host queues a nested
-    /// script call (see [`HostFunctions::take_pending_nested_call`]).
-    /// Drained by the engine layer after the VM yields with
-    /// [`StopReason::PendingNestedCall`].  Like `host`, this is
-    /// transient — it only ever holds a value between a yield and the
-    /// next resume, both of which happen synchronously inside one
-    /// engine call; serializing this field keeps accidental leakage
-    /// visible to rollback/save snapshots instead of silently dropping it.
-    pub pending_nested_call: Option<PendingNestedCall>,
-}
-
-/// Manual `Clone` keeps pending nested calls out of rollback snapshots:
-/// that value is only valid between a VM yield and synchronous resume.
-impl Clone for Vm {
-    fn clone(&self) -> Self {
-        Self {
-            static_area: self.static_area.clone(),
-            heap: self.heap.clone(),
-            frames: self.frames.clone(),
-            outgoing_params: self.outgoing_params.clone(),
-            native_stack: self.native_stack.clone(),
-            native_return_value: self.native_return_value,
-            return_value: self.return_value,
-            ip: self.ip,
-            // pending_nested_call is transient between yield and
-            // resume — both happen inside one synchronous engine call,
-            // so a snapshot taken at a tick boundary always observes
-            // None. Drop it on clone because rollback never needs to
-            // carry it.
-            pending_nested_call: None,
-        }
-    }
 }
 
 impl Vm {
@@ -231,14 +221,13 @@ impl Vm {
             native_return_value: 0,
             return_value: 0,
             ip: 0,
-            pending_nested_call: None,
         }
     }
 
     /// Pair this VM with a native-call host for ad-hoc execution.
     /// The host lives in the returned wrapper, not in `Vm`, so the VM
     /// state itself stays fully serializable.
-    pub fn with_host(self, host: Box<dyn HostFunctions>) -> VmWithHost {
+    pub fn with_host<H: HostFunctions>(self, host: H) -> VmWithHost<H> {
         VmWithHost { vm: self, host }
     }
 
@@ -531,16 +520,18 @@ impl Vm {
                 let Some(host) = host else {
                     return Some(StopReason::Unimplemented("NativeCall"));
                 };
-                self.native_return_value = host.call(index, &mut self.native_stack);
+                let outcome = host.call(index, &mut self.native_stack);
                 // Always advance IP past the NativeCall before yielding —
                 // when the engine resumes us after dispatching the
                 // nested call, it will write the real i32 into
                 // `native_return_value` and the next instruction
                 // (typically `Aff1NativeGetReturn`) will read it.
                 self.ip += 1;
-                if let Some(call) = host.take_pending_nested_call() {
-                    self.pending_nested_call = Some(call);
-                    return Some(StopReason::PendingNestedCall);
+                match outcome {
+                    NativeCallOutcome::Return(value) => self.native_return_value = value,
+                    NativeCallOutcome::PendingNestedCall(call) => {
+                        return Some(StopReason::PendingNestedCall(call));
+                    }
                 }
             }
             Aff1NativeGetReturn { sym } => {
@@ -674,23 +665,23 @@ impl Vm {
 }
 
 /// Convenience wrapper for tests and standalone native-call execution.
-pub struct VmWithHost {
+pub struct VmWithHost<H> {
     pub vm: Vm,
-    pub host: Box<dyn HostFunctions>,
+    pub host: H,
 }
 
-impl VmWithHost {
+impl<H: HostFunctions> VmWithHost<H> {
     pub fn run(&mut self, program: &[Instruction]) -> StopReason {
-        self.vm.run_with_host(program, self.host.as_mut())
+        self.vm.run_with_host(program, &mut self.host)
     }
 
     pub fn run_up_to(&mut self, program: &[Instruction], max_steps: usize) -> StopReason {
         self.vm
-            .run_up_to_with_host(program, max_steps, self.host.as_mut())
+            .run_up_to_with_host(program, max_steps, &mut self.host)
     }
 
-    pub fn take_host(self) -> Option<Box<dyn HostFunctions>> {
-        Some(self.host)
+    pub fn take_host(self) -> H {
+        self.host
     }
 }
 
@@ -1170,24 +1161,104 @@ mod tests {
     #[derive(Clone)]
     struct TestHost;
     impl HostFunctions for TestHost {
-        fn call(&mut self, index: u32, stack: &mut NativeStack) -> i32 {
+        fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
             let b = stack.pop_i32();
             let a = stack.pop_i32();
-            match index {
+            NativeCallOutcome::Return(match index {
                 0 => a + b,
                 1 => a * b,
                 _ => 0,
-            }
+            })
         }
-        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-            self
+    }
+
+    #[derive(Clone)]
+    struct NestedCallHost;
+
+    impl HostFunctions for NestedCallHost {
+        fn call(&mut self, _index: u32, _stack: &mut NativeStack) -> NativeCallOutcome {
+            NativeCallOutcome::PendingNestedCall(PendingNestedCall {
+                actor_handle: 23,
+                fn_name: "FilterAIEvent".to_owned(),
+                params: vec![7, 11],
+                script_this: NestedCallScriptThis::TargetActor,
+            })
         }
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
+    }
+
+    #[test]
+    fn nested_native_yields_after_advancing_ip_and_resumes_with_resolved_value() {
+        let program = [
+            BeginFunction {
+                volatile_count: 0,
+                temp_count: 1,
+            },
+            NativeCall { index: 108 },
+            Aff1NativeGetReturn { sym: tmp(0) },
+            ReturnVal { sym: tmp(0) },
+        ];
+        let mut vm = Vm::new();
+        let mut host = NestedCallHost;
+
+        let stop = vm.run_up_to_with_host(&program, 10, &mut host);
+        assert_eq!(vm.ip, 2, "resume must start after NativeCall");
+        assert_eq!(
+            vm.native_return_value, 0,
+            "a nested call must not stage a fake native return"
+        );
+
+        let StopReason::PendingNestedCall(pending) = stop else {
+            panic!("expected nested-call yield, got {stop:?}");
+        };
+        assert_eq!(pending.actor_handle, 23);
+        assert_eq!(pending.fn_name, "FilterAIEvent");
+        assert_eq!(pending.params, [7, 11]);
+
+        vm.native_return_value = 42;
+        assert_eq!(
+            vm.run_up_to_with_host(&program, 10, &mut host),
+            StopReason::ReturnedValue(42),
+            "Aff1NativeGetReturn must observe the resolved nested result"
+        );
+    }
+
+    struct BorrowingHost<'a> {
+        total: &'a mut i32,
+    }
+
+    impl HostFunctions for BorrowingHost<'_> {
+        fn call(&mut self, _index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+            *self.total += stack.pop_i32();
+            NativeCallOutcome::Return(*self.total)
         }
-        fn clone_dyn(&self) -> Box<dyn HostFunctions> {
-            Box::new(self.clone())
-        }
+    }
+
+    #[test]
+    fn vm_with_host_accepts_a_non_static_borrowing_dispatcher() {
+        let program = [
+            BeginFunction {
+                volatile_count: 0,
+                temp_count: 2,
+            },
+            Aff0IConstant {
+                dst: tmp(0),
+                constant: 7,
+            },
+            NativeParam { sym: tmp(0) },
+            NativeCall { index: 0 },
+            Aff1NativeGetReturn { sym: tmp(4) },
+            ReturnVal { sym: tmp(4) },
+        ];
+        let mut total = 5;
+
+        let stop = {
+            let host = BorrowingHost { total: &mut total };
+            let mut vm = Vm::new().with_host(host);
+            vm.run(&program)
+        };
+
+        assert_eq!(stop, StopReason::ReturnedValue(12));
+        assert_eq!(total, 12);
     }
 
     #[test]

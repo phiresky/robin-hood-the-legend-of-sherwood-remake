@@ -35,7 +35,7 @@
 use std::cell::Cell;
 
 use mlua::{Function, Lua, Table, Value};
-use robin_engine::interp::NativeStack;
+use robin_engine::interp::{NativeCallOutcome, NativeStack};
 use robin_engine::natives::{GameHost, NATIVE_REGISTRY, NativeFn, NativeSignature};
 
 use crate::state::MissionLuaState;
@@ -382,8 +382,13 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
                 value, *abi_type, sig, index, param.name,
             )?);
         }
-        let ret = <GameHost as robin_engine::interp::HostFunctions>::call(host, index, &mut stack);
-        Ok(return_from_stack_word(ret, return_type))
+        match <GameHost as robin_engine::interp::HostFunctions>::call(host, index, &mut stack) {
+            NativeCallOutcome::Return(ret) => Ok(return_from_stack_word(ret, return_type)),
+            NativeCallOutcome::PendingNestedCall(call) => Err(mlua::Error::RuntimeError(format!(
+                "{} requires nested script dispatch, which is unavailable through the Lua host adapter: {call:?}",
+                sig.name
+            ))),
+        }
     })
 }
 
@@ -589,7 +594,8 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
             host,
             NativeFn::RecordSendMessage as u32,
             &mut stack,
-        );
+        )
+        .expect_return("Lua SequenceCall/RecordSendMessage");
         Ok(())
     })?;
     globals.set("SequenceCall", sequence_call)?;

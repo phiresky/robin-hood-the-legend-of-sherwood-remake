@@ -3600,9 +3600,16 @@ impl EngineInner {
                 stack.push_i32(a);
             }
 
-            <crate::natives::GameHost as crate::interp::HostFunctions>::call(
+            match <crate::natives::GameHost as crate::interp::HostFunctions>::call(
                 game_host, index, &mut stack,
-            )
+            ) {
+                crate::interp::NativeCallOutcome::Return(value) => value,
+                crate::interp::NativeCallOutcome::PendingNestedCall(call) => {
+                    return Err(format!(
+                        "native {native_name} requires nested script dispatch and cannot be invoked through the standalone native adapter: {call:?}"
+                    ));
+                }
+            }
         };
 
         self.sync_game_host_post_script(assets);
