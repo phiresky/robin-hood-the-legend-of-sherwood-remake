@@ -4269,6 +4269,11 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
             .iter()
             .map(|det| det.seen_last_frame)
             .collect();
+        assert_eq!(
+            soldier.follow_target,
+            Some(ordered_targets[0]),
+            "the first accepted VIEW must retain focus after the later FIFO entry"
+        );
         let ai = engine
             .get_entity(soldier_id)
             .and_then(Entity::enemy_ai)
@@ -4278,6 +4283,11 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
         assert_eq!(
             ai.base.primary_target, expected_order[0],
             "the first detectable's VIEW must win even when a later target is nearer"
+        );
+        assert_eq!(
+            ai.base.last_stimulus_actor,
+            Some(expected_order[1]),
+            "the second VIEW must run through its own complete Think boundary"
         );
         (ai.list_them.clone(), latches, expected_order)
     }
@@ -4289,6 +4299,124 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
     assert_eq!(near_then_far_latches, vec![true, true]);
     assert_eq!(far_then_near, far_then_near_expected);
     assert_eq!(near_then_far, near_then_far_expected);
+}
+
+#[test]
+fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
+    use crate::ai::{AiState, Decision, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
+
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let old_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let viewed_target_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("target-rebind soldier exists")
+    else {
+        panic!("target-rebind observer changed kind")
+    };
+    soldier.element.active = true;
+    soldier
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    soldier.element.set_position_map(MapPoint::new(0.0, 0.0));
+    soldier.element.set_direction_instantly(4);
+    soldier.npc.life_points = 100;
+    soldier.npc.view_direction = [1.0, 0.0];
+    soldier.npc.view_radius = 300;
+    soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    soldier.npc.eye_status = crate::element::EyeStatus::Stare;
+
+    for (pc_id, x) in [(old_target_id, -200.0), (viewed_target_id, 40.0)] {
+        let Entity::Pc(pc) = engine
+            .get_entity_mut(pc_id)
+            .expect("target-rebind PC exists")
+        else {
+            panic!("target-rebind target changed kind")
+        };
+        pc.element.active = true;
+        pc.element
+            .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+        pc.element.set_position_map(MapPoint::new(x, 0.0));
+        pc.pc.life_points = 100;
+    }
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the target-rebind PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("target-rebind soldier exists before detection")
+    else {
+        panic!("target-rebind observer changed kind")
+    };
+    let ai = soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("target-rebind soldier has enemy AI");
+    ai.base.me = soldier_id.index();
+    ai.base.current_state = AiState::Seeking;
+    ai.base.current_substate = Substate::SeekingJustWatching;
+    ai.current_task_priority = task_priority::SEEKING;
+    ai.base.primary_target = old_target_id.index();
+    ai.base.seek_position = crate::ai::Position {
+        x: -200.0,
+        y: 0.0,
+        ..crate::ai::Position::default()
+    };
+    ai.forced_next_battle_decision = Decision::Fight;
+
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    soldier.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(viewed_target_id),
+        detectable_type: DetectableType::Enemy,
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    });
+
+    crate::sim_rng::with_seed(0xA013_0B1F, || engine.tick_enemy_ai(&assets));
+
+    let ai = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("target-rebind soldier retains enemy AI");
+    assert_eq!(
+        (
+            ai.base.primary_target,
+            ai.base.last_stimulus_actor,
+            ai.base.current_state,
+            ai.base.current_substate,
+            ai.forced_next_battle_decision,
+        ),
+        (
+            viewed_target_id.index(),
+            Some(viewed_target_id.index()),
+            AiState::Attacking,
+            Substate::AttackingSwordfight,
+            Decision::None,
+        )
+    );
+    assert_eq!(ai.base.current_state, AiState::Attacking);
+    assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
 }
 
 #[test]

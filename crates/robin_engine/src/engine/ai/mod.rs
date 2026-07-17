@@ -868,18 +868,16 @@ impl EngineInner {
     /// from the live entity store without re-running the detection
     /// loop: same-camp soldier snapshots for alert coordination,
     /// primary target metadata (position, posture, animation,
-    /// carrier), `primary_target_is_pc`, friend-swap candidates for
+    /// carrier, destination forecast, table-swordfight jump line),
+    /// `primary_target_is_pc`, friend-swap candidates for
     /// `ReconsiderEnemyApproach`, the avenger-on-the-roof wait
     /// position, and a single-target seed for
     /// `enemy_sq_distances` / `min_sq_enemy_distance` so
     /// `battle_decisions` doesn't see an empty list when a valid
-    /// `primary_target` exists.  Fields that truly require the full
-    /// detection scan (`nearby_fighters`, `us_battle_points`,
-    /// `primary_target_multiplicity`,
-    /// `unconscious_enemies`, `nearby_sleeping_enemies`,
-    /// `primary_target_jump_line`, ...) remain empty — the same
-    /// fidelity as the pre-existing timer-dispatch hand-roll at line
-    /// 5927, now shared.
+    /// `primary_target` exists. Fields that truly require the full detection
+    /// scan (`unconscious_enemies`, `nearby_sleeping_enemies`, final visible
+    /// enemy distances/latches, ...) remain empty; RefreshDetection overlays
+    /// those scan products when it uses this builder for a queued stimulus.
     ///
     /// Returns a stub for non-enemy-soldier entities (civilians, PCs,
     /// beggar/animal NPCs); their AI paths don't consult the combat
@@ -937,6 +935,26 @@ impl EngineInner {
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = Some(assets.profile_manager.clone());
         tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch);
+        if let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
+            && enemy_ai.missed_pc != 0
+            && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
+            && let Some(missed_entity) = self.entities.get(missed_id)
+            && let Some(input) = extract_forecast_input(missed_entity)
+        {
+            let doors = self
+                .mission_script
+                .as_ref()
+                .and_then(|script| script.game_host())
+                .map(|host| host.doors.as_slice())
+                .unwrap_or(&[]);
+            tick.missed_pc_forecast = Some(crate::ai::forecast_destination_for_ia(
+                &input,
+                doors,
+                &self.fast_grid.level.sectors,
+                &self.fast_grid.level.sector_number_map,
+            ));
+            tick.missed_pc_is_pc = matches!(missed_entity, Entity::Pc(_));
+        }
         // `fill_list_with_all_near_fighters` walks the global fighter
         // registry on every call.  Populate `nearby_fighters` here so
         // off-detection dispatch sites (timer events, reach-point
@@ -990,6 +1008,35 @@ impl EngineInner {
 
         // primary_target_is_pc: look up the target's entity variant.
         tick.primary_target_is_pc = matches!(self.entities.get(target_id), Some(Entity::Pc(_)));
+        if let Some(target_entity) = self.entities.get(target_id)
+            && let Some(input) = extract_forecast_input(target_entity)
+        {
+            let doors = self
+                .mission_script
+                .as_ref()
+                .and_then(|script| script.game_host())
+                .map(|host| host.doors.as_slice())
+                .unwrap_or(&[]);
+            tick.primary_target_forecast = Some(crate::ai::forecast_destination_for_ia(
+                &input,
+                doors,
+                &self.fast_grid.level.sectors,
+                &self.fast_grid.level.sector_number_map,
+            ));
+        }
+        tick.primary_target_jump_line = crate::engine::melee::is_table_swordfight_needed(
+            &self.entities,
+            &self.fast_grid,
+            &assets.profile_manager,
+            npc_id,
+            target_id,
+        );
+        // TODO(parity): populate primary_target_in_lift and
+        // primary_target_lift_entry from live lift-sector geometry. No engine
+        // producer currently exposes the original ReconsiderEnemyApproach
+        // lift snapshot, so target rebinding deliberately clears both fields.
+        tick.primary_target_in_lift = false;
+        tick.primary_target_lift_entry = None;
 
         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
             let my_company = enemy_ai.company_number;
@@ -3981,14 +4028,8 @@ impl EngineInner {
         if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
         self.ai_global.same_frame_target_claims.clear();
 
-        // Rebuild the per-tick handle → entity view map *before* the
-        // detection pass starts firing stimuli into NPC Think() calls.
-        // Every `AiContext` built in this method and its callees
-        // picks up the refreshed map via
-        // `scratch.ai_entity_views.clone()`.
         // ── 1. Build one immutable per-tick AI world view. ────────
         // Snapshot construction does not dispatch behavior. The phase calls
         // below remain in the original soldier/NPC Hourglass order.
@@ -4023,7 +4064,7 @@ impl EngineInner {
         self.tick_enemy_ai_drain_swordfight_requests(assets);
 
         // ── 6d. Drain pending stimuli ────────────────────────────
-        self.tick_enemy_ai_drain_pending_stimuli(assets, &scratch);
+        self.tick_enemy_ai_drain_pending_stimuli(assets);
         self.ai_global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.

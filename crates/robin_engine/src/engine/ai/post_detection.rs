@@ -5,16 +5,38 @@
 use super::snapshots::Detection;
 use super::*;
 
-/// Full-fidelity detection input attached to the contiguous Enemy stimulus
-/// block queued by `RefreshDetection`. The absolute queue start preserves FIFO
-/// order while every VIEW / OUTOFVIEW entry shares the final detection-built
-/// aggregate. Target-specific primary fields remain a documented parity gap at
-/// the producer until the per-stimulus input is split from this common data.
+/// Final scan aggregate attached to the contiguous Enemy stimulus block queued
+/// by `RefreshDetection`. The absolute queue start preserves FIFO order. Live
+/// context and target-dependent combat fields are rebuilt for each Think; only
+/// fields whose value belongs to the completed detection scan are copied from
+/// this aggregate.
 pub(super) struct PendingEnemyDetectionTickData {
     pub(super) queue_start: usize,
     pub(super) stimuli: Vec<crate::ai::Stimulus>,
     pub(super) tick_data: crate::ai::AiPerTickData,
     matched: usize,
+}
+
+fn overlay_final_detection_scan(
+    live: &mut crate::ai::AiPerTickData,
+    aggregate: &crate::ai::AiPerTickData,
+) {
+    // TODO(parity): original ReinitializeThemList can re-walk a detectable
+    // list changed synchronously by a script between two Think calls. This
+    // aggregate intentionally freezes RefreshDetection's completed scan; live
+    // mid-FIFO detectable-list mutation needs a separate script-boundary test.
+    live.enemy_sq_distances = aggregate.enemy_sq_distances.clone();
+    live.min_sq_enemy_distance = aggregate.min_sq_enemy_distance;
+    live.personally_visible_enemies = aggregate.personally_visible_enemies;
+    live.unconscious_enemies = aggregate.unconscious_enemies.clone();
+    live.nearby_sleeping_enemies = aggregate.nearby_sleeping_enemies.clone();
+    live.seen_last_frame_enemies = aggregate.seen_last_frame_enemies.clone();
+
+    // These are also products of RefreshDetection's completed detectable-list
+    // walk rather than properties of the stimulus target.
+    live.visible_seeking_friends = aggregate.visible_seeking_friends;
+    live.friend_seek_clears_help_flag = aggregate.friend_seek_clears_help_flag;
+    live.camp_ko_money_fighters = aggregate.camp_ko_money_fighters.clone();
 }
 
 impl PendingEnemyDetectionTickData {
@@ -370,14 +392,10 @@ impl EngineInner {
     /// `AiController::pending_stimuli` by `dispatch_ai_stimulus()`
     /// during the combat tick.  We defer them to avoid re-entrant
     /// borrow issues, then replay them now.
-    pub(super) fn tick_enemy_ai_drain_pending_stimuli(
-        &mut self,
-        assets: &LevelAssets,
-        scratch: &SimScratch,
-    ) {
+    pub(super) fn tick_enemy_ai_drain_pending_stimuli(&mut self, assets: &LevelAssets) {
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, scratch, None);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, None);
         }
     }
 
@@ -389,7 +407,6 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
-        scratch: &SimScratch,
         mut enemy_detection_tick_data: Option<PendingEnemyDetectionTickData>,
     ) {
         let stimuli = {
@@ -405,6 +422,11 @@ impl EngineInner {
             return;
         }
         for (queue_index, stimulus) in stimuli.into_iter().enumerate() {
+            // Original Think is a synchronous boundary. Its EndThink (and any
+            // recursive event it launches) finishes before the next queued
+            // stimulus starts, so every entry must observe mutations made by
+            // its predecessor rather than the tick-start entity-view map.
+            let scratch = self.build_sim_scratch(assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let Some(entity) = self.entities.get(npc_id) else {
@@ -429,17 +451,58 @@ impl EngineInner {
                     &self.ai_global.all_soldier_handles,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
+                if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
+                    let view = ctx.entity_view(handle).unwrap_or_else(|| {
+                        panic!(
+                            "queued {:?} for NPC {} references missing entity {}",
+                            stimulus.stimulus_type,
+                            npc_id.index(),
+                            handle
+                        )
+                    });
+                    ctx.antagonist = Some(crate::ai::AntagonistInfo {
+                        position: view.position,
+                        camp: view.camp,
+                        is_swordfighting: view.is_swordfighting,
+                        is_pc: view.is_pc,
+                        is_robin: view.is_robin,
+                        is_vip: view.is_vip,
+                        in_building: view.in_building,
+                    });
+                }
                 ctx
             };
-            // The Enemy VIEW / OUTOFVIEW block carries the shared aggregate
-            // assembled by the detection scan. Every other deferred stimulus
-            // uses the live, narrower fallback builder.
-            let tick_data = take_enemy_detection_tick_data(
+            // The Enemy VIEW / OUTOFVIEW block retains the completed scan
+            // aggregate, but all tactical and target-specific inputs are
+            // rebuilt from the live world for this exact stimulus.
+            let detection_aggregate = take_enemy_detection_tick_data(
                 queue_index,
                 &stimulus,
                 &mut enemy_detection_tick_data,
-            )
-            .unwrap_or_else(|| {
+            );
+            let tick_data = if let Some(aggregate) = detection_aggregate {
+                let target_id = match stimulus.info {
+                    crate::ai::StimulusInfo::Human(handle) => {
+                        self.entity_id_for_index(handle).unwrap_or_else(|| {
+                            panic!(
+                                "Enemy detection {:?} for NPC {} references missing entity {}",
+                                stimulus.stimulus_type,
+                                npc_id.index(),
+                                handle
+                            )
+                        })
+                    }
+                    _ => panic!(
+                        "Enemy detection {:?} for NPC {} has no human target",
+                        stimulus.stimulus_type,
+                        npc_id.index()
+                    ),
+                };
+                let mut live =
+                    self.build_npc_tick_data_for_target(npc_id, &scratch, assets, Some(target_id));
+                overlay_final_detection_scan(&mut live, &aggregate);
+                live
+            } else {
                 let target_override = match stimulus.info {
                     crate::ai::StimulusInfo::Human(handle)
                         if matches!(
@@ -449,12 +512,19 @@ impl EngineInner {
                                 | crate::ai::StimulusType::EventEnemyNear
                         ) =>
                     {
-                        Some(EntityId::Pc(crate::entity_id::PcId(handle)))
+                        Some(self.entity_id_for_index(handle).unwrap_or_else(|| {
+                            panic!(
+                                "queued {:?} for NPC {} references missing entity {}",
+                                stimulus.stimulus_type,
+                                npc_id.index(),
+                                handle
+                            )
+                        }))
                     }
                     _ => None,
                 };
-                self.build_npc_tick_data_for_target(npc_id, scratch, assets, target_override)
-            });
+                self.build_npc_tick_data_for_target(npc_id, &scratch, assets, target_override)
+            };
             self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
         }
         if let Some(override_data) = enemy_detection_tick_data {

@@ -1102,20 +1102,9 @@ impl EngineInner {
                 continue;
             }
 
-            // Refresh live entity/context views at this NPC's FIFO-flush
-            // boundary. Earlier NPC Think calls may have changed AI state,
-            // focus, sequences, or other metadata consumed by this slot.
-            // Quiet NPCs skip this full entity-view clone entirely.
-            let live_scratch = self.build_sim_scratch(assets);
-
-            // TODO(parity): rebuild context views between successive queued
-            // optical stimuli when an earlier Think can mutate data consumed
-            // by the next one. Royalist detection is still coordinated by its
-            // existing global phase rather than this per-NPC loop.
             self.tick_enemy_ai_drain_pending_stimuli_for_npc(
                 npc_id,
                 assets,
-                &live_scratch,
                 enemy_detection_tick_data,
             );
         }
