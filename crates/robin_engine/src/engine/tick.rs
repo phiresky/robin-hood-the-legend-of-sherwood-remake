@@ -1070,11 +1070,13 @@ impl EngineInner {
         // sprite animation completes (detected in tick_entity_animations).
         self.process_animation_orders();
 
-        // Pathfinding is synchronous now — Move sequence elements
-        // call `find_path` directly when their `InstructOwner` action
-        // dispatches (see the Move dispatch in this file).  The
-        // legacy async `ProcessPathRequests` drain had no remaining
-        // producers post-refactor and was deleted.
+        // ── Process one completed path request ───────────────────
+        // Original `RHEngine::ProcessPathRequests` is called exactly once
+        // here, before element / sequence hourglasses, and its pathfinder
+        // callee returns at most one READY request.  Rust's A* is
+        // synchronous, but retaining this one-request slot preserves the
+        // observable per-frame completion order.
+        self.process_next_path_request(assets);
 
         // Snapshot pre-hourglass swordfight state so we can detect a
         // swordfight→non-swordfight transition across this tick and
@@ -1434,8 +1436,9 @@ impl EngineInner {
             // the same code path is reused by the failed-path retry
             // pass.
 
-            match self.try_dispatch_move_path(assets, owner, seq_id, elem_idx, dest, move_action) {
+            match self.try_dispatch_move_path(owner, seq_id, elem_idx, dest, move_action) {
                 MovePathOutcome::Success => {}
+                MovePathOutcome::Pending => {}
                 MovePathOutcome::ActorGone => {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }
