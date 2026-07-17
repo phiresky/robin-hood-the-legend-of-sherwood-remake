@@ -4420,6 +4420,173 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
 }
 
 #[test]
+fn royalist_detection_think_opens_a_later_royalists_same_frame_view() {
+    use crate::ai::{AiState, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
+
+    fn observe(source_before_listener: bool) -> (bool, AiState, bool) {
+        let mut engine = EngineInner::new();
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..ElementData::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let source = make_test_ai_soldier(Camp::Royalists);
+        let listener = make_test_ai_soldier(Camp::Royalists);
+        let (source_id, listener_id) = if source_before_listener {
+            (engine.add_entity(source), engine.add_entity(listener))
+        } else {
+            let listener_id = engine.add_entity(listener);
+            let source_id = engine.add_entity(source);
+            (source_id, listener_id)
+        };
+        let target_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+
+        for (id, x) in [(source_id, 0.0), (listener_id, 20.0), (target_id, 80.0)] {
+            let Entity::Soldier(soldier) = engine
+                .get_entity_mut(id)
+                .expect("Royalist ordering soldier exists")
+            else {
+                panic!("Royalist ordering actor changed kind")
+            };
+            soldier.element.active = true;
+            soldier
+                .element
+                .set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
+            soldier.element.set_position_map(MapPoint::new(x, 0.0));
+            soldier.npc.life_points = 100;
+            soldier.npc.view_radius = 200;
+            soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+            if id == target_id {
+                soldier.element.blipped = true;
+            }
+        }
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+
+        for id in [source_id, listener_id] {
+            let Entity::Soldier(soldier) = engine
+                .get_entity_mut(id)
+                .expect("Royalist observer exists after fixture")
+            else {
+                panic!("Royalist observer changed kind after fixture")
+            };
+            let ai = soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("Royalist observer has enemy AI");
+            ai.base.me = id.index();
+            ai.base.current_state = AiState::Default;
+            ai.base.current_substate = Substate::DefaultOnPost;
+            ai.base.current_music_alert_status = crate::ai::AlertLevel::Green;
+            ai.current_task_priority = task_priority::NONE;
+            ai.base.primary_target = 0;
+            soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+            soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+                element: Some(target_id),
+                detectable_type: DetectableType::Enemy,
+                ..Detectable::default()
+            });
+        }
+
+        let Entity::Soldier(source) = engine
+            .get_entity_mut(source_id)
+            .expect("source Royalist exists")
+        else {
+            panic!("source Royalist changed kind")
+        };
+        source.element.set_direction_instantly(4);
+        source.npc.view_direction = [1.0, 0.0];
+        source.npc.eye_status = crate::element::EyeStatus::Stare;
+
+        let Entity::Soldier(listener) = engine
+            .get_entity_mut(listener_id)
+            .expect("listener Royalist exists")
+        else {
+            panic!("listener Royalist changed kind")
+        };
+        listener.element.set_direction_instantly(4);
+        listener.npc.view_direction = [1.0, 0.0];
+        listener.npc.eye_status = crate::element::EyeStatus::LookForward;
+
+        engine.frame_counter = 7;
+        assert!(
+            !(engine.frame_counter + listener_id.index())
+                .is_multiple_of(crate::ai_vision::DETECTION_FREQUENCY_ENEMY_NPC),
+            "listener fixture must start on a closed Royalist NPC detection gate"
+        );
+        crate::sim_rng::with_seed(0xA013_0B20, || engine.tick_enemy_ai(&assets));
+        assert!(
+            !engine
+                .get_entity(target_id)
+                .expect("Royalist target remains present")
+                .element_data()
+                .blipped,
+            "Royalist HandleDetection must reveal its blipped NPC target at the detecting slot"
+        );
+
+        let source = engine
+            .get_entity(source_id)
+            .and_then(Entity::npc_data)
+            .expect("source Royalist remains an NPC");
+        let source_latch = source.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .find(|det| det.element == Some(target_id))
+            .expect("source retains target detectable")
+            .seen_last_frame;
+        let source_ai = engine
+            .get_entity(source_id)
+            .and_then(Entity::enemy_ai)
+            .expect("source Royalist retains enemy AI");
+        assert_eq!(
+            (source_latch, source_ai.base.current_state),
+            (true, AiState::Attacking),
+            "source Royalist must detect before its alert can test creation ordering"
+        );
+
+        let listener = engine
+            .get_entity(listener_id)
+            .and_then(Entity::npc_data)
+            .expect("listener Royalist remains an NPC");
+        let latch = listener.detectable_lists[DetectableType::Enemy as usize]
+            .iter()
+            .find(|det| det.element == Some(target_id))
+            .expect("listener retains target detectable")
+            .seen_last_frame;
+        let ai = engine
+            .get_entity(listener_id)
+            .and_then(Entity::enemy_ai)
+            .expect("listener Royalist retains enemy AI");
+        (
+            latch,
+            ai.base.current_state,
+            ai.base.primary_target == target_id.index(),
+        )
+    }
+
+    let source_first = observe(true);
+    assert_eq!(
+        source_first,
+        (true, AiState::Attacking, true),
+        "the first Royalist's synchronous VIEW alert must turn and open detection for the later slot"
+    );
+
+    let listener_first = observe(false);
+    assert_eq!(
+        listener_first,
+        (false, AiState::Wondering, false),
+        "an earlier listener slot must not retroactively rescan after the later source alerts it"
+    );
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {

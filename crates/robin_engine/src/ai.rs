@@ -5668,6 +5668,28 @@ impl AiController {
         reports
     }
 
+    /// Drain synchronous `HeyFolksLookThere` calls while leaving unrelated
+    /// formation/coordination work for the ordinary cross-NPC batch.
+    pub fn take_pending_look_there_actions(&mut self) -> Vec<CrossNpcAction> {
+        let mut look_there = Vec::new();
+        let mut deferred = Vec::with_capacity(self.pending_cross_npc_actions.len());
+        for action in self.pending_cross_npc_actions.drain(..) {
+            if matches!(
+                &action,
+                CrossNpcAction::SendStimulus {
+                    stimulus_type: StimulusType::CallLookThere,
+                    ..
+                }
+            ) {
+                look_there.push(action);
+            } else {
+                deferred.push(action);
+            }
+        }
+        self.pending_cross_npc_actions = deferred;
+        look_there
+    }
+
     /// Drain self-directed stimuli queued by `say()`.
     /// The engine re-dispatches these as think() calls to the same NPC.
     pub fn take_pending_self_stimuli(&mut self) -> Vec<StimulusType> {

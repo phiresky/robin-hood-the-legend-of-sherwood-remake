@@ -1,8 +1,7 @@
 //! Per-NPC visibility passes for `tick_enemy_ai`: blip detection (P2a),
-//! enemy → PC `RefreshDetection` (P3), and royalist → enemy detection
-//! (P3b).  All three operate on the snapshots built in [`super::snapshots`]
-//! and dispatch or queue the resulting stimuli at the matching original
-//! phase boundary.
+//! enemy → PC and royalist → enemy `RefreshDetection` (P3). All three
+//! dispatch or queue their resulting stimuli at the matching per-NPC creation
+//! boundary.
 
 use super::snapshots::{AiWorldView, Detection, HumanTarget, ObjectTarget};
 use super::*;
@@ -12,10 +11,9 @@ use crate::coordinates::MapPoint;
 use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, Posture};
 
 /// Royalist-detection scratch type: snapshot of one Lacklandist NPC as a
-/// detection target for the per-royalist visibility pass (P3b).  Built
-/// once at the top of [`EngineInner::tick_enemy_ai_royalist_detection`]
-/// and threaded into the per-NPC body so the inner loop can iterate
-/// without re-borrowing `self.entities`.
+/// detection target for one Royalist's visibility pass. Rebuilt from live
+/// entities at that Royalist's creation slot so earlier NPC Think mutations
+/// are visible.
 #[derive(Clone)]
 struct NpcTarget {
     id: EntityId,
@@ -28,6 +26,7 @@ struct NpcTarget {
     /// 16-sector facing.  Only used for `LeaningOut`: the detection
     /// point projects `direction × 40` forward.
     direction: i16,
+    unconscious: bool,
     /// Whether the target is currently passing through a door — used
     /// by the same-building visibility short-circuit.
     passing_door: bool,
@@ -999,24 +998,24 @@ impl EngineInner {
 
     /// P3 — per-enemy `RefreshDetection` pass.
     ///
-    /// For every Lacklandist NPC: lazy-populate detectables, run the
-    /// synchronous acoustic EVENT_HEAR pass, run per-target visibility,
-    /// accumulate suspect sharpness, queue EVENT_SEES_SHADOW and EVENT_VIEW,
-    /// then run the remaining detectable buckets and flush their FIFO stimuli
-    /// for that same NPC before advancing to the next creation slot. EVENT_VIEW
-    /// is queued after the Enemy scan and dispatched with a live boundary
-    /// context only after every detectable bucket has released the NPC borrow.
+    /// For every NPC: run synchronous acoustics, select the camp-specific
+    /// Enemy visibility path (Lacklandist→PC or Royalist→Lacklandist), then run
+    /// the remaining detectable buckets and flush that NPC's complete FIFO
+    /// before advancing to the next creation slot. EVENT_VIEW is queued after
+    /// the Enemy scan and dispatched only after every detectable bucket has
+    /// released the NPC borrow.
     /// Volatile NPC target metadata is rebuilt at each creation slot so a
     /// later NPC observes state changes made by an earlier NPC's Think.
     /// Original:
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): Royalist detection remains a later global phase. Every
-    // stimulus in one NPC's FIFO shares the same boundary scratch instead of
-    // rebuilding context after each preceding Think mutation, and VIEW entries
-    // still need their target-specific primary forecast/animation fields
-    // rebound on top of the shared final-detection aggregate.
+    // TODO(parity): Royalist Enemy handling still selects one best rising VIEW
+    // instead of walking every rising/falling edge in detectable-list order.
+    // Script-driven mutation of an Enemy list between FIFO Think calls also
+    // remains outside the frozen final-scan aggregate. The Lacklandist branch
+    // still skips its scan while AI-locked; original RefreshDetection scans
+    // and lets StartThink retain/refuse the resulting stimulus instead.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
@@ -1043,6 +1042,32 @@ impl EngineInner {
                 is_forest_level,
                 &mut transitions,
             );
+            let royalist_commit = if self
+                .entities
+                .get(npc_id)
+                .is_some_and(|entity| matches!(entity, Entity::Soldier(s) if s.soldier.cached_camp == Camp::Royalists))
+            {
+                let targets = self.tick_enemy_ai_build_live_royalist_targets();
+                self.tick_enemy_ai_royalist_detection_for_npc(
+                    npc_id,
+                    assets,
+                    &targets,
+                    universal_frame,
+                    golden_eye,
+                    is_forest_level,
+                )
+            } else {
+                None
+            };
+            // Royalist HandleDetection reveals a newly detected blipped NPC
+            // immediately, before this Royalist's queued Think calls and
+            // before the next creation slot.
+            if let Some((target_id, _)) = royalist_commit
+                && let Some(target) = self.entities.get_mut(target_id)
+                && target.element_data().blipped
+            {
+                target.reveal_blip();
+            }
             // Enemy HandlePredetection may already have queued shadows. Append
             // the ordered Enemy VIEW / OUTOFVIEW block now, before later
             // detectable types, preserving the original
@@ -2551,88 +2576,40 @@ impl EngineInner {
         }
     }
 
-    /// P3b — royalist detection pass.
-    ///
-    /// Royalist soldiers detecting Lacklandist NPCs.  Implements the
-    /// blip-reveal side effect and `HeyFolksLookThere` alert
-    /// dispatch; full royalist combat AI (seeking, attacking) is
-    /// deferred.
-    pub(super) fn tick_enemy_ai_royalist_detection(
-        &mut self,
-        assets: &LevelAssets,
-        world: &AiWorldView,
-    ) {
-        let universal_frame = self.frame_counter;
-        let golden_eye = self.ai_global.golden_eye_mode;
-        let is_forest_level = self.weather.is_forest_level;
-
-        // Build target list from alive Lacklandist soldiers.
-        let mut npc_targets: Vec<NpcTarget> = Vec::new();
-        for s in &world.soldiers {
-            if s.camp != Camp::Lacklandists {
-                continue;
-            }
-            // `eye_z` is used as the detection point for
-            // seen-by-pc / blip geometry; this is the target side of
-            // the near-auto-visible check.
-            let eye_z = s.ground_z + crate::stealth::detection_z_for_posture(s.posture, s.is_rider);
-            npc_targets.push(NpcTarget {
-                id: s.id,
-                position: s.position,
-                layer: s.layer,
-                posture: s.posture,
-                action_state: s.action_state,
-                building_sector: s.building_sector,
-                eye_z,
-                direction: s.direction as i16,
-                passing_door: s.passing_door,
-                obstacle_idx: s.obstacle_idx,
-            });
-        }
-
-        if npc_targets.is_empty() {
-            return;
-        }
-
-        let mut to_reveal: Vec<EntityId> = Vec::new();
-        let mut royalist_alert_calls: Vec<(EntityId, MapPoint)> = Vec::new();
-        let royalist_ids = self.entities.npc_ids().collect::<Vec<_>>();
-
-        for npc_id in royalist_ids {
-            self.tick_enemy_ai_royalist_detection_for_npc(
-                npc_id,
-                assets,
-                &npc_targets,
-                universal_frame,
-                golden_eye,
-                is_forest_level,
-                &mut to_reveal,
-                &mut royalist_alert_calls,
-            );
-        }
-
-        for target_id in to_reveal {
-            if let Some(entity) = self.entities.get_mut(target_id)
-                && entity.element_data().blipped
-            {
-                tracing::debug!(
-                    entity = target_id.index(),
-                    "reveal_blip: royalist detected blipped enemy"
-                );
-                entity.reveal_blip();
-            }
-        }
-
-        // HeyFolksLookThere: alert nearby idle royalist soldiers
-        // when a fresh detection commits.
-        const ROYALIST_LOOK_THERE_RADIUS: f32 = 100.0;
-        for (source_npc, target_pos) in royalist_alert_calls {
-            self.hey_folks_look_there(source_npc, target_pos, ROYALIST_LOOK_THERE_RADIUS);
-        }
+    /// Build live Lacklandist soldier targets for one Royalist's creation
+    /// slot. Original RefreshDetection walks live pointers; rebuilding here
+    /// preserves mutations made by earlier NPC Think calls in the same frame.
+    fn tick_enemy_ai_build_live_royalist_targets(&self) -> Vec<NpcTarget> {
+        self.entities
+            .soldiers()
+            .filter_map(|(id, soldier)| {
+                if soldier.soldier.cached_camp != Camp::Lacklandists
+                    || !soldier.element.active
+                    || soldier.npc.life_points <= 0
+                {
+                    return None;
+                }
+                let posture = soldier.element.posture;
+                let is_rider = soldier.soldier.rider;
+                Some(NpcTarget {
+                    id: id.into(),
+                    position: soldier.element.position_map(),
+                    layer: soldier.element.layer(),
+                    posture,
+                    action_state: soldier.actor.action_state,
+                    building_sector: self.entity_building_sector(soldier.element.sector()),
+                    eye_z: soldier.element.position().z
+                        + crate::stealth::detection_z_for_posture(posture, is_rider),
+                    direction: soldier.element.direction() as i16,
+                    unconscious: soldier.human.unconscious,
+                    passing_door: soldier.actor.active_door_pass.is_some(),
+                    obstacle_idx: soldier.element.obstacle_index(),
+                })
+            })
+            .collect()
     }
 
-    /// P3b inner — per-NPC body of [`Self::tick_enemy_ai_royalist_detection`].
-    /// Carries the per-NPC tracing span.
+    /// Royalist Enemy portion of one creation-ordered RefreshDetection call.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     #[allow(clippy::too_many_arguments)]
     fn tick_enemy_ai_royalist_detection_for_npc(
@@ -2643,22 +2620,17 @@ impl EngineInner {
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
-        to_reveal: &mut Vec<EntityId>,
-        royalist_alert_calls: &mut Vec<(EntityId, MapPoint)>,
-    ) {
+    ) -> Option<(EntityId, MapPoint)> {
         // -- Read royalist soldier viewer state --
         let viewer = {
             let Some(entity) = self.entities.get(npc_id) else {
-                return;
+                return None;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Royalists) else {
-                return;
+                return None;
             };
             viewer
         };
-        if viewer.ai_locked {
-            return;
-        }
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
         let dir = viewer.dir;
@@ -2757,7 +2729,7 @@ impl EngineInner {
             // need it).
             let _ai_global = &mut self.ai_global;
             let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
-                return;
+                return None;
             };
 
             let enemy_idx = DetectableType::Enemy as usize;
@@ -2837,12 +2809,7 @@ impl EngineInner {
                         sight_obstacles,
                         fast_grid: &self.fast_grid,
                         layer,
-                        // NpcTarget list filters out
-                        // unconscious soldiers at build time
-                        // (see `ok` check above), so
-                        // targets reaching here are always
-                        // conscious.
-                        target_unconscious: false,
+                        target_unconscious: target.unconscious,
                         target_passing_door: target.passing_door,
                     };
                     ai_vision::compute_visibility(&q)
@@ -2954,11 +2921,7 @@ impl EngineInner {
             }
         }
 
-        // Royalist detects blipped NPC → reveal.
-        if let Some((target_id, target_pos)) = commit_target {
-            to_reveal.push(target_id);
-            royalist_alert_calls.push((npc_id, target_pos));
-        }
+        commit_target
     }
 
     // ── P3c. Per-NPC non-Enemy detection (Body / Object /

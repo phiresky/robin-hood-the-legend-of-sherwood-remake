@@ -4035,10 +4035,6 @@ impl EngineInner {
         // below remain in the original soldier/NPC Hourglass order.
         let world = self.tick_enemy_ai_build_world_view(assets);
 
-        if world.pcs.is_empty() {
-            return;
-        }
-
         // ── 2a. Blip detection (reveal shadows). ────────────────
         self.tick_enemy_ai_blip_detection(assets, &world);
 
@@ -4048,9 +4044,6 @@ impl EngineInner {
         // resulting FIFO Think dispatches all finish for one NPC before the
         // next creation slot starts.
         let transitions = self.tick_enemy_ai_refresh_detection(assets, &world);
-
-        // ── 3b. Royalist detection — reveal blipped enemies. ────
-        self.tick_enemy_ai_royalist_detection(assets, &world);
 
         // ── 4. Log + pursue + alert nearby allies ───────────────
         self.tick_enemy_ai_alert_allies(&transitions);
@@ -7183,6 +7176,12 @@ impl EngineInner {
             // commands, turn orders, attentive-mode transitions, etc.).
             self.drain_pending_for_npc(npc_id, assets);
 
+            // EventViewStandardProcedure calls HeyFolksLookThere directly in
+            // the original. Deliver only that synchronous cross-NPC family at
+            // this Think boundary; phalanx and other coordination actions keep
+            // their existing batch until their own ordering is audited.
+            self.process_synchronous_look_there_for(npc_id, assets);
+
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
             // push EventDone / EventImpossible into pending_self_stimuli.
@@ -7213,6 +7212,133 @@ impl EngineInner {
         }
 
         handled
+    }
+
+    fn process_synchronous_look_there_for(
+        &mut self,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        let actions = self
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(crate::ai::AiController::take_pending_look_there_actions)
+            .unwrap_or_default();
+
+        for action in actions {
+            let crate::ai::CrossNpcAction::SendStimulus {
+                target,
+                stimulus_type: crate::ai::StimulusType::CallLookThere,
+                info,
+                fallback_to_sender: None,
+                to_whole_patrol,
+            } = action
+            else {
+                unreachable!("look-there drain returned a different cross-NPC action")
+            };
+            let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                panic!(
+                    "synchronous CALL_LOOKTHERE from NPC {} references missing target {}",
+                    source_id.index(),
+                    target
+                )
+            });
+            assert!(
+                matches!(self.entities.get(target_id), Some(Entity::Soldier(_))),
+                "synchronous CALL_LOOKTHERE target {} is not a soldier",
+                target
+            );
+
+            let scratch = self.build_sim_scratch(assets);
+            let building_sector = self
+                .entities
+                .get(target_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("CALL_LOOKTHERE target {} disappeared", target));
+            let ctx = {
+                let entity = self
+                    .entities
+                    .get(target_id)
+                    .unwrap_or_else(|| panic!("CALL_LOOKTHERE target {} disappeared", target));
+                build_ai_context_from_entity(
+                    entity,
+                    self.frame_counter,
+                    building_sector,
+                    self.weather.is_forest_level,
+                    self.weather.ambiance,
+                    self.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai_global.all_soldier_handles,
+                )
+            };
+            let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
+            let mut stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::CallLookThere);
+            stimulus.info = info;
+            stimulus.to_whole_patrol = to_whole_patrol;
+            self.dispatch_think_with_drain(target_id, &stimulus, &ctx, &tick_data, assets);
+            self.refresh_npc_view_after_synchronous_look_there(target_id);
+        }
+    }
+
+    /// The port's broad `refresh_npc_views` pass has already visited a later
+    /// creation slot when an earlier NPC synchronously sends CALL_LOOKTHERE.
+    /// Replay the receiver's original per-slot RefreshView now so its new
+    /// focus/face state feeds the still-upcoming RefreshDetection call.
+    fn refresh_npc_view_after_synchronous_look_there(&mut self, npc_id: EntityId) {
+        let ctx = {
+            let entity = self.entities.get(npc_id).unwrap_or_else(|| {
+                panic!("CALL_LOOKTHERE receiver {} disappeared", npc_id.index())
+            });
+            let npc = entity.npc_data().unwrap_or_else(|| {
+                panic!("CALL_LOOKTHERE receiver {} lost NPC data", npc_id.index())
+            });
+            let element = entity.element_data();
+            let follow_target_position = npc.follow_target.map(|target_id| {
+                self.entities
+                    .get(target_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "CALL_LOOKTHERE receiver {} follows missing target {}",
+                            npc_id.index(),
+                            target_id.index()
+                        )
+                    })
+                    .element_data()
+                    .position_map()
+            });
+            crate::ai_vision::RefreshViewContext {
+                body_direction: element.direction(),
+                posture: element.posture,
+                animation: self
+                    .sequence_manager
+                    .current_order_for_actor(npc_id)
+                    .map(|(_, _, order)| order.order_type),
+                is_unconscious: entity.human_data().is_some_and(|human| human.unconscious),
+                is_tied: element.posture == crate::element::Posture::Tied,
+                is_dead: entity.is_dead(),
+                is_active_and_outside_building: element.active
+                    && !self.entity_data_inside_building(element),
+                is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
+                blood_alcohol: entity
+                    .enemy_ai()
+                    .map(|enemy| enemy.base.blood_alcohol)
+                    .unwrap_or(0),
+                own_position: element.position_map(),
+                follow_target_position,
+            }
+        };
+        let entity = self
+            .entities
+            .get_mut(npc_id)
+            .unwrap_or_else(|| panic!("CALL_LOOKTHERE receiver {} disappeared", npc_id.index()));
+        let npc = entity
+            .npc_data_mut()
+            .unwrap_or_else(|| panic!("CALL_LOOKTHERE receiver {} lost NPC data", npc_id.index()));
+        crate::ai_vision::refresh_view(npc, &ctx);
     }
 
     fn process_synchronous_officer_reports_for(
