@@ -101,6 +101,39 @@ impl MissionFrame {
             recorder_hash: None,
         }
     }
+
+    /// Split one admitted replay frame into simulation commands and modal
+    /// acknowledgements, then apply only the simulation commands.
+    pub(super) fn inject_replay_commands(
+        &mut self,
+        player: &mut ReplayPlayer,
+        host: &mut Host,
+        manager: &mut EngineManager,
+        assets: &LevelAssets,
+    ) {
+        assert!(
+            !player.is_finished(),
+            "replay injection requested after the replay finished"
+        );
+        let replay_commands = player.next_frame();
+        let mut simulation_commands = Vec::with_capacity(replay_commands.len());
+        for command in replay_commands {
+            if matches!(command.command, PlayerCommand::ModalDismiss { .. }) {
+                self.replay_modal_dismissals
+                    .push_back(command.command.clone());
+            } else {
+                simulation_commands.push(command.clone());
+            }
+        }
+        manager.engine.apply_commands(
+            &mut host.engine_display,
+            &mut host.input,
+            assets,
+            &simulation_commands,
+        );
+        self.commands = FrameCommands::new();
+        self.commands.commands = simulation_commands;
+    }
 }
 
 /// Owner of the common state for one active mission.
@@ -127,6 +160,97 @@ impl MissionRuntime {
             control,
         }
     }
+
+    /// Open one host frame at the deterministic pre-command boundary.
+    ///
+    /// Network ingress remains a driver concern and must run before this
+    /// method. That ordering is observable for late multiplayer inputs.
+    pub(super) fn begin_frame(&mut self, now_ms: u32) -> MissionFrame {
+        let mut frame = MissionFrame::new(now_ms);
+        self.timeline.open_frame(
+            &mut frame,
+            self.world.manager.sim_frame,
+            &self.world.manager.engine,
+            &self.world.assets,
+        );
+        frame
+    }
+
+    /// Apply the next replay frame, separating modal acknowledgements from
+    /// deterministic engine commands.
+    ///
+    /// Callers decide whether playback is currently allowed (for example,
+    /// the graphical driver freezes playback while paused). Once admitted,
+    /// both drivers use this exact command injection contract.
+    pub(super) fn inject_next_replay_frame(&mut self, frame: &mut MissionFrame) {
+        let Some(player) = self.timeline.replay_player.as_mut() else {
+            return;
+        };
+        frame.inject_replay_commands(
+            player,
+            &mut self.world.host,
+            &mut self.world.manager,
+            &self.world.assets,
+        );
+    }
+
+    /// Advance the common simulation phase while preserving each driver's
+    /// explicit pause/rewind policy.
+    pub(super) fn run_tick(&mut self, policy: TickPolicy) -> Option<GameCode> {
+        self.timeline.run_simulation(|| {
+            if policy.skip_tick {
+                return None;
+            }
+            let mut display = std::mem::take(&mut self.world.host.engine_display);
+            let result = self.world.game.run_engine_tick(
+                &mut self.world.host,
+                &mut display,
+                self.world.assets.as_ref(),
+                &mut self.world.manager.engine,
+                &mut self.world.dev,
+                false,
+                policy.paused,
+            );
+            self.world.host.engine_display = display;
+            result
+        })
+    }
+
+    /// Drain host RPC requests at the shared post-tick boundary.
+    pub(super) fn drain_host_rpc(&mut self) {
+        let net = self.world.host.net.take();
+        crate::http_server::drain_global(
+            &mut self.world.manager,
+            &mut self.world.host,
+            &self.world.assets,
+            net.as_ref(),
+        );
+        self.world.host.net = net;
+    }
+
+    /// Cross the deferred Original `PostInitialize` boundary.
+    ///
+    /// Drivers intentionally choose when to call this: headless does so
+    /// before frame-zero recorder commit, graphical does so after refresh.
+    pub(super) fn run_post_initialize(&mut self) -> bool {
+        let mut display = std::mem::take(&mut self.world.host.engine_display);
+        let initialized = crate::sim_timeline::run_post_initialize_stage(
+            &mut self.world.host,
+            &mut display,
+            &self.world.assets,
+            &mut self.world.manager.engine,
+            &mut self.world.dev,
+        );
+        self.world.host.engine_display = display;
+        initialized
+    }
+}
+
+/// Driver-owned policy for the common engine-tick phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct TickPolicy {
+    pub(super) skip_tick: bool,
+    pub(super) paused: bool,
 }
 
 /// Coarse stages that both mission-loop implementations pass through.
@@ -346,6 +470,20 @@ impl TimelineRuntime {
         self.contract
     }
 
+    /// Capture timeline state into an already-created driver frame.
+    ///
+    /// Graphical networking can append current-frame inputs before this
+    /// boundary; true headless creates an empty frame and opens it directly.
+    pub(super) fn open_frame(
+        &mut self,
+        frame: &mut MissionFrame,
+        sim_frame: u32,
+        engine: &Engine,
+        assets: &LevelAssets,
+    ) {
+        frame.recorder_hash = self.begin_frame(frame.started_at_ms, sim_frame, engine, assets);
+    }
+
     /// Start the input phase and capture the shared pre-command snapshots.
     ///
     /// `begin_frame` intentionally permits replacing any previous phase:
@@ -393,6 +531,16 @@ impl TimelineRuntime {
 
     pub(super) fn begin_simulation(&mut self) {
         self.transition(MissionPhase::Input, MissionPhase::Simulation);
+    }
+
+    /// Execute exactly one simulation-stage action between the shared phase
+    /// transitions. Driver-specific pause and rewind decisions belong in the
+    /// closure, while the timeline owns the ordering invariant.
+    pub(super) fn run_simulation<T>(&mut self, action: impl FnOnce() -> T) -> T {
+        self.begin_simulation();
+        let result = action();
+        self.begin_bookkeeping();
+        result
     }
 
     pub(super) fn begin_bookkeeping(&mut self) {

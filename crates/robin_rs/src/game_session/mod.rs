@@ -17,7 +17,7 @@ mod tick;
 use bootstrap::{MissionBootstrap, MissionSpec};
 use dispatch::apply_local_viewport_scroll;
 pub(crate) use dispatch::{dispatch_local_command, dispatch_local_commands};
-use headless::{HeadlessMission, HeadlessPolicy};
+use headless::HeadlessPolicy;
 use input_handlers::{handle_console_overlay_events, handle_gamepad_events, handle_hold_to_rewind};
 use interactive::{
     InteractiveFrontend, InteractiveMission, MissionAudio, MissionHud, MissionInput,
@@ -98,7 +98,7 @@ use crate::main_entry::{
 };
 use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::multiplayer::lobby::current_epoch_ms;
-use crate::player_command::{FrameCommands, PlayerCommand, PlayerInput};
+use crate::player_command::{PlayerCommand, PlayerInput};
 use crate::player_profile::PlayerProfileManager;
 use crate::profiles::MissionLocation;
 use crate::renderer::Renderer;
@@ -363,197 +363,22 @@ pub(crate) async fn run_mission_headless(
     bootstrap.loaded.engine.campaign_reset_mission_length();
     <RustCallbacks as crate::game::GameCallbacks>::start_play_time(callbacks);
     let mut mission = bootstrap.finish_headless(args, profiles, HeadlessPolicy::replay_runner());
-    // Borrow the owned components under their existing local names. This keeps
-    // Wave 1 as an ownership-only change; phase extraction comes later.
-    let HeadlessMission { runtime, policy } = &mut mission;
-    let MissionRuntime {
-        world,
-        timeline: runtime,
-        control,
-    } = runtime;
-    let MissionWorld {
-        host,
-        game,
-        manager,
-        assets,
-        dev,
-    } = world;
-    let manual_pause = &mut control.manual_pause;
 
     loop {
-        let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
-        frame.recorder_hash = runtime.begin_frame(
-            frame.started_at_ms,
-            manager.sim_frame,
-            &manager.engine,
-            &assets,
-        );
-
-        if let Some(player) = runtime.replay_player.as_mut()
-            && !player.is_finished()
-        {
-            for cmd in player.next_frame() {
-                if matches!(cmd.command, PlayerCommand::ModalDismiss { .. }) {
-                    frame.replay_modal_dismissals.push_back(cmd.command.clone());
-                    continue;
-                }
-                frame.commands.push(cmd.clone());
-            }
-            manager.engine.apply_commands(
-                &mut host.engine_display,
-                &mut host.input,
-                &assets,
-                &frame.commands.commands,
-            );
-        }
-
-        if policy.auto_dismiss_modals {
-            let _ = dismiss_pending_modals(host);
-        }
-        runtime.begin_simulation();
-        let tick_exit_code = if *manual_pause {
-            None
-        } else {
-            let mut display = std::mem::take(&mut host.engine_display);
-            let result = game.run_engine_tick(
-                host,
-                &mut display,
-                assets.as_ref(),
-                &mut manager.engine,
-                dev,
-                false,
-                false,
-            );
-            host.engine_display = display;
-            result
-        };
-        runtime.begin_bookkeeping();
-
-        let net = host.net.take();
-        crate::http_server::drain_global(manager, host, &assets, net.as_ref());
-        host.net = net;
-        if host.pending_mission_state_popup {
-            host.pending_mission_state_popup = false;
-            let kind = engine_player_command::ModalKind::MissionState {
-                kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
-            };
-            let result = pop_matching_dismissal(&mut frame.replay_modal_dismissals, &kind)
-                .unwrap_or(engine_player_command::DialogResult::Completed);
-            frame
-                .modal_dismissals
-                .push(PlayerCommand::ModalDismiss { kind, result });
-            if result == engine_player_command::DialogResult::Completed {
-                let cmd = PlayerCommand::QuitMissionRequested;
-                if let Some(net) = host.net.as_ref() {
-                    net.send_input(cmd.clone());
-                } else {
-                    manager.engine.apply_local_commands(
-                        &mut host.engine_display,
-                        &mut host.input,
-                        &assets,
-                        std::slice::from_ref(&cmd),
-                    );
-                }
-                frame.commands.push(PlayerInput::new(host.local_seat, cmd));
-            }
-        }
-        let mut headless_active_modal: Option<ActiveModal> = None;
-        drain_steps(
-            manager,
-            host,
-            &assets,
-            dev,
-            game,
-            &mut runtime.rewind_buffer,
-            &mut runtime.rollback_checker,
-            &mut runtime.replay_player,
-            manual_pause,
-            &mut headless_active_modal,
-        );
-        let dismissed = if policy.auto_dismiss_modals {
-            dismiss_pending_modals(host)
-        } else {
-            0
-        };
-        if dismissed > 0 {
-            tracing::debug!(dismissed, "headless: auto-dismissed pending modal(s)");
-        }
-        // Headless stepping has no UI to interact with. Recorded
-        // dismissals can be left over when the headless auto-dismiss
-        // path has already closed the modal; keep that visible at
-        // debug level without making every clean headless replay look
-        // like a simulation warning.
-        if !frame.replay_modal_dismissals.is_empty() {
-            tracing::debug!(
-                "Replay headless: {} recorded ModalDismiss command(s) unused this frame",
-                frame.replay_modal_dismissals.len()
-            );
-        }
-
-        // Headless has no renderer or audio backend, but it still crosses
-        // the same logical end-of-first-refresh boundary before committing
-        // frame zero.  Keep PostInitialize out of the simulation tick so
-        // replay and interactive play share the original frame ordering.
-        let mut display = std::mem::take(&mut host.engine_display);
-        let _ = crate::sim_timeline::run_post_initialize_stage(
-            host,
-            &mut display,
-            &assets,
-            &mut manager.engine,
-            dev,
-        );
-        host.engine_display = display;
-
-        if !*manual_pause {
-            if let Some(checker) = runtime.rollback_checker.as_mut() {
-                checker.end_frame(host, frame.commands.commands.clone(), &manager.engine);
-            }
-            runtime
-                .rewind_buffer
-                .end_frame(frame.commands.commands.clone());
-            runtime.record_commands(frame.recorder_hash, &frame.commands.commands, true);
-            runtime.finish_recording(frame.modal_dismissals, true);
-            manager.sim_frame += 1;
-        }
-
-        let replay_finished = runtime
-            .replay_player
-            .as_ref()
-            .is_some_and(|player| player.is_finished());
-        if replay_finished {
-            tracing::info!("headless replay finished");
-        }
-        runtime.begin_presentation();
-        let exit = tick_exit_code
-            .or((policy.exit_when_replay_finishes && replay_finished).then_some(GameCode::Quit));
-        let exit_context = if tick_exit_code.is_some() {
-            Some("headless mission exit")
-        } else if replay_finished {
-            Some("headless replay completion")
-        } else {
-            None
-        };
-        let outcome = runtime.plan_frame_outcome(
-            crate::window::process_uptime_ms(),
-            FramePacing {
-                fast_forward_requested: args.fast_forward,
-                headless: true,
-                engine_fast_forward: manager.engine.is_fast_forward(),
-                slow_motion: host.slow_motion,
-                host_deadline_ms: None,
-            },
-            exit,
-        );
-        match outcome {
+        let frame_result = mission.run_frame(args);
+        match frame_result.outcome {
             FrameOutcome::Exit(code) => {
                 restore_engine_campaign(
                     campaign_ref,
-                    &mut manager.engine,
-                    exit_context.expect("runtime exit must have a campaign restore context"),
+                    &mut mission.runtime.world.manager.engine,
+                    frame_result
+                        .exit
+                        .expect("runtime exit must have a campaign restore context")
+                        .campaign_restore_context(),
                 );
                 return Ok(code);
             }
-            FrameOutcome::Continue { sleep_ms } if *manual_pause => {
+            FrameOutcome::Continue { sleep_ms } if frame_result.paused => {
                 crate::window::sleep_ms(u64::from(sleep_ms.max(10))).await;
             }
             FrameOutcome::Continue { sleep_ms: 0 } => crate::window::yield_to_runtime().await,
@@ -1669,12 +1494,7 @@ pub(crate) async fn run_mission(
         // block further down so the existing
         // `!rewind_active && !consumed_buffered` gating stays in
         // one place.
-        frame.recorder_hash = runtime.begin_frame(
-            frame.started_at_ms,
-            manager.sim_frame,
-            &manager.engine,
-            &assets,
-        );
+        runtime.open_frame(&mut frame, manager.sim_frame, &manager.engine, &assets);
 
         match handle_sherwood_campaign_map_overlay(
             game,
@@ -2973,22 +2793,7 @@ pub(crate) async fn run_mission(
                 // the loop (see the record/check block after begin_frame),
                 // so the check and the recorder write share the same
                 // engine-state sampling point and can't drift.
-                let replay_cmds = player.next_frame();
-                let mut sim_cmds: Vec<PlayerInput> = Vec::with_capacity(replay_cmds.len());
-                for cmd in replay_cmds {
-                    match cmd.command {
-                        engine_player_command::PlayerCommand::ModalDismiss { .. } => {
-                            frame.replay_modal_dismissals.push_back(cmd.command.clone());
-                        }
-                        _ => sim_cmds.push(cmd.clone()),
-                    }
-                }
-                manager.engine.apply_commands(
-                    &mut host.engine_display,
-                    &mut host.input,
-                    &assets,
-                    &sim_cmds,
-                );
+                frame.inject_replay_commands(player, host, manager, &assets);
                 // Discard any live input commands during replay, then stash
                 // the commands we actually applied so the rewind buffer's
                 // per-frame command log captures them — otherwise a later
@@ -2996,8 +2801,6 @@ pub(crate) async fn run_mission(
                 // its snapshots.  Recording is still a no-op (the recorder
                 // gate below short-circuits when `runtime.replay_recorder` is None,
                 // which it always is in replay mode).
-                frame.commands = FrameCommands::new();
-                frame.commands.commands = sim_cmds;
             }
         }
 
@@ -3117,10 +2920,10 @@ pub(crate) async fn run_mission(
         // the tick: the engine state was just replaced with a
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
-        runtime.begin_simulation();
-        let tick_exit_code = if rewind_active {
-            None
-        } else {
+        let tick_exit_code = runtime.run_simulation(|| {
+            if rewind_active {
+                return None;
+            }
             let mut display = std::mem::take(&mut host.engine_display);
             let result = game.run_engine_tick(
                 host,
@@ -3133,8 +2936,7 @@ pub(crate) async fn run_mission(
             );
             host.engine_display = display;
             result
-        };
-        runtime.begin_bookkeeping();
+        });
 
         // ── Drain pending script-RPC requests ──
         // External tools (HTTP /native, /command, /console, /state, …)
