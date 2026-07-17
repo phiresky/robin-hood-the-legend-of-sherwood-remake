@@ -24,17 +24,237 @@ use robin_engine::markers as engine_markers;
 use robin_engine::markers::GroundMark;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_profile::PlayerProfileManager;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::bg_cache::BackgroundDecal;
 use crate::draw_manager::DrawManager;
+use crate::key_config_store::KeyConfigStore;
 use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
 
 const PANNEL_HEIGHT: f32 = engine_api::PANNEL_HEIGHT;
 const DISPLAY_INFO_SAMPLES: usize = 16;
+
+/// Mutable application services shared by clones of one
+/// [`ApplicationContext`]. Separate contexts allocate separate service sets,
+/// which makes tests, headless sessions, and future multi-instance hosts
+/// independent instead of routing through process-wide singletons.
+#[derive(Debug, Serialize, Deserialize)]
+struct ApplicationServices {
+    player_profiles: Mutex<PlayerProfileManager>,
+    key_configs: Mutex<KeyConfigStore>,
+    shipping: Option<Arc<ShippingDatadir>>,
+}
+
+/// Explicit application-owned configuration and persistence context.
+///
+/// `CliArgs` initially carries a bootstrap context containing only parsed
+/// options. `rust_init` supplies the required profile/key/shipping services
+/// before an async game loop begins. Service accessors take snapshots while
+/// holding a lock and return owned data, so no lock guard can cross an
+/// `.await`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationContext {
+    options: engine_api::GlobalOptions,
+    sim_config: Arc<Mutex<engine_api::SimConfig>>,
+    services: Option<Arc<ApplicationServices>>,
+}
+
+/// Owned host-facing snapshot copied out of an [`ApplicationContext`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct HostContextSnapshot {
+    shipping: Option<Arc<ShippingDatadir>>,
+    key_config: KeyConfig,
+    custom_key_config: KeyConfig,
+}
+
+impl ApplicationContext {
+    /// Create the pre-initialization context used while parsing launcher
+    /// arguments. Accessing profiles, keys, or shipping before completion is
+    /// an error rather than a fabricated empty service.
+    pub fn bootstrap(options: engine_api::GlobalOptions) -> Self {
+        let sim_config = engine_api::SimConfig::from_options(
+            &options,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        Self {
+            options,
+            sim_config: Arc::new(Mutex::new(sim_config)),
+            services: None,
+        }
+    }
+
+    pub fn complete(
+        options: engine_api::GlobalOptions,
+        player_profiles: PlayerProfileManager,
+        mut key_configs: KeyConfigStore,
+        shipping: Option<Arc<ShippingDatadir>>,
+    ) -> Result<Self, String> {
+        let active = player_profiles
+            .get_active()
+            .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
+        let difficulty = active.difficulty;
+        let profile_id = active.id;
+
+        // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
+        // active and custom key configs on each player profile, and
+        // `original-code/RHgameinputtranslator.cpp:326` snapshots the active
+        // profile's bindings into the mission input translator. The Rust port
+        // keeps the asset-layer key type in a parallel store keyed by the same
+        // profile id.
+        key_configs.entry_or_default(profile_id);
+
+        Ok(Self {
+            sim_config: Arc::new(Mutex::new(engine_api::SimConfig::from_options(
+                &options, difficulty,
+            ))),
+            options,
+            services: Some(Arc::new(ApplicationServices {
+                player_profiles: Mutex::new(player_profiles),
+                key_configs: Mutex::new(key_configs),
+                shipping,
+            })),
+        })
+    }
+
+    pub fn with_options(mut self, options: engine_api::GlobalOptions) -> Self {
+        let difficulty = self.sim_config().difficulty;
+        *self
+            .sim_config
+            .lock()
+            .expect("ApplicationContext sim-config lock poisoned") =
+            engine_api::SimConfig::from_options(&options, difficulty);
+        self.options = options;
+        self
+    }
+
+    pub fn options(&self) -> &engine_api::GlobalOptions {
+        &self.options
+    }
+
+    pub fn sim_config(&self) -> engine_api::SimConfig {
+        *self
+            .sim_config
+            .lock()
+            .expect("ApplicationContext sim-config lock poisoned")
+    }
+
+    pub fn shipping(&self) -> Result<Option<Arc<ShippingDatadir>>, String> {
+        Ok(self.required_services()?.shipping.clone())
+    }
+
+    pub(crate) fn with_player_profiles_mut<R>(
+        &self,
+        update: impl FnOnce(&mut PlayerProfileManager) -> R,
+    ) -> Result<R, String> {
+        let mut profiles = self
+            .required_services()?
+            .player_profiles
+            .lock()
+            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+        Ok(update(&mut profiles))
+    }
+
+    /// Copy context-owned profile/key services for a synchronous legacy
+    /// boundary. Locks are taken separately and returned values are owned.
+    pub(crate) fn legacy_service_snapshots(
+        &self,
+    ) -> Result<(PlayerProfileManager, KeyConfigStore), String> {
+        let services = self.required_services()?;
+        let profiles = services
+            .player_profiles
+            .lock()
+            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?
+            .clone();
+        let keys = services
+            .key_configs
+            .lock()
+            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?
+            .clone();
+        Ok((profiles, keys))
+    }
+
+    /// Adopt owned snapshots from a legacy menu not yet migrated to accept
+    /// `ApplicationContext` directly.
+    pub(crate) fn replace_legacy_service_snapshots(
+        &self,
+        profiles: PlayerProfileManager,
+        keys: KeyConfigStore,
+    ) -> Result<(), String> {
+        let difficulty = profiles
+            .get_active()
+            .ok_or_else(|| "legacy profile snapshot has no active profile".to_string())?
+            .difficulty;
+        let services = self.required_services()?;
+        *services
+            .player_profiles
+            .lock()
+            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())? = profiles;
+        *services
+            .key_configs
+            .lock()
+            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())? = keys;
+
+        let mut sim_config = self
+            .sim_config
+            .lock()
+            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
+        *sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
+        Ok(())
+    }
+
+    fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
+        let services = self.required_services()?;
+        let profile_id = {
+            let profiles = services
+                .player_profiles
+                .lock()
+                .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+            profiles
+                .get_active()
+                .map(|profile| profile.id)
+                .ok_or_else(|| "ApplicationContext has no active player profile".to_string())?
+        };
+        let (key_config, custom_key_config) = {
+            let key_configs = services
+                .key_configs
+                .lock()
+                .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
+            let entry = key_configs.get(profile_id).ok_or_else(|| {
+                format!("ApplicationContext has no key config for active profile {profile_id}")
+            })?;
+            (entry.active.clone(), entry.custom.clone())
+        };
+        Ok(HostContextSnapshot {
+            shipping: services.shipping.clone(),
+            key_config,
+            custom_key_config,
+        })
+    }
+
+    fn required_services(&self) -> Result<&ApplicationServices, String> {
+        self.services.as_deref().ok_or_else(|| {
+            "ApplicationContext services requested before rust initialization".to_string()
+        })
+    }
+}
+
+impl Default for ApplicationContext {
+    fn default() -> Self {
+        Self::bootstrap(engine_api::GlobalOptions::default())
+    }
+}
+
+impl std::ops::Deref for ApplicationContext {
+    type Target = engine_api::GlobalOptions;
+
+    fn deref(&self) -> &Self::Target {
+        &self.options
+    }
+}
 
 /// Deferred PrintScreen request, including the modifier branch that was
 /// active when the key edge fired.
@@ -214,6 +434,10 @@ impl Default for ViewportState {
 /// **not** participate in the deterministic simulation snapshot.
 #[derive(Default)]
 pub struct Host {
+    /// Application services for the game context driving this host. Bound by
+    /// `Game::run_engine_tick` before side effects are applied.
+    pub application_context: Option<ApplicationContext>,
+
     // ── Rendering / GPU surfaces ─────────────────────────────────
     pub map_surface: u32,
     pub minimap_corner_surfaces: Vec<u32>,
@@ -528,9 +752,37 @@ impl Host {
             // wasm build with a shipping datadir still ends up going
             // through the disk-I/O fallback, which fails because no
             // filesystem is visible inside the worker.
+            // PARITY TODO(app-context): the excluded `game_session` setup
+            // must pass `ApplicationContext` into this constructor before
+            // this final bootstrap-global shipping read can be removed.
             shipping: assets_shipping_datadir::global().cloned(),
             ..Default::default()
         }
+    }
+
+    /// Bind an explicit application context and refresh host-owned resource
+    /// snapshots. Locks are acquired one at a time inside `host_snapshot` and
+    /// are gone before this method returns to the async frame loop.
+    pub fn bind_application_context(&mut self, context: &ApplicationContext) {
+        if self.application_context.as_ref().is_some_and(|bound| {
+            match (&bound.services, &context.services) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b) && bound.options == context.options,
+                (None, None) => bound.options == context.options,
+                _ => false,
+            }
+        }) {
+            return;
+        }
+
+        if context.services.is_some() {
+            let snapshot = context.host_snapshot().unwrap_or_else(|error| {
+                panic!("failed to bind ApplicationContext to Host: {error}")
+            });
+            self.shipping = snapshot.shipping;
+            self.key_config = snapshot.key_config;
+            self.custom_key_config = snapshot.custom_key_config;
+        }
+        self.application_context = Some(context.clone());
     }
 
     /// Mutable access to the frame holder during loading.
@@ -653,20 +905,25 @@ impl Host {
         }
         if let Some(top_left) = fx.pending_minimap_position {
             // Write the new minimap top-left back to the active player
-            // profile on every accepted move.  Persist via the global
-            // `PlayerProfileManager` and save to disk; failures are
-            // logged and otherwise tolerated (the sim has already
-            // accepted the new position).
-            let mut guard = PlayerProfileManager::global();
-            if let Some(mgr) = guard.as_mut()
-                && let Some(profile) = mgr.get_active_mut()
-            {
-                profile.minimap_x = top_left.x;
-                profile.minimap_y = top_left.y;
-                if let Err(e) = mgr.save() {
-                    tracing::warn!("failed to persist minimap position to profile: {e}");
-                }
-            }
+            // profile on every accepted move. Persist through this host's
+            // explicit application context and save to disk; failures are
+            // logged after the sim has already accepted the new position.
+            let context = self
+                .application_context
+                .as_ref()
+                .expect("minimap persistence requires Host to be bound to an ApplicationContext");
+            context
+                .with_player_profiles_mut(|mgr| {
+                    let profile = mgr
+                        .get_active_mut()
+                        .expect("ApplicationContext lost its required active player profile");
+                    profile.minimap_x = top_left.x;
+                    profile.minimap_y = top_left.y;
+                    if let Err(e) = mgr.save() {
+                        tracing::warn!("failed to persist minimap position to profile: {e}");
+                    }
+                })
+                .unwrap_or_else(|error| panic!("failed to persist minimap position: {error}"));
         }
         if fx.pending_swordfight_drag_ignore && self.input.is_dragging {
             // Selected PC left Swordfighting this tick; if a drag was
@@ -807,5 +1064,133 @@ impl Host {
             data.frame_sizes.clone(),
             data.per_frame_offsets.clone(),
         );
+    }
+}
+
+#[cfg(test)]
+mod application_context_tests {
+    use super::*;
+    use robin_engine::player_profile::DifficultyLevel;
+    use winit::keyboard::KeyCode;
+
+    fn context(
+        profile_id: u32,
+        difficulty: DifficultyLevel,
+        key: KeyCode,
+        shipping_marker: &str,
+    ) -> ApplicationContext {
+        let mut profiles = PlayerProfileManager::new(format!("/tmp/context-{profile_id}"));
+        let profile_idx = profiles.create_profile(format!("Profile {profile_id}"), difficulty);
+        profiles.set_active(profile_idx);
+
+        let mut keys = KeyConfigStore::new(format!("/tmp/context-{profile_id}"));
+        keys.entry_or_default(profile_id)
+            .active
+            .set_binding("ZoomIn", Some(key), None);
+
+        let mut shipping = ShippingDatadir::default();
+        shipping
+            .raw
+            .insert(shipping_marker.to_string(), vec![profile_id as u8]);
+
+        ApplicationContext::complete(
+            engine_api::GlobalOptions::default(),
+            profiles,
+            keys,
+            Some(Arc::new(shipping)),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn independent_contexts_do_not_cross_talk() {
+        let easy = context(0, DifficultyLevel::Easy, KeyCode::F2, "easy.marker");
+        let hard = context(0, DifficultyLevel::Hard, KeyCode::F3, "hard.marker");
+
+        let mut easy_host = Host::default();
+        let mut hard_host = Host::default();
+        easy_host.bind_application_context(&easy);
+        hard_host.bind_application_context(&hard);
+
+        assert_eq!(easy.sim_config().difficulty, DifficultyLevel::Easy);
+        assert_eq!(hard.sim_config().difficulty, DifficultyLevel::Hard);
+        assert_eq!(
+            easy_host
+                .key_config
+                .get_binding("ZoomIn")
+                .unwrap()
+                .primary_key,
+            Some(KeyCode::F2)
+        );
+        assert_eq!(
+            hard_host
+                .key_config
+                .get_binding("ZoomIn")
+                .unwrap()
+                .primary_key,
+            Some(KeyCode::F3)
+        );
+        assert!(
+            easy_host
+                .shipping
+                .as_ref()
+                .unwrap()
+                .raw
+                .contains_key("easy.marker")
+        );
+        assert!(
+            !easy_host
+                .shipping
+                .as_ref()
+                .unwrap()
+                .raw
+                .contains_key("hard.marker")
+        );
+        assert!(
+            hard_host
+                .shipping
+                .as_ref()
+                .unwrap()
+                .raw
+                .contains_key("hard.marker")
+        );
+
+        easy.with_player_profiles_mut(|profiles| {
+            profiles.get_active_mut().unwrap().minimap_x = 123.0;
+        })
+        .unwrap();
+        let hard_x = hard
+            .with_player_profiles_mut(|profiles| profiles.get_active().unwrap().minimap_x)
+            .unwrap();
+        assert_eq!(hard_x, 65536.0);
+
+        let (mut easy_profiles, easy_keys) = easy.legacy_service_snapshots().unwrap();
+        easy_profiles.get_active_mut().unwrap().difficulty = DifficultyLevel::Medium;
+        easy.replace_legacy_service_snapshots(easy_profiles, easy_keys)
+            .unwrap();
+        assert_eq!(easy.sim_config().difficulty, DifficultyLevel::Medium);
+        assert_eq!(hard.sim_config().difficulty, DifficultyLevel::Hard);
+    }
+
+    #[test]
+    fn context_snapshots_release_locks_before_await() {
+        let context = context(0, DifficultyLevel::Medium, KeyCode::F4, "lock.marker");
+
+        pollster::block_on(async {
+            let snapshot = context.host_snapshot().unwrap();
+            std::future::ready(()).await;
+
+            let services = context.required_services().unwrap();
+            assert!(services.player_profiles.try_lock().is_ok());
+            assert!(services.key_configs.try_lock().is_ok());
+            assert_eq!(
+                snapshot
+                    .key_config
+                    .get_binding("ZoomIn")
+                    .unwrap()
+                    .primary_key,
+                Some(KeyCode::F4)
+            );
+        });
     }
 }

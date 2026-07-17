@@ -256,11 +256,14 @@ impl RollbackCheckJob {
                 self.history.get(idx).map(|entry| entry.cmds.as_slice())
             })
         });
-        let Some((sim_snapshot, _timing)) = replayed else {
-            tracing::error!(
-                "Rollback checker failed to replay frames {start_frame}..={end_frame}: missing command log entry"
-            );
-            return;
+        let (sim_snapshot, _timing) = match replayed {
+            Ok(replayed) => replayed,
+            Err(error) => {
+                tracing::error!(
+                    "Rollback checker failed to replay frames {start_frame}..={end_frame}: {error}"
+                );
+                return;
+            }
         };
         let replay_us = replay_start.elapsed().as_micros();
 
