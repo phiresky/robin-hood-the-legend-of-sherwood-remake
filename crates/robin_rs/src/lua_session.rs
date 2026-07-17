@@ -29,7 +29,7 @@
 //! this session. Mission scripts whose flow depends on those events will run
 //! their global startup path but miss the later dispatch.
 
-use robin_engine::natives::GameHost;
+use robin_engine::natives::{GameHost, ScriptState};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -291,10 +291,11 @@ impl LuaSession {
     pub fn run_event(
         &self,
         host: &mut GameHost,
+        script_state: &mut ScriptState,
         event_name: &str,
         args: &[i32],
     ) -> Result<i32, LuaSessionError> {
-        let result = self.state.with_host(host, |lua| {
+        let result = self.state.with_host_and_state(host, script_state, |lua| {
             let globals = lua.globals();
             let v: mlua::Value = globals.get(event_name)?;
             let Some(func) = (match &v {
@@ -355,10 +356,10 @@ impl LuaSession {
     /// with both mission and event context.
     pub fn run_required_startup_events(
         &self,
-        host: Option<&mut GameHost>,
+        native_parts: Option<(&mut GameHost, &mut ScriptState)>,
         initialization_seed: i32,
     ) -> Result<(), SpellforgeSessionError> {
-        let Some(host) = host else {
+        let Some((host, script_state)) = native_parts else {
             return Err(SpellforgeSessionError::MissingGameHost {
                 mission: self.mission_basename.clone(),
                 event: "Initialize",
@@ -368,13 +369,12 @@ impl LuaSession {
             ("Initialize", std::slice::from_ref(&initialization_seed)),
             ("PostInitialize", &[][..]),
         ] {
-            self.run_event(host, event, args).map_err(|source| {
-                SpellforgeSessionError::RequiredEvent {
+            self.run_event(host, script_state, event, args)
+                .map_err(|source| SpellforgeSessionError::RequiredEvent {
                     mission: self.mission_basename.clone(),
                     event,
                     source,
-                }
-            })?;
+                })?;
         }
         Ok(())
     }
@@ -624,6 +624,7 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
         let valid_cases = [
             ("Missing", 0),
             ("NoReturn", 0),
@@ -632,16 +633,21 @@ mod tests {
             ("BooleanReturn", 1),
         ];
         for (event, expected) in valid_cases {
-            assert_eq!(session.run_event(&mut host, event, &[]).unwrap(), expected);
+            assert_eq!(
+                session
+                    .run_event(&mut host, &mut script_state, event, &[])
+                    .unwrap(),
+                expected
+            );
         }
 
         assert!(matches!(
-            session.run_event(&mut host, "BadReturn", &[]),
+            session.run_event(&mut host, &mut script_state, "BadReturn", &[]),
             Err(LuaSessionError::UnexpectedEventReturn { actual, .. }) if actual == "table"
         ));
         #[cfg(target_pointer_width = "64")]
         assert!(matches!(
-            session.run_event(&mut host, "WideIntegerReturn", &[]),
+            session.run_event(&mut host, &mut script_state, "WideIntegerReturn", &[]),
             Err(LuaSessionError::EventIntegerOutOfRange {
                 value: 2_147_483_648,
                 ..
@@ -659,8 +665,11 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
 
-        let err = session.run_event(&mut host, "Fails", &[]).unwrap_err();
+        let err = session
+            .run_event(&mut host, &mut script_state, "Fails", &[])
+            .unwrap_err();
         assert!(matches!(err, LuaSessionError::Event { .. }));
         assert!(err.to_string().contains("deliberate failure"));
     }
@@ -679,10 +688,11 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
 
         let err = robin_engine::sim_rng::with_seed(7, || {
             session
-                .run_required_startup_events(Some(&mut host), 123)
+                .run_required_startup_events(Some((&mut host, &mut script_state)), 123)
                 .unwrap_err()
         });
         assert!(matches!(
@@ -727,9 +737,10 @@ mod tests {
             "#,
         );
         let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
         robin_engine::sim_rng::with_seed(0x5eed, || {
             session
-                .run_required_startup_events(Some(&mut host), 0)
+                .run_required_startup_events(Some((&mut host, &mut script_state)), 0)
                 .unwrap();
         });
         let startup_roll: i64 = session.state.lua().globals().get("startup_roll").unwrap();

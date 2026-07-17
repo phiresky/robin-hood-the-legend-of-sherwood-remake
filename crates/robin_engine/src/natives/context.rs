@@ -25,6 +25,10 @@ impl<'a> NativeContext<'a> {
         self.script_state
     }
 
+    pub fn game_host(&self) -> &GameHost {
+        self.game_host
+    }
+
     pub fn script_state_mut(&mut self) -> &mut ScriptState {
         self.script_state
     }

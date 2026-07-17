@@ -36,7 +36,9 @@ use std::cell::Cell;
 
 use mlua::{Function, Lua, Table, Value};
 use robin_engine::interp::{NativeCallOutcome, NativeStack};
-use robin_engine::natives::{GameHost, NATIVE_REGISTRY, NativeFn, NativeSignature};
+use robin_engine::natives::{
+    GameHost, NATIVE_REGISTRY, NativeContext, NativeFn, NativeSignature, ScriptState,
+};
 
 use crate::state::MissionLuaState;
 
@@ -47,7 +49,10 @@ use crate::state::MissionLuaState;
 /// Stored as Lua app data; closures retrieve it via
 /// [`Lua::app_data_ref`].
 #[derive(Clone)]
-pub(crate) struct HostPtr(Cell<*mut GameHost>);
+pub(crate) struct HostPtr {
+    host: Cell<*mut GameHost>,
+    script_state: Cell<*mut ScriptState>,
+}
 
 // SAFETY: `HostPtr` is only accessed from the thread that called
 // [`MissionLuaState::with_host`]; we never let it escape Lua, and
@@ -55,8 +60,11 @@ pub(crate) struct HostPtr(Cell<*mut GameHost>);
 unsafe impl Send for HostPtr {}
 
 impl HostPtr {
-    pub(crate) fn new(host: *mut GameHost) -> Self {
-        Self(Cell::new(host))
+    pub(crate) fn new(host: *mut GameHost, script_state: *mut ScriptState) -> Self {
+        Self {
+            host: Cell::new(host),
+            script_state: Cell::new(script_state),
+        }
     }
 
     /// Borrow the host mutably. Panics if the pointer is null,
@@ -71,11 +79,20 @@ impl HostPtr {
     /// call. Clippy's `mut_from_ref` lint correctly flags the
     /// alternative `&self -> &mut T` shape as a lifetime lie.
     fn host_ptr(&self) -> *mut GameHost {
-        let ptr = self.0.get();
+        let ptr = self.host.get();
         assert!(
             !ptr.is_null(),
             "robin_lua: native invoked with no GameHost attached; \
              wrap the call site in MissionLuaState::with_host"
+        );
+        ptr
+    }
+
+    fn script_state_ptr(&self) -> *mut ScriptState {
+        let ptr = self.script_state.get();
+        assert!(
+            !ptr.is_null(),
+            "robin_lua: native invoked with no ScriptState attached; wrap the call site in MissionLuaState::with_host"
         );
         ptr
     }
@@ -367,6 +384,8 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
         // exclusively borrowed for the duration of `with_host`,
         // which is the only place this shim runs.
         let host: &mut GameHost = unsafe { &mut *host_ptr.host_ptr() };
+        let script_state: &mut ScriptState = unsafe { &mut *host_ptr.script_state_ptr() };
+        let mut native_context = NativeContext::new(host, script_state);
         let mut stack = NativeStack::default();
         // Push in argument order — the engine's `pop_i32()` pulls
         // them off in *reverse*, so the last arg ends up on top of
@@ -382,7 +401,7 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
                 value, *abi_type, sig, index, param.name,
             )?);
         }
-        match <GameHost as robin_engine::interp::HostFunctions>::call(host, index, &mut stack) {
+        match robin_engine::interp::HostFunctions::call(&mut native_context, index, &mut stack) {
             NativeCallOutcome::Return(ret) => Ok(return_from_stack_word(ret, return_type)),
             NativeCallOutcome::PendingNestedCall(call) => Err(mlua::Error::RuntimeError(format!(
                 "{} requires nested script dispatch, which is unavailable through the Lua host adapter: {call:?}",
@@ -584,14 +603,16 @@ fn register_lua_only(lua: &Lua, globals: &Table) -> mlua::Result<()> {
         // SAFETY: see HostPtr docs — pointer is valid for the
         // duration of the surrounding `with_host` scope.
         let host: &mut GameHost = unsafe { &mut *host_ptr(lua)? };
+        let script_state: &mut ScriptState = unsafe { &mut *script_state_ptr(lua)? };
+        let mut native_context = NativeContext::new(host, script_state);
         let mut stack = NativeStack::default();
         // RecordSendMessage(actor, message) pops `message` first
         // (top of stack), then `actor`. So push actor, then
         // message — matching the engine's evaluation order.
         stack.push_i32(0); // actor = God
         stack.push_i32(next);
-        <GameHost as robin_engine::interp::HostFunctions>::call(
-            host,
+        robin_engine::interp::HostFunctions::call(
+            &mut native_context,
             NativeFn::RecordSendMessage as u32,
             &mut stack,
         )
@@ -615,6 +636,15 @@ fn host_ptr(lua: &Lua) -> mlua::Result<*mut GameHost> {
         mlua::Error::RuntimeError("robin_lua: native invoked with no GameHost attached".to_owned())
     })?;
     Ok(ptr.host_ptr())
+}
+
+fn script_state_ptr(lua: &Lua) -> mlua::Result<*mut ScriptState> {
+    let ptr = lua.app_data_ref::<HostPtr>().ok_or_else(|| {
+        mlua::Error::RuntimeError(
+            "robin_lua: native invoked with no ScriptState attached".to_owned(),
+        )
+    })?;
+    Ok(ptr.script_state_ptr())
 }
 
 // Canonical Lua enumeration is declared by

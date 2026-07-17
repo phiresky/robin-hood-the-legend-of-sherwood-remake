@@ -265,8 +265,8 @@ fn run_required_spellforge_startup(
         "Lua: firing Initialize for mission '{}' (seed={engine_rng_seed})",
         lua.mission_basename()
     );
-    engine.with_mission_script_game_host_and_rng(|game_host| {
-        lua.run_required_startup_events(game_host, engine_rng_seed as i32)
+    engine.with_mission_script_game_host_and_rng(|native_parts| {
+        lua.run_required_startup_events(native_parts, engine_rng_seed as i32)
     })
 }
 

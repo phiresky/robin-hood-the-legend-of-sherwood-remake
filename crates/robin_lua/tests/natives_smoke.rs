@@ -3,7 +3,7 @@
 //! confirm the side-effects landed on the host.
 
 use mlua::Lua;
-use robin_engine::natives::{EngineCommand, GameHost, ObjectiveChange};
+use robin_engine::natives::{EngineCommand, GameHost, ObjectiveChange, ScriptState};
 use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
 
 fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
@@ -18,10 +18,13 @@ fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
 fn engine_native_called_from_lua_writes_host_state() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_state = ScriptState::default();
     state
-        .with_host(&mut host, |lua: &Lua| lua.load("InitGlobal(0, 42)").exec())
+        .with_host_and_state(&mut host, &mut script_state, |lua: &Lua| {
+            lua.load("InitGlobal(0, 42)").exec()
+        })
         .unwrap();
-    assert_eq!(host.globals.get(&0).copied(), Some(42));
+    assert_eq!(script_state.globals.get(&0).copied(), Some(42));
 }
 
 /// `Start()` from Lua must open a `RecordingSession`. Confirms the
@@ -50,11 +53,14 @@ fn start_then_thanx_round_trips() {
 fn spellforge_alias_opens_recording() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
+    let mut script_state = ScriptState::default();
     state
-        .with_host(&mut host, |lua: &Lua| lua.load("StartSequence()").exec())
+        .with_host_and_state(&mut host, &mut script_state, |lua: &Lua| {
+            lua.load("StartSequence()").exec()
+        })
         .unwrap();
     assert!(
-        host.recording.is_some(),
+        script_state.sequence_recorder.recording.is_some(),
         "StartSequence should have opened a recording"
     );
 }
@@ -174,8 +180,9 @@ fn native_abi_is_signature_driven() {
     for (source, expected_return_type, expected_command) in cases {
         let (state, _dir) = fresh_state();
         let mut host = GameHost::new();
+        let mut script_state = ScriptState::default();
         state
-            .with_host(&mut host, |lua: &Lua| {
+            .with_host_and_state(&mut host, &mut script_state, |lua: &Lua| {
                 let return_type: String = lua
                     .load(format!("return type((function() {source} end)())"))
                     .eval()?;
@@ -195,7 +202,7 @@ fn native_abi_is_signature_driven() {
             )),
             None => {
                 assert!(host.commands.is_empty());
-                assert_eq!(host.globals.get(&7), Some(&9));
+                assert_eq!(script_state.globals.get(&7), Some(&9));
             }
             Some(other) => panic!("test case does not handle command {other:?}"),
         }

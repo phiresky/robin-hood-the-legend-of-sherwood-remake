@@ -7,7 +7,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use robin_rs::interp::Vm;
-use robin_rs::natives::GameHost;
+use robin_rs::natives::{GameHost, NativeContext, ScriptState};
 use robin_rs::scb;
 use robin_rs::vm::{self, Instruction};
 
@@ -64,8 +64,10 @@ fn main() -> std::process::ExitCode {
         instructions.len()
     );
 
-    let host = GameHost::new().verbose();
-    let mut vm_state = Vm::new().with_host(host);
+    let mut game_host = GameHost::new().verbose();
+    let mut script_state = ScriptState::default();
+    let context = NativeContext::new(&mut game_host, &mut script_state);
+    let mut vm_state = Vm::new().with_host(context);
     vm_state
         .vm
         .heap
@@ -100,9 +102,9 @@ fn main() -> std::process::ExitCode {
 
     tracing::info!("--- {} deferred engine commands ---", host.commands.len());
 
-    if !host.globals.is_empty() {
+    if !host.script_state().globals.is_empty() {
         tracing::info!("--- Globals ---");
-        let mut globals: Vec<_> = host.globals.iter().collect();
+        let mut globals: Vec<_> = host.script_state().globals.iter().collect();
         globals.sort_by_key(|(k, _)| *k);
         for (id, val) in globals {
             tracing::info!("  [{id}] = {val}");

@@ -490,10 +490,19 @@ impl Engine {
     /// inventing a second RNG. The closure must not retain the host reference.
     pub fn with_mission_script_game_host_and_rng<R>(
         &mut self,
-        f: impl FnOnce(Option<&mut crate::natives::GameHost>) -> R,
+        f: impl FnOnce(
+            Option<(
+                &mut crate::natives::GameHost,
+                &mut crate::natives::ScriptState,
+            )>,
+        ) -> R,
     ) -> R {
-        self.inner
-            .with_sim_rng(|inner| f(inner.mission_script_game_host_mut()))
+        self.inner.with_sim_rng(|inner| {
+            f(inner
+                .mission_script
+                .as_mut()
+                .map(|script| (&mut script.game_host, &mut script.state)))
+        })
     }
 
     pub fn take_campaign(&mut self) -> Option<Campaign> {

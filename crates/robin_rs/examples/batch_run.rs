@@ -4,7 +4,7 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use robin_rs::interp::Vm;
-use robin_rs::natives::GameHost;
+use robin_rs::natives::{GameHost, NativeContext, ScriptState};
 use robin_rs::scb;
 use robin_rs::vm::{self, Instruction};
 
@@ -43,8 +43,10 @@ fn main() {
                     .map(|q| vm::decode(*q).unwrap_or(Instruction::Empty))
                     .collect();
 
-                let host = GameHost::new();
-                let mut vm_state = Vm::new().with_host(host);
+                let mut game_host = GameHost::new();
+                let mut script_state = ScriptState::default();
+                let context = NativeContext::new(&mut game_host, &mut script_state);
+                let mut vm_state = Vm::new().with_host(context);
                 vm_state
                     .vm
                     .heap
@@ -86,7 +88,7 @@ fn main() {
                 results.push((
                     format!("{}::{}", class.class_name, func.name),
                     stop_str,
-                    host.commands.len(),
+                    host.game_host().commands.len(),
                     final_ip,
                 ));
                 found = true;
