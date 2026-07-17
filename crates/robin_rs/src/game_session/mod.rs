@@ -48,7 +48,7 @@ use robin_engine::player_command as engine_player_command;
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
-use runtime::{FrameOutcome, FramePacing, MissionRuntime};
+use runtime::{FrameContract, FrameOutcome, FramePacing, TimelineRuntime};
 use setup::{
     MissionSprites, extract_ground_mark_sprite_data, extract_minimap_widget_setup,
     extract_titbit_row_frame_counts, init_audio_backend, load_level_and_sprite_bank,
@@ -393,14 +393,16 @@ pub(crate) async fn run_mission_headless(
         engine_rng_seed,
         host.net.is_some(),
     );
-    let mut runtime = MissionRuntime::new(
+    let mut runtime = TimelineRuntime::new(
         replay,
+        FrameContract::Headless,
         // TODO(parity): Teach headless to drain the multiplayer start
         // barrier. Until then, preserve its existing replay-runner
         // behavior instead of entering a gate it cannot release.
         false,
         host.local_seat == engine_player_command::PlayerId::HOST,
     );
+    debug_assert_eq!(runtime.frame_contract(), FrameContract::Headless);
     let mut manager = engine_manager_api::EngineManager::new(engine, host.local_seat);
     let mut manual_pause = runtime.initially_paused();
 
@@ -1413,11 +1415,13 @@ pub(crate) async fn run_mission(
     // server broadcasts).  Each entry is `(frame → host_hash)`; the
     // client compares its locally-computed hash at the same sampling
     // point.  Drained as frames are reached.
-    let mut runtime = MissionRuntime::new(
+    let mut runtime = TimelineRuntime::new(
         replay,
+        FrameContract::Graphical,
         host.net.is_some(),
         host.local_seat == engine_player_command::PlayerId::HOST,
     );
+    debug_assert_eq!(runtime.frame_contract(), FrameContract::Graphical);
 
     // Manual pause toggle, distinct from the pause menu.  Set on mission
     // entry by `--start-paused` or by a `load-replay` RPC call that
