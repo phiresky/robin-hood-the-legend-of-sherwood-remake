@@ -5933,12 +5933,10 @@ impl EngineInner {
         }
 
         // ── Ground mark animation ────────────────────────────────
-        // Deliberately NOT advanced here: ground marks only
-        // increment their current sprite frame inside the per-mark
-        // on-screen guard, so off-screen marks freeze and never
-        // retire.  Matching that means the advancement + retirement
-        // belongs in the renderer (`render_ground_marks`), which
-        // knows the current view box.
+        // Advanced after `perform_hourglass_inner` by `ground_mark.tick`,
+        // using the deterministic director view. That helper preserves the
+        // original on-screen guard, so off-screen marks freeze. The renderer
+        // remains read-only; see the wrapper at the start of this file.
 
         // Selection ring animation lives host-side now —
         // `Game::run_engine_tick` advances `host.selection_mark`

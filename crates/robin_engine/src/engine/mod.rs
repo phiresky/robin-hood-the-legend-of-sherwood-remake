@@ -3755,6 +3755,11 @@ impl EngineInner {
     /// Remove the campaign at mission-end (or shutdown) and return it
     /// to the caller.  Host returns it to the outer owner.  Save/load
     /// boundary — the engine is not ticking when this runs.
+    ///
+    /// PARITY TODO: encode the active-mission campaign as required state
+    /// instead of `Option`. Original `RHCampaign.cpp` installs one concrete
+    /// singleton, so normal mission code cannot observe a missing campaign;
+    /// Rust currently enforces that only at session teardown boundaries.
     pub fn take_campaign(&mut self) -> Option<crate::campaign::Campaign> {
         self.campaign.take()
     }

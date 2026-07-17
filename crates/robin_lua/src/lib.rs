@@ -1,6 +1,7 @@
 //! `robin_lua` — Lua scripting host for custom missions.
 //!
-//! Background and architecture: see `docs/lua.md`.
+//! Background, determinism limits, and architecture audit: see
+//! `docs/PARITY_AUDIT.md`.
 //!
 //! In a sentence: this crate owns the `mlua::Lua` state for one
 //! mission, registers the Spellforge-compatible API onto it, and
