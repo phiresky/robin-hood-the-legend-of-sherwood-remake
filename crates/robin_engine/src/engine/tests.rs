@@ -4034,6 +4034,136 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
 }
 
 #[test]
+fn npc_out_of_view_precedes_same_slot_body_fifo() {
+    use crate::ai::{AiState, Position, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
+
+    let mut engine = EngineInner::new();
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let lost_pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let body_id = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("out-of-view soldier exists")
+    else {
+        panic!("out-of-view observer changed kind")
+    };
+    soldier.element.active = true;
+    soldier
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
+    soldier.element.set_position_map(MapPoint::new(0.0, 0.0));
+    soldier.element.set_direction_instantly(4);
+    soldier.npc.life_points = 100;
+    soldier.npc.view_direction = [1.0, 0.0];
+    soldier.npc.view_radius = 135;
+    soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    soldier.npc.eye_status = crate::element::EyeStatus::Stare;
+    let ai = soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("out-of-view soldier has enemy AI");
+    ai.base.me = soldier_id.index();
+    ai.base.current_state = AiState::Attacking;
+    ai.base.current_substate = Substate::AttackingObserve;
+    ai.base.primary_target = lost_pc_id.index();
+    ai.base.seek_position = Position {
+        x: -200.0,
+        y: 0.0,
+        ..Position::default()
+    };
+    ai.current_task_priority = task_priority::ENEMY;
+
+    let Entity::Pc(lost_pc) = engine.get_entity_mut(lost_pc_id).expect("lost PC exists") else {
+        panic!("lost target changed kind")
+    };
+    lost_pc.element.active = true;
+    lost_pc
+        .element
+        .set_position(crate::coordinates::WorldPoint3D::new(-200.0, 0.0, 0.0));
+    lost_pc.element.set_position_map(MapPoint::new(-200.0, 0.0));
+    lost_pc.pc.life_points = 100;
+
+    let Entity::Pc(body) = engine.get_entity_mut(body_id).expect("body PC exists") else {
+        panic!("body target changed kind")
+    };
+    body.element.active = true;
+    body.element
+        .set_position(crate::coordinates::WorldPoint3D::new(80.0, 0.0, 0.0));
+    body.element.set_position_map(MapPoint::new(80.0, 0.0));
+    body.pc.life_points = 0;
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the living PC profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("out-of-view soldier exists before detection")
+    else {
+        panic!("out-of-view soldier changed kind")
+    };
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    soldier.npc.detectable_lists[DetectableType::Body as usize].clear();
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(lost_pc_id),
+        detectable_type: DetectableType::Enemy,
+        seen_last_frame: true,
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    });
+    soldier.npc.detectable_lists[DetectableType::Body as usize].push(Detectable {
+        element: Some(body_id),
+        detectable_type: DetectableType::Body,
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    });
+
+    crate::sim_rng::with_seed(0xA013_0A7, || engine.tick_enemy_ai(&assets));
+
+    let soldier = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::npc_data)
+        .expect("out-of-view soldier remains an NPC");
+    assert!(
+        !soldier.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame,
+        "lost enemy must clear its seen latch"
+    );
+    assert!(
+        soldier.detectable_lists[DetectableType::Body as usize].is_empty(),
+        "visible body must commit and leave its one-shot detectable list"
+    );
+    let ai = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("out-of-view soldier retains enemy AI");
+    assert_eq!(
+        ai.base.detected_body,
+        body_id.index(),
+        "OUTOFVIEW must enter Seeking before the later BODY stimulus is handled"
+    );
+    assert_eq!(ai.base.current_state, AiState::Seeking);
+    assert_eq!(ai.base.current_substate, Substate::SeekingBodyReactiontime);
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {

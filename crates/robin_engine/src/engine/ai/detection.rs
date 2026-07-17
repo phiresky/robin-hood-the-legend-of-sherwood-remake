@@ -1012,21 +1012,17 @@ impl EngineInner {
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): EVENT_OUTOFVIEW is collected for a later global dispatch;
-    // Royalist detection remains a later global phase; and every stimulus in
-    // one NPC's FIFO shares the same boundary scratch instead of rebuilding
-    // context after each preceding Think mutation.
+    // TODO(parity): Royalist detection remains a later global phase; every
+    // stimulus in one NPC's FIFO shares the same boundary scratch instead of
+    // rebuilding context after each preceding Think mutation; and the Enemy
+    // commit still emits only the selected best target's EVENT_VIEW rather
+    // than one rising VIEW for every visible detectable.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
         world: &AiWorldView,
-    ) -> (Vec<Detection>, Vec<(EntityId, u32)>) {
+    ) -> Vec<Detection> {
         let mut transitions: Vec<Detection> = Vec::new();
-        // Falling-edge EVENT_OUTOFVIEW queue: per-detectable
-        // (npc_id, target_handle) pairs whose `seen_last_frame` just
-        // transitioned to false.  Drained at the end of the detection
-        // pass, after the outer NPC borrow ends.
-        let mut out_of_view_dispatches: Vec<(EntityId, u32)> = Vec::new();
 
         let universal_frame = self.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
@@ -1046,14 +1042,13 @@ impl EngineInner {
                 golden_eye,
                 is_forest_level,
                 &mut transitions,
-                &mut out_of_view_dispatches,
             );
-            // Enemy HandlePredetection may already have queued
-            // EVENT_SEES_SHADOW. Append the committed ENEMY stimulus now,
-            // before scanning later detectable types, preserving the relative
-            // SHADOW → VIEW → BODY → OBJECT → FRIEND → MISSED_FRIEND → BEGGAR
-            // order behind any earlier stimulus already in the NPC FIFO.
-            let event_view_tick_data = if let Some((stimulus, tick_data)) = think_input {
+            // Enemy HandlePredetection may already have queued shadows. Append
+            // the ordered Enemy VIEW / OUTOFVIEW block now, before later
+            // detectable types, preserving the original
+            // SHADOW → (VIEW|OUTOFVIEW)* → BODY → OBJECT → FRIEND →
+            // MISSED_FRIEND → BEGGAR FIFO.
+            let enemy_detection_tick_data = if let Some((stimuli, tick_data)) = think_input {
                 let entity = self.entities.get_mut(npc_id).unwrap_or_else(|| {
                     panic!(
                         "detected NPC {} disappeared before its same-phase stimulus queue",
@@ -1066,14 +1061,13 @@ impl EngineInner {
                         npc_id.index()
                     )
                 });
-                let queue_index = ai.pending_stimuli.len();
-                let stimulus_type = stimulus.stimulus_type;
-                ai.pending_stimuli.push(stimulus);
-                Some(super::post_detection::PendingEventViewTickData {
-                    queue_index,
-                    stimulus_type,
+                let queue_start = ai.pending_stimuli.len();
+                ai.pending_stimuli.extend(stimuli.iter().copied());
+                Some(super::post_detection::PendingEnemyDetectionTickData::new(
+                    queue_start,
+                    stimuli,
                     tick_data,
-                })
+                ))
             } else {
                 None
             };
@@ -1102,8 +1096,8 @@ impl EngineInner {
                 .is_some_and(|ai| !ai.pending_stimuli.is_empty());
             if !has_pending_stimuli {
                 assert!(
-                    event_view_tick_data.is_none(),
-                    "queued EVENT_VIEW lost its pending stimulus before the per-NPC drain"
+                    enemy_detection_tick_data.is_none(),
+                    "queued Enemy detection block lost its stimuli before the per-NPC drain"
                 );
                 continue;
             }
@@ -1122,11 +1116,11 @@ impl EngineInner {
                 npc_id,
                 assets,
                 &live_scratch,
-                event_view_tick_data,
+                enemy_detection_tick_data,
             );
         }
 
-        (transitions, out_of_view_dispatches)
+        transitions
     }
 
     /// P3 inner — per-NPC body of [`Self::tick_enemy_ai_refresh_detection`].
@@ -1143,8 +1137,7 @@ impl EngineInner {
         golden_eye: bool,
         is_forest_level: bool,
         transitions: &mut Vec<Detection>,
-        out_of_view_dispatches: &mut Vec<(EntityId, u32)>,
-    ) -> Option<(crate::ai::Stimulus, AiPerTickData)> {
+    ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
         use crate::element::{ActionState, Posture};
 
@@ -1244,6 +1237,7 @@ impl EngineInner {
         let mut commit: Option<(EntityId, MapPoint, bool)> = None;
         let mut think_tick_data: Option<AiPerTickData> = None;
         let mut think_stimulus: Option<crate::ai::Stimulus> = None;
+        let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         {
             // Build the obstacle view from individual disjoint
             // fields so the borrow checker can split it from the
@@ -2384,9 +2378,8 @@ impl EngineInner {
                     && let Some(pc) = pc_snapshots.iter().find(|p| p.id == target_id)
                     && !pc.guarded
                 {
-                    // Queue EVENT_SEES_SHADOW for the
-                    // post-detection pending_stimuli drain —
-                    // see the EventHear site for rationale.
+                    // Queue EVENT_SEES_SHADOW for this NPC's post-detection
+                    // FIFO drain, ahead of its Enemy VIEW / OUTOFVIEW block.
                     let shadow_pos = crate::ai::Position {
                         x: pc.position.x,
                         y: pc.position.y,
@@ -2429,7 +2422,7 @@ impl EngineInner {
                             )
                         });
 
-                    if target_posture == Posture::SimulatingBeggar {
+                    let suppress_beggar_view = if target_posture == Posture::SimulatingBeggar {
                         // Original: `RHartificialmalignity.cpp::GetIQ` reads
                         // `uwIntelligence` and applies the enemy-IQ difficulty
                         // modifier. Fighting ability is a different capacity.
@@ -2451,11 +2444,10 @@ impl EngineInner {
                                 crate::player_profile::difficulty_params::HARD_ENEMY_IQ,
                                 100,
                             ) as i32;
-                        if npc_iq < crate::stealth::CHECK_BEGGAR_MIN_IQ {
-                            // Too dumb to spot a beggar — skip.
-                            return None;
-                        }
-                    }
+                        npc_iq < crate::stealth::CHECK_BEGGAR_MIN_IQ
+                    } else {
+                        false
+                    };
 
                     // Only dispatch EVENT_VIEW on the rising edge of
                     // `seen_last_frame` for THIS detectable.  Without
@@ -2492,7 +2484,7 @@ impl EngineInner {
                         rising_edge,
                         "detection commit check"
                     );
-                    if rising_edge {
+                    if rising_edge && !suppress_beggar_view {
                         soldier.npc.alerted = true;
 
                         // Dispatch through the Think state machine
@@ -2574,8 +2566,29 @@ impl EngineInner {
                 let was_seen = det.seen_last_frame;
                 let is_seen = det.seen_now;
                 let falling_edge = !is_seen && was_seen;
+                // HandleDetection's second pass intersperses rising VIEW and
+                // falling OUTOFVIEW by detectable-list order. The current
+                // port still selects one best rising VIEW, so insert that one
+                // at its target's exact position among every falling edge.
+                if committed
+                    && is_seen
+                    && !was_seen
+                    && let Some(target_id) = det.element
+                    && think_stimulus.as_ref().is_some_and(|stimulus| {
+                        matches!(stimulus.info, crate::ai::StimulusInfo::Human(handle) if handle == target_id.index())
+                    })
+                {
+                    enemy_stimuli.push(
+                        think_stimulus
+                            .take()
+                            .expect("matching Enemy VIEW stimulus disappeared"),
+                    );
+                }
                 if falling_edge && let Some(target_id) = det.element {
-                    out_of_view_dispatches.push((npc_id, target_id.index()));
+                    enemy_stimuli.push(crate::ai::Stimulus::with_human(
+                        crate::ai::StimulusType::EventOutOfView,
+                        target_id.index(),
+                    ));
                 }
                 if committed {
                     det.seen_last_frame = is_seen;
@@ -2594,6 +2607,10 @@ impl EngineInner {
                     "latch update"
                 );
             }
+            assert!(
+                think_stimulus.is_none(),
+                "selected Enemy VIEW stimulus did not match its detectable-list entry"
+            );
         }
 
         if let Some((target_id, target_pos, newly_alerted)) = commit {
@@ -2604,11 +2621,11 @@ impl EngineInner {
                 newly_alerted,
             });
         }
-        match (think_stimulus, think_tick_data) {
-            (Some(stimulus), Some(tick_data)) => Some((stimulus, tick_data)),
-            (None, _) => None,
-            (Some(_), None) => {
-                panic!("detection committed an enemy Think stimulus without per-tick enemy input")
+        match (enemy_stimuli.is_empty(), think_tick_data) {
+            (false, Some(tick_data)) => Some((enemy_stimuli, tick_data)),
+            (true, _) => None,
+            (false, None) => {
+                panic!("detection queued Enemy Think stimuli without per-tick enemy input")
             }
         }
     }
@@ -2981,8 +2998,7 @@ impl EngineInner {
                             crate::ai::StimulusType::EventView,
                             target_id.index(),
                         );
-                        // Queue for post-detection drain — see
-                        // the EventHear site for rationale.
+                        // Queue for this NPC's post-detection FIFO drain.
                         enemy_ai.base.pending_stimuli.push(stimulus);
                     }
 

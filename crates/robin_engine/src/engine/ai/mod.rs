@@ -4006,17 +4006,13 @@ impl EngineInner {
         // volatile target rebuild, non-Enemy detectable buckets, and the
         // resulting FIFO Think dispatches all finish for one NPC before the
         // next creation slot starts.
-        let (transitions, out_of_view_dispatches) =
-            self.tick_enemy_ai_refresh_detection(assets, &world);
+        let transitions = self.tick_enemy_ai_refresh_detection(assets, &world);
 
         // ── 3b. Royalist detection — reveal blipped enemies. ────
         self.tick_enemy_ai_royalist_detection(assets, &world);
 
         // ── 4. Log + pursue + alert nearby allies ───────────────
         self.tick_enemy_ai_alert_allies(&transitions);
-
-        // ── 4b. Lost-sight EVENT_OUTOFVIEW dispatch. ───────────────
-        self.tick_enemy_ai_dispatch_out_of_view(out_of_view_dispatches, &world.pcs);
 
         // Commit detection-local presentation state. Normal timer polling is
         // deliberately not part of this pass; NPC::Hourglass polls it only
