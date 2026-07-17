@@ -3207,12 +3207,47 @@ pub struct DoorSeekInfo {
     /// `RunAndAlertSoldiers` for the layer-mismatch malus in the
     /// weighted-distance scoring.
     pub layer_out: u16,
-    /// Cached `IsActorAutorized` result for an NPC soldier entering in
-    /// the direct (outside→inside) direction. Used by
-    /// `FindDoorEnemyCouldBeBehind`. Snapshot — does NOT track runtime
-    /// building capacity or post-patch lock changes; refresh by
-    /// rebuilding the array.
+    /// Cached static portion of `IsActorAutorized` for a non-rider NPC
+    /// soldier entering in the direct (outside→inside) direction with
+    /// building capacity available. Runtime capacity and rider state are
+    /// applied by [`Self::is_npc_villain_authorized_direct`].
     pub npc_villain_authorized_direct: bool,
+}
+
+impl DoorSeekInfo {
+    /// Complete the cached static authorization with the two live gates from
+    /// `RHDoor::IsActorAutorized`: destination-building capacity and rider
+    /// state.
+    #[inline]
+    pub fn is_npc_villain_authorized_direct(
+        &self,
+        building_has_capacity: bool,
+        actor_is_rider: bool,
+    ) -> bool {
+        self.npc_villain_authorized_direct && building_has_capacity && !actor_is_rider
+    }
+}
+
+/// Build the static authorization cached by [`DoorSeekInfo`].
+///
+/// `FindDoorEnemyCouldBeBehind` has already narrowed the actor to an NPC
+/// soldier and supplies the live capacity/rider gates at use time. Calling
+/// the shared door authorization implementation here keeps the remaining
+/// building-type, active-state, and villain-lock gates aligned with
+/// `RHDoor::IsActorAutorized(true, mpMe, false)`.
+pub(crate) fn cache_npc_villain_authorized_direct(door: &crate::gate::Door) -> bool {
+    let actor = crate::gate::ActorAuthInfo {
+        kind: crate::element_kinds::ElementKind::ActorSoldier,
+        pc_auth_bit: 0,
+        has_lockpick: false,
+        has_climb: false,
+        has_jump: false,
+        is_rider: false,
+        posture: crate::element::Posture::Upright,
+    };
+
+    door.door_type == crate::gate::DoorType::Building
+        && door.is_actor_authorized(true, &actor, true, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -3860,6 +3895,17 @@ impl House {
     #[inline]
     pub fn occupant_count(&self) -> usize {
         self.occupant_ids.len()
+    }
+
+    /// Match `RHSectorBuilding::IsAuthorized()`.
+    ///
+    /// The original proto constructor initializes
+    /// `muwMaxNumberOfOccupants` to `0xFFFF`, and the proto loader does not
+    /// overwrite it. The occupant count is nevertheless tested live on each
+    /// authorization call.
+    #[inline]
+    pub fn is_authorized(&self) -> bool {
+        self.occupant_count() < usize::from(u16::MAX)
     }
 
     /// Whether the given entity is currently an occupant.
