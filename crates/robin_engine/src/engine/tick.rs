@@ -8713,6 +8713,16 @@ mod soldier_take_drink_parity_tests {
         let mut display = HostDisplayState::default();
         super::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.perform_hourglass(&mut display, &assets, &mut dev);
+        assert_eq!(
+            engine
+                .get_entity(actor_id)
+                .expect("interaction actor present")
+                .element_data()
+                .direction(),
+            0,
+            "the sequence-manager dispatch follows the entity loop, so its new order cannot turn the actor on the launch frame"
+        );
+        engine.perform_hourglass(&mut display, &assets, &mut dev);
         (engine, actor_id)
     }
 
