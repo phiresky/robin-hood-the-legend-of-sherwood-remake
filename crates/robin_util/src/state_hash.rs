@@ -9,9 +9,8 @@
 //! `StateHash` works around both by being a separate trait we control:
 //! float impls go through `to_bits()`, and `HashMap` impls hash a
 //! sorted view of the entries. The `#[derive(StateHash)]` macro in
-//! `robin_state_hash_derive` walks structs/enums field-by-field,
-//! skipping `#[serde(skip)]` fields so the hash matches what the
-//! snapshot would carry.
+//! `robin_state_hash_derive` walks structs/enums field-by-field and
+//! writes an explicit marker for fields omitted from the snapshot.
 
 use std::hash::Hasher;
 
@@ -20,6 +19,19 @@ use std::hash::Hasher;
 /// byte sequence into the hasher, regardless of in-memory layout.
 pub trait StateHash {
     fn state_hash<H: Hasher>(&self, state: &mut H);
+}
+
+/// Feed an explicit marker for one intentionally unhashed field.
+///
+/// Skipped fields used to contribute no bytes at all. That made adding or
+/// removing a skip annotation invisible whenever the field's ordinary hash
+/// was also empty (for example `()`). Keeping a marker in declaration order
+/// makes the opt-out part of the hash schema while still ignoring its value.
+#[doc(hidden)]
+#[inline]
+pub fn hash_skipped_field<H: Hasher>(state: &mut H) {
+    // ASCII "SKIPFLD\0", interpreted as a fixed little-endian tag.
+    state.write_u64(0x0044_4c46_5049_4b53);
 }
 
 // ─── Primitives ───────────────────────────────────────────────────

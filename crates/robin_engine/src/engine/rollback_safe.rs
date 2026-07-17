@@ -29,6 +29,37 @@ use crate::element::EntityId;
 use crate::minimap::HitMask;
 use crate::player_command::{PlayerCommand, PlayerInput};
 
+/// Parallel runtime array whose length must match the loaded level geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotGridComponent {
+    Lines,
+    Sectors,
+    Masks,
+}
+
+impl std::fmt::Display for SnapshotGridComponent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Lines => "lines",
+            Self::Sectors => "sectors",
+            Self::Masks => "masks",
+        })
+    }
+}
+
+/// A decoded snapshot is incompatible with the already-loaded mission.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SnapshotRestoreError {
+    #[error(
+        "snapshot fast-grid {component} runtime length {snapshot_len} does not match loaded level length {level_len}"
+    )]
+    FastGridLengthMismatch {
+        component: SnapshotGridComponent,
+        snapshot_len: usize,
+        level_len: usize,
+    },
+}
+
 /// Cross-crate owner of the simulation engine.
 ///
 /// Downstream crates get `&EngineInner` via `Deref` and may only mutate
@@ -154,6 +185,19 @@ impl Engine {
     /// and save/load restore after decoding an `Engine`.
     pub fn attach_level_assets(&mut self, assets: &LevelAssets) {
         self.inner.attach_level_assets(assets);
+        if let Some(script) = self.inner.mission_script.as_mut() {
+            // `StaticArc` payloads deserialize as explicitly detached: they
+            // are level attachments, not snapshot state. Rebind both payloads
+            // before any script-native call can observe the GameHost.
+            script
+                .game_host
+                .profile_manager
+                .attach(assets.profile_manager.clone());
+            script
+                .game_host
+                .hiking_paths
+                .attach(assets.hiking_paths.clone());
+        }
     }
 
     /// Create a fully-initialised engine for mission play.
@@ -654,6 +698,26 @@ impl Engine {
     /// Queues `UpdateInformationBars` on the script host so the next
     /// tick recomputes the HUD state to match the loaded mission.
     pub fn restore(&mut self, display: &mut super::HostDisplayState, saved: Engine) {
+        // TODO(snapshot-api): migrate the downstream save-file facade to
+        // `try_restore` and surface `SnapshotRestoreError` to the UI. That
+        // caller is outside this invariant-hardening slice, so retain the
+        // existing infallible facade while rejecting corruption loudly.
+        self.try_restore(display, saved)
+            .unwrap_or_else(|error| panic!("cannot restore engine snapshot: {error}"));
+    }
+
+    /// Fallible form of [`Self::restore`] for snapshot/network boundaries.
+    ///
+    /// Validation happens before `self` is mutated. In particular, malformed
+    /// parallel fast-grid arrays are rejected rather than replaced with
+    /// all-active values that were never present in the snapshot.
+    pub fn try_restore(
+        &mut self,
+        display: &mut super::HostDisplayState,
+        saved: Engine,
+    ) -> Result<(), SnapshotRestoreError> {
+        self.validate_snapshot_compatibility(&saved)?;
+
         // Consume the saved engine's inner into `self.inner`, keeping
         // the previous (already-loaded) `inner` as `prev` so its Arc'd
         // static level data can be transferred over.  Taking `&mut self`
@@ -678,27 +742,16 @@ impl Engine {
         // Re-attach the script bytecode Arc to the deserialised mission
         // script. The concrete GameHost is now serialised on
         // MissionScript; `vm.host` is only a temporary call adapter.
-        if let (Some(new_ms), Some(prev_ms)) = (inner.mission_script.as_mut(), prev.mission_script)
+        if let (Some(new_ms), Some(prev_ms)) =
+            (inner.mission_script.as_mut(), prev.mission_script.as_ref())
         {
             new_ms
                 .manager
                 .attach_program(prev_ms.manager.program.clone());
+            new_ms.game_host.profile_manager = prev_ms.game_host.profile_manager.clone();
+            new_ms.game_host.hiking_paths = prev_ms.game_host.hiking_paths.clone();
         }
 
-        // Validate `FastFindGrid` runtime fields that are sized from
-        // level geometry.
-        let n_lines = inner.fast_grid.level.lines.len();
-        let n_sectors = inner.fast_grid.level.sectors.len();
-        let n_masks = inner.fast_grid.level.masks.len();
-        if inner.fast_grid.line_active.len() != n_lines {
-            inner.fast_grid.line_active = vec![true; n_lines];
-        }
-        if inner.fast_grid.sector_active.len() != n_sectors {
-            inner.fast_grid.sector_active = vec![true; n_sectors];
-        }
-        if inner.fast_grid.mask_active.len() != n_masks {
-            inner.fast_grid.mask_active = vec![true; n_masks];
-        }
         // Rebuild `SequenceManager` lookup indices after replacing the
         // sequence list.
         inner.sequence_manager.rebuild_indices();
@@ -706,6 +759,43 @@ impl Engine {
         // ── Engine-owned transient reset + HUD refresh ───────────
         inner.post_load_fixups(display);
         inner.queue_update_information_bars();
+        Ok(())
+    }
+
+    fn validate_snapshot_compatibility(&self, saved: &Engine) -> Result<(), SnapshotRestoreError> {
+        let level = &self.inner.fast_grid.level;
+        let lengths = [
+            (
+                SnapshotGridComponent::Lines,
+                saved.inner.fast_grid.line_active.len(),
+                level.lines.len(),
+            ),
+            (
+                SnapshotGridComponent::Sectors,
+                saved.inner.fast_grid.sector_active.len(),
+                level.sectors.len(),
+            ),
+            (
+                SnapshotGridComponent::Masks,
+                saved.inner.fast_grid.mask_active.len(),
+                level.masks.len(),
+            ),
+        ];
+
+        // Original provenance: `original-code/RHfastfindgrid.cpp:8890-9115`
+        // serializes runtime patch/door/sector state against the already
+        // loaded grid and propagates failure. It never invents an all-active
+        // replacement when the save and level topology disagree.
+        for (component, snapshot_len, level_len) in lengths {
+            if snapshot_len != level_len {
+                return Err(SnapshotRestoreError::FastGridLengthMismatch {
+                    component,
+                    snapshot_len,
+                    level_len,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -760,6 +850,35 @@ mod tests {
         assert_eq!(
             restored.inner.cutscene_camera.level_size,
             crate::coordinates::MapSize::new(1234.0, 5678.0)
+        );
+    }
+
+    #[test]
+    fn try_restore_rejects_mismatched_runtime_lengths_without_mutating_live_engine() {
+        let mut live_inner = EngineInner::new();
+        live_inner.cutscene_camera.level_size = crate::coordinates::MapSize::new(1234.0, 5678.0);
+        let mut live = Engine { inner: live_inner };
+
+        let mut malformed_inner = EngineInner::new();
+        malformed_inner.fast_grid.line_active.push(true);
+        let malformed = Engine {
+            inner: malformed_inner,
+        };
+
+        let mut display = crate::engine::HostDisplayState::default();
+        let error = live.try_restore(&mut display, malformed).unwrap_err();
+        assert_eq!(
+            error,
+            SnapshotRestoreError::FastGridLengthMismatch {
+                component: SnapshotGridComponent::Lines,
+                snapshot_len: 1,
+                level_len: 0,
+            }
+        );
+        assert_eq!(
+            live.inner.cutscene_camera.level_size,
+            crate::coordinates::MapSize::new(1234.0, 5678.0),
+            "validation must happen before replacing the live engine"
         );
     }
 }

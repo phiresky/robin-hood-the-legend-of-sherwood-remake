@@ -421,8 +421,10 @@ fn normalize_wasm_query(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use clap::error::ErrorKind;
+    use robin_engine::profiles::ProfileManager;
 
-    use super::try_parse_cli_from;
+    use super::{current_mission_id, required_mission_id, try_parse_cli_from};
+    use crate::campaign::Campaign;
 
     #[test]
     fn clap_launcher_flags_populate_global_options() {
@@ -470,6 +472,18 @@ mod tests {
         let err = try_parse_cli_from(["robin", "--proto", "Leicester"]).unwrap_err();
 
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    #[should_panic(expected = "required test mission: mission ID zero is invalid")]
+    fn required_mission_id_rejects_zero() {
+        required_mission_id(Some(0), "required test mission");
+    }
+
+    #[test]
+    #[should_panic(expected = "current_mission_id: campaign must have a valid current mission")]
+    fn current_mission_id_rejects_missing_current_mission() {
+        current_mission_id(&Campaign::default(), &ProfileManager::new());
     }
 }
 use crate::game_operation::GameCode;
@@ -906,8 +920,9 @@ pub enum SaveLoadRequest {
         mission_id: u32,
     },
     /// Write the Restart auto-save (pre-restart snapshot), called once
-    /// per mission right after level init finishes.
-    Restart { mission_id: u32 },
+    /// per mission right after level init finishes. The live campaign
+    /// supplies the required mission ID when the request is processed.
+    Restart,
     /// Apply the Restart auto-save to the engine, restoring the
     /// pristine post-level-init state without reloading the level.
     /// Called when the op code transitions to a level-restart
@@ -954,7 +969,7 @@ impl SaveLoadRequest {
         matches!(
             self,
             SaveLoadRequest::Save { .. }
-                | SaveLoadRequest::Restart { .. }
+                | SaveLoadRequest::Restart
                 | SaveLoadRequest::Continue { .. }
                 | SaveLoadRequest::QuickSave { .. }
                 | SaveLoadRequest::Sherwood { .. }
@@ -978,7 +993,7 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
     fn serialize_for_restart(&mut self, write: bool) {
         self.pending = Some(if write {
-            SaveLoadRequest::Restart { mission_id: 0 }
+            SaveLoadRequest::Restart
         } else {
             SaveLoadRequest::LoadRestart
         });
@@ -1030,10 +1045,14 @@ impl crate::game::GameCallbacks for RustCallbacks {
             .unwrap_or(false)
     }
     fn save_game_mission_id(&self) -> u32 {
-        self.save_manager
+        let idx = self
+            .save_manager
             .find_by_filename(special_slots::CONTINUE)
-            .and_then(|idx| self.save_manager.slot_mission_id(idx))
-            .unwrap_or(0)
+            .expect("save_game_mission_id: Continue slot must exist after file-exists check");
+        required_mission_id(
+            self.save_manager.slot_mission_id(idx),
+            "save_game_mission_id: Continue slot must have a cached mission ID",
+        )
     }
     fn set_sound_mode(&mut self, mode: GameSoundMode) {
         // Queued and flushed by `flush_pending_callbacks` in the frame
@@ -1082,16 +1101,29 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
 }
 
-/// Resolve the mission profile ID of the campaign's current mission, or 0.
+/// Require a real mission ID from state that has already been established.
+///
+/// Original: `original-code/RHgame.cpp:1644-1646` and `:3215` directly
+/// dereference the campaign's current mission/profile when comparing or
+/// writing saves; zero is not substituted for missing required state.
+pub(crate) fn required_mission_id(mission_id: Option<u32>, context: &str) -> u32 {
+    let mission_id = mission_id.unwrap_or_else(|| panic!("{context}"));
+    assert_ne!(mission_id, 0, "{context}: mission ID zero is invalid");
+    mission_id
+}
+
+/// Resolve the required mission profile ID of the campaign's current mission.
 pub(crate) fn current_mission_id(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
 ) -> u32 {
-    campaign
-        .current_mission_idx
-        .and_then(|idx| campaign.missions.get(idx))
-        .map(|m| m.profile(profiles).id)
-        .unwrap_or(0)
+    required_mission_id(
+        campaign
+            .current_mission_idx
+            .and_then(|idx| campaign.missions.get(idx))
+            .map(|m| m.profile(profiles).id),
+        "current_mission_id: campaign must have a valid current mission",
+    )
 }
 
 /// Flush sound / mouse callback intents queued by the Game state machine
@@ -1297,10 +1329,10 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror the load into the Continue slot,
                             // guarded by IsContinue/IsRestart so we
                             // don't clobber the slot we just loaded.
-                            let mid = callbacks
-                                .save_manager
-                                .slot_mission_id(idx)
-                                .unwrap_or(mission_id);
+                            let mid = required_mission_id(
+                                callbacks.save_manager.slot_mission_id(idx),
+                                "loaded save slot must retain its cached mission ID",
+                            );
                             if !is_continue && !is_restart {
                                 callbacks.save_manager.write_continue_save_background(
                                     host,
@@ -1325,15 +1357,11 @@ pub(crate) fn perform_pending_save_load(
                 }
             }
         }
-        SaveLoadRequest::Restart { mission_id } => {
-            let mid = if mission_id == 0 {
-                engine
-                    .campaign()
-                    .map(|c| current_mission_id(c, profiles))
-                    .unwrap_or(0)
-            } else {
-                mission_id
-            };
+        SaveLoadRequest::Restart => {
+            let campaign = engine
+                .campaign()
+                .expect("Restart save requires the engine campaign");
+            let mid = current_mission_id(campaign, profiles);
             if let Err(err) = callbacks.save_manager.write_restart_save(
                 host,
                 game,
@@ -1432,7 +1460,10 @@ pub(crate) fn perform_pending_save_load(
                             // Mirror into the Continue slot — QuickSave is
                             // neither Continue nor Restart so it always
                             // mirrors.
-                            let mid = callbacks.save_manager.slot_mission_id(i).unwrap_or(0);
+                            let mid = required_mission_id(
+                                callbacks.save_manager.slot_mission_id(i),
+                                "loaded QuickSave slot must retain its cached mission ID",
+                            );
                             callbacks.save_manager.write_continue_save_background(
                                 host,
                                 game,
