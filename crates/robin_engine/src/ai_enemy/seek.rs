@@ -659,8 +659,21 @@ impl EnemyAi {
                 continue;
             }
 
-            // Skip doors the soldier isn't allowed to enter.
-            if !door_info.npc_villain_authorized_direct {
+            // Complete the cached static authorization with the original's
+            // two live gates: building capacity and rider state.
+            let building = global
+                .houses
+                .iter()
+                .find(|house| house.sector_index == u32::from(door_info.sector_in))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "building door {} targets sector {} without an AI house",
+                        door_info.door_index, door_info.sector_in
+                    )
+                });
+            if !door_info
+                .is_npc_villain_authorized_direct(building.is_authorized(), ctx.self_is_rider)
+            {
                 continue;
             }
 

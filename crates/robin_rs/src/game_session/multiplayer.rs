@@ -5,6 +5,7 @@
 use crate::Host;
 use crate::player_command::PlayerInput;
 use crate::rewind::RewindBuffer;
+use crate::sim_timeline::{RestorePolicy, SnapshotHistory, replay_one_frame_profiled};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
@@ -75,7 +76,7 @@ pub(crate) fn drain_net_inputs(
     assets: &LevelAssets,
     rewind_buffer: &mut RewindBuffer,
     peer_hashes: &mut std::collections::BTreeMap<u32, u64>,
-    recent_timeline_history: &mut crate::sim_timeline::RecentTimelineHistory,
+    recent_timeline_history: &mut SnapshotHistory,
 ) -> NetDrainResult {
     use crate::multiplayer::NetEvent;
 
@@ -428,12 +429,14 @@ fn rewind_from_recent_timeline_history(
     target_frame: u32,
     assets: &LevelAssets,
     rewind_buffer: &RewindBuffer,
-    recent_timeline_history: &mut crate::sim_timeline::RecentTimelineHistory,
+    recent_timeline_history: &mut SnapshotHistory,
     start_frame: u32,
     late_input_count: usize,
 ) -> Option<(Engine, MultiplayerRollbackTelemetry)> {
     let restore_start = web_time::Instant::now();
-    let mut snapshot = recent_timeline_history.get(start_frame)?;
+    let mut snapshot = recent_timeline_history
+        .restore(start_frame, RestorePolicy::Exact)
+        .ok()?;
     let restore_us = restore_start.elapsed().as_micros();
 
     recent_timeline_history.truncate_after(start_frame);
@@ -452,21 +455,16 @@ fn rewind_from_recent_timeline_history(
         let command_lookup_start = web_time::Instant::now();
         let cmds = rewind_buffer.commands_for(snapshot.frame)?;
         replay_command_lookup_us += command_lookup_start.elapsed().as_micros();
-        let apply_start = web_time::Instant::now();
-        snapshot
-            .engine
-            .apply_commands(&mut scratch_display, &mut scratch_host.input, assets, cmds);
-        replay_apply_us += apply_start.elapsed().as_micros();
-        let tick_start = web_time::Instant::now();
-        crate::sim_timeline::run_engine_tick_core(
-            &mut scratch_host,
+        let frame_timing = replay_one_frame_profiled(
+            &mut snapshot,
             &mut scratch_display,
             assets,
-            &mut snapshot.engine,
+            &mut scratch_host,
             &mut scratch_dev,
+            cmds,
         );
-        replay_tick_us += tick_start.elapsed().as_micros();
-        snapshot.frame += 1;
+        replay_apply_us += frame_timing.apply_us;
+        replay_tick_us += frame_timing.tick_us;
     }
     let remember_start = web_time::Instant::now();
     recent_timeline_history.remember(snapshot.clone());

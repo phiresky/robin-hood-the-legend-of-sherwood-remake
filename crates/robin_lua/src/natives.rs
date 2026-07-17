@@ -36,7 +36,7 @@ use std::cell::Cell;
 
 use mlua::{Function, Lua, Table, Value};
 use robin_engine::interp::NativeStack;
-use robin_engine::natives::{GameHost, NATIVE_REGISTRY, NativeFn};
+use robin_engine::natives::{GameHost, NATIVE_REGISTRY, NativeFn, NativeSignature};
 
 use crate::state::MissionLuaState;
 
@@ -182,6 +182,96 @@ pub struct NativeBinding {
     pub native: NativeFn,
 }
 
+/// A typed failure at the Lua/native ABI boundary.
+///
+/// These errors are wrapped in [`mlua::Error::ExternalError`], preserving
+/// their concrete type for callers that need to distinguish bad script
+/// arguments from failures raised inside a native implementation.
+#[derive(Debug, thiserror::Error)]
+pub enum NativeAbiError {
+    #[error("native `{native}` has no signature metadata")]
+    MissingSignature { native: &'static str },
+    #[error("native `{native}` has unsupported {position} type `{declared_type}`")]
+    UnsupportedSignatureType {
+        native: &'static str,
+        position: &'static str,
+        declared_type: &'static str,
+    },
+    #[error("{native}: expected {expected} argument(s), got {actual}")]
+    WrongArity {
+        native: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("{native}: argument {index} (`{parameter}`) expects {expected}, got Lua {actual}")]
+    WrongArgumentType {
+        native: &'static str,
+        index: usize,
+        parameter: &'static str,
+        expected: &'static str,
+        actual: &'static str,
+    },
+    #[error(
+        "{native}: argument {index} (`{parameter}`) must be an integral 32-bit value, got {value}"
+    )]
+    InvalidInteger {
+        native: &'static str,
+        index: usize,
+        parameter: &'static str,
+        value: f64,
+    },
+    #[error(
+        "{native}: argument {index} (`{parameter}`) must be representable as a finite f32, got {value}"
+    )]
+    InvalidFloat {
+        native: &'static str,
+        index: usize,
+        parameter: &'static str,
+        value: f64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeAbiType {
+    Int,
+    Float,
+    Bool,
+    Handle,
+    Void,
+}
+
+impl NativeAbiType {
+    fn from_signature(
+        native: &'static str,
+        position: &'static str,
+        declared_type: &'static str,
+    ) -> Result<Self, NativeAbiError> {
+        match declared_type {
+            "int" => Ok(Self::Int),
+            "float" => Ok(Self::Float),
+            "bool" => Ok(Self::Bool),
+            "Actor" | "Door" | "Patch" | "Location" | "SoundSource" | "Building" | "Scroll"
+            | "Way" => Ok(Self::Handle),
+            "void" if position == "return" => Ok(Self::Void),
+            _ => Err(NativeAbiError::UnsupportedSignatureType {
+                native,
+                position,
+                declared_type,
+            }),
+        }
+    }
+
+    fn lua_name(self) -> &'static str {
+        match self {
+            Self::Int => "integer",
+            Self::Float => "number",
+            Self::Bool => "boolean",
+            Self::Handle => "handle",
+            Self::Void => "no value",
+        }
+    }
+}
+
 /// Register every binding (engine-backed natives, Lua-only
 /// helpers, and aliases) onto `state`. Idempotent: subsequent calls
 /// are no-ops with a warning.
@@ -193,12 +283,12 @@ pub fn register_natives(state: &mut MissionLuaState) -> mlua::Result<()> {
     let lua = state.lua();
     let globals = lua.globals();
 
-    // 1. Every NativeFn the .scb VM knows about is registered under
-    //    its canonical name. Argument coercion is "all ints", which
-    //    matches the engine's stack-based dispatcher (every native
-    //    pops i32s and returns an i32). String-taking and
-    //    table-returning natives are handled in Lua-only shims
-    //    below — they bypass NativeStack.
+    // 1. Every NativeFn exposed to Lua by the declarative registry is
+    //    registered under its canonical name. The signature controls how
+    //    Lua values are encoded into the engine's four-byte stack words and
+    //    how its i32 result word is exposed to Lua. String-taking and
+    //    table-returning natives are handled in Lua-only shims below — they
+    //    bypass NativeStack.
     for definition in NATIVE_REGISTRY
         .iter()
         .filter(|definition| definition.expose_to_lua)
@@ -230,21 +320,42 @@ pub fn register_natives(state: &mut MissionLuaState) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Build a Lua function that pushes its integer args onto a
-/// `NativeStack` (in argument order) and calls `GameHost::call`.
+/// Build a Lua function that marshals its declared arguments onto a
+/// `NativeStack` (in argument order), calls `GameHost::call`, and marshals
+/// the declared return type back to Lua.
+///
+/// Original provenance: `original-code/RHScriptAPI.scs` is the source of
+/// the `int`/`float`/`bool`/`void`/handle signatures mirrored by
+/// [`NativeSignature`]. In particular, floats always occupy the stack as
+/// IEEE-754 `f32` bits even when their Lua value is mathematically integral.
+///
+/// TODO(parity): The Spellforge add-on DLL that bridged Lua to this API is
+/// not present in `original-code`; verify whether it accepted additional
+/// cross-type coercions. Until then the declared signature is enforced so a
+/// bad value cannot silently turn into an unrelated stack word.
 fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
-    let sig = robin_engine::natives::native_signature_by_name(native.into())
-        .expect("every NativeFn has a signature");
+    let sig = robin_engine::natives::native_signature_by_name(native.into()).ok_or_else(|| {
+        mlua::Error::external(NativeAbiError::MissingSignature {
+            native: native.into(),
+        })
+    })?;
+    let param_types = sig
+        .params
+        .iter()
+        .map(|param| NativeAbiType::from_signature(sig.name, "parameter", param.ty))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(mlua::Error::external)?;
+    let return_type = NativeAbiType::from_signature(sig.name, "return", sig.return_type)
+        .map_err(mlua::Error::external)?;
     let arity = sig.params.len();
     let index = native as u32;
     lua.create_function(move |lua, args: mlua::Variadic<Value>| {
         if args.len() != arity {
-            return Err(mlua::Error::RuntimeError(format!(
-                "{}: expected {} arg(s), got {}",
-                sig.name,
-                arity,
-                args.len()
-            )));
+            return Err(mlua::Error::external(NativeAbiError::WrongArity {
+                native: sig.name,
+                expected: arity,
+                actual: args.len(),
+            }));
         }
         let host_ptr = lua
             .app_data_ref::<HostPtr>()
@@ -261,38 +372,94 @@ fn make_native_shim(lua: &Lua, native: NativeFn) -> mlua::Result<Function> {
         // them off in *reverse*, so the last arg ends up on top of
         // the stack. The .scb VM produced this exact order, so we
         // mirror it.
-        for v in args.iter() {
-            stack.push_i32(value_to_i32(v, sig.name)?);
+        for (index, ((value, param), abi_type)) in args
+            .iter()
+            .zip(sig.params.iter())
+            .zip(param_types.iter())
+            .enumerate()
+        {
+            stack.push_i32(argument_to_stack_word(
+                value, *abi_type, sig, index, param.name,
+            )?);
         }
         let ret = <GameHost as robin_engine::interp::HostFunctions>::call(host, index, &mut stack);
-        Ok(ret)
+        Ok(return_from_stack_word(ret, return_type))
     })
 }
 
-/// Coerce a Lua value into an i32 the engine expects. Booleans map
-/// to 0/1 (Spellforge's `IsActorPC` etc. return booleans on the Lua
-/// side but bytes on the engine side). Floats are accepted because
-/// some natives take `bits_of(f32)` packed as i32 (zoom, weights).
-fn value_to_i32(v: &Value, native: &str) -> mlua::Result<i32> {
-    match v {
-        Value::Integer(i) => Ok(*i),
-        Value::Number(n) => {
-            // Whole numbers pass straight through; non-whole values
-            // are packed as f32 bits (the engine pops them with
-            // `f32::from_bits`). This matches what the .scb compiler
-            // emits for literal floats.
-            if n.fract() == 0.0 && *n >= i32::MIN as f64 && *n <= i32::MAX as f64 {
-                Ok(*n as i32)
-            } else {
-                Ok((*n as f32).to_bits() as i32)
+fn argument_to_stack_word(
+    value: &Value,
+    abi_type: NativeAbiType,
+    signature: &'static NativeSignature,
+    index: usize,
+    parameter: &'static str,
+) -> mlua::Result<i32> {
+    let wrong_type = || {
+        mlua::Error::external(NativeAbiError::WrongArgumentType {
+            native: signature.name,
+            index: index + 1,
+            parameter,
+            expected: abi_type.lua_name(),
+            actual: value.type_name(),
+        })
+    };
+
+    match abi_type {
+        NativeAbiType::Int | NativeAbiType::Handle => match value {
+            Value::Integer(value) => Ok(*value),
+            Value::Number(value)
+                if value.is_finite()
+                    && value.fract() == 0.0
+                    && *value >= i32::MIN as f64
+                    && *value <= i32::MAX as f64 =>
+            {
+                Ok(*value as i32)
             }
+            Value::Number(value) => Err(mlua::Error::external(NativeAbiError::InvalidInteger {
+                native: signature.name,
+                index: index + 1,
+                parameter,
+                value: *value,
+            })),
+            _ => Err(wrong_type()),
+        },
+        NativeAbiType::Float => {
+            let value = match value {
+                Value::Integer(value) => *value as f64,
+                Value::Number(value) => *value,
+                _ => return Err(wrong_type()),
+            };
+            let packed = value as f32;
+            if !value.is_finite() || !packed.is_finite() {
+                return Err(mlua::Error::external(NativeAbiError::InvalidFloat {
+                    native: signature.name,
+                    index: index + 1,
+                    parameter,
+                    value,
+                }));
+            }
+            Ok(packed.to_bits() as i32)
         }
-        Value::Boolean(b) => Ok(i32::from(*b)),
-        Value::Nil => Ok(0),
-        other => Err(mlua::Error::RuntimeError(format!(
-            "{native}: cannot coerce {} to int",
-            other.type_name()
-        ))),
+        NativeAbiType::Bool => match value {
+            Value::Boolean(value) => Ok(i32::from(*value)),
+            _ => Err(wrong_type()),
+        },
+        NativeAbiType::Void => Err(mlua::Error::external(
+            NativeAbiError::UnsupportedSignatureType {
+                native: signature.name,
+                position: "parameter",
+                declared_type: "void",
+            },
+        )),
+    }
+}
+
+fn return_from_stack_word(value: i32, abi_type: NativeAbiType) -> Value {
+    match abi_type {
+        NativeAbiType::Int | NativeAbiType::Handle => Value::Integer(value),
+        NativeAbiType::Float => Value::Number(f32::from_bits(value as u32) as f64),
+        NativeAbiType::Bool => Value::Boolean(value != 0),
+        NativeAbiType::Void => Value::Nil,
     }
 }
 

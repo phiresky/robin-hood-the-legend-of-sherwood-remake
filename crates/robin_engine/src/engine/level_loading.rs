@@ -3401,18 +3401,12 @@ impl EngineInner {
                     .iter()
                     .enumerate()
                     .map(|(idx, door)| {
-                        // Approximation of "is the soldier authorized to
-                        // enter through this door?": we check only the
-                        // static villain lock + active flag; the building
-                        // capacity and rider checks are dynamic and not
-                        // modelled here. `find_door_enemy_could_be_behind`
-                        // is only called from soldier seek paths and
-                        // building doors are the only relevant door type,
-                        // so the approximation is fine.
+                        // Cache the actor-independent portion of the exact
+                        // authorization used by FindDoorEnemyCouldBeBehind.
+                        // Live building capacity and rider state are applied
+                        // when the seek helper consumes this snapshot.
                         let npc_villain_authorized_direct =
-                            matches!(door.door_type, crate::gate::DoorType::Building)
-                                && door.active
-                                && !door.locked_npc_villain;
+                            crate::ai::cache_npc_villain_authorized_direct(door);
                         crate::ai::DoorSeekInfo {
                             door_index: crate::gate::DoorIndex(idx as u32),
                             door_type: door.door_type,
