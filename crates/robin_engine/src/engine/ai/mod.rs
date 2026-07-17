@@ -19,7 +19,7 @@ use crate::element::{
     Camp, Detectable, DetectableType, Entity, EntityId, Human as _, PcId, SoldierId,
 };
 use crate::engine::SimScratch;
-use crate::entities::Entities;
+use crate::entities::{Entities, EntitySlots};
 
 /// Exact `ubFramePhase` computed by `RHElementActorNPC::Hourglass`.
 /// `register_number` is the original creation/register ordering value.
@@ -3235,7 +3235,10 @@ impl EngineInner {
 
     /// Per-frame view parameter refresh for every NPC.  The
     /// `refresh_view()` call inside `perform_refresh`.
-    pub(super) fn refresh_npc_views(&mut self) {
+    pub(super) fn refresh_npc_views(
+        &mut self,
+        positions_before_movement: &EntitySlots<Option<MapPoint>>,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -3267,10 +3270,33 @@ impl EngineInner {
 
                 let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
 
-                let follow_target_position = npc.follow_target.and_then(|tid| {
-                    self.entities.get(tid).map(|e| {
-                        let p = &e.element_data().position_map();
-                        crate::coordinates::MapPoint::new(p.x, p.y)
+                let follow_target_position = npc.follow_target.and_then(|target_id| {
+                    self.entities.get(target_id).map(|target| {
+                        // Original provenance:
+                        // - RHEngine::PerformHourglass walks marrayElements in
+                        //   creation order (RHengine.cpp:3715-3724,7909-7944).
+                        // - RHElementActorNPC::Hourglass delegates to the base
+                        //   human Hourglass before RefreshView
+                        //   (RHelementactornpc.cpp:3528-3544).
+                        // - EYES_FOLLOW reads pMobileTarget->GetPositionGround
+                        //   inside RefreshView (RHelementactornpc.cpp:1012-1018).
+                        // Thus a later-created target has not moved yet, while
+                        // an earlier-created target has. EntityId::index is the
+                        // append-only legacy creation slot in this port.
+                        if target_id.index() > npc_id.index() {
+                            positions_before_movement
+                                .get(target_id)
+                                .copied()
+                                .flatten()
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "NPC {npc_id:?} follows later-created target {target_id:?}, \
+                                         but the required pre-movement position snapshot is missing"
+                                    )
+                                })
+                        } else {
+                            target.element_data().position_map()
+                        }
                     })
                 });
 

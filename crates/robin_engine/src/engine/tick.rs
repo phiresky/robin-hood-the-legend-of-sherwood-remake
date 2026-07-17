@@ -5,6 +5,7 @@ use super::*;
 use crate::abilities::{self, BeginResult as AbilityBeginResult};
 use crate::bow_shot::{self, BeginShotResult};
 use crate::element::{Command, Entity, EntityId};
+use crate::entities::EntitySlots;
 use crate::game_operation::GameCode;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
@@ -522,10 +523,10 @@ impl EngineInner {
         let was_swordfighting = self.hourglass_phase_entities(assets);
 
         trace_hourglass_phase(HourglassPhase::EntitySystems);
-        self.hourglass_phase_entity_systems(assets);
+        let positions_before_movement = self.hourglass_phase_entity_systems(assets);
 
         trace_hourglass_phase(HourglassPhase::Npcs);
-        self.hourglass_phase_npcs(assets);
+        self.hourglass_phase_npcs(assets, &positions_before_movement);
 
         trace_hourglass_phase(HourglassPhase::GameplaySystems);
         self.hourglass_phase_gameplay_systems(display, assets);
@@ -5486,7 +5487,20 @@ impl EngineInner {
     /// Original provenance: these responsibilities were distributed across
     /// individual `RHElement::Hourglass` implementations inside the original
     /// creation-ordered entity loop (`original-code/RHengine.cpp:3715-3723`).
-    fn hourglass_phase_entity_systems(&mut self, assets: &LevelAssets) {
+    fn hourglass_phase_entity_systems(
+        &mut self,
+        assets: &LevelAssets,
+    ) -> EntitySlots<Option<crate::coordinates::MapPoint>> {
+        // Preserve the position each element exposed before the globally
+        // batched movement pass. The original does not have this batch:
+        // RHElementActorNPC::Hourglass calls RHElementActorHuman::Hourglass
+        // (and therefore the observer's own movement) before RefreshView,
+        // while actors with a later creation order have not run yet.
+        let mut positions_before_movement = EntitySlots::filled(self.entities.len(), None);
+        for (entity_id, entity) in self.entities.occupied() {
+            positions_before_movement[entity_id] = Some(entity.element_data().position_map());
+        }
+
         // ── Per-frame movement tick ─────────────────────────────
         // Advance all entities that have active paths.
         let (arrived_entities, galopp_entities) = self.tick_entity_movement(assets);
@@ -5657,10 +5671,13 @@ impl EngineInner {
         // (bracketed by `SetScrollExecutingScript` / reset).
         self.dispatch_scroll_hourglasses(assets);
 
-        // TODO(original-parity): this system-oriented pass cannot yet prove the
-        // original's per-entity interleaving between movement, animation, and
-        // NPC refresh. Keep this order mechanically stable until replay parity
-        // supplies an exact cross-entity oracle.
+        // TODO(original-parity): the followed-target position oracle below
+        // proves one movement/NPC-refresh interleaving, but the rest of this
+        // system-oriented pass still lacks per-entity dispatch boundaries.
+        // Keep those responsibilities batched until each consumer has the
+        // mixed pre/post inputs required at an individual creation slot.
+
+        positions_before_movement
     }
 
     /// Run the NPC Hourglass tail and its immediately adjacent notification
@@ -5668,7 +5685,11 @@ impl EngineInner {
     ///
     /// Original provenance: `RHElementActorNPC::Hourglass` in
     /// `original-code/RHelementactornpc.cpp:3495-3614`.
-    fn hourglass_phase_npcs(&mut self, assets: &LevelAssets) {
+    fn hourglass_phase_npcs(
+        &mut self,
+        assets: &LevelAssets,
+        positions_before_movement: &EntitySlots<Option<crate::coordinates::MapPoint>>,
+    ) {
         // ── Per-frame NPC view refresh ─────────────────────────
         // Update each NPC's vision cone (direction, aperture,
         // radius) from head turning, lean-out, stare, drunk wobble,
@@ -5695,7 +5716,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(NpcHourglassPhase::View);
         #[cfg(not(test))]
         observe_npc_hourglass_phase(());
-        self.refresh_npc_views();
+        self.refresh_npc_views(positions_before_movement);
 
         // RefreshDetection, including its synchronous Think side effects.
         // Timer polling and the old lock-queue drain are separate tail
@@ -5800,8 +5821,12 @@ impl EngineInner {
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
 
-        // TODO(original-parity): determine the observable cases where batched
-        // NPC updates differ from creation-ordered per-NPC Hourglass calls.
+        // TODO(original-parity): RefreshView's followed-target position now
+        // observes the correct creation-order boundary, but RefreshDetection
+        // still builds one post-movement world snapshot for every NPC. Full
+        // parity requires a per-NPC Hourglass API that can consume the mixed
+        // pre/post entity view at that slot and synchronously commit that
+        // NPC's Think side effects before advancing to the next slot.
     }
 
     /// Advance combat, projectiles, abilities, and other gameplay systems that
