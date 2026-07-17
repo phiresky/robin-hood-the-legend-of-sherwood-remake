@@ -1653,18 +1653,29 @@ impl EnemyAi {
     /// synchronous AI state-machine gates. Unlike the 360-degree helper,
     /// this uses the live post-`RefreshView` cone and opaque line of sight.
     fn is_detecting(&self, target: HumanHandle, ctx: &AiContext) -> bool {
-        let Some(view) = ctx.entity_view(target) else {
-            tracing::warn!(
-                me = self.base.me,
-                target,
-                "is_detecting: required target entity view is missing"
-            );
-            return false;
-        };
+        let view = ctx.entity_view(target).unwrap_or_else(|| {
+            panic!(
+                "is_detecting: NPC {} requires missing target entity view {target}",
+                self.base.me
+            )
+        });
 
-        let target_in_same_building = ctx.in_building
-            && ctx.building_sector.is_some()
-            && ctx.building_sector == view.building_sector;
+        // ComputeVisibility uses the sector's BUILDING flag, not the
+        // broader engine-side "inside building or passing a door" helper.
+        let viewer_in_building = ctx.building_sector.is_some();
+        let target_in_same_building =
+            viewer_in_building && ctx.building_sector == view.building_sector;
+
+        // This gate exists only in the same-building branch. Outside,
+        // bodies and unconscious humans are still valid visibility targets
+        // as long as their raw element is active and outside a building.
+        if viewer_in_building && (view.is_dead || view.is_unconscious || view.passing_door) {
+            return false;
+        }
+        if !viewer_in_building && (!view.active || view.building_sector.is_some()) {
+            return false;
+        }
+
         let target_detection_xy = crate::stealth::detection_point_xy(
             crate::coordinates::MapPoint::new(view.position.x, view.position.y),
             view.posture,
@@ -1672,11 +1683,23 @@ impl EnemyAi {
         );
         let target_eye_z =
             view.elevation + crate::stealth::detection_z_for_posture(view.posture, view.is_rider);
-        let radius = ctx.self_view_radius as f32;
-        let plane_distance = ctx.self_eye_z - view.elevation;
-        let effective_view_radius = (radius * radius - plane_distance * plane_distance)
-            .max(0.0)
-            .sqrt();
+        let sight_obstacles = ctx.obstacle_list();
+        let target_obstacle = view.obstacle_idx.map(|handle| {
+            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+                panic!("is_detecting: target {target} requires missing sight obstacle {handle}")
+            })
+        });
+        let effective_view_radius = crate::ai_vision::compute_view_radius(
+            ctx.self_eye_position,
+            ctx.self_eye_z,
+            ctx.self_view_radius,
+            (ctx.self_view_direction[0], ctx.self_view_direction[1]),
+            ctx.self_real_half_aperture,
+            ctx.is_night_or_fog,
+            &ctx.fast_grid.level,
+            sight_obstacles,
+            target_obstacle,
+        );
 
         crate::ai_vision::compute_visibility(&crate::ai_vision::VisibilityQuery {
             viewer: ctx.self_eye_position,
@@ -1685,16 +1708,16 @@ impl EnemyAi {
             view_radius: ctx.self_view_radius,
             viewer_eye_status: ctx.self_eye_status,
             real_half_aperture: ctx.self_real_half_aperture,
-            viewer_in_building: ctx.in_building,
+            viewer_in_building,
             target_in_same_building,
             forest_180_degree_view: ctx.is_forest_level
                 && ctx.camp == crate::element::Camp::Royalists,
             golden_eye_mode: false,
             effective_view_radius,
-            target_is_active_and_outside_building: view.is_able_to_fight && !view.in_building,
+            target_is_active_and_outside_building: view.active && view.building_sector.is_none(),
             target: target_detection_xy,
             target_posture: view.posture,
-            target_action_state: crate::element::ActionState::Waiting,
+            target_action_state: view.action_state,
             target_is_pc: view.is_pc,
             viewer_eye_z: ctx.self_eye_z,
             target_eye_z,
@@ -1702,8 +1725,30 @@ impl EnemyAi {
             fast_grid: &ctx.fast_grid,
             layer: ctx.position.level,
             target_unconscious: view.is_unconscious,
-            target_passing_door: false,
+            target_passing_door: view.passing_door,
         }) > 0.0
+    }
+
+    /// Complete the synchronous Charly-to-officer call after the engine
+    /// has delivered `CALL_MR_OFFICER_I_AM_BACK` and obtained the
+    /// officer's real `Think` return value.
+    pub(crate) fn resolve_charly_officer_report(
+        &mut self,
+        accepted: bool,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) {
+        assert_eq!(self.base.current_state, AiState::Seeking);
+        assert_eq!(
+            self.base.current_substate,
+            Substate::SeekingCharlyGoToOfficer
+        );
+        if accepted {
+            self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
+            self.base.launch_timer(10, ctx.frame);
+        } else {
+            self.return_to_duty(DutyFlags::empty(), ctx, tick);
+        }
     }
 
     /// 180°-detection (the simple-geometry half that can be answered
@@ -3473,7 +3518,11 @@ mod tests {
             is_tower_guard: false,
             is_swordfighting: false,
             is_able_to_fight: true,
+            active: true,
             is_unconscious: false,
+            action_state: crate::element::ActionState::Waiting,
+            passing_door: false,
+            obstacle_idx: None,
             in_building: false,
             building_sector: None,
             script_locked: false,
@@ -3591,7 +3640,7 @@ mod tests {
     }
 
     #[test]
-    fn charly_inside_view_cone_reports_to_officer_then_arms_ten_frame_timer() {
+    fn charly_inside_view_cone_queues_synchronous_officer_report_without_transitioning() {
         let mut ai = charly_heading_to_officer();
         let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
 
@@ -3603,23 +3652,163 @@ mod tests {
             None,
         );
 
+        assert_eq!(ai.base.current_substate, Substate::SeekingCharlyGoToOfficer);
+        assert!(matches!(
+            ai.base.pending_cross_npc_actions.as_slice(),
+            [CrossNpcAction::ReportBackToOfficer {
+                officer: 2,
+                charly: 1,
+            }]
+        ));
+        assert_eq!(ai.base.when_does_timer_ring, 0);
+    }
+
+    #[test]
+    fn accepted_officer_report_enters_seen_and_arms_ten_frame_timer() {
+        let mut ai = charly_heading_to_officer();
+        let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
+
+        ai.resolve_charly_officer_report(true, &ctx, &AiPerTickData::stub());
+
         assert_eq!(
             ai.base.current_substate,
             Substate::SeekingCharlyGoToOfficerSeen
         );
-        assert!(matches!(
-            ai.base.pending_cross_npc_actions.as_slice(),
-            [CrossNpcAction::SendStimulus {
-                target: 2,
-                stimulus_type: StimulusType::CallMrOfficerIAmBack,
-                ..
-            }]
-        ));
         assert_eq!(ai.base.when_does_timer_ring, 110);
         assert_eq!(
             ai.base.substate_at_last_timer_launch,
             Substate::SeekingCharlyGoToOfficerSeen
         );
+    }
+
+    #[test]
+    fn refused_officer_report_returns_charly_to_duty() {
+        let mut ai = charly_heading_to_officer();
+        let ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
+
+        ai.resolve_charly_officer_report(false, &ctx, &AiPerTickData::stub());
+
+        assert_eq!(ai.base.current_state, AiState::Default);
+        assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
+        assert_eq!(ai.base.antagonist, 0);
+    }
+
+    #[test]
+    fn normal_detection_uses_raw_active_outside_gate_not_able_to_fight() {
+        let ai = charly_heading_to_officer();
+        let mut ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
+        let officer = Arc::make_mut(&mut ctx.entity_views)
+            .get_mut(&2)
+            .expect("officer view");
+        officer.is_able_to_fight = false;
+        officer.is_unconscious = true;
+        officer.active = true;
+
+        assert!(ai.is_detecting(2, &ctx));
+
+        Arc::make_mut(&mut ctx.entity_views)
+            .get_mut(&2)
+            .expect("officer view")
+            .active = false;
+        assert!(!ai.is_detecting(2, &ctx));
+    }
+
+    #[test]
+    fn normal_detection_same_building_uses_exact_body_and_door_gates() {
+        let ai = charly_heading_to_officer();
+        let mut ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
+        let building = SectorHandle::new(7);
+        ctx.building_sector = building;
+        let officer = Arc::make_mut(&mut ctx.entity_views)
+            .get_mut(&2)
+            .expect("officer view");
+        officer.building_sector = building;
+        officer.in_building = true;
+        officer.active = false;
+        officer.is_able_to_fight = false;
+        assert!(ai.is_detecting(2, &ctx));
+
+        for gate in 0..3 {
+            {
+                let officer = Arc::make_mut(&mut ctx.entity_views)
+                    .get_mut(&2)
+                    .expect("officer view");
+                officer.is_dead = gate == 0;
+                officer.is_unconscious = gate == 1;
+                officer.passing_door = gate == 2;
+            }
+            assert!(!ai.is_detecting(2, &ctx), "same-building gate {gate}");
+            let officer = Arc::make_mut(&mut ctx.entity_views)
+                .get_mut(&2)
+                .expect("officer view");
+            officer.is_dead = false;
+            officer.is_unconscious = false;
+            officer.passing_door = false;
+        }
+    }
+
+    #[test]
+    fn normal_detection_does_not_treat_viewer_door_transit_as_building_sector() {
+        let ai = charly_heading_to_officer();
+        let mut ctx = charly_to_officer_context(test_position(200.0, 0.0), Vec::new());
+        ctx.in_building = true;
+        ctx.building_sector = None;
+
+        assert!(ai.is_detecting(2, &ctx));
+    }
+
+    #[test]
+    fn normal_detection_projects_radius_on_target_obstacle_top_plane() {
+        use crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA;
+
+        let ai = charly_heading_to_officer();
+        let target = test_position(380.0, 0.0);
+        let clear_ctx = charly_to_officer_context(target, Vec::new());
+        assert!(ai.is_detecting(2, &clear_ctx));
+
+        let mut platform = SightObstacle::new(0, SIGHTOBSTACLE_PROJECTION_AREA);
+        platform.obstacle_points = vec![
+            ObstaclePoint {
+                x: 350.0,
+                y: -20.0,
+                z_top: 200.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 410.0,
+                y: -20.0,
+                z_top: 200.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 410.0,
+                y: 20.0,
+                z_top: 200.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 350.0,
+                y: 20.0,
+                z_top: 200.0,
+                z_bottom: 0.0,
+            },
+        ];
+        platform.top_plane_points = [
+            [350.0, -20.0, 200.0],
+            [410.0, -20.0, 200.0],
+            [350.0, 20.0, 200.0],
+        ];
+        platform.bottom_plane_points =
+            [[350.0, -20.0, 0.0], [410.0, -20.0, 0.0], [350.0, 20.0, 0.0]];
+        platform.rebuild_geometry();
+        let mut platform_ctx = charly_to_officer_context(target, vec![platform]);
+        let officer = Arc::make_mut(&mut platform_ctx.entity_views)
+            .get_mut(&2)
+            .expect("officer view");
+        officer.elevation = 200.0;
+        officer.obstacle_idx = crate::position_interface::ObstacleHandle::new(0);
+
+        assert!(!ai.is_detecting(2, &platform_ctx));
     }
 
     #[test]

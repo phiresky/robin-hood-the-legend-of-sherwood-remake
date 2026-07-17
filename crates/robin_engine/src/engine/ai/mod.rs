@@ -262,6 +262,7 @@ pub(super) fn build_ai_context_from_entity(
     frame: u32,
     building_sector: Option<crate::position_interface::SectorHandle>,
     is_forest_level: bool,
+    ambiance: crate::engine::types::Ambiance,
     standard_view_polygon_radius: u16,
     entity_views: &SharedAiEntityViews,
     sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
@@ -410,6 +411,10 @@ pub(super) fn build_ai_context_from_entity(
         self_view_radius: self_view_radius as u16,
         self_real_half_aperture,
         self_eye_status,
+        is_night_or_fog: matches!(
+            ambiance,
+            crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
+        ),
         in_uninterruptible_command: false,
         // `is_inside_building`: the building sector check OR the
         // door-transit branch — true during the few frames an actor is
@@ -691,9 +696,9 @@ pub(super) fn build_my_exit_door_info(
 /// Called by [`EngineInner::build_sim_scratch`] at the start of each
 /// AI dispatch pass so the map reflects current entity
 /// positions / states.  Includes every PC, soldier, civilian, and
-/// pickup-style bonus entity; skips inactive and projectile entities
-/// (they're never the target of a handle lookup in the ported AI
-/// paths).
+/// pickup-style bonus entity. Human views include inactive actors because
+/// normal `IsDetecting(human)` ignores activity in its same-building arm;
+/// inactive bonuses and projectile entities remain excluded.
 pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     let doors_ref = engine
         .mission_script
@@ -737,11 +742,9 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     let mut map = AiEntityViewMap::with_capacity(engine.entities.len());
     for (entity_id, entity) in engine.entities.occupied() {
         let elem = entity.element_data();
-        if !elem.active {
-            continue;
-        }
         match entity {
-            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) | Entity::Bonus(_) => {}
+            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => {}
+            Entity::Bonus(_) if elem.active => {}
             _ => continue,
         }
         // Resolve building sector (if any) through the same helper
@@ -1794,6 +1797,7 @@ impl EngineInner {
         let entity_views = scratch.ai_entity_views.clone();
         let sight_obstacles = scratch.ai_sight_obstacles.clone();
         let all_soldier_handles = self.ai_global.all_soldier_handles.clone();
+        let ambiance = self.weather.ambiance;
 
         // Snapshot of every live human in the engine; every per-NPC
         // init pass reuses the same list to build its detectable enemy
@@ -1814,6 +1818,7 @@ impl EngineInner {
                 &entity_views,
                 &sight_obstacles,
                 &fast_grid,
+                ambiance,
                 &all_soldier_handles,
                 &all_soldier_entity_ids,
                 &soldier_subordinate_ids,
@@ -1882,6 +1887,7 @@ impl EngineInner {
         entity_views: &SharedAiEntityViews,
         sight_obstacles: &crate::sight_obstacle::SharedSightObstacles,
         fast_grid: &crate::fast_find_grid::FastFindGrid,
+        ambiance: crate::engine::types::Ambiance,
         all_soldier_handles: &std::sync::Arc<Vec<u32>>,
         all_soldier_entity_ids: &[EntityId],
         soldier_subordinate_ids: &[Vec<u16>],
@@ -2118,6 +2124,7 @@ impl EngineInner {
                 0,
                 building_sector,
                 is_forest_level,
+                ambiance,
                 standard_view_radius,
                 entity_views,
                 sight_obstacles,
@@ -2656,6 +2663,7 @@ impl EngineInner {
                     current_frame,
                     None,
                     self.weather.is_forest_level,
+                    self.weather.ambiance,
                     self.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -2704,6 +2712,7 @@ impl EngineInner {
                     current_frame,
                     None,
                     self.weather.is_forest_level,
+                    self.weather.ambiance,
                     self.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -4584,6 +4593,7 @@ impl EngineInner {
                             self.frame_counter,
                             None,
                             self.weather.is_forest_level,
+                            self.weather.ambiance,
                             self.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
@@ -4997,6 +5007,7 @@ impl EngineInner {
                 self.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -5267,6 +5278,7 @@ impl EngineInner {
                 self.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -5422,6 +5434,7 @@ impl EngineInner {
                     self.frame_counter,
                     None,
                     self.weather.is_forest_level,
+                    self.weather.ambiance,
                     self.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -5520,6 +5533,7 @@ impl EngineInner {
                 self.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -5969,6 +5983,7 @@ impl EngineInner {
                 frame,
                 None,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -6359,6 +6374,7 @@ impl EngineInner {
                     patrol_frame,
                     None,
                     self.weather.is_forest_level,
+                    self.weather.ambiance,
                     self.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -6610,6 +6626,7 @@ impl EngineInner {
                             frame,
                             None,
                             self.weather.is_forest_level,
+                            self.weather.ambiance,
                             self.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
@@ -6648,6 +6665,7 @@ impl EngineInner {
                             frame,
                             None,
                             self.weather.is_forest_level,
+                            self.weather.ambiance,
                             self.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
@@ -6698,6 +6716,7 @@ impl EngineInner {
                                         frame,
                                         None,
                                         self.weather.is_forest_level,
+                                        self.weather.ambiance,
                                         self.standard_view_polygon_radius,
                                         &scratch.ai_entity_views,
                                         &scratch.ai_sight_obstacles,
@@ -6723,6 +6742,7 @@ impl EngineInner {
                             frame,
                             None,
                             self.weather.is_forest_level,
+                            self.weather.ambiance,
                             self.standard_view_polygon_radius,
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
@@ -6751,6 +6771,7 @@ impl EngineInner {
                                 frame,
                                 None,
                                 self.weather.is_forest_level,
+                                self.weather.ambiance,
                                 self.standard_view_polygon_radius,
                                 &scratch.ai_entity_views,
                                 &scratch.ai_sight_obstacles,
@@ -6990,6 +7011,9 @@ impl EngineInner {
                         ai.synchronizing_actors.push(actor);
                     }
                 }
+                crate::ai::CrossNpcAction::ReportBackToOfficer { .. } => {
+                    panic!("synchronous officer report leaked into deferred cross-NPC actions")
+                }
             }
         }
 
@@ -7023,6 +7047,12 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> bool {
         let handled = self.dispatch_filtered_stimulus(assets, npc_id, stimulus, ctx, tick_data);
+
+        // The original Charly handler directly calls the officer's Think and
+        // branches on its bool before returning. Drain this result-bearing
+        // cross-NPC call here, inside the originating dispatch, rather than
+        // letting it fall into the end-of-frame cross-action batch.
+        self.process_synchronous_officer_reports_for(npc_id, assets);
 
         // Drain any panic-seek-point fallback the think pushed
         // (FleeingPanic / EventCouldntReachPoint arm).  Needs the
@@ -7066,6 +7096,103 @@ impl EngineInner {
         }
 
         handled
+    }
+
+    fn process_synchronous_officer_reports_for(
+        &mut self,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        let reports = self
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(crate::ai::AiController::take_pending_officer_reports)
+            .unwrap_or_default();
+
+        for report in reports {
+            let crate::ai::CrossNpcAction::ReportBackToOfficer { officer, charly } = report else {
+                unreachable!("take_pending_officer_reports returned a deferred action")
+            };
+            assert_eq!(
+                source_id.index(),
+                charly,
+                "officer report source must be the reporting Charly"
+            );
+
+            let scratch = self.build_sim_scratch(assets);
+            let officer_id = EntityId::Soldier(SoldierId(officer));
+            let officer_building_sector = self
+                .entities
+                .get(officer_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("reporting Charly requires missing officer {officer}"));
+            let officer_ctx = {
+                let entity = self.entities.get(officer_id).unwrap_or_else(|| {
+                    panic!("reporting Charly requires missing officer {officer}")
+                });
+                build_ai_context_from_entity(
+                    entity,
+                    self.frame_counter,
+                    officer_building_sector,
+                    self.weather.is_forest_level,
+                    self.weather.ambiance,
+                    self.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai_global.all_soldier_handles,
+                )
+            };
+            let officer_tick = self.build_npc_tick_data(officer_id, &scratch, assets);
+            let officer_stimulus = crate::ai::Stimulus::with_human(
+                crate::ai::StimulusType::CallMrOfficerIAmBack,
+                charly,
+            );
+            let accepted = self.dispatch_think_with_drain(
+                officer_id,
+                &officer_stimulus,
+                &officer_ctx,
+                &officer_tick,
+                assets,
+            );
+
+            let charly_id = EntityId::Soldier(SoldierId(charly));
+            let charly_building_sector = self
+                .entities
+                .get(charly_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
+            let charly_ctx = {
+                let entity = self
+                    .entities
+                    .get(charly_id)
+                    .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
+                build_ai_context_from_entity(
+                    entity,
+                    self.frame_counter,
+                    charly_building_sector,
+                    self.weather.is_forest_level,
+                    self.weather.ambiance,
+                    self.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai_global.all_soldier_handles,
+                )
+            };
+            let charly_tick = self.build_npc_tick_data(charly_id, &scratch, assets);
+            let entity = self
+                .entities
+                .get_mut(charly_id)
+                .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
+            let enemy = entity
+                .enemy_ai_mut()
+                .unwrap_or_else(|| panic!("reporting Charly {charly} requires enemy AI"));
+            enemy.resolve_charly_officer_report(accepted, &charly_ctx, &charly_tick);
+        }
     }
 
     /// Drain each NPC's `pending_self_stimuli` queue and re-dispatch each
@@ -7136,6 +7263,7 @@ impl EngineInner {
                     frame,
                     None,
                     self.weather.is_forest_level,
+                    self.weather.ambiance,
                     self.standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -7260,6 +7388,7 @@ impl EngineInner {
         let scratch = self.build_sim_scratch(assets);
         let frame = self.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
+        let ambiance = self.weather.ambiance;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
         for (npc_id, _, _) in requests {
             let ctx = {
@@ -7279,6 +7408,7 @@ impl EngineInner {
                     frame,
                     None,
                     is_forest_level,
+                    ambiance,
                     standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -7365,6 +7495,7 @@ impl EngineInner {
                 current_frame,
                 None,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -7431,6 +7562,7 @@ impl EngineInner {
                 current_frame,
                 None,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -7463,6 +7595,7 @@ impl EngineInner {
 
         let frame = self.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
+        let ambiance = self.weather.ambiance;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
@@ -7487,6 +7620,7 @@ impl EngineInner {
                     frame,
                     None,
                     is_forest_level,
+                    ambiance,
                     standard_view_polygon_radius,
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
@@ -7580,6 +7714,7 @@ impl EngineInner {
                 current_frame,
                 None,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
@@ -7723,6 +7858,7 @@ impl EngineInner {
                 frame,
                 None,
                 self.weather.is_forest_level,
+                self.weather.ambiance,
                 self.standard_view_polygon_radius,
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,

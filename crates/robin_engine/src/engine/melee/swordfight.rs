@@ -542,6 +542,7 @@ impl EngineInner {
                         self.frame_counter,
                         None,
                         self.weather.is_forest_level,
+                        self.weather.ambiance,
                         self.standard_view_polygon_radius,
                         &scratch.ai_entity_views,
                         &scratch.ai_sight_obstacles,
