@@ -4,7 +4,7 @@
 //! and queue stimuli on each soldier's `pending_stimuli` for the post-
 //! detection drains in [`super::post_detection`] to consume.
 
-use super::snapshots::{Detection, HumanTarget, ObjectTarget, PcSnapshot, SoldierSnapshot};
+use super::snapshots::{AiWorldView, Detection, HumanTarget, ObjectTarget};
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
@@ -89,10 +89,13 @@ impl SoldierSightContext {
             return None;
         }
 
-        let ai = soldier.npc.ai_brain.base();
-        let current_substate = ai
-            .map(|a| a.current_substate)
-            .unwrap_or(crate::ai::Substate::DefaultOnPost);
+        // Original: `RHElementActorSoldier` owns
+        // `RHArtificialMalignity` and calls its state directly from
+        // Hourglass. An eligible live soldier without EnemyAi is invalid.
+        let ai = soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+            panic!("eligible active soldier has no EnemyAi brain during detection")
+        });
+        let current_substate = ai.base.current_substate;
         let ignore_bodies = matches!(
             current_substate,
             crate::ai::Substate::SeekingOfficerWaitForAlertingSoldier
@@ -111,15 +114,13 @@ impl SoldierSightContext {
             eye_status: soldier.npc.eye_status,
             current_state: soldier.npc.ai_state(),
             current_substate,
-            ai_locked: ai.map(|a| a.ai_is_locked()).unwrap_or(false),
+            ai_locked: ai.base.ai_is_locked(),
             view_forward: (view_direction[0], view_direction[1]),
             real_half_aperture: soldier.npc.real_half_aperture,
             posture: soldier.element.posture,
             action_state: soldier.actor.action_state,
             sector: soldier.element.sector(),
-            alert_status: ai
-                .map(|a| a.current_music_alert_status)
-                .unwrap_or(crate::ai::AlertLevel::Green),
+            alert_status: ai.base.current_music_alert_status,
             blipped: soldier.element.blipped,
             position_map,
             camp: soldier.soldier.cached_camp,
@@ -281,7 +282,7 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_blip_detection(
         &mut self,
         assets: &LevelAssets,
-        pc_snapshots: &[PcSnapshot],
+        world: &AiWorldView,
     ) {
         use crate::element::Posture;
 
@@ -479,7 +480,7 @@ impl EngineInner {
 
             // ── Path A: SeesBlip ─────────────────────────────
             if sees_blip_gate {
-                for pc in pc_snapshots {
+                for pc in &world.pcs {
                     if pc.layer != blip_layer {
                         continue;
                     }
@@ -567,7 +568,7 @@ impl EngineInner {
             if !revealed && object_gate {
                 const ON_SHOULDERS_DET: f32 = 1.3;
                 const DEFAULT_DET: f32 = 1.0;
-                for pc in pc_snapshots {
+                for pc in &world.pcs {
                     if !pc.able_to_fight {
                         // Skip unconscious PCs.
                         continue;
@@ -700,7 +701,7 @@ impl EngineInner {
     /// on a separate `heard_last_frame` latch), so running it as its own
     /// pass has no behavioural interaction with the visual detection
     /// that follows.
-    pub(super) fn tick_enemy_ai_acoustic_detection(&mut self, pc_snapshots: &[PcSnapshot]) {
+    pub(super) fn tick_enemy_ai_acoustic_detection(&mut self, world: &AiWorldView) {
         use crate::ai::AiState;
 
         // Constant 1.0 hearing factor — the static default, never
@@ -786,7 +787,7 @@ impl EngineInner {
             // (they only track Lacklandist enemies), so we skip the
             // populate for them.
             if expects_pc_detectables {
-                for pc in pc_snapshots {
+                for pc in &world.pcs {
                     if !npc.detectable_lists[enemy_idx]
                         .iter()
                         .any(|d| d.element == Some(pc.id))
@@ -807,7 +808,7 @@ impl EngineInner {
 
             let deafness = npc.get_deafness(universal_frame, cover_volume) as f32;
 
-            for pc in pc_snapshots {
+            for pc in &world.pcs {
                 // RefreshDetection iterates `DETECTABLE_ENEMY` and
                 // filters PCs.  Skip PCs absent from this NPC's list
                 // (Royalists don't track PCs, so they naturally hear
@@ -892,20 +893,22 @@ impl EngineInner {
     ///
     /// For every Lacklandist NPC: lazy-populate detectables, run the
     /// per-target visibility pass, accumulate suspect sharpness, fire
-    /// EVENT_HEAR / EVENT_SEES_SHADOW / EVENT_VIEW (deferred to the
-    /// post-detection drain via `pending_stimuli`). Returns the rising-edge
-    /// `Detection` transitions and the falling-edge OUTOFVIEW dispatch list
-    /// for the post-detection alert / pursuit phases (P4 / P4b) to consume.
-    #[allow(clippy::too_many_arguments)]
+    /// EVENT_HEAR / EVENT_SEES_SHADOW and EVENT_VIEW. EVENT_VIEW is dispatched
+    /// with tick data derived from the same immutable world view immediately
+    /// after the NPC borrow ends. Original:
+    /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
+    /// scanning lists, then calls `Think` before returning from that NPC's
+    /// Hourglass. Returns the rising/falling edges for later phases.
+    // TODO(parity): Migrate EVENT_HEAR, EVENT_SEES_SHADOW, and the non-enemy
+    // detectable lists onto typed world-view inputs too. The Original flushes
+    // all of `listOfStimuliToSend` at the end of this same RefreshDetection;
+    // Rust still drains those remaining stimulus kinds in the later dispatch
+    // phase.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
-        pc_snapshots: &[PcSnapshot],
-        soldier_snapshots: &[SoldierSnapshot],
-        ko_money_fight_soldiers: &[(EntityId, Camp)],
-        primary_target_multiplicity: &std::collections::BTreeMap<EntityId, u32>,
-        pc_forecasts: &std::collections::HashMap<u32, crate::ai::ForecastedDestination>,
-        npc_jump_lines: &std::collections::HashMap<EntityId, Option<u32>>,
+        scratch: &SimScratch,
+        world: &AiWorldView,
     ) -> (Vec<Detection>, Vec<(EntityId, u32)>) {
         let mut transitions: Vec<Detection> = Vec::new();
         // Falling-edge EVENT_OUTOFVIEW queue: per-detectable
@@ -923,21 +926,40 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
-            self.tick_enemy_ai_refresh_detection_for_npc(
+            let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
                 assets,
-                pc_snapshots,
-                soldier_snapshots,
-                ko_money_fight_soldiers,
-                primary_target_multiplicity,
-                pc_forecasts,
-                npc_jump_lines,
+                world,
                 universal_frame,
                 golden_eye,
                 is_forest_level,
                 &mut transitions,
                 &mut out_of_view_dispatches,
             );
+            if let Some((stimulus, tick_data)) = think_input {
+                let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+                let entity = self.entities.get(npc_id).unwrap_or_else(|| {
+                    panic!(
+                        "detected NPC {} disappeared before its same-phase Think dispatch",
+                        npc_id.index()
+                    )
+                });
+                let building_sector = self.entity_building_sector(entity.element_data().sector());
+                let mut ctx = build_ai_context_from_entity(
+                    entity,
+                    universal_frame,
+                    building_sector,
+                    self.weather.is_forest_level,
+                    self.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai_global.all_soldier_handles,
+                );
+                ctx.in_uninterruptible_command = in_uninterruptible_command;
+                self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+            }
         }
 
         (transitions, out_of_view_dispatches)
@@ -947,38 +969,39 @@ impl EngineInner {
     /// Carries the per-NPC tracing span so all events emitted inside the
     /// detection pass automatically include `npc=<id>` in their span context.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    #[allow(clippy::too_many_arguments)]
     fn tick_enemy_ai_refresh_detection_for_npc(
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,
-        pc_snapshots: &[PcSnapshot],
-        soldier_snapshots: &[SoldierSnapshot],
-        ko_money_fight_soldiers: &[(EntityId, Camp)],
-        primary_target_multiplicity: &std::collections::BTreeMap<EntityId, u32>,
-        pc_forecasts: &std::collections::HashMap<u32, crate::ai::ForecastedDestination>,
-        npc_jump_lines: &std::collections::HashMap<EntityId, Option<u32>>,
+        world: &AiWorldView,
         universal_frame: u32,
         golden_eye: bool,
         is_forest_level: bool,
         transitions: &mut Vec<Detection>,
         out_of_view_dispatches: &mut Vec<(EntityId, u32)>,
-    ) {
+    ) -> Option<(crate::ai::Stimulus, AiPerTickData)> {
         use crate::ai::AiState;
         use crate::element::{ActionState, Posture};
+
+        let pc_snapshots = world.pcs.as_slice();
+        let soldier_snapshots = world.soldiers.as_slice();
+        let ko_money_fight_soldiers = world.ko_money_fight_soldiers.as_slice();
+        let primary_target_multiplicity = &world.primary_target_multiplicity;
+        let pc_forecasts = &world.pc_forecasts;
+        let npc_jump_lines = &world.npc_jump_lines;
 
         // -- Read enemy state in a scoped borrow --
         let viewer = {
             let Some(entity) = self.entities.get(npc_id) else {
-                return;
+                return None;
             };
             let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Lacklandists) else {
-                return;
+                return None;
             };
             viewer
         };
         if viewer.ai_locked {
-            return;
+            return None;
         }
         let eye = viewer.eye;
         let eye_z = viewer.eye_z;
@@ -1059,6 +1082,8 @@ impl EngineInner {
         // valid.  We scope the mut access so we can push to
         // `transitions` afterwards without conflict.
         let mut commit: Option<(EntityId, MapPoint, bool)> = None;
+        let mut think_tick_data: Option<AiPerTickData> = None;
+        let mut think_stimulus: Option<crate::ai::Stimulus> = None;
         {
             // Build the obstacle view from individual disjoint
             // fields so the borrow checker can split it from the
@@ -1079,7 +1104,7 @@ impl EngineInner {
             // at this level don't need it.
             let _ai_global = &mut self.ai_global;
             let Some(Entity::Soldier(soldier)) = self.entities.get_mut(npc_id) else {
-                return;
+                return None;
             };
 
             // Beggar-trick learning.  Capture the AI's current
@@ -1148,12 +1173,18 @@ impl EngineInner {
             let mut max_visibility_raw: f32 = 0.0;
 
             for det in detectables.iter_mut() {
-                let Some(target_id) = det.element else {
-                    continue;
-                };
-                let Some(pc) = pc_snapshots.iter().find(|p| p.id == target_id) else {
-                    continue;
-                };
+                let target_id = det
+                    .element
+                    .expect("enemy detectable survived cleanup without a target entity handle");
+                let pc = pc_snapshots
+                    .iter()
+                    .find(|p| p.id == target_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "enemy detectable target {} is absent from the per-tick PC view",
+                            target_id.index()
+                        )
+                    });
 
                 // Different layer ⇒ different floor in a building;
                 // LOS raycast won't cross and the IsActive check
@@ -1460,7 +1491,7 @@ impl EngineInner {
                 };
                 // ── Populate combat context from engine ──────
                 let mut tick_data = AiPerTickData {
-                    profile_manager: assets.profile_manager.clone(),
+                    profile_manager: Some(assets.profile_manager.clone()),
                     // Pre-computed forecast for the primary target.
                     primary_target_forecast: pc_forecasts
                         .get(&enemy_ai.base.primary_target)
@@ -2149,6 +2180,7 @@ impl EngineInner {
                         });
                     }
                 }
+                think_tick_data = Some(tick_data);
             }
 
             // Accumulate the per-type detection suspects.
@@ -2224,25 +2256,44 @@ impl EngineInner {
                     // When the detected PC is disguised as a
                     // beggar, fire `EVENT_SEES_BEGGAR` instead of
                     // `EVENT_VIEW` — but only if the NPC's IQ
-                    // (fighting ability) >= CHECK_BEGGAR_MIN_IQ
-                    // (30).  Low-IQ soldiers ignore beggars
-                    // entirely.
+                    // >= CHECK_BEGGAR_MIN_IQ (30). Low-IQ soldiers
+                    // ignore beggars entirely.
                     let target_posture = pc_snapshots
                         .iter()
                         .find(|pc| pc.id == target_id)
                         .map(|pc| pc.posture)
-                        .unwrap_or(Posture::Upright);
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "committed detection target {} is absent from the per-tick PC view",
+                                target_id.index()
+                            )
+                        });
 
                     if target_posture == Posture::SimulatingBeggar {
-                        // IQ check: soldier IQ >= CHECK_BEGGAR_MIN_IQ.
-                        let npc_iq = assets
+                        // Original: `RHartificialmalignity.cpp::GetIQ` reads
+                        // `uwIntelligence` and applies the enemy-IQ difficulty
+                        // modifier. Fighting ability is a different capacity.
+                        let intelligence = assets
                             .profile_manager
                             .get_soldier(soldier.soldier.soldier_profile_index)
-                            .map(|p| p.fighting as i32)
-                            .unwrap_or(50);
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "detecting soldier {} requires missing soldier profile {}",
+                                    npc_id.index(),
+                                    u32::from(soldier.soldier.soldier_profile_index)
+                                )
+                            })
+                            .intelligence;
+                        let npc_iq = crate::player_profile::DifficultyLevel::current()
+                            .modify_capacity(
+                                intelligence,
+                                crate::player_profile::difficulty_params::EASY_ENEMY_IQ,
+                                crate::player_profile::difficulty_params::HARD_ENEMY_IQ,
+                                100,
+                            ) as i32;
                         if npc_iq < crate::stealth::CHECK_BEGGAR_MIN_IQ {
                             // Too dumb to spot a beggar — skip.
-                            return;
+                            return None;
                         }
                     }
 
@@ -2305,16 +2356,12 @@ impl EngineInner {
                                 sector: None,
                                 level: 0,
                             };
-                            // Queue EVENT_VIEW for the post-detection
-                            // pending_stimuli drain — see the
-                            // EventHear site for rationale.  The
-                            // drain uses default `tick_data`, so the
-                            // `enemy_sq_distances` seeding that the
-                            // inline path did for list_them is lost;
-                            // battle_decisions will rebuild the list
-                            // from the next detection frame via the
-                            // standard `reinitialize_them_list` path.
-                            enemy_ai.base.pending_stimuli.push(stimulus);
+                            // Dispatch after releasing the soldier borrow,
+                            // using the tick input built from this exact world
+                            // view. This preserves the original end-of-
+                            // RefreshDetection Think phase and avoids the
+                            // later live-rebuild/stub path.
+                            think_stimulus = Some(stimulus);
                         }
 
                         // Always set music alert to Red on a fresh
@@ -2397,6 +2444,13 @@ impl EngineInner {
                 newly_alerted,
             });
         }
+        match (think_stimulus, think_tick_data) {
+            (Some(stimulus), Some(tick_data)) => Some((stimulus, tick_data)),
+            (None, _) => None,
+            (Some(_), None) => {
+                panic!("detection committed an enemy Think stimulus without per-tick enemy input")
+            }
+        }
     }
 
     /// P3b — royalist detection pass.
@@ -2405,64 +2459,36 @@ impl EngineInner {
     /// blip-reveal side effect and `HeyFolksLookThere` alert
     /// dispatch; full royalist combat AI (seeking, attacking) is
     /// deferred.
-    pub(super) fn tick_enemy_ai_royalist_detection(&mut self, assets: &LevelAssets) {
+    pub(super) fn tick_enemy_ai_royalist_detection(
+        &mut self,
+        assets: &LevelAssets,
+        world: &AiWorldView,
+    ) {
         let universal_frame = self.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
         let is_forest_level = self.weather.is_forest_level;
 
         // Build target list from alive Lacklandist soldiers.
         let mut npc_targets: Vec<NpcTarget> = Vec::new();
-        for (npc_id, s) in self.entities.soldiers() {
-            let (
-                pos,
-                layer,
-                posture,
-                action_state,
-                sector,
-                ground_z,
-                ok,
-                is_rider,
-                passing_door,
-                obstacle_idx,
-                direction,
-            ) = {
-                if s.soldier.cached_camp != Camp::Lacklandists {
-                    continue;
-                }
-                let ok = s.element.active && s.npc.life_points > 0 && !s.human.unconscious;
-                (
-                    s.element.position_map(),
-                    s.element.layer(),
-                    s.element.posture,
-                    s.actor.action_state,
-                    s.element.sector(),
-                    s.element.position().z,
-                    ok,
-                    s.soldier.rider,
-                    s.actor.active_door_pass.is_some(),
-                    s.element.obstacle_index(),
-                    s.element.direction(),
-                )
-            };
-            if !ok {
+        for s in &world.soldiers {
+            if s.camp != Camp::Lacklandists {
                 continue;
             }
-            let building_sector = self.entity_building_sector(sector);
             // `eye_z` is used as the detection point for
             // seen-by-pc / blip geometry; this is the target side of
             // the near-auto-visible check.
-            let eye_z = ground_z + crate::stealth::detection_z_for_posture(posture, is_rider);
+            let eye_z = s.ground_z + crate::stealth::detection_z_for_posture(s.posture, s.is_rider);
             npc_targets.push(NpcTarget {
-                id: npc_id.into(),
-                position: pos,
-                layer,
-                posture,
-                action_state,
-                building_sector,
+                id: s.id,
+                position: s.position,
+                layer: s.layer,
+                posture: s.posture,
+                action_state: s.action_state,
+                building_sector: s.building_sector,
                 eye_z,
-                direction,
-                passing_door,
-                obstacle_idx,
+                direction: s.direction as i16,
+                passing_door: s.passing_door,
+                obstacle_idx: s.obstacle_idx,
             });
         }
 
@@ -2894,8 +2920,7 @@ impl EngineInner {
     pub(super) fn tick_enemy_ai_refresh_per_type_detection(
         &mut self,
         assets: &LevelAssets,
-        human_targets: &std::collections::HashMap<EntityId, HumanTarget>,
-        object_targets: &std::collections::HashMap<EntityId, ObjectTarget>,
+        world: &AiWorldView,
     ) {
         let universal_frame = self.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
@@ -2904,8 +2929,8 @@ impl EngineInner {
             self.tick_enemy_ai_refresh_per_type_for_npc(
                 npc_id,
                 assets,
-                human_targets,
-                object_targets,
+                &world.human_targets,
+                &world.object_targets,
                 universal_frame,
                 golden_eye,
             );
