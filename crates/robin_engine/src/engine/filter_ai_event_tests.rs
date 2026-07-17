@@ -433,6 +433,10 @@ const TMP2: u16 = 0xC008;
 ///    the `PrototypeFilterEvent` native and returns its result.
 ///  - `InnerTarget::FilterAIEvent(...)` returns the constant `42`.
 fn build_nested_scb() -> ScbFile {
+    build_nested_scb_with_inner_this(false)
+}
+
+fn build_nested_scb_with_inner_this(inner_returns_this: bool) -> ScbFile {
     // Outer class.  FilterAIEvent reads the three params it was
     // called with, pushes them onto the native stack in order, calls
     // PrototypeFilterEvent, then returns whatever the native handed
@@ -485,9 +489,9 @@ fn build_nested_scb() -> ScbFile {
         quads: outer_quads,
     };
 
-    // Inner class.  FilterAIEvent unconditionally returns 42 — a
-    // recognisable sentinel that the outer caller can only observe by
-    // virtue of the nested dispatch having actually run.
+    // Inner class. FilterAIEvent normally returns 42 as a recognisable
+    // sentinel. The parity variant returns ThisActor so the test can prove
+    // PrototypeFilterEvent preserves the outer receiver.
     let mut inner_quads = Vec::new();
     let mut inner_functions = Vec::new();
     for name in [
@@ -512,7 +516,12 @@ fn build_nested_scb() -> ScbFile {
         size_of_temporary: 4,
     });
     inner_quads.push(q_begin_function(0, 1));
-    inner_quads.push(q_aff0_iconstant(TMP0, 42));
+    if inner_returns_this {
+        inner_quads.push(q_native_call(crate::natives::NativeFn::ThisActor as u32));
+        inner_quads.push(q_aff1_native_get_return(TMP0));
+    } else {
+        inner_quads.push(q_aff0_iconstant(TMP0, 42));
+    }
     inner_quads.push(q_return_val(TMP0));
     inner_quads.push(q_end_function());
 
@@ -540,12 +549,50 @@ fn build_nested_scb() -> ScbFile {
     }
 }
 
+#[test]
+fn ordinary_actor_callback_binds_this_to_the_target_actor() {
+    let scb = build_nested_scb_with_inner_this(true);
+    let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let inner_handle = 22;
+    assert!(script.bind_actor(inner_handle, "InnerTarget"));
+
+    let result = script
+        .call_actor_function(inner_handle, "FilterAIEvent", &[0, 0])
+        .expect("direct actor callback runs cleanly");
+
+    assert_eq!(result, inner_handle);
+    assert_eq!(script.game_host.script_this, 0, "call context is restored");
+}
+
+#[test]
+fn prototype_filter_event_preserves_the_outer_this_actor() {
+    // Original: RHScript::PrototypeFilterEvent deliberately leaves
+    // pScriptThis unchanged so the prototype knows the actual event receiver.
+    // See original-code/RHScript.cpp:6508-6535.
+    let scb = build_nested_scb_with_inner_this(true);
+    let mut script = MissionScript::from_scb(scb).expect("scb builds");
+    let outer_handle = 11;
+    let prototype_handle = 22;
+    assert!(script.bind_actor(outer_handle, "OuterCaller"));
+    assert!(script.bind_actor(prototype_handle, "InnerTarget"));
+
+    let result = script
+        .call_actor_function(outer_handle, "FilterAIEvent", &[prototype_handle, 0, 0])
+        .expect("nested prototype dispatch runs cleanly");
+
+    assert_eq!(
+        result, outer_handle,
+        "the prototype's ThisActor must remain the outer event receiver"
+    );
+    assert_eq!(script.game_host.script_this, 0, "call context is restored");
+}
+
 /// Smoke test: an actor script's `FilterAIEvent` calls
 /// `PrototypeFilterEvent` on a sibling actor, and the nested call's
 /// return value flows back into the outer return.  Verifies that:
 ///
-///  1. The native arm queues a `PendingNestedCall`.
-///  2. The interpreter yields with `StopReason::PendingNestedCall`.
+///  1. The native arm returns an explicit `PendingNestedCall` outcome.
+///  2. The interpreter carries it in `StopReason::PendingNestedCall`.
 ///  3. `call_actor_function`'s resume loop dispatches the queued call
 ///     against the target actor's bound script.
 ///  4. The result (`42`) is patched into the outer VM's

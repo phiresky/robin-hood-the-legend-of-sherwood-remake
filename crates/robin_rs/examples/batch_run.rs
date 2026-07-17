@@ -44,7 +44,7 @@ fn main() {
                     .collect();
 
                 let host = GameHost::new();
-                let mut vm_state = Vm::new().with_host(Box::new(host));
+                let mut vm_state = Vm::new().with_host(host);
                 vm_state
                     .vm
                     .heap
@@ -75,17 +75,13 @@ fn main() {
                     robin_rs::interp::StopReason::StepLimit => "LIMIT",
                     robin_rs::interp::StopReason::HitEmpty => "EMPTY",
                     robin_rs::interp::StopReason::Unimplemented(_) => "UNIMPL",
-                    robin_rs::interp::StopReason::PendingNestedCall => "NESTED",
+                    robin_rs::interp::StopReason::PendingNestedCall(_) => "NESTED",
                 };
 
                 let final_ip = vm_state.vm.ip as usize;
                 // Count deferred engine commands as a stand-in for "natives invoked"
                 // (the previous host-trace facility is gone).
-                let host_any = vm_state.take_host().unwrap();
-                let host: &GameHost = host_any
-                    .as_any()
-                    .downcast_ref::<GameHost>()
-                    .expect("host was not GameHost");
+                let host = vm_state.take_host();
 
                 results.push((
                     format!("{}::{}", class.class_name, func.name),
