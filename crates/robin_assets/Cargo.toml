@@ -40,3 +40,8 @@ bzip2 = "0.6"
 
 [dev-dependencies]
 tempfile = "3"
+
+# The library keeps winit platform-neutral for wasm consumers. Standalone
+# Linux test targets still need one native backend selected so winit compiles.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }

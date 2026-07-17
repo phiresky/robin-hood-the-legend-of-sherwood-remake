@@ -8,6 +8,44 @@ use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::profiles::WeaponThrustKind;
 use crate::weapons::SwordStrike;
 
+/// Compute the non-charge flight vector used by a falling-pushed order.
+///
+/// `RHElementActorHuman::ExecuteFallingPushed` accepts exactly these three
+/// thrust kinds.  In all three cases the remaining strike distance is based
+/// on the victim distance projected onto the attacker's direction, including
+/// a negative projection when the victim is behind the attacker.
+fn push_flight_vector(
+    kind: WeaponThrustKind,
+    attacker_dir: (f32, f32),
+    attacker_pos: crate::coordinates::MapPoint,
+    victim_pos: crate::coordinates::MapPoint,
+    max_distance: f32,
+) -> (f32, f32) {
+    let dx = victim_pos.x - attacker_pos.x;
+    let dy = victim_pos.y - attacker_pos.y;
+    let projected_distance = dx * attacker_dir.0 + dy * attacker_dir.1;
+    let remaining_distance = max_distance - projected_distance;
+
+    match kind {
+        WeaponThrustKind::PushAside => (
+            attacker_dir.0 * remaining_distance,
+            attacker_dir.1 * remaining_distance,
+        ),
+        WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
+            let distance = dx.hypot(dy);
+            if distance < 0.01 {
+                (0.0, 0.0)
+            } else {
+                (
+                    dx / distance * remaining_distance,
+                    dy / distance * remaining_distance,
+                )
+            }
+        }
+        _ => panic!("unexpected push thrust kind: {kind:?}"),
+    }
+}
+
 impl EngineInner {
     // ─── Push / stumble effects ─────────────────────────────────────
 
@@ -603,46 +641,13 @@ impl EngineInner {
                 attacker_dir_vec.1 * push.repulsion as f32,
             )
         } else {
-            match push.kind {
-                WeaponThrustKind::PushAside => {
-                    // Attacker direction × (max_distance - proximity).
-                    let dx = victim_pos.x - attacker_pos.x;
-                    let dy = victim_pos.y - attacker_pos.y;
-                    let proximity = (dx * attacker_dir_vec.0 + dy * attacker_dir_vec.1).abs();
-                    let push_dist = (push.max_distance - proximity).max(0.0);
-                    (
-                        attacker_dir_vec.0 * push_dist,
-                        attacker_dir_vec.1 * push_dist,
-                    )
-                }
-                WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
-                    // Radial (victim - attacker), normalised ×
-                    // (max_dist - proximity).
-                    let dx = victim_pos.x - attacker_pos.x;
-                    let dy = victim_pos.y - attacker_pos.y;
-                    let dist = (dx * dx + dy * dy).sqrt();
-                    if dist < 0.01 {
-                        (0.0, 0.0)
-                    } else {
-                        let push_dist = (push.max_distance - dist).max(0.0);
-                        (dx / dist * push_dist, dy / dist * push_dist)
-                    }
-                }
-                _ => {
-                    // Fallback: radial push by repulsion
-                    let dx = victim_pos.x - attacker_pos.x;
-                    let dy = victim_pos.y - attacker_pos.y;
-                    let dist = (dx * dx + dy * dy).sqrt();
-                    if dist < 0.01 {
-                        (0.0, 0.0)
-                    } else {
-                        (
-                            dx / dist * push.repulsion as f32,
-                            dy / dist * push.repulsion as f32,
-                        )
-                    }
-                }
-            }
+            push_flight_vector(
+                push.kind,
+                attacker_dir_vec,
+                attacker_pos,
+                victim_pos,
+                push.max_distance,
+            )
         };
 
         // Set victim facing opposite to flight direction.
@@ -1334,5 +1339,49 @@ impl EngineInner {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinates::MapPoint;
+
+    #[test]
+    fn push_flight_vector_matches_all_original_supported_thrust_kinds() {
+        let attacker = MapPoint::new(0.0, 0.0);
+        let direction = (1.0, 0.0);
+
+        assert_eq!(
+            push_flight_vector(
+                WeaponThrustKind::PushAside,
+                direction,
+                attacker,
+                MapPoint::new(-3.0, 0.0),
+                10.0,
+            ),
+            (13.0, 0.0),
+            "PUSH_ASIDE uses the signed attacker-direction projection"
+        );
+
+        for kind in [WeaponThrustKind::TrueCircle, WeaponThrustKind::FalseCircle] {
+            assert_eq!(
+                push_flight_vector(kind, direction, attacker, MapPoint::new(0.0, 4.0), 10.0,),
+                (0.0, 10.0),
+                "{kind:?} moves radially but uses the attacker-direction projection"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "unexpected push thrust kind: Straight")]
+    fn push_flight_vector_rejects_unexpected_thrust_kind() {
+        push_flight_vector(
+            WeaponThrustKind::Straight,
+            (1.0, 0.0),
+            MapPoint::new(0.0, 0.0),
+            MapPoint::new(4.0, 0.0),
+            10.0,
+        );
     }
 }

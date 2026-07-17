@@ -19,6 +19,12 @@ use crate::element::{Camp, Detectable, DetectableType, Entity, EntityId, PcId, S
 use crate::engine::SimScratch;
 use crate::entities::Entities;
 
+/// Exact `ubFramePhase` computed by `RHElementActorNPC::Hourglass`.
+/// `register_number` is the original creation/register ordering value.
+pub(super) fn npc_hourglass_frame_phase(frame: u32, register_number: u32) -> u8 {
+    (frame as u8).wrapping_sub((register_number as u8).wrapping_add(100))
+}
+
 /// Number of arrows given to Merry Man archers in forest levels.
 const MERRY_MAN_ARROWS: u16 = 3;
 
@@ -892,7 +898,7 @@ impl EngineInner {
             .unwrap_or(false);
 
         let mut tick = AiPerTickData::stub();
-        tick.profile_manager = assets.profile_manager.clone();
+        tick.profile_manager = Some(assets.profile_manager.clone());
         tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch);
         // `fill_list_with_all_near_fighters` walks the global fighter
         // registry on every call.  Populate `nearby_fighters` here so
@@ -1303,8 +1309,7 @@ impl EngineInner {
 
         // Build a friendly soldier snapshot for `handle` (which may be self).
         let build_soldier = |handle: u32| -> Option<FighterSnapshot> {
-            let Some(Entity::Soldier(s)) = self.entities.get(EntityId::Soldier(SoldierId(handle)))
-            else {
+            let Some(s) = self.entities.get_soldier(SoldierId(handle)) else {
                 return None;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -1314,13 +1319,23 @@ impl EngineInner {
                 return None;
             }
             let pos = s.element.position_map();
-            let enemy_ai_other = s.npc.ai_brain.enemy()?;
+            let enemy_ai_other = s
+                .npc
+                .ai_brain
+                .enemy()
+                .unwrap_or_else(|| panic!("active soldier {handle} has no EnemyAi brain"));
             let soldier_profile = assets
                 .profile_manager
-                .get_soldier(s.soldier.soldier_profile_index);
-            let has_formation = soldier_profile.map(|p| p.formation).unwrap_or(false);
+                .get_soldier(s.soldier.soldier_profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "soldier {handle} requires missing soldier profile {}",
+                        u32::from(s.soldier.soldier_profile_index)
+                    )
+                });
+            let has_formation = soldier_profile.formation;
             let fighting_ability = {
-                let base = soldier_profile.map(|p| p.fighting).unwrap_or(50);
+                let base = soldier_profile.fighting;
                 if s.soldier.cached_camp == Camp::Lacklandists {
                     let diff = crate::player_profile::DifficultyLevel::current();
                     diff.modify_capacity(
@@ -1333,8 +1348,21 @@ impl EngineInner {
                     base
                 }
             };
-            let bow_profile =
-                soldier_profile.and_then(|p| assets.profile_manager.get_bow(p.shooting_weapon_id));
+            let bow_profile = if soldier_profile.shooting_weapon_id == 0 {
+                None
+            } else {
+                Some(
+                    assets
+                        .profile_manager
+                        .get_bow(soldier_profile.shooting_weapon_id)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "soldier {handle} requires missing bow profile {}",
+                                soldier_profile.shooting_weapon_id
+                            )
+                        }),
+                )
+            };
             let is_archer_unit = bow_profile
                 .map(|bow| bow.normal_shoot.range > 0)
                 .unwrap_or(false);
@@ -1348,17 +1376,18 @@ impl EngineInner {
                 })
                 .unwrap_or(0);
             let hth_id = enemy_ai_other.hth_weapon_id;
-            let hth_profile = assets.profile_manager.get_hth_weapon(hth_id);
-            let (sword_range_default, sword_range_maximal, sword_range_uber) = hth_profile
-                .map(|w| {
-                    (
-                        w.distance[crate::weapons::WeaponDistance::Default as usize],
-                        w.distance[crate::weapons::WeaponDistance::Maximal as usize],
-                        w.distance[crate::weapons::WeaponDistance::Uber as usize],
-                    )
-                })
-                .unwrap_or((40, 50, 70));
-            let weapon_is_shield = hth_profile.map(|w| w.shield).unwrap_or(false);
+            let hth_profile = assets
+                .profile_manager
+                .get_hth_weapon(hth_id)
+                .unwrap_or_else(|| {
+                    panic!("soldier {handle} requires missing HtH weapon profile {hth_id}")
+                });
+            let (sword_range_default, sword_range_maximal, sword_range_uber) = (
+                hth_profile.distance[crate::weapons::WeaponDistance::Default as usize],
+                hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
+                hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
+            );
+            let weapon_is_shield = hth_profile.shield;
             let has_shield_anim = s
                 .element
                 .sprite
@@ -1416,7 +1445,7 @@ impl EngineInner {
                 is_shield_bearer,
                 is_archer_unit,
                 is_tower_guard: enemy_ai_other.tower_guard,
-                is_vip: soldier_profile.map(|p| p.vip).unwrap_or(false),
+                is_vip: soldier_profile.vip,
                 soldier_profile_pride: enemy_ai_other.soldier_profile_pride,
                 is_robin: false,
                 left_combat_neighbour: enemy_ai_other.left_combat_neighbour,
@@ -1439,7 +1468,7 @@ impl EngineInner {
 
         // Build an enemy PC snapshot for `handle`.
         let build_pc = |handle: u32| -> Option<FighterSnapshot> {
-            let Some(Entity::Pc(pc)) = self.entities.get(EntityId::Pc(PcId(handle))) else {
+            let Some(pc) = self.entities.get_pc(PcId(handle)) else {
                 return None;
             };
             if !pc.element.active || pc.pc.life_points <= 0 {
@@ -1449,19 +1478,28 @@ impl EngineInner {
             let is_carried = pc.human.carrier.is_some();
             let alive = !is_unconscious;
             let pos = pc.element.position_map();
-            let character = assets.profile_manager.get_character(pc.pc.profile_index);
-            let hth_id = character.map(|c| c.hth_weapon_id).unwrap_or(0);
-            let fighting_ability = character.map(|c| c.fighting).unwrap_or(50);
-            let hth_profile = assets.profile_manager.get_hth_weapon(hth_id);
-            let (sword_range_default, sword_range_maximal, sword_range_uber) = hth_profile
-                .map(|w| {
-                    (
-                        w.distance[crate::weapons::WeaponDistance::Default as usize],
-                        w.distance[crate::weapons::WeaponDistance::Maximal as usize],
-                        w.distance[crate::weapons::WeaponDistance::Uber as usize],
+            let character = assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "PC {handle} requires missing character profile {}",
+                        u32::from(pc.pc.profile_index)
                     )
-                })
-                .unwrap_or((40, 50, 70));
+                });
+            let hth_id = character.hth_weapon_id;
+            let fighting_ability = character.fighting;
+            let hth_profile = assets
+                .profile_manager
+                .get_hth_weapon(hth_id)
+                .unwrap_or_else(|| {
+                    panic!("PC {handle} requires missing HtH weapon profile {hth_id}")
+                });
+            let (sword_range_default, sword_range_maximal, sword_range_uber) = (
+                hth_profile.distance[crate::weapons::WeaponDistance::Default as usize],
+                hth_profile.distance[crate::weapons::WeaponDistance::Maximal as usize],
+                hth_profile.distance[crate::weapons::WeaponDistance::Uber as usize],
+            );
             let in_recovery = !alive
                 || matches!(
                     pc.actor.old_action,
@@ -1515,7 +1553,7 @@ impl EngineInner {
                 is_shield_bearer: false,
                 is_archer_unit: false,
                 is_tower_guard: false,
-                is_vip: character.map(|c| c.vip).unwrap_or(false),
+                is_vip: character.vip,
                 soldier_profile_pride: 0,
                 is_robin: pc.pc.robin,
                 left_combat_neighbour: 0,
@@ -1539,9 +1577,9 @@ impl EngineInner {
         let mut out: Vec<FighterSnapshot> = Vec::with_capacity(1 + self.pc_ids.len() + 4);
 
         // Self entry first — no radius filter (the AI is at distance 0).
-        if let Some(snap) = build_soldier(me_handle) {
-            out.push(snap);
-        }
+        out.push(build_soldier(me_handle).unwrap_or_else(|| {
+            panic!("enemy AI self {me_handle} is absent from the live fighter registry")
+        }));
 
         // All live soldiers in the same combat radius. Scan the global
         // camp fighter registries when rebuilding the us/them lists;
@@ -1617,8 +1655,7 @@ impl EngineInner {
             if current == 0 {
                 break;
             }
-            let Some(Entity::Soldier(s)) = self.entities.get(EntityId::Soldier(SoldierId(current)))
-            else {
+            let Some(s) = self.entities.get_soldier(SoldierId(current)) else {
                 break;
             };
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
@@ -3545,14 +3582,15 @@ impl EngineInner {
                     actor_id: Some(snap.entity_id),
                 });
             // Schedule the deterministic MYTALK finish from the
-            // host-populated sample-duration table. Missing entries fall
-            // back to `EXCLAMATION_DEFAULT_FRAMES`; sound backend presence
-            // is deliberately not part of sim state.
-            let duration = assets
-                .exclamation_durations
-                .get(&(group, snap.speech_id, excl_id))
-                .copied()
-                .unwrap_or(super::EXCLAMATION_DEFAULT_FRAMES);
+            // host-populated sample-duration table. Missing samples use
+            // the original zero-length completion path; sound backend
+            // presence is deliberately not part of sim state.
+            let duration = super::exclamation_duration_frames(
+                &assets.exclamation_durations,
+                group,
+                snap.speech_id,
+                excl_id,
+            );
             self.sound_sim
                 .playing_exclamations
                 .push(crate::sound::PlayingExclamation {
@@ -3639,7 +3677,7 @@ impl EngineInner {
         // `sound_is_finished` callback: clear current_remark and fire
         // the MYTALK event (`inform_ai_on_finished_remark`).
         for &(actor_handle, _excl_id) in &self.sound_sim.finished_exclamations {
-            if let Some(actor_id) = self.entities.id_at_index(actor_handle)
+            if let Some(actor_id) = self.entities.id_at_legacy_slot(actor_handle)
                 && let Some(entity) = self.entities.get_mut(actor_id)
             {
                 // PC branch: nothing to do here — the C++ "currently
@@ -3823,56 +3861,31 @@ impl EngineInner {
         // Every `AiContext` built in this method and its callees
         // picks up the refreshed map via
         // `scratch.ai_entity_views.clone()`.
-        // ── 1. Snapshot PC state. ────────────────────────────────
-        let pc_snapshots = self.tick_enemy_ai_build_pc_snapshots(assets);
+        // ── 1. Build one immutable per-tick AI world view. ────────
+        // Snapshot construction does not dispatch behavior. The phase calls
+        // below remain in the original soldier/NPC Hourglass order.
+        let world = self.tick_enemy_ai_build_world_view(assets);
 
-        // ── 1b. Pre-compute destination forecasts for all PCs. ───
-        let pc_forecasts = self.tick_enemy_ai_build_pc_forecasts();
-
-        if pc_snapshots.is_empty() {
+        if world.pcs.is_empty() {
             return;
         }
 
         // ── 2a. Blip detection (reveal shadows). ────────────────
-        self.tick_enemy_ai_blip_detection(assets, &pc_snapshots);
-
-        // ── 2b. Compute PC primary-target multiplicity. ──────────
-        let primary_target_multiplicity = self.tick_enemy_ai_build_primary_target_multiplicity();
-
-        // ── 2c-pre. Precompute table-swordfight jump-lines. ──────
-        let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
-
-        // ── 2c. Snapshot soldier state for us-list building. ─────
-        let soldier_snapshots = self.tick_enemy_ai_build_soldier_snapshots(assets);
-
-        // ── 2d. Unconscious money-fight KO snapshot. ─────────────
-        let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
-
-        // Original: RHElementActorSoldier::Hourglass calls
-        // AttackingReactiontimeEnemyNearTest before RHElementActorNPC::Hourglass
-        // performs the soldier's detection work.
-        self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
+        self.tick_enemy_ai_blip_detection(assets, &world);
 
         // ── 2e. Shared acoustic-detection pass. ──────────────────
         // The hearing branch of `refresh_detection` plus
         // `update_hearing` — runs for every NPC (civilians +
         // Lacklandist soldiers), independent of the soldier-only
         // visual loop below.
-        self.tick_enemy_ai_acoustic_detection(&pc_snapshots);
+        self.tick_enemy_ai_acoustic_detection(&world);
 
         // ── 3. Per-enemy RefreshDetection loop. ──────────────────
-        let (transitions, out_of_view_dispatches) = self.tick_enemy_ai_refresh_detection(
-            assets,
-            &pc_snapshots,
-            &soldier_snapshots,
-            &ko_money_fight_soldiers,
-            &primary_target_multiplicity,
-            &pc_forecasts,
-            &npc_jump_lines,
-        );
+        let (transitions, out_of_view_dispatches) =
+            self.tick_enemy_ai_refresh_detection(assets, &scratch, &world);
 
         // ── 3b. Royalist detection — reveal blipped enemies. ────
-        self.tick_enemy_ai_royalist_detection(assets);
+        self.tick_enemy_ai_royalist_detection(assets, &world);
 
         // ── 3c. Per-NPC non-Enemy detection. ────────────────────
         // The per-`type` outer loop arms of `refresh_detection` for
@@ -3880,17 +3893,18 @@ impl EngineInner {
         // MissedFriend / Beggar.  Builds a per-tick target map first
         // so each NPC's pass can dereference target metadata without
         // re-borrowing `self.entities`.
-        let (human_targets, object_targets) = self.tick_enemy_ai_build_human_object_targets();
-        self.tick_enemy_ai_refresh_per_type_detection(assets, &human_targets, &object_targets);
+        self.tick_enemy_ai_refresh_per_type_detection(assets, &world);
 
         // ── 4. Log + pursue + alert nearby allies ───────────────
         self.tick_enemy_ai_alert_allies(&transitions);
 
         // ── 4b. Lost-sight EVENT_OUTOFVIEW dispatch. ───────────────
-        self.tick_enemy_ai_dispatch_out_of_view(out_of_view_dispatches, &pc_snapshots);
+        self.tick_enemy_ai_dispatch_out_of_view(out_of_view_dispatches, &world.pcs);
 
-        // ── 6. Pursuit / approach / combat stance ────────────────
-        self.tick_enemy_ai_pursuit_approach(assets, &scratch, transitions);
+        // Commit detection-local presentation state. Normal timer polling is
+        // deliberately not part of this pass; NPC::Hourglass polls it only
+        // after ambush, busy/ladder, lock gating, and The16thFrame.
+        self.tick_enemy_ai_commit_detection_transitions(transitions);
 
         // ── 6c. Process pending AI swordfight requests. ─────────
         self.tick_enemy_ai_drain_swordfight_requests(assets);
@@ -4438,7 +4452,7 @@ impl EngineInner {
             };
             let charly_pos = self
                 .entities
-                .id_at_index(charly_handle)
+                .id_at_legacy_slot(charly_handle)
                 .and_then(|charly_id| self.entities.get(charly_id))
                 .map(|e| {
                     let pm = e.element_data().position_map();
@@ -7242,12 +7256,24 @@ impl EngineInner {
         let scratch = self.build_sim_scratch(assets);
 
         let current_frame = self.frame_counter;
-        let frame_phase = (current_frame % 16) as u8;
 
         for npc_id in self.entities.npc_ids().collect::<Vec<_>>() {
-            // Stagger: each NPC runs on a different frame within the
-            // 16-frame window, matching per-actor `hourglass` phasing.
-            if (npc_id.index() % 16) != frame_phase as u32 {
+            // Exact original phase:
+            //   (frame & 255) - ((register_number + 100) & 255)
+            // with unsigned-byte wrap. Passing the full phase matters:
+            // The16thFrame uses bits 4..5 to reduce some work to every
+            // 64th frame, so substituting `frame % 16` ran that work 4x.
+            let frame_phase = npc_hourglass_frame_phase(current_frame, npc_id.index());
+            if (frame_phase & 15) != 0 {
+                continue;
+            }
+
+            let locked = self.entities.get(npc_id).is_some_and(|entity| {
+                entity
+                    .ai_controller()
+                    .is_some_and(|ai| !ai.locks_flag_field.is_empty() || ai.script_locked)
+            });
+            if locked {
                 continue;
             }
 
@@ -7278,7 +7304,7 @@ impl EngineInner {
                 continue;
             };
 
-            if !entity.element_data().active {
+            if !entity.element_data().active || entity.is_dead() {
                 continue;
             }
 
@@ -7317,22 +7343,51 @@ impl EngineInner {
                             is_idle,
                             sequence_null_about_to_launch,
                         );
-
-                        // `random_speech(frame_phase)` — runs every
-                        // 256 frames per civilian, staggered by id.
-                        // Formula: `(frame & 255) - ((id + 100) & 255)`.
-                        // `random_speech` early-exits unless the
-                        // resulting phase is 0, so a wider visit
-                        // cadence here is a no-op on non-trigger frames.
-                        let id_offset = (npc_id.index().wrapping_add(100)) & 255;
-                        let civ_phase = ((current_frame & 255).wrapping_sub(id_offset)) as u8;
-                        friendly_ai.random_speech(civ_phase, &ctx);
                     }
                     // `tick_data` is only used for enemies; civilians
                     // don't need it.
                     let _ = &tick_data;
                 }
                 _ => {}
+            }
+        }
+    }
+
+    /// Civilian `RandomSpeech(ubFramePhase)` call from NPC Hourglass.
+    /// It sits before the lock gate and only acts at exact phase zero.
+    pub(super) fn tick_civilian_random_speech(&mut self, assets: &LevelAssets) {
+        let current_frame = self.frame_counter;
+        let due: Vec<_> = self
+            .entities
+            .npc_ids()
+            .filter(|&npc_id| {
+                matches!(self.entities.get(npc_id), Some(Entity::Civilian(_)))
+                    && npc_hourglass_frame_phase(current_frame, npc_id.index()) == 0
+            })
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+
+        let scratch = self.build_sim_scratch(assets);
+        for npc_id in due {
+            let Some(entity) = self.entities.get_mut(npc_id) else {
+                continue;
+            };
+            let ctx = build_ai_context_from_entity(
+                entity,
+                current_frame,
+                None,
+                self.weather.is_forest_level,
+                self.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.fast_grid,
+                &assets.hiking_paths,
+                &self.ai_global.all_soldier_handles,
+            );
+            if let Some(friendly_ai) = entity.friendly_ai_mut() {
+                friendly_ai.random_speech(0, &ctx);
             }
         }
     }
@@ -7436,8 +7491,10 @@ impl EngineInner {
         let npc_ids: Vec<EntityId> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
-            // Read macro-timer state without holding a borrow.
-            let fire = {
+            // Read macro-timer state without holding a borrow. The original
+            // stops an elapsed macro timer even if the NPC has since left
+            // DefaultInMacro; only command execution is substate-gated.
+            let (fire, execute) = {
                 let Some(entity) = self.entities.get(npc_id) else {
                     continue;
                 };
@@ -7447,11 +7504,16 @@ impl EngineInner {
                     _ => None,
                 };
                 base.map(|ai| {
-                    ai.macro_timer_is_running
-                        && ai.when_does_macro_timer_ring <= current_frame
-                        && ai.current_substate == crate::ai::Substate::DefaultInMacro
+                    let unlocked = ai.locks_flag_field.is_empty() && !ai.script_locked;
+                    let fire = unlocked
+                        && ai.macro_timer_is_running
+                        && ai.when_does_macro_timer_ring <= current_frame;
+                    (
+                        fire,
+                        fire && ai.current_substate == crate::ai::Substate::DefaultInMacro,
+                    )
                 })
-                .unwrap_or(false)
+                .unwrap_or((false, false))
             };
             if !fire {
                 continue;
@@ -7486,7 +7548,9 @@ impl EngineInner {
             };
             if let Some(base) = base_opt {
                 base.macro_timer_is_running = false;
-                base.execute_next_macro_command(&ctx);
+                if execute {
+                    base.execute_next_macro_command(&ctx);
+                }
             }
         }
     }

@@ -11,7 +11,9 @@ use crate::player_command::PlayerInput;
 use crate::replay::{ReplayPlayer, ReplayRecorder};
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
-use crate::sim_timeline::{RECENT_TIMELINE_HISTORY_FRAMES, RecentTimelineHistory};
+use crate::sim_timeline::{
+    CheckpointPolicy, RECENT_TIMELINE_HISTORY_FRAMES, RetentionPolicy, SnapshotHistory,
+};
 use robin_engine::engine::{Engine, LevelAssets};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -98,7 +100,7 @@ pub(super) struct MissionRuntime {
     pub(super) replay_finished_logged: bool,
 
     pub(super) peer_hashes: BTreeMap<u32, u64>,
-    pub(super) recent_timeline_history: RecentTimelineHistory,
+    pub(super) recent_timeline_history: SnapshotHistory,
     pub(super) mp_start_gate: Option<u64>,
     pub(super) mp_waiting_for_initial_snapshot: bool,
     pub(super) mp_waiting_for_begin_sim: bool,
@@ -126,7 +128,12 @@ impl MissionRuntime {
             start_paused: replay.start_paused,
             replay_finished_logged: false,
             peer_hashes: BTreeMap::new(),
-            recent_timeline_history: RecentTimelineHistory::new(RECENT_TIMELINE_HISTORY_FRAMES),
+            recent_timeline_history: SnapshotHistory::new(
+                CheckpointPolicy::EveryFrame,
+                RetentionPolicy::Latest {
+                    capacity: RECENT_TIMELINE_HISTORY_FRAMES,
+                },
+            ),
             mp_start_gate: None,
             mp_waiting_for_initial_snapshot: wait_for_multiplayer_start && !local_is_host,
             mp_waiting_for_begin_sim: wait_for_multiplayer_start,

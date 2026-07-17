@@ -771,6 +771,74 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
     })
 }
 
+fn set_experiences_test_host() -> (GameHost, i32) {
+    let actor = GameHost::actor_handle_from_index(0);
+    let profile_idx = crate::profiles::CharacterProfileIdx(0);
+    let mut status = crate::pc_status::PcStatus::default();
+    status.human_status.hand_to_hand = crate::pc_status::Skill {
+        experience: 37,
+        capacity: 11,
+    };
+    status.human_status.bow = crate::pc_status::Skill {
+        experience: 83,
+        capacity: 22,
+    };
+
+    let mut campaign = crate::campaign::Campaign::default();
+    campaign.characters.push(crate::campaign::PcDescription {
+        character_profile_idx: Some(profile_idx),
+        instanced: true,
+        status,
+    });
+
+    let mut host = GameHost::new();
+    host.entities = vec![Some(native_test_pc(Vec::new(), Vec::new()))];
+    host.pc_profile_map.insert(actor, profile_idx);
+    host.campaign = Some(campaign);
+    (host, actor)
+}
+
+fn call_set_experiences(host: &mut GameHost, actor: i32, sword: i32, bow: i32) {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(sword);
+    stack.push_i32(bow);
+    assert_eq!(
+        <GameHost as HostFunctions>::call(host, NativeFn::SetExperiences as u32, &mut stack),
+        0
+    );
+}
+
+#[test]
+fn set_experiences_updates_exact_backing_status_for_live_pc() {
+    let (mut host, actor) = set_experiences_test_host();
+
+    call_set_experiences(&mut host, actor, 64, 29);
+
+    let status = &host.campaign.as_ref().unwrap().characters[0].status;
+    assert_eq!(status.human_status.hand_to_hand.capacity, 64);
+    assert_eq!(status.human_status.hand_to_hand.experience, 37);
+    assert_eq!(status.human_status.bow.capacity, 29);
+    assert_eq!(status.human_status.bow.experience, 83);
+}
+
+#[test]
+fn set_experiences_capacities_persist_with_campaign_description() {
+    let (mut host, actor) = set_experiences_test_host();
+    call_set_experiences(&mut host, actor, 73, 41);
+
+    let encoded = serde_json::to_string(host.campaign.as_ref().unwrap())
+        .expect("serialize campaign after SetExperiences");
+    let restored: crate::campaign::Campaign =
+        serde_json::from_str(&encoded).expect("restore serialized campaign");
+
+    let status = &restored.characters[0].status;
+    assert_eq!(status.human_status.hand_to_hand.capacity, 73);
+    assert_eq!(status.human_status.hand_to_hand.experience, 37);
+    assert_eq!(status.human_status.bow.capacity, 41);
+    assert_eq!(status.human_status.bow.experience, 83);
+}
+
 #[test]
 fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
     let mut host = GameHost::new();

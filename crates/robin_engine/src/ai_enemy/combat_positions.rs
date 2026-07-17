@@ -3075,7 +3075,7 @@ impl EnemyAi {
                 &mut friends_positions,
                 &enemies_positions,
                 &tick.nearby_fighters,
-                &tick.profile_manager,
+                tick.required_profile_manager(),
                 iq,
             );
             if score > best_score {

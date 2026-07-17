@@ -3,9 +3,12 @@
 //! in-crate while the parser lived here; now they run as integration tests
 //! against both crates.
 
+mod support;
+
 use robin_assets::scb;
 use robin_engine::natives::GameHost;
 use robin_engine::script_manager::{ScriptError, ScriptManager};
+use support::{data_directory, data_file};
 
 /// Build a minimal .scb byte buffer with one class, one function.
 fn make_scb_bytes(class_name: &str, fn_name: &str, heap_size: i32, quads: &[scb::Quad]) -> Vec<u8> {
@@ -266,14 +269,14 @@ fn destroy_clears_state() {
 }
 
 /// Run the demo script's StartUp class through the ScriptManager API.
+///
+/// Original provenance: `original-code/RHgame.cpp:453-456` initializes the VM
+/// from the mission bytecode, and `original-code/RHengine.cpp:1077-1081`
+/// requires that mission bytecode to bind a `StartUp` class.
 #[test]
+#[ignore = "requires Leicester demo data via ROBINHOOD_DATA_DIR; see README.md"]
 fn demo_script_via_manager() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = std::path::PathBuf::from(manifest_dir)
-        .join("../../datadirs/demo/Data/Levels/Dem_Lei_MP.scb");
-    let Ok(path) = path.canonicalize() else {
-        return; // skip if no datadirs
-    };
+    let path = data_file("Data/Levels/Dem_Lei_MP.scb");
 
     let scb = scb::parse_file(&path).unwrap();
     let mut mgr = ScriptManager::new(scb);
@@ -302,14 +305,14 @@ fn demo_script_via_manager() {
 /// Exercises all fullgame scripts through the manager: load each .scb,
 /// create an instance of every class, list functions. Pure structural
 /// test — doesn't execute (engine stubs would cause wild branching).
+///
+/// Original provenance: `original-code/virtualmachine/SBSimpleVirtualMachine.cpp:32-45`
+/// constructs a VM instance by looking up its serialized class, while lines
+/// 97-111 implement the equivalent class-binding path.
 #[test]
+#[ignore = "requires full-game data via ROBINHOOD_DATA_DIR; see README.md"]
 fn load_all_fullgame_scripts_via_manager() {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let levels_dir =
-        std::path::PathBuf::from(manifest_dir).join("../../datadirs/fullgame/Data/Levels");
-    let Ok(levels_dir) = levels_dir.canonicalize() else {
-        return;
-    };
+    let levels_dir = data_directory("Data/Levels");
 
     let mut scripts = 0;
     let mut total_classes = 0;
