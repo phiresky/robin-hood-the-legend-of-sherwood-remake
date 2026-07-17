@@ -2086,13 +2086,14 @@ impl MissionScript {
     /// campaign-style side effects (e.g. `ConfiscateMoney` crediting
     /// collected money) land on the engine's per-mission counter rather
     /// than a private GameHost copy.
-    pub fn swap_engine_state(
+    pub(crate) fn swap_engine_state(
         &mut self,
         entities: &mut crate::entities::Entities,
         ai_global: &mut crate::ai::AiGlobalState,
         fast_grid: &mut crate::fast_find_grid::FastFindGrid,
         campaign: &mut Option<crate::campaign::Campaign>,
         mission_stat: &mut crate::mission_stat::MissionStat,
+        script_domains: &mut super::state::ScriptDomains,
     ) {
         match self.campaign_lease.take() {
             None => {
@@ -2109,6 +2110,7 @@ impl MissionScript {
         std::mem::swap(&mut self.game_host.ai_global, ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, fast_grid);
         std::mem::swap(&mut self.game_host.mission_stat, mission_stat);
+        std::mem::swap(&mut self.game_host.engine_domains, script_domains);
     }
 
     /// Borrow the live engine state for one script/native dispatch.
@@ -2125,6 +2127,7 @@ impl MissionScript {
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
         campaign: &'a mut Option<crate::campaign::Campaign>,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
+        script_domains: &'a mut super::state::ScriptDomains,
         queries: crate::natives::NativeQueryViews<'a>,
         script_this: Option<i32>,
     ) -> ScriptContext<'a> {
@@ -2137,6 +2140,7 @@ impl MissionScript {
             fast_grid,
             campaign,
             mission_stat,
+            script_domains,
             queries,
             script_this,
         )
@@ -2275,6 +2279,7 @@ pub(crate) struct ScriptContext<'a> {
     campaign: &'a mut Option<crate::campaign::Campaign>,
     campaign_identity: CampaignIdentity,
     mission_stat: &'a mut crate::mission_stat::MissionStat,
+    script_domains: &'a mut super::state::ScriptDomains,
     saved_script_this: Option<i32>,
 }
 
@@ -2288,6 +2293,7 @@ impl<'a> ScriptContext<'a> {
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
         campaign: &'a mut Option<crate::campaign::Campaign>,
         mission_stat: &'a mut crate::mission_stat::MissionStat,
+        script_domains: &'a mut super::state::ScriptDomains,
         queries: crate::natives::NativeQueryViews<'a>,
         script_this: Option<i32>,
     ) -> Self {
@@ -2296,6 +2302,7 @@ impl<'a> ScriptContext<'a> {
         std::mem::swap(&mut game_host.fast_grid, fast_grid);
         let campaign_identity = lend_required_campaign(campaign, &mut game_host.campaign);
         std::mem::swap(&mut game_host.mission_stat, mission_stat);
+        std::mem::swap(&mut game_host.engine_domains, script_domains);
 
         let saved_script_this =
             script_this.map(|value| std::mem::replace(&mut game_host.script_this, value));
@@ -2311,6 +2318,7 @@ impl<'a> ScriptContext<'a> {
             campaign,
             campaign_identity,
             mission_stat,
+            script_domains,
             saved_script_this,
         }
     }
@@ -2339,6 +2347,7 @@ impl Drop for ScriptContext<'_> {
         std::mem::swap(&mut self.game_host.ai_global, self.ai_global);
         std::mem::swap(&mut self.game_host.fast_grid, self.fast_grid);
         std::mem::swap(&mut self.game_host.mission_stat, self.mission_stat);
+        std::mem::swap(&mut self.game_host.engine_domains, self.script_domains);
         reclaim_required_campaign(
             self.campaign,
             &mut self.game_host.campaign,
@@ -2367,6 +2376,7 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut script_domains = super::state::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
@@ -2378,6 +2388,7 @@ mod campaign_ownership_tests {
             &mut fast_grid,
             campaign,
             &mut mission_stat,
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
             None,
         );
@@ -2482,6 +2493,7 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut script_domains = super::state::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
@@ -2493,6 +2505,7 @@ mod campaign_ownership_tests {
             &mut fast_grid,
             &mut engine_campaign,
             &mut mission_stat,
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
             None,
         );

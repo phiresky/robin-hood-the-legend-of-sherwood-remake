@@ -64,7 +64,7 @@ mod simulation_gate;
 mod snapshot;
 mod soldier_helpers;
 mod special_motion;
-mod state;
+pub(crate) mod state;
 pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;
@@ -184,6 +184,10 @@ pub struct EngineInner {
 
     /// Authoritative entities and the spatial state indexed alongside them.
     pub(crate) world: WorldState,
+
+    /// Deterministic world-script domains temporarily leased to native
+    /// dispatch while the legacy script transaction is active.
+    pub(crate) script_domains: state::ScriptDomains,
 
     /// Deterministic orders, sequences, timers, messages, and existing
     /// deferred-gameplay queues.
@@ -433,6 +437,7 @@ impl EngineInner {
             control: SimulationControl::new(0),
             ai: AiRuntime::new(),
             world: WorldState::new(),
+            script_domains: state::ScriptDomains::default(),
             orders: OrderRuntime::new(),
 
             script_globals: Vec::new(),
@@ -3516,6 +3521,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         let result = script.post_initialize(queries);
         script.swap_engine_state(
@@ -3524,6 +3530,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 

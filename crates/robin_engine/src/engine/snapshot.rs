@@ -78,6 +78,8 @@ struct FlatEngineSnapshot {
     dynamic_sight_obstacles: Vec<crate::sight_obstacle::SightObstacle>,
     static_sight_obstacle_active: Vec<bool>,
     campaign: Option<crate::campaign::Campaign>,
+    #[serde(default)]
+    script_domains: Option<super::state::ScriptDomains>,
 }
 
 impl Serialize for EngineInner {
@@ -85,7 +87,7 @@ impl Serialize for EngineInner {
     where
         S: Serializer,
     {
-        let mut snapshot = serializer.serialize_struct("EngineInner", 51)?;
+        let mut snapshot = serializer.serialize_struct("EngineInner", 52)?;
         snapshot.serialize_field("sim_config", &self.sim_config)?;
         snapshot.serialize_field("mission", &self.mission_domain.state)?;
         snapshot.serialize_field("frame_counter", &self.control.frame_counter)?;
@@ -158,6 +160,7 @@ impl Serialize for EngineInner {
             &self.world.static_sight_obstacle_active,
         )?;
         snapshot.serialize_field("campaign", &self.mission_domain.campaign)?;
+        snapshot.serialize_field("script_domains", &self.script_domains)?;
         snapshot.end()
     }
 }
@@ -203,6 +206,7 @@ impl<'de> Deserialize<'de> for EngineInner {
                 dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
                 static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
             },
+            script_domains: snapshot.script_domains.unwrap_or_default(),
             script_globals: snapshot.script_globals,
             orders: OrderRuntime {
                 next_order_id: snapshot.next_order_id,

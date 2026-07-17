@@ -830,6 +830,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
 
             // ── Phase 1: Per-actor Initialize ──
@@ -950,6 +951,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -1002,6 +1004,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
             if let Err(e) = script.finalize(abandoned, queries) {
                 tracing::warn!("Script Finalize failed: {e}");
@@ -1012,6 +1015,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
     }
@@ -1087,6 +1091,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for (handle, new_anim, old_anim) in &changes {
@@ -1106,6 +1111,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -1167,6 +1173,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         // Per-scroll `Hourglass` is distinct from the engine script
@@ -1184,6 +1191,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -1252,6 +1260,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         let result = script.call_scroll_function(handle, "IsTaken", &[pc_handle], queries);
         script.swap_engine_state(
@@ -1260,6 +1269,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -1517,6 +1527,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for &(zone_idx, _, handle) in &entries {
@@ -1531,6 +1542,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -1662,6 +1674,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for &(zone_idx, _, handle) in &enter_events {
@@ -1681,6 +1694,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -1885,6 +1899,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
 
             // Per-actor ProcessMessage
@@ -1935,6 +1950,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -1973,6 +1989,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
             for &(target_handle, pc_handle, fn_name) in calls {
                 if let Err(e) =
@@ -1987,6 +2004,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);
@@ -2074,6 +2092,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         let result = script.call_actor_function(handle, "FilterAIEvent", &[source, code], queries);
         script.swap_engine_state(
@@ -2082,6 +2101,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
 
@@ -2224,6 +2244,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
 
         for (handle, source, code) in &notifications {
@@ -2238,6 +2259,7 @@ impl EngineInner {
             &mut self.world.fast_grid,
             &mut self.mission_domain.campaign,
             &mut self.mission_domain.mission_stat,
+            &mut self.script_domains,
         );
         self.sync_game_host_post_script(assets);
     }
@@ -3703,6 +3725,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
                 queries,
                 this_actor,
             );

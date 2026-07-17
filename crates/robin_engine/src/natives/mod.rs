@@ -156,6 +156,13 @@ pub struct GameHost {
     /// pickup path.
     pub mission_stat: crate::mission_stat::MissionStat,
 
+    /// Engine-owned script domains parked here only while the legacy script
+    /// transaction is active. The canonical value is serialized by
+    /// `EngineInner`, never as part of the native dispatcher.
+    #[serde(skip)]
+    #[state_hash(skip)]
+    pub(crate) engine_domains: crate::engine::state::ScriptDomains,
+
     /// Handle of the entity whose script is currently running.
     pub script_this: i32,
 
@@ -269,6 +276,7 @@ impl GameHost {
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             campaign: None,
             mission_stat: crate::mission_stat::MissionStat::default(),
+            engine_domains: crate::engine::state::ScriptDomains::default(),
             commands: Vec::new(),
             outline_display: false,
             script_this: 0,

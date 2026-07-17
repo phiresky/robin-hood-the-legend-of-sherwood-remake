@@ -7483,6 +7483,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
             for &(npc_id, path_idx, wp_idx) in &requests {
                 let actor_handle = crate::natives::GameHost::actor_handle(npc_id);
@@ -7514,6 +7515,7 @@ impl EngineInner {
                 &mut self.world.fast_grid,
                 &mut self.mission_domain.campaign,
                 &mut self.mission_domain.mission_stat,
+                &mut self.script_domains,
             );
         }
         self.sync_game_host_post_script(assets);

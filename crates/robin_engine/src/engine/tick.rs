@@ -739,6 +739,7 @@ impl EngineInner {
                     &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
+                    &mut self.script_domains,
                 );
                 if let Err(e) = script.hourglass(game_seconds, queries) {
                     tracing::warn!("Script Hourglass error: {e}");
@@ -749,6 +750,7 @@ impl EngineInner {
                     &mut self.world.fast_grid,
                     &mut self.mission_domain.campaign,
                     &mut self.mission_domain.mission_stat,
+                    &mut self.script_domains,
                 );
             }
 
@@ -771,6 +773,7 @@ impl EngineInner {
                         &mut self.world.fast_grid,
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
+                        &mut self.script_domains,
                     );
                     let victory_result = script.check_victory_condition(game_seconds, queries);
                     script.swap_engine_state(
@@ -779,6 +782,7 @@ impl EngineInner {
                         &mut self.world.fast_grid,
                         &mut self.mission_domain.campaign,
                         &mut self.mission_domain.mission_stat,
+                        &mut self.script_domains,
                     );
 
                     // Put the script back before syncing side-effects.
