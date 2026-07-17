@@ -2936,7 +2936,7 @@ impl EngineInner {
     /// and call `my_dear_friends_please_please_detect_me` to broadcast
     /// DETECTABLE_BODY to every other NPC.
     pub(super) fn tick_inform_my_friends(&mut self) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -3073,7 +3073,7 @@ impl EngineInner {
     /// Runs after `tick_inform_my_friends` so a "down → up → down"
     /// flicker in the same frame resolves to the freshest state.
     pub(super) fn tick_ai_pending_resurrection_and_eyes(&mut self) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -3134,7 +3134,7 @@ impl EngineInner {
     /// Per-frame view parameter refresh for every NPC.  The
     /// `refresh_view()` call inside `perform_refresh`.
     pub(super) fn refresh_npc_views(&mut self) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -3850,7 +3850,7 @@ impl EngineInner {
     }
 
     pub(super) fn tick_enemy_ai(&mut self, assets: &LevelAssets) {
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -5894,7 +5894,7 @@ impl EngineInner {
     pub(super) fn tick_patrol_coordination(&mut self, assets: &LevelAssets) {
         use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7250,7 +7250,7 @@ impl EngineInner {
     // the same frame.
 
     pub(super) fn tick_periodic_ai(&mut self, assets: &LevelAssets) {
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7401,7 +7401,7 @@ impl EngineInner {
     // `check_ambush_point`.
 
     pub(super) fn tick_refresh_ambush_points(&mut self, assets: &LevelAssets) {
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
         if self.ai_global.ambush_points.is_empty() {
@@ -7476,7 +7476,7 @@ impl EngineInner {
     // the common macro opcodes too (REVERSE_PATH, WAIT, GOTO_POINT,
     // FACE_TO, ...).
     pub(super) fn tick_ai_macro_timers(&mut self, assets: &LevelAssets) {
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7573,7 +7573,7 @@ impl EngineInner {
     // fire.  Bumping the ring frame in lock-step with the lock keeps
     // it strictly greater than `current_frame`, preventing a fire.
     pub(super) fn tick_npc_locked_frame_timer_bumps(&mut self) {
-        let frozen = self.freeze_all;
+        let frozen = self.actors_frozen();
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
             let Some(entity) = self.entities.get_mut(npc_id) else {
@@ -7606,7 +7606,7 @@ impl EngineInner {
     // the same frame does not suppress this counter (the BUSY lock is
     // exactly what we want to escape from).
     pub(super) fn tick_npc_stuck_on_ladder(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         let scratch = self.build_sim_scratch(assets);

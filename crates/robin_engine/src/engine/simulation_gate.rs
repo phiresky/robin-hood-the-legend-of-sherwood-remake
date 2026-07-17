@@ -19,15 +19,50 @@
 #[derive(
     Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
 )]
-pub struct SimulationGateState {
+pub(crate) struct SimulationGateState {
     /// Whether sequence/camera state locks the engine's post-counter work.
-    pub(crate) lock_engine: bool,
+    lock_engine: bool,
     /// Whether actor updates are frozen by script or cheat state.
-    pub(crate) freeze_all: bool,
+    freeze_all: bool,
     /// Presentation frames left in a blocking fade.
     ///
     /// The triggering tick presents the first frame, hence a `2 * speed` fade
     /// stores `2 * speed - 1` here.
-    #[serde(default)]
-    pub(crate) fade_freeze_frames_remaining: u32,
+    fade_freeze_frames_remaining: u32,
+}
+
+impl SimulationGateState {
+    pub(super) fn engine_locked(&self) -> bool {
+        self.lock_engine
+    }
+
+    pub(super) fn set_engine_locked(&mut self, locked: bool) {
+        self.lock_engine = locked;
+    }
+
+    pub(super) fn actors_frozen(&self) -> bool {
+        self.freeze_all
+    }
+
+    pub(super) fn set_actors_frozen(&mut self, frozen: bool) {
+        self.freeze_all = frozen;
+    }
+
+    #[cfg(test)]
+    pub(super) fn fade_freeze_frames_remaining(&self) -> u32 {
+        self.fade_freeze_frames_remaining
+    }
+
+    pub(super) fn set_fade_freeze_frames_remaining(&mut self, frames: u32) {
+        self.fade_freeze_frames_remaining = frames;
+    }
+
+    /// Consume one presentation-only fade frame without advancing simulation.
+    pub(super) fn consume_fade_freeze_frame(&mut self) -> bool {
+        if self.fade_freeze_frames_remaining == 0 {
+            return false;
+        }
+        self.fade_freeze_frames_remaining -= 1;
+        true
+    }
 }

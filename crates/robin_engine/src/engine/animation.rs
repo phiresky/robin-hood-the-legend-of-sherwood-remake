@@ -2702,7 +2702,7 @@ impl EngineInner {
         &mut self,
         assets: &crate::engine::types::LevelAssets,
     ) -> (Vec<EntityId>, Vec<EntityId>, AnimCompletionOutcomes) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return (Vec::new(), Vec::new(), AnimCompletionOutcomes::default());
         }
 

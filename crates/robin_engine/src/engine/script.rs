@@ -443,7 +443,7 @@ impl EngineInner {
                         }
                     }
                     crate::natives::DeferredCommand::FreezeAll { freeze } => {
-                        self.freeze_all = freeze;
+                        self.set_actors_frozen(freeze);
                     }
                     crate::natives::DeferredCommand::HandleDeath { actor } => {
                         if let Some(id) = self.entity_id_for_actor_handle(actor) {
@@ -2656,7 +2656,7 @@ impl EngineInner {
                             frames_remaining: total_frames,
                         })
                     });
-                    self.fade_freeze_frames_remaining = total_frames.saturating_sub(1);
+                    self.set_fade_freeze_frames_remaining(total_frames.saturating_sub(1));
                 }
                 EngineCommand::SetOutlineDisplay { display: show } => {
                     // Forward `MSG_SWITCH_MASKED_DISPLAY` when the

@@ -202,8 +202,7 @@ impl EngineInner {
         // display-state, or sound timer. A frame-counter deadline cannot
         // represent this: advancing that clock would mature every deadline
         // that is supposed to remain frozen during the blocking native.
-        if self.fade_freeze_frames_remaining > 0 {
-            self.fade_freeze_frames_remaining -= 1;
+        if self.consume_fade_freeze_frame() {
             let mut fx = std::mem::take(&mut self.pending_side_effects);
             fx.code = GameCode::LevelInProgress;
             // Fast-forward render skipping must not strand the host fade.
@@ -331,7 +330,7 @@ impl EngineInner {
     /// reaches 0, fire `element_terminated` on that element so the
     /// next hourglass pass advances past it.
     fn tick_actor_wait_timers(&mut self) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         // Two-pass to avoid overlapping borrows of `self.entities`
@@ -622,7 +621,7 @@ impl EngineInner {
         // ── Skip logic if engine is locked (zoom, sequence, etc) ─
         if display.background_transform.zoom_to_up
             || display.background_transform.zoom_to_down
-            || self.lock_engine
+            || self.engine_locked()
         {
             return GameCode::LevelInProgress;
         }
@@ -1160,7 +1159,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(());
         self.tick_apple_smell();
         self.tick_soldier_track_primary_target();
-        if !self.freeze_all && !self.ai_global.freeze {
+        if !self.actors_frozen() && !self.ai_global.freeze {
             let scratch = self.build_sim_scratch(assets);
             self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
         }
@@ -7886,7 +7885,7 @@ impl EngineInner {
                         _ => None,
                     })
                     .unwrap_or(false);
-                self.freeze_all = freeze;
+                self.set_actors_frozen(freeze);
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
             }
             Some(Command::CharacterAvailable) => {
