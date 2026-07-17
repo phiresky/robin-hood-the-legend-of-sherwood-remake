@@ -20,6 +20,7 @@ use crate::game_render::{
 use crate::host::PrintScreenRequest;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
+use crate::presentation::{PresentationFrameId, ZoomPresentationUpdate};
 use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
 use crate::sherwood_hud::{self, SherwoodButtonEnable, SherwoodTooltipTracker};
 use crate::sound::MusicMode;
@@ -38,16 +39,43 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
 
+/// Update the zoom-HUD presentation area once for the current simulation
+/// frame. The renderer retains the frame-addressed immutable snapshot so all
+/// render passes in this loop iteration consume identical data.
+///
+/// Original provenance:
+/// - `original-code/sblibng/SBUI.cpp`, `SBUI::Update`: tooltip focus/timer
+///   state advances before `SBUI::Display` draws it (lines 382-433).
+/// - `original-code/RHgame.cpp`, `RHGame::InitializeInterface`: the Zoom+ and
+///   Zoom- widgets receive their localized tooltips (lines 538-545).
+fn update_zoom_presentation(
+    engine: &Engine,
+    display: &engine_api::HostDisplayState,
+    host: &Host,
+    ctx: &mut RenderContext<'_>,
+) {
+    let frame_id = PresentationFrameId::new(engine.frame_counter());
+    let enable = ZoomButtonEnable::from_engine(engine, display);
+    let mouse = ctx.threaded_input.position();
+    let hovered = ctx
+        .zoom_layout
+        .hit_test_geometric(mouse.x as i32, mouse.y as i32);
+    let input = ZoomPresentationUpdate::new(enable, hovered, host.input.left_mouse_down);
+    ctx.renderer
+        .update_zoom_presentation(frame_id, input, &mut *ctx.zoom_tooltip);
+}
+
 /// Render a throwaway frame per pending `/screenshot` request, reply
 /// with the captured PNG, then clear the offscreen target for the
 /// live frame.  No-op when nothing is pending.
 ///
 /// Each screenshot renders against a **clone** of `dev` with its own
-/// debug-flag overrides — the live `dev` is never mutated.  Tooltip
-/// trackers (hover timers) are snapshotted and restored around each
-/// render so screenshots don't double-advance them for the live
-/// frame.  `host.input` hover state (focused_entity_id etc.) is not
-/// restored because the live `render_frame` overwrites it anyway.
+/// debug-flag overrides — the live `dev` is never mutated. Tooltip trackers
+/// that have not yet moved to immutable presentation data are snapshotted
+/// and restored around each render. The zoom HUD is prepared once per engine
+/// frame and needs no clone/restore workaround. `host.input` hover state
+/// (focused_entity_id etc.) is not restored because the live `render_frame`
+/// overwrites it anyway.
 pub(super) fn drain_screenshots(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
@@ -56,6 +84,10 @@ pub(super) fn drain_screenshots(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
+    // This is the normal frame's update boundary even when there are no HTTP
+    // requests. The live draw later in the loop only reads the snapshot.
+    update_zoom_presentation(engine, display, host, ctx);
+
     let pending = crate::http_server::take_pending_screenshots();
     if pending.is_empty() {
         return;
@@ -66,7 +98,6 @@ pub(super) fn drain_screenshots(
 
         // Snapshot tooltip timers so this throwaway render doesn't
         // double-advance them for the live frame.
-        let saved_zoom = ctx.zoom_tooltip.clone();
         let saved_corner = ctx.corner_tooltip.clone();
         let saved_requirements = ctx.requirements_tooltip.clone();
         let saved_blazon = ctx.blazon_tooltip.clone();
@@ -83,7 +114,6 @@ pub(super) fn drain_screenshots(
 
         // Restore the trackers so the live render sees the pre-screenshot
         // state.
-        *ctx.zoom_tooltip = saved_zoom;
         *ctx.corner_tooltip = saved_corner;
         *ctx.requirements_tooltip = saved_requirements;
         *ctx.blazon_tooltip = saved_blazon;
@@ -111,7 +141,8 @@ pub(super) fn capture_save_thumbnail(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> Option<Thumbnail> {
-    let saved_zoom = ctx.zoom_tooltip.clone();
+    update_zoom_presentation(engine, display, host, ctx);
+
     let saved_corner = ctx.corner_tooltip.clone();
     let saved_requirements = ctx.requirements_tooltip.clone();
     let saved_blazon = ctx.blazon_tooltip.clone();
@@ -135,7 +166,6 @@ pub(super) fn capture_save_thumbnail(
         }
     };
 
-    *ctx.zoom_tooltip = saved_zoom;
     *ctx.corner_tooltip = saved_corner;
     *ctx.requirements_tooltip = saved_requirements;
     *ctx.blazon_tooltip = saved_blazon;
@@ -236,6 +266,8 @@ pub(super) fn drain_wide_print_screen(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> bool {
+    update_zoom_presentation(engine, display, host, ctx);
+
     let level_w = host.viewport.level_size.x.ceil() as u32;
     let level_h = host.viewport.level_size.y.ceil() as u32;
     if level_w == 0 || level_h == 0 {
@@ -602,7 +634,9 @@ pub struct RenderContext<'a> {
     pub titbit_renderer: &'a mut crate::titbit_renderer::TitbitRenderer,
     pub console_overlay: &'a mut crate::console_overlay::ConsoleOverlay,
 
-    // Mutable per-frame UI trackers (tooltip hover timers).
+    // Update-owned per-frame UI trackers (tooltip hover timers). The zoom
+    // tracker is only mutated by `update_zoom_presentation`; remaining
+    // trackers still await migration out of the draw pass.
     pub zoom_tooltip: &'a mut ZoomTooltipTracker,
     pub corner_tooltip: &'a mut CornerTooltipTracker,
     pub requirements_tooltip: &'a mut crate::ui_panel::RequirementsTooltipTracker,
@@ -649,6 +683,8 @@ pub struct RenderContext<'a> {
 /// The caller is responsible for:
 /// - running `pre_render_engine_setup` before this function (drain
 ///   deferred bg blits, sort display order);
+/// - preparing the zoom presentation through the screenshot/thumbnail/wide
+///   update boundary before drawing;
 /// - calling `renderer.present()` after this function returns;
 /// - running `post_render_engine_cleanup` to clear one-shot NPC flags;
 /// - skipping the whole trio in fast-forward (`host.skip_render`).
@@ -660,6 +696,16 @@ pub(super) fn render_frame(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
+    // Rendering only reads the zoom presentation prepared at the update
+    // boundary. A missing or stale snapshot is an ordering error, never a
+    // reason to invent default button state.
+    let zoom_frame_id = PresentationFrameId::new(engine.frame_counter());
+    let zoom_mouse = ctx.threaded_input.position();
+    let zoom_presentation = *ctx
+        .renderer
+        .zoom_presentation(zoom_frame_id)
+        .unwrap_or_else(|err| panic!("render_frame requires prepared zoom presentation: {err}"));
+
     // Unpack once — the function body is long and every deref is
     // noisy.  All fields are `&'a mut T` / `&'a T`, so this is a
     // reborrow, not a move.
@@ -669,7 +715,6 @@ pub(super) fn render_frame(
     let selection_mark_renderer = &mut *ctx.selection_mark_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
     let console_overlay = &mut *ctx.console_overlay;
-    let zoom_tooltip = &mut *ctx.zoom_tooltip;
     let corner_tooltip = &mut *ctx.corner_tooltip;
     let requirements_tooltip = &mut *ctx.requirements_tooltip;
     let blazon_tooltip = &mut *ctx.blazon_tooltip;
@@ -1124,39 +1169,41 @@ pub(super) fn render_frame(
         sherwood_tooltip.update(None);
     }
 
-    // Zoom HUD buttons (ZoomUp / ZoomDown) on the lower panel.
-    // Enable state is derived directly from `Engine::is_zoom_possible`
-    // + the directional predicates — recomputing each frame is
-    // cheaper than latching state.  Sprite state follows the
-    // disabled/normal/hover/pressed scheme so the visuals reuse the
-    // BTTN resource frames the original game ships.
+    // Zoom HUD buttons (ZoomUp / ZoomDown) on the lower panel. All button
+    // and tooltip decisions were prepared in the update phase above; this
+    // complete area now only consumes immutable presentation data.
     {
-        let zoom_enable = ZoomButtonEnable::from_engine(engine, &host.engine_display);
-        let mp = threaded_input.position();
-        let hovered_btn = zoom_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
         let hover = ZoomHoverState {
-            hovered: hovered_btn,
-            mouse_pressed: host.input.left_mouse_down,
+            hovered: zoom_presentation.hovered.map(Into::into),
+            mouse_pressed: zoom_presentation.mouse_pressed,
         };
-        zoom_hud::draw_with_sprites(renderer, zoom_layout, zoom_enable, hover, zoom_sprites);
+        zoom_hud::draw_with_sprites(
+            renderer,
+            zoom_layout,
+            zoom_presentation.button_enable(),
+            hover,
+            zoom_sprites,
+        );
 
-        // Hover tooltip ("Zoom in" / "Zoom out").
-        zoom_tooltip.update(hovered_btn);
-        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
-            let (cw, ch) = cursor_renderer.current_frame_size();
-            zoom_hud::draw_tooltip(
-                renderer,
-                zoom_tooltip,
-                |btn| {
-                    let mt_id = zoom_hud::zoom_button_tooltip_mt_id(btn);
-                    resources.menu_text.get(mt_id)
-                },
-                &fonts.tooltip_font,
-                fonts.shadow_font.as_ref(),
-                mp.x as i32,
-                mp.y as i32,
-                (cw as i32, ch as i32),
-            );
+        if let (Some(tooltip), Some(resources), Some(fonts)) =
+            (zoom_presentation.ready_tooltip, menu_resources, hud_fonts)
+        {
+            let btn = tooltip.into();
+            let text = resources
+                .menu_text
+                .get(zoom_hud::zoom_button_tooltip_mt_id(btn));
+            if !text.is_empty() {
+                let (cw, ch) = cursor_renderer.current_frame_size();
+                crate::ui_panel::draw_screen_tooltip(
+                    renderer,
+                    &fonts.tooltip_font,
+                    fonts.shadow_font.as_ref(),
+                    &text,
+                    zoom_mouse.x as i32,
+                    zoom_mouse.y as i32,
+                    (cw as i32, ch as i32),
+                );
+            }
         }
     }
 
