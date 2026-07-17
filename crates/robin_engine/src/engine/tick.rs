@@ -9,6 +9,61 @@ use crate::game_operation::GameCode;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NpcHourglassPhase {
+    SoldierPrelude,
+    Patrol,
+    BaseHuman,
+    Broadcasts,
+    View,
+    Detection,
+    Ambush,
+    Busy,
+    Ladder,
+    LockGate,
+    SixteenthFrame,
+    NormalTimer,
+    MacroTimer,
+    QueuedStimuli,
+}
+
+#[cfg(test)]
+thread_local! {
+    static NPC_HOURGLASS_PHASE_TRACE: std::cell::RefCell<Option<Vec<NpcHourglassPhase>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
+    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(phase);
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn observe_npc_hourglass_phase(_phase: ()) {}
+
+#[cfg(test)]
+pub(super) fn capture_npc_hourglass_phases<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<NpcHourglassPhase>) {
+    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
+        assert!(trace.borrow().is_none(), "phase capture is not re-entrant");
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let phases = NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("phase capture must remain active")
+    });
+    (result, phases)
+}
+
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -1094,7 +1149,37 @@ impl EngineInner {
         // doesn't bleed into the next click-release action.
         let was_swordfighting = self.is_selected_pc_swordfighting();
 
+        // RHElementActorSoldier::Hourglass performs its subclass prelude
+        // before delegating to RHElementActorNPC::Hourglass: apple smell,
+        // primary-target tracking, and the reaction-time EnemyNear test.
+        // In particular, keep the target snap introduced by 24c43efde ahead
+        // of RefreshView without moving it into the base NPC phases.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::SoldierPrelude);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_apple_smell();
+        self.tick_soldier_track_primary_target();
+        if !self.freeze_all && !self.ai_global.freeze {
+            let scratch = self.build_sim_scratch(assets);
+            self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
+        }
+
+        // First base-NPC phase in RHElementActorNPC::Hourglass. Patrol
+        // history observes the actor before RHElementActorHuman::Hourglass
+        // executes its movement/order work.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_patrol_coordination(assets);
+
         // ── Element hourglass (per-element update) ───────────────
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::BaseHuman);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_concussion_healing(assets);
         let mut to_remove = Vec::new();
         for (id, entity) in self.entities.occupied_mut() {
             if !entity.hourglass() {
@@ -5300,6 +5385,10 @@ impl EngineInner {
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
             );
         }
+        // RHElementActorHuman::Hourglass performs its staggered tiredness
+        // recovery after the base actor/order work and before returning to
+        // RHElementActorNPC::Hourglass.
+        self.tick_tiredness(assets);
 
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
@@ -5341,11 +5430,10 @@ impl EngineInner {
         // NPCs whose `inform_my_friends` flag was set by
         // `set_concussion_of_the_brain` broadcast DETECTABLE_BODY to
         // every ally during Hourglass.
-        // Original: RHElementActorSoldier::Hourglass re-snaps these combat
-        // substates toward mpPrimaryTarget before delegating to
-        // RHElementActorNPC::Hourglass and its RefreshDetection pass.
-        self.tick_soldier_track_primary_target();
-
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Broadcasts);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_inform_my_friends();
 
         // ── Deferred resurrection-broadcast + eye-status apply ──
@@ -5355,12 +5443,35 @@ impl EngineInner {
         // own `eye_status` back to `LookForward`.
         self.tick_ai_pending_resurrection_and_eyes();
 
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::View);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.refresh_npc_views();
+
+        // RefreshDetection, including its synchronous Think side effects.
+        // Timer polling and the old lock-queue drain are separate tail
+        // phases below, exactly as in RHElementActorNPC::Hourglass.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_enemy_ai(assets);
+
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_refresh_ambush_points(assets);
 
         // ── Per-tick AILOCK_BUSY edge detector ─────────────────
         // Lock or unlock AILOCK_BUSY based on the live
         // `is_very_very_busy` predicate (posture or active PassDoor /
         // Fall element).  Runs after the view refresh.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Busy);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_npc_busy_edge_detect();
 
         // ── Stuck-on-ladder emergency counter ──────────────────
@@ -5368,7 +5479,13 @@ impl EngineInner {
         // ladders idling in CMD_WAIT/CMD_MOVE_WAITING; after 25
         // frames force a ReturnToDuty so the actor can self-recover.
         // Runs after the BUSY edge detector.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_npc_stuck_on_ladder(assets);
+
+        self.tick_civilian_random_speech(assets);
 
         // ── Locked-frame timer bumps ───────────────────────────
         // When any lock is held the entire Hourglass tail
@@ -5379,29 +5496,44 @@ impl EngineInner {
         // window and acts as the "skip the fire" gate for the
         // downstream macro-timer / EVENT_TIMER fire checks (which
         // compare against the live `frame_counter`).
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::LockGate);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_npc_locked_frame_timer_bumps();
+
+        // The unlocked tail is ordered exactly like the original callee:
+        // The16thFrame, normal EVENT_TIMER, macro timer, then stimuli held
+        // by a prior AI/script lock.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_periodic_ai(assets);
+
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_ai_normal_timers(assets);
 
         // ── Macro-timer hourglass ──────────────────────────────
         // Poll the macro-specific timer each frame and, when it
         // rings, call `execute_next_macro_command` directly —
         // bypassing the stimulus queue so CMD_WAIT / CMD_BEND
-        // resume cleanly.  Runs before `tick_enemy_ai` so any
-        // resulting movement-order / substate change is visible
-        // to the detection pass.
+        // resume cleanly. Any resulting movement-order / substate change
+        // is visible to the queued-stimulus drain in the same frame.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_ai_macro_timers(assets);
 
-        // ── Per-frame enemy AI tick ─────────────────────────────
-        // Vision → alert → pursue.  Stand-in for the full
-        // detection / `Think(stimulus)` pipeline until the state
-        // machine is ported.  Without this, enemies stand around
-        // doing nothing.
-        self.tick_enemy_ai(assets);
-
-        // ── Per-frame ambush-point peek scan ────────────────────
-        // Drive the Far/Near/Checked ambush-point transitions and
-        // dispatch the CheckAmbushPoint left/right substate change
-        // when the NPC enters LOS for the first time.
-        self.tick_refresh_ambush_points(assets);
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_ai_queued_stimuli(assets);
 
         // ── Post-AI script state-change notifications ───────────
         // Notify per-actor scripts of AI state transitions via
@@ -5419,15 +5551,6 @@ impl EngineInner {
         // entries every frame regardless of `speech_display` so the
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
-
-        // ── Periodic AI tasks (every 16 frames, staggered) ────
-        // Stuck recovery, stalled timer restart, etc.
-        self.tick_periodic_ai(assets);
-
-        // ── Per-frame patrol coordination ──────────────────────
-        // Chiefs record position history, compute formation positions
-        // for their minions, and dispatch CALL_PATROL_COORDINATE.
-        self.tick_patrol_coordination(assets);
 
         // ── Per-frame bow-shot tick ─────────────────────────────
         // Drive the `SHOOTING_WITH_BOW` animation for every actor
@@ -5479,9 +5602,6 @@ impl EngineInner {
         // apply damage, handle death/KO/wakeup transitions, and
         // tick concussion healing.
         self.tick_melee_combat(assets);
-
-        // Per-frame soldier counter decrements (apple-smell).
-        self.tick_apple_smell();
 
         // Per-frame PC life-point auto-heal (immortal bump +
         // Easy-mode slow regen).  Runs after the

@@ -530,7 +530,7 @@ impl EngineInner {
     /// Per-frame tiredness recovery.
     ///
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
-    pub(super) fn tick_tiredness(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_tiredness(&mut self, assets: &LevelAssets) {
         let frame = self.frame_counter;
         for (id, entity) in self.entities.humans_mut() {
             let idx = id.index();
