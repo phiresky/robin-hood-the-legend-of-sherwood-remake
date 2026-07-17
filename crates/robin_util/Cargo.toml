@@ -17,4 +17,5 @@ nonmax = "0.5"
 enum-map = "2"
 
 [dev-dependencies]
+tempfile = "3"
 serde_json = "1"
