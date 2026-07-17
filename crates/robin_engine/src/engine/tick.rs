@@ -29,16 +29,16 @@ const HOURGLASS_LOG_INTERVAL: u32 = 100;
 ///
 /// Keep these deliberately broader than individual systems: the phase trace is
 /// an ordering contract for the tick spine, not a second scheduler.  In
-/// particular, `Paths` names the Rust port's retry/refresh maintenance; path
-/// construction itself is synchronous during `Sequences` (see the parity
+/// particular, `Paths` names the Rust port's prior-tick retry maintenance;
+/// path construction itself is synchronous during `Sequences` (see the parity
 /// audit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HourglassPhase {
     DeferredEffectsStart,
     MissionAndMessages,
     NpcOrders,
-    Entities,
     Paths,
+    Entities,
     Sequences,
     EntitySystems,
     Npcs,
@@ -385,11 +385,11 @@ impl EngineInner {
         trace_hourglass_phase(HourglassPhase::NpcOrders);
         self.hourglass_phase_npc_orders(assets);
 
-        trace_hourglass_phase(HourglassPhase::Entities);
-        let was_swordfighting = self.hourglass_phase_entities();
-
         trace_hourglass_phase(HourglassPhase::Paths);
         self.hourglass_phase_paths(assets);
+
+        trace_hourglass_phase(HourglassPhase::Entities);
+        let was_swordfighting = self.hourglass_phase_entities(assets);
 
         trace_hourglass_phase(HourglassPhase::Sequences);
         self.hourglass_phase_sequences(display, assets);
@@ -1210,7 +1210,7 @@ impl EngineInner {
     /// Original provenance: `original-code/RHengine.cpp:3715-3723` iterates
     /// `marrayElements`, which `SortForEngine` orders by creation order at
     /// `original-code/RHengine.cpp:7909-7944`, and removes dead elements inline.
-    fn hourglass_phase_entities(&mut self) -> bool {
+    fn hourglass_phase_entities(&mut self, assets: &LevelAssets) -> bool {
         // Pathfinding is synchronous now — Move sequence elements
         // call `find_path` directly when their `InstructOwner` action
         // dispatches (see the Move dispatch in this file).  The
@@ -1248,15 +1248,24 @@ impl EngineInner {
         // counter is serde'd `PcData`).
         self.tick_pc_teleport_fades();
 
+        // `RefreshSeek` and WAIT_TIMER are actor-Hourglass behavior in the
+        // original, not part of the engine's ProcessPathRequests pre-pass.
+        // Original provenance: `original-code/RHelementactor.cpp:610-625`
+        // updates WAIT_TIMER while executing the actor's current order; seek
+        // refresh dispatch is in `original-code/RHelementactor.cpp:2720-2728`.
+        self.tick_refresh_seeks(assets);
+        self.tick_actor_wait_timers();
+
         was_swordfighting
     }
 
-    /// Maintain failed and moving-target path requests before sequence launch.
+    /// Retry path requests left unresolved by an earlier tick before any
+    /// entity refresh observes their state.
     ///
     /// Original provenance: `original-code/RHengine.cpp:3697-3702` calls
     /// `ProcessPathRequests` before collision and entity hourglasses. Rust path
-    /// construction is synchronous in the sequence phase, so only retry and
-    /// seek-refresh maintenance remains here; see the parity TODO below.
+    /// construction is synchronous in the sequence phase, so only failed-path
+    /// retry maintenance remains in this pre-entity phase.
     fn hourglass_phase_paths(&mut self, assets: &LevelAssets) {
         // ── Failed-path retry ────────────────────────────────────
         // Move / Seek elements whose pathfind failed on a previous
@@ -1268,29 +1277,15 @@ impl EngineInner {
         // correctly.
         self.process_failed_path_timeouts(assets);
 
-        // ── Per-tick RefreshSeek ─────────────────────────────────
-        // For every actor with an in-flight Command::Seek whose
-        // target has moved >10 units since the last seek launch (and
-        // `seek_refresh_wait` has elapsed), interrupt the current
-        // movement element and launch a fresh seek sequence.  Runs
-        // before the hourglass so the relaunched seek dispatches in
-        // the same tick.  See [`engine/refresh_seek.rs`] for the
-        // covered and still-outstanding branches.
-        self.tick_refresh_seeks(assets);
-
-        // ── Actor WAIT_TIMER countdown ───────────────────────────
-        // For every actor whose current sequence element is
-        // `Command::WaitTimer`, decrement `wait_time`; when it
-        // reaches 0 the element transitions to terminated.
-        self.tick_actor_wait_timers();
-
-        // TODO(original-parity): restore/verify the original
-        // ProcessPathRequests -> collision -> entity Hourglass ordering if
-        // asynchronous path requests or collision preprocessing return.
+        // Original `CheckForCollision` followed ProcessPathRequests, but its
+        // sole mobile-damage branch is explicitly dead in shipped missions
+        // (`original-code/RHengine.cpp:10790-10855`): IsMobile never returns
+        // true. Do not synthesize a collision phase with invented effects.
     }
 
-    /// Launch and dispatch sequence elements, including the inline immediate
-    /// action cascades and message/target callbacks they defer.
+    /// Launch and dispatch sequence elements after the ported base entity and
+    /// actor-Hourglass work, including inline immediate-action cascades and
+    /// the message/target callbacks they defer.
     ///
     /// Original provenance: `original-code/RHengine.cpp:3726-3727` calls
     /// `RHSequenceManager::Hourglass` after the entity loop; its FIFO `Go()`

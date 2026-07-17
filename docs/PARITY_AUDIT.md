@@ -3,15 +3,14 @@
 ## `PerformHourglass` phase ordering
 
 The Rust tick is mechanically decomposed in
-`crates/robin_engine/src/engine/tick.rs` without reordering the statements that
-were in `perform_hourglass_inner`. The emitted `HourglassPhase` trace is the
-ordering contract for that Rust pipeline:
+`crates/robin_engine/src/engine/tick.rs`. The emitted `HourglassPhase` trace is
+the ordering contract for the audited Rust pipeline:
 
 1. `DeferredEffectsStart`
 2. `MissionAndMessages`
 3. `NpcOrders`
-4. `Entities`
-5. `Paths`
+4. `Paths`
+5. `Entities`
 6. `Sequences`
 7. `EntitySystems`
 8. `Npcs`
@@ -38,30 +37,48 @@ The original element array is sorted by `GetCreationOrder()` in
 its pending list FIFO and calls `Go()` at
 `original-code/RHsequencemanager.cpp:931-943`.
 
-### Unresolved parity
+### Resolved ordering parity
 
-- **Paths:** Rust constructs paths synchronously while dispatching Move/Seek
-  sequence elements. Its `Paths` phase contains failed-path retry,
-  moving-target seek refresh, and actor wait-timer maintenance, and currently
-  follows `Entities`. This does not reproduce the original asynchronous
-  `ProcessPathRequests -> CheckForCollision -> entity Hourglass` interleaving.
-  TODO: use replay/state-hash evidence before moving any of these calls.
-- **Entities:** `Entities::occupied_mut()` walks stable table slots, matching
-  creation order for the append-only runtime table. TODO: verify imported save
-  games and every level loader preserve creation order in slot order; do not
-  add a fallback sort key without an original-data source.
+- **Core spine:** Prior-tick path retry now runs before `Entities`; base entity
+  and actor-hourglass work completes before `Sequences`; and
+  `DeferredEffectsEnd` remains last. This restores the provable portion of the
+  original coarse `ProcessPathRequests -> element Hourglass ->
+  SequenceManager::Hourglass -> post-process` order without crossing the
+  profile-dependent batched-system lifecycle described below.
+- **Paths:** New Move/Seek paths are constructed synchronously when their
+  sequence element launches, so there is no async request queue to drain.
+  `Paths` handles only failed requests carried from an earlier tick. Seek
+  refresh and WAIT_TIMER maintenance now live in `Entities`, matching
+  `RHElementActor::Hourglass` provenance. The intervening original
+  `CheckForCollision` had only a mobile-damage arm, explicitly marked dead in
+  `original-code/RHengine.cpp:10790-10855` because shipped missions never
+  return true from `IsMobile`; Rust therefore has no invented replacement.
+- **Entities:** `EngineInner::add_entity` appends and removal leaves a hole;
+  `Entities::occupied_mut()` walks those slots in ascending order. Focused
+  tests prove slots are not reused and serde save/load preserves both holes
+  and order. This supplies the Rust equivalent of original creation ordering.
+- **Deferred effects:** The original swordfight falling-edge check, titbit
+  update, dead-selection scan, and anonymous timers retain their exact order
+  at the start of `DeferredEffectsEnd`. Rust-only condolation, re-entrant
+  self-stimulus, `PostInitialize`, and immediate-action drains follow them, so
+  they cannot affect an original post-process earlier than its source order.
+
+### Remaining architectural limitations
+
 - **NPCs:** Original NPC AI/detection was reached inside each NPC element's
   creation-ordered Hourglass (for example
   `original-code/RHelementactornpc.cpp:3495-3614`). Rust has both an `NpcOrders`
-  pre-pass and a batched `Npcs` pass after sequences/entity systems. TODO:
-  characterize cross-NPC cases where batching changes same-frame visibility.
+  pre-pass and a batched `Npcs` pass after sequence launch. Fixing that is an AI
+  lifecycle/interleaving change, not a tick-only reorder: the NPC pass requires
+  complete profile/brain snapshots, and this slice may neither invent missing
+  defaults nor change AI ownership. TODO(original-parity): move NPC work into
+  creation-ordered entity refresh only when the AI implementation owns
+  complete per-NPC profiles/brains at that boundary.
 - **Entity systems:** Movement, animation, projectile, melee, and ability work
   is batched by system in Rust, whereas the original invoked subtype
-  hourglasses from the creation-ordered element loop. TODO: map observable
-  cross-entity interleavings with original replays before consolidating or
-  moving phase boundaries.
-- **Deferred effects:** Condolation, re-entrant self-stimulus,
-  `PostInitialize`, and immediate-action drains are Rust determinism/borrowing
-  splits without exact one-to-one original calls. They remain in
-  `DeferredEffectsEnd`, after all gameplay phases, and are explicitly traced so
-  future parity changes cannot move them silently.
+  hourglasses from the creation-ordered element loop. Base entity refresh is
+  now correctly placed, but the profile-dependent batched systems remain after
+  sequence translation. Exact intra-entity interleaving requires redesign
+  outside this tick-only slice. TODO(original-parity): give these systems
+  complete per-entity inputs, then map observable cross-entity interleavings
+  with original replays before changing subsystem APIs.

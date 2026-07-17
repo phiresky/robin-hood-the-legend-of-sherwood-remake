@@ -102,8 +102,8 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
             HourglassPhase::DeferredEffectsStart,
             HourglassPhase::MissionAndMessages,
             HourglassPhase::NpcOrders,
-            HourglassPhase::Entities,
             HourglassPhase::Paths,
+            HourglassPhase::Entities,
             HourglassPhase::Sequences,
             HourglassPhase::EntitySystems,
             HourglassPhase::Npcs,
@@ -134,6 +134,40 @@ fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
             HourglassPhase::DeferredEffectsStart,
             HourglassPhase::MissionAndMessages,
         ]
+    );
+}
+
+#[test]
+fn entity_slot_order_is_append_only_and_survives_save_round_trip() {
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(Entity::Scroll(crate::element::ElementScroll::default()));
+    let second = engine.add_entity(Entity::Scroll(crate::element::ElementScroll::default()));
+
+    engine.remove_entity(first);
+    let third = engine.add_entity(Entity::Scroll(crate::element::ElementScroll::default()));
+
+    assert_eq!(first.index(), 0);
+    assert_eq!(second.index(), 1);
+    assert_eq!(third.index(), 2, "removed slots must never be reused");
+    assert_eq!(
+        engine
+            .entities
+            .occupied()
+            .map(|(id, _)| id.index())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+
+    let encoded = serde_json::to_string(&engine.entities).expect("serialize entity slots");
+    let decoded: crate::entities::Entities =
+        serde_json::from_str(&encoded).expect("deserialize entity slots");
+    assert_eq!(
+        decoded
+            .occupied()
+            .map(|(id, _)| id.index())
+            .collect::<Vec<_>>(),
+        vec![1, 2],
+        "save loading must preserve slot/creation order and holes"
     );
 }
 
