@@ -560,7 +560,12 @@ fn add_language_folder() {
 fn setup_data_dir() -> Result<(), String> {
     if let Ok(data_dir) = std::env::var("ROBINHOOD_DATA_DIR") {
         tracing::info!("ROBINHOOD_DATA_DIR set, using primary datadir {}", data_dir);
-        SbFile::set_primary_path(&data_dir);
+        let status = SbFile::set_primary_path(&data_dir);
+        if status != SBFILE_NO_ERROR {
+            return Err(format!(
+                "Unable to install ROBINHOOD_DATA_DIR {data_dir}: SBFile error {status}"
+            ));
+        }
     } else if !Path::new("Data").is_dir()
         && let Ok(exe) = std::env::current_exe()
         && let Some(parent) = exe.parent()
@@ -569,9 +574,20 @@ fn setup_data_dir() -> Result<(), String> {
             "Using executable directory as primary datadir: {}",
             parent.display()
         );
-        SbFile::set_primary_path(&parent.to_string_lossy());
+        let status = SbFile::set_primary_path(&parent.to_string_lossy());
+        if status != SBFILE_NO_ERROR {
+            return Err(format!(
+                "Unable to install executable directory {}: SBFile error {status}",
+                parent.display()
+            ));
+        }
     } else {
-        SbFile::set_primary_path(".");
+        let status = SbFile::set_primary_path(".");
+        if status != SBFILE_NO_ERROR {
+            return Err(format!(
+                "Unable to install current directory as datadir: SBFile error {status}"
+            ));
+        }
     }
 
     // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
@@ -654,12 +670,8 @@ pub fn rust_init() -> Result<RustInit, String> {
         .map_err(|e| format!("shipping datadir: {e:#}"))?
         .map(std::sync::Arc::new);
     if let Some(ref dd) = shipping {
-        let _ = assets_shipping_datadir::install_global(dd.clone());
-        // Hand the small-file bundle to `asset_fs` so every `SbFile::open`
-        // hits the in-memory map instead of issuing loose-file I/O.
-        // Anything not in the bundle falls through to disk (native) or
-        // synchronous fetch (wasm).
-        let _ = robin_util::asset_fs::install_bundle(std::sync::Arc::new(dd.raw.clone()));
+        assets_shipping_datadir::install_global(dd.clone())
+            .map_err(|error| format!("install shipping datadir: {error:#}"))?;
     }
 
     rust_init_finish(shipping)
@@ -667,7 +679,7 @@ pub fn rust_init() -> Result<RustInit, String> {
 
 /// Wasm variant of [`rust_init`] — the JS host has already decoded the
 /// shipping datadir from the fetched `datadir.bin` bytes and installed
-/// it via `install_global` / `install_bundle`, so we skip the
+/// it via `install_global`, so we skip the
 /// `try_load` step and reuse the supplied handle.
 pub fn rust_init_with_shipping(
     shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,

@@ -2,7 +2,7 @@
 //! subsystem the engine needs at boot.
 //!
 //! Produced by the `convert_datadir --format shipping` binary and loaded
-//! at engine startup (see [`try_load_global`]). When a shipping datadir is
+//! at engine startup (see [`try_load`]). When a shipping datadir is
 //! present, individual subsystem loaders (`ProfileManager::load_all_legacy_cpf`,
 //! `FrameHolder::initialize_sprite_bank`, `ResourceManager::attach_resource_file`,
 //! etc.) consult it instead of reading legacy files off disk.
@@ -82,6 +82,15 @@ impl ShippingDatadir {
             .with_context(|| format!("decode {}", path.display()))
     }
 
+    /// Load through an explicit VFS instance.
+    pub fn load_from_vfs(vfs: &robin_util::asset_fs::AssetVfs, path: &Path) -> Result<Self> {
+        let compressed = vfs
+            .read(path)
+            .with_context(|| format!("read {}", path.display()))?;
+        Self::from_compressed_bytes(&compressed)
+            .with_context(|| format!("decode {}", path.display()))
+    }
+
     /// Parse a shipping datadir blob already in memory.  Used by the
     /// wasm-bindgen bootstrap, which fetches `datadir.bin` from JS,
     /// hands the bytes to Rust, and decodes here — bypassing the
@@ -136,10 +145,29 @@ pub fn zstd_compress_with_window(bytes: &[u8], window_log: u32) -> Result<Vec<u8
 /// the file isn't present (legacy datadir), `Ok(Some(_))` on success.
 pub fn try_load(data_dir: &Path) -> Result<Option<ShippingDatadir>> {
     let path = data_dir.join("datadir.bin");
-    if !robin_util::asset_fs::exists(&path) {
-        return Ok(None);
+    match robin_util::asset_fs::read(&path) {
+        Ok(compressed) => ShippingDatadir::from_compressed_bytes(&compressed)
+            .with_context(|| format!("decode {}", path.display()))
+            .map(Some),
+        Err(robin_util::asset_fs::AssetError::NotFound(_)) => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
     }
-    ShippingDatadir::load_from_file(&path).map(Some)
+}
+
+/// Instance form of [`try_load`]. Existence and open failures stay distinct:
+/// only a genuine not-found result selects the legacy loose-file path.
+pub fn try_load_from(
+    vfs: &robin_util::asset_fs::AssetVfs,
+    data_dir: &Path,
+) -> Result<Option<ShippingDatadir>> {
+    let path = data_dir.join("datadir.bin");
+    match vfs.read(&path) {
+        Ok(compressed) => ShippingDatadir::from_compressed_bytes(&compressed)
+            .with_context(|| format!("decode {}", path.display()))
+            .map(Some),
+        Err(robin_util::asset_fs::AssetError::NotFound(_)) => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -148,16 +176,98 @@ pub fn try_load(data_dir: &Path) -> Result<Option<ShippingDatadir>> {
 
 use std::sync::{Arc, OnceLock};
 
-static GLOBAL: OnceLock<Arc<ShippingDatadir>> = OnceLock::new();
+/// A parsed shipping payload and the VFS it was mounted into.
+///
+/// Keeping these together prevents startup from publishing parsed data while
+/// silently failing to publish its raw-file mount (or vice versa).
+#[derive(Debug)]
+pub struct ShippingAssets {
+    datadir: Arc<ShippingDatadir>,
+    vfs: Arc<robin_util::asset_fs::AssetVfs>,
+}
+
+impl ShippingAssets {
+    pub fn install(
+        datadir: Arc<ShippingDatadir>,
+        vfs: Arc<robin_util::asset_fs::AssetVfs>,
+    ) -> Result<Self> {
+        vfs.mount_bundle_first(Arc::new(datadir.raw.clone()))
+            .context("mount shipping raw asset bundle")?;
+        Ok(Self { datadir, vfs })
+    }
+
+    pub fn datadir(&self) -> &Arc<ShippingDatadir> {
+        &self.datadir
+    }
+
+    pub fn vfs(&self) -> &Arc<robin_util::asset_fs::AssetVfs> {
+        &self.vfs
+    }
+}
+
+static GLOBAL: OnceLock<Arc<ShippingAssets>> = OnceLock::new();
 
 /// Install a shipping datadir as the process-wide instance so lower-level
-/// loaders can consult it for pre-parsed data.  Returns `Err` with the
-/// passed `Arc` if a datadir is already installed.
-pub fn install_global(dd: Arc<ShippingDatadir>) -> std::result::Result<(), Arc<ShippingDatadir>> {
-    GLOBAL.set(dd)
+/// loaders can consult it for pre-parsed data. Installation and VFS mount
+/// failures are returned to the startup boundary.
+pub fn install_global(dd: Arc<ShippingDatadir>) -> Result<()> {
+    if GLOBAL.get().is_some() {
+        return Err(anyhow!("shipping datadir already installed"));
+    }
+    let installed = Arc::new(ShippingAssets::install(
+        dd,
+        robin_util::asset_fs::global().clone(),
+    )?);
+    GLOBAL
+        .set(installed)
+        .map_err(|_| anyhow!("shipping datadir concurrently installed"))
 }
 
 /// Access the installed shipping datadir, if any.
 pub fn global() -> Option<&'static Arc<ShippingDatadir>> {
+    GLOBAL.get().map(|installed| installed.datadir())
+}
+
+/// Access the co-owned runtime shipping/VFS installation.
+pub fn global_assets() -> Option<&'static Arc<ShippingAssets>> {
     GLOBAL.get()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_util::asset_fs::{AssetVfs, Bundle};
+
+    #[test]
+    fn shipping_installation_owns_vfs_and_has_first_priority() {
+        let vfs = Arc::new(AssetVfs::new());
+        let mut loose = Bundle::new();
+        loose.insert("shared.dat".to_string(), b"loose".to_vec());
+        vfs.mount_bundle(Arc::new(loose)).unwrap();
+
+        let mut datadir = ShippingDatadir::default();
+        datadir
+            .raw
+            .insert("shared.dat".to_string(), b"shipping".to_vec());
+        let installed = ShippingAssets::install(Arc::new(datadir), vfs.clone()).unwrap();
+
+        assert!(Arc::ptr_eq(installed.vfs(), &vfs));
+        assert_eq!(installed.vfs().read("shared.dat").unwrap(), b"shipping");
+    }
+
+    #[test]
+    fn shipping_installation_propagates_invalid_bundle_path() {
+        let vfs = Arc::new(AssetVfs::new());
+        let mut datadir = ShippingDatadir::default();
+        datadir
+            .raw
+            .insert("../escape.dat".to_string(), b"bad".to_vec());
+
+        let error = ShippingAssets::install(Arc::new(datadir), vfs).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("mount shipping raw asset bundle")
+        );
+    }
 }

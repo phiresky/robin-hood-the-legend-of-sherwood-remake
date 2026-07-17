@@ -3997,6 +3997,7 @@ dependencies = [
  "nonmax",
  "rustc-hash 2.1.2",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 
