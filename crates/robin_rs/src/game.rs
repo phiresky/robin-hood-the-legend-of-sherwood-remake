@@ -634,11 +634,11 @@ impl Game {
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
         engine.attach_sim_config(self.global_options.sim_config());
-        // The engine owns the mission-scoped campaign internally; for
-        // tests that keep the campaign separate, swap it in for the
-        // duration of the quit-mission sync so stats land in the
-        // right place, then hand it back.
-        engine.install_campaign(std::mem::take(campaign));
+        // The engine already owns the one required mission campaign. Apply
+        // quit updates to that exact allocation, then return it to the test
+        // harness's outer owner. Installing the separate placeholder here
+        // would replace the authoritative campaign and violate PA-037's
+        // ownership invariant.
         let mut input = engine_api::InputState::default();
         let mut display = engine_api::HostDisplayState::default();
         engine.apply_command(
@@ -649,9 +649,7 @@ impl Game {
                 exit_code: self.operation.get_current(),
             },
         );
-        if let Some(c) = engine.take_campaign() {
-            *campaign = c;
-        }
+        *campaign = engine.take_campaign();
         self.process_operation(campaign, &assets.profile_manager, callbacks)
     }
 
