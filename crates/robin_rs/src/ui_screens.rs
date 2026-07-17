@@ -7,7 +7,6 @@
 //! Screens covered:
 //! - transient overlay popup
 //! - loading progress screen
-//! - yes/no confirmation dialog
 //! - scrollable text popup with pagination
 //! - character dialogue with portrait animation
 //! - post-mission debriefing
@@ -137,60 +136,6 @@ impl LoadingScreen {
     /// Returns `true` while the loading screen is active.
     pub fn is_active(&self) -> bool {
         self.active
-    }
-}
-
-// ---------------------------------------------------------------------------
-// YesNoDialog
-// ---------------------------------------------------------------------------
-
-/// User's choice in a yes/no dialog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum YesNoChoice {
-    #[default]
-    Unknown,
-    Yes,
-    No,
-}
-
-/// State for a yes/no confirmation dialog.
-///
-/// Modal window with two buttons and keyboard shortcuts
-/// (Return → Yes, Escape → No).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct YesNoDialog {
-    /// The message displayed to the user.
-    pub message: String,
-    /// The user's choice (set when a button is activated).
-    pub choice: YesNoChoice,
-    /// Whether the dialog has been closed (choice made).
-    pub closed: bool,
-}
-
-impl YesNoDialog {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            choice: YesNoChoice::Unknown,
-            closed: false,
-        }
-    }
-
-    /// Handle the Yes button (or Return key).
-    pub fn on_yes(&mut self) {
-        self.choice = YesNoChoice::Yes;
-        self.closed = true;
-    }
-
-    /// Handle the No button (or Escape key).
-    pub fn on_no(&mut self) {
-        self.choice = YesNoChoice::No;
-        self.closed = true;
-    }
-
-    /// Convenience: returns true if the user confirmed.
-    pub fn confirmed(&self) -> bool {
-        self.choice == YesNoChoice::Yes
     }
 }
 
@@ -1956,34 +1901,6 @@ mod tests {
         assert_eq!(screen.message, "second");
     }
 
-    // -- YesNoDialog --------------------------------------------------------
-
-    #[test]
-    fn yes_no_default_is_unknown() {
-        let dialog = YesNoDialog::default();
-        assert_eq!(dialog.choice, YesNoChoice::Unknown);
-        assert!(!dialog.closed);
-        assert!(!dialog.confirmed());
-    }
-
-    #[test]
-    fn yes_no_confirm() {
-        let mut dialog = YesNoDialog::new("Delete file?");
-        dialog.on_yes();
-        assert!(dialog.confirmed());
-        assert!(dialog.closed);
-        assert_eq!(dialog.choice, YesNoChoice::Yes);
-    }
-
-    #[test]
-    fn yes_no_reject() {
-        let mut dialog = YesNoDialog::new("Delete file?");
-        dialog.on_no();
-        assert!(!dialog.confirmed());
-        assert!(dialog.closed);
-        assert_eq!(dialog.choice, YesNoChoice::No);
-    }
-
     // -- PopupScroll --------------------------------------------------------
 
     #[test]
@@ -2724,16 +2641,6 @@ mod tests {
         assert_eq!(restored.progress, screen.progress);
         assert_eq!(restored.message, screen.message);
         assert_eq!(restored.active, screen.active);
-    }
-
-    #[test]
-    fn yes_no_serde_roundtrip() {
-        let mut dialog = YesNoDialog::new("Test?");
-        dialog.on_yes();
-        let json = serde_json::to_string(&dialog).unwrap();
-        let restored: YesNoDialog = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.choice, YesNoChoice::Yes);
-        assert!(restored.closed);
     }
 
     #[test]

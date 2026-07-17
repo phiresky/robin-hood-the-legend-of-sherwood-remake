@@ -182,7 +182,7 @@ impl EngineInner {
     /// `RHElementActorSoldier::Hourglass` calls this before the NPC detection
     /// pass. The gate is evaluated once, then the current `mlistThem` is
     /// walked in order and each eligible nearby enemy is sent through Think.
-    pub(super) fn tick_attacking_reactiontime_enemy_near(
+    pub(crate) fn tick_attacking_reactiontime_enemy_near(
         &mut self,
         assets: &LevelAssets,
         scratch: &SimScratch,

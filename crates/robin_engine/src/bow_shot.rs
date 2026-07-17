@@ -3871,13 +3871,11 @@ mod tests {
 
     impl TestEntityIndexAccess for Entities {
         fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)> {
-            let id = self.id_at_index(index)?;
-            Some((id, self.get(id)?))
+            self.get_legacy_slot(index)
         }
 
         fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)> {
-            let id = self.id_at_index(index)?;
-            Some((id, self.get_mut(id)?))
+            self.get_legacy_slot_mut(index)
         }
     }
 
