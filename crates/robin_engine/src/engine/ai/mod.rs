@@ -1393,9 +1393,7 @@ impl EngineInner {
                         }),
                 )
             };
-            let is_archer_unit = bow_profile
-                .map(|bow| bow.normal_shoot.range > 0)
-                .unwrap_or(false);
+            let is_archer_unit = snapshots::is_archer_from_bow(bow_profile);
             let bow_max_range = bow_profile
                 .map(|bow| {
                     if bow.has_long_shoot {
@@ -1655,18 +1653,17 @@ impl EngineInner {
         out
     }
 
-    /// Snapshot every right-chain phalanx member's `list_them` (plus
-    /// position/direction) so `PhalanxReinitializeThemList` can union
-    /// each neighbour's enemies into the shared list without mutating
-    /// sibling AI brains.  The chain is walked via depth-first recursion
-    /// through `right_combat_neighbour`; we materialise the chain
-    /// up-front because Rust's borrow rules forbid mutable cross-NPC
-    /// state during a single AI tick.
+    /// Snapshot every right-chain phalanx member (including self) with
+    /// their live viewer state, persistent `list_them`, and current
+    /// detectable-enemy list. `PhalanxReinitializeThemList` replays the
+    /// original recursion over this data without borrowing sibling AI
+    /// brains while one member is mutable.
     pub(super) fn build_phalanx_member_them_lists(
         &self,
         npc_id: crate::element::EntityId,
     ) -> Vec<crate::ai::PhalanxMemberThemList> {
-        use crate::ai::{PhalanxMemberThemList, Position};
+        use crate::ai::{PhalanxEnemySnapshot, PhalanxMemberThemList, Position};
+        use crate::element::Human;
         let Some(Entity::Soldier(soldier)) = self.entities.get(npc_id) else {
             return Vec::new();
         };
@@ -1674,8 +1671,47 @@ impl EngineInner {
             return Vec::new();
         };
 
+        let snapshot_enemy = |handle: u32, member_camp: Camp| -> PhalanxEnemySnapshot {
+            let entity_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
+                panic!("phalanx member references missing enemy handle {handle}")
+            });
+            let entity = self.entities.get(entity_id).unwrap_or_else(|| {
+                panic!("phalanx enemy handle {handle} resolved to a vacant entity slot")
+            });
+            let human = entity
+                .human_data()
+                .unwrap_or_else(|| panic!("phalanx enemy handle {handle} is not a human entity"));
+            let element = entity.element_data();
+            let map = element.position_map();
+            let able_to_fight = match entity {
+                Entity::Pc(pc) => pc.is_able_to_fight(),
+                Entity::Soldier(soldier) => soldier.is_able_to_fight(),
+                Entity::Civilian(civilian) => civilian.is_able_to_fight(),
+                _ => unreachable!("human_data returned Some for a non-human entity"),
+            };
+            PhalanxEnemySnapshot {
+                handle,
+                position: Position {
+                    x: map.x,
+                    y: map.y,
+                    sector: element.sector(),
+                    level: element.layer(),
+                },
+                direction: element.direction() as u16,
+                posture: element.posture,
+                elevation: entity.position_iface().get_elevation(),
+                is_rider: entity.soldier_data().is_some_and(|data| data.rider),
+                active: element.active,
+                able_to_fight,
+                dead: entity.is_dead(),
+                unconscious: human.unconscious,
+                friend: entity.camp() == member_camp,
+                in_building: self.entity_data_inside_building(element),
+            }
+        };
+
         let mut out: Vec<PhalanxMemberThemList> = Vec::new();
-        let mut current = enemy_ai.right_combat_neighbour;
+        let mut current = enemy_ai.base.me;
         // Cap at 16 like the consumer's right-chain walk; phalanxes are
         // small and the cap guards against any cycle in cached neighbour
         // links.
@@ -1693,16 +1729,42 @@ impl EngineInner {
                 break;
             };
             let pos = s.element.position_map();
+            let member_camp = s.soldier.cached_camp;
+            let current_them_list = neighbour_ai
+                .list_them
+                .iter()
+                .map(|&handle| snapshot_enemy(handle, member_camp))
+                .collect();
+            let enemy_list = s
+                .npc
+                .detectable_lists
+                .get(crate::element::DetectableType::Enemy as usize)
+                .unwrap_or_else(|| panic!("phalanx member {current} has no detectable-enemy list"));
+            let detectable_enemies = enemy_list
+                .iter()
+                .map(|detectable| {
+                    let entity_id = detectable.element.unwrap_or_else(|| {
+                        panic!("phalanx member {current} has a null detectable enemy")
+                    });
+                    snapshot_enemy(entity_id.index(), member_camp)
+                })
+                .collect();
             out.push(PhalanxMemberThemList {
                 handle: current,
-                current_them_list: neighbour_ai.list_them.clone(),
+                current_them_list,
+                detectable_enemies,
                 position: Position {
                     x: pos.x,
                     y: pos.y,
-                    sector: None,
+                    sector: s.element.sector(),
                     level: s.element.layer(),
                 },
                 direction: s.element.direction() as u16,
+                posture: s.element.posture,
+                elevation: s.element.sprite.position_iface.get_elevation(),
+                is_rider: s.soldier.rider,
+                in_building: self.entity_data_inside_building(&s.element),
+                sq_view_radius: (s.npc.view_radius as f32) * (s.npc.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;
             if next == 0 || next == current {
