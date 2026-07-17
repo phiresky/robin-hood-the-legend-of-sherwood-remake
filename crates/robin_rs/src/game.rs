@@ -13,6 +13,7 @@ use robin_engine::player_command as engine_player_command;
 use robin_engine::profiles as engine_profiles;
 use serde::{Deserialize, Serialize};
 
+use crate::app_effect::AppEffect;
 use crate::campaign::Campaign;
 use crate::game_operation::{GameCode, GameOperationState};
 use crate::profiles::MissionLocation;
@@ -182,9 +183,11 @@ impl Game {
                 Some(GameCode::Quit)
             }
             GameCode::LevelNext => {
-                // Stop sound, enable mouse, return to caller.
-                callbacks.set_sound_mode(SoundMode::Menu);
-                callbacks.set_mouse_enabled(true);
+                // Original: `original-code/RHgame.cpp`,
+                // `RHGame::GameLoop`, `RHGAME_LEVEL_NEXT` applies these
+                // in this exact order before returning.
+                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
+                callbacks.emit_app_effect(AppEffect::SetMouseEnabled(true));
                 Some(GameCode::LevelNext)
             }
             GameCode::LevelSucceeded => self.handle_level_succeeded(campaign, profiles, callbacks),
@@ -255,14 +258,16 @@ impl Game {
     ) -> Option<GameCode> {
         callbacks.suspend_play_time();
         callbacks.synchronize_profile_with_campaign(campaign, profiles);
-        callbacks.play_jingle(Jingle::MissionWon);
+        // Original: `original-code/RHgame.cpp`, `RHGame::GameLoop`,
+        // `RHGAME_LEVEL_SUCCEEDED` plays the jingle before menu mode.
+        callbacks.emit_app_effect(AppEffect::PlayJingle(Jingle::MissionWon));
 
         // Display debriefing if campaign not over.
         if campaign.get_ares() < 10 {
             callbacks.display_debriefing(true);
         }
 
-        callbacks.set_sound_mode(SoundMode::Menu);
+        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
 
         if callbacks.is_loading_requested() {
             let load_code = callbacks.get_debriefing_game_code();
@@ -270,7 +275,7 @@ impl Game {
                 self.operation.set(GameCode::LevelLoad);
             }
             callbacks.start_play_time();
-            callbacks.set_sound_mode(SoundMode::Mission);
+            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
             None
         } else {
             Some(self.operation.get_current())
@@ -287,14 +292,17 @@ impl Game {
 
         callbacks.suspend_play_time();
         callbacks.synchronize_profile_with_campaign(campaign, profiles);
-        callbacks.play_jingle(Jingle::MissionLost);
+        // Original: `original-code/RHgame.cpp`, `RHGame::GameLoop`,
+        // `RHGAME_LEVEL_FAILED` / `RHGAME_LEVEL_INTERRUPTED` use the
+        // same jingle-before-menu ordering as the success branch.
+        callbacks.emit_app_effect(AppEffect::PlayJingle(Jingle::MissionLost));
 
         // Display debriefing if campaign not over.
         if campaign.get_ares() < 10 {
             callbacks.display_debriefing(false);
         }
 
-        callbacks.set_sound_mode(SoundMode::Menu);
+        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
 
         if callbacks.is_loading_requested() {
             let load_code = callbacks.get_debriefing_game_code();
@@ -302,7 +310,7 @@ impl Game {
                 self.operation.set(GameCode::LevelLoad);
             }
             callbacks.start_play_time();
-            callbacks.set_sound_mode(SoundMode::Mission);
+            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
             None
         } else if was_interrupted {
             Some(GameCode::LevelInterrupted)
@@ -661,19 +669,7 @@ impl Game {
 
 // ─── Callback traits ────────────────────────────────────────────────
 
-/// Sound mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SoundMode {
-    Menu,
-    Mission,
-}
-
-/// Jingle type for mission end.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Jingle {
-    MissionWon,
-    MissionLost,
-}
+pub use crate::app_effect::{Jingle, SoundMode};
 
 /// Callbacks the game state machine fires at transition points.
 pub trait GameCallbacks {
@@ -693,12 +689,8 @@ pub trait GameCallbacks {
     fn save_game_file_exists(&self) -> bool;
     fn save_game_mission_id(&self) -> u32;
 
-    // ── Sound ──
-    fn set_sound_mode(&mut self, mode: SoundMode);
-    fn play_jingle(&mut self, jingle: Jingle);
-
-    // ── Input ──
-    fn set_mouse_enabled(&mut self, enabled: bool);
+    // ── Ordered host effects ──
+    fn emit_app_effect(&mut self, effect: AppEffect);
 
     // ── Script ──
     fn send_script_message(&mut self, target: u32, message: u32);
@@ -871,6 +863,7 @@ mod tests {
         save_mission_id: u32,
         loading_requested: bool,
         debriefing_code: GameCode,
+        effects: Vec<AppEffect>,
     }
 
     impl Default for StubCallbacks {
@@ -880,6 +873,7 @@ mod tests {
                 save_mission_id: 0,
                 loading_requested: false,
                 debriefing_code: GameCode::LevelInProgress,
+                effects: Vec::new(),
             }
         }
     }
@@ -902,9 +896,9 @@ mod tests {
         fn save_game_mission_id(&self) -> u32 {
             self.save_mission_id
         }
-        fn set_sound_mode(&mut self, _: SoundMode) {}
-        fn play_jingle(&mut self, _: Jingle) {}
-        fn set_mouse_enabled(&mut self, _: bool) {}
+        fn emit_app_effect(&mut self, effect: AppEffect) {
+            self.effects.push(effect);
+        }
         fn send_script_message(&mut self, _: u32, _: u32) {}
         fn display_ingame_menu(&mut self) {}
         fn display_debriefing(&mut self, _: bool) {}
@@ -969,6 +963,13 @@ mod tests {
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
         assert_eq!(result, Some(GameCode::LevelNext));
+        assert_eq!(
+            cb.effects,
+            [
+                AppEffect::SetSoundMode(SoundMode::Menu),
+                AppEffect::SetMouseEnabled(true),
+            ]
+        );
     }
 
     #[test]
@@ -1000,6 +1001,13 @@ mod tests {
 
         let result = game.process_operation(&campaign, &profiles, &mut cb);
         assert_eq!(result, Some(GameCode::Quit));
+        assert_eq!(
+            cb.effects,
+            [
+                AppEffect::PlayJingle(Jingle::MissionLost),
+                AppEffect::SetSoundMode(SoundMode::Menu),
+            ]
+        );
     }
 
     #[test]
@@ -1032,6 +1040,14 @@ mod tests {
         let result = game.process_operation(&campaign, &profiles, &mut cb);
         assert!(result.is_none());
         assert!(game.operation.is(GameCode::LevelLoad));
+        assert_eq!(
+            cb.effects,
+            [
+                AppEffect::PlayJingle(Jingle::MissionLost),
+                AppEffect::SetSoundMode(SoundMode::Menu),
+                AppEffect::SetSoundMode(SoundMode::Mission),
+            ]
+        );
     }
 
     // ── Engine integration tests ────────────────────────────────

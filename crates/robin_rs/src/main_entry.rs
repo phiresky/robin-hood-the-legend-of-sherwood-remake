@@ -14,7 +14,6 @@ use robin_assets::picture::Picture;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::campaign as engine_campaign;
 use robin_engine::engine as engine_api;
-use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::ProfileManager;
 use robin_engine::replay as engine_replay;
@@ -26,8 +25,8 @@ use std::path::Path;
 use clap::Parser;
 use serde::Deserialize;
 
+use crate::app_effect::{AppEffect, AppEffectExecutionError, AppEffectQueue};
 use crate::campaign::Campaign;
-use crate::game::{Jingle as GameJingle, SoundMode as GameSoundMode};
 use crate::player_profile::{DifficultyLevel, PlayerProfileManager};
 use crate::replay_format::COMPACT_PREFIX;
 use crate::save_file::special_slots;
@@ -820,19 +819,10 @@ pub(crate) struct RustCallbacks {
     /// Result returned by the debriefing UI; determines whether the
     /// post-mission flow transitions to LevelLoad.
     pub debriefing_code: GameCode,
-    /// Pending sound-mode transition queued by `set_sound_mode`. The
-    /// callback trait doesn't have access to the audio backend or the
-    /// sound manager (they're owned by the game_session frame loop), so
-    /// we record the intent here and the frame loop flushes it to
-    /// `host.sound.set_mode` via `flush_pending_callbacks`.
-    pub pending_sound_mode: Option<GameSoundMode>,
-    /// Pending mission-end jingle queued by `play_jingle`, flushed the
-    /// same way as the sound mode.
-    pub pending_jingle: Option<GameJingle>,
-    /// `set_mouse_enabled` intent, flushed to `SDL_ShowCursor` by the
-    /// frame loop. The state machine toggles this on mission-end
-    /// transitions.
-    pub pending_mouse_enabled: Option<bool>,
+    /// Ordered game-flow effects awaiting the host executor. A FIFO is
+    /// required because one transition can request Menu and then Mission
+    /// sound in the same frame; neither request may overwrite the other.
+    pub app_effects: AppEffectQueue,
     /// Set by `perform_pending_save_load` after a successful Load so the
     /// frame loop can call `Game::apply_post_load_sync`.
     pub post_load_sync: Option<PostLoadSync>,
@@ -936,9 +926,7 @@ impl RustCallbacks {
             pending: None,
             loading_requested: false,
             debriefing_code: GameCode::LevelInProgress,
-            pending_sound_mode: None,
-            pending_jingle: None,
-            pending_mouse_enabled: None,
+            app_effects: AppEffectQueue::default(),
             post_load_sync: None,
             pending_level_load: None,
             pending_save_banner: None,
@@ -1035,18 +1023,8 @@ impl crate::game::GameCallbacks for RustCallbacks {
             .and_then(|idx| self.save_manager.slot_mission_id(idx))
             .unwrap_or(0)
     }
-    fn set_sound_mode(&mut self, mode: GameSoundMode) {
-        // Queued and flushed by `flush_pending_callbacks` in the frame
-        // loop, which has the audio backend + sound manager in scope.
-        // Last-write-wins if the state machine queues twice in a frame
-        // (the underlying `set_mode` is idempotent to the current mode).
-        self.pending_sound_mode = Some(mode);
-    }
-    fn play_jingle(&mut self, jingle: GameJingle) {
-        self.pending_jingle = Some(jingle);
-    }
-    fn set_mouse_enabled(&mut self, enabled: bool) {
-        self.pending_mouse_enabled = Some(enabled);
+    fn emit_app_effect(&mut self, effect: AppEffect) {
+        self.app_effects.push(effect);
     }
     fn send_script_message(&mut self, target: u32, message: u32) {
         tracing::debug!("Script message: target={} msg={}", target, message);
@@ -1094,47 +1072,55 @@ pub(crate) fn current_mission_id(
         .unwrap_or(0)
 }
 
-/// Flush sound / mouse callback intents queued by the Game state machine
-/// or pause-menu logic into the live audio backend + SDL cursor state.
+/// Execute queued game-flow effects against the narrow host facilities they
+/// are allowed to mutate: sound playback and mouse-event acceptance.
 ///
-/// Call each frame after `game.process_operation` and after any code path
-/// that might invoke `callbacks.set_sound_mode` / `play_jingle` /
-/// `set_mouse_enabled`. The callback boundary can't touch the audio
-/// backend directly (it's owned by the frame loop), so we queue and
-/// flush.
-pub(crate) fn flush_pending_callbacks(
-    host: &mut crate::Host,
-    callbacks: &mut RustCallbacks,
-    _manager: &mut engine_manager_api::EngineManager,
+/// Call after `game.process_operation` and before any early return from code
+/// that emitted an effect. The callback boundary cannot touch these host
+/// resources directly because the frame loop owns them.
+pub(crate) fn execute_app_effects(
+    effects: &mut AppEffectQueue,
+    sound: &mut crate::sound::SoundManager,
     threaded_input: &mut crate::input::ThreadedInput,
     mut audio_backend: Option<&mut dyn crate::sound::AudioBackend>,
 ) {
-    if let Some(mode) = callbacks.pending_sound_mode.take()
-        && let Some(backend) = audio_backend.as_deref_mut()
-    {
-        let sound_mode = match mode {
-            GameSoundMode::Menu => AudioSoundMode::Menu,
-            GameSoundMode::Mission => AudioSoundMode::Mission,
-        };
-        host.sound.set_mode(sound_mode, backend);
-    }
+    let result: Result<(), AppEffectExecutionError<std::convert::Infallible>> = effects
+        .try_execute(|effect| {
+            match effect {
+                AppEffect::SetSoundMode(mode) => {
+                    // `None` is an explicit audio-disabled state established
+                    // by setup (`-NOSOUND`, headless, or a logged init
+                    // failure), so acknowledging sound-only effects here is
+                    // intentional rather than a fabricated fallback value.
+                    if let Some(backend) = audio_backend.as_deref_mut() {
+                        let sound_mode = match mode {
+                            crate::app_effect::SoundMode::Menu => AudioSoundMode::Menu,
+                            crate::app_effect::SoundMode::Mission => AudioSoundMode::Mission,
+                        };
+                        sound.set_mode(sound_mode, backend);
+                    }
+                }
+                AppEffect::PlayJingle(jingle) => {
+                    if let Some(backend) = audio_backend.as_deref_mut() {
+                        let sound_jingle = match jingle {
+                            crate::app_effect::Jingle::MissionWon => SoundJingle::MissionWon,
+                            crate::app_effect::Jingle::MissionLost => SoundJingle::MissionLost,
+                        };
+                        sound.play_jingle(sound_jingle, backend);
+                    }
+                }
+                AppEffect::SetMouseEnabled(enabled) => {
+                    // Disable the input pump's mouse-event branch during
+                    // cinematics / mission briefings / movie playback so
+                    // motion and clicks do not leak to the game.
+                    threaded_input.set_enabled(enabled);
+                }
+            }
+            Ok(())
+        });
 
-    if let Some(jingle) = callbacks.pending_jingle.take()
-        && let Some(backend) = audio_backend
-    {
-        let sound_jingle = match jingle {
-            GameJingle::MissionWon => SoundJingle::MissionWon,
-            GameJingle::MissionLost => SoundJingle::MissionLost,
-        };
-        host.sound.play_jingle(sound_jingle, backend);
-    }
-
-    if let Some(enabled) = callbacks.pending_mouse_enabled.take() {
-        // Disable the input pump's mouse-event branch during
-        // cinematics / mission briefings / movie playback so motion
-        // and clicks don't leak to the game. There's no software-cursor
-        // pipeline to hide; cursor.rs renders directly from `position`.
-        threaded_input.set_enabled(enabled);
+    if let Err(AppEffectExecutionError::Effect { source, .. }) = result {
+        match source {}
     }
 }
 

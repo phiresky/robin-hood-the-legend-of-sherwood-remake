@@ -10,12 +10,13 @@ use super::{
     dispatch_local_commands,
 };
 use crate::Host;
+use crate::app_effect::{AppEffect, SoundMode};
 use crate::campaign::Campaign;
 use crate::campaign_map::{self, CampaignMapChoice};
 use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
 use crate::element::{Command, Posture};
-use crate::game::{Game, GameCallbacks, SoundMode};
+use crate::game::{Game, GameCallbacks};
 use crate::game_operation::GameCode;
 use crate::gfx_types::GameEvent;
 use crate::graphic_config::GraphicConfig;
@@ -1114,7 +1115,7 @@ pub(super) async fn handle_pause_menu_events(
                 renderer.clear_frozen_scene();
                 threaded_input.reset_input_state();
                 input_translator.reset_state();
-                callbacks.set_sound_mode(SoundMode::Mission);
+                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
                 // Forward a MSG_MOUSE_MOVED at the current cursor
                 // position so HUD hover state is re-evaluated on the
                 // first frame after the menu closes.
@@ -1330,7 +1331,7 @@ pub(super) async fn handle_pause_menu_events(
                     renderer.clear_frozen_scene();
                     threaded_input.reset_input_state();
                     input_translator.reset_state();
-                    callbacks.set_sound_mode(SoundMode::Mission);
+                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
                 } else if let Some(menu) = pause_menu.as_mut() {
                     menu.reset_after_side_menu();
                     let sw = renderer.screen_width() as i32;
@@ -1340,7 +1341,7 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::Restart => {
                 // Reload the same mission.
-                callbacks.set_sound_mode(SoundMode::Mission);
+                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
                 *campaign_ref = engine.take_campaign().unwrap_or_default();
                 return HandlerAction::Exit(GameCode::LevelRestart);
             }
@@ -1354,7 +1355,7 @@ pub(super) async fn handle_pause_menu_events(
                     true
                 };
                 if confirmed {
-                    callbacks.set_sound_mode(SoundMode::Mission);
+                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
                     *campaign_ref = engine.take_campaign().unwrap_or_default();
                     return HandlerAction::Exit(GameCode::Quit);
                 }
