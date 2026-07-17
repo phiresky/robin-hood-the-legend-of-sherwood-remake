@@ -42,6 +42,8 @@ mod scroll_reveal;
 mod seat;
 mod sector_motion;
 mod selection;
+#[cfg(test)]
+mod send_message_tests;
 mod sequence_validity;
 mod simulation_gate;
 mod soldier_helpers;
@@ -144,7 +146,7 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// reattachment. If you find yourself fighting serde for a field, that's a
 /// signal it doesn't belong on `EngineInner` — extract it to a host wrapper
 /// instead.
-#[derive(Clone, robin_state_hash_derive::StateHash)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
     /// Per-session gameplay configuration attached by `Game` before a
     /// tick. This is runtime configuration rather than mutable sim state:
@@ -255,6 +257,7 @@ pub struct EngineInner {
     /// free helpers (AI, combat, bow scatter, …) can draw from it without
     /// every call site threading `&mut fastrand::Rng`. Serialized via a
     /// single `u64` seed — see [`crate::sim_rng::serde_rng`].
+    #[serde(with = "crate::sim_rng::serde_rng")]
     pub(crate) rng: fastrand::Rng,
 
     // ── Pending side effects ─────────────────────────────────────
@@ -300,15 +303,19 @@ pub struct EngineInner {
     /// replay stay deterministic.  [Sim state]
     pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
 
-    /// Retry queue for Move / Seek elements whose initial pathfind
-    /// failed.  Entries stay here for up to 100 frames while the engine
-    /// retries pathfinding each tick; after that window expires the
-    /// owning element transitions to `Impossible` (and PCs hear
+    /// A*-requiring movement elements waiting for the legacy once-per-frame
+    /// path-request processing point.  Direct moves bypass this queue.
+    #[serde(default)]
+    pub(crate) pending_path_requests: crate::engine::movement::PendingPathRequestQueue,
+
+    /// Timeout queue for Move / Seek elements whose path request failed.
+    /// Entries stay here for 100 frames without retrying; after that window
+    /// the owning element transitions to `Impossible` (and PCs hear
     /// `HERO_UNABLE_TO_DO_SOMETHING`).
     ///
     /// See [`movement::FailedPathRequest`] for field-level docs.
     /// Drained each tick by
-    /// [`EngineInner::retry_failed_path_requests`].  [Sim state]
+    /// [`EngineInner::process_failed_path_timeouts`].  [Sim state]
     pub(crate) failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
 
     // ── AI ────────────────────────────────────────────────────────
@@ -426,227 +433,6 @@ pub struct EngineInner {
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
 
-// Keep the pre-extraction snapshot schema byte-for-byte stable. Serde's
-// `flatten` preserves JSON field names but cannot be encoded by bincode, which
-// is used for multiplayer snapshots. A remote representation preserves both
-// formats while the owned Rust layout can continue to decompose.
-//
-// TODO(engine-state): replace this implicit schema with an explicitly
-// versioned snapshot type once save migration is allowed. Until then, keeping
-// this representation exhaustive is intentional: adding an EngineInner field
-// makes the conversion below fail to compile until its snapshot behavior is
-// decided.
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(remote = "EngineInner")]
-struct EngineInnerSerde {
-    mission: MissionState,
-    frame_counter: u32,
-    sound_sim: crate::sound::SoundSimState,
-    #[serde(getter = "EngineInner::serde_lock_engine")]
-    lock_engine: bool,
-    #[serde(getter = "EngineInner::serde_freeze_all")]
-    freeze_all: bool,
-    #[serde(default, getter = "EngineInner::serde_fade_freeze_frames_remaining")]
-    fade_freeze_frames_remaining: u32,
-    speed: f32,
-    speed_int: u16,
-    weather: WeatherState,
-    shield: ShieldState,
-    script_globals: Vec<i32>,
-    cheat_used_flags: u32,
-    standard_view_polygon_radius: u16,
-    next_order_id: u32,
-    chorus_timer: u16,
-    force_check: bool,
-    messenger: Messenger,
-    fast_grid: FastFindGrid,
-    pathfinder: PathFinder,
-    short_briefings: ShortBriefings,
-    mission_stat: MissionStat,
-    ground_mark: GroundMark,
-    entities: Entities,
-    pc_ids: Vec<EntityId>,
-    titbit_manager: crate::titbit::TitbitManager,
-    seats: Vec<SeatState>,
-    cutscene_camera: CameraState,
-    #[serde(with = "crate::sim_rng::serde_rng")]
-    rng: fastrand::Rng,
-    pending_side_effects: SideEffects,
-    user_locked: bool,
-    qa_recording_for: Vec<crate::element::EntityId>,
-    qa_recording_slot: u8,
-    action_before_recording_macro: crate::profiles::Action,
-    fast_forward: bool,
-    pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
-    failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
-    ai_global: AiGlobalState,
-    macro_store: crate::macro_store::MacroStore,
-    dead_pc: Option<EntityId>,
-    timer_elements: Vec<TimerEntry>,
-    sequence_manager: SequenceManager,
-    pending_reinforcements: Vec<Option<EntityId>>,
-    pending_scroll_amulets: Vec<PendingScrollAmulet>,
-    pending_hero_speeches: Vec<(EntityId, u16)>,
-    pending_hades_kills: Vec<EntityId>,
-    pending_concussion_side_effects: Vec<(EntityId, crate::combat::ConcussionOutcome)>,
-    mission_script: Option<MissionScript>,
-    script_zone_data: Vec<crate::sector::ScriptSectorData>,
-    dynamic_sight_obstacles: Vec<crate::sight_obstacle::SightObstacle>,
-    static_sight_obstacle_active: Vec<bool>,
-    campaign: Option<crate::campaign::Campaign>,
-}
-
-impl serde::Serialize for EngineInner {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        EngineInnerSerde::serialize(self, serializer)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for EngineInner {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        EngineInnerSerde::deserialize(deserializer).map(Into::into)
-    }
-}
-
-impl From<EngineInnerSerde> for EngineInner {
-    fn from(state: EngineInnerSerde) -> Self {
-        let EngineInnerSerde {
-            mission,
-            frame_counter,
-            sound_sim,
-            lock_engine,
-            freeze_all,
-            fade_freeze_frames_remaining,
-            speed,
-            speed_int,
-            weather,
-            shield,
-            script_globals,
-            cheat_used_flags,
-            standard_view_polygon_radius,
-            next_order_id,
-            chorus_timer,
-            force_check,
-            messenger,
-            fast_grid,
-            pathfinder,
-            short_briefings,
-            mission_stat,
-            ground_mark,
-            entities,
-            pc_ids,
-            titbit_manager,
-            seats,
-            cutscene_camera,
-            rng,
-            pending_side_effects,
-            user_locked,
-            qa_recording_for,
-            qa_recording_slot,
-            action_before_recording_macro,
-            fast_forward,
-            pending_move_requests,
-            failed_path_requests,
-            ai_global,
-            macro_store,
-            dead_pc,
-            timer_elements,
-            sequence_manager,
-            pending_reinforcements,
-            pending_scroll_amulets,
-            pending_hero_speeches,
-            pending_hades_kills,
-            pending_concussion_side_effects,
-            mission_script,
-            script_zone_data,
-            dynamic_sight_obstacles,
-            static_sight_obstacle_active,
-            campaign,
-        } = state;
-
-        Self {
-            sim_config: std::cell::Cell::new(None),
-            mission,
-            frame_counter,
-            sound_sim,
-            simulation_gates: SimulationGateState {
-                lock_engine,
-                freeze_all,
-                fade_freeze_frames_remaining,
-            },
-            speed,
-            speed_int,
-            weather,
-            shield,
-            script_globals,
-            cheat_used_flags,
-            standard_view_polygon_radius,
-            next_order_id,
-            chorus_timer,
-            force_check,
-            messenger,
-            fast_grid,
-            pathfinder,
-            short_briefings,
-            mission_stat,
-            ground_mark,
-            entities,
-            pc_ids,
-            titbit_manager,
-            seats,
-            cutscene_camera,
-            rng,
-            pending_side_effects,
-            user_locked,
-            qa_recording_for,
-            qa_recording_slot,
-            action_before_recording_macro,
-            fast_forward,
-            pending_move_requests,
-            failed_path_requests,
-            ai_global,
-            macro_store,
-            dead_pc,
-            timer_elements,
-            sequence_manager,
-            pending_reinforcements,
-            pending_scroll_amulets,
-            pending_hero_speeches,
-            pending_hades_kills,
-            pending_concussion_side_effects,
-            mission_script,
-            script_zone_data,
-            dynamic_sight_obstacles,
-            static_sight_obstacle_active,
-            campaign,
-        }
-    }
-}
-
-impl std::ops::Deref for EngineInner {
-    type Target = SimulationGateState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.simulation_gates
-    }
-}
-
-// TODO(engine-state): migrate the existing tick/script/AI field accesses to
-// narrow EngineInner gate accessors, then remove this source-compatibility
-// bridge. Keeping it for this slice avoids touching those prohibited modules
-// or changing their evaluation order.
-impl std::ops::DerefMut for EngineInner {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.simulation_gates
-    }
-}
-
 /// Sample duration in sim frames (40 ms each), keyed by sound-source
 /// sample id.  Populated host-side from the decoded WAV length in the
 /// sound cache; consulted by [`EngineInner`] when an `Activate` /
@@ -714,16 +500,34 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
 }
 
 impl EngineInner {
-    fn serde_lock_engine(&self) -> bool {
-        self.lock_engine
+    pub(crate) fn engine_locked(&self) -> bool {
+        self.simulation_gates.engine_locked()
     }
 
-    fn serde_freeze_all(&self) -> bool {
-        self.freeze_all
+    pub(crate) fn set_engine_locked(&mut self, locked: bool) {
+        self.simulation_gates.set_engine_locked(locked);
     }
 
-    fn serde_fade_freeze_frames_remaining(&self) -> u32 {
-        self.fade_freeze_frames_remaining
+    pub(crate) fn actors_frozen(&self) -> bool {
+        self.simulation_gates.actors_frozen()
+    }
+
+    pub(crate) fn set_actors_frozen(&mut self, frozen: bool) {
+        self.simulation_gates.set_actors_frozen(frozen);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fade_freeze_frames_remaining(&self) -> u32 {
+        self.simulation_gates.fade_freeze_frames_remaining()
+    }
+
+    pub(crate) fn set_fade_freeze_frames_remaining(&mut self, frames: u32) {
+        self.simulation_gates
+            .set_fade_freeze_frames_remaining(frames);
+    }
+
+    pub(crate) fn consume_fade_freeze_frame(&mut self) -> bool {
+        self.simulation_gates.consume_fade_freeze_frame()
     }
 
     pub(crate) fn pc_description_index_for_pc_data(
@@ -854,6 +658,7 @@ impl EngineInner {
             action_before_recording_macro: crate::profiles::Action::NoAction,
             fast_forward: false,
             pending_move_requests: Vec::new(),
+            pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
 
             entities: Entities::new(),
@@ -2539,6 +2344,7 @@ impl EngineInner {
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
         self.pathfinder.cancel_requests_for(owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
         // drops stale retry entries for the actor.  Mirror that here so
@@ -2603,6 +2409,7 @@ impl EngineInner {
         // `element_impossible` / hero-speech on a sequence that no
         // longer cares.
         self.failed_path_requests.retain(|r| r.owner != owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         self.sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
     }
@@ -2655,7 +2462,7 @@ impl EngineInner {
     /// `Command::PassDoor | Command::Fall` arm of `is_very_very_busy`,
     /// which neither caller checks.
     pub(super) fn tick_npc_busy_edge_detect(&mut self) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
@@ -3363,7 +3170,16 @@ impl EngineInner {
             && self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| elem.command == crate::element::Command::Seek)
+                .is_some_and(|elem| {
+                    matches!(
+                        elem.command,
+                        crate::element::Command::Seek | crate::element::Command::MoveOk
+                    ) && matches!(
+                        &elem.data,
+                        crate::sequence::SequenceElementData::Movement { flags, .. }
+                            if flags.contains(crate::sequence::MoveFlags::SEEK)
+                    )
+                })
             && self
                 .get_entity(owner_id)
                 .and_then(|e| e.actor_data())
@@ -3523,6 +3339,7 @@ impl EngineInner {
         // owner is gone.
         self.failed_path_requests.retain(|r| r.owner != id);
         self.pending_move_requests.retain(|(eid, _)| *eid != id);
+        self.pending_path_requests.retain_not_owned_by(id);
     }
 
     /// Number of live entities.
@@ -3946,6 +3763,7 @@ impl EngineInner {
     /// Remove the campaign at mission-end (or shutdown) and return it
     /// to the caller.  Host returns it to the outer owner.  Save/load
     /// boundary — the engine is not ticking when this runs.
+    ///
     /// PARITY TODO: encode the active-mission campaign as required state
     /// instead of `Option`. Original `RHCampaign.cpp` installs one concrete
     /// singleton, so normal mission code cannot observe a missing campaign;
@@ -3973,6 +3791,7 @@ impl EngineInner {
         self.chorus_timer = 0;
         self.fast_forward = false;
         self.pending_move_requests.clear();
+        self.pending_path_requests.clear();
         self.failed_path_requests.clear();
 
         // Force a full redraw on the next frame — the background cache
@@ -4088,8 +3907,8 @@ impl EngineInner {
         self.cheat_used_flags = cheat_used_flags;
         self.speed = speed;
         self.speed_int = speed_int;
-        self.lock_engine = lock_engine;
-        self.freeze_all = freeze_all;
+        self.set_engine_locked(lock_engine);
+        self.set_actors_frozen(freeze_all);
         self.script_globals = script_globals;
     }
 

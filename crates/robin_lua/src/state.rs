@@ -87,9 +87,8 @@ impl MissionLuaState {
         install_log(&lua)?;
 
         // `SequenceCallbacks` is the closure stash for
-        // `SequenceCall(fn)` — see `SequenceCall` semantics in
-        // the Spellforge sequence-callback contract. We keep it in the
-        // registry rather than
+        // `SequenceCall(fn)` — see the Spellforge sequence-callback
+        // contract. We keep it in the registry rather than
         // `_G` so the sandbox's "globals are frozen" rule doesn't
         // block `SequenceCall` from inserting new ids. Scripts
         // never reach into the table directly (it's a private

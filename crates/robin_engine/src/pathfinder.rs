@@ -143,11 +143,10 @@ pub enum PathFinderSpeed {
     VerySlow = 3,
 }
 
-// The `PathRequest` struct + its backing queue were deleted during
-// the order-queue refactor.  Movement launches now call `find_path`
-// synchronously and build orders directly on the Move sequence
-// element; the request-object plumbing it replaced had no remaining
-// producers.
+// Request scheduling lives on `EngineInner`, because requests carry
+// sequence-element IDs and complete at the engine's once-per-frame legacy
+// `ProcessPathRequests` point.  This type retains only the serializable A*
+// state and performs the selected request synchronously.
 
 // ─── Index newtypes ──────────────────────────────────────────────
 

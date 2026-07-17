@@ -60,13 +60,14 @@ use tick::{
 };
 
 use crate::Host;
+use crate::app_effect::{AppEffect, SoundMode};
 use crate::campaign::Campaign;
 use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{
     CornerButton, CornerButtonEnable, CornerButtonSprites, CornerHudLayout, CornerTooltipTracker,
 };
 use crate::cursor::CursorRenderer;
-use crate::game::{Game, GameCallbacks, SoundMode};
+use crate::game::{Game, GameCallbacks};
 use crate::game_operation::GameCode;
 use crate::gfx_types::GameEvent;
 use crate::host::PrintScreenRequest;
@@ -84,7 +85,7 @@ use crate::loading_screen::{LoadingDatadirKind, LoadingScreenRenderer};
 use crate::lua_session::LuaSession;
 use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, detect_demo_mode,
-    flush_pending_callbacks, perform_pending_save_load, required_mission_id, resolve_loading_pak,
+    execute_app_effects, perform_pending_save_load, required_mission_id, resolve_loading_pak,
 };
 use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::menu::CampaignMapState;
@@ -1613,7 +1614,7 @@ pub(crate) async fn run_mission(
             renderer.clear_frozen_scene();
             threaded_input.reset_input_state();
             input_translator.reset_state();
-            callbacks.set_sound_mode(SoundMode::Mission);
+            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
             threaded_input.queue_mouse_motion_resync();
         }
         // Disjoint-borrow event poll: `event_pump`/`width`/`height` are
@@ -2089,7 +2090,7 @@ pub(crate) async fn run_mission(
                             renderer.clear_frozen_scene();
                             threaded_input.reset_input_state();
                             input_translator.reset_state();
-                            callbacks.set_sound_mode(SoundMode::Mission);
+                            callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
                             // Forward a MSG_MOUSE_MOVED at the current
                             // cursor position so HUD widgets /
                             // portraits / buttons under the cursor
@@ -2130,7 +2131,7 @@ pub(crate) async fn run_mission(
                                 // symmetric close-branch above calls
                                 // `clear_frozen_scene`.
                                 renderer.freeze_scene_for_modal();
-                                callbacks.set_sound_mode(SoundMode::Menu);
+                                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Menu));
                             }
                         }
                     }
@@ -2473,7 +2474,17 @@ pub(crate) async fn run_mission(
             .await
             {
                 HandlerAction::Continue => continue,
-                HandlerAction::Exit(code) => return Ok(code),
+                HandlerAction::Exit(code) => {
+                    execute_app_effects(
+                        &mut callbacks.app_effects,
+                        &mut host.sound,
+                        &mut threaded_input,
+                        audio_backend
+                            .as_mut()
+                            .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+                    );
+                    return Ok(code);
+                }
                 HandlerAction::Proceed => {}
             }
 
@@ -2595,6 +2606,17 @@ pub(crate) async fn run_mission(
             None
         };
         if let Some(exit_code) = exit_code {
+            // `RHGame::GameLoop` applies transition sound/input changes
+            // before returning its terminal code. Execute them here so
+            // the mission-local Host is not dropped with queued effects.
+            execute_app_effects(
+                &mut callbacks.app_effects,
+                &mut host.sound,
+                &mut threaded_input,
+                audio_backend
+                    .as_mut()
+                    .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+            );
             tracing::info!("Game exited with: {:?}", exit_code);
             // Flush any pending save before returning (e.g. the
             // quit-time continue save).
@@ -3889,15 +3911,14 @@ pub(crate) async fn run_mission(
             );
         }
 
-        // Flush any sound-mode / jingle / mouse intents queued by the
+        // Execute any sound-mode / jingle / mouse intents queued by the
         // state machine (`game.process_operation`), the pause-menu input
         // handler, or script-triggered menus. Must run before the sound
         // hourglass so a fresh `set_mode(Mission)` immediately tees up
         // `load_music = true` before the tick.
-        flush_pending_callbacks(
-            &mut host,
-            callbacks,
-            &mut manager,
+        execute_app_effects(
+            &mut callbacks.app_effects,
+            &mut host.sound,
             &mut threaded_input,
             audio_backend
                 .as_mut()

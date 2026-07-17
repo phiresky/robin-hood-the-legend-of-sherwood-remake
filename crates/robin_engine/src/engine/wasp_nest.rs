@@ -67,7 +67,7 @@ const CHANGE_DIRECTION_TRIES: u32 = 10;
 impl EngineInner {
     /// Per-frame tick for wasp nests and their spawned wasps.
     pub(super) fn tick_wasp_nests(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 

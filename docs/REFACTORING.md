@@ -80,16 +80,20 @@ Introduce phase names and trace points before moving logic:
 7. `AdaptedDeterministicTail` — Rust-only deterministic presentation state and
    side-effect packaging, each item labelled as adaptation.
 
-Do not start by splitting `tick.rs`. First add a stable ordered trace vocabulary
-and lock behavior with tests. Extraction then becomes mechanical.
+The coarse `tick.rs` phase split and ordered `HourglassPhase` trace have landed.
+Further extraction must preserve that trace and wait for PA-013's per-entity
+interleaving evidence; phase names are a seam, not proof that batched internals
+match Original.
 
 ## Dependencies, risk, tests, merge order, conflicts
 
 This status reflects the current merge from `main`: campaign teardown and
 fast-grid validation, the shared timeline primitive, frame-paced paths, exact
 NPC subphase order, synchronous condolence/message re-entry, and the
-post-refresh PostInitialize boundary have landed. They remain prerequisites and
-regressions, not work to reimplement.
+post-refresh PostInitialize boundary have landed. The core tick phase split,
+script `SendMessage` sequence path, door authorization, `Sees`, shoulder-action
+gate, and collinear impact ordering have also landed. They remain prerequisites
+and regressions, not work to reimplement.
 
 | Order | Mergeable slice | Status | Depends on | Risk | Focused tests | Main conflicts |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -102,7 +106,7 @@ regressions, not work to reimplement.
 | 7 | **Lua contract gate.** Reject Spellforge in deterministic modes; required startup/runtime failures abort; correct public event claims. | Open | 1, 4, 5 | Medium vanilla/high mods. | required failure; deterministic rejection; optional callback; return coercion. | `lua_session.rs`, `robin_lua`, `host.rs`, session startup |
 | 8 | **Lua event completeness.** Add Timer/victory/Finalize/per-entity routing from exact versioned Spellforge provenance; decide snapshot strategy first. | Open | 7 | High: new script semantics. | cadence; FilterAIEvent; ProcessMessage; target/zone/waypoint; save policy. | AI, sequence, script manager, Lua session |
 | 9 | **Finish AI transaction barriers.** Exact NPC subphase order and recursive self-stimuli have landed; retain read-only views only where they preserve Original entity-order visibility. | Partial | 6 + trace seam | Very high: central gameplay. | storage order; list mutation; recursive DONE/REACH/IMPOSSIBLE; locked FIFO; phase wrap. | `engine/ai/*`, `tick.rs`, `sequence.rs` |
-| 10 | **Finish tick phase extraction.** Simulation-gate and runtime seams plus the PostInitialize boundary have landed; extract remaining named phases only after tests lock order. | Partial | 2, 6, 9 | Medium after traces, very high before. | full phase trace; first tick; lock return; mission exit; replay corpus. | `tick.rs`, `game.rs`, `sim_timeline.rs` |
+| 10 | **Audit the landed tick phase extraction.** The coarse split, phase trace, simulation gate, runtime seams, and PostInitialize boundary have landed. Keep batched internals stable until PA-013 proves the remaining per-entity interleavings. | Landed core; PA-013 open | 2, 6, 9 for deeper moves | Medium for seam cleanup; very high for interleaving | full phase trace; first tick; lock return; mission exit; replay corpus. | `tick.rs`, `game.rs`, `sim_timeline.rs` |
 
 Required-state errors come first so later work can distinguish invariant failures
 from accepted fallbacks. Snapshot closure precedes consolidation because sharing

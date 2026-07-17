@@ -226,7 +226,7 @@ impl EngineInner {
     /// hourglass loop.
     pub(super) fn tick_bow_shots(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
         let mut spawned_projectiles = Vec::new();
-        if self.freeze_all {
+        if self.actors_frozen() {
             return spawned_projectiles;
         }
         let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
@@ -1820,7 +1820,7 @@ impl EngineInner {
     /// Advance every active arrow projectile by one frame; apply
     /// damage on hit and despawn.  Called from the main hourglass loop.
     pub(super) fn tick_arrows(&mut self, assets: &LevelAssets, skip_arrow_ids: &[EntityId]) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         self.update_shield_obstacles(assets);
@@ -1835,7 +1835,7 @@ impl EngineInner {
     }
 
     fn tick_new_projectile_once(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         self.update_shield_obstacles(assets);
@@ -2742,7 +2742,7 @@ impl EngineInner {
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
     ) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         let results = crate::abilities::tick_abilities(
@@ -3665,7 +3665,7 @@ impl EngineInner {
         assets: &LevelAssets,
         executed_actions: &[(EntityId, crate::order::OrderType)],
     ) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
