@@ -1218,7 +1218,7 @@ impl EngineInner {
     /// Resolve a legacy raw entity-table index to the typed ID variant for
     /// the entity currently stored in that slot.
     pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
-        self.entities.id_at_index(index)
+        self.entities.id_at_legacy_slot(index)
     }
 
     /// Resolve a script actor handle to the typed ID variant for the entity
