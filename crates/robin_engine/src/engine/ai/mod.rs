@@ -4001,17 +4001,11 @@ impl EngineInner {
         // ── 2a. Blip detection (reveal shadows). ────────────────
         self.tick_enemy_ai_blip_detection(assets, &world);
 
-        // ── 2e. Shared acoustic-detection pass. ──────────────────
-        // The hearing branch of `refresh_detection` plus
-        // `update_hearing` — runs for every NPC (civilians +
-        // Lacklandist soldiers), independent of the soldier-only
-        // visual loop below.
-        self.tick_enemy_ai_acoustic_detection(&world);
-
         // ── 3. Creation-ordered per-NPC RefreshDetection loop. ───
-        // Enemy detection, volatile target rebuild, non-Enemy detectable
-        // buckets, and the resulting FIFO Think dispatches all finish for one
-        // NPC before the next creation slot starts.
+        // Acoustic detection + synchronous EVENT_HEAR, Enemy detection,
+        // volatile target rebuild, non-Enemy detectable buckets, and the
+        // resulting FIFO Think dispatches all finish for one NPC before the
+        // next creation slot starts.
         let (transitions, out_of_view_dispatches) =
             self.tick_enemy_ai_refresh_detection(assets, &world);
 

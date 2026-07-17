@@ -3875,6 +3875,165 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
 }
 
 #[test]
+fn npc_hearing_thinks_before_same_slot_optical_detection() {
+    use crate::ai::AiState;
+    use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    // Keep the NPC out of legacy slot zero and choose the frame so its
+    // `(frame + creation_order) % DETECTION_FREQUENCY_SOUNDS` gate is open.
+    engine.add_entity(Entity::Target(crate::element::ElementTarget {
+        element: ElementData {
+            kind: ElementKind::Target,
+            ..ElementData::default()
+        },
+        fx: Default::default(),
+        target: Default::default(),
+    }));
+    engine.frame_counter = 2;
+
+    let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let stale_pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("hearing-order soldier exists")
+    else {
+        panic!("hearing-order entity changed kind")
+    };
+    soldier.element.active = true;
+    soldier
+        .element
+        .set_position(crate::coordinates::WorldPoint3D {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        });
+    soldier.element.set_position_map(MapPoint::new(0.0, 0.0));
+    soldier.element.set_direction_instantly(4);
+    soldier.npc.life_points = 100;
+    soldier.npc.view_direction = [1.0, 0.0];
+    soldier.npc.view_radius = 135;
+    soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    soldier.npc.eye_status = crate::element::EyeStatus::Stare;
+    let ai = soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("hearing-order soldier has enemy AI");
+    ai.base.me = soldier_id.index();
+
+    let Entity::Pc(pc) = engine
+        .get_entity_mut(pc_id)
+        .expect("hearing-order PC exists")
+    else {
+        panic!("hearing-order target changed kind")
+    };
+    pc.element.active = true;
+    pc.element.set_position(crate::coordinates::WorldPoint3D {
+        x: 55.0,
+        y: 0.0,
+        z: 0.0,
+    });
+    pc.element.set_position_map(MapPoint::new(55.0, 0.0));
+    pc.pc.life_points = 100;
+
+    let Entity::Pc(stale_pc) = engine
+        .get_entity_mut(stale_pc_id)
+        .expect("stale hearing-order PC exists")
+    else {
+        panic!("stale hearing-order target changed kind")
+    };
+    stale_pc.element.active = false;
+    stale_pc.pc.life_points = 0;
+
+    // RunningUpright on ground produces a 70-volume TAPTAPTAP. At 55 units
+    // this becomes the original's 15-volume subjective noise, while keeping
+    // EVENT_VIEW outside the unrelated close-combat branch (< 50 units).
+    // Install it as the production snapshot builder's current animation
+    // instead of injecting a synthetic noise into the detection helper.
+    let mut movement = SequenceElement::new_movement(
+        1,
+        crate::element::Command::Move,
+        Some(pc_id),
+        OrderType::RunningUpright,
+    );
+    movement
+        .orders
+        .push_back(Order::test_new(OrderType::RunningUpright, 0.0, 0.0));
+    let movement_sequence = engine.sequence_manager.launch_element(movement);
+    engine
+        .sequence_manager
+        .element_in_progress(movement_sequence, 0);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    let Entity::Soldier(soldier) = engine
+        .get_entity_mut(soldier_id)
+        .expect("soldier exists before hearing-order detection")
+    else {
+        panic!("hearing-order soldier changed kind")
+    };
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+    soldier.npc.detection_suspects[DetectableType::Enemy as usize] = 0;
+    // Acoustics runs before optical CleanUpDetectables. A just-dead PC can
+    // therefore still occupy an earlier enemy-list slot without appearing in
+    // the alive-only world snapshot; it must not block the later audible PC.
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(stale_pc_id),
+        detectable_type: DetectableType::Enemy,
+        ..Detectable::default()
+    });
+    soldier.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+        element: Some(pc_id),
+        detectable_type: DetectableType::Enemy,
+        // Keep the oracle about HEAR → VIEW rather than predetection shadow.
+        shadow_seen_last_frame: true,
+        ..Detectable::default()
+    });
+
+    crate::sim_rng::with_seed(0xA013_0EAD, || engine.tick_enemy_ai(&assets));
+
+    assert_eq!(
+        engine
+            .get_entity(pc_id)
+            .and_then(Entity::actor_data)
+            .expect("hearing-order PC remains an actor")
+            .last_noise_volume,
+        70,
+        "production PC snapshot must derive the expected running noise"
+    );
+    assert!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(Entity::npc_data)
+            .expect("hearing-order soldier remains an NPC")
+            .detectable_lists[DetectableType::Enemy as usize][0]
+            .heard_last_frame,
+        "production acoustic pass must reach UpdateHearing's latch"
+    );
+    let ai = engine
+        .get_entity(soldier_id)
+        .and_then(Entity::enemy_ai)
+        .expect("soldier remains an enemy AI");
+    assert_eq!(
+        ai.base.current_state,
+        AiState::Attacking,
+        "synchronous EVENT_HEAR must make optical detection instant in the same RefreshDetection call"
+    );
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {

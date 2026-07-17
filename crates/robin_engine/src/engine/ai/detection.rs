@@ -1,8 +1,8 @@
 //! Per-NPC visibility passes for `tick_enemy_ai`: blip detection (P2a),
 //! enemy → PC `RefreshDetection` (P3), and royalist → enemy detection
 //! (P3b).  All three operate on the snapshots built in [`super::snapshots`]
-//! and queue stimuli on each soldier's `pending_stimuli` for the post-
-//! detection drains in [`super::post_detection`] to consume.
+//! and dispatch or queue the resulting stimuli at the matching original
+//! phase boundary.
 
 use super::snapshots::{AiWorldView, Detection, HumanTarget, ObjectTarget};
 use super::*;
@@ -707,19 +707,23 @@ impl EngineInner {
         }
     }
 
-    /// P2e — shared acoustic-detection pass.
+    /// Acoustic portion of one NPC's `RefreshDetection` call.
     ///
     /// The hearing branch is called per-tick from every NPC's
     /// `Hourglass`, so civilians run it too — which is how they
     /// react to the PC walking by / swordfighting nearby.
     ///
-    /// Factored out of the soldier-only visual detection loop so it
-    /// correctly covers civilians as well.  Hearing is independent of
-    /// the visual pass (different gating, different state, edge-triggered
-    /// on a separate `heard_last_frame` latch), so running it as its own
-    /// pass has no behavioural interaction with the visual detection
-    /// that follows.
-    pub(super) fn tick_enemy_ai_acoustic_detection(&mut self, world: &AiWorldView) {
+    /// This stays separate from the soldier-only visual helper so civilians
+    /// continue to hear PCs. It is nevertheless called from the creation-
+    /// ordered per-NPC coordinator: original `UpdateHearing` invokes
+    /// `Think(EVENT_HEAR)` inline, and that state change is visible to the
+    /// same NPC's optical `InstantDetection` decision immediately afterward.
+    pub(super) fn tick_enemy_ai_acoustic_detection_for_npc(
+        &mut self,
+        npc_id: EntityId,
+        assets: &LevelAssets,
+        world: &AiWorldView,
+    ) {
         use crate::ai::AiState;
 
         // Constant 1.0 hearing factor — the static default, never
@@ -728,71 +732,67 @@ impl EngineInner {
         const DETECTION_FREQUENCY_SOUNDS: u32 = 3;
 
         let universal_frame = self.frame_counter;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            // Read NPC state (layer, position, current_state, active).
-            let (layer, position, elevation, current_state, active, expects_pc_detectables) = {
-                let Some(entity) = self.entities.get(npc_id) else {
-                    continue;
-                };
-                // Every NPC runs the acoustic pass — it lives on the
-                // base NPC class.  `expects_pc_detectables` captures
-                // the camp-level predicate "does this NPC's enemy
-                // list include PCs?"  Royalists iterate the pass but
-                // skip PCs they don't track (their inner loop
-                // iterates detectable_lists and finds none).
-                let expects_pc_detectables = match entity {
-                    Entity::Civilian(_) => true,
-                    Entity::Soldier(s) => s.soldier.cached_camp == Camp::Lacklandists,
-                    _ => continue,
-                };
-                if !entity.is_active() || entity.is_dead() {
-                    continue;
-                }
-                if entity.human_data().map(|h| h.unconscious).unwrap_or(false) {
-                    continue;
-                }
-                let Some(npc) = entity.npc_data() else {
-                    continue;
-                };
-                (
-                    entity.element_data().layer(),
-                    entity.element_data().position_map(),
-                    entity.element_data().position().z,
-                    npc.ai_state(),
-                    entity.is_active(),
-                    expects_pc_detectables,
-                )
+        // Read NPC state. The state gate is sampled once before the enemy-list
+        // loop, as in the original outer
+        // `if (mCurrentState != STATE_ATTACKING)`.
+        let (position, elevation, current_state, expects_pc_detectables) = {
+            let Some(entity) = self.entities.get(npc_id) else {
+                return;
             };
-            if !active {
-                continue;
+            // Every NPC runs the acoustic pass — it lives on the
+            // base NPC class.  `expects_pc_detectables` captures
+            // the camp-level predicate "does this NPC's enemy
+            // list include PCs?"  Royalists iterate the pass but
+            // skip PCs they don't track (their inner loop
+            // iterates detectable_lists and finds none).
+            let expects_pc_detectables = match entity {
+                Entity::Civilian(_) => true,
+                Entity::Soldier(s) => s.soldier.cached_camp == Camp::Lacklandists,
+                _ => return,
+            };
+            if entity.is_dead() || entity.element_data().posture == Posture::Tied {
+                return;
             }
-            // Attacking NPCs are already locked onto their target
-            // and don't accumulate new hearing stimuli.
-            if matches!(current_state, AiState::Attacking) {
-                continue;
+            if entity.human_data().map(|h| h.unconscious).unwrap_or(false) {
+                return;
             }
-            let modified_frame = universal_frame.wrapping_add(npc_id.index());
-            if !modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS) {
-                continue;
-            }
+            let Some(npc) = entity.npc_data() else {
+                return;
+            };
+            (
+                entity.element_data().position_map(),
+                entity.element_data().position().z,
+                npc.ai_state(),
+                expects_pc_detectables,
+            )
+        };
+        // Attacking NPCs are already locked onto their target
+        // and don't accumulate new hearing stimuli.
+        if matches!(current_state, AiState::Attacking) {
+            return;
+        }
+        let modified_frame = universal_frame.wrapping_add(npc_id.index());
+        if !modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS) {
+            return;
+        }
 
-            // Fold the max covering volume from active sound sources
-            // at the NPC's position into the deafness write-back.
-            // Computed here because `NpcData` has no access to the
-            // `SoundSourceManager`.  Done before the entity re-borrow
-            // so we don't hold `&mut self.entities` while reading
-            // `&self.sound_sim`.
-            let cover_volume = self
-                .sound_sim
-                .sources
-                .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
+        // Fold the max covering volume from active sound sources
+        // at the NPC's position into the deafness write-back.
+        // Computed here because `NpcData` has no access to the
+        // `SoundSourceManager`.  Done before the entity re-borrow
+        // so we don't hold `&mut self.entities` while reading
+        // `&self.sound_sim`.
+        let cover_volume = self
+            .sound_sim
+            .sources
+            .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
 
+        let (deafness, pc_target_ids) = {
             let Some(entity) = self.entities.get_mut(npc_id) else {
-                continue;
+                return;
             };
             let Some(npc) = entity.npc_data_mut() else {
-                continue;
+                return;
             };
             let enemy_idx = DetectableType::Enemy as usize;
 
@@ -825,8 +825,43 @@ impl EngineInner {
             }
 
             let deafness = npc.get_deafness(universal_frame, cover_volume) as f32;
+            // `RefreshDetection` walks this NPC's DETECTABLE_ENEMY list, not
+            // the engine PC registry. Preserve that list's insertion order:
+            // each inline Think may mutate state observed by the next entry.
+            let pc_target_ids: Vec<EntityId> = npc.detectable_lists[enemy_idx]
+                .iter()
+                .filter_map(|detectable| match detectable.element {
+                    Some(id @ EntityId::Pc(_)) => Some(id),
+                    _ => None,
+                })
+                .collect();
+            (deafness, pc_target_ids)
+        };
 
-            for pc in &world.pcs {
+        let enemy_idx = DetectableType::Enemy as usize;
+        for pc_id in pc_target_ids {
+            let Some(pc) = world.pcs.iter().find(|pc| pc.id == pc_id) else {
+                // A dead or inactive PC can remain in the
+                // detectable list until optical CleanUpDetectables later in
+                // this same RefreshDetection call. There is no acoustic
+                // snapshot to sample in that expected stale window. A live
+                // registered PC missing from the world view is inconsistent.
+                match self.entities.get(pc_id) {
+                    Some(entity) if !entity.is_active() || entity.is_dead() => continue,
+                    Some(_) | None => panic!(
+                        "NPC {} tracks live PC {} for hearing but the PC is absent from the detection view",
+                        npc_id.index(),
+                        pc_id.index()
+                    ),
+                }
+            };
+            let stimulus = {
+                let Some(entity) = self.entities.get_mut(npc_id) else {
+                    return;
+                };
+                let Some(npc) = entity.npc_data_mut() else {
+                    return;
+                };
                 // RefreshDetection iterates `DETECTABLE_ENEMY` and
                 // filters PCs.  Skip PCs absent from this NPC's list
                 // (Royalists don't track PCs, so they naturally hear
@@ -835,99 +870,152 @@ impl EngineInner {
                     .iter()
                     .any(|d| d.element == Some(pc.id));
                 if !tracked {
-                    continue;
-                }
-                if pc.layer != layer {
-                    continue;
-                }
-                let pc_volume = pc.noise_volume;
-                if pc_volume == 0 {
-                    continue;
-                }
-                // Hear-my-noise-box pre-filter: half-extents are
-                // (volume + 100, volume*ASPECT_RATIO + 100) in raw
-                // map coords.
-                let dx = pc.position.x - position.x;
-                let dy_raw = pc.position.y - position.y;
-                let half_x = pc_volume as f32 + 100.0;
-                let half_y = pc_volume as f32 * crate::position_interface::ASPECT_RATIO + 100.0;
-                if dx.abs() > half_x || dy_raw.abs() > half_y {
-                    continue;
-                }
-                let dy_stretched = dy_raw * crate::position_interface::INVERSE_ASPECT_RATIO;
-                let modified_volume = pc_volume as f32 * HEARING_FACTOR;
-                if dx.abs().max(dy_stretched.abs()) > modified_volume {
-                    continue;
-                }
-                let distance = (dx * dx + dy_stretched * dy_stretched).sqrt();
-                let subjective = modified_volume - distance - deafness;
-
-                let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
-                    .iter()
-                    .find(|d| d.element == Some(pc.id))
-                    .map(|d| (d.heard_last_frame, d.seen_last_frame))
-                    .unwrap_or((false, false));
-
-                // Rising edge of can-hear, only when not already
-                // seen — hearing detects an unseen PC, nothing more.
-                if subjective > 0.0 && !det_heard && !det_seen {
-                    let noise_type = if pc.is_swordfighting {
-                        crate::ai::NoiseType::ZingZing
+                    None
+                } else {
+                    let pc_volume = pc.noise_volume;
+                    // Hear-my-noise-box pre-filter: half-extents are
+                    // (volume + 100, volume*ASPECT_RATIO + 100) in raw
+                    // map coords. Outside this box original RefreshDetection
+                    // does not call UpdateHearing, so the latch is untouched.
+                    let dx = pc.position.x - position.x;
+                    let dy_raw = pc.position.y - position.y;
+                    let half_x = pc_volume as f32 + 100.0;
+                    let half_y = pc_volume as f32 * crate::position_interface::ASPECT_RATIO + 100.0;
+                    if dx.abs() > half_x || dy_raw.abs() > half_y {
+                        None
                     } else {
-                        crate::ai::NoiseType::TapTapTap
-                    };
-                    let noise = crate::ai::Noise {
-                        origin: crate::ai::Position {
-                            x: pc.position.x,
-                            y: pc.position.y,
-                            sector: crate::position_interface::SectorHandle::new(pc.sector_num),
-                            level: pc.layer,
-                        },
-                        noise_type,
-                        volume: pc_volume,
-                        elevation: pc.ground_elevation,
-                        element_id: pc.id.index() as u16,
-                    };
-                    let stimulus =
-                        crate::ai::Stimulus::with_noise(crate::ai::StimulusType::EventHear, noise);
-                    if let Some(ai) = npc.ai_brain.base_mut() {
-                        ai.pending_stimuli.push(stimulus);
+                        // GetHearVolume uses the full 3D position. Its noise
+                        // origin is `(x, y + elevation, elevation)` and it has
+                        // no logical-layer rejection, so nearby cross-layer
+                        // sounds remain audible when their actual geometry is.
+                        let source_elevation = pc.ground_elevation as f32;
+                        let dy_stretched = (position.y - pc.position.y - source_elevation)
+                            * crate::position_interface::INVERSE_ASPECT_RATIO;
+                        let dx_3d = position.x - pc.position.x;
+                        let dz = elevation - source_elevation;
+                        let modified_volume = pc_volume as f32 * HEARING_FACTOR;
+                        let max_norm = dx_3d.abs().max(dy_stretched.abs()).max(dz.abs());
+                        let distance =
+                            (dx_3d * dx_3d + dy_stretched * dy_stretched + dz * dz).sqrt();
+                        // Original GetHearVolume explicitly rejects NOISE_OFF,
+                        // a coincident source/listener, and sources beyond the
+                        // modified-volume max norm. UpdateHearing still runs
+                        // for all of these inside-box cases and clears its
+                        // rising-edge latch.
+                        let subjective =
+                            if pc_volume == 0 || distance == 0.0 || max_norm > modified_volume {
+                                0.0
+                            } else {
+                                (modified_volume - distance - deafness).max(0.0)
+                            };
+
+                        let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
+                            .iter()
+                            .find(|d| d.element == Some(pc.id))
+                            .map(|d| (d.heard_last_frame, d.seen_last_frame))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "tracked PC {} disappeared from NPC {}'s enemy list",
+                                    pc.id.index(),
+                                    npc_id.index()
+                                )
+                            });
+
+                        let stimulus = if subjective > 0.0 && !det_heard && !det_seen {
+                            let noise_type = if pc.is_swordfighting {
+                                crate::ai::NoiseType::ZingZing
+                            } else {
+                                crate::ai::NoiseType::TapTapTap
+                            };
+                            let noise = crate::ai::Noise {
+                                origin: crate::ai::Position {
+                                    x: pc.position.x,
+                                    y: pc.position.y,
+                                    sector: crate::position_interface::SectorHandle::new(
+                                        pc.sector_num,
+                                    ),
+                                    level: pc.layer,
+                                },
+                                noise_type,
+                                volume: subjective as u16,
+                                elevation: pc.ground_elevation,
+                                element_id: pc.id.index() as u16,
+                            };
+                            Some(crate::ai::Stimulus::with_noise(
+                                crate::ai::StimulusType::EventHear,
+                                noise,
+                            ))
+                        } else {
+                            None
+                        };
+
+                        // UpdateHearing always refreshes this latch when the
+                        // hear-box admitted the target, including zero-volume
+                        // and beyond-range cases.
+                        let det = npc.detectable_lists[enemy_idx]
+                            .iter_mut()
+                            .find(|d| d.element == Some(pc.id))
+                            .expect("hearing detectable vanished between reads");
+                        det.heard_last_frame = subjective > 0.0;
+                        stimulus
                     }
                 }
-                // Update the heard_last_frame latch on every pass so
-                // the rising-edge detection stays in sync with the
-                // current audibility — regardless of seen state.
-                if let Some(det) = npc.detectable_lists[enemy_idx]
-                    .iter_mut()
-                    .find(|d| d.element == Some(pc.id))
-                {
-                    det.heard_last_frame = subjective > 0.0;
-                }
-            }
+            };
+
+            let Some(stimulus) = stimulus else {
+                continue;
+            };
+
+            // `UpdateHearing` calls Think inline. Rebuild both views for each
+            // edge because an earlier PC's hearing handler may mutate state
+            // consumed by the next handler or by optical detection below.
+            let scratch = self.build_sim_scratch(assets);
+            let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+            let building_sector = self
+                .entities
+                .get(npc_id)
+                .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
+            let Some(entity) = self.entities.get(npc_id) else {
+                return;
+            };
+            let mut ctx = build_ai_context_from_entity(
+                entity,
+                self.frame_counter,
+                building_sector,
+                self.weather.is_forest_level,
+                self.weather.ambiance,
+                self.standard_view_polygon_radius,
+                &scratch.ai_entity_views,
+                &scratch.ai_sight_obstacles,
+                &self.fast_grid,
+                &assets.hiking_paths,
+                &self.ai_global.all_soldier_handles,
+            );
+            ctx.in_uninterruptible_command = in_uninterruptible_command;
+            let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
+            self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
     /// P3 — per-enemy `RefreshDetection` pass.
     ///
     /// For every Lacklandist NPC: lazy-populate detectables, run the
-    /// per-target visibility pass, accumulate suspect sharpness, fire
-    /// EVENT_HEAR / EVENT_SEES_SHADOW and EVENT_VIEW, then run the remaining
-    /// detectable buckets and flush their FIFO stimuli for that same NPC
-    /// before advancing to the next creation slot. EVENT_VIEW is queued after
-    /// the Enemy scan and dispatched with a live boundary context only after
-    /// every detectable bucket has released the NPC borrow.
+    /// synchronous acoustic EVENT_HEAR pass, run per-target visibility,
+    /// accumulate suspect sharpness, queue EVENT_SEES_SHADOW and EVENT_VIEW,
+    /// then run the remaining detectable buckets and flush their FIFO stimuli
+    /// for that same NPC before advancing to the next creation slot. EVENT_VIEW
+    /// is queued after the Enemy scan and dispatched with a live boundary
+    /// context only after every detectable bucket has released the NPC borrow.
     /// Volatile NPC target metadata is rebuilt at each creation slot so a
     /// later NPC observes state changes made by an earlier NPC's Think.
     /// Original:
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): EVENT_HEAR is still queued by a global acoustic prepass
-    // instead of being Thought synchronously before this NPC's optical scan;
-    // EVENT_OUTOFVIEW is collected for a later global dispatch; Royalist
-    // detection remains a later global phase; and every stimulus in one NPC's
-    // FIFO shares the same boundary scratch instead of rebuilding context
-    // after each preceding Think mutation.
+    // TODO(parity): EVENT_OUTOFVIEW is collected for a later global dispatch;
+    // Royalist detection remains a later global phase; and every stimulus in
+    // one NPC's FIFO shares the same boundary scratch instead of rebuilding
+    // context after each preceding Think mutation.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
@@ -949,6 +1037,7 @@ impl EngineInner {
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
+            self.tick_enemy_ai_acoustic_detection_for_npc(npc_id, assets, world);
             let think_input = self.tick_enemy_ai_refresh_detection_for_npc(
                 npc_id,
                 assets,
@@ -1026,9 +1115,9 @@ impl EngineInner {
             let live_scratch = self.build_sim_scratch(assets);
 
             // TODO(parity): rebuild context views between successive queued
-            // stimuli when an earlier Think can mutate data consumed by the
-            // next one. Acoustic and Royalist detection are still coordinated
-            // by their existing global phases rather than this per-NPC loop.
+            // optical stimuli when an earlier Think can mutate data consumed
+            // by the next one. Royalist detection is still coordinated by its
+            // existing global phase rather than this per-NPC loop.
             self.tick_enemy_ai_drain_pending_stimuli_for_npc(
                 npc_id,
                 assets,
