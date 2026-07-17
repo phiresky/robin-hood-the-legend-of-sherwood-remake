@@ -8,10 +8,11 @@ const TMP0: u16 = 0xC000;
 const TMP4: u16 = 0xC004;
 const TMP8: u16 = 0xC008;
 const TMP12: u16 = 0xC00C;
+const TMP16: u16 = 0xC010;
 
 /// Helper: build a program that pushes constants, calls a native, and returns the result.
 fn call_native_return(index: u32, args: &[i32]) -> Vec<crate::vm::Instruction> {
-    let temps = [TMP0, TMP4, TMP8, TMP12];
+    let temps = [TMP0, TMP4, TMP8, TMP12, TMP16];
     let temp_count = (args.len() + 1) as u16; // +1 for the return slot
     let ret_slot = temps[args.len()]; // first unused temp
 
@@ -52,6 +53,36 @@ fn run_native_deferred(index: u32, args: &[i32]) -> (StopReason, Vec<DeferredCom
         .downcast_mut::<GameHost>()
         .expect("host is GameHost");
     (stop, std::mem::take(&mut host.deferred_commands))
+}
+
+#[test]
+fn send_message_native_queues_sequence_launch_payload() {
+    let (stop, commands) = run_native_deferred(NativeFn::SendMessage as u32, &[0, 1234]);
+    assert_eq!(stop, StopReason::ReturnedValue(0));
+    assert!(matches!(
+        commands.as_slice(),
+        [DeferredCommand::SendMessage {
+            actor: 0,
+            message: 1234,
+            arg1: 0,
+            arg2: 0,
+        }]
+    ));
+
+    let (stop, commands) = run_native_deferred(
+        NativeFn::SendMessageWithArguments as u32,
+        &[0, 2345, -11, 22],
+    );
+    assert_eq!(stop, StopReason::ReturnedValue(0));
+    assert!(matches!(
+        commands.as_slice(),
+        [DeferredCommand::SendMessage {
+            actor: 0,
+            message: 2345,
+            arg1: -11,
+            arg2: 22,
+        }]
+    ));
 }
 
 #[test]

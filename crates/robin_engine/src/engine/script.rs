@@ -249,9 +249,14 @@ impl EngineInner {
 
         let mut engine_commands = Vec::new();
         // Deferred commands that must run AFTER `self.mission_script` is put
-        // back (e.g. `ProcessPatchEffects`, which looks patches up via
-        // `self.mission_script`).  Populated inside the host block below.
+        // back (currently `ProcessPatchEffects`, which looks patches up via
+        // `self.mission_script`). Populated inside the host block below.
         let mut post_script: Vec<crate::natives::DeferredCommand> = Vec::new();
+        // RHScript::SendMessage launches a standalone RHCOMMAND_SEND_MESSAGE
+        // sequence element. Keep requests in native-call order and launch
+        // them once the mission script is installed again so their immediate
+        // ProcessMessage callback can re-enter the script system this frame.
+        let mut script_messages: Vec<(i32, i32, i32, i32)> = Vec::new();
 
         if let Some(game_host) = script.game_host_mut() {
             // ── Entity active state → real entities ──
@@ -403,17 +408,12 @@ impl EngineInner {
             // `post_script` and processed after the script is put back.
             for cmd in game_host.deferred_commands.drain(..) {
                 match cmd {
-                    cmd @ crate::natives::DeferredCommand::SendMessage { .. } => {
-                        // `SendMessage(actor, code, arg1, arg2)` should
-                        // dispatch `ProcessMessage` on the target.  We
-                        // shortcut the sequence-element round-trip and
-                        // dispatch through the existing ProcessMessage path:
-                        // `actor == 0` → global StartUp `ProcessMessage`;
-                        // otherwise the per-actor script's `ProcessMessage`.
-                        // Defer to post_script because dispatch needs
-                        // `self.mission_script` to be back in place.
-                        post_script.push(cmd);
-                    }
+                    crate::natives::DeferredCommand::SendMessage {
+                        actor,
+                        message,
+                        arg1,
+                        arg2,
+                    } => script_messages.push((actor, message, arg1, arg2)),
                     crate::natives::DeferredCommand::SelectPC { actor, select } => {
                         // Scripted scene: targets the LOCAL seat.
                         if actor == 0 {
@@ -719,11 +719,6 @@ impl EngineInner {
         // commands that read `self.mission_script`.
         self.mission_script = Some(script);
 
-        // Collect SendMessage commands into the shape
-        // `dispatch_sequence_messages` expects so we issue a single swap
-        // around the whole batch.
-        let mut per_actor_msgs: Vec<(i32, i32, i32, i32)> = Vec::new();
-        let mut engine_msgs: Vec<(i32, i32, i32)> = Vec::new();
         for cmd in post_script {
             match cmd {
                 crate::natives::DeferredCommand::ProcessPatchEffects {
@@ -732,30 +727,112 @@ impl EngineInner {
                 } => {
                     self.process_patch_effects(assets, patch_index, effects);
                 }
-                crate::natives::DeferredCommand::SendMessage {
-                    actor,
-                    message,
-                    arg1,
-                    arg2,
-                } => {
-                    if actor == 0 {
-                        engine_msgs.push((message, arg1, arg2));
-                    } else {
-                        per_actor_msgs.push((actor, message, arg1, arg2));
-                    }
-                }
-                _ => unreachable!(
-                    "only ProcessPatchEffects and SendMessage are deferred post-script"
-                ),
+                _ => unreachable!("only ProcessPatchEffects is deferred post-script"),
             }
         }
-        if !per_actor_msgs.is_empty() || !engine_msgs.is_empty() {
-            self.dispatch_sequence_messages(assets, &per_actor_msgs, &engine_msgs);
+
+        for (actor, message, arg1, arg2) in script_messages {
+            self.launch_script_send_message(assets, actor, message, arg1, arg2);
         }
 
         if !engine_commands.is_empty() {
             self.apply_host_commands(assets, engine_commands);
         }
+    }
+
+    /// Launch and synchronously execute the one-element sequence created by
+    /// `RHScript::SendMessage[WithArguments]`.
+    ///
+    /// The original route is `LaunchSequenceElement` →
+    /// `RegisterSequenceElementToGo` → `ExecutedImmediately`. The last
+    /// step calls `ExecuteImmediately` directly, so an owner-bound message
+    /// deliberately bypasses `Instruct` priority contention and leaves the
+    /// actor's current sequence untouched. `ProcessMessage` runs before the
+    /// SendMessage element changes from `Todo` to `Terminated`.
+    fn launch_script_send_message(
+        &mut self,
+        assets: &LevelAssets,
+        actor: i32,
+        message: i32,
+        arg1: i32,
+        arg2: i32,
+    ) {
+        let owner = if actor == 0 {
+            None
+        } else {
+            let Some(owner) = self.entity_id_for_actor_handle(actor) else {
+                tracing::warn!(
+                    actor,
+                    message,
+                    "SendMessage target disappeared before sequence launch"
+                );
+                return;
+            };
+            Some(owner)
+        };
+
+        let mut element = crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::SendMessage,
+            owner,
+        );
+        element.set_property(
+            crate::sequence::Field::Message,
+            crate::sequence::FieldValue::Integer(message as u32),
+        );
+        element.set_property(
+            crate::sequence::Field::MessageArgument,
+            crate::sequence::FieldValue::Integer(arg1 as u32),
+        );
+        element.set_property(
+            crate::sequence::Field::MessageExtendedArgument,
+            crate::sequence::FieldValue::Integer(arg2 as u32),
+        );
+        let mut sequence = crate::sequence::Sequence::new();
+        sequence.append_element(element);
+
+        // Use LaunchSequence rather than the owned LaunchElement/Instruct
+        // wrapper. RHCOMMAND_SEND_MESSAGE is in ExecutedImmediately(), so
+        // the original never arbitrates it against the actor's current
+        // element.
+        let sequence_id = self.launch_sequence(sequence);
+        let action = self
+            .sequence_manager
+            .take_pending_immediate_action_for(sequence_id, 0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "SendMessage sequence {:?} did not register its immediate action",
+                    sequence_id
+                )
+            });
+
+        match action {
+            crate::sequence::SequenceAction::ExecuteImmediateOwner {
+                owner: action_owner,
+                sequence_id: action_sequence_id,
+                element_index: 0,
+            } => {
+                assert_eq!(Some(action_owner), owner);
+                assert_eq!(action_sequence_id, sequence_id);
+                self.dispatch_sequence_messages(assets, &[(actor, message, arg1, arg2)], &[]);
+            }
+            crate::sequence::SequenceAction::ExecuteImmediateEngine {
+                sequence_id: action_sequence_id,
+                element_index: 0,
+            } => {
+                assert!(owner.is_none());
+                assert_eq!(action_sequence_id, sequence_id);
+                self.dispatch_sequence_messages(assets, &[], &[(message, arg1, arg2)]);
+            }
+            other => panic!(
+                "SendMessage sequence {:?} registered unexpected action {:?}",
+                sequence_id, other
+            ),
+        }
+
+        // RHEngine/RHElementActor set RHSEQ_TERMINATED only after
+        // ProcessMessage returns.
+        self.sequence_manager.element_terminated(sequence_id, 0);
     }
 
     /// Load a mission script from the level directory.

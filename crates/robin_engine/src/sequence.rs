@@ -2559,6 +2559,37 @@ impl SequenceManager {
         self.pending_immediate_actions.drain(..).collect()
     }
 
+    /// Remove the pending immediate action for one freshly-launched
+    /// sequence element without disturbing older actions in the queue.
+    ///
+    /// Script `SendMessage` uses this to reproduce the original
+    /// `LaunchSequenceElement` call synchronously at the post-VM boundary:
+    /// the message's own immediate action is dispatched before the element
+    /// terminates, while unrelated immediate actions retain their queue
+    /// position for the normal hourglass drain.
+    pub(crate) fn take_pending_immediate_action_for(
+        &mut self,
+        sequence_id: SequenceId,
+        element_index: usize,
+    ) -> Option<SequenceAction> {
+        let position = self
+            .pending_immediate_actions
+            .iter()
+            .position(|action| match action {
+                SequenceAction::ExecuteImmediateOwner {
+                    sequence_id: action_sequence_id,
+                    element_index: action_element_index,
+                    ..
+                }
+                | SequenceAction::ExecuteImmediateEngine {
+                    sequence_id: action_sequence_id,
+                    element_index: action_element_index,
+                } => *action_sequence_id == sequence_id && *action_element_index == element_index,
+                _ => false,
+            })?;
+        self.pending_immediate_actions.remove(position)
+    }
+
     /// `true` iff there is at least one immediate-dispatch action
     /// awaiting drain.  Used by the engine's drain loop to know when
     /// to stop calling [`Self::take_pending_immediate_actions`].
