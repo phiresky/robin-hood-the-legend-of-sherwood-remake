@@ -94,10 +94,10 @@ pub(super) enum HourglassPhase {
     NpcOrders,
     Paths,
     Entities,
-    Sequences,
     EntitySystems,
     Npcs,
     GameplaySystems,
+    Sequences,
     DeferredEffectsEnd,
 }
 
@@ -499,9 +499,6 @@ impl EngineInner {
         trace_hourglass_phase(HourglassPhase::Entities);
         let was_swordfighting = self.hourglass_phase_entities(assets);
 
-        trace_hourglass_phase(HourglassPhase::Sequences);
-        self.hourglass_phase_sequences(display, assets);
-
         trace_hourglass_phase(HourglassPhase::EntitySystems);
         self.hourglass_phase_entity_systems(assets);
 
@@ -510,6 +507,9 @@ impl EngineInner {
 
         trace_hourglass_phase(HourglassPhase::GameplaySystems);
         self.hourglass_phase_gameplay_systems(display, assets);
+
+        trace_hourglass_phase(HourglassPhase::Sequences);
+        self.hourglass_phase_sequences(display, assets);
 
         trace_hourglass_phase(HourglassPhase::DeferredEffectsEnd);
         self.hourglass_phase_deferred_effects_end(display, assets, was_swordfighting);
@@ -5797,15 +5797,34 @@ impl EngineInner {
         // with an active bow shot; when the animation reports
         // `Done`, spawn an arrow projectile and notify the sequence
         // manager.
-        let spawned_projectiles = self.tick_bow_shots(assets);
+        let _spawned_projectiles = self.tick_bow_shots(assets);
 
         // ── Per-frame arrow tick ────────────────────────────────
         // C++ `ShootWithBowAt` calls `pArrow->Hourglass()` before
-        // `AddElement`. Bow release runs from the sequence-manager phase,
-        // after the global element hourglass loop has already finished for
-        // this frame, so freshly spawned arrows are excluded from this
-        // same-frame global projectile tick.
-        self.tick_arrows(assets, &spawned_projectiles);
+        // `AddElement`. When bow release happens inside an actor's virtual
+        // Hourglass, the appended arrow is subsequently reached by
+        // RHEngine's size-checked element loop and receives its registered
+        // entity Hourglass too.
+        // The original does not batch projectile Hourglass calls ahead of
+        // every PC Hourglass. Both virtual calls occur at their respective
+        // positions in RHEngine's creation-ordered element array. Preserve
+        // that relative order for their observable damage/auto-heal effects.
+        let creation_ordered_pc_and_projectiles: Vec<EntityId> = self
+            .entities
+            .occupied()
+            .filter_map(|(id, entity)| {
+                matches!(entity, Entity::Pc(_) | Entity::Projectile(_)).then_some(id)
+            })
+            .collect();
+        for entity_id in creation_ordered_pc_and_projectiles {
+            match entity_id {
+                EntityId::Pc(_) => self.tick_pc_auto_heal_for(entity_id),
+                EntityId::Projectile(_) => {
+                    self.tick_existing_projectile(assets, entity_id);
+                }
+                _ => unreachable!("filtered to PCs and projectiles"),
+            }
+        }
 
         // ── Per-frame purse / coin tick ─────────────────────────
         // Drive purse trajectories until impact (then burst into
@@ -5842,11 +5861,6 @@ impl EngineInner {
         // apply damage, handle death/KO/wakeup transitions, and
         // tick concussion healing.
         self.tick_melee_combat(assets);
-
-        // Per-frame PC life-point auto-heal (immortal bump +
-        // Easy-mode slow regen).  Runs after the
-        // melee/concussion/tiredness pass.
-        self.tick_pc_auto_heal();
 
         // ── Per-frame ability tick ─────────────────────────────
         // Drive hero ability animations (carry, tie, heal, whistle,

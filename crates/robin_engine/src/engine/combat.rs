@@ -1817,9 +1817,13 @@ impl EngineInner {
         }
     }
 
-    /// Advance every active arrow projectile by one frame; apply
-    /// damage on hit and despawn.  Called from the main hourglass loop.
-    pub(super) fn tick_arrows(&mut self, assets: &LevelAssets, skip_arrow_ids: &[EntityId]) {
+    /// Advance one pre-existing projectile at its creation-order position in
+    /// the virtual entity pass.
+    pub(super) fn tick_existing_projectile(
+        &mut self,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+    ) {
         if self.actors_frozen() {
             return;
         }
@@ -1830,7 +1834,7 @@ impl EngineInner {
             static_active: &self.static_sight_obstacle_active,
         };
         let results =
-            bow_shot::tick_arrows_excluding(&mut self.entities, sight_obstacles, skip_arrow_ids);
+            bow_shot::tick_existing_projectile(&mut self.entities, sight_obstacles, projectile_id);
         self.process_projectile_tick_results(assets, results);
     }
 
@@ -2353,7 +2357,8 @@ impl EngineInner {
     /// [`Self::tick_concussion_healing`], [`Self::tick_tiredness`],
     /// and the PC noise bookkeeping in `engine/ai.rs`; this tick only
     /// covers the PC-specific heal branches.
-    pub(super) fn tick_pc_auto_heal(&mut self) {
+    /// Apply the PC-specific tail of `RHElementActorPC::Hourglass` to one PC.
+    pub(super) fn tick_pc_auto_heal_for(&mut self, pc_id: EntityId) {
         /// Auto-heal cadence in frames.
         const TIME_AUTO_HEAL: u32 = 100;
 
@@ -2361,49 +2366,47 @@ impl EngineInner {
             == crate::player_profile::DifficultyLevel::Easy
             && self.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
 
-        for pc_id in self.pc_ids.clone() {
-            let (lp, immortal, swordfighting, in_coma) = {
-                let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
-                    continue;
-                };
-                // Fried-psykokwack PCs short-circuit the whole hourglass
-                // tick; skip heals too.  Also skip inactive / dead /
-                // already-maxed PCs.
-                if !pc.element.active
-                    || pc.pc.fried_psykokwack
-                    || pc.pc.life_points <= 0
-                    || pc.pc.life_points >= crate::pc_status::LIFEPOINTS_PC
-                {
-                    continue;
-                }
-                let in_coma = self
-                    .pc_description_for_pc_data(&pc.pc)
-                    .map(|d| d.status.in_coma)
-                    .unwrap_or(false);
-                (
-                    pc.pc.life_points,
-                    pc.pc.immortal,
-                    !pc.human.opponents.is_empty(),
-                    in_coma,
-                )
+        let (lp, immortal, swordfighting, in_coma) = {
+            let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
+                return;
             };
-
-            let new_lp = if immortal {
-                // Snap up to a 75 floor before incrementing.
-                if lp < 75 { 75 } else { lp + 1 }
-            } else if tick_easy && !swordfighting {
-                if in_coma {
-                    continue;
-                }
-                lp + 1
-            } else {
-                continue;
-            };
-            let new_lp = new_lp.min(crate::pc_status::LIFEPOINTS_PC);
-
-            if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
-                pc.pc.life_points = new_lp;
+            // Fried-psykokwack PCs short-circuit the whole hourglass
+            // tick; skip heals too.  Also skip inactive / dead /
+            // already-maxed PCs.
+            if !pc.element.active
+                || pc.pc.fried_psykokwack
+                || pc.pc.life_points <= 0
+                || pc.pc.life_points >= crate::pc_status::LIFEPOINTS_PC
+            {
+                return;
             }
+            let in_coma = self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|d| d.status.in_coma)
+                .unwrap_or(false);
+            (
+                pc.pc.life_points,
+                pc.pc.immortal,
+                !pc.human.opponents.is_empty(),
+                in_coma,
+            )
+        };
+
+        let new_lp = if immortal {
+            // Snap up to a 75 floor before incrementing.
+            if lp < 75 { 75 } else { lp + 1 }
+        } else if tick_easy && !swordfighting {
+            if in_coma {
+                return;
+            }
+            lp + 1
+        } else {
+            return;
+        };
+        let new_lp = new_lp.min(crate::pc_status::LIFEPOINTS_PC);
+
+        if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+            pc.pc.life_points = new_lp;
         }
     }
 
