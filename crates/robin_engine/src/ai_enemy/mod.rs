@@ -3438,9 +3438,14 @@ impl EnemyAi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::{DoorSeekInfo, House, cache_npc_villain_authorized_direct};
     use crate::ai_entity_view::{AiEntityView, AiEntityViewMap, EntityKind, NetCoverInfo};
+    use crate::coordinates::MapPoint;
     use crate::element::{Camp, EyeStatus, Posture};
+    use crate::entity_id::{EntityId, SoldierId};
+    use crate::gate::{Door, DoorIndex, DoorType};
     use crate::order::OrderType;
+    use crate::position_interface::SectorHandle;
     use crate::sight_obstacle::{ObstaclePoint, SharedSightObstacles, SightObstacle};
     use std::sync::Arc;
 
@@ -3665,6 +3670,183 @@ mod tests {
             ai.base.substate_at_last_timer_launch,
             Substate::SeekingCharlyGoToOfficer
         );
+    }
+
+    fn run_find_door_authorization_case(
+        door_type: DoorType,
+        active: bool,
+        locked_npc_villain: bool,
+        building_full: bool,
+        actor_is_rider: bool,
+    ) -> EnemyAi {
+        let center = Position {
+            x: 0.0,
+            y: 0.0,
+            sector: SectorHandle::new(7),
+            level: 0,
+        };
+        let position_in = Position {
+            x: 50.0,
+            y: 60.0,
+            sector: SectorHandle::new(8),
+            level: 2,
+        };
+        let point_out = MapPoint::new(10.0, 0.0);
+
+        let door = Door {
+            door_type,
+            active,
+            locked_npc_villain,
+            ..Default::default()
+        };
+
+        let mut global = AiGlobalState::default();
+        global.door_seek_infos.push(DoorSeekInfo {
+            door_index: DoorIndex(0),
+            door_type,
+            point_out,
+            position_in,
+            sector_out: 7,
+            sector_in: 8,
+            layer_out: 0,
+            npc_villain_authorized_direct: cache_npc_villain_authorized_direct(&door),
+        });
+        let occupant_ids = if building_full {
+            vec![EntityId::Soldier(SoldierId(0)); usize::from(u16::MAX)]
+        } else {
+            Vec::new()
+        };
+        global.houses.push(House {
+            sector_index: 8,
+            occupant_ids,
+            ..House::default()
+        });
+
+        let mut ai = EnemyAi::new(1);
+        let ctx = AiContext {
+            frame: 100,
+            camp: Camp::Lacklandists,
+            in_building: true,
+            building_sector: SectorHandle::new(9),
+            self_is_rider: actor_is_rider,
+            ..AiContext::default()
+        };
+        let seek_direction =
+            crate::position_interface::vector_to_sector_0_to_15_iso(point_out.x, point_out.y)
+                as u16;
+
+        ai.seek_area(
+            center,
+            0,
+            SeekFlags::HOUSE | SeekFlags::LOCATION_FIRST,
+            seek_direction,
+            &mut global,
+            &ctx,
+            &AiPerTickData::stub(),
+        );
+
+        // The indoor caller must enter the three-frame watching delay after
+        // selecting the personal seek point, regardless of authorization.
+        // This pins the exact state/timer ordering around the door decision.
+        assert_eq!(ai.my_seek_points, vec![1111]);
+        assert_eq!(ai.base.current_state, AiState::Seeking);
+        assert_eq!(
+            ai.base.current_substate,
+            Substate::SeekingSeekpointWatchingSidewards
+        );
+        assert!(ai.base.timer_is_running);
+        assert_eq!(ai.base.when_does_timer_ring, 103);
+        assert_eq!(
+            ai.base.substate_at_last_timer_launch,
+            Substate::SeekingSeekpointWatchingSidewards
+        );
+
+        ai
+    }
+
+    #[test]
+    fn find_door_enemy_could_be_behind_applies_every_original_authorization_gate() {
+        let center = Position {
+            x: 0.0,
+            y: 0.0,
+            sector: SectorHandle::new(7),
+            level: 0,
+        };
+        let behind_door = Position {
+            x: 50.0,
+            y: 60.0,
+            sector: SectorHandle::new(8),
+            level: 2,
+        };
+
+        let cases = [
+            (
+                "authorized",
+                DoorType::Building,
+                true,
+                false,
+                false,
+                false,
+                behind_door,
+            ),
+            (
+                "building type",
+                DoorType::Default,
+                true,
+                false,
+                false,
+                false,
+                center,
+            ),
+            (
+                "active state",
+                DoorType::Building,
+                false,
+                false,
+                false,
+                false,
+                center,
+            ),
+            (
+                "building capacity",
+                DoorType::Building,
+                true,
+                false,
+                true,
+                false,
+                center,
+            ),
+            (
+                "rider",
+                DoorType::Building,
+                true,
+                false,
+                false,
+                true,
+                center,
+            ),
+            (
+                "villain lock",
+                DoorType::Building,
+                true,
+                true,
+                false,
+                false,
+                center,
+            ),
+        ];
+
+        for (name, door_type, active, locked, full, rider, expected) in cases {
+            let ai = run_find_door_authorization_case(door_type, active, locked, full, rider);
+            assert_eq!(ai.seek_center, expected, "{name} gate");
+            assert_eq!(
+                ai.personal_seek_point_1
+                    .as_ref()
+                    .map(|point| point.position),
+                Some(expected),
+                "{name} gate must be applied before the personal point is created"
+            );
+        }
     }
 
     #[test]

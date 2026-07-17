@@ -226,7 +226,7 @@ impl EngineInner {
     /// hourglass loop.
     pub(super) fn tick_bow_shots(&mut self, assets: &LevelAssets) -> Vec<EntityId> {
         let mut spawned_projectiles = Vec::new();
-        if self.freeze_all {
+        if self.actors_frozen() {
             return spawned_projectiles;
         }
         let events = bow_shot::tick_bow_shots(&mut self.entities, &mut self.sequence_manager);
@@ -1575,7 +1575,108 @@ fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::coordinates::M
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{soldier_piercing_protection, soldier_shield_dimensions};
+    use crate::element::{
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, Entity, HumanData, Posture,
+    };
+    use crate::engine::{EngineInner, LevelAssets};
+    use crate::order::OrderType;
     use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
+    use crate::sequence::{SequenceElementData, SequenceState};
+    use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+    use std::sync::Arc;
+
+    fn make_pc(posture: Posture) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture,
+                ..Default::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::Waiting,
+                ..Default::default()
+            },
+            human: HumanData::default(),
+            pc: Default::default(),
+        })
+    }
+
+    fn blocked_shoulder_pair() -> (
+        EngineInner,
+        LevelAssets,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(make_pc(Posture::OnShoulders));
+        let mut carrier = make_pc(Posture::CarryingOnShoulders);
+        let Entity::Pc(carrier_pc) = &mut carrier else {
+            unreachable!()
+        };
+        carrier_pc.pc.carried = Some(victim_id);
+        let carrier_id = engine.add_entity(carrier);
+        engine
+            .get_entity_mut(victim_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+
+        // A flat solid slab from z=60 through z=70 intersects the exact
+        // CanCarryOnShoulders vertical segment (z=50..90) at the default
+        // actor position (0, 0).
+        let mut ceiling = SightObstacle::new_default(0);
+        ceiling.obstacle_points = vec![
+            ObstaclePoint {
+                x: -10.0,
+                y: -10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: -10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: 10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: -10.0,
+                y: 10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+        ];
+        ceiling.top_plane_points = [
+            [-10.0, -10.0, 70.0],
+            [10.0, -10.0, 70.0],
+            [-10.0, 10.0, 70.0],
+        ];
+        ceiling.bottom_plane_points = [
+            [-10.0, -10.0, 60.0],
+            [10.0, -10.0, 60.0],
+            [-10.0, 10.0, 60.0],
+        ];
+        ceiling.rebuild_geometry();
+
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = Arc::new(vec![ceiling]);
+        (engine, assets, carrier_id, victim_id)
+    }
+
+    fn shoulder_drop_elements(engine: &EngineInner) -> Vec<&crate::sequence::SequenceElement> {
+        engine
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| element.command == crate::element::Command::ReceiveDamage)
+            .collect()
+    }
 
     #[test]
     fn stone_soldier_protection_requires_real_weapon_profile() {
@@ -1624,6 +1725,46 @@ mod tests {
             soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
             Some((22, 44))
         );
+    }
+
+    #[test]
+    fn carrying_posture_waiting_action_does_not_run_ceiling_check() {
+        let (mut engine, assets, carrier_id, _) = blocked_shoulder_pair();
+
+        engine.tick_shouldered_carry_ceiling(
+            &assets,
+            &[(carrier_id, OrderType::WaitingCarryingOnShoulders)],
+        );
+
+        assert!(shoulder_drop_elements(&engine).is_empty());
+    }
+
+    #[test]
+    fn walking_carry_action_launches_drop_on_that_action_frame() {
+        let (mut engine, assets, carrier_id, victim_id) = blocked_shoulder_pair();
+        assert!(shoulder_drop_elements(&engine).is_empty());
+
+        engine.tick_shouldered_carry_ceiling(
+            &assets,
+            &[(carrier_id, OrderType::WalkingCarryingOnShoulders)],
+        );
+
+        let drops = shoulder_drop_elements(&engine);
+        assert_eq!(drops.len(), 1);
+        let drop = drops[0];
+        assert_eq!(drop.owner, Some(victim_id));
+        assert_eq!(drop.state, SequenceState::Todo);
+        assert!(matches!(
+            drop.data,
+            SequenceElementData::Damage {
+                origin: Some(origin),
+                damage: 0,
+                concussion: 0,
+                sword_strike: None,
+                sword_profile_idx: None,
+                is_harder_hit: false,
+            } if origin == victim_id
+        ));
     }
 }
 
@@ -1676,10 +1817,14 @@ impl EngineInner {
         }
     }
 
-    /// Advance every active arrow projectile by one frame; apply
-    /// damage on hit and despawn.  Called from the main hourglass loop.
-    pub(super) fn tick_arrows(&mut self, assets: &LevelAssets, skip_arrow_ids: &[EntityId]) {
-        if self.freeze_all {
+    /// Advance one pre-existing projectile at its creation-order position in
+    /// the virtual entity pass.
+    pub(super) fn tick_existing_projectile(
+        &mut self,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+    ) {
+        if self.actors_frozen() {
             return;
         }
         self.update_shield_obstacles(assets);
@@ -1689,12 +1834,12 @@ impl EngineInner {
             static_active: &self.static_sight_obstacle_active,
         };
         let results =
-            bow_shot::tick_arrows_excluding(&mut self.entities, sight_obstacles, skip_arrow_ids);
+            bow_shot::tick_existing_projectile(&mut self.entities, sight_obstacles, projectile_id);
         self.process_projectile_tick_results(assets, results);
     }
 
     fn tick_new_projectile_once(&mut self, assets: &LevelAssets, arrow_id: EntityId) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         self.update_shield_obstacles(assets);
@@ -2212,7 +2357,8 @@ impl EngineInner {
     /// [`Self::tick_concussion_healing`], [`Self::tick_tiredness`],
     /// and the PC noise bookkeeping in `engine/ai.rs`; this tick only
     /// covers the PC-specific heal branches.
-    pub(super) fn tick_pc_auto_heal(&mut self) {
+    /// Apply the PC-specific tail of `RHElementActorPC::Hourglass` to one PC.
+    pub(super) fn tick_pc_auto_heal_for(&mut self, pc_id: EntityId) {
         /// Auto-heal cadence in frames.
         const TIME_AUTO_HEAL: u32 = 100;
 
@@ -2220,49 +2366,47 @@ impl EngineInner {
             == crate::player_profile::DifficultyLevel::Easy
             && self.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
 
-        for pc_id in self.pc_ids.clone() {
-            let (lp, immortal, swordfighting, in_coma) = {
-                let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
-                    continue;
-                };
-                // Fried-psykokwack PCs short-circuit the whole hourglass
-                // tick; skip heals too.  Also skip inactive / dead /
-                // already-maxed PCs.
-                if !pc.element.active
-                    || pc.pc.fried_psykokwack
-                    || pc.pc.life_points <= 0
-                    || pc.pc.life_points >= crate::pc_status::LIFEPOINTS_PC
-                {
-                    continue;
-                }
-                let in_coma = self
-                    .pc_description_for_pc_data(&pc.pc)
-                    .map(|d| d.status.in_coma)
-                    .unwrap_or(false);
-                (
-                    pc.pc.life_points,
-                    pc.pc.immortal,
-                    !pc.human.opponents.is_empty(),
-                    in_coma,
-                )
+        let (lp, immortal, swordfighting, in_coma) = {
+            let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
+                return;
             };
-
-            let new_lp = if immortal {
-                // Snap up to a 75 floor before incrementing.
-                if lp < 75 { 75 } else { lp + 1 }
-            } else if tick_easy && !swordfighting {
-                if in_coma {
-                    continue;
-                }
-                lp + 1
-            } else {
-                continue;
-            };
-            let new_lp = new_lp.min(crate::pc_status::LIFEPOINTS_PC);
-
-            if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
-                pc.pc.life_points = new_lp;
+            // Fried-psykokwack PCs short-circuit the whole hourglass
+            // tick; skip heals too.  Also skip inactive / dead /
+            // already-maxed PCs.
+            if !pc.element.active
+                || pc.pc.fried_psykokwack
+                || pc.pc.life_points <= 0
+                || pc.pc.life_points >= crate::pc_status::LIFEPOINTS_PC
+            {
+                return;
             }
+            let in_coma = self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|d| d.status.in_coma)
+                .unwrap_or(false);
+            (
+                pc.pc.life_points,
+                pc.pc.immortal,
+                !pc.human.opponents.is_empty(),
+                in_coma,
+            )
+        };
+
+        let new_lp = if immortal {
+            // Snap up to a 75 floor before incrementing.
+            if lp < 75 { 75 } else { lp + 1 }
+        } else if tick_easy && !swordfighting {
+            if in_coma {
+                return;
+            }
+            lp + 1
+        } else {
+            return;
+        };
+        let new_lp = new_lp.min(crate::pc_status::LIFEPOINTS_PC);
+
+        if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+            pc.pc.life_points = new_lp;
         }
     }
 
@@ -2601,7 +2745,7 @@ impl EngineInner {
         display: &mut super::HostDisplayState,
         assets: &LevelAssets,
     ) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         let results = crate::abilities::tick_abilities(
@@ -3512,36 +3656,41 @@ impl EngineInner {
 
     // ─── Shouldered-carry ceiling check ─────────────────────────────
 
-    /// Per-frame check for PCs carrying another PC on their shoulders:
-    /// if the column above the carrier is blocked by a SOLID obstacle,
-    /// force the shouldered PC off by launching a zero-damage
-    /// `RECEIVE_DAMAGE` element against them (which drops them via the
-    /// shoulder-fall path in `translate_shoulder_damage`).
+    /// Check PCs whose movement action executed this frame for the original
+    /// `RHANIMATION_WALKING_CARRYING_ON_SHOULDERS` ceiling collision.
     ///
-    /// We run the ceiling check whenever a PC is in
-    /// `Posture::CarryingOnShoulders`, which covers both the walking
-    /// and waiting arms of the carry cycle.  Functionally a stationary
-    /// carrier can't be under a low ceiling without having walked there
-    /// first, so this is broader-but-equivalent to a walking-only
-    /// gate.
-    pub(super) fn tick_shouldered_carry_ceiling(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+    /// The original calls `CanCarryOnShoulders` only from that action's
+    /// `RHElementActorPC::Execute` arm, after `PerformMotion`.  In particular,
+    /// the persistent `RHPOSTURE_CARRYING_ON_SHOULDERS` waiting state does not
+    /// run this check.
+    pub(super) fn tick_shouldered_carry_ceiling(
+        &mut self,
+        assets: &LevelAssets,
+        executed_actions: &[(EntityId, crate::order::OrderType)],
+    ) {
+        if self.actors_frozen() {
             return;
         }
 
         // Collect (carrier_id, victim_id) pairs first to avoid
         // overlapping borrows with launch_element.
         let mut drops: Vec<(crate::element::EntityId, crate::element::EntityId)> = Vec::new();
-        for (carrier_id, entity) in self.entities.humans() {
-            let carrier_id: EntityId = carrier_id.into();
-            let elem = entity.element_data();
-            if elem.posture != crate::element::Posture::CarryingOnShoulders {
+        for &(carrier_id, action) in executed_actions {
+            if action != crate::order::OrderType::WalkingCarryingOnShoulders {
                 continue;
             }
+            let Some(entity) = self.get_entity(carrier_id) else {
+                tracing::warn!(
+                    ?carrier_id,
+                    "shouldered-carry ceiling check lost executing carrier"
+                );
+                continue;
+            };
+            let elem = entity.element_data();
             let carrier_pos = elem.position();
 
             let obstacles = self.sight_obstacles(assets);
-            if crate::abilities::can_carry_on_shoulders(carrier_pos.into(), obstacles) {
+            if crate::abilities::can_carry_on_shoulders(carrier_pos, obstacles) {
                 continue;
             }
 
@@ -3560,8 +3709,8 @@ impl EngineInner {
             let Some(victim_id) = victim_id else {
                 tracing::warn!(
                     ?carrier_id,
-                    "shouldered-carry ceiling check: carrier in CarryingOnShoulders \
-                     posture has no shouldered victim — skipping"
+                    "shouldered-carry ceiling check: executing carrier has no \
+                     shouldered victim — skipping"
                 );
                 continue;
             };

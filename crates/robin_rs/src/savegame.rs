@@ -293,6 +293,7 @@ impl SaveGameManager {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn write_special_save_background(
         &mut self,
         filename: &str,
@@ -563,6 +564,7 @@ impl SaveGameManager {
     /// The caller must supply the live engine; the engine must have an
     /// active campaign (panics otherwise).  If `thumbnail` is `Some`, it
     /// is also written to the sibling thumb file alongside the payload.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_save_from_engine(
         &mut self,
         host: &mut Host,

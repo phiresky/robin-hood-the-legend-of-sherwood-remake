@@ -6,12 +6,10 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
 
 pub const SBFILE_NO_ERROR: i32 = 0;
 pub const SBFILE_ERROR_FILE_NOT_FOUND: i32 = -1;
@@ -24,9 +22,35 @@ pub const SBFILE_ERROR_BAD_ARCHIVE: i32 = -20;
 
 pub const SB_FILE_READ: i32 = 0x01;
 
-static ALTERNATE_PATHS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-static OVERLAY_PATHS: Mutex<Vec<OverlayRoot>> = Mutex::new(Vec::new());
-static PRIMARY_PATH: Mutex<Option<String>> = Mutex::new(None);
+/// Instance-owned SBFile lookup state.
+///
+/// The original engine stored alternate paths in a static vector
+/// (`original-code/sblibng/SBFile.cpp:23`) and searched it in insertion order
+/// after the requested path (`SBFile.cpp:1014-1042`). This type preserves that
+/// ordering while allowing independent instances for tools and tests.
+pub struct SbFileSystem {
+    assets: Arc<robin_util::asset_fs::AssetVfs>,
+    alternate_paths: Mutex<Vec<String>>,
+    overlay_paths: Mutex<Vec<OverlayRoot>>,
+    primary_path: Mutex<Option<PathBuf>>,
+}
+
+impl SbFileSystem {
+    pub fn new(assets: Arc<robin_util::asset_fs::AssetVfs>) -> Self {
+        Self {
+            assets,
+            alternate_paths: Mutex::new(Vec::new()),
+            overlay_paths: Mutex::new(Vec::new()),
+            primary_path: Mutex::new(None),
+        }
+    }
+}
+
+static GLOBAL_FILE_SYSTEM: OnceLock<SbFileSystem> = OnceLock::new();
+
+fn global_file_system() -> &'static SbFileSystem {
+    GLOBAL_FILE_SYSTEM.get_or_init(|| SbFileSystem::new(robin_util::asset_fs::global().clone()))
+}
 
 /// One overlay root in the lookup stack.
 ///
@@ -35,17 +59,17 @@ static PRIMARY_PATH: Mutex<Option<String>> = Mutex::new(None);
 /// `Zip` is a zip archive mounted in-memory (no extraction); lookups
 /// consult a pre-built case-folded index built at mount time.
 enum OverlayRoot {
-    Directory(String),
+    Directory(PathBuf),
     #[cfg(not(target_arch = "wasm32"))]
     Zip(Arc<ZipOverlay>),
 }
 
 impl OverlayRoot {
-    fn display_path(&self) -> &str {
+    fn display_path(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            OverlayRoot::Directory(p) => p.as_str(),
+            OverlayRoot::Directory(p) => p.to_string_lossy(),
             #[cfg(not(target_arch = "wasm32"))]
-            OverlayRoot::Zip(z) => z.display_path.as_str(),
+            OverlayRoot::Zip(z) => std::borrow::Cow::Borrowed(z.display_path.as_str()),
         }
     }
 }
@@ -318,60 +342,105 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 /// find zip-backed assets, which is correct: custom-mission mod data
 /// never includes ffmpeg inputs.
 pub fn resolve_data_path(path: &str) -> Option<PathBuf> {
-    let normalised = path.replace('\\', "/");
-    let p = Path::new(&normalised);
+    global_file_system().resolve_data_path(path)
+}
 
-    // Overlay paths intentionally take precedence over the primary datadir.
-    let overlay_paths = OVERLAY_PATHS.lock().unwrap();
-    for overlay in overlay_paths.iter() {
-        let OverlayRoot::Directory(dir) = overlay else {
-            continue;
-        };
-        let full = format!("{}/{}", dir, normalised);
-        if let Some(resolved) = resolve_case_insensitive(Path::new(&full))
+impl SbFileSystem {
+    pub fn resolve_data_path(&self, path: &str) -> Option<PathBuf> {
+        let normalised = path.replace('\\', "/");
+        let p = Path::new(&normalised);
+        if !p.is_absolute()
+            && p.components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            tracing::warn!("resolve_data_path: rejected escaping path {normalised}");
+            return None;
+        }
+
+        // Overlay paths intentionally take precedence over the primary datadir.
+        let overlay_paths = self.overlay_paths.lock().unwrap();
+        for overlay in overlay_paths.iter() {
+            let OverlayRoot::Directory(dir) = overlay else {
+                continue;
+            };
+            let full = dir.join(&normalised);
+            if let Some(resolved) = resolve_contained_file(dir, &full) {
+                return Some(resolved);
+            }
+        }
+        drop(overlay_paths);
+
+        if let Some(primary) = self.primary_path.lock().unwrap().clone() {
+            let full = primary.join(&normalised);
+            if let Some(resolved) = resolve_contained_file(&primary, &full) {
+                return Some(resolved);
+            }
+        }
+
+        // Direct path
+        if let Some(resolved) = resolve_case_insensitive(p)
             && resolved.is_file()
         {
             return Some(resolved);
         }
-    }
-    drop(overlay_paths);
 
-    if let Some(primary) = PRIMARY_PATH.lock().unwrap().clone() {
-        let full = format!("{}/{}", primary, normalised);
-        if let Some(resolved) = resolve_case_insensitive(Path::new(&full))
-            && resolved.is_file()
-        {
-            return Some(resolved);
-        }
-    }
-
-    // Direct path
-    if let Some(resolved) = resolve_case_insensitive(p)
-        && resolved.is_file()
-    {
-        return Some(resolved);
-    }
-
-    // Alternate paths
-    let alt_paths = ALTERNATE_PATHS.lock().unwrap();
-    for alt in alt_paths.iter() {
-        if let Some(primary) = PRIMARY_PATH.lock().unwrap().clone() {
-            let full = format!("{}/{}/{}", primary, alt, normalised);
+        // Alternate paths
+        let alt_paths = self.alternate_paths.lock().unwrap();
+        for alt in alt_paths.iter() {
+            if let Some(primary) = self.primary_path.lock().unwrap().clone() {
+                let full = primary.join(alt).join(&normalised);
+                if let Some(resolved) = resolve_contained_file(&primary, &full) {
+                    return Some(resolved);
+                }
+            }
+            let full = format!("{}/{}", alt, normalised);
             if let Some(resolved) = resolve_case_insensitive(Path::new(&full))
                 && resolved.is_file()
             {
                 return Some(resolved);
             }
         }
-        let full = format!("{}/{}", alt, normalised);
-        if let Some(resolved) = resolve_case_insensitive(Path::new(&full))
-            && resolved.is_file()
-        {
-            return Some(resolved);
-        }
-    }
 
-    None
+        None
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resolve_contained_file(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    let resolved = resolve_case_insensitive(candidate)?;
+    let resolved = fs::canonicalize(resolved).ok()?;
+    (resolved.starts_with(root) && resolved.is_file()).then_some(resolved)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn path_exists_contained(root: &Path, candidate: &Path) -> Result<bool, i32> {
+    let Some(resolved) = resolve_case_insensitive(candidate) else {
+        return Ok(false);
+    };
+    let resolved = fs::canonicalize(&resolved).map_err(|error| {
+        tracing::warn!("asset {} cannot be resolved: {error}", resolved.display());
+        SBFILE_ERROR_READ
+    })?;
+    if !resolved.starts_with(root) {
+        tracing::warn!(
+            "asset {} escapes mount {}",
+            resolved.display(),
+            root.display()
+        );
+        return Err(SBFILE_ERROR_READ);
+    }
+    Ok(true)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resolve_contained_file(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    let resolved = resolve_case_insensitive(candidate)?;
+    (resolved.starts_with(root)).then_some(resolved)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn path_exists_contained(root: &Path, candidate: &Path) -> Result<bool, i32> {
+    Ok(resolve_case_insensitive(candidate).is_some_and(|resolved| resolved.starts_with(root)))
 }
 
 /// Read `path` as bytes, honouring case-insensitive resolution on native
@@ -388,59 +457,88 @@ pub fn resolve_data_path(path: &str) -> Option<PathBuf> {
 /// miss to drive an "insert CD" disc-swap prompt. The Rust port ships
 /// from a flat datadir, has no CD-media support, and therefore has no
 /// equivalent — intentionally dropped.
-fn try_read(path: &str) -> Option<Vec<u8>> {
-    match robin_util::asset_fs::read(path) {
-        Ok(bytes) => return Some(bytes),
+fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<Vec<u8>>, i32> {
+    match file_system.assets.read(path) {
+        Ok(bytes) => return Ok(Some(bytes)),
         Err(robin_util::asset_fs::AssetError::NotFound(_)) => {
             tracing::trace!("asset {path}: not found");
         }
-        Err(e) => tracing::warn!("asset read failed for {path}: {e}"),
+        // Absolute host paths are intentionally handled by the compatibility
+        // fallback below; virtual paths must remain mount-contained.
+        Err(robin_util::asset_fs::AssetError::InvalidPath(_)) if Path::new(path).is_absolute() => {}
+        Err(e) => {
+            tracing::warn!("asset read failed for {path}: {e}");
+            return Err(SBFILE_ERROR_READ);
+        }
     }
     if let Some(resolved) = resolve_case_insensitive(Path::new(path)) {
         match robin_util::asset_fs::read(&resolved) {
-            Ok(bytes) => return Some(bytes),
+            Ok(bytes) => return Ok(Some(bytes)),
             Err(robin_util::asset_fs::AssetError::NotFound(_)) => {
                 tracing::trace!(
                     "asset {} (case-resolved from {path}): not found",
                     resolved.display()
                 );
             }
-            Err(e) => tracing::warn!(
-                "asset read failed for {} (case-resolved from {path}): {e}",
-                resolved.display()
-            ),
+            Err(e) => {
+                tracing::warn!(
+                    "asset read failed for {} (case-resolved from {path}): {e}",
+                    resolved.display()
+                );
+                return Err(SBFILE_ERROR_READ);
+            }
         }
     }
-    None
+    Ok(None)
 }
 
 impl SbFile {
     pub fn open(path: &str, _flags: i32) -> Result<Self, i32> {
+        global_file_system().open(path, _flags)
+    }
+}
+
+impl SbFileSystem {
+    pub fn open(&self, path: &str, _flags: i32) -> Result<SbFile, i32> {
         let normalised = path.replace('\\', "/");
-        let overlay_paths = OVERLAY_PATHS.lock().unwrap();
+        let requested = Path::new(&normalised);
+        if requested.is_absolute() {
+            return try_read(self, &normalised)?
+                .map(SbFile::from_bytes)
+                .ok_or(SBFILE_ERROR_FILE_NOT_FOUND);
+        }
+        if requested
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            tracing::warn!("SbFile::open: rejected escaping path {normalised}");
+            return Err(SBFILE_ERROR_READ);
+        }
+        let overlay_paths = self.overlay_paths.lock().unwrap();
         for overlay in overlay_paths.iter() {
-            if let Some(bytes) = read_from_overlay(overlay, &normalised) {
-                return Ok(Self::from_bytes(bytes));
+            if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
+                return Ok(SbFile::from_bytes(bytes));
             }
         }
         drop(overlay_paths);
-        if let Some(primary) = PRIMARY_PATH.lock().unwrap().clone()
-            && let Some(bytes) = try_read(&format!("{primary}/{normalised}"))
+        if let Some(primary) = self.primary_path.lock().unwrap().clone()
+            && let Some(bytes) = try_read(self, &primary.join(&normalised).to_string_lossy())?
         {
-            return Ok(Self::from_bytes(bytes));
+            return Ok(SbFile::from_bytes(bytes));
         }
-        if let Some(bytes) = try_read(&normalised) {
-            return Ok(Self::from_bytes(bytes));
+        if let Some(bytes) = try_read(self, &normalised)? {
+            return Ok(SbFile::from_bytes(bytes));
         }
-        let alt_paths = ALTERNATE_PATHS.lock().unwrap();
+        let alt_paths = self.alternate_paths.lock().unwrap();
         for alt in alt_paths.iter() {
-            if let Some(primary) = PRIMARY_PATH.lock().unwrap().clone()
-                && let Some(bytes) = try_read(&format!("{primary}/{alt}/{normalised}"))
+            if let Some(primary) = self.primary_path.lock().unwrap().clone()
+                && let Some(bytes) =
+                    try_read(self, &primary.join(alt).join(&normalised).to_string_lossy())?
             {
-                return Ok(Self::from_bytes(bytes));
+                return Ok(SbFile::from_bytes(bytes));
             }
-            if let Some(bytes) = try_read(&format!("{alt}/{normalised}")) {
-                return Ok(Self::from_bytes(bytes));
+            if let Some(bytes) = try_read(self, &format!("{alt}/{normalised}"))? {
+                return Ok(SbFile::from_bytes(bytes));
             }
         }
         tracing::warn!(
@@ -450,6 +548,15 @@ impl SbFile {
         Err(SBFILE_ERROR_FILE_NOT_FOUND)
     }
 
+    pub fn read_all(&self, path: &str) -> Result<Vec<u8>, i32> {
+        let mut file = self.open(path, SB_FILE_READ)?;
+        let mut bytes = vec![0; file.get_size() as usize];
+        file.serialize_bytes(&mut bytes)?;
+        Ok(bytes)
+    }
+}
+
+impl SbFile {
     fn from_bytes(bytes: Vec<u8>) -> Self {
         let size = bytes.len() as u64;
         SbFile {
@@ -462,10 +569,7 @@ impl SbFile {
     }
 
     pub fn read_all(path: &str) -> Result<Vec<u8>, i32> {
-        let mut file = Self::open(path, SB_FILE_READ)?;
-        let mut bytes = vec![0; file.get_size() as usize];
-        file.serialize_bytes(&mut bytes)?;
-        Ok(bytes)
+        global_file_system().read_all(path)
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> i32 {
@@ -619,69 +723,22 @@ impl SbFile {
         Ok(())
     }
 
-    /// Clears `line`, then loops reading one byte at a time, appending
-    /// it unless the byte is `\n` or `\r`, until a `\n` is consumed or
-    /// EOF is reached. Returns `!self.is_eof()` — i.e. true if the file
-    /// may still have more data, false if EOF was reached (whether
-    /// mid-line or just past the terminating newline).
-
     pub fn exists(path: &str) -> bool {
-        let n = path.replace('\\', "/");
-        let overlays = OVERLAY_PATHS.lock().unwrap();
-        for overlay in overlays.iter() {
-            if overlay_root_exists(overlay, &n) {
-                return true;
+        match global_file_system().try_exists(path) {
+            Ok(exists) => exists,
+            Err(error) => {
+                tracing::warn!("SbFile::exists({path}): lookup failed with error {error}");
+                false
             }
         }
-        drop(overlays);
-        if let Some(primary) = PRIMARY_PATH.lock().unwrap().clone() {
-            let c = format!("{}/{}", primary, n);
-            if Path::new(&c).exists() || resolve_case_insensitive(Path::new(&c)).is_some() {
-                return true;
-            }
-        }
-        if robin_util::asset_fs::exists(&n) {
-            return true;
-        }
-        let p = Path::new(&n);
-        if p.exists() {
-            return true;
-        }
-        if resolve_case_insensitive(p).is_some() {
-            return true;
-        }
-        let alts = ALTERNATE_PATHS.lock().unwrap();
-        for alt in alts.iter() {
-            if let Some(primary) = PRIMARY_PATH.lock().unwrap().clone() {
-                let c = format!("{}/{}/{}", primary, alt, n);
-                if Path::new(&c).exists() || resolve_case_insensitive(Path::new(&c)).is_some() {
-                    return true;
-                }
-            }
-            let c = format!("{}/{}", alt, n);
-            if Path::new(&c).exists() || resolve_case_insensitive(Path::new(&c)).is_some() {
-                return true;
-            }
-        }
-        false
     }
 
     pub fn add_alternate_path(path: &str) -> i32 {
-        let mut p = ALTERNATE_PATHS.lock().unwrap();
-        if p.iter().any(|x| x == path) {
-            return SBFILE_ERROR_PATH_ALREADY_PRESENT;
-        }
-        p.push(path.to_string());
-        SBFILE_NO_ERROR
+        global_file_system().add_alternate_path(path)
     }
 
     pub fn add_overlay_path(path: &str) -> i32 {
-        let mut p = OVERLAY_PATHS.lock().unwrap();
-        if p.iter().any(|x| x.display_path() == path) {
-            return SBFILE_ERROR_PATH_ALREADY_PRESENT;
-        }
-        p.push(OverlayRoot::Directory(path.to_string()));
-        SBFILE_NO_ERROR
+        global_file_system().add_overlay_path(path)
     }
 
     /// Mount a zip archive as an overlay root, with no on-disk extraction.
@@ -695,29 +752,14 @@ impl SbFile {
     /// `remove_overlay(zip_path)` undoes this.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn add_overlay_zip(zip_path: &str) -> i32 {
-        let mut p = OVERLAY_PATHS.lock().unwrap();
-        if p.iter().any(|x| x.display_path() == zip_path) {
-            return SBFILE_ERROR_PATH_ALREADY_PRESENT;
-        }
-        let overlay = match ZipOverlay::open(Path::new(zip_path)) {
-            Ok(o) => o,
-            Err(e) => return e,
-        };
-        p.push(OverlayRoot::Zip(Arc::new(overlay)));
-        SBFILE_NO_ERROR
+        global_file_system().add_overlay_zip(zip_path)
     }
 
     /// Remove an overlay by its registered path (works for both directory
     /// and zip overlays).  Returns `SBFILE_ERROR_PATH_NOT_IN_SET` if not
     /// found.
     pub fn remove_overlay(path: &str) -> i32 {
-        let mut p = OVERLAY_PATHS.lock().unwrap();
-        if let Some(i) = p.iter().position(|x| x.display_path() == path) {
-            p.remove(i);
-            SBFILE_NO_ERROR
-        } else {
-            SBFILE_ERROR_PATH_NOT_IN_SET
-        }
+        global_file_system().remove_overlay(path)
     }
 
     /// Returns all directory-overlay paths (in priority order).  Zip
@@ -726,27 +768,195 @@ impl SbFile {
     /// `Data/Characters/*.rhs.d/`), which doesn't apply to in-memory zip
     /// roots.
     pub fn overlay_paths() -> Vec<String> {
-        OVERLAY_PATHS
+        global_file_system().overlay_paths()
+    }
+
+    pub fn set_primary_path(path: &str) -> i32 {
+        global_file_system().set_primary_path(path)
+    }
+
+    pub fn remove_alternate_path(path: &str) -> i32 {
+        global_file_system().remove_alternate_path(path)
+    }
+}
+
+impl SbFileSystem {
+    pub fn try_exists(&self, path: &str) -> Result<bool, i32> {
+        let normalised = path.replace('\\', "/");
+        let requested = Path::new(&normalised);
+        if !requested.is_absolute()
+            && requested
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(SBFILE_ERROR_READ);
+        }
+
+        if !requested.is_absolute() {
+            let overlays = self.overlay_paths.lock().unwrap();
+            for overlay in overlays.iter() {
+                match overlay {
+                    OverlayRoot::Directory(root) => {
+                        if path_exists_contained(root, &root.join(&normalised))? {
+                            return Ok(true);
+                        }
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    OverlayRoot::Zip(zip) if zip.exists(&normalised) => return Ok(true),
+                    #[cfg(not(target_arch = "wasm32"))]
+                    OverlayRoot::Zip(_) => {}
+                }
+            }
+        }
+
+        if !requested.is_absolute()
+            && let Some(primary) = self.primary_path.lock().unwrap().clone()
+            && path_exists_contained(&primary, &primary.join(&normalised))?
+        {
+            return Ok(true);
+        }
+        match self.assets.try_exists(requested) {
+            Ok(true) => return Ok(true),
+            Ok(false) | Err(robin_util::asset_fs::AssetError::InvalidPath(_)) => {}
+            Err(error) => {
+                tracing::warn!("SbFileSystem::try_exists({normalised}): {error}");
+                return Err(SBFILE_ERROR_READ);
+            }
+        }
+        if resolve_case_insensitive(requested).is_some() {
+            return Ok(true);
+        }
+
+        if !requested.is_absolute() {
+            let alternate_paths = self.alternate_paths.lock().unwrap();
+            for alternate in alternate_paths.iter() {
+                if let Some(primary) = self.primary_path.lock().unwrap().clone()
+                    && path_exists_contained(&primary, &primary.join(alternate).join(&normalised))?
+                {
+                    return Ok(true);
+                }
+                if resolve_case_insensitive(&Path::new(alternate).join(&normalised)).is_some() {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn add_alternate_path(&self, path: &str) -> i32 {
+        let mut paths = self.alternate_paths.lock().unwrap();
+        if paths.iter().any(|candidate| candidate == path) {
+            return SBFILE_ERROR_PATH_ALREADY_PRESENT;
+        }
+        paths.push(path.to_string());
+        SBFILE_NO_ERROR
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn add_overlay_path(&self, path: &str) -> i32 {
+        let canonical = match fs::canonicalize(path) {
+            Ok(path) if path.is_dir() => path,
+            Ok(_) => {
+                tracing::warn!("SbFileSystem::add_overlay_path: {path} is not a directory");
+                return SBFILE_ERROR_NO_FILE;
+            }
+            Err(error) => {
+                tracing::warn!("SbFileSystem::add_overlay_path: cannot open {path}: {error}");
+                return SBFILE_ERROR_FILE_NOT_FOUND;
+            }
+        };
+        let mut paths = self.overlay_paths.lock().unwrap();
+        if paths
+            .iter()
+            .any(|candidate| candidate.display_path() == canonical.to_string_lossy())
+        {
+            return SBFILE_ERROR_PATH_ALREADY_PRESENT;
+        }
+        paths.push(OverlayRoot::Directory(canonical));
+        SBFILE_NO_ERROR
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn add_overlay_path(&self, _path: &str) -> i32 {
+        // TODO(asset-vfs): add a browser-provided directory mount if wasm
+        // gains a host filesystem abstraction. Returning an explicit error
+        // avoids pretending the mount was installed.
+        SBFILE_ERROR_NO_FILE
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn add_overlay_zip(&self, zip_path: &str) -> i32 {
+        let mut paths = self.overlay_paths.lock().unwrap();
+        if paths
+            .iter()
+            .any(|candidate| candidate.display_path() == zip_path)
+        {
+            return SBFILE_ERROR_PATH_ALREADY_PRESENT;
+        }
+        let overlay = match ZipOverlay::open(Path::new(zip_path)) {
+            Ok(overlay) => overlay,
+            Err(error) => return error,
+        };
+        paths.push(OverlayRoot::Zip(Arc::new(overlay)));
+        SBFILE_NO_ERROR
+    }
+
+    pub fn remove_overlay(&self, path: &str) -> i32 {
+        #[cfg(not(target_arch = "wasm32"))]
+        let requested = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        #[cfg(target_arch = "wasm32")]
+        let requested = PathBuf::from(path);
+        let mut paths = self.overlay_paths.lock().unwrap();
+        if let Some(index) = paths.iter().position(|candidate| {
+            candidate.display_path() == path
+                || candidate.display_path() == requested.to_string_lossy()
+        }) {
+            paths.remove(index);
+            SBFILE_NO_ERROR
+        } else {
+            SBFILE_ERROR_PATH_NOT_IN_SET
+        }
+    }
+
+    pub fn overlay_paths(&self) -> Vec<String> {
+        self.overlay_paths
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|o| match o {
-                OverlayRoot::Directory(p) => Some(p.clone()),
+            .filter_map(|overlay| match overlay {
+                OverlayRoot::Directory(path) => Some(path.to_string_lossy().into_owned()),
                 #[cfg(not(target_arch = "wasm32"))]
                 OverlayRoot::Zip(_) => None,
             })
             .collect()
     }
 
-    pub fn set_primary_path(path: &str) -> i32 {
-        *PRIMARY_PATH.lock().unwrap() = Some(path.to_string());
+    pub fn set_primary_path(&self, path: &str) -> i32 {
+        #[cfg(not(target_arch = "wasm32"))]
+        let path = match fs::canonicalize(path) {
+            Ok(path) if path.is_dir() => path,
+            Ok(path) => {
+                tracing::warn!(
+                    "SbFileSystem::set_primary_path: {} is not a directory",
+                    path.display()
+                );
+                return SBFILE_ERROR_NO_FILE;
+            }
+            Err(error) => {
+                tracing::warn!("SbFileSystem::set_primary_path: cannot open {path}: {error}");
+                return SBFILE_ERROR_FILE_NOT_FOUND;
+            }
+        };
+        #[cfg(target_arch = "wasm32")]
+        let path = PathBuf::from(path);
+        *self.primary_path.lock().unwrap() = Some(path);
         SBFILE_NO_ERROR
     }
 
-    pub fn remove_alternate_path(path: &str) -> i32 {
-        let mut p = ALTERNATE_PATHS.lock().unwrap();
-        if let Some(i) = p.iter().position(|x| x == path) {
-            p.remove(i);
+    pub fn remove_alternate_path(&self, path: &str) -> i32 {
+        let mut paths = self.alternate_paths.lock().unwrap();
+        if let Some(index) = paths.iter().position(|candidate| candidate == path) {
+            paths.remove(index);
             SBFILE_NO_ERROR
         } else {
             SBFILE_ERROR_PATH_NOT_IN_SET
@@ -755,23 +965,35 @@ impl SbFile {
 }
 
 /// Read `path` from an overlay root, returning the bytes if present.
-fn read_from_overlay(root: &OverlayRoot, normalised: &str) -> Option<Vec<u8>> {
-    match root {
-        OverlayRoot::Directory(dir) => try_read(&format!("{dir}/{normalised}")),
-        #[cfg(not(target_arch = "wasm32"))]
-        OverlayRoot::Zip(z) => z.try_read(normalised),
-    }
-}
-
-/// Test whether `path` exists in an overlay root.
-fn overlay_root_exists(root: &OverlayRoot, normalised: &str) -> bool {
+fn read_from_overlay(
+    file_system: &SbFileSystem,
+    root: &OverlayRoot,
+    normalised: &str,
+) -> Result<Option<Vec<u8>>, i32> {
     match root {
         OverlayRoot::Directory(dir) => {
-            let c = format!("{dir}/{normalised}");
-            Path::new(&c).exists() || resolve_case_insensitive(Path::new(&c)).is_some()
+            let Some(resolved) = resolve_case_insensitive(&dir.join(normalised)) else {
+                return Ok(None);
+            };
+            let resolved = fs::canonicalize(&resolved).map_err(|error| {
+                tracing::warn!(
+                    "overlay asset {} cannot be opened: {error}",
+                    resolved.display()
+                );
+                SBFILE_ERROR_READ
+            })?;
+            if !resolved.starts_with(dir) {
+                tracing::warn!(
+                    "overlay asset {} escapes mount {}",
+                    resolved.display(),
+                    dir.display()
+                );
+                return Err(SBFILE_ERROR_READ);
+            }
+            try_read(file_system, &resolved.to_string_lossy())
         }
         #[cfg(not(target_arch = "wasm32"))]
-        OverlayRoot::Zip(z) => z.exists(normalised),
+        OverlayRoot::Zip(z) => Ok(z.try_read(normalised)),
     }
 }
 
@@ -847,6 +1069,67 @@ mod tests {
             SBFILE_NO_ERROR
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_system_instances_isolate_paths_and_preserve_overlay_precedence() {
+        let primary = tempfile::tempdir().unwrap();
+        let overlay = tempfile::tempdir().unwrap();
+        fs::write(primary.path().join("shared.dat"), b"primary").unwrap();
+        fs::write(overlay.path().join("shared.dat"), b"overlay").unwrap();
+
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let mounted = SbFileSystem::new(assets.clone());
+        mounted.set_primary_path(primary.path().to_str().unwrap());
+        assert!(mounted.try_exists(".").unwrap());
+        assert_eq!(
+            mounted.add_overlay_path(overlay.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert_eq!(mounted.read_all("shared.dat").unwrap(), b"overlay");
+
+        let isolated = SbFileSystem::new(assets);
+        isolated.set_primary_path(primary.path().to_str().unwrap());
+        assert_eq!(isolated.read_all("shared.dat").unwrap(), b"primary");
+        assert!(isolated.overlay_paths().is_empty());
+    }
+
+    #[test]
+    fn overlay_install_failure_is_not_reported_as_success() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let file_system = SbFileSystem::new(assets);
+        let missing =
+            std::env::temp_dir().join(format!("sbfile-missing-overlay-{}", fastrand::u64(..)));
+        assert_eq!(
+            file_system.add_overlay_path(missing.to_str().unwrap()),
+            SBFILE_ERROR_FILE_NOT_FOUND
+        );
+        assert_eq!(
+            file_system.set_primary_path(missing.to_str().unwrap()),
+            SBFILE_ERROR_FILE_NOT_FOUND
+        );
+        assert!(file_system.overlay_paths().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlay_symlink_cannot_escape_mount() {
+        use std::os::unix::fs::symlink;
+
+        let overlay = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.dat"), b"secret").unwrap();
+        symlink(outside.path(), overlay.path().join("escape")).unwrap();
+
+        let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        assert_eq!(
+            file_system.add_overlay_path(overlay.path().to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        assert!(matches!(
+            file_system.open("escape/secret.dat", SB_FILE_READ),
+            Err(SBFILE_ERROR_READ)
+        ));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

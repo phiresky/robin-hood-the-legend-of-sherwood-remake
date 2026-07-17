@@ -36,6 +36,7 @@ impl EngineInner {
     /// map point. C++ jump landing, for example, asks the destination line's
     /// sector for the projection area at the line midpoint rather than at
     /// the exact landing point.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_special_move_position(
         &mut self,
         assets: &LevelAssets,
@@ -114,6 +115,7 @@ impl EngineInner {
     /// translator has selected the exact step. Keeping order creation and
     /// actor-state setup here prevents the PassDoor launch path and the
     /// transition-resume path from drifting apart.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn install_special_walk_order(
         &mut self,
         entity_id: EntityId,

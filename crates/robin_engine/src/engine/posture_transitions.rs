@@ -223,7 +223,6 @@ impl EngineInner {
             &move_box,
             half_diag,
             &self.fast_grid,
-            &mut self.rng,
         );
 
         // Rewrite the walking-order targets on the Move element with
@@ -248,14 +247,12 @@ impl EngineInner {
                         | OrderType::WalkingWithSword
                         | OrderType::RunningWithSword
                 ) && let Some(next) = dev_iter.next()
+                    && ((order.target_x - next.x).abs() > 0.01
+                        || (order.target_y - next.y).abs() > 0.01)
                 {
-                    if (order.target_x - next.x).abs() > 0.01
-                        || (order.target_y - next.y).abs() > 0.01
-                    {
-                        order.target_x = next.x;
-                        order.target_y = next.y;
-                        order.reseed_id(crate::order::alloc_order_id(next_order_id));
-                    }
+                    order.target_x = next.x;
+                    order.target_y = next.y;
+                    order.reseed_id(crate::order::alloc_order_id(next_order_id));
                 }
             }
         }

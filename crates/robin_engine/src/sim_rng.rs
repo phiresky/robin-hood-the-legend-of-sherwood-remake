@@ -130,9 +130,8 @@ pub fn shuffle<T>(slice: &mut [T]) {
 /// [`fastrand::Rng::get_seed`] / [`fastrand::Rng::with_seed`], which
 /// preserves the full internal state (fastrand's PRNG state IS the seed).
 ///
-/// Not used yet — the full `EngineInner` doesn't derive `Serialize` at the
-/// moment. This lives here ready for when network state-sync / desync
-/// dumps get wired up.
+/// Used by `EngineInner::rng`, so save files, rollback snapshots, network
+/// state-sync, and desync dumps preserve the exact next simulation roll.
 pub mod serde_rng {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

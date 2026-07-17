@@ -42,7 +42,10 @@ mod scroll_reveal;
 mod seat;
 mod sector_motion;
 mod selection;
+#[cfg(test)]
+mod send_message_tests;
 mod sequence_validity;
+mod simulation_gate;
 mod soldier_helpers;
 mod special_motion;
 pub mod target_interaction;
@@ -83,6 +86,7 @@ use crate::pathfinder::PathFinder;
 use crate::profiles::MissionType;
 use crate::sequence::SequenceManager;
 use crate::short_briefings::ShortBriefings;
+use simulation_gate::SimulationGateState;
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -144,6 +148,14 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// instead.
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
+    /// Per-session gameplay configuration attached by `Game` before a
+    /// tick. This is runtime configuration rather than mutable sim state:
+    /// rollback clones preserve it, while deserialized saves must have it
+    /// reattached before gameplay resumes. `Option` is intentional so a
+    /// missing attachment fails loudly instead of inventing Medium difficulty.
+    #[state_hash(skip)]
+    sim_config: std::cell::Cell<Option<SimConfig>>,
+
     // ── Mission ──────────────────────────────────────────────────
     /// Win/loss tracking and mission metadata. [Serialized]
     pub(crate) mission: MissionState,
@@ -161,20 +173,9 @@ pub struct EngineInner {
     /// See [`crate::sound::SoundSimState`]. [Serialized]
     pub(crate) sound_sim: crate::sound::SoundSimState,
 
-    // ── EngineInner locks ─────────────────────────────────────────────
-    /// Whether the engine is locked (during sequences, etc). [Serialized]
-    pub(crate) lock_engine: bool,
-    /// Freeze all actors (script command). [Serialized]
-    pub(crate) freeze_all: bool,
-    /// Presentation frames still to show while the simulation is frozen.
-    /// `FadeToBlack` calls `Flip()` `2*speed` times without calling
-    /// `PerformHourglass`; this count is deliberately independent of
-    /// `frame_counter` so the universal clock and every sim timer remain
-    /// fixed while the host presents the fade ramp. The command's trigger
-    /// tick presents the first frame, so this stores the remaining
-    /// `2*speed - 1` frames. [Serialized]
-    #[serde(default)]
-    pub(crate) fade_freeze_frames_remaining: u32,
+    // ── Simulation suspension gates ─────────────────────────────
+    /// Lock, actor-freeze, and blocking-fade state. [Serialized]
+    pub(crate) simulation_gates: SimulationGateState,
 
     // ── Sequence / animation ─────────────────────────────────────
     /// Sequence playback speed multiplier. [Serialized]
@@ -251,13 +252,10 @@ pub struct EngineInner {
     /// host-owned so the deterministic engine is identical for every seat.
     pub(crate) cutscene_camera: CameraState,
     // ── Simulation RNG ───────────────────────────────────────────
-    /// The authoritative deterministic RNG for every gameplay random roll.
-    /// Installed into [`crate::sim_rng`] for the duration of each tick so
-    /// free helpers (AI, combat, bow scatter, …) can draw from it without
-    /// every call site threading `&mut fastrand::Rng`. Serialized via a
-    /// single `u64` seed — see [`crate::sim_rng::serde_rng`].
-    #[serde(with = "crate::sim_rng::serde_rng")]
-    pub(crate) rng: fastrand::Rng,
+    /// The one deterministic RNG capability for every gameplay random roll.
+    /// It owns the stream at snapshot boundaries and lends it to
+    /// [`crate::sim_rng`] only for an explicit simulation scope.
+    pub(crate) rng: SimulationRng,
 
     // ── Pending side effects ─────────────────────────────────────
     /// Outputs produced by the current tick (sounds, overlay show/hide,
@@ -302,15 +300,19 @@ pub struct EngineInner {
     /// replay stay deterministic.  [Sim state]
     pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
 
-    /// Retry queue for Move / Seek elements whose initial pathfind
-    /// failed.  Entries stay here for up to 100 frames while the engine
-    /// retries pathfinding each tick; after that window expires the
-    /// owning element transitions to `Impossible` (and PCs hear
+    /// A*-requiring movement elements waiting for the legacy once-per-frame
+    /// path-request processing point.  Direct moves bypass this queue.
+    #[serde(default)]
+    pub(crate) pending_path_requests: crate::engine::movement::PendingPathRequestQueue,
+
+    /// Timeout queue for Move / Seek elements whose path request failed.
+    /// Entries stay here for 100 frames without retrying; after that window
+    /// the owning element transitions to `Impossible` (and PCs hear
     /// `HERO_UNABLE_TO_DO_SOMETHING`).
     ///
     /// See [`movement::FailedPathRequest`] for field-level docs.
     /// Drained each tick by
-    /// [`EngineInner::retry_failed_path_requests`].  [Sim state]
+    /// [`EngineInner::process_failed_path_timeouts`].  [Sim state]
     pub(crate) failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
 
     // ── AI ────────────────────────────────────────────────────────
@@ -434,10 +436,31 @@ pub struct EngineInner {
 /// `ResumeAll` dispatches to schedule a deterministic finish.
 pub type SourceDurations = std::sync::Arc<std::collections::BTreeMap<u32, u32>>;
 
-/// Fallback duration when the host hasn't (or can't) populate a
-/// sample-length entry for a given source id — approximately 3 s at
-/// 25 fps.
-pub const SOURCE_DEFAULT_FRAMES: u32 = 75;
+/// Return the decoded duration for an exclamation, or the original
+/// missing-sample completion value. `RHSound::GetSampleLengthMs` returns
+/// zero when `GetCacheEntryForSettings` cannot resolve/load the sample;
+/// the following sound hourglass then completes that pending sound
+/// immediately. Rust schedules that zero-length completion for the next
+/// simulation boundary so it remains rollback deterministic.
+pub(super) fn exclamation_duration_frames(
+    durations: &ExclamationDurations,
+    group: crate::sound::ExclamationGroup,
+    profile_id: u32,
+    exclamation_id: u16,
+) -> u32 {
+    durations
+        .get(&(group, profile_id, exclamation_id))
+        .copied()
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                ?group,
+                profile_id,
+                exclamation_id,
+                "exclamation sample missing from duration table; scheduling zero-length completion"
+            );
+            0
+        })
+}
 
 /// A queued persistent background decal update for an FX entity whose
 /// patch just transitioned. `restore_only = true` removes the decal
@@ -474,6 +497,36 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
 }
 
 impl EngineInner {
+    pub(crate) fn engine_locked(&self) -> bool {
+        self.simulation_gates.engine_locked()
+    }
+
+    pub(crate) fn set_engine_locked(&mut self, locked: bool) {
+        self.simulation_gates.set_engine_locked(locked);
+    }
+
+    pub(crate) fn actors_frozen(&self) -> bool {
+        self.simulation_gates.actors_frozen()
+    }
+
+    pub(crate) fn set_actors_frozen(&mut self, frozen: bool) {
+        self.simulation_gates.set_actors_frozen(frozen);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fade_freeze_frames_remaining(&self) -> u32 {
+        self.simulation_gates.fade_freeze_frames_remaining()
+    }
+
+    pub(crate) fn set_fade_freeze_frames_remaining(&mut self, frames: u32) {
+        self.simulation_gates
+            .set_fade_freeze_frames_remaining(frames);
+    }
+
+    pub(crate) fn consume_fade_freeze_frame(&mut self) -> bool {
+        self.simulation_gates.consume_fade_freeze_frame()
+    }
+
     pub(crate) fn pc_description_index_for_pc_data(
         &self,
         pc_data: &crate::element::PcData,
@@ -549,6 +602,7 @@ impl EngineInner {
         // add deterministic seats via `ConnectSeat`.
         //
         Self {
+            sim_config: std::cell::Cell::new(None),
             cutscene_camera: CameraState {
                 level_size: crate::coordinates::MapSize::ZERO,
                 zoom_factor: 1.0,
@@ -562,9 +616,7 @@ impl EngineInner {
 
             sound_sim: crate::sound::SoundSimState::default(),
 
-            lock_engine: false,
-            freeze_all: false,
-            fade_freeze_frames_remaining: 0,
+            simulation_gates: SimulationGateState::default(),
 
             speed: 1.0,
             speed_int: 0,
@@ -590,12 +642,12 @@ impl EngineInner {
             mission_stat: MissionStat::default(),
             ground_mark: GroundMark::default(),
 
-            // Seed 0 is a placeholder; multiplayer will replace this with a
-            // value negotiated at match start so every client simulates the
-            // same sequence of rolls. Single-player is fully deterministic
-            // with this fixed seed.
-            #[allow(clippy::disallowed_methods)]
-            rng: fastrand::Rng::with_seed(0),
+            // Original: the `__TEST` path in
+            // `original-code/launcher.cpp:762-766` calls `srand(0)`.
+            // `Engine::new` replaces this bare-engine test seed with the
+            // replay/match seed before level setup draws. This is a real
+            // owned stream, never the temporary replacement used before.
+            rng: SimulationRng::with_seed(0),
             pending_side_effects: SideEffects::default(),
             user_locked: false,
             qa_recording_for: Vec::new(),
@@ -603,6 +655,7 @@ impl EngineInner {
             action_before_recording_macro: crate::profiles::Action::NoAction,
             fast_forward: false,
             pending_move_requests: Vec::new(),
+            pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
 
             entities: Entities::new(),
@@ -637,16 +690,19 @@ impl EngineInner {
     ///
     /// Called from `Engine::new` after level loading is complete.
     pub(crate) fn initialize(&mut self, assets: &mut LevelAssets) {
-        // Install the deterministic RNG into the thread-local so AI init
-        // (and any other init-time `sim_rng` users) draws from the engine's
-        // owned state. `perform_hourglass` does the same dance for the
-        // per-tick path; level init needs its own scope because it runs
-        // outside the tick.
-        #[allow(clippy::disallowed_methods)]
-        let placeholder = fastrand::Rng::with_seed(0);
-        crate::sim_rng::install(std::mem::replace(&mut self.rng, placeholder));
-        self.initialize_inner(assets);
-        self.rng = crate::sim_rng::uninstall();
+        self.with_sim_rng(|engine| engine.initialize_inner(assets));
+    }
+
+    /// Run non-tick simulation work against the engine's authoritative RNG.
+    ///
+    /// This is also used by focused tests that invoke a normally tick-owned
+    /// subsystem directly. A panic is fatal to the simulation and may leave
+    /// the thread-local installed, matching `perform_hourglass` semantics.
+    pub(crate) fn with_sim_rng<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.rng.enter_scope();
+        let result = f(self);
+        self.rng.leave_scope();
+        result
     }
 
     fn initialize_inner(&mut self, assets: &mut LevelAssets) {
@@ -741,9 +797,11 @@ impl EngineInner {
     /// scroll starts on a random frame of its fluttering animation
     /// instead of all waving in lockstep.
     fn initialize_all_scrolls(&mut self) {
-        let rng = &mut self.rng;
         for (_, scroll) in self.entities.scrolls_mut() {
-            scroll.element.sprite.force_random_sprite_frame(rng);
+            // Original: `RHElementScroll::Initialize` in
+            // `original-code/RHElementScroll.cpp:153-171` calls
+            // `ForceRandomSpriteFrame` after script initialization.
+            scroll.element.sprite.force_random_sprite_frame_sim();
         }
     }
 
@@ -850,11 +908,12 @@ impl EngineInner {
                 self.add_campaign_value_to(campaign, crate::campaign::CampaignValue::Score, 1000);
             }
 
-            let difficulty = crate::player_profile::PlayerProfileManager::global()
-                .as_ref()
-                .and_then(|mgr| mgr.get_active())
-                .map(|p| p.difficulty)
-                .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
+            // Original provenance: `original-code/RHengine.cpp:16381-16398`
+            // reads the active profile difficulty to scale post-mission
+            // warcrime recruitment. The Rust engine receives that value in
+            // `SimConfig` before the tick, so two simultaneous game contexts
+            // cannot observe one another's active profile.
+            let difficulty = self.required_sim_config().difficulty;
 
             let recruited =
                 campaign.recruit_post_mission_peasants(living, dead, difficulty, profiles);
@@ -868,6 +927,19 @@ impl EngineInner {
             // Explicitly zero on the lost path.
             self.mission_stat.new_peasant_count = 0;
         }
+    }
+
+    /// Attach immutable configuration for the game context driving this
+    /// engine. Takes `&self` so the facade's read-only `Deref` can perform the
+    /// runtime attachment without exposing general mutable engine internals.
+    pub fn attach_sim_config(&self, config: SimConfig) {
+        self.sim_config.set(Some(config));
+    }
+
+    fn required_sim_config(&self) -> SimConfig {
+        self.sim_config.get().expect(
+            "engine gameplay requires SimConfig; Game must attach its application context before ticking",
+        )
     }
 
     /// Compute score bonus for living enemy soldiers that are tied or
@@ -1197,7 +1269,7 @@ impl EngineInner {
     /// Resolve a legacy raw entity-table index to the typed ID variant for
     /// the entity currently stored in that slot.
     pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
-        self.entities.id_at_index(index)
+        self.entities.id_at_legacy_slot(index)
     }
 
     /// Resolve a script actor handle to the typed ID variant for the entity
@@ -2274,6 +2346,7 @@ impl EngineInner {
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
         self.pathfinder.cancel_requests_for(owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
         // drops stale retry entries for the actor.  Mirror that here so
@@ -2338,6 +2411,7 @@ impl EngineInner {
         // `element_impossible` / hero-speech on a sequence that no
         // longer cares.
         self.failed_path_requests.retain(|r| r.owner != owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         self.sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
     }
@@ -2390,7 +2464,7 @@ impl EngineInner {
     /// `Command::PassDoor | Command::Fall` arm of `is_very_very_busy`,
     /// which neither caller checks.
     pub(super) fn tick_npc_busy_edge_detect(&mut self) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
@@ -3098,7 +3172,16 @@ impl EngineInner {
             && self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| elem.command == crate::element::Command::Seek)
+                .is_some_and(|elem| {
+                    matches!(
+                        elem.command,
+                        crate::element::Command::Seek | crate::element::Command::MoveOk
+                    ) && matches!(
+                        &elem.data,
+                        crate::sequence::SequenceElementData::Movement { flags, .. }
+                            if flags.contains(crate::sequence::MoveFlags::SEEK)
+                    )
+                })
             && self
                 .get_entity(owner_id)
                 .and_then(|e| e.actor_data())
@@ -3258,6 +3341,7 @@ impl EngineInner {
         // owner is gone.
         self.failed_path_requests.retain(|r| r.owner != id);
         self.pending_move_requests.retain(|(eid, _)| *eid != id);
+        self.pending_path_requests.retain_not_owned_by(id);
     }
 
     /// Number of live entities.
@@ -3373,11 +3457,11 @@ impl EngineInner {
                 break;
             }
 
-            // `rand() % (LIFEPOINTS_PC * 2) < life_points` — healthier
-            // peasants survive into reservists, frailer ones die
-            // outright.  Using the deterministic engine RNG keeps
-            // replays stable.
-            let roll = self.rng.u32(0..LIFEPOINTS_PC_X2) as i32;
+            // Original: `RHGame::ConvertSelectedPeasantsToBlazons` in
+            // `original-code/RHgame.cpp:4202-4251` uses
+            // `rand() % (LIFEPOINTS_PC << 1) < life_points`; healthier
+            // peasants survive into reservists, frailer ones die outright.
+            let roll = crate::sim_rng::u32(0..LIFEPOINTS_PC_X2) as i32;
             let campaign = self.campaign.as_mut().expect("campaign vanished mid-loop");
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);
@@ -3505,16 +3589,10 @@ impl EngineInner {
         }
     }
 
-    /// Run the mission script's `PostInitialize` hook on the first
-    /// tick after level load, then no-op on every subsequent call.
-    /// Idempotent — driven by a sim-side `post_initialized` flag on
-    /// [`MissionScript`], so the host never has to coordinate with the
-    /// engine on whether the hook has already fired.
-    ///
-    /// Called from the top of [`EngineInner::perform_hourglass_inner`]
-    /// so the one-shot script-side state mutations stay inside the
-    /// hashed tick window — rollback replay runs them exactly once per
-    /// level load too.
+    /// Run the mission script's `PostInitialize` hook once, then no-op.
+    /// The serialized flag keeps both live play and rollback replay
+    /// idempotent; [`EngineInner::perform_post_initialize`] owns the
+    /// original post-refresh host boundary.
     pub(crate) fn run_post_initialize_if_needed(&mut self, assets: &LevelAssets) {
         let Some(script) = self.mission_script.as_mut() else {
             return;
@@ -3606,14 +3684,6 @@ impl EngineInner {
         );
     }
 
-    /// Subtract from a campaign value: bounded decrement plus the
-    /// `UpdatePurseActions` refresh on `RANSOM_VALUE`.  The
-    /// debug-only underflow assert is intentionally omitted.  Doing
-    /// the refresh here (rather than relying on the per-tick sweep)
-    /// keeps the purse-action gating frame-accurate: any caller that
-    /// queries Purse availability on the same frame as the
-    /// subtraction sees the post-subtraction state.
-
     fn apply_value_add_side_effects(
         mission_stat: &mut MissionStat,
         side_effects: &mut SideEffects,
@@ -3687,6 +3757,11 @@ impl EngineInner {
     /// Remove the campaign at mission-end (or shutdown) and return it
     /// to the caller.  Host returns it to the outer owner.  Save/load
     /// boundary — the engine is not ticking when this runs.
+    ///
+    /// PARITY TODO: encode the active-mission campaign as required state
+    /// instead of `Option`. Original `RHCampaign.cpp` installs one concrete
+    /// singleton, so normal mission code cannot observe a missing campaign;
+    /// Rust currently enforces that only at session teardown boundaries.
     pub fn take_campaign(&mut self) -> Option<crate::campaign::Campaign> {
         self.campaign.take()
     }
@@ -3710,6 +3785,7 @@ impl EngineInner {
         self.chorus_timer = 0;
         self.fast_forward = false;
         self.pending_move_requests.clear();
+        self.pending_path_requests.clear();
         self.failed_path_requests.clear();
 
         // Force a full redraw on the next frame — the background cache
@@ -3825,8 +3901,8 @@ impl EngineInner {
         self.cheat_used_flags = cheat_used_flags;
         self.speed = speed;
         self.speed_int = speed_int;
-        self.lock_engine = lock_engine;
-        self.freeze_all = freeze_all;
+        self.set_engine_locked(lock_engine);
+        self.set_actors_frozen(freeze_all);
         self.script_globals = script_globals;
     }
 
@@ -3839,7 +3915,7 @@ impl EngineInner {
     /// Current RNG seed.  Used by the replay recorder to stamp the
     /// deterministic seed into the `.rhrec.jsonl` header.  Read-only.
     pub fn rng_seed(&self) -> u64 {
-        self.rng.get_seed()
+        self.rng.seed()
     }
 
     /// Which of the 10 known playable characters a PC entity represents.
@@ -3871,9 +3947,66 @@ impl EngineInner {
     /// loading a replay or a save — replay/load is a mission-lifecycle
     /// boundary, outside the per-tick input pipeline.
     pub fn restore_rng_from_seed(&mut self, seed: u64) {
-        #[allow(clippy::disallowed_methods)]
-        {
-            self.rng = fastrand::Rng::with_seed(seed);
-        }
+        self.rng.reseed(seed);
     }
+}
+
+/// Complete the profile and AI attachments required by full-tick unit tests.
+///
+/// Production entities receive these attachments during level loading. Tests
+/// that construct active actors directly must do the equivalent before
+/// calling `perform_hourglass`; keeping it here prevents individual fixtures
+/// from weakening the runtime's required-data invariants.
+#[cfg(test)]
+pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &mut LevelAssets) {
+    let mut profiles = (*assets.profile_manager).clone();
+    let mut needs_hth_weapon = false;
+
+    for (_, pc) in engine.entities.pcs() {
+        if !pc.element.active || pc.pc.life_points <= 0 {
+            continue;
+        }
+        let profile_idx = usize::from(pc.pc.profile_index);
+        profiles
+            .characters
+            .resize_with(profile_idx + 1, crate::profiles::CharacterProfile::default);
+        if profiles.characters[profile_idx].hth_weapon_id == 0 {
+            profiles.characters[profile_idx].hth_weapon_id = 1;
+        }
+        needs_hth_weapon = true;
+    }
+
+    for (soldier_id, soldier) in engine.entities.soldiers_mut() {
+        if !soldier.element.active || soldier.human.unconscious {
+            continue;
+        }
+        let profile_idx = usize::from(soldier.soldier.soldier_profile_index);
+        profiles
+            .soldiers
+            .resize_with(profile_idx + 1, crate::profiles::SoldierProfile::default);
+        if profiles.soldiers[profile_idx].hth_weapon_id == 0 {
+            profiles.soldiers[profile_idx].hth_weapon_id = 1;
+        }
+
+        if soldier.npc.ai_brain.is_none() {
+            soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(
+                crate::ai_enemy::EnemyAi::new(soldier_id.0),
+            ));
+        }
+        let enemy_ai =
+            soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
+            });
+        if enemy_ai.hth_weapon_id == 0 {
+            enemy_ai.hth_weapon_id = 1;
+        }
+        needs_hth_weapon = true;
+    }
+
+    if needs_hth_weapon && profiles.hth_weapons.is_empty() {
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+    }
+    assets.profile_manager = std::sync::Arc::new(profiles);
 }

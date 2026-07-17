@@ -160,7 +160,7 @@ pub async fn play_video(window: &mut GameWindow, path: &str) -> Result<(), Strin
                 let bytes = &resampled.data(0)[..n_samples * 2 * 4];
                 let f32_pairs: &[f32] = bytemuck::cast_slice(bytes);
                 audio_frames.reserve(n_samples);
-                for pair in f32_pairs.chunks_exact(2) {
+                for pair in f32_pairs.as_chunks::<2>().0 {
                     audio_frames.push(kira::Frame {
                         left: pair[0],
                         right: pair[1],
@@ -189,7 +189,7 @@ pub async fn play_video(window: &mut GameWindow, path: &str) -> Result<(), Strin
             }
             let bytes = &resampled.data(0)[..n_samples * 2 * 4];
             let f32_pairs: &[f32] = bytemuck::cast_slice(bytes);
-            for pair in f32_pairs.chunks_exact(2) {
+            for pair in f32_pairs.as_chunks::<2>().0 {
                 audio_frames.push(kira::Frame {
                     left: pair[0],
                     right: pair[1],
@@ -595,7 +595,7 @@ impl VideoBlit {
             pass.draw(0..6, 0..1);
         }
         window.gpu.queue.submit(Some(encoder.finish()));
-        frame.present();
+        window.gpu.queue.present(frame);
         // Silence "unused" warnings — these fields exist to keep the
         // bind-group layout / sampler alive for the pipeline's life.
         let _ = (&self.bgl, &self.sampler);

@@ -614,7 +614,7 @@ impl Default for Position {
 // ---------------------------------------------------------------------------
 
 /// Predicted destination of a target actor for AI pursuit.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ForecastedDestination {
     pub position: Position,
     pub direction: u16,
@@ -2912,7 +2912,6 @@ impl ReconnaissanceReport {
     /// - `REPORT_UPDATE_BODIES` (1): merge seen_bodies from `other`
     /// - `REPORT_UPDATE_CHARLY` (2): copy charly handle if we don't have one
     /// - `REPORT_UPDATE_TYPE` (4): update report type and seek position
-
     pub fn add_seen_body(&mut self, body: HumanHandle) {
         self.seen_bodies.push(body);
     }
@@ -3207,12 +3206,47 @@ pub struct DoorSeekInfo {
     /// `RunAndAlertSoldiers` for the layer-mismatch malus in the
     /// weighted-distance scoring.
     pub layer_out: u16,
-    /// Cached `IsActorAutorized` result for an NPC soldier entering in
-    /// the direct (outside→inside) direction. Used by
-    /// `FindDoorEnemyCouldBeBehind`. Snapshot — does NOT track runtime
-    /// building capacity or post-patch lock changes; refresh by
-    /// rebuilding the array.
+    /// Cached static portion of `IsActorAutorized` for a non-rider NPC
+    /// soldier entering in the direct (outside→inside) direction with
+    /// building capacity available. Runtime capacity and rider state are
+    /// applied by [`Self::is_npc_villain_authorized_direct`].
     pub npc_villain_authorized_direct: bool,
+}
+
+impl DoorSeekInfo {
+    /// Complete the cached static authorization with the two live gates from
+    /// `RHDoor::IsActorAutorized`: destination-building capacity and rider
+    /// state.
+    #[inline]
+    pub fn is_npc_villain_authorized_direct(
+        &self,
+        building_has_capacity: bool,
+        actor_is_rider: bool,
+    ) -> bool {
+        self.npc_villain_authorized_direct && building_has_capacity && !actor_is_rider
+    }
+}
+
+/// Build the static authorization cached by [`DoorSeekInfo`].
+///
+/// `FindDoorEnemyCouldBeBehind` has already narrowed the actor to an NPC
+/// soldier and supplies the live capacity/rider gates at use time. Calling
+/// the shared door authorization implementation here keeps the remaining
+/// building-type, active-state, and villain-lock gates aligned with
+/// `RHDoor::IsActorAutorized(true, mpMe, false)`.
+pub(crate) fn cache_npc_villain_authorized_direct(door: &crate::gate::Door) -> bool {
+    let actor = crate::gate::ActorAuthInfo {
+        kind: crate::element_kinds::ElementKind::ActorSoldier,
+        pc_auth_bit: 0,
+        has_lockpick: false,
+        has_climb: false,
+        has_jump: false,
+        is_rider: false,
+        posture: crate::element::Posture::Upright,
+    };
+
+    door.door_type == crate::gate::DoorType::Building
+        && door.is_actor_authorized(true, &actor, true, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -3561,9 +3595,14 @@ pub struct SleepingEnemyInfo {
 /// and swordfight tactics. Passed alongside AiContext.
 #[derive(Debug, Clone)]
 pub struct AiPerTickData {
-    /// Shared immutable profile table used for profile-pointer reads from
-    /// AI helpers without cloning profile structs into every snapshot.
-    pub profile_manager: std::sync::Arc<crate::profiles::ProfileManager>,
+    /// Shared immutable profile table used by combat evaluation.
+    ///
+    /// `None` is valid only for narrow non-combat dispatches and test
+    /// fixtures. Combat code must call [`Self::required_profile_manager`]
+    /// rather than manufacturing an empty profile table. Original:
+    /// `RHProfileManager.h::GetHandToHandProfile` asserts that the requested
+    /// profile exists; `RHSword` therefore always owns a real profile.
+    pub profile_manager: Option<std::sync::Arc<crate::profiles::ProfileManager>>,
     pub patrol_chief_position: Position,
     pub patrol_chief_state: AiState,
     pub enemy_sq_distances: Vec<(HumanHandle, i32)>,
@@ -3734,6 +3773,13 @@ pub struct FriendSwapCandidate {
 }
 
 impl AiPerTickData {
+    /// Return the profile table required by swordfight evaluation.
+    pub fn required_profile_manager(&self) -> &crate::profiles::ProfileManager {
+        self.profile_manager.as_deref().expect(
+            "combat AI requires the level profile manager; construct tick data from the AI world view",
+        )
+    }
+
     /// Construct an empty/stub `AiPerTickData` with all fields zeroed
     /// or empty. **Use sparingly** — every call site is shipping a
     /// stripped-down snapshot to whatever AI dispatch follows, and any
@@ -3760,7 +3806,7 @@ impl AiPerTickData {
     /// builder call instead of silently feeding empty combat context.
     pub fn stub() -> Self {
         Self {
-            profile_manager: std::sync::Arc::new(crate::profiles::ProfileManager::new()),
+            profile_manager: None,
             patrol_chief_position: Position::default(),
             patrol_chief_state: AiState::Default,
             enemy_sq_distances: Vec::new(),
@@ -3869,6 +3915,17 @@ impl House {
     #[inline]
     pub fn occupant_count(&self) -> usize {
         self.occupant_ids.len()
+    }
+
+    /// Match `RHSectorBuilding::IsAuthorized()`.
+    ///
+    /// The original proto constructor initializes
+    /// `muwMaxNumberOfOccupants` to `0xFFFF`, and the proto loader does not
+    /// overwrite it. The occupant count is nevertheless tested live on each
+    /// authorization call.
+    #[inline]
+    pub fn is_authorized(&self) -> bool {
+        self.occupant_count() < usize::from(u16::MAX)
     }
 
     /// Whether the given entity is currently an occupant.
@@ -8526,6 +8583,26 @@ impl ConsiderationAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "combat AI requires the level profile manager")]
+    fn required_profiles_reject_narrow_noncombat_tick_data() {
+        AiPerTickData::stub().required_profile_manager();
+    }
+
+    #[test]
+    fn required_profile_manager_returns_the_supplied_level_profiles() {
+        let mut profiles = crate::profiles::ProfileManager::new();
+        profiles.hth_weapons.push(Default::default());
+        let profiles = std::sync::Arc::new(profiles);
+        let mut tick = AiPerTickData::stub();
+        tick.profile_manager = Some(profiles.clone());
+
+        assert!(std::ptr::eq(
+            tick.required_profile_manager(),
+            profiles.as_ref()
+        ));
+    }
 
     #[test]
     fn substate_groups() {

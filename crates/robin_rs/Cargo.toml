@@ -64,7 +64,7 @@ arboard = { version = "3", optional = true }
 # GPU.  `webgl` enables wgpu's WebGL2 backend so wasm builds work on
 # browsers that don't yet expose WebGPU (most non-Chrome desktops as
 # of 2026).  Adds a few KiB to native; harmless to keep on.
-wgpu = { version = "29", features = ["webgl", "glsl"] }
+wgpu = { version = "30", features = ["webgl", "glsl"] }
 pollster = "0.4"
 
 # Audio
@@ -87,7 +87,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 
 # Native-only: tiny blocking HTTP server for the script-RPC endpoint.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-librashader = { path = "../../third_party/librashader/librashader", default-features = false, features = ["presets", "runtime-wgpu", "stable"] }
+librashader = { git = "https://github.com/SnowflakePowered/librashader.git", rev = "87e8a97b50516d997defeaa168173dcd185d4022", default-features = false, features = ["presets", "runtime-wgpu", "stable"] }
 tiny_http = "0.12"
 # Multiplayer transport.  The host/server side still uses blocking
 # tungstenite in spawned OS threads; native clients use

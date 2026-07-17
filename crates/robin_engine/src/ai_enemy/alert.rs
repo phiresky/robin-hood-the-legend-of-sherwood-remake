@@ -909,12 +909,12 @@ impl EnemyAi {
                             | Substate::SeekingGroupGoToOfficer
                             | Substate::SeekingGroupGetInstructedByOfficer
                             | Substate::SeekingRunningToOfficer
-                            | Substate::SeekingRunningToOfficerSeen => {
-                                if self.is_detecting_360_degrees(cs.handle, ctx) {
-                                    // Another soldier is already alerting an
-                                    // officer — abort.
-                                    return false;
-                                }
+                            | Substate::SeekingRunningToOfficerSeen
+                                if self.is_detecting_360_degrees(cs.handle, ctx) =>
+                            {
+                                // Another soldier is already alerting an
+                                // officer — abort.
+                                return false;
                             }
                             _ => {}
                         }

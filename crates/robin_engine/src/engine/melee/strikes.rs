@@ -38,7 +38,7 @@ impl EngineInner {
     ///
     /// Also ticks concussion healing for all humans.
     pub(crate) fn tick_melee_combat(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -75,8 +75,6 @@ impl EngineInner {
         self.tick_enemy_sword_attacks(assets);
         let consumed_smalltalk_hint_actors = self.tick_evaluate_swordfight(assets);
         self.tick_smalltalk(assets, &consumed_smalltalk_hint_actors);
-        self.tick_concussion_healing(assets);
-        self.tick_tiredness(assets);
         self.tick_refresh_hero_mouth();
         self.tick_pc_combat_anim_speech(assets);
         self.tick_refresh_purse_disable(assets);
@@ -1775,7 +1773,7 @@ impl EngineInner {
                     }
                     let vpos = velem.position_map();
                     if point_in_quad(vpos.x, vpos.y, p0, p1, p2, p3) {
-                        pending_victims.push(victim_id.into());
+                        pending_victims.push(victim_id);
                     }
                 }
 
@@ -2557,7 +2555,7 @@ impl EngineInner {
     }
 
     /// Per-frame concussion healing for all humans.
-    pub(super) fn tick_concussion_healing(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_concussion_healing(&mut self, assets: &LevelAssets) {
         let mut pending_fit_again: Vec<EntityId> = Vec::new();
         // Standup / BeingStunnedSword chains discovered during the
         // entity-iter loop are launched after the loop ends to avoid

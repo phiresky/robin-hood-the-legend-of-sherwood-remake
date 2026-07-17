@@ -1,6 +1,7 @@
 #![allow(unused_mut)]
 
 use super::movement::mercenary_formation_destinations;
+use super::tick::{HourglassPhase, begin_hourglass_phase_capture, end_hourglass_phase_capture};
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
@@ -13,9 +14,76 @@ fn engine_creation() {
     assert_eq!(engine.cutscene_camera.zoom_factor, 1.0);
     assert_eq!(engine.frame_counter, 0);
     assert!(!engine.fast_forward);
-    assert!(!engine.lock_engine);
+    assert!(!engine.engine_locked());
     assert!(!engine.mission.mission_won);
     assert_eq!(display.display_op, DisplayOpCode::Redraw);
+}
+
+#[test]
+fn simulation_gate_aggregate_roundtrips_without_hash_drift() {
+    let engine = EngineInner::new();
+    let expected_hash = crate::replay::state_hash(&engine);
+
+    let json = serde_json::to_value(&engine).expect("serialize engine");
+    let object = json
+        .as_object()
+        .expect("EngineInner should serialize as a map");
+    let gates = object
+        .get("simulation_gates")
+        .and_then(serde_json::Value::as_object)
+        .expect("simulation gates should serialize as a nested aggregate");
+    assert_eq!(
+        gates.get("lock_engine"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        gates.get("freeze_all"),
+        Some(&serde_json::Value::Bool(false))
+    );
+    assert_eq!(
+        gates.get("fade_freeze_frames_remaining"),
+        Some(&serde_json::Value::from(0))
+    );
+    assert!(!object.contains_key("lock_engine"));
+    assert!(!object.contains_key("freeze_all"));
+
+    let restored: EngineInner = serde_json::from_value(json).expect("deserialize engine");
+    assert_eq!(crate::replay::state_hash(&restored), expected_hash);
+}
+
+#[test]
+fn simulation_gates_survive_rollback_restore_and_replay() {
+    let assets = LevelAssets::new();
+    let mut original = EngineInner::new();
+    original.set_engine_locked(true);
+    original.set_actors_frozen(true);
+    original.set_fade_freeze_frames_remaining(2);
+
+    let bytes =
+        bincode::serde::encode_to_vec(&original, bincode::config::standard()).expect("encode");
+    let (mut replay, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).expect("decode");
+    assert_eq!(consumed, bytes.len());
+    assert!(replay.engine_locked());
+    assert!(replay.actors_frozen());
+    assert_eq!(replay.fade_freeze_frames_remaining(), 2);
+    assert_eq!(
+        crate::replay::state_hash(&original),
+        crate::replay::state_hash(&replay)
+    );
+
+    let mut original_display = HostDisplayState::default();
+    let mut replay_display = original_display.clone();
+    let mut original_dev = DevState::default();
+    let mut replay_dev = DevState::default();
+    for _ in 0..4 {
+        original.perform_hourglass(&mut original_display, &assets, &mut original_dev);
+        replay.perform_hourglass(&mut replay_display, &assets, &mut replay_dev);
+        assert_eq!(
+            crate::replay::state_hash(&original),
+            crate::replay::state_hash(&replay)
+        );
+    }
 }
 
 #[test]
@@ -82,6 +150,247 @@ fn hourglass_returns_in_progress() {
 }
 
 #[test]
+fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+
+    begin_hourglass_phase_capture();
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+    let phases = end_hourglass_phase_capture();
+
+    assert_eq!(result, GameCode::LevelInProgress);
+    assert_eq!(
+        phases,
+        vec![
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages,
+            HourglassPhase::NpcOrders,
+            HourglassPhase::Paths,
+            HourglassPhase::Entities,
+            HourglassPhase::EntitySystems,
+            HourglassPhase::Npcs,
+            HourglassPhase::GameplaySystems,
+            HourglassPhase::Sequences,
+            HourglassPhase::DeferredEffectsEnd,
+        ]
+    );
+}
+
+#[test]
+fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.mission.quit_won = true;
+
+    begin_hourglass_phase_capture();
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+    let phases = end_hourglass_phase_capture();
+
+    assert_eq!(result, GameCode::LevelSucceeded);
+    assert_eq!(
+        phases,
+        vec![
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages,
+        ]
+    );
+}
+
+#[test]
+fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    bind_test_action_point(
+        &mut engine,
+        soldier_id,
+        OrderType::TransitionWaitingUprightSitting,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+
+    // Bypass EngineInner's synchronous launch wrapper to model an element
+    // already waiting in RHSequenceManager's FIFO at frame start.
+    let mut element = SequenceElement::new(1, Command::SitDown, Some(soldier_id));
+    element.posture_after_transition = Posture::Upright;
+    let sequence_id = engine.sequence_manager.launch_element(element);
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let element = engine
+        .sequence_manager
+        .get_element(sequence_id, 0)
+        .expect("pending element should have dispatched");
+    assert_eq!(element.state, SequenceState::InProgress);
+    let order_id = element
+        .current_order()
+        .expect("SitDown should translate to an animation")
+        .order_id
+        .get();
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .expect("soldier present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        u32::MAX,
+        "an order dispatched by RHSequenceManager after the entity loop must not animate in that same frame"
+    );
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .expect("soldier present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        order_id,
+        "the dispatched animation must start on the following entity frame"
+    );
+}
+
+fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
+    use crate::bow_shot::{SpawnArrowParams, spawn_arrow};
+    use crate::coordinates::{WorldPoint3D, WorldVec3D};
+    use crate::element::Posture;
+    use crate::entity_id::PcId;
+
+    let mut engine = EngineInner::new();
+
+    let mut shooter = make_test_soldier(Posture::Upright);
+    shooter
+        .element_data_mut()
+        .set_position_map(MapPoint { x: 0.0, y: 0.0 });
+    let Entity::Soldier(shooter_soldier) = &mut shooter else {
+        unreachable!();
+    };
+    shooter_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    shooter_soldier.npc.life_points = 100;
+    let shooter_id = engine.add_entity(shooter);
+
+    let victim_id = EntityId::Pc(PcId(if pc_before_arrow { 1 } else { 2 }));
+    let make_arrow = || {
+        spawn_arrow(SpawnArrowParams {
+            shooter: shooter_id,
+            bow_point: WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+            target: victim_id,
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
+            trajectory: vec![crate::element::TrajectoryPoint {
+                position: WorldPoint3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 2,
+            }],
+            damage: 10,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        })
+    };
+    let mut victim = make_test_pc(Posture::Upright);
+    victim
+        .element_data_mut()
+        .set_position_map(MapPoint { x: 50.0, y: 0.0 });
+    let Entity::Pc(victim_pc) = &mut victim else {
+        unreachable!();
+    };
+    victim_pc.pc.life_points = 74;
+    victim_pc.pc.immortal = true;
+
+    if pc_before_arrow {
+        assert_eq!(engine.add_entity(victim), victim_id);
+        engine.add_entity(make_arrow());
+    } else {
+        engine.add_entity(make_arrow());
+        assert_eq!(engine.add_entity(victim), victim_id);
+    }
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let Some(Entity::Pc(victim)) = engine.get_entity(victim_id) else {
+        panic!("victim PC missing after projectile frame");
+    };
+    victim.pc.life_points
+}
+
+#[test]
+fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
+    // RHElementActorPC::Hourglass snaps 74 HP to 75. The projectile then
+    // subtracts 10 when the PC's creation order is earlier: 74 -> 75 -> 65.
+    assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(true), 65);
+
+    // Reversing only the element-array order reverses the observable state:
+    // projectile damage 74 -> 64, then the PC hourglass snaps 64 -> 75.
+    assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(false), 75);
+}
+
+#[test]
+fn entity_slot_order_is_append_only_and_survives_save_round_trip() {
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(Entity::Scroll(crate::element::ElementScroll::default()));
+    let second = engine.add_entity(Entity::Scroll(crate::element::ElementScroll::default()));
+
+    engine.remove_entity(first);
+    let third = engine.add_entity(Entity::Scroll(crate::element::ElementScroll::default()));
+
+    assert_eq!(first.index(), 0);
+    assert_eq!(second.index(), 1);
+    assert_eq!(third.index(), 2, "removed slots must never be reused");
+    assert_eq!(
+        engine
+            .entities
+            .occupied()
+            .map(|(id, _)| id.index())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+
+    let encoded = serde_json::to_string(&engine.entities).expect("serialize entity slots");
+    let decoded: crate::entities::Entities =
+        serde_json::from_str(&encoded).expect("deserialize entity slots");
+    assert_eq!(
+        decoded
+            .occupied()
+            .map(|(id, _)| id.index())
+            .collect::<Vec<_>>(),
+        vec![1, 2],
+        "save loading must preserve slot/creation order and holes"
+    );
+}
+
+#[test]
 fn hourglass_advances_mission_length_from_sim_seconds() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
@@ -141,7 +450,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
         .flatten()
         .expect("fade command should emit a host ramp");
     assert_eq!(fade.frames_remaining, 6);
-    assert_eq!(engine.fade_freeze_frames_remaining, 5);
+    assert_eq!(engine.fade_freeze_frames_remaining(), 5);
 
     // The trigger tick presents the first of six frames. Each of the five
     // subsequent hourglass calls represents one more presentation, but is
@@ -150,7 +459,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
         let side_effects = engine.perform_hourglass(&mut display, &assets, &mut dev);
         assert_eq!(side_effects.code, GameCode::LevelInProgress);
         assert!(!side_effects.skip_render);
-        assert_eq!(engine.fade_freeze_frames_remaining, expected_remaining);
+        assert_eq!(engine.fade_freeze_frames_remaining(), expected_remaining);
         assert_eq!(engine.frame_counter, 25);
         assert_eq!(
             engine
@@ -226,6 +535,7 @@ fn enter_helping_climb_sequence_dispatches_stealth_transition() {
         Some(pc_id),
     );
     engine.launch_element(elem);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
@@ -288,7 +598,7 @@ fn hourglass_locked_skips_logic() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.lock_engine = true;
+    engine.set_engine_locked(true);
     // Even with a chorus timer, lock should prevent it from being decremented
     // (actually, chorus timer IS decremented before the lock check)
     engine.chorus_timer = 5;
@@ -334,14 +644,10 @@ fn rollback_clone_stays_in_sync() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
-    #[allow(clippy::disallowed_methods)]
-    let seed = fastrand::Rng::with_seed(0xDEADBEEF).u64(..);
+    let seed = 0xDEAD_BEEF_CAFE_BABE;
 
     let mut original = EngineInner::new();
-    #[allow(clippy::disallowed_methods)]
-    {
-        original.rng = fastrand::Rng::with_seed(seed);
-    }
+    original.restore_rng_from_seed(seed);
 
     // Warm up a few ticks so the clone is taken from a non-initial state.
     for _ in 0..30 {
@@ -359,7 +665,7 @@ fn rollback_clone_stays_in_sync() {
     }
 
     assert_eq!(original.frame_counter, replay.frame_counter);
-    assert_eq!(original.rng.get_seed(), replay.rng.get_seed());
+    assert_eq!(original.rng_seed(), replay.rng_seed());
     assert_eq!(original.chorus_timer, replay.chorus_timer);
     assert_eq!(original.mission.mission_won, replay.mission.mission_won);
     assert_eq!(original.script_globals, replay.script_globals);
@@ -373,7 +679,84 @@ fn rollback_clone_stays_in_sync() {
         second_replay.perform_hourglass(&mut display, &assets, &mut dev);
     }
     assert_eq!(second_replay.frame_counter, original.frame_counter);
-    assert_eq!(second_replay.rng.get_seed(), original.rng.get_seed());
+    assert_eq!(second_replay.rng_seed(), original.rng_seed());
+}
+
+/// `RHGame::GameLoop` calls mission `PostInitialize` only after its
+/// first `Refresh(true, true)` and `RHSound::Hourglass` calls.  Keep the
+/// engine tick and that host-owned boundary observably separate: frame
+/// zero must finish without flipping the serialized one-shot flag, and
+/// the explicit post-refresh stage must flip it without advancing time.
+#[test]
+fn post_initialize_waits_for_post_refresh_stage() {
+    use crate::scb::{ClassEntry, Function, ScbFile};
+    use crate::vm::{Opcode, Quad};
+
+    let begin = Quad {
+        operation: Opcode::BeginFunction as u8,
+        operands: [0; 8],
+    };
+    let ret = Quad {
+        operation: Opcode::Return as u8,
+        operands: [0; 8],
+    };
+    let startup = ClassEntry {
+        source_file: "post_initialize_ordering_test.scs".into(),
+        class_name: "StartUp".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: vec![Function {
+            name: "PostInitialize".into(),
+            address: 0,
+            num_parameters: 0,
+            size_of_return_value: 0,
+            size_of_parameters: 0,
+            size_of_volatile: 0,
+            size_of_temporary: 0,
+        }],
+        quads: vec![begin, ret],
+    };
+
+    let mut engine = EngineInner::new();
+    engine.mission_script = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![startup],
+        })
+        .expect("synthetic StartUp script"),
+    );
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    assert_eq!(engine.frame_counter, 1, "the first simulation frame ran");
+    assert!(
+        !engine.mission_script.as_ref().unwrap().post_initialized,
+        "PostInitialize must not run before the first host refresh and sound hourglass"
+    );
+
+    let rng_seed_before_post_initialize = engine.rng_seed();
+    let first_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
+    assert!(first_post_initialize_effects.is_some());
+    assert_eq!(
+        engine.rng_seed(),
+        rng_seed_before_post_initialize,
+        "an empty PostInitialize must reclaim the unchanged simulation RNG stream"
+    );
+    assert_eq!(
+        engine.frame_counter, 1,
+        "the post-refresh stage must not advance simulation time"
+    );
+    assert!(
+        engine.mission_script.as_ref().unwrap().post_initialized,
+        "the post-refresh stage must dispatch PostInitialize exactly at the frame-one boundary"
+    );
+
+    let second_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
+    assert!(second_post_initialize_effects.is_none());
+    assert_eq!(engine.frame_counter, 1);
+    assert!(engine.mission_script.as_ref().unwrap().post_initialized);
 }
 
 /// Serialize the engine to JSON, deserialize it back, advance the
@@ -386,14 +769,10 @@ fn serde_roundtrip_stays_in_sync() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
-    #[allow(clippy::disallowed_methods)]
-    let seed = fastrand::Rng::with_seed(0xFEED_FACE).u64(..);
+    let seed = 0xFEED_FACE_0123_4567;
 
     let mut original = EngineInner::new();
-    #[allow(clippy::disallowed_methods)]
-    {
-        original.rng = fastrand::Rng::with_seed(seed);
-    }
+    original.restore_rng_from_seed(seed);
 
     for _ in 0..30 {
         original.perform_hourglass(&mut display, &assets, &mut dev);
@@ -413,7 +792,7 @@ fn serde_roundtrip_stays_in_sync() {
     }
 
     assert_eq!(rehydrated.frame_counter, clone_ref.frame_counter);
-    assert_eq!(rehydrated.rng.get_seed(), clone_ref.rng.get_seed());
+    assert_eq!(rehydrated.rng_seed(), clone_ref.rng_seed());
     assert_eq!(rehydrated.chorus_timer, clone_ref.chorus_timer);
     assert_eq!(
         rehydrated.mission.mission_won,
@@ -637,20 +1016,34 @@ fn sprite_serialization_surface_matches_v2_contract() {
     assert_eq!(rehydrated_sprite.center.x, 32.0);
     assert_eq!(rehydrated_sprite.center.y, 48.0);
 
-    // Ticking twice must not diverge from an equivalent in-memory
-    // Clone — the reset level-owned attachments mean this engine can render
-    // as an unbound-sprite soldier; what matters for sim determinism is that
-    // the tick path treats both copies identically.
-    let mut dev = DevState::default();
-    let assets = LevelAssets::new();
-    let mut clone = rehydrated.clone();
+    // Model the level loader rebinding an alternate profile before ticking.
+    // Empty attachments are sufficient here because this contract test only
+    // exercises deterministic state progression, not animation resources.
     let mut rehydrated = rehydrated;
+    let sprite = &mut rehydrated
+        .entities
+        .occupied_mut()
+        .next()
+        .expect("one entity")
+        .1
+        .element_data_mut()
+        .sprite;
+    sprite.alternate_scripts = Some(Arc::new(Vec::new()));
+    sprite.alternate_conversion = Some(Arc::new(Vec::new()));
+
+    // Ticking twice must not diverge from an equivalent in-memory
+    // clone; what matters for sim determinism is that the tick path treats
+    // both copies identically after the normal runtime attachments are bound.
+    let mut dev = DevState::default();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut rehydrated, &mut assets);
+    let mut clone = rehydrated.clone();
     for _ in 0..2 {
         rehydrated.perform_hourglass(&mut display, &assets, &mut dev);
         clone.perform_hourglass(&mut display, &assets, &mut dev);
     }
     assert_eq!(rehydrated.frame_counter, clone.frame_counter);
-    assert_eq!(rehydrated.rng.get_seed(), clone.rng.get_seed());
+    assert_eq!(rehydrated.rng_seed(), clone.rng_seed());
 }
 
 #[test]
@@ -1890,7 +2283,7 @@ fn dead_pc_triggers_failure() {
         kind: crate::element::ElementKind::ActorPc,
         ..Default::default()
     };
-    pc_elem.set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0).into());
+    pc_elem.set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0));
     let entity = Entity::Pc(crate::element::ActorPc {
         element: pc_elem,
         actor: Default::default(),
@@ -1986,12 +2379,12 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
         },
         ..Default::default()
     });
-    engine.add_entity(scroll);
+    let scroll_id = engine.add_entity(scroll);
 
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
     engine.dispatch_scroll_hourglasses(&assets);
-    let entity = engine.get_entity(crate::element::EntityId::Pc(crate::entity_id::PcId(0)));
+    let entity = engine.get_entity(scroll_id);
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,
         _ => unreachable!("scroll entity missing"),
@@ -2054,6 +2447,114 @@ fn make_test_soldier(posture: crate::element::Posture) -> Entity {
         npc: Default::default(),
         soldier: Default::default(),
     })
+}
+
+const SPEECH_TIMING_PROFILE_ID: u32 = 0x1234_0000;
+
+fn build_mytalk_timing_test(duration_frames: Option<u32>) -> (EngineInner, EntityId, LevelAssets) {
+    use crate::ai::{Remark, SpeechFlags};
+    use crate::element::AiBrain;
+    use crate::profiles::SoldierProfile;
+    use crate::sound::ExclamationGroup;
+
+    let mut engine = EngineInner::new();
+    engine.frame_counter = 100;
+
+    let mut soldier_entity = make_test_soldier(crate::element::Posture::Upright);
+    let Entity::Soldier(soldier) = &mut soldier_entity else {
+        unreachable!();
+    };
+    soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+    let ai = soldier.npc.ai_brain.base_mut().unwrap();
+    ai.current_remark = Remark::Arrow;
+    ai.current_remark_flags = (SpeechFlags::MYTALK_1 | SpeechFlags::ALWAYS).bits();
+    let soldier_id = engine.add_entity(soldier_entity);
+
+    let mut assets = LevelAssets::new();
+    std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .soldiers
+        .push(SoldierProfile {
+            profile_name: "timing-test-soldier".into(),
+            exclamation_id: SPEECH_TIMING_PROFILE_ID,
+            ..Default::default()
+        });
+    if let Some(frames) = duration_frames {
+        std::sync::Arc::make_mut(&mut assets.exclamation_durations).insert(
+            (
+                ExclamationGroup::Civilian,
+                SPEECH_TIMING_PROFILE_ID,
+                Remark::Arrow as u16,
+            ),
+            frames,
+        );
+    }
+
+    (engine, soldier_id, assets)
+}
+
+fn mytalk_ai(engine: &EngineInner, soldier_id: EntityId) -> &crate::ai::AiController {
+    engine
+        .get_entity(soldier_id)
+        .and_then(Entity::ai_controller)
+        .expect("timing-test soldier has an AI controller")
+}
+
+#[test]
+fn mytalk_completion_obeys_exact_asset_duration_frame() {
+    use crate::ai::{Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(Some(3));
+    engine.process_npc_speech(&assets);
+
+    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(engine.sound_sim.playing_exclamations[0].finish_frame, 103);
+    assert!(mytalk_ai(&engine, soldier_id).speech_in_flight);
+
+    for frame in [101, 102] {
+        engine.frame_counter = frame;
+        super::tick::drain_matured_exclamations(&mut engine.sound_sim, frame);
+        engine.process_npc_speech(&assets);
+        let ai = mytalk_ai(&engine, soldier_id);
+        assert!(ai.speech_in_flight);
+        assert_eq!(ai.current_remark, Remark::Arrow);
+        assert!(ai.pending_self_stimuli.is_empty());
+    }
+
+    engine.frame_counter = 103;
+    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 103);
+    engine.process_npc_speech(&assets);
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert!(!ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
+}
+
+#[test]
+fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
+    use crate::ai::{Remark, StimulusType};
+
+    let (mut engine, soldier_id, assets) = build_mytalk_timing_test(None);
+    engine.process_npc_speech(&assets);
+
+    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(
+        engine.sound_sim.playing_exclamations[0].finish_frame, 100,
+        "missing metadata must not fabricate a 75-frame speech"
+    );
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert!(ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::Arrow);
+
+    engine.frame_counter = 101;
+    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 101);
+    engine.process_npc_speech(&assets);
+
+    let ai = mytalk_ai(&engine, soldier_id);
+    assert_eq!(engine.frame_counter, 101);
+    assert!(!ai.speech_in_flight);
+    assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
+    assert_eq!(ai.pending_mytalk_flags, 0);
+    assert_eq!(ai.pending_self_stimuli, vec![StimulusType::EventMyTalk1]);
 }
 
 /// Build a minimal civilian entity for NPC-translate tests.
@@ -2180,9 +2681,287 @@ fn make_test_ai_soldier(camp: crate::element::Camp) -> Entity {
 }
 
 #[test]
+fn messenger_selection_followup_retargets_recording_before_frame_returns() {
+    use crate::messenger::{Message, MessageType, PcMessage};
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let second = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    engine.seats[0].selection = vec![first];
+
+    // RHMessenger::ForwardMessage handles these calls synchronously.  In
+    // particular, SelectCharacter's recursive UpdateRecordingMacro must
+    // run before ForwardMessage returns, so the recording target changes
+    // in this frame rather than surviving as queued work for the next one.
+    engine
+        .messenger
+        .send(Message::pc(PcMessage::StartRecordingMacro, Some(first)));
+    engine
+        .messenger
+        .send(Message::pc(PcMessage::SelectCharacter, Some(second)));
+
+    let mut assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    assert_eq!(engine.seats[0].selection, vec![second]);
+    assert_eq!(
+        engine.qa_recording_for,
+        vec![second],
+        "SelectCharacter -> UpdateRecordingMacro must complete in the originating frame"
+    );
+    assert!(
+        engine
+            .messenger
+            .drain()
+            .into_iter()
+            .all(|msg| msg.msg_type != MessageType::Pc(PcMessage::UpdateRecordingMacro, None)),
+        "the recursive recording update must not remain queued for the next frame"
+    );
+}
+
+fn set_test_soldier_brawl_got_hit(engine: &mut EngineInner, soldier: EntityId) {
+    use crate::ai::{AiState, Substate};
+
+    let entity = engine
+        .get_entity_mut(soldier)
+        .expect("test soldier present");
+    let npc = entity.npc_data_mut().expect("test soldier is an NPC");
+    npc.ai_brain =
+        crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(soldier.index())));
+    npc.ai_brain
+        .enemy_mut()
+        .expect("enemy brain installed")
+        .set_state(AiState::Wondering, Substate::WonderingBrawlGotHit);
+}
+
+#[test]
+fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
+    use crate::ai::{StimulusType, Substate};
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    set_test_soldier_brawl_got_hit(&mut engine, soldier);
+    engine
+        .get_entity_mut(soldier)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .fire_self_stimulus(StimulusType::EventDone);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.drain_pending_self_stimuli(&assets);
+
+    let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+    assert_eq!(
+        ai.current_substate,
+        Substate::WonderingWatchingForMoreMoney,
+        "GotHit EventDone recursively fires EventDone in Recovering before the outer Think returns"
+    );
+    assert!(
+        ai.pending_self_stimuli.is_empty(),
+        "a recursive self-stimulus must not leak into the next frame"
+    );
+    assert!(ai.pending_look_sidewards.is_none());
+    assert!(
+        engine.sequence_manager.sequences_iter().any(|seq| {
+            seq.elements.iter().any(|elem| {
+                matches!(
+                    elem.command,
+                    crate::element::Command::LookLeft | crate::element::Command::LookRight
+                )
+            })
+        }),
+        "the recursively selected look action must enter same-frame sequence arbitration"
+    );
+}
+
+#[test]
+fn condolation_reenters_think_before_dispatch_returns() {
+    use crate::ai::Substate;
+    use crate::element::Command;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    set_test_soldier_brawl_got_hit(&mut engine, soldier);
+
+    let seq_id = engine.sequence_manager.launch_element(SequenceElement::new(
+        1,
+        Command::LookLeft,
+        Some(soldier),
+    ));
+    engine.sequence_manager.element_in_progress(seq_id, 0);
+    engine.sequence_manager.element_terminated(seq_id, 0);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.dispatch_condolations(&assets);
+
+    let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+    assert_eq!(
+        ai.current_substate,
+        Substate::WonderingWatchingForMoreMoney,
+        "SetState -> SendCondolationCard -> Think(EventDone) must finish before dispatch returns"
+    );
+    assert!(ai.pending_self_stimuli.is_empty());
+    assert!(ai.pending_look_sidewards.is_none());
+    assert!(
+        engine.sequence_manager.sequences_iter().any(|seq| {
+            seq.elements.iter().any(|elem| {
+                matches!(
+                    elem.command,
+                    crate::element::Command::LookLeft | crate::element::Command::LookRight
+                )
+            })
+        }),
+        "condolation re-entry must launch its follow-up before dispatch returns"
+    );
+}
+
+#[test]
+fn condolation_followup_arbitrates_before_parent_sequence_successor() {
+    use crate::ai::{AiState, Substate};
+    use crate::element::Command;
+    use crate::sequence::{Sequence, SequenceAction, SequenceElement};
+
+    let mut engine = EngineInner::new();
+    let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    set_test_soldier_brawl_got_hit(&mut engine, soldier);
+
+    let mut parent = Sequence::new();
+    parent.append_element(SequenceElement::new(1, Command::LookLeft, Some(soldier)));
+    // IsLastRealAction explicitly skips Wait/AssertPosition successors,
+    // so the LookLeft condolence still fires before Ready queues this.
+    parent.append_element(SequenceElement::new(2, Command::Wait, Some(soldier)));
+    let parent_id = engine.sequence_manager.launch_sequence(parent);
+
+    let initial = engine.sequence_manager.hourglass();
+    assert_eq!(initial.len(), 1);
+    engine.sequence_manager.element_in_progress(parent_id, 0);
+    engine.sequence_manager.element_terminated(parent_id, 0);
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.dispatch_condolations(&assets);
+
+    let commands: Vec<_> = engine
+        .sequence_manager
+        .hourglass()
+        .into_iter()
+        .map(|action| {
+            let (seq_id, elem_idx) = match action {
+                SequenceAction::InstructOwner {
+                    sequence_id,
+                    element_index,
+                    ..
+                }
+                | SequenceAction::EngineCommand {
+                    sequence_id,
+                    element_index,
+                }
+                | SequenceAction::ExecuteImmediateOwner {
+                    sequence_id,
+                    element_index,
+                    ..
+                }
+                | SequenceAction::ExecuteImmediateEngine {
+                    sequence_id,
+                    element_index,
+                } => (sequence_id, element_index),
+            };
+            engine
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .expect("queued action still has an element")
+                .command
+        })
+        .collect();
+
+    assert_eq!(
+        commands,
+        vec![
+            Command::EnterAttentiveMode,
+            Command::LookLeft,
+            Command::Wait,
+        ],
+        "SendCondolationCard's recursive Think must launch/arbitrate its action before Ready queues the parent's next level"
+    );
+
+    let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
+    assert_eq!(ai.current_state, AiState::Wondering);
+    assert_eq!(ai.current_substate, Substate::WonderingWatchingForMoreMoney);
+}
+
+#[test]
+fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
+    use crate::element::Command;
+    use crate::sequence::{CascadeFlags, Sequence, SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let second = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    let third = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
+    for owner in [second, third] {
+        engine
+            .get_entity_mut(owner)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap()
+            .wasp_victim = true;
+    }
+
+    let mut seq = Sequence::new();
+    seq.append_element(SequenceElement::new(1, Command::LookLeft, Some(first)));
+    seq.append_element(SequenceElement::new(
+        2,
+        Command::ReceiveWaspSting,
+        Some(second),
+    ));
+    seq.append_element(SequenceElement::new(
+        3,
+        Command::ReceiveWaspSting,
+        Some(third),
+    ));
+    let seq_id = engine.sequence_manager.launch_sequence(seq);
+
+    engine
+        .sequence_manager
+        .element_interrupted(seq_id, 0, CascadeFlags::NEXT_LEVEL);
+    engine.dispatch_condolations_for_npc(first, &LevelAssets::new());
+
+    for (idx, owner) in [(1, second), (2, third)] {
+        assert_eq!(
+            engine
+                .sequence_manager
+                .get_element(seq_id, idx)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted
+        );
+        assert!(
+            !engine
+                .get_entity(owner)
+                .unwrap()
+                .npc_data()
+                .unwrap()
+                .wasp_victim,
+            "cross-owner card {idx} must run inside the originating SetState cascade"
+        );
+    }
+    assert!(
+        engine
+            .sequence_manager
+            .drain_pending_condolations()
+            .is_empty()
+    );
+}
+
+#[test]
 fn primary_target_tracking_precedes_view_refresh() {
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
@@ -2211,6 +2990,7 @@ fn primary_target_tracking_precedes_view_refresh() {
         pc.element.set_position_map(target_pos);
     }
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let expected = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -2224,6 +3004,124 @@ fn primary_target_tracking_precedes_view_refresh() {
     assert_eq!(
         soldier.npc.direction_old, expected,
         "RefreshView must observe the combat tracking direction in the same frame"
+    );
+}
+
+#[test]
+fn npc_hourglass_observes_exact_original_phase_order() {
+    use super::tick::{NpcHourglassPhase as Phase, capture_npc_hourglass_phases};
+
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+
+    let (_, phases) =
+        capture_npc_hourglass_phases(|| engine.perform_hourglass(&mut display, &assets, &mut dev));
+
+    assert_eq!(
+        phases,
+        vec![
+            Phase::SoldierPrelude,
+            Phase::Patrol,
+            Phase::BaseHuman,
+            Phase::Broadcasts,
+            Phase::View,
+            Phase::Detection,
+            Phase::Ambush,
+            Phase::Busy,
+            Phase::Ladder,
+            Phase::LockGate,
+            Phase::SixteenthFrame,
+            Phase::NormalTimer,
+            Phase::MacroTimer,
+            Phase::QueuedStimuli,
+        ]
+    );
+}
+
+#[test]
+fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
+    use super::ai::npc_hourglass_frame_phase;
+
+    let sixteenth_frame_visits: Vec<_> = (0..256)
+        .filter_map(|frame| {
+            let phase = npc_hourglass_frame_phase(frame, 0);
+            (phase & 15 == 0).then_some((frame, phase))
+        })
+        .collect();
+    assert_eq!(
+        sixteenth_frame_visits,
+        vec![
+            (4, 160),
+            (20, 176),
+            (36, 192),
+            (52, 208),
+            (68, 224),
+            (84, 240),
+            (100, 0),
+            (116, 16),
+            (132, 32),
+            (148, 48),
+            (164, 64),
+            (180, 80),
+            (196, 96),
+            (212, 112),
+            (228, 128),
+            (244, 144),
+        ]
+    );
+    assert_eq!(
+        sixteenth_frame_visits
+            .iter()
+            .filter_map(|&(frame, phase)| (phase & 63 == 0).then_some(frame))
+            .collect::<Vec<_>>(),
+        vec![36, 100, 164, 228]
+    );
+}
+
+#[test]
+fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+
+    let ai = engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| entity.ai_controller_mut())
+        .expect("test soldier has AI");
+    ai.locks_flag_field = crate::ai::AiLockFlags::BUSY;
+    ai.stimulus_queue.push(crate::ai::Stimulus::new(
+        crate::ai::StimulusType::EventAfterCombatInjury,
+    ));
+
+    engine.tick_ai_queued_stimuli(&assets);
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .stimulus_queue
+            .len(),
+        1,
+        "the Hourglass lock gate must preserve queued stimuli"
+    );
+
+    engine
+        .get_entity_mut(soldier_id)
+        .and_then(|entity| entity.ai_controller_mut())
+        .unwrap()
+        .locks_flag_field = crate::ai::AiLockFlags::empty();
+    engine.tick_ai_queued_stimuli(&assets);
+    assert!(
+        engine
+            .get_entity(soldier_id)
+            .and_then(|entity| entity.ai_controller())
+            .unwrap()
+            .stimulus_queue
+            .is_empty(),
+        "the final unlocked Hourglass phase must replay the old lock queue"
     );
 }
 
@@ -2502,8 +3400,9 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::default();
+    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let active = engine
@@ -2543,8 +3442,9 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     engine.set_soldier_attentive_mode(soldier_id, true, false);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::default();
+    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let active = engine
@@ -2703,8 +3603,9 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::default();
+    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     // `MakePostureTransition` translates the CROUCH_UP then the element's
@@ -3102,8 +4003,9 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let elem_state = engine
@@ -3132,8 +4034,9 @@ fn equip_bow_translate_plays_transition_orders() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(pc_id);
 
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let elem = engine
@@ -3176,7 +4079,7 @@ fn assert_npc_translate_books(
 ) {
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let actor = match command {
         crate::element::Command::BeggarShowFace => {
@@ -3189,6 +4092,7 @@ fn assert_npc_translate_books(
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(actor);
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let (order_seq, _, order_type) = engine
@@ -3224,7 +4128,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
 
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
     let target = engine.add_entity(make_test_soldier(Posture::Lying));
@@ -3241,6 +4145,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(rescuer);
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let (order_seq, _, order) = engine
@@ -3358,8 +4263,9 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     engine.ensure_wait_element(victim);
 
     let mut display = HostDisplayState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let entity = engine.get_entity(victim).expect("victim still present");

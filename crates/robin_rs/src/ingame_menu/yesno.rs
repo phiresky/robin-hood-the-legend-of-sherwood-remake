@@ -10,12 +10,15 @@
 //! and select transitions.  The bridge module renders them using the
 //! existing sprite pipeline.
 
-use crate::gfx_types::Keycode;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::sprite::BBox;
+use serde::{Deserialize, Serialize};
+use winit::keyboard::KeyCode;
 
+use crate::focus_manager::{FrameButtonFocusManager, GroupOrientation};
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
+use crate::ui::{UiEvent, UiMsg};
 
 use super::layout::{
     MenuTransform, TextAlign, TooltipState, VAlign, dim_screen, draw_background,
@@ -42,6 +45,13 @@ const BUTTON_GAP: i32 = 18;
 /// Widget IDs for the two buttons.
 const ID_YES: u32 = 0;
 const ID_NO: u32 = 1;
+
+/// Resolved result of the modal's widget event stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum YesNoChoice {
+    Yes,
+    No,
+}
 
 /// Display the modal confirmation dialog.  Returns `true` if the player
 /// chose Yes (or pressed Return / Numpad Enter), `false` if the player
@@ -71,6 +81,8 @@ pub struct YesNoModalState {
     transform: MenuTransform,
     win_x: i32,
     win_y: i32,
+    focus: FrameButtonFocusManager,
+    choice: Option<YesNoChoice>,
 }
 
 impl YesNoModalState {
@@ -115,8 +127,27 @@ impl YesNoModalState {
             w.base_mut().set_tooltip_text(&no_tooltip);
         }
 
+        // Original provenance: RHMenuYesNo.cpp::Create registers both
+        // buttons as non-navigable horizontal groupables, then binds Return
+        // and Numpad Enter to Yes and Escape to No. Keeping the buttons
+        // non-navigable is intentional: Left/Right must not change the
+        // original shortcut-only dialog behavior.
+        let mut focus = FrameButtonFocusManager::new(GroupOrientation::Horizontal);
+        focus.add_button(&frame, ID_YES, false);
+        focus.add_button(&frame, ID_NO, false);
+        focus.add_shortcut(ID_YES, KeyCode::Enter);
+        focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
+        focus.add_shortcut(ID_NO, KeyCode::Escape);
+
         let mut input_state = ModalInputState::new();
         input_state.seed_mouse_from_sdl(event_pump, transform);
+        // UiKeyboard's first refresh only establishes its baseline. Do that
+        // before polling so a key pressed on the modal's first visible frame
+        // is not swallowed.
+        {
+            let _ = input_state.as_widget_input();
+        }
+        input_state.end_frame();
 
         Self {
             message,
@@ -126,6 +157,8 @@ impl YesNoModalState {
             transform,
             win_x,
             win_y,
+            focus,
+            choice: None,
         }
     }
 
@@ -136,41 +169,62 @@ impl YesNoModalState {
         resources: &IngameMenuResources,
         cursor: Option<&ModalCursor<'_>>,
     ) -> Option<bool> {
-        let mut result = None;
+        if let Some(choice) = self.choice {
+            return Some(choice == YesNoChoice::Yes);
+        }
+
         for event in event_pump.poll_events() {
             self.input_state.update_from_event(&event, self.transform);
-            match event {
-                GameEvent::Quit => result = Some(false),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => result = Some(true),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => result = Some(false),
-                _ => {}
+            if matches!(event, GameEvent::Quit) {
+                self.resolve(YesNoChoice::No);
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&events) {
-            match id {
-                ID_YES => result = Some(true),
-                ID_NO => result = Some(false),
-                _ => {}
-            }
-        }
+        self.process_widget_input();
 
         self.render(renderer, resources, cursor);
         renderer.present();
-        result
+        self.choice.map(|choice| choice == YesNoChoice::Yes)
+    }
+
+    fn process_widget_input(&mut self) {
+        let events = {
+            let widget_input = self.input_state.as_widget_input();
+            let events = self.frame.process_input(&widget_input);
+            let mouse_captured = widget_input
+                .capture
+                .is_some_and(|capture| capture.get().is_some());
+            self.focus.process_input(
+                &mut self.frame,
+                events,
+                widget_input.keyboard,
+                mouse_captured,
+            )
+        };
+        self.input_state.end_frame();
+        self.apply_widget_events(&events);
+    }
+
+    fn apply_widget_events(&mut self, events: &[UiEvent]) {
+        for event in events {
+            if event.msg_type != UiMsg::WidgetActivated {
+                continue;
+            }
+            match event.origin_widget_id {
+                ID_YES => self.resolve(YesNoChoice::Yes),
+                ID_NO => self.resolve(YesNoChoice::No),
+                id => panic!("yes/no modal received activation from unknown widget {id}"),
+            }
+        }
+    }
+
+    /// Resolve at most once. Nested/modal callers may observe the state more
+    /// than once while unwinding; a later cancel event must not overwrite an
+    /// already-confirmed choice (or vice versa).
+    fn resolve(&mut self, choice: YesNoChoice) {
+        if self.choice.is_none() {
+            self.choice = Some(choice);
+        }
     }
 
     fn render(
@@ -265,4 +319,110 @@ pub async fn show_file_not_found(
         path
     );
     show_yesno(event_pump, renderer, resources, cursor, &message).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gfx_types::Keycode;
+
+    fn modal_state() -> YesNoModalState {
+        let frame = widget_bridge::make_button_frame(&[
+            (ID_YES, "Yes", 0, 0, 80, 30),
+            (ID_NO, "No", 100, 0, 80, 30),
+        ]);
+        let mut focus = FrameButtonFocusManager::new(GroupOrientation::Horizontal);
+        focus.add_button(&frame, ID_YES, false);
+        focus.add_button(&frame, ID_NO, false);
+        focus.add_shortcut(ID_YES, KeyCode::Enter);
+        focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
+        focus.add_shortcut(ID_NO, KeyCode::Escape);
+
+        let mut input_state = ModalInputState::new();
+        {
+            let _ = input_state.as_widget_input();
+        }
+        input_state.end_frame();
+
+        YesNoModalState {
+            message: "Continue?".to_string(),
+            frame,
+            input_state,
+            tooltip: TooltipState::new(),
+            transform: MenuTransform::centered(640, 480),
+            win_x: 0,
+            win_y: 0,
+            focus,
+            choice: None,
+        }
+    }
+
+    fn key_event(keycode: Keycode, physical_key: KeyCode, down: bool) -> GameEvent {
+        if down {
+            GameEvent::KeyDown {
+                keycode,
+                physical_key: Some(physical_key),
+            }
+        } else {
+            GameEvent::KeyUp {
+                keycode,
+                physical_key: Some(physical_key),
+            }
+        }
+    }
+
+    fn send_key(state: &mut YesNoModalState, keycode: Keycode, physical: KeyCode, down: bool) {
+        let event = key_event(keycode, physical, down);
+        state.input_state.update_from_event(&event, state.transform);
+        state.process_widget_input();
+    }
+
+    #[test]
+    fn return_focuses_then_confirms_on_release() {
+        let mut state = modal_state();
+        send_key(&mut state, Keycode::Return, KeyCode::Enter, true);
+        assert_eq!(state.choice, None);
+        assert_eq!(state.focus.focused_button(), Some(ID_YES));
+
+        send_key(&mut state, Keycode::Return, KeyCode::Enter, false);
+        assert_eq!(state.choice, Some(YesNoChoice::Yes));
+    }
+
+    #[test]
+    fn escape_focuses_then_cancels_on_release() {
+        let mut state = modal_state();
+        send_key(&mut state, Keycode::Escape, KeyCode::Escape, true);
+        assert_eq!(state.choice, None);
+        assert_eq!(state.focus.focused_button(), Some(ID_NO));
+
+        send_key(&mut state, Keycode::Escape, KeyCode::Escape, false);
+        assert_eq!(state.choice, Some(YesNoChoice::No));
+    }
+
+    #[test]
+    fn original_non_navigable_group_ignores_arrows() {
+        let mut state = modal_state();
+        send_key(&mut state, Keycode::Right, KeyCode::ArrowRight, true);
+        assert_eq!(state.focus.focused_button(), None);
+        assert_eq!(state.choice, None);
+    }
+
+    #[test]
+    fn resolution_is_reentrant_and_first_choice_wins() {
+        let mut state = modal_state();
+        state.apply_widget_events(&[
+            UiEvent {
+                msg_type: UiMsg::WidgetActivated,
+                origin_widget_id: ID_YES,
+                data: None,
+            },
+            UiEvent {
+                msg_type: UiMsg::WidgetActivated,
+                origin_widget_id: ID_NO,
+                data: None,
+            },
+        ]);
+        state.resolve(YesNoChoice::No);
+        assert_eq!(state.choice, Some(YesNoChoice::Yes));
+    }
 }

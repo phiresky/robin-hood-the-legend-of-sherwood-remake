@@ -191,8 +191,6 @@ impl DrawManager {
         }
     }
 
-    /// Fill a rectangle in world coordinates, clipped to the view.
-
     /// Draw a dotted line between two points.
     ///
     /// `start` is the distance from `a` to the first dot (updated on return).

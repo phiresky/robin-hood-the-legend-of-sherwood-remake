@@ -204,8 +204,6 @@ pub enum Action {
 }
 
 impl Action {
-    /// True when this is one of the contextual (non-toolbar) actions.
-
     pub fn from_u32(v: u32) -> Self {
         Self::try_from(v).unwrap_or_else(|_| {
             tracing::warn!("invalid Action value {v}, clamping to NoAction");

@@ -58,7 +58,7 @@ impl EngineInner {
     ///   off the purse's `child_coins` list (the empty pouch stays alive
     ///   forever as decoration).
     pub(super) fn tick_purses_and_coins(&mut self, assets: &crate::engine::LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -300,10 +300,12 @@ impl EngineInner {
                 y: source_pos.y,
             };
             for _ in 0..bow_shot::COIN_SCATTER_ATTEMPTS {
-                // Random direction in one of 16 sectors, magnitude in
-                // [COIN_SCATTER_MIN, COIN_SCATTER_MIN+31].
-                let sector = (self.rng.u32(..) & 15) as i16;
-                let magnitude = COIN_SCATTER_MIN + (self.rng.u32(..) & 31) as f32;
+                // Original: `RHElementPurse::Burst` in
+                // `original-code/RHElementPurse.cpp:138-181` uses
+                // `rand() & 15` for direction and `10 + (rand() & 31)`
+                // for magnitude on each of seven attempts.
+                let sector = (crate::sim_rng::u32(..) & 15) as i16;
+                let magnitude = COIN_SCATTER_MIN + (crate::sim_rng::u32(..) & 31) as f32;
                 let (ux, uy) = crate::element::direction_vector_16(sector);
                 // Y is compressed by ASPECT_RATIO to match isometric ground.
                 let scatter_x = ux * magnitude;
@@ -333,9 +335,8 @@ impl EngineInner {
                 .get_entity(purse_id)
                 .map(|e| e.position_iface().get_sector())
                 .unwrap_or(None);
-            let target_pos: WorldPoint3D = self
-                .position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y)
-                .into();
+            let target_pos: WorldPoint3D =
+                self.position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y);
 
             let goal_grid_pt = crate::coordinates::MapPoint::new(goal_2d.x, goal_2d.y);
             let target_sector = match self.fast_grid.get_sector(goal_grid_pt, goal_grid_pt, layer) {
@@ -525,6 +526,10 @@ mod tests {
         engine.add_entity(entity)
     }
 
+    fn tick_purses(engine: &mut EngineInner, assets: &crate::engine::LevelAssets) {
+        engine.with_sim_rng(|engine| engine.tick_purses_and_coins(assets));
+    }
+
     #[test]
     fn purse_burst_spawns_child_coins_and_marks_purse() {
         let mut engine = EngineInner::new();
@@ -540,7 +545,7 @@ mod tests {
         );
 
         let assets = crate::engine::LevelAssets::new();
-        engine.tick_purses_and_coins(&assets);
+        tick_purses(&mut engine, &assets);
 
         // Purse should be marked as burst with N child coin handles.
         let purse = engine.get_entity(purse_id).expect("purse still alive");
@@ -593,7 +598,7 @@ mod tests {
             None,
         );
         let assets = crate::engine::LevelAssets::new();
-        engine.tick_purses_and_coins(&assets);
+        tick_purses(&mut engine, &assets);
         let coin_ids: Vec<EntityId> = match engine.get_entity(purse_id) {
             Some(Entity::Projectile(p)) => p.projectile.purse.child_coins.clone(),
             _ => panic!("purse missing"),
@@ -651,7 +656,7 @@ mod tests {
             None,
         );
         let assets = crate::engine::LevelAssets::new();
-        engine.tick_purses_and_coins(&assets);
+        tick_purses(&mut engine, &assets);
         let coin_ids: Vec<EntityId> = match engine.get_entity(purse_id) {
             Some(Entity::Projectile(p)) => p.projectile.purse.child_coins.clone(),
             _ => panic!("purse missing"),
@@ -667,7 +672,7 @@ mod tests {
 
         // Run a tick — Hourglass drain should prune the child list…
         let assets = crate::engine::LevelAssets::new();
-        engine.tick_purses_and_coins(&assets);
+        tick_purses(&mut engine, &assets);
         let purse = engine
             .get_entity(purse_id)
             .expect("purse slot still present");
@@ -686,6 +691,66 @@ mod tests {
         assert!(
             p.projectile.purse.burst,
             "purse should still be flagged as burst"
+        );
+    }
+
+    #[test]
+    fn purse_rng_replay_from_clone_is_deterministic() {
+        let mut live = EngineInner::new();
+        live.restore_rng_from_seed(0xA11C_E5E1_1234_5678);
+        spawn_landing_purse(
+            &mut live,
+            WorldPoint3D {
+                x: 125.0,
+                y: 275.0,
+                z: 0.0,
+            },
+            0,
+            None,
+        );
+        let initial_seed = live.rng_seed();
+        let mut replay = live.clone();
+        let assets = crate::engine::LevelAssets::new();
+
+        tick_purses(&mut live, &assets);
+        tick_purses(&mut replay, &assets);
+
+        assert_ne!(live.rng_seed(), initial_seed, "purse burst must draw RNG");
+        assert_eq!(live.rng_seed(), replay.rng_seed());
+        assert_eq!(
+            crate::replay::state_hash(&live),
+            crate::replay::state_hash(&replay),
+            "rollback replay must reproduce coin scatter and RNG state"
+        );
+    }
+
+    #[test]
+    fn purse_rng_save_restore_is_deterministic() {
+        let mut continuous = EngineInner::new();
+        continuous.restore_rng_from_seed(0x5A7E_CAFE_89AB_CDEF);
+        spawn_landing_purse(
+            &mut continuous,
+            WorldPoint3D {
+                x: 75.0,
+                y: 150.0,
+                z: 0.0,
+            },
+            0,
+            None,
+        );
+        let json = serde_json::to_string(&continuous).expect("serialize pre-burst engine");
+        let mut restored: EngineInner =
+            serde_json::from_str(&json).expect("deserialize pre-burst engine");
+        let assets = crate::engine::LevelAssets::new();
+
+        tick_purses(&mut continuous, &assets);
+        tick_purses(&mut restored, &assets);
+
+        assert_eq!(continuous.rng_seed(), restored.rng_seed());
+        assert_eq!(
+            crate::replay::state_hash(&continuous),
+            crate::replay::state_hash(&restored),
+            "save restore must reproduce coin scatter and RNG state"
         );
     }
 }

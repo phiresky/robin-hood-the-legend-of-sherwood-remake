@@ -357,7 +357,9 @@ impl PortraitCache {
                     if res_id == RHID_TOP_SCROLL {
                         let pixels: Vec<u16> = pic
                             .data
-                            .chunks_exact(2)
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
                             .map(|c| u16::from_le_bytes([c[0], c[1]]))
                             .collect();
                         let tc = crate::renderer::TRANSPARENT_COLOR_KEY_16;
@@ -745,7 +747,9 @@ impl PortraitCache {
                         opt.as_ref().map(|pic| {
                             let pixels: Vec<u16> = pic
                                 .data
-                                .chunks_exact(2)
+                                .as_chunks::<2>()
+                                .0
+                                .iter()
                                 .map(|c| u16::from_le_bytes([c[0], c[1]]))
                                 .collect();
                             (i, pic.width, pic.height, pixels)
@@ -958,7 +962,9 @@ pub(crate) fn required_action_sub_id(action: crate::profiles::Action) -> usize {
 pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
     let pixels: Vec<u16> = pic
         .data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     renderer

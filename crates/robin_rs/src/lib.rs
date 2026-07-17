@@ -162,6 +162,7 @@ pub use robin_engine::alert_colors;
 pub use robin_util::asset_fs;
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod app_effect;
 pub mod bg_cache;
 pub mod blit_to_map;
 pub mod campaign_map;
@@ -212,6 +213,7 @@ pub mod multiplayer;
 pub mod native_font;
 pub mod pc_info_overlay;
 pub mod portrait_bar;
+pub mod presentation;
 pub mod profiler;
 pub mod recon_report;
 pub mod renderer;

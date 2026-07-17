@@ -401,7 +401,7 @@ fn bench_anim_samples(
         let mut sheet_565 = vec![0u8; pitch_bytes * sheet_h as usize];
         {
             let key = TRANSPARENT_COLOR_16.to_le_bytes();
-            for px in sheet_565.chunks_exact_mut(2) {
+            for px in sheet_565.as_chunks_mut::<2>().0 {
                 px.copy_from_slice(&key);
             }
         }
@@ -717,7 +717,7 @@ fn bench_whole_character(data_dir: &Path, characters: &[String]) -> Result<()> {
         // Default fill: RGBA → all-zero transparent; RGB → pure green (the key).
         // 0x07C0 = (R=0, G=0x3E in 6-bit, B=0); 6-bit→8-bit expand below.
         let key_g8 = (0x3Eu8 << 2) | (0x3Eu8 >> 4);
-        for chunk in atlas_rgb.chunks_exact_mut(3) {
+        for chunk in atlas_rgb.as_chunks_mut::<3>().0 {
             chunk[0] = 0;
             chunk[1] = key_g8;
             chunk[2] = 0;
@@ -1659,7 +1659,7 @@ fn pad_rgb565(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
     }
     let mut out = vec![0u8; dw as usize * dh as usize * 2];
     let key = TRANSPARENT_COLOR_16.to_le_bytes();
-    for px in out.chunks_exact_mut(2) {
+    for px in out.as_chunks_mut::<2>().0 {
         px.copy_from_slice(&key);
     }
     for y in 0..sh as usize {

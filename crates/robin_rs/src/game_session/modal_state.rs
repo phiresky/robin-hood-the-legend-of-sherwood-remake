@@ -211,7 +211,7 @@ pub(super) fn start_active_dialogue_batch(
         return None;
     };
 
-    let dialog_ids: Vec<i32> = host.pending_dialogues.drain(..).collect();
+    let dialog_ids: Vec<i32> = std::mem::take(&mut host.pending_dialogues);
     let mut pending = VecDeque::with_capacity(dialog_ids.len());
     for dialog_id in dialog_ids {
         let sentences = build_dialogue_sentences(
@@ -337,7 +337,7 @@ pub(super) async fn drain_pending_dialogues(
     // recording, the interactive result is appended to the recorder
     // so future replays of this file can reproduce the dismissal.
     if !host.pending_dialogues.is_empty() {
-        let dialog_ids: Vec<i32> = host.pending_dialogues.drain(..).collect();
+        let dialog_ids: Vec<i32> = std::mem::take(&mut host.pending_dialogues);
         if headless {
             tracing::debug!(
                 count = dialog_ids.len(),
@@ -438,7 +438,7 @@ pub(super) fn start_active_popup_scroll_batch(
     if host.pending_popup_texts.is_empty() {
         return None;
     }
-    let text_ids: Vec<i32> = host.pending_popup_texts.drain(..).collect();
+    let text_ids: Vec<i32> = std::mem::take(&mut host.pending_popup_texts);
     let Some(resources) = menu_resources.as_mut() else {
         tracing::warn!(
             "DisplayPopupText: menu resources unavailable — dropping {} popup(s)",
@@ -561,7 +561,7 @@ pub(super) fn start_active_debriefing_batch(
     if host.pending_debriefings.is_empty() {
         return None;
     }
-    let ids: Vec<DebriefingTextId> = host.pending_debriefings.drain(..).collect();
+    let ids: Vec<DebriefingTextId> = std::mem::take(&mut host.pending_debriefings);
     let (Some(descriptors), Some(_resources)) = (level_descriptors, menu_resources) else {
         tracing::warn!(
             "DisplayDebriefing: level descriptors or menu resources unavailable — \
@@ -913,7 +913,7 @@ pub(super) async fn drain_pending_popup_scroll(
     // Script natives `DisplayPopupText` and the `DisplayAllPopupTexts`
     // cheat push text IDs onto `pending_popup_texts`.
     if !host.pending_popup_texts.is_empty() {
-        let text_ids: Vec<i32> = host.pending_popup_texts.drain(..).collect();
+        let text_ids: Vec<i32> = std::mem::take(&mut host.pending_popup_texts);
         let Some(resources) = menu_resources.as_mut() else {
             // Without `IngameMenuResources` the parchment background, OK
             // button sprite, and font cache are all unavailable — we
@@ -1123,7 +1123,7 @@ pub(super) async fn drain_pending_debriefings(
     // into a lose phase and a win phase and iterating each
     // independently.
     if !host.pending_debriefings.is_empty() {
-        let ids: Vec<DebriefingTextId> = host.pending_debriefings.drain(..).collect();
+        let ids: Vec<DebriefingTextId> = std::mem::take(&mut host.pending_debriefings);
         if let (Some(descriptors), Some(resources)) = (&level_descriptors, &menu_resources) {
             let (lose_ids, win_ids): (Vec<_>, Vec<_>) = ids
                 .into_iter()

@@ -182,7 +182,7 @@ impl crate::engine::EngineInner {
     /// Runs once per tick before the sequence manager hourglass so the
     /// freshly-launched seek sequence gets picked up in the same tick.
     pub(super) fn tick_refresh_seeks(&mut self, assets: &LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
@@ -212,7 +212,9 @@ impl crate::engine::EngineInner {
             };
             if !matches!(
                 elem.command,
-                crate::element::Command::Move | crate::element::Command::Seek
+                crate::element::Command::Move
+                    | crate::element::Command::MoveOk
+                    | crate::element::Command::Seek
             ) {
                 continue;
             }

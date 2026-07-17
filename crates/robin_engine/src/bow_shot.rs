@@ -2902,6 +2902,20 @@ pub fn tick_arrow(
     tick_arrows_matching(entities, sight_obstacles, Some(arrow_id), true, &[])
 }
 
+/// Advance one projectile already present in the engine element array.
+///
+/// Unlike [`tick_arrow`], this does not treat the projectile's spawn-time
+/// priming step as its current-frame advancement. It is used by the engine's
+/// creation-ordered entity pass so projectile and PC hourglasses can retain
+/// their relative element-array order.
+pub fn tick_existing_projectile(
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    projectile_id: EntityId,
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(entities, sight_obstacles, Some(projectile_id), false, &[])
+}
+
 fn tick_arrows_matching(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
@@ -3871,13 +3885,11 @@ mod tests {
 
     impl TestEntityIndexAccess for Entities {
         fn get_at_index(&self, index: u32) -> Option<(EntityId, &Entity)> {
-            let id = self.id_at_index(index)?;
-            Some((id, self.get(id)?))
+            self.get_legacy_slot(index)
         }
 
         fn get_mut_at_index(&mut self, index: u32) -> Option<(EntityId, &mut Entity)> {
-            let id = self.id_at_index(index)?;
-            Some((id, self.get_mut(id)?))
+            self.get_legacy_slot_mut(index)
         }
     }
 
@@ -4013,15 +4025,14 @@ mod tests {
     fn begin_bow_shot_sets_shooter_state() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4043,10 +4054,7 @@ mod tests {
             "C++ ShootBow translation must not force the actor's action state before queued bow orders run"
         );
         assert!(actor.active_shot.is_active());
-        assert_eq!(
-            actor.active_shot.target,
-            Some(EntityId::Pc(crate::entity_id::PcId(1)))
-        );
+        assert_eq!(actor.active_shot.target, Some(target_id));
         assert_eq!(actor.active_shot.shoot_mode, Some(ShootMode::Normal));
         // Should have: shoot order + reload order (and possibly transition orders)
         assert!(sm.get_element(seq_id, elem_idx).unwrap().orders.len() >= 2);
@@ -4056,15 +4064,14 @@ mod tests {
     fn tick_bow_shots_detaches_when_sequence_has_advanced_past_bow_orders() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4104,15 +4111,14 @@ mod tests {
     fn tick_bow_shots_waits_behind_pre_shoot_setup_order() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4153,6 +4159,7 @@ mod tests {
     fn tick_bow_shots_detaches_before_trailing_non_bow_order() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
         bind_test_bow_release_rows(
             entities
                 .get_mut_at_index(0)
@@ -4160,15 +4167,13 @@ mod tests {
                 .unwrap(),
             OrderType::ShootingWithBow,
         );
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4241,15 +4246,14 @@ mod tests {
     fn tick_bow_shots_panics_on_missing_resolved_shoot_mode() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4273,6 +4277,7 @@ mod tests {
     fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
         entities
             .get_mut_at_index(0)
             .map(|(_, entity)| entity)
@@ -4280,10 +4285,8 @@ mod tests {
             .actor_data_mut()
             .unwrap()
             .action_state = ActionState::AimingWithBow;
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         set_test_action_state_after_transition(
             &mut sm,
             seq_id,
@@ -4295,7 +4298,7 @@ mod tests {
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4328,10 +4331,9 @@ mod tests {
     fn begin_bow_shot_uses_action_state_after_transition_for_setup_orders() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         set_test_action_state_after_transition(
             &mut sm,
             seq_id,
@@ -4343,7 +4345,7 @@ mod tests {
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4372,18 +4374,17 @@ mod tests {
     fn begin_bow_shot_rejects_dead_target() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
         if let Some((_, Entity::Soldier(s))) = entities.get_mut_at_index(1) {
             s.npc.life_points = 0; // dead
         }
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4400,15 +4401,14 @@ mod tests {
             Some(make_pc(0.0, 0.0)),
             Some(make_arrow_target(50.0, 0.0)),
         ]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Target(crate::entity_id::TargetId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4426,7 +4426,7 @@ mod tests {
                 .unwrap()
                 .active_shot
                 .target,
-            Some(EntityId::Pc(crate::entity_id::PcId(1)))
+            Some(target_id)
         );
     }
 
@@ -4436,16 +4436,15 @@ mod tests {
             Some(make_anonymous_pc(0.0, 0.0)),
             Some(make_soldier(50.0, 0.0)),
         ]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4475,16 +4474,15 @@ mod tests {
             z: 100.0,
         });
         let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Target(crate::entity_id::TargetId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4523,6 +4521,7 @@ mod tests {
             z: 100.0,
         });
         let mut entities = entity_table(vec![Some(make_pc(0.0, 100.0)), Some(target)]);
+        let target_id = EntityId::Target(crate::entity_id::TargetId(1));
         bind_test_bow_release_rows(
             entities
                 .get_mut_at_index(0)
@@ -4530,16 +4529,14 @@ mod tests {
                 .unwrap(),
             OrderType::ShootingWithBow,
         );
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
         let result = begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4575,6 +4572,7 @@ mod tests {
     fn tick_bow_shots_fires_arrow_and_returns_to_aiming() {
         let mut entities =
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
         bind_test_bow_release_rows(
             entities
                 .get_mut_at_index(0)
@@ -4582,16 +4580,14 @@ mod tests {
                 .unwrap(),
             OrderType::ShootingWithBow,
         );
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
         begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,
@@ -4618,7 +4614,7 @@ mod tests {
         );
         let r = &fired[0];
         assert_eq!(r.shooter, EntityId::Pc(crate::entity_id::PcId(0)));
-        assert_eq!(r.target, EntityId::Pc(crate::entity_id::PcId(1)));
+        assert_eq!(r.target, target_id);
         assert_eq!(r.target_pos.x, 50.0);
 
         // Shooter should now be in AimingWithBow (sustained aim).
@@ -5745,7 +5741,7 @@ mod tests {
             entity_table(vec![Some(make_pc(0.0, 0.0)), Some(make_soldier(50.0, 0.0))]);
         let died = apply_arrow_hit(
             &mut entities,
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
             EntityId::Pc(crate::entity_id::PcId(0)),
             30,
             0,
@@ -5768,7 +5764,7 @@ mod tests {
         }
         let died = apply_arrow_hit(
             &mut entities,
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
             EntityId::Pc(crate::entity_id::PcId(0)),
             30,
             0,
@@ -5967,16 +5963,15 @@ mod tests {
         let mut target = make_soldier(50.0, 0.0);
         target.element_data_mut().posture = Posture::LeaningOut;
         let mut entities = entity_table(vec![Some(pc), Some(target)]);
-        let (mut sm, seq_id, elem_idx) = launch_test_shoot_element(
-            EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
-        );
+        let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
+        let (mut sm, seq_id, elem_idx) =
+            launch_test_shoot_element(EntityId::Pc(crate::entity_id::PcId(0)), target_id);
 
         begin_bow_shot(
             &mut entities,
             &mut sm,
             EntityId::Pc(crate::entity_id::PcId(0)),
-            EntityId::Pc(crate::entity_id::PcId(1)),
+            target_id,
             seq_id,
             elem_idx,
             false,

@@ -113,8 +113,6 @@ impl SoundSource {
         Self::default()
     }
 
-    /// Check if this source is part of the given ambience.
-
     /// Convert to [`SoundSourceInfo`] for use by the geometry engine.
     pub fn to_source_info(&self) -> SoundSourceInfo {
         SoundSourceInfo {

@@ -305,7 +305,7 @@ impl GameWindow {
             });
         }
         self.gpu.queue.submit(Some(encoder.finish()));
-        frame.present();
+        self.gpu.queue.present(frame);
     }
 
     /// Drain pending events that the [`AppHandler`] has buffered into
@@ -511,11 +511,11 @@ async fn build_game_window_async(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        // wgpu 29 has a bug where mixing BROWSER_WEBGPU + GL causes
+        // wgpu 30 has a bug where mixing BROWSER_WEBGPU + GL causes
         // the WebGPU backend's `request_adapter` error to claim
         // `supported_backends = BROWSER_WEBGPU` only — masking the
         // GL backend even when wgpu-core/gles is compiled in (see
-        // `wgpu-29.0.1/src/backend/webgpu.rs:960`, where upstream still
+        // `wgpu-30.0.0/src/backend/webgpu.rs:1022`, where upstream still
         // notes that supported_backends should include compiled
         // wgpu-core backends). Pin to GL (= WebGL2 on wasm) for now
         // until that adapter-discovery path is fixed upstream.
@@ -532,6 +532,7 @@ async fn build_game_window_async(
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         })
         .await
         .map_err(|e| format!("request_adapter: {e}"))?;
@@ -602,6 +603,7 @@ async fn build_game_window_async(
     let surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
+        color_space: wgpu::SurfaceColorSpace::Auto,
         width: actual.width.max(1),
         height: actual.height.max(1),
         present_mode: wgpu::PresentMode::AutoNoVsync,
@@ -1278,7 +1280,7 @@ where
         event_loop
             .run_app(&mut handler)
             .map_err(|e| format!("EventLoop::run_app: {e}"))?;
-        Ok(_exit_code_rx.try_recv().unwrap_or(0))
+        receive_game_exit_code(&_exit_code_rx)
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -1287,6 +1289,22 @@ where
         event_loop.spawn_app(handler);
         Ok(0)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn receive_game_exit_code(receiver: &std::sync::mpsc::Receiver<i32>) -> Result<i32, String> {
+    // Parity TODO: `original-code/launcher.cpp:679` runs the game and event
+    // loop in one `main` thread, so the Rust native split runtime has no
+    // Original thread-result analogue. Treat absence as a runtime failure,
+    // never as the successful process exit code zero.
+    receiver.try_recv().map_err(|err| match err {
+        std::sync::mpsc::TryRecvError::Empty => {
+            "game event loop exited before the game thread published its exit code".to_owned()
+        }
+        std::sync::mpsc::TryRecvError::Disconnected => {
+            "game thread terminated without publishing an exit code".to_owned()
+        }
+    })
 }
 
 fn make_event_loop(
@@ -1347,6 +1365,40 @@ pub fn start_text_input() {
     with_game_window(|w| w.reset_dead_keys());
 }
 pub fn stop_text_input() {}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::receive_game_exit_code;
+
+    #[test]
+    fn game_exit_code_is_forwarded() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(17).unwrap();
+
+        assert_eq!(receive_game_exit_code(&rx), Ok(17));
+    }
+
+    #[test]
+    fn missing_game_exit_code_is_an_error() {
+        let (_tx, rx) = std::sync::mpsc::channel();
+
+        assert_eq!(
+            receive_game_exit_code(&rx),
+            Err("game event loop exited before the game thread published its exit code".to_owned())
+        );
+    }
+
+    #[test]
+    fn disconnected_game_thread_is_an_error() {
+        let (tx, rx) = std::sync::mpsc::channel::<i32>();
+        drop(tx);
+
+        assert_eq!(
+            receive_game_exit_code(&rx),
+            Err("game thread terminated without publishing an exit code".to_owned())
+        );
+    }
+}
 
 // ---------------------------------------------------------------------
 // Key mapping (unchanged from the pump-events implementation).

@@ -1451,6 +1451,72 @@ pub enum Command {
     ShootBowOnce,
 }
 
+/// Payload of the sequence `SendMessage` command.
+///
+/// Original provenance: `original-code/RHScript.cpp:6825-6917` constructs
+/// both message entry points with the same three integer properties, while
+/// `original-code/RHelementactor.cpp:2939-2966` and
+/// `original-code/RHengine.cpp:5185-5197` deliver that exact triple to the
+/// actor or global `ProcessMessage` callback respectively.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub struct SendMessageCommand {
+    pub message: i32,
+    pub argument: i32,
+    pub extended_argument: i32,
+}
+
+impl SendMessageCommand {
+    pub const fn new(message: i32, argument: i32, extended_argument: i32) -> Self {
+        Self {
+            message,
+            argument,
+            extended_argument,
+        }
+    }
+}
+
+/// Typed view of a sequence command.
+///
+/// Payload-bearing families are migrated out of the legacy generic property
+/// bag one family at a time. `Legacy` deliberately retains the remaining
+/// command discriminants so callers can adopt this type without a flag-day
+/// conversion of every gameplay command.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+)]
+pub enum SequenceCommand {
+    SendMessage(SendMessageCommand),
+    Legacy(Command),
+}
+
+impl SequenceCommand {
+    /// Return the legacy discriminant used by existing dispatch switches.
+    pub const fn legacy_command(self) -> Command {
+        match self {
+            Self::SendMessage(_) => Command::SendMessage,
+            Self::Legacy(command) => command,
+        }
+    }
+}
+
 impl Command {
     pub fn is_swordstrike(self) -> bool {
         matches!(

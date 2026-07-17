@@ -387,7 +387,9 @@ fn upload_picture_to_gpu_frame(pic: &Picture, renderer: &mut Renderer) -> Option
     let h = pic.height;
     let pixel_u16: Vec<u16> = pic
         .data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     upload_pixels_to_gpu_frame(w, h, &pixel_u16, renderer)

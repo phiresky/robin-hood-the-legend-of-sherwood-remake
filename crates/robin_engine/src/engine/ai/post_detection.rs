@@ -101,30 +101,12 @@ impl EngineInner {
         }
     }
 
-    /// P6 — pursuit / approach / combat stance.
-    ///
-    /// 6a) Reveal blipped NPCs that just committed a detection.
-    /// 6b) Per-NPC EVENT_TIMER dispatch: fire `Think(EVENT_TIMER)`
-    ///     through the filter gate so the AI state machine advances
-    ///     (bored idle → DefaultBoredStandard, alerted →
-    ///     ReconsiderEnemyApproach / ReconsiderSwordfight).
-    /// 6.panic) For every enemy that just entered melee, apply the
-    ///     combat-stance action_state, halt the PC target's movement,
-    ///     and fire `nearby_civilians_panic`.
-    pub(super) fn tick_enemy_ai_pursuit_approach(
+    /// Finalize newly committed detections by revealing blipped NPCs.
+    pub(super) fn tick_enemy_ai_commit_detection_transitions(
         &mut self,
-        assets: &LevelAssets,
-        scratch: &SimScratch,
         transitions: Vec<Detection>,
     ) {
-        let current_frame = self.frame_counter;
-
-        // Collect enemies that transition INTO Swordfight this tick
-        // so we can fire `nearby_civilians_panic` for them outside
-        // the entity borrow scope.
-        let mut panic_calls: Vec<EntityId> = Vec::new();
-
-        // 6a. Newly committed detections — reveal blipped enemies who
+        // Newly committed detections — reveal blipped enemies who
         // just saw the player.
         //
         // This block previously also called `reconsider_enemy_approach`
@@ -136,8 +118,7 @@ impl EngineInner {
         // `reconsider_enemy_approach` after detection — it lets the
         // state machine advance through the
         // `AttackingReactiontimeTurning` → `AttackingReactiontime` →
-        // `BattleDecisions` chain on `EVENT_TIMER`.  Section 6b polls
-        // the timer and dispatches `EventTimer`, matching that flow.
+        // `BattleDecisions` chain on the later `EVENT_TIMER` phase.
         //
         // The facing snap and focus are already handled inside
         // `event_view_standard_procedure` (via `face_entity` +
@@ -153,8 +134,24 @@ impl EngineInner {
                 entity.reveal_blip();
             }
         }
+    }
 
-        // 6b. EVENT_TIMER dispatch.  For every enemy whose timer has
+    /// Normal-timer phase from `RHElementActorNPC::Hourglass`.
+    ///
+    /// Runs after `The16thFrame` and before the macro timer. For every
+    /// unlocked NPC whose timer elapsed, stop it and dispatch
+    /// `Think(EVENT_TIMER)`. Soldiers that enter swordfight receive the
+    /// original post-dispatch combat-stance and civilian-panic effects.
+    pub(crate) fn tick_ai_normal_timers(&mut self, assets: &LevelAssets) {
+        if self.actors_frozen() || self.ai_global.freeze {
+            return;
+        }
+
+        let scratch = self.build_sim_scratch(assets);
+        let current_frame = self.frame_counter;
+        let mut panic_calls: Vec<EntityId> = Vec::new();
+
+        // EVENT_TIMER dispatch. For every NPC whose timer has
         // elapsed, stop the timer and fire `Think(EVENT_TIMER)` through
         // the filter gate so the AI state machine advances (bored idle
         // → `default_bored_standard_procedure`, alerted →
@@ -169,7 +166,7 @@ impl EngineInner {
             self.tick_enemy_ai_pursuit_approach_timer_for_npc(
                 npc_id,
                 assets,
-                scratch,
+                &scratch,
                 current_frame,
                 &mut panic_calls,
             );
@@ -222,8 +219,7 @@ impl EngineInner {
         }
     }
 
-    /// P6 inner — per-NPC body of the timer-dispatch loop in
-    /// [`Self::tick_enemy_ai_pursuit_approach`].  Carries the per-NPC
+    /// Per-NPC body of [`Self::tick_ai_normal_timers`]. Carries the per-NPC
     /// tracing span for `Think(EVENT_TIMER)` dispatches.
     ///
     /// Handles both soldiers (enemy AI) and civilians (friendly AI).
@@ -252,7 +248,9 @@ impl EngineInner {
             let Some(ai) = entity.ai_controller() else {
                 return;
             };
-            let fires = ai.timer_is_running
+            let unlocked = ai.locks_flag_field.is_empty() && !ai.script_locked;
+            let fires = unlocked
+                && ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
                     || ai.when_does_timer_ring > current_frame.saturating_add(1_000_000));
             // `primary_target == 0` means "no target selected" — the AI
@@ -463,6 +461,78 @@ impl EngineInner {
             let tick_data =
                 self.build_npc_tick_data_for_target(npc_id, scratch, assets, target_override);
             self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+        }
+    }
+
+    /// Drain stimuli retained by `start_think` while an NPC was AI- or
+    /// script-locked. This is the final unlocked phase of
+    /// `RHElementActorNPC::Hourglass`, after both timer kinds.
+    pub(crate) fn tick_ai_queued_stimuli(&mut self, assets: &LevelAssets) {
+        if self.actors_frozen() || self.ai_global.freeze {
+            return;
+        }
+
+        let scratch = self.build_sim_scratch(assets);
+        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
+        for npc_id in npc_ids {
+            loop {
+                let stimulus = {
+                    let Some(entity) = self.entities.get_mut(npc_id) else {
+                        break;
+                    };
+                    let Some(ai) = entity.ai_controller_mut() else {
+                        break;
+                    };
+                    // A previous queued Think may acquire a new lock. The
+                    // original loop stops immediately and preserves the rest.
+                    if !ai.locks_flag_field.is_empty() || ai.script_locked {
+                        break;
+                    }
+                    if ai.stimulus_queue.is_empty() {
+                        break;
+                    }
+                    ai.stimulus_queue.remove(0)
+                };
+
+                let in_uninterruptible_command = self.is_very_very_busy(npc_id);
+                let ctx = {
+                    let Some(entity) = self.entities.get(npc_id) else {
+                        break;
+                    };
+                    let building_sector =
+                        self.entity_building_sector(entity.element_data().sector());
+                    let mut ctx = build_ai_context_from_entity(
+                        entity,
+                        self.frame_counter,
+                        building_sector,
+                        self.weather.is_forest_level,
+                        self.standard_view_polygon_radius,
+                        &scratch.ai_entity_views,
+                        &scratch.ai_sight_obstacles,
+                        &self.fast_grid,
+                        &assets.hiking_paths,
+                        &self.ai_global.all_soldier_handles,
+                    );
+                    ctx.in_uninterruptible_command = in_uninterruptible_command;
+                    ctx
+                };
+                let target_override = match stimulus.info {
+                    crate::ai::StimulusInfo::Human(handle)
+                        if matches!(
+                            stimulus.stimulus_type,
+                            crate::ai::StimulusType::EventView
+                                | crate::ai::StimulusType::EventSeesBeggar
+                                | crate::ai::StimulusType::EventEnemyNear
+                        ) =>
+                    {
+                        self.entity_id_for_index(handle)
+                    }
+                    _ => None,
+                };
+                let tick_data =
+                    self.build_npc_tick_data_for_target(npc_id, &scratch, assets, target_override);
+                self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+            }
         }
     }
 }
