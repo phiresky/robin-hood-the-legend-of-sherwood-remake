@@ -300,15 +300,19 @@ pub struct EngineInner {
     /// replay stay deterministic.  [Sim state]
     pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
 
-    /// Retry queue for Move / Seek elements whose initial pathfind
-    /// failed.  Entries stay here for up to 100 frames while the engine
-    /// retries pathfinding each tick; after that window expires the
-    /// owning element transitions to `Impossible` (and PCs hear
+    /// A*-requiring movement elements waiting for the legacy once-per-frame
+    /// path-request processing point.  Direct moves bypass this queue.
+    #[serde(default)]
+    pub(crate) pending_path_requests: crate::engine::movement::PendingPathRequestQueue,
+
+    /// Timeout queue for Move / Seek elements whose path request failed.
+    /// Entries stay here for 100 frames without retrying; after that window
+    /// the owning element transitions to `Impossible` (and PCs hear
     /// `HERO_UNABLE_TO_DO_SOMETHING`).
     ///
     /// See [`movement::FailedPathRequest`] for field-level docs.
     /// Drained each tick by
-    /// [`EngineInner::retry_failed_path_requests`].  [Sim state]
+    /// [`EngineInner::process_failed_path_timeouts`].  [Sim state]
     pub(crate) failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
 
     // ── AI ────────────────────────────────────────────────────────
@@ -854,6 +858,7 @@ impl EngineInner {
             action_before_recording_macro: crate::profiles::Action::NoAction,
             fast_forward: false,
             pending_move_requests: Vec::new(),
+            pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
 
             entities: Entities::new(),
@@ -2539,6 +2544,7 @@ impl EngineInner {
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
         self.pathfinder.cancel_requests_for(owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
         // drops stale retry entries for the actor.  Mirror that here so
@@ -2603,6 +2609,7 @@ impl EngineInner {
         // `element_impossible` / hero-speech on a sequence that no
         // longer cares.
         self.failed_path_requests.retain(|r| r.owner != owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         self.sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
     }
@@ -3363,7 +3370,16 @@ impl EngineInner {
             && self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| elem.command == crate::element::Command::Seek)
+                .is_some_and(|elem| {
+                    matches!(
+                        elem.command,
+                        crate::element::Command::Seek | crate::element::Command::MoveOk
+                    ) && matches!(
+                        &elem.data,
+                        crate::sequence::SequenceElementData::Movement { flags, .. }
+                            if flags.contains(crate::sequence::MoveFlags::SEEK)
+                    )
+                })
             && self
                 .get_entity(owner_id)
                 .and_then(|e| e.actor_data())
@@ -3523,6 +3539,7 @@ impl EngineInner {
         // owner is gone.
         self.failed_path_requests.retain(|r| r.owner != id);
         self.pending_move_requests.retain(|(eid, _)| *eid != id);
+        self.pending_path_requests.retain_not_owned_by(id);
     }
 
     /// Number of live entities.
@@ -3969,6 +3986,7 @@ impl EngineInner {
         self.chorus_timer = 0;
         self.fast_forward = false;
         self.pending_move_requests.clear();
+        self.pending_path_requests.clear();
         self.failed_path_requests.clear();
 
         // Force a full redraw on the next frame — the background cache
