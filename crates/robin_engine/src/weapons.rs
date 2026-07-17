@@ -353,8 +353,6 @@ impl SwordState {
         degrees_to_radians(profile.thrusts[strike as usize].final_angle)
     }
 
-    /// Rotation angle in radians.
-
     pub fn get_strike_repulsion(&self, profile: &HtHWeaponProfile, strike: SwordStrike) -> u16 {
         profile.thrusts[strike as usize].repulsion
     }

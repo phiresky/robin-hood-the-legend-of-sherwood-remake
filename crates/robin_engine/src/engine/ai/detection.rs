@@ -968,6 +968,7 @@ impl EngineInner {
     /// P3 inner — per-NPC body of [`Self::tick_enemy_ai_refresh_detection`].
     /// Carries the per-NPC tracing span so all events emitted inside the
     /// detection pass automatically include `npc=<id>` in their span context.
+    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     fn tick_enemy_ai_refresh_detection_for_npc(
         &mut self,
@@ -992,13 +993,8 @@ impl EngineInner {
 
         // -- Read enemy state in a scoped borrow --
         let viewer = {
-            let Some(entity) = self.entities.get(npc_id) else {
-                return None;
-            };
-            let Some(viewer) = SoldierSightContext::from_viewer(entity, Camp::Lacklandists) else {
-                return None;
-            };
-            viewer
+            let entity = self.entities.get(npc_id)?;
+            SoldierSightContext::from_viewer(entity, Camp::Lacklandists)?
         };
         if viewer.ai_locked {
             return None;

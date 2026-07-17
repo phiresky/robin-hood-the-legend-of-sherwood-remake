@@ -3687,7 +3687,7 @@ impl EngineInner {
             let carrier_pos = elem.position();
 
             let obstacles = self.sight_obstacles(assets);
-            if crate::abilities::can_carry_on_shoulders(carrier_pos.into(), obstacles) {
+            if crate::abilities::can_carry_on_shoulders(carrier_pos, obstacles) {
                 continue;
             }
 

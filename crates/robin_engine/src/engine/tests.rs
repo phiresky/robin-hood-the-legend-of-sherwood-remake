@@ -383,6 +383,7 @@ fn enter_helping_climb_sequence_dispatches_stealth_transition() {
         Some(pc_id),
     );
     engine.launch_element(elem);
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
@@ -865,14 +866,28 @@ fn sprite_serialization_surface_matches_v2_contract() {
     assert_eq!(rehydrated_sprite.center.x, 32.0);
     assert_eq!(rehydrated_sprite.center.y, 48.0);
 
-    // Ticking twice must not diverge from an equivalent in-memory
-    // Clone — the reset level-owned attachments mean this engine can render
-    // as an unbound-sprite soldier; what matters for sim determinism is that
-    // the tick path treats both copies identically.
-    let mut dev = DevState::default();
-    let assets = LevelAssets::new();
-    let mut clone = rehydrated.clone();
+    // Model the level loader rebinding an alternate profile before ticking.
+    // Empty attachments are sufficient here because this contract test only
+    // exercises deterministic state progression, not animation resources.
     let mut rehydrated = rehydrated;
+    let sprite = &mut rehydrated
+        .entities
+        .occupied_mut()
+        .next()
+        .expect("one entity")
+        .1
+        .element_data_mut()
+        .sprite;
+    sprite.alternate_scripts = Some(Arc::new(Vec::new()));
+    sprite.alternate_conversion = Some(Arc::new(Vec::new()));
+
+    // Ticking twice must not diverge from an equivalent in-memory
+    // clone; what matters for sim determinism is that the tick path treats
+    // both copies identically after the normal runtime attachments are bound.
+    let mut dev = DevState::default();
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut rehydrated, &mut assets);
+    let mut clone = rehydrated.clone();
     for _ in 0..2 {
         rehydrated.perform_hourglass(&mut display, &assets, &mut dev);
         clone.perform_hourglass(&mut display, &assets, &mut dev);
@@ -2118,7 +2133,7 @@ fn dead_pc_triggers_failure() {
         kind: crate::element::ElementKind::ActorPc,
         ..Default::default()
     };
-    pc_elem.set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0).into());
+    pc_elem.set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0));
     let entity = Entity::Pc(crate::element::ActorPc {
         element: pc_elem,
         actor: Default::default(),
@@ -2214,12 +2229,12 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
         },
         ..Default::default()
     });
-    engine.add_entity(scroll);
+    let scroll_id = engine.add_entity(scroll);
 
     // No mission_script → nothing to dispatch, counter stays zero.
     let assets = crate::engine::LevelAssets::new();
     engine.dispatch_scroll_hourglasses(&assets);
-    let entity = engine.get_entity(crate::element::EntityId::Pc(crate::entity_id::PcId(0)));
+    let entity = engine.get_entity(scroll_id);
     let counter = match entity {
         Some(Entity::Scroll(s)) => s.script_hourglass_timeout,
         _ => unreachable!("scroll entity missing"),
@@ -2535,9 +2550,10 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
         .messenger
         .send(Message::pc(PcMessage::SelectCharacter, Some(second)));
 
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(engine.seats[0].selection, vec![second]);
@@ -2585,7 +2601,9 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
         .unwrap()
         .fire_self_stimulus(StimulusType::EventDone);
 
-    engine.drain_pending_self_stimuli(&LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.drain_pending_self_stimuli(&assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
     assert_eq!(
@@ -2628,7 +2646,9 @@ fn condolation_reenters_think_before_dispatch_returns() {
     ));
     engine.sequence_manager.element_in_progress(seq_id, 0);
     engine.sequence_manager.element_terminated(seq_id, 0);
-    engine.dispatch_condolations(&LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.dispatch_condolations(&assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
     assert_eq!(
@@ -2672,7 +2692,9 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
     assert_eq!(initial.len(), 1);
     engine.sequence_manager.element_in_progress(parent_id, 0);
     engine.sequence_manager.element_terminated(parent_id, 0);
-    engine.dispatch_condolations(&LevelAssets::new());
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.dispatch_condolations(&assets);
 
     let commands: Vec<_> = engine
         .sequence_manager
@@ -2789,7 +2811,7 @@ fn condolation_cascade_crosses_owners_before_outer_dispatch_returns() {
 #[test]
 fn primary_target_tracking_precedes_view_refresh() {
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
@@ -2818,6 +2840,7 @@ fn primary_target_tracking_precedes_view_refresh() {
         pc.element.set_position_map(target_pos);
     }
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let expected = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -2910,8 +2933,9 @@ fn npc_hourglass_uses_exact_wrapped_register_frame_phase() {
 #[test]
 fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
     let mut engine = EngineInner::new();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let ai = engine
         .get_entity_mut(soldier_id)
@@ -3226,8 +3250,9 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::default();
+    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let active = engine
@@ -3267,8 +3292,9 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     engine.set_soldier_attentive_mode(soldier_id, true, false);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::default();
+    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let active = engine
@@ -3427,8 +3453,9 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::default();
+    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     // `MakePostureTransition` translates the CROUCH_UP then the element's
@@ -3826,8 +3853,9 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let elem_state = engine
@@ -3856,8 +3884,9 @@ fn equip_bow_translate_plays_transition_orders() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(pc_id);
 
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let elem = engine
@@ -3900,7 +3929,7 @@ fn assert_npc_translate_books(
 ) {
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let actor = match command {
         crate::element::Command::BeggarShowFace => {
@@ -3913,6 +3942,7 @@ fn assert_npc_translate_books(
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(actor);
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let (order_seq, _, order_type) = engine
@@ -3948,7 +3978,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
 
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let rescuer = engine.add_entity(make_test_pc(Posture::Upright));
     let target = engine.add_entity(make_test_soldier(Posture::Lying));
@@ -3965,6 +3995,7 @@ fn wake_up_translate_books_waking_up_with_antagonist() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(rescuer);
 
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     let _ = engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let (order_seq, _, order) = engine
@@ -4082,8 +4113,9 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     engine.ensure_wait_element(victim);
 
     let mut display = HostDisplayState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     let entity = engine.get_entity(victim).expect("victim still present");

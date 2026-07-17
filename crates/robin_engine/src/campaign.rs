@@ -655,9 +655,6 @@ impl Campaign {
         self.mission_team_indices.retain(|&i| i != char_idx);
     }
 
-    /// Remove the mission team member at the given position (index into
-    /// `mission_team_indices`, not a character index).
-
     pub fn reset_mission_team(&mut self) {
         self.mission_team_indices.clear();
     }

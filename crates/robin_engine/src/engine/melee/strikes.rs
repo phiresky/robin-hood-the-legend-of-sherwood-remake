@@ -1773,7 +1773,7 @@ impl EngineInner {
                     }
                     let vpos = velem.position_map();
                     if point_in_quad(vpos.x, vpos.y, p0, p1, p2, p3) {
-                        pending_victims.push(victim_id.into());
+                        pending_victims.push(victim_id);
                     }
                 }
 

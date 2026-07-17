@@ -1058,11 +1058,17 @@ mod tests {
             vip: true,
             ..SoldierProfile::default()
         });
-        pm.characters.push(CharacterProfile::default());
         pm.characters.push(CharacterProfile {
-            actions: [Action::Net, Action::NoAction, Action::NoAction],
+            hth_weapon_id: 1,
             ..CharacterProfile::default()
         });
+        pm.characters.push(CharacterProfile {
+            actions: [Action::Net, Action::NoAction, Action::NoAction],
+            hth_weapon_id: 1,
+            ..CharacterProfile::default()
+        });
+        pm.hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
         let mut assets = LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(pm);
         assets

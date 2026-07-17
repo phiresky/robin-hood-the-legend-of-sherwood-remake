@@ -1601,27 +1601,19 @@ impl EnemyAi {
         };
 
         let dir_diff = (ideal_direction.wrapping_sub(real_direction)) & 15;
-        let enemies_in_front;
-        let enemy_on_right_side;
-        match dir_diff {
+
+        let (enemies_in_front, enemy_on_right_side) = match dir_diff {
             0 | 1 | 15 => {
                 // Within tolerance
                 if self.phalanx_is_encircled_by_enemies(&phalanx_center, ideal_direction, tick) {
                     self.break_phalanx(global, ctx, tick, grid);
                     return true;
                 }
-                enemies_in_front = true;
-                enemy_on_right_side = false; // unused when enemies_in_front
+                (true, false) // unused when enemies_in_front
             }
-            2..=8 => {
-                enemies_in_front = false;
-                enemy_on_right_side = true;
-            }
-            _ => {
-                enemies_in_front = false;
-                enemy_on_right_side = false;
-            }
-        }
+            2..=8 => (false, true),
+            _ => (false, false),
+        };
 
         let distance_sb = archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32;
 

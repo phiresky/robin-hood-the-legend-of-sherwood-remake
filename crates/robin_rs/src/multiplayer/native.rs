@@ -517,6 +517,7 @@ fn broadcast_input(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_incoming_peer(
     stream: TcpStream,
     peers: Arc<Mutex<ServerPeers>>,

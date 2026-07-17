@@ -1291,13 +1291,6 @@ impl SoundManager {
         }
     }
 
-    /// Deactivate a specific sound source.
-    ///
-    /// Walks the pending list, stops the channel of the **first**
-    /// matching entry, and erases just that entry. Earlier Rust used
-    /// `retain` which dropped *every* match — that broke when
-    /// duplicate pendings exist.
-
     // ── Hourglass (main update) ──────────────────────────────────────
 
     /// Main per-frame sound update. Call once per game tick.
@@ -1849,8 +1842,6 @@ impl SoundManager {
     }
 
     // ── Cache entry info extraction ──────────────────────────────────
-
-    /// Get sample length in ms for given sound settings.
 
     /// Extract cache entry info (file name, length, etc.) without holding a
     /// borrow on the cache. Calls the appropriate cache getter internally.

@@ -3474,10 +3474,12 @@ mod tests {
         };
         let point_out = MapPoint::new(10.0, 0.0);
 
-        let mut door = Door::default();
-        door.door_type = door_type;
-        door.active = active;
-        door.locked_npc_villain = locked_npc_villain;
+        let door = Door {
+            door_type,
+            active,
+            locked_npc_villain,
+            ..Default::default()
+        };
 
         let mut global = AiGlobalState::default();
         global.door_seek_infos.push(DoorSeekInfo {

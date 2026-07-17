@@ -1159,22 +1159,16 @@ pub fn find_path_gates(
                 continue;
             }
         }
-        let direct;
-        let from_pt;
-        let to_pt;
-        if door.sector_out == source_sector {
+
+        let (direct, from_pt, to_pt) = if door.sector_out == source_sector {
             // Direct: enter from outside, exit through point_in (into sector_in)
-            direct = true;
-            from_pt = door.point_out;
-            to_pt = door.point_in;
+            (true, door.point_out, door.point_in)
         } else if door.sector_in == source_sector {
             // Indirect: enter from inside, exit through point_out (into sector_out)
-            direct = false;
-            from_pt = door.point_in;
-            to_pt = door.point_out;
+            (false, door.point_in, door.point_out)
         } else {
             continue;
-        }
+        };
 
         let d_from_src = dist(source, from_pt);
         let d_to_goal = dist(to_pt, goal);
@@ -1422,20 +1416,14 @@ pub fn find_path_into_door(
                 continue;
             }
         }
-        let direct;
-        let from_pt;
-        let heuristic_pt;
-        if door.sector_out == source_sector {
-            direct = true;
-            from_pt = door.point_out;
-            heuristic_pt = door.point_in;
+
+        let (direct, from_pt, heuristic_pt) = if door.sector_out == source_sector {
+            (true, door.point_out, door.point_in)
         } else if door.sector_in == source_sector {
-            direct = false;
-            from_pt = door.point_in;
-            heuristic_pt = door.point_out;
+            (false, door.point_in, door.point_out)
         } else {
             continue;
-        }
+        };
 
         let d_from_src = dist(source, from_pt);
         let d_to_goal = dist(heuristic_pt, goal_mid);

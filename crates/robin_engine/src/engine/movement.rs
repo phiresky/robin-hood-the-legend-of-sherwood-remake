@@ -5257,7 +5257,7 @@ impl EngineInner {
                     // (tick_entity_movement's post-loop door-pass
                     // dispatch) does the order push.
                     return DoorPassAdvance::Continue {
-                        destination: destination.into(),
+                        destination,
                         action,
                         reverse,
                         compute_direction,

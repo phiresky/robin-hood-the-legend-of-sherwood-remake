@@ -195,8 +195,6 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
     false
 }
 
-/// Skip `n` bytes forward from the current position (SEEK_CUR).
-
 /// Seek to an absolute byte position (SEEK_SET).
 pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
     file.skip(pos as i64, 0); // 0 = SEEK_SET
@@ -942,7 +940,9 @@ impl Picture {
         let pitch_words = (self.pitch as usize) / 2;
         let old_words: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let mut new_words = vec![0u16; new_w * new_h];
@@ -992,7 +992,6 @@ impl Picture {
     /// `x_delta = oldW / newW` is integer-divide-then-cast — when
     /// upsampling (`new > old`) the block collapses to 1×1, i.e.
     /// nearest-neighbour. Only "nice" when downsampling.
-
     fn resize_nice_rgb16(&mut self, new_size: (u16, u16)) -> bool {
         let (new_w, new_h) = (new_size.0 as usize, new_size.1 as usize);
         if new_w == 0 || new_h == 0 {
@@ -1003,7 +1002,9 @@ impl Picture {
         let pitch_words = (self.pitch as usize) / 2;
         let old_words: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let mut new_words = vec![0u16; new_w * new_h];
@@ -1059,7 +1060,9 @@ impl Picture {
         let pitch_words = (self.pitch as usize) / 2;
         let old_words: Vec<u16> = self
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect();
         let mut new_words = vec![0u16; new_w * new_h];
@@ -1163,7 +1166,7 @@ mod tests {
         let h: u16 = 4;
         let mut data = vec![0u8; (w as usize) * (h as usize) * 2];
         let key: u16 = 0x07C0;
-        for px in data.chunks_exact_mut(2) {
+        for px in data.as_chunks_mut::<2>().0 {
             px.copy_from_slice(&key.to_le_bytes());
         }
         let pic = Picture {

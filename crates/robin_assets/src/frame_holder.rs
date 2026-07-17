@@ -143,7 +143,7 @@ fn packed_data_for_index(
     index: &BankSpriteIndex,
     sprite_index: usize,
 ) -> Result<Option<Vec<u16>>> {
-    if index.position % 2 != 0 || index.size % 2 != 0 {
+    if !index.position.is_multiple_of(2) || !index.size.is_multiple_of(2) {
         return Err(anyhow!(
             "sprite index record {sprite_index}: bank byte range {}..+{} is not 16-bit aligned",
             index.position,
@@ -355,9 +355,6 @@ impl FrameHolder {
     pub fn dictionaries(&self) -> &[FrameDictionary] {
         &self.dictionaries
     }
-
-    /// Mutable slice of the day dictionaries.  Used by the CHROMA cheat
-    /// to hue-shift palette entries in place.
 
     pub fn num_sprites(&self) -> usize {
         self.sprites.len()
@@ -688,7 +685,7 @@ impl FrameHolder {
             // Each entry is 4 u16 pixels = 8 bytes.
             let byte_count = usize::from(num_entries) * 8;
             let raw_bytes = reader.take(byte_count, format!("dictionary {i} pixels"))?;
-            let data: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&raw_bytes).to_vec();
+            let data: Vec<u16> = bytemuck::cast_slice::<u8, u16>(raw_bytes).to_vec();
             let dict = FrameDictionary::from_raw(num_entries, data);
             let real_index = self.add_dictionary(dict);
             dict_conversion.insert(i as u16, real_index);
@@ -1396,7 +1393,6 @@ pub fn unpack_rgb565(color: u16) -> (u16, u16, u16) {
 /// 6-bit green channel is therefore discarded before scaling — a
 /// deliberate quirk of the original asm code that we preserve for
 /// pixel-exact parity.
-
 /// Blend pixels toward a fog color at the given intensity.
 ///
 /// Uses the same 5-bit green mask (`0x07C0`) as [`apply_color_scale_16`].

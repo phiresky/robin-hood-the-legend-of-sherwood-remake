@@ -2289,8 +2289,6 @@ impl SequenceManager {
         self.sequences.get_mut(&id)
     }
 
-    /// Check if a sequence exists. O(log N).
-
     fn index_sequence_actor_refs(&mut self, seq_id: SequenceId) {
         let refs: Vec<(EntityId, SequenceElementRef, SequenceState)> = {
             let Some(seq) = self.sequences.get(&seq_id) else {

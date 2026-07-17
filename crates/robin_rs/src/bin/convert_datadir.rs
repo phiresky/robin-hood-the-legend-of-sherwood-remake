@@ -1723,7 +1723,7 @@ fn picture_to_rgb888(pic: &Picture) -> Result<Vec<u8>> {
         }
         _ => {
             let rgba = pic.to_rgba8888(None);
-            for px in rgba.chunks_exact(4) {
+            for px in rgba.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&px[..3]);
             }
         }

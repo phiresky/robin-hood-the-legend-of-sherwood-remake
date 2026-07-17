@@ -611,9 +611,8 @@ impl EngineInner {
         // rendered live by `ui_panel.rs` directly from
         // `mission.mission_won` + `PcData::guard`, so there's nothing
         // to do here for (b).
-        let pc_guarded = self.is_pc_guarded();
 
-        pc_guarded
+        self.is_pc_guarded()
     }
 
     /// Run mission gates, the once-per-second script, clock advancement, and
@@ -2141,7 +2140,7 @@ impl EngineInner {
                                                 owner,
                                                 seq_id,
                                                 elem_idx,
-                                                (*destination).into(),
+                                                *destination,
                                                 *action,
                                                 *reverse,
                                                 *compute_direction,
@@ -8470,12 +8469,13 @@ mod bow_command_body_parity_tests {
 
     fn launch_bow_command_and_tick(command: Command, action_state: ActionState) -> EngineInner {
         let mut engine = EngineInner::new();
-        let assets = LevelAssets::new();
+        let mut assets = LevelAssets::new();
         let pc_id = engine.add_entity(make_aiming_pc(action_state));
         engine.launch_element(SequenceElement::new(1, command, Some(pc_id)));
 
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.perform_hourglass(&mut display, &assets, &mut dev);
         engine
     }
@@ -8512,7 +8512,7 @@ mod bow_command_body_parity_tests {
     #[test]
     fn bow_lean_out_commands_keep_transition_order_live() {
         let mut engine = EngineInner::new();
-        let assets = LevelAssets::new();
+        let mut assets = LevelAssets::new();
         let soldier_id = engine.add_entity(make_bow_soldier(
             Posture::Upright,
             ActionState::AimingWithBow,
@@ -8525,6 +8525,7 @@ mod bow_command_body_parity_tests {
 
         let mut display = HostDisplayState::default();
         let mut dev = DevState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.perform_hourglass(&mut display, &assets, &mut dev);
 
         let elem = engine.sequence_manager.get_element(seq_id, 0).unwrap();
@@ -8606,9 +8607,8 @@ mod soldier_take_drink_parity_tests {
     use super::*;
     use crate::coordinates::WorldPoint3D;
     use crate::element::{
-        ActorData, ActorPc, ActorSoldier, ElementBonus, ElementData, ElementKind,
-        ElementProjectile, HumanData, NpcData, ObjectData, ObjectType, PcData, Posture,
-        ProjectileData, SoldierData,
+        ActorData, ActorSoldier, ElementBonus, ElementData, ElementKind, ElementProjectile,
+        HumanData, NpcData, ObjectData, ObjectType, Posture, ProjectileData, SoldierData,
     };
     use crate::sequence::SequenceElement;
 
@@ -8640,11 +8640,12 @@ mod soldier_take_drink_parity_tests {
         };
         element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
-        Entity::Pc(ActorPc {
+        Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData::default(),
             human: HumanData::default(),
-            pc: PcData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
         })
     }
 
@@ -8689,7 +8690,7 @@ mod soldier_take_drink_parity_tests {
         antagonist: Entity,
     ) -> (EngineInner, EntityId) {
         let mut engine = EngineInner::new();
-        let assets = LevelAssets::new();
+        let mut assets = LevelAssets::new();
         let actor_id = engine.add_entity(actor);
         let antagonist_id = engine.add_entity(antagonist);
         engine.launch_element(SequenceElement::new_interaction(
@@ -8701,6 +8702,7 @@ mod soldier_take_drink_parity_tests {
 
         let mut dev = DevState::default();
         let mut display = HostDisplayState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.perform_hourglass(&mut display, &assets, &mut dev);
         (engine, actor_id)
     }
@@ -8732,13 +8734,14 @@ mod soldier_take_drink_parity_tests {
     #[test]
     fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
         let mut engine = EngineInner::new();
-        let assets = LevelAssets::new();
+        let mut assets = LevelAssets::new();
         engine.add_entity(make_pc_at(100.0, 100.0));
         let bonus_id =
             engine.add_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
 
         let mut dev = DevState::default();
         let mut display = HostDisplayState::default();
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
         engine.perform_hourglass(&mut display, &assets, &mut dev);
 
         let bonus = engine.get_entity(bonus_id).unwrap();
@@ -8822,6 +8825,7 @@ mod drop_ammo_merge_tests {
             },
         }));
 
+        super::complete_test_runtime_fixture(&mut engine, &mut assets);
         (engine, pc_id, assets)
     }
 

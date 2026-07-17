@@ -781,7 +781,9 @@ fn load_row(
         // RGB565 source pixels.
         let source_pixels: Vec<u16> = pic
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         let Some((crop_x, crop_y, crop_w, crop_h)) = pic.opaque_bounds_16() else {
@@ -818,7 +820,7 @@ fn load_row(
         // ARGB8888 little-endian, i.e. [B, G, R, A] in memory.
         // Swizzle to [R, G, B, A] for wgpu's Rgba8UnormSrgb.
         let mut rgba = Vec::with_capacity(argb_bytes.len());
-        for px in argb_bytes.chunks_exact(4) {
+        for px in argb_bytes.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
         }
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {

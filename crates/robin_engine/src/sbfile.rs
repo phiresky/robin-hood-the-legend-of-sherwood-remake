@@ -723,12 +723,6 @@ impl SbFile {
         Ok(())
     }
 
-    /// Clears `line`, then loops reading one byte at a time, appending
-    /// it unless the byte is `\n` or `\r`, until a `\n` is consumed or
-    /// EOF is reached. Returns `!self.is_eof()` — i.e. true if the file
-    /// may still have more data, false if EOF was reached (whether
-    /// mid-line or just past the terminating newline).
-
     pub fn exists(path: &str) -> bool {
         match global_file_system().try_exists(path) {
             Ok(exists) => exists,

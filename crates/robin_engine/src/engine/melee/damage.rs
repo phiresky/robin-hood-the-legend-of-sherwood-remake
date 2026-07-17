@@ -319,10 +319,7 @@ impl EngineInner {
 
             let victim_pos = self
                 .get_entity(victim_id)
-                .map(|e| {
-                    let p = e.element_data().position_map();
-                    p
-                })
+                .map(|e| e.element_data().position_map())
                 .unwrap_or(crate::coordinates::MapPoint::ZERO);
 
             // Real weapon/armor materials from character/soldier profiles
@@ -1517,6 +1514,7 @@ impl EngineInner {
     /// `RHElementStone::HitHuman` flow: collision creates a
     /// `Receive*Damage` sequence element, and that element applies HP
     /// damage, death side effects, and hit/death animations.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn launch_projectile_damage_now(
         &mut self,
         assets: &LevelAssets,

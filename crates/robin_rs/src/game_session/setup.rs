@@ -111,7 +111,7 @@ fn decode_png_rgba(path: &std::path::Path) -> Result<(u16, u16, Vec<u8>), String
         png::ColorType::Rgba => data.to_vec(),
         png::ColorType::Rgb => {
             let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
-            for px in data.chunks_exact(3) {
+            for px in data.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 255]);
             }
             out
@@ -872,7 +872,9 @@ pub(super) fn extract_minimap_widget_setup(
     {
         let pixels: Vec<u16> = pic
             .data
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|c| u16::from_le_bytes([c[0], c[1]]))
             .collect();
         button_hit_mask = Some(HitMask::from_pixels_u16(

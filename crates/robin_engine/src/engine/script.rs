@@ -146,12 +146,10 @@ impl EngineInner {
     /// Populate PC authorisation bits in GameHost from spawned PC entities.
     pub(super) fn refresh_game_host_pc_auth_bits(&mut self) {
         let mut bits: Vec<(i32, u16)> = Vec::new();
-        let mut pc_bit_idx = 0u16;
-        for (id, _) in self.entities.pcs() {
+        for (pc_bit_idx, (id, _)) in self.entities.pcs().enumerate() {
             let handle = crate::natives::GameHost::actor_handle(id);
             let bit = 1u16 << pc_bit_idx;
             bits.push((handle, bit));
-            pc_bit_idx += 1;
         }
         if let Some(ref mut script) = self.mission_script
             && let Some(game_host) = script.game_host_mut()
@@ -3601,10 +3599,10 @@ impl EngineInner {
             for &a in args {
                 stack.push_i32(a);
             }
-            let ret = <crate::natives::GameHost as crate::interp::HostFunctions>::call(
+
+            <crate::natives::GameHost as crate::interp::HostFunctions>::call(
                 game_host, index, &mut stack,
-            );
-            ret
+            )
         };
 
         self.sync_game_host_post_script(assets);

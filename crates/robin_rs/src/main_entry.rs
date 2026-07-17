@@ -794,7 +794,8 @@ fn load_profiles(
 fn load_player_profile_manager() -> PlayerProfileManager {
     let save_dir = crate::save_file::default_save_directory();
     let save_dir_str = save_dir.to_string_lossy().into_owned();
-    let mgr = match PlayerProfileManager::load(&save_dir_str) {
+
+    match PlayerProfileManager::load(&save_dir_str) {
         Ok(mgr) => mgr,
         Err(err) => {
             tracing::warn!(
@@ -805,8 +806,7 @@ fn load_player_profile_manager() -> PlayerProfileManager {
             mgr.set_active(idx);
             mgr
         }
-    };
-    mgr
+    }
 }
 
 /// Load the key-config service owned by [`ApplicationContext`]. First-run
@@ -815,13 +815,13 @@ fn load_player_profile_manager() -> PlayerProfileManager {
 fn load_key_config_store() -> KeyConfigStore {
     let save_dir = crate::save_file::default_save_directory();
     let save_dir_str = save_dir.to_string_lossy().into_owned();
-    let store = KeyConfigStore::load(&save_dir_str).unwrap_or_else(|err| {
+
+    KeyConfigStore::load(&save_dir_str).unwrap_or_else(|err| {
         tracing::warn!(
             "Failed to load key configs from {save_dir_str} ({err}); starting with empty store"
         );
         KeyConfigStore::new(save_dir_str)
-    });
-    store
+    })
 }
 
 // ─── Game callbacks (pure-Rust path) ────────────────────────────────
@@ -1568,7 +1568,9 @@ pub(crate) fn perform_pending_save_load(
 pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
     let pixels: Vec<u16> = pic
         .data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     renderer

@@ -1387,7 +1387,7 @@ impl EngineInner {
                     running,
                 } => PlayerCommand::GroupMove {
                     actors: vec![pc],
-                    destination: destination.into(),
+                    destination,
                     running,
                     show_marker: true,
                     // Macro replay always re-resolves via spatial lookup;
@@ -1472,7 +1472,7 @@ impl EngineInner {
                     running,
                 } => PlayerCommand::DropAleAt {
                     actor: pc,
-                    target_pos: target_pos.into(),
+                    target_pos,
                     running,
                 },
                 crate::macro_store::QaReplayCommand::Swordfight { target, running } => {

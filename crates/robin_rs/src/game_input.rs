@@ -398,12 +398,11 @@ fn resolve_action_left_click(
     // target arms so the recorded titbit and `*_TARGET` sequence field
     // both land on the real 3D point instead of `z=0`.
     let convert_to_3d = |pt: MapPoint| -> engine_coordinates::WorldPoint3D {
-        let p3d = engine.fast_grid().convert_2d_to_3d(
+        engine.fast_grid().convert_2d_to_3d(
             pt,
             engine_sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
             engine.sight_obstacles(assets),
-        );
-        p3d
+        )
     };
 
     // Post-launch tail for actions that deselect on launch (non-
@@ -1419,7 +1418,7 @@ pub fn resolve_swordfight(
             continue;
         }
 
-        let pc_screen = host.viewport.map_to_screen_unclamped(pos_map.into());
+        let pc_screen = host.viewport.map_to_screen_unclamped(pos_map);
         let pattern = host.mouse_way.evaluate(pc_screen, facing_dir);
         tracing::trace!(
             "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} mw_pts={}",

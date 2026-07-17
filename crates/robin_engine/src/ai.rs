@@ -2912,7 +2912,6 @@ impl ReconnaissanceReport {
     /// - `REPORT_UPDATE_BODIES` (1): merge seen_bodies from `other`
     /// - `REPORT_UPDATE_CHARLY` (2): copy charly handle if we don't have one
     /// - `REPORT_UPDATE_TYPE` (4): update report type and seek position
-
     pub fn add_seen_body(&mut self, body: HumanHandle) {
         self.seen_bodies.push(body);
     }

@@ -333,9 +333,8 @@ impl EngineInner {
                 .get_entity(purse_id)
                 .map(|e| e.position_iface().get_sector())
                 .unwrap_or(None);
-            let target_pos: WorldPoint3D = self
-                .position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y)
-                .into();
+            let target_pos: WorldPoint3D =
+                self.position_to_point_3d(assets, purse_sector, layer, goal_2d.x, goal_2d.y);
 
             let goal_grid_pt = crate::coordinates::MapPoint::new(goal_2d.x, goal_2d.y);
             let target_sector = match self.fast_grid.get_sector(goal_grid_pt, goal_grid_pt, layer) {

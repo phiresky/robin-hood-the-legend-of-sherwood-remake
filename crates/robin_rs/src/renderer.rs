@@ -3371,7 +3371,7 @@ impl Renderer {
 
         // ARGB8888 LE = [B, G, R, A] in memory → [R, G, B, A] for wgpu.
         let mut rgba = Vec::with_capacity(argb.len());
-        for px in argb.chunks_exact(4) {
+        for px in argb.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
         }
         let (_tex, view) = upload_rgba_texture(&self.gpu, &rgba, w, h, "tt scratch");

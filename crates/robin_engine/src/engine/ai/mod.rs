@@ -1309,9 +1309,7 @@ impl EngineInner {
 
         // Build a friendly soldier snapshot for `handle` (which may be self).
         let build_soldier = |handle: u32| -> Option<FighterSnapshot> {
-            let Some(s) = self.entities.get_soldier(SoldierId(handle)) else {
-                return None;
-            };
+            let s = self.entities.get_soldier(SoldierId(handle))?;
             if !s.element.active || s.human.unconscious || s.npc.life_points <= 0 {
                 // Detection-pass builder only feeds soldier_snapshots
                 // through the alive+conscious filter (see
@@ -1468,9 +1466,7 @@ impl EngineInner {
 
         // Build an enemy PC snapshot for `handle`.
         let build_pc = |handle: u32| -> Option<FighterSnapshot> {
-            let Some(pc) = self.entities.get_pc(PcId(handle)) else {
-                return None;
-            };
+            let pc = self.entities.get_pc(PcId(handle))?;
             if !pc.element.active || pc.pc.life_points <= 0 {
                 return None;
             }
@@ -3578,7 +3574,7 @@ impl EngineInner {
                     profile_id: snap.speech_id,
                     exclamation_id: excl_id,
                     variant,
-                    position: snap.position.into(),
+                    position: snap.position,
                     actor_id: Some(snap.entity_id),
                 });
             // Schedule the deterministic MYTALK finish from the

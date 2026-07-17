@@ -171,12 +171,12 @@ impl Thumbnail {
         let mut pixels = Vec::with_capacity(expected_pixels);
         match info.color_type {
             png::ColorType::Rgb => {
-                for chunk in data.chunks_exact(3) {
+                for chunk in data.as_chunks::<3>().0 {
                     pixels.push(rgb888_to_rgb565(chunk[0], chunk[1], chunk[2]));
                 }
             }
             png::ColorType::Rgba => {
-                for chunk in data.chunks_exact(4) {
+                for chunk in data.as_chunks::<4>().0 {
                     pixels.push(rgb888_to_rgb565(chunk[0], chunk[1], chunk[2]));
                 }
             }

@@ -1268,15 +1268,6 @@ impl IngameMenuResources {
         .or(self.fonts.list_fallback.as_ref())
     }
 
-    /// `list_font()` as a `NativeFont`, falling back to `default` when
-    /// the list font resolves to TrueType.
-    ///
-    /// Prefer [`Self::list_font`] + the `Font`-polymorphic layout
-    /// helpers — that path actually rasterises the configured TrueType
-    /// font instead of substituting the bitmap default. This narrowed
-    /// view exists for a couple of remaining bitmap-only callers
-    /// (`ui.rs` widget shims) that haven't been migrated yet.
-
     /// 6-state list font lookup that preserves the `Font` enum so
     /// callers can render via either the native bitmap or the TrueType
     /// path. Same alternate-fallback logic as

@@ -508,8 +508,6 @@ impl CampaignMapState {
         self.update_war_crime_text(campaign, menu_text);
     }
 
-    /// Get the mission index at a given location, if any.
-
     // ── Campaign interaction ───────────────────────────────────────
 
     /// Handle the player clicking on a map location.

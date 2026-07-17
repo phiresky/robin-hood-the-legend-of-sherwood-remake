@@ -188,18 +188,19 @@ impl YesNoModalState {
     }
 
     fn process_widget_input(&mut self) {
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        let mouse_captured = widget_input
-            .capture
-            .is_some_and(|capture| capture.get().is_some());
-        let events = self.focus.process_input(
-            &mut self.frame,
-            events,
-            widget_input.keyboard,
-            mouse_captured,
-        );
-        drop(widget_input);
+        let events = {
+            let widget_input = self.input_state.as_widget_input();
+            let events = self.frame.process_input(&widget_input);
+            let mouse_captured = widget_input
+                .capture
+                .is_some_and(|capture| capture.get().is_some());
+            self.focus.process_input(
+                &mut self.frame,
+                events,
+                widget_input.keyboard,
+                mouse_captured,
+            )
+        };
         self.input_state.end_frame();
         self.apply_widget_events(&events);
     }

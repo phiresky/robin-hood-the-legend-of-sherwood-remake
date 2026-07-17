@@ -3682,14 +3682,6 @@ impl EngineInner {
         );
     }
 
-    /// Subtract from a campaign value: bounded decrement plus the
-    /// `UpdatePurseActions` refresh on `RANSOM_VALUE`.  The
-    /// debug-only underflow assert is intentionally omitted.  Doing
-    /// the refresh here (rather than relying on the per-tick sweep)
-    /// keeps the purse-action gating frame-accurate: any caller that
-    /// queries Purse availability on the same frame as the
-    /// subtraction sees the post-subtraction state.
-
     fn apply_value_add_side_effects(
         mission_stat: &mut MissionStat,
         side_effects: &mut SideEffects,
@@ -3953,4 +3945,64 @@ impl EngineInner {
             self.rng = fastrand::Rng::with_seed(seed);
         }
     }
+}
+
+/// Complete the profile and AI attachments required by full-tick unit tests.
+///
+/// Production entities receive these attachments during level loading. Tests
+/// that construct active actors directly must do the equivalent before
+/// calling `perform_hourglass`; keeping it here prevents individual fixtures
+/// from weakening the runtime's required-data invariants.
+#[cfg(test)]
+pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &mut LevelAssets) {
+    let mut profiles = (*assets.profile_manager).clone();
+    let mut needs_hth_weapon = false;
+
+    for (_, pc) in engine.entities.pcs() {
+        if !pc.element.active || pc.pc.life_points <= 0 {
+            continue;
+        }
+        let profile_idx = usize::from(pc.pc.profile_index);
+        profiles
+            .characters
+            .resize_with(profile_idx + 1, crate::profiles::CharacterProfile::default);
+        if profiles.characters[profile_idx].hth_weapon_id == 0 {
+            profiles.characters[profile_idx].hth_weapon_id = 1;
+        }
+        needs_hth_weapon = true;
+    }
+
+    for (soldier_id, soldier) in engine.entities.soldiers_mut() {
+        if !soldier.element.active || soldier.human.unconscious {
+            continue;
+        }
+        let profile_idx = usize::from(soldier.soldier.soldier_profile_index);
+        profiles
+            .soldiers
+            .resize_with(profile_idx + 1, crate::profiles::SoldierProfile::default);
+        if profiles.soldiers[profile_idx].hth_weapon_id == 0 {
+            profiles.soldiers[profile_idx].hth_weapon_id = 1;
+        }
+
+        if soldier.npc.ai_brain.is_none() {
+            soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(
+                crate::ai_enemy::EnemyAi::new(soldier_id.0),
+            ));
+        }
+        let enemy_ai =
+            soldier.npc.ai_brain.enemy_mut().unwrap_or_else(|| {
+                panic!("test soldier {} has a non-enemy AI brain", soldier_id.0)
+            });
+        if enemy_ai.hth_weapon_id == 0 {
+            enemy_ai.hth_weapon_id = 1;
+        }
+        needs_hth_weapon = true;
+    }
+
+    if needs_hth_weapon && profiles.hth_weapons.is_empty() {
+        profiles
+            .hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+    }
+    assets.profile_manager = std::sync::Arc::new(profiles);
 }

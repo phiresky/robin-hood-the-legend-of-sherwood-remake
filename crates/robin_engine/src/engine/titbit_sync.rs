@@ -281,7 +281,7 @@ impl EngineInner {
                 | TitbitKind::AppleSmell
                 | TitbitKind::Speak => {
                     if let Some(pt) = entity.compute_stars_point() {
-                        t.position = pt.into();
+                        t.position = pt;
                     }
                 }
                 TitbitKind::WorkIcon => {
@@ -289,12 +289,12 @@ impl EngineInner {
                     // above the head rather than at the emoticon slot.
                     if let Some(mut pt) = entity.compute_stars_point() {
                         pt.z += 24.0;
-                        t.position = pt.into();
+                        t.position = pt;
                     }
                 }
                 TitbitKind::Lock => {
                     if let Some(pt) = entity.compute_feet_point() {
-                        t.position = pt.into();
+                        t.position = pt;
                     }
                 }
                 TitbitKind::Hidden => {
@@ -316,7 +316,7 @@ impl EngineInner {
                     // (`SetPosition` + `ComputePositionMap`).  Normal
                     // suppliers use `positionMap` directly.
                     t.position = if entity.is_fx_target() {
-                        elem.position().into()
+                        elem.position()
                     } else {
                         WorldPoint3D {
                             x: elem.position_map().x,

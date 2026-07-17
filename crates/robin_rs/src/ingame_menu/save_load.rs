@@ -230,11 +230,10 @@ pub async fn show_save_load(
     let outcome = loop {
         // Build (or rebuild) the widget frame. Save mode accepts an
         // empty name and fills a default label on confirmation.
-        let action_enabled = match (mode, selected) {
-            (SaveLoadMode::Save, Some(_)) => true,
-            (SaveLoadMode::Load, Some(ListRow::Existing(_))) => true,
-            _ => false,
-        };
+        let action_enabled = matches!(
+            (mode, selected),
+            (SaveLoadMode::Save, Some(_)) | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
+        );
         let delete_enabled = matches!(selected, Some(ListRow::Existing(_)));
         let mut frame = FrameWnd::default();
         frame.enabled = true;
@@ -388,11 +387,11 @@ pub async fn show_save_load(
                         {
                             // Match the action-enable rules used by the
                             // explicit button / Enter-key path.
-                            let action_enabled_now = match (mode, selected) {
-                                (SaveLoadMode::Save, Some(_)) => true,
-                                (SaveLoadMode::Load, Some(ListRow::Existing(_))) => true,
-                                _ => false,
-                            };
+                            let action_enabled_now = matches!(
+                                (mode, selected),
+                                (SaveLoadMode::Save, Some(_))
+                                    | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
+                            );
                             if action_enabled_now {
                                 activated = Some(ID_LOAD_SAVE);
                             }
