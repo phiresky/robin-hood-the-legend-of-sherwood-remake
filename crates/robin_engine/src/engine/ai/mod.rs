@@ -7033,9 +7033,10 @@ impl EngineInner {
     /// which in the original engine immediately re-enter the AI but in
     /// Rust are queued to avoid nested `&mut AiGlobalState` borrows.
     ///
-    /// Called unconditionally each tick — not hidden behind a sibling
-    /// early-return — so a stimulus queued late in tick N is guaranteed
-    /// to fire at the start of tick N+1.
+    /// Called unconditionally each tick.  Each NPC is drained to a fixed
+    /// point so a Think call that recursively fires another self-stimulus
+    /// observes that stimulus in the originating frame, matching the
+    /// original direct `Think(...)` call.
     pub(super) fn drain_pending_self_stimuli(&mut self, assets: &LevelAssets) {
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
         for npc_id in npc_ids {
@@ -7055,18 +7056,34 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        let scratch = self.build_sim_scratch(assets);
-        let frame = self.frame_counter;
-        let stimuli: Vec<StimulusType> = {
-            let Some(entity) = self.entities.get_mut(npc_id) else {
-                return;
+        const MAX_REENTRANT_STIMULI: usize = 111;
+        let mut dispatched = 0usize;
+
+        loop {
+            let stimulus_type = {
+                let Some(entity) = self.entities.get_mut(npc_id) else {
+                    return;
+                };
+                let Some(ai) = entity.ai_controller_mut() else {
+                    return;
+                };
+                if ai.pending_self_stimuli.is_empty() {
+                    break;
+                }
+                ai.pending_self_stimuli.remove(0)
             };
-            let Some(ai) = entity.ai_controller_mut() else {
-                return;
-            };
-            ai.take_pending_self_stimuli()
-        };
-        for stimulus_type in stimuli {
+
+            dispatched += 1;
+            if dispatched > MAX_REENTRANT_STIMULI {
+                tracing::warn!(
+                    npc = npc_id.index(),
+                    "self-stimulus recursion exceeded the original 111-call guard"
+                );
+                break;
+            }
+
+            let scratch = self.build_sim_scratch(assets);
+            let frame = self.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let Some(entity) = self.entities.get(npc_id) else {
@@ -7097,6 +7114,13 @@ impl EngineInner {
             // The re-entered think might have queued a panic-seek
             // fallback (FleeingPanic / EventCouldntReachPoint).
             self.process_pending_panic_seek_fallback_for(npc_id, &ctx);
+
+            // Original Think calls execute their engine-facing side effects
+            // before returning.  Close that window after every recursive
+            // stimulus so a newly launched sequence participates in
+            // arbitration before the next sibling stimulus is delivered.
+            self.drain_pending_for_npc(npc_id, assets);
+            self.dispatch_condolations_for_npc(npc_id, assets);
         }
     }
 
