@@ -305,7 +305,7 @@ impl GameWindow {
             });
         }
         self.gpu.queue.submit(Some(encoder.finish()));
-        frame.present();
+        self.gpu.queue.present(frame);
     }
 
     /// Drain pending events that the [`AppHandler`] has buffered into
@@ -511,11 +511,11 @@ async fn build_game_window_async(
     }
     #[cfg(target_arch = "wasm32")]
     {
-        // wgpu 29 has a bug where mixing BROWSER_WEBGPU + GL causes
+        // wgpu 30 has a bug where mixing BROWSER_WEBGPU + GL causes
         // the WebGPU backend's `request_adapter` error to claim
         // `supported_backends = BROWSER_WEBGPU` only — masking the
         // GL backend even when wgpu-core/gles is compiled in (see
-        // `wgpu-29.0.1/src/backend/webgpu.rs:960`, where upstream still
+        // `wgpu-30.0.0/src/backend/webgpu.rs:1022`, where upstream still
         // notes that supported_backends should include compiled
         // wgpu-core backends). Pin to GL (= WebGL2 on wasm) for now
         // until that adapter-discovery path is fixed upstream.
@@ -532,6 +532,7 @@ async fn build_game_window_async(
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         })
         .await
         .map_err(|e| format!("request_adapter: {e}"))?;
@@ -602,6 +603,7 @@ async fn build_game_window_async(
     let surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: surface_format,
+        color_space: wgpu::SurfaceColorSpace::Auto,
         width: actual.width.max(1),
         height: actual.height.max(1),
         present_mode: wgpu::PresentMode::AutoNoVsync,

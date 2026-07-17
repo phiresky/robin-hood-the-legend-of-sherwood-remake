@@ -72,7 +72,7 @@ pub(crate) fn build_pipeline(
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
-            buffers: &vertex_buffers,
+            buffers: &[Some(vertex_buffers[0].clone())],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
