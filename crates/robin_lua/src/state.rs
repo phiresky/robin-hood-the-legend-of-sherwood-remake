@@ -269,7 +269,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
     let rng = lua.create_function(
         |_, args: mlua::Variadic<i32>| -> mlua::Result<mlua::Value> {
             match args.len() {
-                0 => Ok(mlua::Value::Number(robin_engine::sim_rng::f32() as f64)),
+                0 => Ok(mlua::Value::Number(robin_engine::sim_rng::f32(
+                    robin_engine::sim_rng::RngSite::LuaMathRandom,
+                ) as f64)),
                 1 => {
                     let n = args[0];
                     if n < 1 {
@@ -278,7 +280,11 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                         )));
                     }
                     Ok(mlua::Value::Integer(
-                        robin_engine::sim_rng::i32(1..=n).into(),
+                        robin_engine::sim_rng::i32(
+                            robin_engine::sim_rng::RngSite::LuaMathRandom,
+                            1..=n,
+                        )
+                        .into(),
                     ))
                 }
                 2 => {
@@ -289,7 +295,11 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                         )));
                     }
                     Ok(mlua::Value::Integer(
-                        robin_engine::sim_rng::i32(a..=b).into(),
+                        robin_engine::sim_rng::i32(
+                            robin_engine::sim_rng::RngSite::LuaMathRandom,
+                            a..=b,
+                        )
+                        .into(),
                     ))
                 }
                 n => Err(mlua::Error::RuntimeError(format!(

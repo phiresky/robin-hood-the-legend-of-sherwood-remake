@@ -749,7 +749,11 @@ mod tests {
     #[test]
     fn lying_stuck_under_net_can_mutate_to_wriggle_and_consumes() {
         let seed = (0..1000)
-            .find(|seed| crate::sim_rng::with_seed(*seed, || crate::sim_rng::u32(..31) == 0))
+            .find(|seed| {
+                crate::sim_rng::with_seed(*seed, || {
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0
+                })
+            })
             .expect("test should find a 1/31 roll seed");
         let (mut sequence_manager, seq_id) = sequence_with_order(OrderType::LyingStuckUnderNet);
         let mut next_order_id = 9;
@@ -2362,7 +2366,7 @@ fn apply_under_net_cycle_side_effect(
 
     match (anim_type, motion) {
         (OT::WriggleUnderNet, MS::Start) => {
-            match crate::sim_rng::u32(..3) {
+            match crate::sim_rng::u32(crate::sim_rng::RngSite::WriggleDirection, ..3) {
                 0 => {
                     let direction = (entity.element_data().direction() + 1) & 15;
                     entity.element_data_mut().set_direction_instantly(direction);
@@ -2559,7 +2563,9 @@ fn dispatch_arm_completion(
             if is_wait_cmd {
                 let next_type = match anim_type {
                     OT::WaitingUprightBored => {
-                        if crate::sim_rng::u32(..10) == 0 {
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BoredAnimationChoice, ..10)
+                            == 0
+                        {
                             OT::WaitingUprightBoredRandom
                         } else {
                             OT::WaitingUprightBored
@@ -2588,7 +2594,7 @@ fn dispatch_arm_completion(
     // on every motion state (the roll runs before the motion-state
     // switch), then always return InProgress.
     if matches!(anim_type, OT::LyingStuckUnderNet) {
-        if crate::sim_rng::u32(..31) == 0 {
+        if crate::sim_rng::u32(crate::sim_rng::RngSite::NetWriggleGate, ..31) == 0 {
             if let Some(elem) = ctx
                 .sequence_manager
                 .get_element_mut(ctx.seq_id, ctx.elem_idx)

@@ -434,7 +434,9 @@ impl EngineInner {
                     .and_then(|e| e.human_data())
                     .map(|h| h.relative_fighting_ability)
                     .unwrap_or(50);
-                let roll_loses = crate::sim_rng::u32(0..100) <= rfa as u32;
+                let roll_loses =
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeInitiative, 0..100)
+                        <= rfa as u32;
                 let out_of_range = self.can_he_kill_me_but_me_not(entity_id, principal_id, assets);
                 if roll_loses || out_of_range {
                     // Lose initiative and hand it to the opponent; skip
@@ -459,7 +461,7 @@ impl EngineInner {
             }
 
             // Pick left or right smalltalk strike
-            let is_left = crate::sim_rng::bool();
+            let is_left = crate::sim_rng::bool(crate::sim_rng::RngSite::SmalltalkStrikeSide);
             pending_smalltalk_strikes.push((entity_id.into(), principal_id, is_left));
         }
 

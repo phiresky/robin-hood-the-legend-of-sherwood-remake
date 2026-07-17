@@ -179,7 +179,8 @@ impl EngineInner {
 
         // Random rotation offset, applied to direction_goal so the
         // soldier rotates during the animation.  Range is `rand(0..17) - 8`.
-        let rotation = crate::sim_rng::i32(0..17) - 8;
+        let rotation =
+            crate::sim_rng::i32(crate::sim_rng::RngSite::SoldierFreedRotation, 0..17) - 8;
         let new_goal = {
             let current_goal = i16::from(entity.position_iface().get_direction_goal());
             (current_goal + rotation as i16).rem_euclid(16)
@@ -741,9 +742,12 @@ impl EngineInner {
             let mut defender = center;
             let mut attacker = center;
             for _ in 0..10 {
-                let jitter = crate::sim_rng::i32(0..7) - 3;
+                let jitter =
+                    crate::sim_rng::i32(crate::sim_rng::RngSite::DoorFightDispersion, 0..7) - 3;
                 let dd = (base_direction + jitter as i16).rem_euclid(16);
-                let magnitude = 30.0 + crate::sim_rng::u32(0..64) as f32;
+                let magnitude = 30.0
+                    + crate::sim_rng::u32(crate::sim_rng::RngSite::DoorFightDispersion, 0..64)
+                        as f32;
                 // Apply the isometric aspect ratio to the Y component
                 // — `direction_vector_16` returns a pure unit vector,
                 // but the door-battle dispersion expects an
@@ -805,7 +809,10 @@ impl EngineInner {
             } else {
                 // Extra pursuers pick a random fleeing guy as their
                 // duel target.
-                let target_idx = crate::sim_rng::u32(0..num_fleeing as u32) as usize;
+                let target_idx = crate::sim_rng::u32(
+                    crate::sim_rng::RngSite::DoorFightTarget,
+                    0..num_fleeing as u32,
+                ) as usize;
                 self.send_before_door_to_fight(
                     pursuing[i],
                     attacker_pos,

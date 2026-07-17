@@ -90,6 +90,50 @@ fn simulation_gates_survive_rollback_restore_and_replay() {
 }
 
 #[test]
+fn rng_snapshot_restores_next_gameplay_draw_and_state_hash() {
+    let mut live = EngineInner::new();
+    live.restore_rng_from_seed(0xA036_5EED_CAFE_BEEF);
+    live.with_sim_rng(|_| {
+        let _ = crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 97)
+            .expect("positive script bound");
+    });
+
+    let bytes = bincode::serde::encode_to_vec(&live, bincode::config::standard())
+        .expect("encode RNG snapshot");
+    let (mut restored, consumed): (EngineInner, usize) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard())
+            .expect("decode RNG snapshot");
+    assert_eq!(consumed, bytes.len());
+    assert_eq!(
+        crate::replay::state_hash(&live),
+        crate::replay::state_hash(&restored)
+    );
+
+    let next_live = live.with_sim_rng(|_| {
+        (
+            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 101)
+                .expect("positive script bound"),
+            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 17)
+                .expect("positive script bound"),
+        )
+    });
+    let next_restored = restored.with_sim_rng(|_| {
+        (
+            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 101)
+                .expect("positive script bound"),
+            crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, 17)
+                .expect("positive script bound"),
+        )
+    });
+    assert_eq!(next_live, next_restored);
+    assert_eq!(live.rng_seed(), restored.rng_seed());
+    assert_eq!(
+        crate::replay::state_hash(&live),
+        crate::replay::state_hash(&restored)
+    );
+}
+
+#[test]
 fn scrolling_table_generation() {
     let bg = BackgroundTransform::default();
     assert_eq!(bg.x_scrolling_values[0], 0.0);

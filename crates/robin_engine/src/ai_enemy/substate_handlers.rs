@@ -174,11 +174,15 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking1Sidewards);
                     // Random LR or RL.
-                    self.base.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-                        LookDirection::RightLeft
-                    } else {
-                        LookDirection::LeftRight
-                    });
+                    self.base.pending_look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
+                            != 0
+                        {
+                            LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
+                        },
+                    );
                     self.base
                         .launch_timer(parameters_ai::AI_LOOK_TIME as u32, ctx.frame);
                 }
@@ -192,8 +196,10 @@ impl EnemyAi {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking2);
                     let dir = (ctx.direction + 5) & 15;
                     self.base.face_direction(dir, ctx);
-                    self.base
-                        .launch_timer(30 + crate::sim_rng::u32(0..8), ctx.frame);
+                    self.base.launch_timer(
+                        30 + crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..8),
+                        ctx.frame,
+                    );
                 }
             }
 
@@ -201,11 +207,15 @@ impl EnemyAi {
                 if stimulus_type == StimulusType::EventTimer {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking2Sidewards);
                     // Random LR or RL.
-                    self.base.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-                        LookDirection::RightLeft
-                    } else {
-                        LookDirection::LeftRight
-                    });
+                    self.base.pending_look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
+                            != 0
+                        {
+                            LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
+                        },
+                    );
                     self.base
                         .launch_timer(parameters_ai::AI_LOOK_TIME as u32, ctx.frame);
                 }
@@ -219,8 +229,10 @@ impl EnemyAi {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking3);
                     let dir = (ctx.direction + 5) & 15;
                     self.base.face_direction(dir, ctx);
-                    self.base
-                        .launch_timer(30 + crate::sim_rng::u32(0..8), ctx.frame);
+                    self.base.launch_timer(
+                        30 + crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..8),
+                        ctx.frame,
+                    );
                 }
             }
 
@@ -513,7 +525,10 @@ impl EnemyAi {
                             let pos = if self.seek_point_view_directions.is_empty() {
                                 0
                             } else {
-                                crate::sim_rng::usize(0..=self.seek_point_view_directions.len())
+                                crate::sim_rng::usize(
+                                    crate::sim_rng::RngSite::EnemySeekDirectionShuffle,
+                                    0..=self.seek_point_view_directions.len(),
+                                )
                             };
                             self.seek_point_view_directions.insert(pos, dir);
                         }
@@ -538,11 +553,13 @@ impl EnemyAi {
                         AiState::Seeking,
                         Substate::SeekingSeekpointWatchingSidewards,
                     );
-                    self.base.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-                        LookDirection::LeftRight
-                    } else {
-                        LookDirection::RightLeft
-                    });
+                    self.base.pending_look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemySeekLook, 0..2) != 0 {
+                            LookDirection::LeftRight
+                        } else {
+                            LookDirection::RightLeft
+                        },
+                    );
                     self.base
                         .launch_timer(parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32, ctx.frame);
                 }
@@ -803,11 +820,13 @@ impl EnemyAi {
                     // The engine consumes `pending_look_sidewards`
                     // into a sequence of LookLeft / LookRight commands
                     // at post-think time.
-                    self.base.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-                        LookDirection::LeftRight
-                    } else {
-                        LookDirection::RightLeft
-                    });
+                    self.base.pending_look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemySeekLook, 0..2) != 0 {
+                            LookDirection::LeftRight
+                        } else {
+                            LookDirection::RightLeft
+                        },
+                    );
                     self.base
                         .launch_timer(parameters_ai::AI_LOOK_TIME as u32, ctx.frame);
                 }
@@ -2861,7 +2880,7 @@ impl EnemyAi {
                         AiState::Attacking,
                         Substate::AttackingTooProudToAttackOverview,
                     );
-                    if crate::sim_rng::u32(0..16) == 0 {
+                    if crate::sim_rng::u32(crate::sim_rng::RngSite::TooProudLook, 0..16) == 0 {
                         self.base.pending_look_sidewards = Some(LookDirection::LeftRight);
                     } else {
                         self.base.launch_timer(20, ctx.frame);
@@ -3103,7 +3122,9 @@ impl EnemyAi {
                                 .unwrap_or(false);
                             if target_is_bow {
                                 // Still danger
-                                if crate::sim_rng::u32(0..4) == 0 {
+                                if crate::sim_rng::u32(crate::sim_rng::RngSite::ShieldAdvance, 0..4)
+                                    == 0
+                                {
                                     // Lower shield to advance
                                     self.set_state(
                                         AiState::Attacking,
@@ -3415,18 +3436,21 @@ impl EnemyAi {
             // periodic re-seeking.
             Substate::DefaultLookingForCharly => {
                 if stimulus_type == StimulusType::EventTimer {
-                    let rand_sorrow = crate::sim_rng::u32(0..5000) as u16;
+                    let rand_sorrow =
+                        crate::sim_rng::u32(crate::sim_rng::RngSite::CharlySorrow, 0..5000) as u16;
                     if rand_sorrow < self.base.sorrow_level + 10 {
                         self.set_state(
                             AiState::Default,
                             Substate::DefaultLookingSidewardsForCharly,
                         );
-                        self.base.pending_look_sidewards =
-                            Some(if crate::sim_rng::u32(0..2) != 0 {
+                        self.base.pending_look_sidewards = Some(
+                            if crate::sim_rng::u32(crate::sim_rng::RngSite::CharlySorrow, 0..2) != 0
+                            {
                                 LookDirection::LeftRight
                             } else {
                                 LookDirection::RightLeft
-                            });
+                            },
+                        );
                     }
                     self.base.sorrow_level = self
                         .base
@@ -3498,11 +3522,15 @@ impl EnemyAi {
             Substate::WonderingLooking3 => {
                 if stimulus_type == StimulusType::EventTimer {
                     self.set_state(AiState::Wondering, Substate::WonderingLooking3Sidewards);
-                    self.base.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-                        LookDirection::RightLeft
-                    } else {
-                        LookDirection::LeftRight
-                    });
+                    self.base.pending_look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::EnemyWonderingLook, 0..2)
+                            != 0
+                        {
+                            LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
+                        },
+                    );
                 }
             }
 
@@ -4464,11 +4492,15 @@ impl EnemyAi {
                         _ => Substate::SeekingOfficerLookingForSoldiers3Sidewards,
                     };
                     self.set_state(AiState::Seeking, next);
-                    self.base.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-                        LookDirection::RightLeft
-                    } else {
-                        LookDirection::LeftRight
-                    });
+                    self.base.pending_look_sidewards = Some(
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::OfficerSearchLook, 0..2)
+                            != 0
+                        {
+                            LookDirection::RightLeft
+                        } else {
+                            LookDirection::LeftRight
+                        },
+                    );
                 }
             }
 

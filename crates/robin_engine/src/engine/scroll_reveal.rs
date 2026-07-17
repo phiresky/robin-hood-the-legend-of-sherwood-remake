@@ -447,7 +447,7 @@ impl EngineInner {
             );
             return;
         }
-        sprite.force_random_sprite_frame_sim();
+        sprite.force_random_sprite_frame(crate::sim_rng::RngSite::ScrollRevealFrame);
 
         let mut element = crate::element::ElementData {
             kind: crate::element::ElementKind::ObjectBonus,

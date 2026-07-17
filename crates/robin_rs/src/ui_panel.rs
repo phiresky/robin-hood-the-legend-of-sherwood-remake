@@ -23,6 +23,7 @@ use robin_engine::engine::Engine;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
+use robin_engine::sim_rng::{self, AuxiliaryRngSite};
 use robin_engine::sprite::BBox;
 use std::collections::HashMap;
 
@@ -787,9 +788,9 @@ impl PortraitCache {
     // part of the rollback / replay hash.  Must NOT use ambient
     // `rand::rng()` (seeded from OS entropy) — that causes a
     // different peasant-name set every run, producing a frame-0
-    // replay desync.  Instead seed a throwaway `fastrand::Rng` from
-    // the engine's current seed so both recording and replay pick
-    // the same names without advancing the sim RNG.
+    // replay desync. Instead use the reviewed authoritative auxiliary
+    // generator seeded from the Engine's current stream state. Recording and
+    // replay pick the same names without advancing the serialized stream.
     pub fn generate_peasant_names(
         &mut self,
         res: &mut ResourceManager,
@@ -841,38 +842,39 @@ impl PortraitCache {
             return;
         }
 
-        #[allow(clippy::disallowed_methods)]
-        let mut rng = fastrand::Rng::with_seed(engine.rng_seed());
-        for kind in peasants {
-            let slot = kind.as_index();
-            if self.localized_names[slot].is_some() {
-                continue;
-            }
-
-            let mut generated = None;
-            for _ in 0..MAX_ATTEMPTS {
-                let first = &firstnames[rng.usize(0..firstnames.len())];
-                let last = &surnames[rng.usize(0..surnames.len())];
-                let full = format!("{first} {last}");
-
-                if !engine.is_peasant_name_registered(&full) {
-                    engine.apply_command(
-                        display,
-                        input,
-                        assets,
-                        &engine_player_command::PlayerCommand::RegisterPeasantName {
-                            name: full.clone(),
-                        },
-                    );
-                    generated = Some(full);
-                    break;
+        let seed = engine.rng_seed();
+        sim_rng::with_auxiliary_seed(AuxiliaryRngSite::PeasantNames, seed, |rng| {
+            for kind in peasants {
+                let slot = kind.as_index();
+                if self.localized_names[slot].is_some() {
+                    continue;
                 }
-            }
 
-            let display_name = generated.unwrap_or_else(|| "Misteryman".to_string());
-            tracing::info!("Peasant {kind:?} → {display_name:?}");
-            self.localized_names[slot] = Some(display_name);
-        }
+                let mut generated = None;
+                for _ in 0..MAX_ATTEMPTS {
+                    let first = &firstnames[rng.usize(0..firstnames.len())];
+                    let last = &surnames[rng.usize(0..surnames.len())];
+                    let full = format!("{first} {last}");
+
+                    if !engine.is_peasant_name_registered(&full) {
+                        engine.apply_command(
+                            display,
+                            input,
+                            assets,
+                            &engine_player_command::PlayerCommand::RegisterPeasantName {
+                                name: full.clone(),
+                            },
+                        );
+                        generated = Some(full);
+                        break;
+                    }
+                }
+
+                let display_name = generated.unwrap_or_else(|| "Misteryman".to_string());
+                tracing::info!("Peasant {kind:?} → {display_name:?}");
+                self.localized_names[slot] = Some(display_name);
+            }
+        });
     }
 
     /// Look up the renderer surface for a character's face portrait.

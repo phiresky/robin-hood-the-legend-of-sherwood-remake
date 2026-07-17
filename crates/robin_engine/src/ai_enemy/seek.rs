@@ -275,7 +275,10 @@ impl EnemyAi {
                     * parameters_ai::AI_MIN_LOOKFORHELPFLAG_SEEK_POINT_FACTOR)
                     as u16;
 
-                expected_points = crate::sim_rng::u16(min..=expected_points);
+                expected_points = crate::sim_rng::u16(
+                    crate::sim_rng::RngSite::SeekPointSelection,
+                    min..=expected_points,
+                );
             }
 
             // ── Phase 4: select points by interest (randomised order) ──
@@ -287,13 +290,18 @@ impl EnemyAi {
                     break;
                 }
                 let interest = global.seek_points[idx].calculate_interest(current_frame);
-                if crate::sim_rng::u8(0..100) < interest {
+                if crate::sim_rng::u8(crate::sim_rng::RngSite::SeekPointSelection, 0..100)
+                    < interest
+                {
                     // Unconditionally call rand on every accepted
                     // point, including the first (where the count == 1
                     // consumes a draw deterministically returning 0).
                     // Match the RNG-step count exactly for replay
                     // determinism — no `is_empty()` short-circuit.
-                    let insert_pos = crate::sim_rng::usize(0..=selected_random.len());
+                    let insert_pos = crate::sim_rng::usize(
+                        crate::sim_rng::RngSite::SeekPointSelection,
+                        0..=selected_random.len(),
+                    );
                     selected_random.insert(insert_pos, idx);
                     count_f += interest as f32 * 0.01;
                 }
@@ -577,7 +585,9 @@ impl EnemyAi {
             }
         };
 
-        if is_locked || crate::sim_rng::u8(0..100) >= interest {
+        if is_locked
+            || crate::sim_rng::u8(crate::sim_rng::RngSite::SeekPointAcceptance, 0..100) >= interest
+        {
             // Skip this point — try the next one
             self.seek_next_point(global, ctx, tick);
             return;

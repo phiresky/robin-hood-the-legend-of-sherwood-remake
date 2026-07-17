@@ -2386,7 +2386,7 @@ impl EngineInner {
                 // within its current row.  Sequencing must be
                 // force_animation → force_random_sprite_frame because
                 // `force_animation` resets `current_frame` to 0.
-                sprite.force_random_sprite_frame(&mut self.rng);
+                sprite.force_random_sprite_frame(crate::sim_rng::RngSite::LevelBonusInitialFrame);
             }
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
@@ -2549,8 +2549,13 @@ impl EngineInner {
         // We split this into two phases to satisfy the borrow checker:
         // Phase A computes assignments from campaign data (borrows self.campaign),
         // Phase B creates entities (borrows assets.sprite_scriptor, self.entities).
-        // (char_idx, profile_idx, beam_me_idx, sherwood_returner)
-        let pc_spawn_plan: Vec<(usize, crate::profiles::CharacterProfileIdx, usize, bool)>;
+        // (char_idx, profile_idx, beam_me_idx, pre-shuffle Sherwood placement roll)
+        let pc_spawn_plan: Vec<(
+            usize,
+            crate::profiles::CharacterProfileIdx,
+            usize,
+            Option<super::teleport::SherwoodPlacementRoll>,
+        )>;
         let is_sherwood;
         {
             let campaign = self
@@ -2634,11 +2639,9 @@ impl EngineInner {
 
             let mut assignments: Vec<Option<usize>> = vec![None; loaded.mission.beam_mes.len()];
             let mut instanced = vec![false; team.len()];
-            // `sherwood_placed[ti]` is true when team-member `ti` was
-            // seated by the Sherwood branch (not Phase 1 / Phase 2).
-            // Flows through to the spawn plan so Phase B can call
-            // `randomize_position` on those PCs.
-            let mut sherwood_placed = vec![false; team.len()];
+            // Pre-rolled placement values are kept by team member until
+            // Phase B can create and mutate the corresponding entity.
+            let mut sherwood_placement_rolls = vec![None; team.len()];
 
             // Phase 1: Handle required characters.
             for (bm_idx, beam_me) in loaded.mission.beam_mes.iter().enumerate() {
@@ -2723,7 +2726,9 @@ impl EngineInner {
                     }
                     assignments[bm_idx] = Some(ti);
                     instanced[ti] = true;
-                    sherwood_placed[ti] = true;
+                    // Original creates and randomizes every remembered PC
+                    // before consuming the 200 beam-me shuffle draws.
+                    sherwood_placement_rolls[ti] = Some(super::teleport::roll_sherwood_placement());
                 }
 
                 // Shuffle the free beam-mes 100 times.  Both the
@@ -2736,14 +2741,12 @@ impl EngineInner {
                 // sim RNG so replay / rollback stay reproducible.
                 let n = loaded.mission.beam_mes.len();
                 if n > 0 {
-                    for _ in 0..100 {
-                        let a = crate::sim_rng::usize(0..n);
-                        let b = crate::sim_rng::usize(0..n);
+                    shuffle_sherwood_slots(n, |a, b| {
                         if a != b {
                             loaded.mission.beam_mes.swap(a, b);
                             assignments.swap(a, b);
                         }
-                    }
+                    });
                 }
             }
 
@@ -2911,7 +2914,7 @@ impl EngineInner {
                     if let Some(desc) = campaign.characters.get_mut(char_idx) {
                         desc.instanced = true;
                     }
-                    Some((char_idx, profile_idx, bm_idx, sherwood_placed[ti]))
+                    Some((char_idx, profile_idx, bm_idx, sherwood_placement_rolls[ti]))
                 })
                 .collect();
         }
@@ -2924,7 +2927,7 @@ impl EngineInner {
             // Find the spawn plan entry for this beam-me, if any
             let plan_entry = pc_spawn_plan.iter().find(|&&(_, _, bi, _)| bi == bm_idx);
 
-            if let Some(&(char_idx, mut profile_idx, _, sherwood_returner)) = plan_entry {
+            if let Some(&(char_idx, mut profile_idx, _, sherwood_placement_roll)) = plan_entry {
                 // A "Robin des villes" PC in a forest level is rewritten
                 // to "Robin des bois", and vice-versa in a town level.
                 // Swap both `profile_idx` and the campaign character's
@@ -3226,8 +3229,8 @@ impl EngineInner {
                 // Sherwood returners get their position + facing
                 // jittered by `randomize_position`.  Non-returners keep
                 // the beam-me's exact position/facing.
-                if sherwood_returner {
-                    self.randomize_position(spawned_eid);
+                if let Some(roll) = sherwood_placement_roll {
+                    self.apply_randomized_position(spawned_eid, roll);
                 }
             } else {
                 // No PC for this beam-me — push None to keep script indices aligned.
@@ -5881,7 +5884,9 @@ impl EngineInner {
                         );
                         continue;
                     }
-                    sprite.force_random_sprite_frame(&mut self.rng);
+                    sprite.force_random_sprite_frame(
+                        crate::sim_rng::RngSite::SherwoodProductionBonusFrame,
+                    );
                     sprite.apply_placement(
                         MapPoint::new(point.x, point.y),
                         point.layer,
@@ -5943,7 +5948,7 @@ impl EngineInner {
                         );
                         continue;
                     }
-                    sprite.force_random_sprite_frame(&mut self.rng);
+                    sprite.force_random_sprite_frame(crate::sim_rng::RngSite::SherwoodRelicFrame);
                     sprite.apply_placement(
                         MapPoint::new(point.x, point.y),
                         point.layer,
@@ -6103,5 +6108,47 @@ impl EngineInner {
         sector: &crate::sector_production::SectorProduction,
     ) -> bool {
         campaign.sector_has_specialist(sector, profiles)
+    }
+}
+
+fn shuffle_sherwood_slots(n: usize, mut swap: impl FnMut(usize, usize)) {
+    assert!(
+        n > 0,
+        "Sherwood beam-me shuffle requires a non-empty slot list"
+    );
+    for _ in 0..100 {
+        let a = crate::sim_rng::usize(crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
+        let b = crate::sim_rng::usize(crate::sim_rng::RngSite::SherwoodBeamMeShuffle, 0..n);
+        swap(a, b);
+    }
+}
+
+#[cfg(test)]
+mod rng_order_tests {
+    use super::shuffle_sherwood_slots;
+    use crate::sim_rng::RngSite;
+
+    #[test]
+    fn returning_pc_placement_draws_precede_all_beam_me_shuffle_draws() {
+        crate::sim_rng::with_seed(0xA036, || {
+            let (_, trace) = crate::sim_rng::with_draw_trace(|| {
+                let _ = super::super::teleport::roll_sherwood_placement();
+                shuffle_sherwood_slots(4, |_, _| {});
+            });
+            assert_eq!(trace.len(), 203);
+            assert_eq!(
+                &trace[..3],
+                &[
+                    RngSite::SherwoodReturningPcPlacement,
+                    RngSite::SherwoodReturningPcPlacement,
+                    RngSite::SherwoodReturningPcPlacement,
+                ]
+            );
+            assert!(
+                trace[3..]
+                    .iter()
+                    .all(|site| *site == RngSite::SherwoodBeamMeShuffle)
+            );
+        });
     }
 }

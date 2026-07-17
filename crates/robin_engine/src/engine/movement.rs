@@ -1931,7 +1931,12 @@ impl EngineInner {
                 // Original: `RHSequence::AppendMoveToSequence` in
                 // `original-code/RHsequence.cpp:484` sums two `rand() & 15`
                 // draws for this building-exit wait.
-                let r: u32 = crate::sim_rng::u32(0..16) + crate::sim_rng::u32(0..16);
+                let r: u32 =
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::RuntimeBuildingExitWait, 0..16)
+                        + crate::sim_rng::u32(
+                            crate::sim_rng::RngSite::RuntimeBuildingExitWait,
+                            0..16,
+                        );
                 let mut w = SequenceElement::new_generic(level, wait_command, Some(entity_id));
                 w.set_property(Field::Timer, FieldValue::Integer(r));
                 seq.append_element(w);
@@ -2332,7 +2337,13 @@ impl EngineInner {
                         // `original-code/RHsequence.cpp:905`. The
                         // direction stuffed on the element is the
                         // door's `point_out - point_in` sector-index.
-                        let r: u32 = crate::sim_rng::u32(0..16) + crate::sim_rng::u32(0..16);
+                        let r: u32 = crate::sim_rng::u32(
+                            crate::sim_rng::RngSite::RuntimeBuildingExitWait,
+                            0..16,
+                        ) + crate::sim_rng::u32(
+                            crate::sim_rng::RngSite::RuntimeBuildingExitWait,
+                            0..16,
+                        );
                         let mut wait = SequenceElement::new_generic(
                             level,
                             Command::WaitTimer,

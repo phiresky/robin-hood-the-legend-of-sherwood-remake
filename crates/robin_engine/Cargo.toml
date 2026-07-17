@@ -45,3 +45,4 @@ enum-map = { version = "2", features = ["serde"] }
 [dev-dependencies]
 tempfile = "3"
 tracing-subscriber = "0.3"
+syn = { version = "2", features = ["full", "visit"] }

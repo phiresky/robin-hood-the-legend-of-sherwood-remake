@@ -359,7 +359,10 @@ impl EngineInner {
                 // play command — the per-source delay is always reset
                 // immediately after a play decision.
                 if src.delay_stepping > 0 && src.max_delay > src.min_delay {
-                    let step = crate::sim_rng::u32(0..src.delay_stepping as u32) as u16;
+                    let step = crate::sim_rng::u32(
+                        crate::sim_rng::RngSite::DelayedSoundTimer,
+                        0..src.delay_stepping as u32,
+                    ) as u16;
                     let range = src.max_delay - src.min_delay;
                     src.timer = (step as u32 * range as u32 / src.delay_stepping as u32) as u16
                         + src.min_delay;
@@ -8361,8 +8364,12 @@ pub(super) fn apply_drunken_path_deviation(
             for _try in 0..3 {
                 // `rand() & 15` — pick a random 16-sector direction
                 // and scale by another 0..15 random magnitude.
-                let dir_sector = crate::sim_rng::u32(0..16) as i16;
-                let magnitude = crate::sim_rng::u32(0..16) as f32;
+                let dir_sector =
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
+                        as i16;
+                let magnitude =
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::DrunkenPathDeviation, 0..16)
+                        as f32;
                 let (dx, dy) = crate::element_kinds::direction_vector_16(dir_sector);
                 let scale = magnitude * max_norm * DRUNKEN_DEVIATION_FACTOR * factor;
                 let candidate = crate::coordinates::MapPoint::new(
@@ -8472,7 +8479,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
     }
 
     fn random_u32(&self) -> u32 {
-        crate::sim_rng::u32(..)
+        crate::sim_rng::u32(crate::sim_rng::RngSite::TitbitUpdate, ..)
     }
 }
 

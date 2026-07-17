@@ -1317,7 +1317,10 @@ impl Sprite {
                 // with probability 1/N from the deterministic simulation
                 // RNG so replays match.
                 if (self.current_frame != 0 || self.frame_count != 0)
-                    || crate::sim_rng::u32(..BORED_ANIM_PROBABILITY) == 0
+                    || crate::sim_rng::u32(
+                        crate::sim_rng::RngSite::SpriteBoredStart,
+                        ..BORED_ANIM_PROBABILITY,
+                    ) == 0
                 {
                     self.frame_count = self.frame_count.wrapping_add(1);
                     if self.frame_count > self.wait_time(self.current_row, self.current_frame) {
@@ -1335,7 +1338,10 @@ impl Sprite {
                 // Same as BoredAnim but with a different probability.
                 // Deterministic simulation RNG.
                 if (self.current_frame != 0 || self.frame_count != 0)
-                    || crate::sim_rng::u32(..SNAKE_ANIM_PROBABILITY) == 0
+                    || crate::sim_rng::u32(
+                        crate::sim_rng::RngSite::SpriteSnakeStart,
+                        ..SNAKE_ANIM_PROBABILITY,
+                    ) == 0
                 {
                     self.frame_count = self.frame_count.wrapping_add(1);
                     if self.frame_count > self.wait_time(self.current_row, self.current_frame) {
@@ -1817,31 +1823,12 @@ impl Sprite {
         self.frame_count = other_frame_count;
     }
 
-    /// Pick a random starting frame on the current row.
-    ///
-    /// Called from mission-load paths (bonus/scroll spawn, post-load
-    /// `EngineInner::initialize_all_scrolls`) which run *outside* a
-    /// simulation tick, so the ambient `sim_rng` thread-local isn't
-    /// installed.  Callers must therefore thread `&mut EngineInner::rng`
-    /// in directly so level-load randomness still comes from the same
-    /// seeded PRNG that drives rollback-replay determinism.
-    #[allow(clippy::disallowed_methods)]
-    pub fn force_random_sprite_frame(&mut self, rng: &mut fastrand::Rng) {
+    /// Pick a random starting frame on the current row from the installed
+    /// Engine-owned simulation stream.
+    pub fn force_random_sprite_frame(&mut self, site: crate::sim_rng::RngSite) {
         let num = self.num_frames_for_row(self.current_row);
         if num > 0 {
-            self.current_frame = rng.u16(..num);
-        }
-    }
-
-    /// `force_random_sprite_frame` variant for sim-tick callers.
-    ///
-    /// Pulls from the `sim_rng` thread-local that `perform_hourglass`
-    /// installs, so the draw is deterministic across rollback replays.
-    /// Must not be called outside a simulation tick.
-    pub fn force_random_sprite_frame_sim(&mut self) {
-        let num = self.num_frames_for_row(self.current_row);
-        if num > 0 {
-            self.current_frame = crate::sim_rng::u16(0..num);
+            self.current_frame = crate::sim_rng::u16(site, 0..num);
         }
     }
 

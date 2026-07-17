@@ -48,7 +48,7 @@ impl EngineInner {
             tracing::warn!("REINFORCEMENT: no reinforcement doors on this level.");
             return;
         }
-        let pick = crate::sim_rng::usize(0..door_count);
+        let pick = crate::sim_rng::usize(crate::sim_rng::RngSite::ReinforcementDoor, 0..door_count);
         let door_index = self.ai_global.reinforcement_doors[pick].door_index;
 
         // Snapshot door geometry — we'll drop the host borrow before
@@ -246,8 +246,16 @@ impl EngineInner {
             .unwrap_or_else(|| crate::coordinates::MoveBoxHalfDiagonal::new(12.0, 8.0));
         let mut jitter: Option<MapPoint> = None;
         for _ in 0..10 {
-            let dx = crate::sim_rng::i32(-50..=50) as f32;
-            let dy = crate::sim_rng::i32(-50..=50) as f32;
+            let dx = -50.0
+                + 100.0
+                    * crate::sim_rng::c_rand_unit_inclusive(
+                        crate::sim_rng::RngSite::ReinforcementJitter,
+                    );
+            let dy = -50.0
+                + 100.0
+                    * crate::sim_rng::c_rand_unit_inclusive(
+                        crate::sim_rng::RngSite::ReinforcementJitter,
+                    );
             let candidate = pin + MapVec::new(dx, dy);
             if self
                 .fast_grid

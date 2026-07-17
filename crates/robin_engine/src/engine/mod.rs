@@ -845,7 +845,10 @@ impl EngineInner {
             // Original: `RHElementScroll::Initialize` in
             // `original-code/RHElementScroll.cpp:153-171` calls
             // `ForceRandomSpriteFrame` after script initialization.
-            scroll.element.sprite.force_random_sprite_frame_sim();
+            scroll
+                .element
+                .sprite
+                .force_random_sprite_frame(crate::sim_rng::RngSite::ScrollInitialFrame);
         }
     }
 
@@ -3520,7 +3523,10 @@ impl EngineInner {
             // `original-code/RHgame.cpp:4202-4251` uses
             // `rand() % (LIFEPOINTS_PC << 1) < life_points`; healthier
             // peasants survive into reservists, frailer ones die outright.
-            let roll = crate::sim_rng::u32(0..LIFEPOINTS_PC_X2) as i32;
+            let roll = crate::sim_rng::u32(
+                crate::sim_rng::RngSite::PeasantReservistSurvival,
+                0..LIFEPOINTS_PC_X2,
+            ) as i32;
             let campaign = self.campaign.as_mut().expect("campaign vanished mid-loop");
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);

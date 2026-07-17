@@ -1198,7 +1198,7 @@ pub fn apply_projectile_landing_resolution(
 /// Returns `Some(bias)` if the shot misses (caller adds to velocity),
 /// or `None` if the shot hits.
 pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Option<WorldVec3D> {
-    let roll: u32 = crate::sim_rng::u32(1..=100);
+    let roll: u32 = crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 1..=100);
 
     if roll <= hit_chance {
         // Hit!
@@ -1207,9 +1207,12 @@ pub fn roll_hit_and_compute_bias(hit_chance: u32, bow_skill_capacity: u32) -> Op
 
     // Miss — compute random bias, scaled by inverse skill.
     let skill_factor = 1.0 - (bow_skill_capacity.min(100) as f32 / 100.0);
-    let bx = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
-    let by = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
-    let bz = (crate::sim_rng::u32(0..5) as f32 - 2.0) * skill_factor;
+    let bx = (crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+        * skill_factor;
+    let by = (crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+        * skill_factor;
+    let bz = (crate::sim_rng::u32(crate::sim_rng::RngSite::BowAccuracy, 0..5) as f32 - 2.0)
+        * skill_factor;
 
     Some(WorldVec3D {
         x: bx,
@@ -2807,7 +2810,7 @@ fn apply_arrow_falling_sprite_visual(proj: &mut ElementProjectile) {
     // `ForceSprite(mubFallingDirection, (rand() % 3) + 3)`, then rotates
     // the row by -2 sectors for the next refresh.
     let row = proj.projectile.falling_direction;
-    let frame = (crate::sim_rng::u32(0..3) as u16) + 3;
+    let frame = (crate::sim_rng::u32(crate::sim_rng::RngSite::ArrowFallingFrame, 0..3) as u16) + 3;
     proj.element.sprite.force_sprite_row_raw(row);
     proj.element.sprite.force_sprite(row, frame);
     proj.projectile.falling_direction = (row + 14) % 16;
