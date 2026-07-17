@@ -391,7 +391,7 @@ impl EngineInner {
     //  Per-frame net driver
     // ════════════════════════════════════════════════════════════════
 
-    /// Advance every active net by one frame.
+    /// Advance one active net by one frame at its creation-order position.
     ///
     /// * **In flight**: advance the ballistic trajectory; decrement
     ///   `time_till_unfolding` and switch the sprite animation to
@@ -413,22 +413,24 @@ impl EngineInner {
     ///   net-antagonist pickup, and the pickup branch in
     ///   `engine/tick.rs` calls [`EngineInner::unapply_net_effect`] +
     ///   despawns the net.
-    pub(crate) fn tick_nets(&mut self, assets: &LevelAssets) {
+    pub(crate) fn tick_net(&mut self, assets: &LevelAssets, net_id: EntityId) {
         if self.actors_frozen() {
             return;
         }
 
-        // Phase 1: advance trajectory + classify each net into
+        // Phase 1: advance trajectory + classify the net into
         // (descending-near-landing, just-landed) and stamp the
         // in-flight animation transitions on it directly.
-        let mut applies: Vec<EntityId> = Vec::new();
-        let mut just_landed: Vec<EntityId> = Vec::new();
-
-        for (net_id, net) in self.entities.nets_mut() {
+        let (apply, just_landed) = {
+            let Some(Entity::Net(net)) = self.entities.get_mut(net_id) else {
+                return;
+            };
             if !net.element.active {
-                continue;
+                return;
             }
 
+            let mut apply = false;
+            let mut just_landed = false;
             if net.projectile.flying {
                 advance_net_trajectory(net);
 
@@ -459,15 +461,15 @@ impl EngineInner {
                     && z_above_landing <= NET_DESCENT_APPLY_THRESHOLD
                     && descending
                 {
-                    applies.push(net_id.into());
+                    apply = true;
                 }
 
                 if !net.projectile.flying && net.net.was_flying {
                     // Just landed this frame — queue the landing-time
                     // work for phase 2 (which holds `&mut self` so it
                     // can register repulsive points + look up obstacles).
-                    applies.push(net_id.into());
-                    just_landed.push(net_id.into());
+                    apply = true;
+                    just_landed = true;
                     net.net.was_flying = false;
                 }
             } else {
@@ -493,45 +495,44 @@ impl EngineInner {
                     }
                 }
             }
-        }
+            (apply, just_landed)
+        };
 
         // Phase 1b — `NetMoving` ↔ `ObjectLying` toggle. While the
         // net's animation is `ObjectLying` or `NetMoving`, swap based
         // on whether any victim is currently in `WriggleUnderNet`.
         // Done in a separate read pass so we can borrow victim
         // entities.
-        let mut wriggle_updates: Vec<(EntityId, crate::element::Animation)> = Vec::new();
-        for (id, net) in self.entities.nets() {
-            if !net.element.active || net.projectile.flying {
-                continue;
+        let wriggle_update = match self.get_entity(net_id) {
+            Some(Entity::Net(net))
+                if net.element.active
+                    && !net.projectile.flying
+                    && matches!(
+                        net.object.animation,
+                        crate::element::Animation::NetMoving
+                            | crate::element::Animation::ObjectLying
+                    ) =>
+            {
+                let desired = if self.any_victim_is_moving(&net.net.victims) {
+                    crate::element::Animation::NetMoving
+                } else {
+                    crate::element::Animation::ObjectLying
+                };
+                (desired != net.object.animation).then_some(desired)
             }
-            if !matches!(
-                net.object.animation,
-                crate::element::Animation::NetMoving | crate::element::Animation::ObjectLying
-            ) {
-                continue;
-            }
-            let any_moving = self.any_victim_is_moving(&net.net.victims);
-            let desired = if any_moving {
-                crate::element::Animation::NetMoving
-            } else {
-                crate::element::Animation::ObjectLying
-            };
-            if desired != net.object.animation {
-                wriggle_updates.push((id.into(), desired));
-            }
-        }
-        for (id, anim) in wriggle_updates {
-            if let Some(Entity::Net(n)) = self.get_entity_mut(id) {
-                n.object.animation = anim;
-            }
+            _ => None,
+        };
+        if let Some(animation) = wriggle_update
+            && let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
+        {
+            net.object.animation = animation;
         }
 
         // Phase 2: apply effects (mutable engine borrow released above).
-        for net_id in applies {
+        if apply {
             self.apply_net_falling_effect(assets, net_id);
         }
-        for net_id in just_landed {
+        if just_landed {
             self.apply_projectile_landing_resolution(assets, net_id);
             self.snap_net_to_landing_obstacle(assets, net_id);
             self.register_net_repulsive_points(net_id);
@@ -1143,6 +1144,39 @@ mod tests {
                 "posture stays Upright until the ReceiveNet handler runs"
             );
         }
+    }
+
+    #[test]
+    fn ordered_net_dispatch_applies_landing_capture_inline() {
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let mut net = make_net(landing);
+        let Entity::Net(net_data) = &mut net else {
+            unreachable!();
+        };
+        net_data.projectile.flying = true;
+        net_data.net.was_flying = true;
+        let net_id = engine.add_entity(net);
+        let victim_id = engine.add_entity(make_soldier(landing, 0, false));
+
+        engine.tick_net(&assets, net_id);
+
+        assert_eq!(
+            engine
+                .get_entity(victim_id)
+                .expect("landing victim present")
+                .human_data()
+                .expect("landing victim human")
+                .stuck_under_nets_counter,
+            1,
+            "net landing must capture before dispatch advances to the victim's later slot"
+        );
+        assert_eq!(count_receive_net_for(&engine, victim_id), 1);
     }
 
     #[test]

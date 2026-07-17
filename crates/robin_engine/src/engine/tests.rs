@@ -1,7 +1,10 @@
 #![allow(unused_mut)]
 
 use super::movement::mercenary_formation_destinations;
-use super::tick::{HourglassPhase, begin_hourglass_phase_capture, end_hourglass_phase_capture};
+use super::tick::{
+    HourglassPhase, begin_hourglass_phase_capture, capture_ordered_gameplay_entities,
+    end_hourglass_phase_capture,
+};
 use super::*;
 use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
@@ -354,6 +357,340 @@ fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
     // Reversing only the element-array order reverses the observable state:
     // projectile damage 74 -> 64, then the PC hourglass snaps 64 -> 75.
     assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(false), 75);
+}
+
+#[test]
+fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again() {
+    use crate::bow_shot::{SpawnArrowParams, spawn_arrow};
+    use crate::coordinates::{WorldPoint3D, WorldVec3D};
+    use crate::element::{ActionState, Command, Posture, TrajectoryPoint};
+    use crate::entity_id::{PcId, ProjectileId, SoldierId};
+    use crate::movement::ActiveShot;
+    use crate::order::{Order, OrderType};
+    use crate::profiles::{
+        BowProfile, BowShootMode, CharacterProfile, ProfileManager, SoldierProfile,
+    };
+    use crate::sequence::SequenceElement;
+    use crate::weapons::ShootMode;
+
+    let mut engine = EngineInner::new();
+    let mut target = make_test_soldier(Posture::Upright);
+    target
+        .element_data_mut()
+        .set_position_map(MapPoint::new(1000.0, 0.0));
+    target.element_data_mut().set_position(WorldPoint3D {
+        x: 1000.0,
+        y: 0.0,
+        z: 0.0,
+    });
+    let Entity::Soldier(target_data) = &mut target else {
+        unreachable!();
+    };
+    target_data.soldier.soldier_profile_index = crate::profiles::SoldierProfileIdx(0);
+    target_data.npc.life_points = 100;
+    let target_id = engine.add_entity(target);
+    assert_eq!(target_id, EntityId::Soldier(SoldierId(0)));
+
+    let shooter_id = EntityId::Pc(PcId(2));
+    let existing_arrow = spawn_arrow(SpawnArrowParams {
+        shooter: shooter_id,
+        bow_point: WorldPoint3D {
+            x: 2000.0,
+            y: 0.0,
+            z: 25.0,
+        },
+        trajectory_origin: MapPoint::new(2000.0, 0.0),
+        target: target_id,
+        target_pos: MapPoint::new(1000.0, 0.0),
+        trajectory: vec![TrajectoryPoint {
+            position: WorldPoint3D {
+                x: 1000.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            time: 2,
+        }],
+        damage: 10,
+        layer: 0,
+        lands_in_hole: false,
+        initial_velocity: WorldVec3D {
+            x: -1.0,
+            y: 0.0,
+            z: 0.0,
+        },
+    });
+    let existing_arrow_id = engine.add_entity(existing_arrow);
+    assert_eq!(existing_arrow_id, EntityId::Projectile(ProjectileId(1)));
+
+    let mut shooter = make_test_pc(Posture::Upright);
+    shooter
+        .element_data_mut()
+        .set_position_map(MapPoint::new(0.0, 0.0));
+    shooter.element_data_mut().set_position(WorldPoint3D {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    });
+    assert_eq!(engine.add_entity(shooter), shooter_id);
+    bind_test_bow_release_action(&mut engine, shooter_id);
+
+    let mut shot_element =
+        SequenceElement::new_interaction(1, Command::ShootBow, Some(shooter_id), Some(target_id));
+    let order = Order::test_new(OrderType::ShootingWithBow, 0.0, 0.0);
+    let order_id = order.order_id;
+    shot_element.orders.push_back(order);
+    let shot_sequence = engine.sequence_manager.launch_element(shot_element);
+    engine
+        .sequence_manager
+        .element_in_progress(shot_sequence, 0);
+    {
+        let shooter = engine
+            .get_entity_mut(shooter_id)
+            .expect("bow shooter present");
+        let actor = shooter.actor_data_mut().expect("bow shooter actor data");
+        actor.action_state = ActionState::AimingWithBow;
+        actor.active_shot = ActiveShot {
+            sequence_id: Some(shot_sequence),
+            element_index: 0,
+            target: Some(target_id),
+            order_id: Some(order_id),
+            released: false,
+            shoot_mode: Some(ShootMode::Normal),
+        };
+    }
+
+    let mut profiles = ProfileManager::new();
+    profiles.characters.push(CharacterProfile {
+        shooting_weapon_id: 1,
+        shooting: 100,
+        ..CharacterProfile::default()
+    });
+    profiles.soldiers.push(SoldierProfile {
+        hth_weapon_id: 1,
+        ..SoldierProfile::default()
+    });
+    profiles.hth_weapons.push(Default::default());
+    profiles.bows.push(BowProfile {
+        normal_shoot: BowShootMode {
+            range: 2000,
+            damage: 10,
+            ..BowShootMode::default()
+        },
+        ..BowProfile::default()
+    });
+    let mut assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+    let mut display = HostDisplayState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    bind_test_bow_release_action(&mut engine, shooter_id);
+    let shoot_direction = crate::position_interface::vector_to_sector_0_to_15_iso(1000.0, 0.0);
+    engine
+        .get_entity_mut(shooter_id)
+        .expect("bow shooter present after fixture")
+        .element_data_mut()
+        .set_direction_instantly(shoot_direction);
+    let motion = engine
+        .get_entity_mut(shooter_id)
+        .expect("bow shooter present after fixture")
+        .element_data_mut()
+        .sprite
+        .perform_action(
+            Some(order_id),
+            OrderType::ShootingWithBow,
+            shoot_direction as u16,
+            crate::sprite::FrameProgression::Default,
+            false,
+        );
+    assert_eq!(motion, crate::sprite::MotionState::Start);
+    let motion = engine
+        .get_entity_mut(shooter_id)
+        .expect("bow shooter present after first animation pulse")
+        .element_data_mut()
+        .sprite
+        .perform_action(
+            Some(order_id),
+            OrderType::ShootingWithBow,
+            shoot_direction as u16,
+            crate::sprite::FrameProgression::Default,
+            false,
+        );
+    assert_eq!(motion, crate::sprite::MotionState::InProgress);
+
+    let (_, visited) = engine.with_sim_rng(|engine| {
+        capture_ordered_gameplay_entities(|| {
+            engine.hourglass_phase_gameplay_systems(&mut display, &assets)
+        })
+    });
+
+    let shot_after = engine
+        .get_entity(shooter_id)
+        .expect("bow shooter remains")
+        .actor_data()
+        .expect("bow shooter actor data")
+        .active_shot;
+    assert!(
+        shot_after.released,
+        "prepared shooting action did not reach its release pulse: {shot_after:?}"
+    );
+
+    let spawned_arrow_id = EntityId::Projectile(ProjectileId(3));
+    assert_eq!(
+        visited,
+        vec![target_id, existing_arrow_id, shooter_id, spawned_arrow_id],
+        "the existing impact must run before bow release, and the appended arrow must be reached by the live-size loop"
+    );
+    let spawned_arrow = match engine.get_entity(spawned_arrow_id) {
+        Some(Entity::Projectile(projectile)) => projectile,
+        _ => panic!("bow release did not leave the spawned arrow alive"),
+    };
+    assert!(
+        spawned_arrow.projectile.launch_segment_start.is_none(),
+        "the spawned arrow's explicit primer must be consumed before its second, registered Hourglass"
+    );
+}
+
+#[test]
+fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::SequenceElement;
+
+    let mut engine = EngineInner::new();
+    let first = engine.add_entity(make_test_pc(Posture::Upright));
+    let second = engine.add_entity(make_test_pc(Posture::Upright));
+    for actor_id in [first, second] {
+        bind_test_action_point(
+            &mut engine,
+            actor_id,
+            OrderType::Eating,
+            crate::coordinates::SpriteLocalPoint::ZERO,
+            crate::coordinates::SpriteAnchor::ZERO,
+        );
+        let sequence_id = engine.sequence_manager.launch_element(SequenceElement::new(
+            1,
+            Command::EatCmd,
+            Some(actor_id),
+        ));
+        assert_eq!(
+            crate::abilities::begin_eat(
+                &mut engine.entities,
+                &mut engine.sequence_manager,
+                actor_id,
+                sequence_id,
+                0,
+                &mut engine.next_order_id,
+            ),
+            crate::abilities::BeginResult::Started
+        );
+        engine.sequence_manager.element_in_progress(sequence_id, 0);
+    }
+
+    let mut display = HostDisplayState::default();
+    let assets = LevelAssets::new();
+    engine.tick_ability_for(&mut display, &assets, first);
+
+    assert_ne!(
+        engine
+            .get_entity(first)
+            .expect("first ability actor present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        u32::MAX,
+        "the actor at the current creation slot must advance"
+    );
+    assert_eq!(
+        engine
+            .get_entity(second)
+            .expect("later ability actor present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        u32::MAX,
+        "a later actor's ability cannot advance from an earlier actor's Hourglass"
+    );
+}
+
+#[test]
+fn melee_completion_precedes_a_later_ability_dispatch() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::weapons::SwordStrike;
+
+    let mut engine = EngineInner::new();
+    let attacker = engine.add_entity(make_test_pc(Posture::Upright));
+    let later_actor = engine.add_entity(make_test_pc(Posture::Upright));
+
+    let melee_sequence = engine.sequence_manager.launch_element(SequenceElement::new(
+        1,
+        Command::SwordstrikeThrustA,
+        Some(attacker),
+    ));
+    engine
+        .sequence_manager
+        .element_in_progress(melee_sequence, 0);
+    let mut active_melee =
+        crate::movement::ActiveMelee::new(later_actor, SwordStrike::A, Some(melee_sequence), 0);
+    active_melee.frames_remaining = 1;
+    active_melee.hit_applied = true;
+    engine
+        .get_entity_mut(attacker)
+        .expect("attacker present")
+        .actor_data_mut()
+        .expect("attacker actor data")
+        .active_melee = active_melee;
+
+    bind_test_action_point(
+        &mut engine,
+        later_actor,
+        OrderType::Eating,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+    let ability_sequence = engine.sequence_manager.launch_element(SequenceElement::new(
+        1,
+        Command::EatCmd,
+        Some(later_actor),
+    ));
+    assert_eq!(
+        crate::abilities::begin_eat(
+            &mut engine.entities,
+            &mut engine.sequence_manager,
+            later_actor,
+            ability_sequence,
+            0,
+            &mut engine.next_order_id,
+        ),
+        crate::abilities::BeginResult::Started
+    );
+    engine
+        .sequence_manager
+        .element_in_progress(ability_sequence, 0);
+
+    let assets = LevelAssets::new();
+    engine.tick_melee_completion_for(&assets, attacker);
+
+    assert_eq!(
+        engine
+            .sequence_manager
+            .get_element(melee_sequence, 0)
+            .expect("melee sequence present")
+            .state,
+        SequenceState::Terminated,
+    );
+    assert_eq!(
+        engine
+            .get_entity(later_actor)
+            .expect("later ability actor present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        u32::MAX,
+        "completing an earlier melee actor must not globally advance a later ability"
+    );
 }
 
 #[test]
@@ -3382,6 +3719,36 @@ fn bind_test_action_point(
     let element = engine.get_entity_mut(id).unwrap().element_data_mut();
     let position = element.position_map();
     let direction = element.direction();
+    element.sprite = sprite;
+    element.set_position_map(position);
+    element.set_direction_instantly(direction);
+}
+
+fn bind_test_bow_release_action(engine: &mut EngineInner, id: EntityId) {
+    let action = crate::order::OrderType::ShootingWithBow;
+    let script = crate::sprite_script::SpriteScript {
+        action_id: action as u16,
+        action_done: 0,
+        average_speed: 0.0,
+        hotspot: crate::coordinates::SpriteLocalPoint::new(2.0, 3.0),
+        sum_distance: 0,
+        frame_ids: vec![1, 2, 3],
+        delays: vec![0, 0, 0],
+        distances: vec![0, 0, 0],
+        offsets: vec![SpriteFrameOffset::ZERO; 3],
+        sound_ids: vec![0, 0, 0],
+    };
+    let mut conversion =
+        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    conversion[action as usize] = 0;
+    let mut sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(vec![script; 16]),
+        std::sync::Arc::new(conversion),
+    );
+    let element = engine.get_entity_mut(id).unwrap().element_data_mut();
+    let position = element.position_map();
+    let direction = element.direction();
+    sprite.center = crate::coordinates::SpriteAnchor::ZERO;
     element.sprite = sprite;
     element.set_position_map(position);
     element.set_direction_instantly(direction);
