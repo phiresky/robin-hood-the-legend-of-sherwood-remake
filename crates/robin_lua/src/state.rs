@@ -278,7 +278,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                             "math.random: upper bound must be >= 1, got {n}"
                         )));
                     }
-                    Ok(mlua::Value::Integer(robin_engine::sim_rng::i32(1..=n)))
+                    Ok(mlua::Value::Integer(
+                        robin_engine::sim_rng::i32(1..=n).into(),
+                    ))
                 }
                 2 => {
                     let (a, b) = (args[0], args[1]);
@@ -287,7 +289,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                             "math.random: empty interval [{a}, {b}]"
                         )));
                     }
-                    Ok(mlua::Value::Integer(robin_engine::sim_rng::i32(a..=b)))
+                    Ok(mlua::Value::Integer(
+                        robin_engine::sim_rng::i32(a..=b).into(),
+                    ))
                 }
                 n => Err(mlua::Error::RuntimeError(format!(
                     "math.random: expected 0..=2 args, got {n}"

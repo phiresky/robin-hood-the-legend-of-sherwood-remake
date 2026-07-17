@@ -16,11 +16,11 @@ robin_engine = { path = "../robin_engine" }
 robin_assets = { path = "../robin_assets" }
 robin_lua = { path = "../robin_lua" }
 robin_util = { path = "../robin_util" }
-mlua = { version = "0.10", features = ["luau", "send"] }
+mlua = { version = "0.12", features = ["luau", "send"] }
 tempfile = "3"
 ab_glyph = "0.2"
 geo = { version = "0.33", features = ["serde"] }
-earcutr = "0.4"
+earcutr = "0.5"
 bitflags = { version = "2", features = ["serde"] }
 enum-map = { version = "2", features = ["serde"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -65,7 +65,7 @@ arboard = { version = "3", optional = true }
 # browsers that don't yet expose WebGPU (most non-Chrome desktops as
 # of 2026).  Adds a few KiB to native; harmless to keep on.
 wgpu = { version = "30", features = ["webgl", "glsl"] }
-pollster = "0.4"
+pollster = "1.0"
 
 # Audio
 kira = { version = "0.12", optional = true }
@@ -93,11 +93,11 @@ tiny_http = "0.12"
 # tungstenite in spawned OS threads; native clients use
 # tokio-tungstenite so inbound frames and outbound game-loop messages
 # are selected without read-timeout polling.
-tungstenite = "0.28"
+tungstenite = "0.30"
 tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
-tokio-tungstenite = "0.28"
+tokio-tungstenite = "0.30"
 # Read .zip mod packs for the custom-mission selector.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Direct JNI calls let android_main ask the Java Activity to leave the

@@ -406,7 +406,14 @@ fn argument_to_stack_word(
 
     match abi_type {
         NativeAbiType::Int | NativeAbiType::Handle => match value {
-            Value::Integer(value) => Ok(*value),
+            Value::Integer(value) => i32::try_from(*value).map_err(|_| {
+                mlua::Error::external(NativeAbiError::InvalidInteger {
+                    native: signature.name,
+                    index: index + 1,
+                    parameter,
+                    value: *value as f64,
+                })
+            }),
             Value::Number(value)
                 if value.is_finite()
                     && value.fract() == 0.0
@@ -456,7 +463,7 @@ fn argument_to_stack_word(
 
 fn return_from_stack_word(value: i32, abi_type: NativeAbiType) -> Value {
     match abi_type {
-        NativeAbiType::Int | NativeAbiType::Handle => Value::Integer(value),
+        NativeAbiType::Int | NativeAbiType::Handle => Value::Integer(value.into()),
         NativeAbiType::Float => Value::Number(f32::from_bits(value as u32) as f64),
         NativeAbiType::Bool => Value::Boolean(value != 0),
         NativeAbiType::Void => Value::Nil,

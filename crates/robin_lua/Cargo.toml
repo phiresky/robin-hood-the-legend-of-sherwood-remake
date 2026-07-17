@@ -20,7 +20,7 @@ robin_util = { path = "../robin_util" }
 # routes script-local writes through a per-script environment, which
 # is the right safety story for running arbitrary downloaded
 # missions.
-mlua = { version = "0.10", features = ["luau", "send"] }
+mlua = { version = "0.12", features = ["luau", "send"] }
 tracing = "0.1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -32,4 +32,4 @@ tracing-subscriber = "0.3"
 # Used by the `check_mod_lua` example to walk downloaded mission
 # zips. Examples reuse dev-dependencies, so this stays out of the
 # library's release-mode dep graph.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }

@@ -91,6 +91,14 @@ pub enum LuaSessionError {
         event: String,
         actual: String,
     },
+    #[error(
+        "Lua event `{event}` for mission `{mission}` returned integer {value}, which is outside the signed 32-bit game ABI range"
+    )]
+    EventIntegerOutOfRange {
+        mission: String,
+        event: String,
+        value: i64,
+    },
 }
 
 impl LuaSession {
@@ -197,7 +205,7 @@ impl LuaSession {
             // args once.
             let mut variadic: mlua::Variadic<mlua::Value> = mlua::Variadic::new();
             for a in args {
-                variadic.push(mlua::Value::Integer(*a));
+                variadic.push(mlua::Value::Integer((*a).into()));
             }
             let ret: mlua::MultiValue = func.call(variadic)?;
             Ok(ret.into_iter().next())
@@ -210,7 +218,13 @@ impl LuaSession {
         })?;
         match returned {
             None | Some(mlua::Value::Nil) => Ok(0),
-            Some(mlua::Value::Integer(value)) => Ok(value),
+            Some(mlua::Value::Integer(value)) => {
+                i32::try_from(value).map_err(|_| LuaSessionError::EventIntegerOutOfRange {
+                    mission: self.mission_basename.clone(),
+                    event: event_name.to_owned(),
+                    value: value.into(),
+                })
+            }
             Some(mlua::Value::Number(value))
                 if value.is_finite()
                     && value.fract() == 0.0
@@ -384,6 +398,7 @@ mod tests {
             function IntegerReturn() return 17 end
             function IntegralNumberReturn() return 18 / 1 end
             function BooleanReturn() return true end
+            function WideIntegerReturn() return 2147483648 end
             function BadReturn() return {} end
             "#,
         );
@@ -402,6 +417,14 @@ mod tests {
         assert!(matches!(
             session.run_event(&mut host, "BadReturn", &[]),
             Err(LuaSessionError::UnexpectedEventReturn { actual, .. }) if actual == "table"
+        ));
+        #[cfg(target_pointer_width = "64")]
+        assert!(matches!(
+            session.run_event(&mut host, "WideIntegerReturn", &[]),
+            Err(LuaSessionError::EventIntegerOutOfRange {
+                value: 2_147_483_648,
+                ..
+            })
         ));
     }
 
