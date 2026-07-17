@@ -1165,6 +1165,11 @@ struct CompatibleGameHost {
     scroll_status: Option<BTreeMap<i32, i32>>,
     scroll_attachments: Option<BTreeMap<i32, i32>>,
     scroll_attachment_dirty: Option<std::collections::BTreeSet<i32>>,
+    building_occupants: Option<Vec<Vec<i32>>>,
+    arrow_reserves: Option<Vec<bool>>,
+    actor_building: Option<BTreeMap<i32, i32>>,
+    building_active: Option<Vec<bool>>,
+    building_gates: Option<Vec<Vec<i32>>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1180,6 +1185,33 @@ struct LegacyNpcValues(
 );
 
 impl CompatibleGameHost {
+    fn legacy_buildings<E: serde::de::Error>(
+        &self,
+    ) -> Result<Option<super::state::BuildingState>, E> {
+        let present = [
+            self.building_occupants.is_some(),
+            self.arrow_reserves.is_some(),
+            self.actor_building.is_some(),
+            self.building_active.is_some(),
+            self.building_gates.is_some(),
+        ];
+        if !present.iter().any(|value| *value) {
+            return Ok(None);
+        }
+        if !present.iter().all(|value| *value) {
+            return Err(E::custom(
+                "legacy GameHost has an incomplete building-domain field set",
+            ));
+        }
+        Ok(Some(super::state::BuildingState {
+            occupants: self.building_occupants.clone().expect("validated above"),
+            arrow_reserves: self.arrow_reserves.clone().expect("validated above"),
+            actor_building: self.actor_building.clone().expect("validated above"),
+            active: self.building_active.clone().expect("validated above"),
+            gates: self.building_gates.clone().expect("validated above"),
+        }))
+    }
+
     fn legacy_scrolls<E: serde::de::Error>(&self) -> Result<Option<super::state::ScrollState>, E> {
         let present = [
             self.scroll_status.is_some(),
@@ -1296,9 +1328,13 @@ impl<'de> Deserialize<'de> for MissionScript {
         };
 
         let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
+        let legacy_buildings = snapshot.game_host.legacy_buildings::<D::Error>()?;
         let mut game_host = snapshot.game_host.current;
         if let Some(scrolls) = legacy_scrolls.clone() {
             game_host.engine_domains.scrolls = scrolls;
+        }
+        if let Some(buildings) = legacy_buildings.clone() {
+            game_host.engine_domains.buildings = buildings;
         }
 
         Ok(Self {
@@ -1324,7 +1360,7 @@ impl<'de> Deserialize<'de> for MissionScript {
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
             campaign_lease: None,
-            legacy_script_domains_present: legacy_scrolls.is_some(),
+            legacy_script_domains_present: legacy_scrolls.is_some() || legacy_buildings.is_some(),
         })
     }
 }

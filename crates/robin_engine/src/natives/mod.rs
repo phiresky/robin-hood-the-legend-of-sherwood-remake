@@ -71,8 +71,6 @@ pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
-use std::collections::BTreeMap;
-
 use crate::ai::{AiGlobalState, AiState, AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
 use crate::element::{ActionState, Camp, Command, Entity, EntityId, Posture, TargetFilter};
@@ -191,16 +189,6 @@ pub struct GameHost {
 
     /// Currently executing scroll entity handle (for ThisScroll). 0 = none.
     pub current_scroll: i32,
-    /// Building occupants. Index = building index. Value = actor handles.
-    pub building_occupants: Vec<Vec<i32>>,
-    /// Parallel to `building_occupants` (same indexing): whether each
-    /// building carries an arrow reserve the player can collect.
-    /// Loaded from the GUYS/CAVE tenant chunk at level-load and
-    /// propagated into `ai::House::arrow_reserve` by
-    /// `EngineInner::initialize_buildings`.
-    pub arrow_reserves: Vec<bool>,
-    /// Actor handle → building handle (which building they're in).
-    pub actor_building: BTreeMap<i32, i32>,
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
 
@@ -210,11 +198,6 @@ pub struct GameHost {
     /// that don't use the objectives system (i.e. all vanilla missions
     /// — only Spellforge mods touch it).
     pub pending_objective_changes: Vec<ObjectiveChange>,
-
-    /// Building active state. Index = building index.
-    pub building_active: Vec<bool>,
-    /// Building → gate (door) handles. Index = building index.
-    pub building_gates: Vec<Vec<i32>>,
 
     /// Whether the game is in "men to blazon" conversion UI mode (Sherwood).
     pub men_to_blazon_conversion_mode: bool,
@@ -275,13 +258,8 @@ impl GameHost {
             sound_commands: Vec::new(),
             background_invalidated: false,
             current_scroll: 0,
-            building_occupants: Vec::new(),
-            arrow_reserves: Vec::new(),
-            actor_building: BTreeMap::new(),
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
-            building_active: Vec::new(),
-            building_gates: Vec::new(),
             men_to_blazon_conversion_mode: false,
             blinking_blazons: 0,
             blink_expire_frame: u32::MAX,
@@ -5608,10 +5586,17 @@ impl NativeContext<'_> {
                     }
                     if bld == 0 {
                         // NULL building: check if actor is inside ANY building
-                        i32::from(self.actor_building.contains_key(&actor))
+                        i32::from(
+                            self.engine_domains
+                                .buildings
+                                .actor_building
+                                .contains_key(&actor),
+                        )
                     } else {
                         // Check if actor is in the specific building
-                        i32::from(self.actor_building.get(&actor) == Some(&bld))
+                        i32::from(
+                            self.engine_domains.buildings.actor_building.get(&actor) == Some(&bld),
+                        )
                     }
                 }
                 UnBlip => {
@@ -5921,7 +5906,12 @@ impl NativeContext<'_> {
                         npc_entity.element_data().position().z,
                     );
 
-                    let viewer_building = self.actor_building.get(&npc_h).copied();
+                    let viewer_building = self
+                        .engine_domains
+                        .buildings
+                        .actor_building
+                        .get(&npc_h)
+                        .copied();
                     let viewer_building_sector = viewer_building
                         .and_then(|h| crate::position_interface::SectorHandle::new(h as u16));
                     let viewer_in_building = viewer_building.is_some();
@@ -5934,7 +5924,12 @@ impl NativeContext<'_> {
                         .expect("Sees validated a human target, which must have actor data")
                         .action_state;
                     let tgt_active = target_entity.element_data().active;
-                    let target_building = self.actor_building.get(&target_h).copied();
+                    let target_building = self
+                        .engine_domains
+                        .buildings
+                        .actor_building
+                        .get(&target_h)
+                        .copied();
                     let tgt_building_sector = target_building
                         .and_then(|h| crate::position_interface::SectorHandle::new(h as u16));
                     let tgt_in_building = target_building.is_some();
@@ -7399,13 +7394,18 @@ impl NativeContext<'_> {
                 CleanFromHisBuildingBeforeTeleport => {
                     let actor_h = stack.pop_i32();
                     // Remove actor from their current building's occupant list
-                    if let Some(&bld_h) = self.actor_building.get(&actor_h) {
+                    if let Some(&bld_h) = self.engine_domains.buildings.actor_building.get(&actor_h)
+                    {
                         if let Some(idx) = Self::building_index(bld_h)
-                            && let Some(occupants) = self.building_occupants.get_mut(idx)
+                            && let Some(occupants) =
+                                self.engine_domains.buildings.occupants.get_mut(idx)
                         {
                             occupants.retain(|&a| a != actor_h);
                         }
-                        self.actor_building.remove(&actor_h);
+                        self.engine_domains
+                            .buildings
+                            .actor_building
+                            .remove(&actor_h);
                         1
                     } else {
                         tracing::warn!(
@@ -7473,11 +7473,17 @@ impl NativeContext<'_> {
                     let bld_h = stack.pop_i32();
                     let actor_h = stack.pop_i32();
                     if let Some(idx) = Self::building_index(bld_h) {
-                        if idx >= self.building_occupants.len() {
-                            self.building_occupants.resize(idx + 1, Vec::new());
+                        if idx >= self.engine_domains.buildings.occupants.len() {
+                            self.engine_domains
+                                .buildings
+                                .occupants
+                                .resize(idx + 1, Vec::new());
                         }
-                        self.building_occupants[idx].push(actor_h);
-                        self.actor_building.insert(actor_h, bld_h);
+                        self.engine_domains.buildings.occupants[idx].push(actor_h);
+                        self.engine_domains
+                            .buildings
+                            .actor_building
+                            .insert(actor_h, bld_h);
                     }
                     // EngineInner applies positioning (inactive + special layer +
                     // building sector + gate point_in + DisableAllActionsTemp
@@ -7494,11 +7500,11 @@ impl NativeContext<'_> {
                     let bld_h = stack.pop_i32();
                     let active = val != 0;
                     if let Some(idx) = Self::building_index(bld_h) {
-                        if idx < self.building_active.len() {
-                            self.building_active[idx] = active;
+                        if idx < self.engine_domains.buildings.active.len() {
+                            self.engine_domains.buildings.active[idx] = active;
                         }
                         // Activate/deactivate all gates for this building
-                        if let Some(gates) = self.building_gates.get(idx).cloned() {
+                        if let Some(gates) = self.engine_domains.buildings.gates.get(idx).cloned() {
                             for &gate_h in &gates {
                                 if let Some(door) = self.get_door_mut(gate_h) {
                                     door.set_active(active);
@@ -7524,7 +7530,7 @@ impl NativeContext<'_> {
                     // appears to rely on it.
                     let bld_h = stack.pop_i32();
                     Self::building_index(bld_h)
-                        .and_then(|idx| self.building_occupants.get(idx))
+                        .and_then(|idx| self.engine_domains.buildings.occupants.get(idx))
                         .and_then(|occ| occ.first().copied())
                         .unwrap_or(0)
                 }

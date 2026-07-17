@@ -5030,10 +5030,13 @@ impl EngineInner {
             if is_building {
                 let last_handle = game_host.doors.len() as i32;
                 let gates: Vec<i32> = (first_handle..=last_handle).collect();
-                if bld_idx >= game_host.building_gates.len() {
-                    game_host.building_gates.resize(bld_idx + 1, Vec::new());
+                if bld_idx >= self.script_domains.buildings.gates.len() {
+                    self.script_domains
+                        .buildings
+                        .gates
+                        .resize(bld_idx + 1, Vec::new());
                 }
-                game_host.building_gates[bld_idx] = gates;
+                self.script_domains.buildings.gates[bld_idx] = gates;
                 bld_idx += 1;
             }
         }
@@ -5557,23 +5560,32 @@ impl EngineInner {
 
         // ── Building occupants from tenant data ──
         for (bld_idx, tenants) in loaded.mission.building_tenants.iter().enumerate() {
-            if bld_idx >= game_host.building_occupants.len() {
-                game_host.building_occupants.resize(bld_idx + 1, Vec::new());
+            if bld_idx >= self.script_domains.buildings.occupants.len() {
+                self.script_domains
+                    .buildings
+                    .occupants
+                    .resize(bld_idx + 1, Vec::new());
             }
             // Parallel array: propagate the `arrow_reserve` flag off the
             // same tenant chunk so `initialize_buildings` can copy it
             // into `ai::House::arrow_reserve`.  Consumer: AI's
             // `FleeingRunForArrowReserves` substate.
-            if bld_idx >= game_host.arrow_reserves.len() {
-                game_host.arrow_reserves.resize(bld_idx + 1, false);
+            if bld_idx >= self.script_domains.buildings.arrow_reserves.len() {
+                self.script_domains
+                    .buildings
+                    .arrow_reserves
+                    .resize(bld_idx + 1, false);
             }
-            game_host.arrow_reserves[bld_idx] = tenants.arrow_reserve;
+            self.script_domains.buildings.arrow_reserves[bld_idx] = tenants.arrow_reserve;
             for &elem_idx in &tenants.tenant_element_indices {
                 let actor_h =
                     crate::natives::GameHost::actor_handle_from_index(usize::from(elem_idx));
-                game_host.building_occupants[bld_idx].push(actor_h);
+                self.script_domains.buildings.occupants[bld_idx].push(actor_h);
                 let bld_h = crate::natives::GameHost::building_handle_from_index(bld_idx);
-                game_host.actor_building.insert(actor_h, bld_h);
+                self.script_domains
+                    .buildings
+                    .actor_building
+                    .insert(actor_h, bld_h);
             }
         }
 

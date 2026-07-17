@@ -2476,17 +2476,18 @@ impl EngineInner {
                 .and_then(|&idx| self.world.fast_grid.level.sectors.get(idx))
                 .and_then(|gs| gs.building_index);
 
-            // Read `arrow_reserve` off the parallel `GameHost` array
+            // Read `arrow_reserve` from the engine-owned building domain
             // (populated from the GUYS/CAVE tenant chunk at level
             // load).  `max_occupants` still has no proto source — we
             // leave it at the `0xFFFF` default (unlimited) matching
             // `BuildingData::default()`.
             let arrow_reserve = building_index
                 .and_then(|bi| {
-                    self.mission_script
-                        .as_ref()
-                        .and_then(|s| s.game_host())
-                        .and_then(|h| h.arrow_reserves.get(usize::from(bi)).copied())
+                    self.script_domains
+                        .buildings
+                        .arrow_reserves
+                        .get(usize::from(bi))
+                        .copied()
                 })
                 .unwrap_or(false);
 

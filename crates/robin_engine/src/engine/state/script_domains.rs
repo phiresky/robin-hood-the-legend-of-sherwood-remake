@@ -7,6 +7,15 @@ pub(crate) struct ZoneState {
     pub(crate) scripts: Vec<crate::sector::ScriptSectorData>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct BuildingState {
+    pub(crate) occupants: Vec<Vec<i32>>,
+    pub(crate) arrow_reserves: Vec<bool>,
+    pub(crate) actor_building: BTreeMap<i32, i32>,
+    pub(crate) active: Vec<bool>,
+    pub(crate) gates: Vec<Vec<i32>>,
+}
+
 /// Deterministic scroll state shared by engine systems and script natives.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScrollState {
@@ -22,6 +31,7 @@ pub(crate) struct ScrollState {
 /// Domain-specific state is added here one owner at a time.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScriptDomains {
+    pub(crate) buildings: BuildingState,
     pub(crate) scrolls: ScrollState,
     pub(crate) zones: ZoneState,
 }

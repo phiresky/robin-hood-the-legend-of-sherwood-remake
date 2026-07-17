@@ -493,7 +493,10 @@ fn is_inside_building_specific() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let building = GameHost::building_handle_from_index(2);
-    host.actor_building.insert(actor, building);
+    host.engine_domains
+        .buildings
+        .actor_building
+        .insert(actor, building);
     let prog = call_native_return(98, &[actor, building]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
@@ -503,7 +506,9 @@ fn is_inside_building_specific() {
 fn is_inside_building_wrong() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
-    host.actor_building
+    host.engine_domains
+        .buildings
+        .actor_building
         .insert(actor, GameHost::building_handle_from_index(2));
     let prog = call_native_return(98, &[actor, GameHost::building_handle_from_index(6)]);
     let mut vm = Vm::new().with_host(Box::new(host));
@@ -514,7 +519,9 @@ fn is_inside_building_wrong() {
 fn is_inside_building_null_checks_any() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
-    host.actor_building
+    host.engine_domains
+        .buildings
+        .actor_building
         .insert(actor, GameHost::building_handle_from_index(2));
     // NULL building (0): checks if in ANY building
     let prog = call_native_return(98, &[actor, 0]);

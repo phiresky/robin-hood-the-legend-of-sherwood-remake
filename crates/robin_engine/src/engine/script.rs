@@ -3080,8 +3080,10 @@ impl EngineInner {
             let Some(game_host) = script.game_host() else {
                 return;
             };
-            let gate_handle = game_host
-                .building_gates
+            let gate_handle = self
+                .script_domains
+                .buildings
+                .gates
                 .get(bld_idx)
                 .and_then(|g| g.first())
                 .copied();
@@ -3184,25 +3186,27 @@ impl EngineInner {
                     }
                 }
                 // Push the carried into the occupants list.
-                if let Some(ref mut script) = self.mission_script
-                    && let Some(gh) = script.game_host_mut()
-                {
-                    if bld_idx >= gh.building_occupants.len() {
-                        gh.building_occupants.resize(bld_idx + 1, Vec::new());
-                    }
-                    gh.building_occupants[bld_idx].push(carried_h);
-                    gh.actor_building.insert(carried_h, building);
+                if bld_idx >= self.script_domains.buildings.occupants.len() {
+                    self.script_domains
+                        .buildings
+                        .occupants
+                        .resize(bld_idx + 1, Vec::new());
                 }
+                self.script_domains.buildings.occupants[bld_idx].push(carried_h);
+                self.script_domains
+                    .buildings
+                    .actor_building
+                    .insert(carried_h, building);
             }
 
             // Re-enable corpses already inside the building: walk the
             // occupants list and SetActive(true) on humans that are
             // (is_dead || unconscious) && carrier.is_none().
             let occupants: Vec<i32> = self
-                .mission_script
-                .as_ref()
-                .and_then(|s| s.game_host())
-                .and_then(|gh| gh.building_occupants.get(bld_idx))
+                .script_domains
+                .buildings
+                .occupants
+                .get(bld_idx)
                 .cloned()
                 .unwrap_or_default();
             for occ_h in occupants {
