@@ -10,6 +10,135 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::coordinates::{MapBBox, MapPoint, MapSize, MapVec, SpriteFrameOffset};
 use crate::game_operation::GameCode;
 
+/// Distinctive but internally inert state used to lock the top-level Engine
+/// serde, bincode, and StateHash contracts before reorganizing its fields.
+///
+/// Keep this fixture free of level attachments: it must remain serializable at
+/// the same snapshot boundary as `EngineInner::new()`.
+fn engine_compatibility_fixture() -> EngineInner {
+    let mut engine = EngineInner::new();
+
+    let mut config = SimConfig::default();
+    config.highlander2 = true;
+    config.golden_eye = true;
+    config.ignore_default_loose = true;
+    engine.attach_sim_config(config);
+
+    engine.mission.mission_won = true;
+    engine.mission.quit_interrupted = true;
+    engine.mission.map_name = "compatibility-map".into();
+    engine.mission.victory_defeat_id = 0x1020_3040;
+    engine.frame_counter = 0x1122_3344;
+    engine.set_engine_locked(true);
+    engine.set_actors_frozen(true);
+    engine.set_fade_freeze_frames_remaining(7);
+    engine.speed = 1.75;
+    engine.speed_int = 9;
+    engine.shield.is_protected = true;
+    engine.script_globals = vec![-7, 0, 42, i32::MAX];
+    engine.cheat_used_flags = 0xA5A5_5A5A;
+    engine.standard_view_polygon_radius = 321;
+    engine.next_order_id = 0x5566_7788;
+    engine.chorus_timer = 23;
+    engine.force_check = true;
+    engine.mission_stat.collected_money = 1234;
+    engine.mission_stat.added_score = 5678;
+    engine.cutscene_camera.view_position = MapPoint::new(101.5, 202.25);
+    engine.restore_rng_from_seed(0xCAFE_BABE_1020_3040);
+    engine.pending_side_effects.invalidate_background = true;
+    engine.user_locked = true;
+    engine.qa_recording_slot = 2;
+    engine.fast_forward = true;
+    engine.pending_reinforcements.push(None);
+    engine.static_sight_obstacle_active = vec![true, false, true];
+
+    engine
+}
+
+#[test]
+fn engine_top_level_snapshot_schema_and_bytes_are_stable() {
+    use std::collections::BTreeSet;
+
+    let engine = engine_compatibility_fixture();
+    let json = serde_json::to_value(&engine).expect("serialize compatibility fixture to JSON");
+    let object = json
+        .as_object()
+        .expect("EngineInner snapshot must remain a top-level map");
+    let actual_keys = object.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    let expected_keys = [
+        "action_before_recording_macro",
+        "ai_global",
+        "campaign",
+        "cheat_used_flags",
+        "chorus_timer",
+        "cutscene_camera",
+        "dead_pc",
+        "dynamic_sight_obstacles",
+        "entities",
+        "failed_path_requests",
+        "fast_forward",
+        "fast_grid",
+        "force_check",
+        "frame_counter",
+        "ground_mark",
+        "macro_store",
+        "messenger",
+        "mission",
+        "mission_script",
+        "mission_stat",
+        "next_order_id",
+        "pathfinder",
+        "pc_ids",
+        "pending_concussion_side_effects",
+        "pending_hades_kills",
+        "pending_hero_speeches",
+        "pending_move_requests",
+        "pending_path_requests",
+        "pending_reinforcements",
+        "pending_scroll_amulets",
+        "pending_side_effects",
+        "qa_recording_for",
+        "qa_recording_slot",
+        "rng",
+        "script_globals",
+        "script_zone_data",
+        "seats",
+        "sequence_manager",
+        "shield",
+        "short_briefings",
+        "sim_config",
+        "simulation_gates",
+        "sound_sim",
+        "speed",
+        "speed_int",
+        "standard_view_polygon_radius",
+        "static_sight_obstacle_active",
+        "timer_elements",
+        "titbit_manager",
+        "user_locked",
+        "weather",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    assert_eq!(actual_keys, expected_keys);
+
+    let bytes = bincode::serde::encode_to_vec(&engine, bincode::config::standard())
+        .expect("encode compatibility fixture to bincode");
+    let encoded_hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    assert_eq!(
+        encoded_hex,
+        "01010101010100010000000111636f6d7061746962696c6974792d6d6170fc40302010fc4433221100000000000101070000e03f090000000100040d0054fcfefffffffc5a5aa5a5fb4101fc88776655170100000000000001000000fbd20400000000000000fb2e160000000000000000000f000000000000010000000000000000000000000000000000cb4200404a43000080bf000080bf0000000000000000000000803f0000803f000000000000000000000000000000000000000000000000000000000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042000000000000c0400000c0400000c0400000c040000000410000004100002041000020410000404100004041000060410000804100008041000090410000a0410000b0410000c0410000d0410000e0410000f0410000004200000042000000420000004200000042000000420000004200000042000000420000004200000042010000003f0000803f000000400000000000000000000000000000000000000000000000000000803f0000803f000000000000000000000000000000000500000000fd40302010bebafeca0000000001000000000000000000000000000000000000000001000200010000000000000000000000000000000000000000000000000000020000000000000000000000000000000101000100000000000000000301000100"
+    );
+    assert_eq!(
+        crate::replay::state_hash(&engine),
+        8_556_489_992_877_124_234,
+        "top-level regrouping must not invalidate recorded replay hashes"
+    );
+}
+
 #[test]
 fn engine_creation() {
     let mut display = HostDisplayState::default();
@@ -249,6 +378,56 @@ fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
             HourglassPhase::MissionAndMessages,
         ]
     );
+}
+
+#[test]
+fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.set_engine_locked(true);
+
+    begin_hourglass_phase_capture();
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+    let phases = end_hourglass_phase_capture();
+
+    assert_eq!(result, GameCode::LevelInProgress);
+    assert_eq!(
+        engine.frame_counter, 1,
+        "the lock gate follows clock advance"
+    );
+    assert_eq!(
+        phases,
+        vec![
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages,
+        ]
+    );
+}
+
+#[test]
+fn blocking_fade_frame_runs_before_rng_clock_and_phase_dispatch() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let assets = LevelAssets::new();
+    let mut engine = EngineInner::new();
+    engine.set_fade_freeze_frames_remaining(1);
+    let rng_seed = engine.rng_seed();
+
+    begin_hourglass_phase_capture();
+    let result = engine
+        .perform_hourglass(&mut display, &assets, &mut dev)
+        .code;
+    let phases = end_hourglass_phase_capture();
+
+    assert_eq!(result, GameCode::LevelInProgress);
+    assert_eq!(engine.frame_counter, 0);
+    assert_eq!(engine.rng_seed(), rng_seed);
+    assert!(phases.is_empty());
+    assert_eq!(engine.fade_freeze_frames_remaining(), 0);
 }
 
 #[test]
