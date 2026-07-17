@@ -584,8 +584,14 @@ fn post_initialize_waits_for_post_refresh_stage() {
         "PostInitialize must not run before the first host refresh and sound hourglass"
     );
 
+    let rng_seed_before_post_initialize = engine.rng_seed();
     let first_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
     assert!(first_post_initialize_effects.is_some());
+    assert_eq!(
+        engine.rng_seed(),
+        rng_seed_before_post_initialize,
+        "an empty PostInitialize must reclaim the unchanged simulation RNG stream"
+    );
     assert_eq!(
         engine.frame_counter, 1,
         "the post-refresh stage must not advance simulation time"
