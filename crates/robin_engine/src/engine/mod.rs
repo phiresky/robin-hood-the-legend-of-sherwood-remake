@@ -144,6 +144,14 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// instead.
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
+    /// Per-session gameplay configuration attached by `Game` before a
+    /// tick. This is runtime configuration rather than mutable sim state:
+    /// rollback clones preserve it, while deserialized saves must have it
+    /// reattached before gameplay resumes. `Option` is intentional so a
+    /// missing attachment fails loudly instead of inventing Medium difficulty.
+    #[serde(skip, default)]
+    sim_config: std::cell::Cell<Option<SimConfig>>,
+
     // ── Mission ──────────────────────────────────────────────────
     /// Win/loss tracking and mission metadata. [Serialized]
     pub(crate) mission: MissionState,
@@ -570,6 +578,7 @@ impl EngineInner {
         // add deterministic seats via `ConnectSeat`.
         //
         Self {
+            sim_config: std::cell::Cell::new(None),
             cutscene_camera: CameraState {
                 level_size: crate::coordinates::MapSize::ZERO,
                 zoom_factor: 1.0,
@@ -871,11 +880,12 @@ impl EngineInner {
                 self.add_campaign_value_to(campaign, crate::campaign::CampaignValue::Score, 1000);
             }
 
-            let difficulty = crate::player_profile::PlayerProfileManager::global()
-                .as_ref()
-                .and_then(|mgr| mgr.get_active())
-                .map(|p| p.difficulty)
-                .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
+            // Original provenance: `original-code/RHengine.cpp:16381-16398`
+            // reads the active profile difficulty to scale post-mission
+            // warcrime recruitment. The Rust engine receives that value in
+            // `SimConfig` before the tick, so two simultaneous game contexts
+            // cannot observe one another's active profile.
+            let difficulty = self.required_sim_config().difficulty;
 
             let recruited =
                 campaign.recruit_post_mission_peasants(living, dead, difficulty, profiles);
@@ -889,6 +899,19 @@ impl EngineInner {
             // Explicitly zero on the lost path.
             self.mission_stat.new_peasant_count = 0;
         }
+    }
+
+    /// Attach immutable configuration for the game context driving this
+    /// engine. Takes `&self` so the facade's read-only `Deref` can perform the
+    /// runtime attachment without exposing general mutable engine internals.
+    pub fn attach_sim_config(&self, config: SimConfig) {
+        self.sim_config.set(Some(config));
+    }
+
+    fn required_sim_config(&self) -> SimConfig {
+        self.sim_config.get().expect(
+            "engine gameplay requires SimConfig; Game must attach its application context before ticking",
+        )
     }
 
     /// Compute score bonus for living enemy soldiers that are tied or
