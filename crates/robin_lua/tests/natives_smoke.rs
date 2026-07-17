@@ -3,8 +3,8 @@
 //! confirm the side-effects landed on the host.
 
 use mlua::Lua;
-use robin_engine::natives::{GameHost, ObjectiveChange};
-use robin_lua::{MissionLuaState, register_natives};
+use robin_engine::natives::{EngineCommand, GameHost, ObjectiveChange};
+use robin_lua::{MissionLuaState, NativeAbiError, register_natives};
 
 fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -25,19 +25,19 @@ fn engine_native_called_from_lua_writes_host_state() {
 }
 
 /// `Start()` from Lua must open a `RecordingSession`. Confirms the
-/// dispatcher routes integer args + return values cleanly.
+/// dispatcher maps declared bool returns to Lua booleans.
 #[test]
 fn start_then_thanx_round_trips() {
     let (state, _dir) = fresh_state();
     let mut host = GameHost::new();
     state
         .with_host(&mut host, |lua: &Lua| {
-            let start_ret: i32 = lua.load("return Start()").eval()?;
-            assert_eq!(start_ret, 1);
+            let start_ret: bool = lua.load("return Start()").eval()?;
+            assert!(start_ret);
             // `Thanx` on an empty recording returns 0 with a
             // warning — engine semantics preserved.
-            let thanx_ret: i32 = lua.load("return Thanx()").eval()?;
-            assert_eq!(thanx_ret, 0);
+            let thanx_ret: bool = lua.load("return Thanx()").eval()?;
+            assert!(!thanx_ret);
             Ok(())
         })
         .unwrap();
@@ -138,11 +138,109 @@ fn is_actor_out_of_action_callable() {
     let mut host = GameHost::new();
     state
         .with_host(&mut host, |lua: &Lua| {
-            let r: i32 = lua.load("return IsActorOutOfAction(99)").eval()?;
-            assert_eq!(r, 0);
+            let r: bool = lua.load("return IsActorOutOfAction(99)").eval()?;
+            assert!(!r);
             Ok(())
         })
         .unwrap();
+}
+
+/// The table is deliberately heterogeneous: it proves the original
+/// `RHScriptAPI.scs` signature, rather than the Lua value's apparent shape,
+/// selects each stack encoding and return conversion.
+#[test]
+fn native_abi_is_signature_driven() {
+    let cases = [
+        (
+            // Luau stores this literal as an integer. SetZoomLevel declares a
+            // float, so the ABI must still pack the bits for 1.0f32.
+            "return SetZoomLevel(1)",
+            "boolean",
+            Some(EngineCommand::SetZoomLevel { zoom: 1.0 }),
+        ),
+        (
+            "return DisplayMap(true)",
+            "boolean",
+            Some(EngineCommand::DisplayMap { show: true }),
+        ),
+        (
+            "return DisplayMap(false)",
+            "boolean",
+            Some(EngineCommand::DisplayMap { show: false }),
+        ),
+        ("return InitGlobal(7.0, 9.0)", "nil", None),
+    ];
+
+    for (source, expected_return_type, expected_command) in cases {
+        let (state, _dir) = fresh_state();
+        let mut host = GameHost::new();
+        state
+            .with_host(&mut host, |lua: &Lua| {
+                let return_type: String = lua
+                    .load(format!("return type((function() {source} end)())"))
+                    .eval()?;
+                assert_eq!(return_type, expected_return_type, "{source}");
+                Ok(())
+            })
+            .unwrap();
+
+        match expected_command {
+            Some(EngineCommand::SetZoomLevel { zoom }) => assert!(matches!(
+                host.commands.as_slice(),
+                [EngineCommand::SetZoomLevel { zoom: actual }] if *actual == zoom
+            )),
+            Some(EngineCommand::DisplayMap { show }) => assert!(matches!(
+                host.commands.as_slice(),
+                [EngineCommand::DisplayMap { show: actual }] if *actual == show
+            )),
+            None => {
+                assert!(host.commands.is_empty());
+                assert_eq!(host.globals.get(&7), Some(&9));
+            }
+            Some(other) => panic!("test case does not handle command {other:?}"),
+        }
+    }
+}
+
+/// Invalid values must remain typed Rust errors through mlua's callback
+/// wrapper; they must never be reinterpreted as zero-valued stack words.
+#[test]
+fn invalid_native_arguments_are_typed_errors() {
+    let cases = [
+        ("InitGlobal(1, 2.5)", "integral 32-bit value"),
+        ("InitGlobal(1, true)", "expects integer"),
+        ("SetZoomLevel(true)", "expects number"),
+        ("DisplayMap(1)", "expects boolean"),
+        ("DisplayMap(nil)", "expects boolean"),
+        ("DisplayMap()", "expected 1 argument(s)"),
+    ];
+
+    let (state, _dir) = fresh_state();
+    let mut host = GameHost::new();
+    state
+        .with_host(&mut host, |lua: &Lua| {
+            for (source, expected_message) in cases {
+                let err = lua.load(source).exec().expect_err(source);
+                assert!(
+                    err.to_string().contains(expected_message),
+                    "{source}: unexpected error: {err}"
+                );
+                assert!(
+                    contains_native_abi_error(&err),
+                    "{source}: NativeAbiError was erased: {err}"
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
+fn contains_native_abi_error(error: &mlua::Error) -> bool {
+    match error {
+        mlua::Error::CallbackError { cause, .. } => contains_native_abi_error(cause),
+        mlua::Error::ExternalError(cause) => cause.downcast_ref::<NativeAbiError>().is_some(),
+        _ => false,
+    }
 }
 
 /// `SequenceCall(fn)` registers a Lua closure in the registry-side
