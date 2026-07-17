@@ -1110,7 +1110,13 @@ impl GameHost {
                 // Script recording runs under the engine's installed
                 // simulation RNG, so this consumes the same deterministic
                 // stream as runtime gate routing.
-                let r: u32 = crate::sim_rng::u32(0..16) + crate::sim_rng::u32(0..16);
+                let r: u32 = crate::sim_rng::u32(
+                    crate::sim_rng::RngSite::SequenceRecordingBuildingExitWait,
+                    0..16,
+                ) + crate::sim_rng::u32(
+                    crate::sim_rng::RngSite::SequenceRecordingBuildingExitWait,
+                    0..16,
+                );
                 let mut w = SequenceElement::new_generic(0, Command::WaitTimer, owner);
                 w.set_property(Field::Timer, FieldValue::Integer(r));
                 self.record_seq_step(w, emit_count == 0);
@@ -3093,11 +3099,8 @@ impl HostFunctions for GameHost {
                 }
                 Rand => {
                     let max = stack.pop_i32();
-                    if max <= 0 {
-                        0
-                    } else {
-                        crate::sim_rng::i32(0..max)
-                    }
+                    crate::sim_rng::script_rand(crate::sim_rng::RngSite::ScriptRand, max)
+                        .unwrap_or_else(|error| panic!("{error}"))
                 }
                 PrintConsole => {
                     // Originally blits "%d\n" into the in-game

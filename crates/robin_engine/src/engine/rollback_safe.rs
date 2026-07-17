@@ -257,14 +257,16 @@ impl Engine {
         // spawns) so that beam-me sector validation and downstream
         // sector-handle resolution see the populated grid.
         let mut pending = PendingLevelData::default();
-        inner.initialize_from_campaign(
-            assets,
-            &mut pending,
-            loaded,
-            level_directory,
-            bg_pixel_dims,
-            progress,
-        )?;
+        inner.with_sim_rng(|inner| {
+            inner.initialize_from_campaign(
+                assets,
+                &mut pending,
+                loaded,
+                level_directory,
+                bg_pixel_dims,
+                progress,
+            )
+        })?;
         inner.populate_sector_gates_from_doors();
         inner.resolve_patch_mask_refs(&mut pending);
         // AI init runs HERE — after pathfinder + grid are fully
@@ -276,7 +278,9 @@ impl Engine {
 
         // Mission script StartUp::Initialize — `hiking_paths` was
         // just populated by the level loader.
-        inner.initialize_mission_script_with(assets, 0, &assets.hiking_paths);
+        inner.with_sim_rng(|inner| {
+            inner.initialize_mission_script_with(assets, 0, &assets.hiking_paths)
+        });
 
         // Sherwood-only: spawn production bonuses at the registered
         // points.
@@ -289,13 +293,15 @@ impl Engine {
             })
             .unwrap_or(false);
         if is_sherwood {
-            inner.apply_production_sector_data(assets);
-            // Fire the "production-sector data is ready" hook
-            // (`SendMessage(0, 1001)`) the Sherwood StartUp script
-            // listens for on fresh Sherwood entry.  The LevelLoad twin
-            // is handled via the post-load fixup path; this arm covers
-            // fresh entry only.
-            inner.dispatch_startup_message(assets, 1001, 0, 0);
+            inner.with_sim_rng(|inner| {
+                inner.apply_production_sector_data(assets);
+                // Fire the "production-sector data is ready" hook
+                // (`SendMessage(0, 1001)`) the Sherwood StartUp script
+                // listens for on fresh Sherwood entry.  The LevelLoad twin
+                // is handled via the post-load fixup path; this arm covers
+                // fresh entry only.
+                inner.dispatch_startup_message(assets, 1001, 0, 0);
+            });
         }
         Ok(Self { inner })
     }
@@ -473,6 +479,21 @@ impl Engine {
     /// [`EngineInner::mission_script_game_host_mut`].
     pub fn mission_script_game_host_mut(&mut self) -> Option<&mut crate::natives::GameHost> {
         self.inner.mission_script_game_host_mut()
+    }
+
+    /// Run a host-side mission-script extension against the live `GameHost`
+    /// while the Engine-owned simulation RNG is installed.
+    ///
+    /// Spellforge startup is outside the normal engine tick but its native
+    /// shims can still draw from `sim_rng`; using this boundary advances the
+    /// one authoritative stream instead of panicking for lack of a scope or
+    /// inventing a second RNG. The closure must not retain the host reference.
+    pub fn with_mission_script_game_host_and_rng<R>(
+        &mut self,
+        f: impl FnOnce(Option<&mut crate::natives::GameHost>) -> R,
+    ) -> R {
+        self.inner
+            .with_sim_rng(|inner| f(inner.mission_script_game_host_mut()))
     }
 
     pub fn take_campaign(&mut self) -> Option<Campaign> {

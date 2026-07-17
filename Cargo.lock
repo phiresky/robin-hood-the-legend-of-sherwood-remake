@@ -3557,6 +3557,7 @@ dependencies = [
  "serde_json_any_key",
  "strum",
  "strum_macros",
+ "syn",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",

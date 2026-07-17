@@ -339,7 +339,10 @@ impl EngineInner {
         }
 
         let new_principal = if !candidates.is_empty() {
-            let pick = crate::sim_rng::usize(0..candidates.len());
+            let pick = crate::sim_rng::usize(
+                crate::sim_rng::RngSite::PrincipalOpponent,
+                0..candidates.len(),
+            );
             candidates[pick]
         } else {
             // Nearest-opponent fallback.

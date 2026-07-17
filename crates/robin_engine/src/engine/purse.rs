@@ -308,8 +308,11 @@ impl EngineInner {
                 // `original-code/RHElementPurse.cpp:138-181` uses
                 // `rand() & 15` for direction and `10 + (rand() & 31)`
                 // for magnitude on each of seven attempts.
-                let sector = (crate::sim_rng::u32(..) & 15) as i16;
-                let magnitude = COIN_SCATTER_MIN + (crate::sim_rng::u32(..) & 31) as f32;
+                let sector = (crate::sim_rng::u32(crate::sim_rng::RngSite::PurseCoinScatter, ..)
+                    & 15) as i16;
+                let magnitude = COIN_SCATTER_MIN
+                    + (crate::sim_rng::u32(crate::sim_rng::RngSite::PurseCoinScatter, ..) & 31)
+                        as f32;
                 let (ux, uy) = crate::element::direction_vector_16(sector);
                 // Y is compressed by ASPECT_RATIO to match isometric ground.
                 let scatter_x = ux * magnitude;

@@ -14,8 +14,10 @@
 //! It does not own engine state — engine pointers are passed in per
 //! call via [`MissionLuaState::with_host`]. The Lua state lives on
 //! the host side (not in `Engine`) because `mlua::Lua` is not
-//! serializable or rollback-friendly. See `docs/PARITY_AUDIT.md` for the
-//! deterministic-mode restriction and required snapshot work.
+//! serializable or rollback-friendly. The session boundary therefore rejects
+//! Spellforge before replay playback, rollback verification, or multiplayer;
+//! these runtime restrictions reduce nondeterministic inputs for normal
+//! single-player execution but do not make Lua snapshot-safe.
 //!
 //! ## Why Luau, not Lua 5.4
 //!
@@ -209,17 +211,16 @@ fn install_require(lua: &Lua, mission_dir: &Path) -> Result<(), mlua::Error> {
     Ok(())
 }
 
-/// Strip the non-deterministic corners of the standard library and
-/// reroute `math.random` through the engine's seeded RNG.
+/// Strip variable host inputs from the standard library and reroute
+/// `math.random` through the engine's seeded RNG.
 ///
-/// This is the Factorio approach (see their [Lua libraries
-/// docs][factorio]): block sources of wall-clock / platform /
-/// scheduler variance entirely, and replace `math.random` with a
-/// deterministic generator shared across all peers. Without this,
-/// two clients running the same mission would diverge after the
-/// first `math.random` call or the first `os.time()` read, and
-/// rollback replay within a single peer would diverge after a
-/// scripted coroutine yield.
+/// This follows the same sandboxing principle as Factorio (see their [Lua
+/// libraries docs][factorio]): block wall-clock / platform / scheduler inputs
+/// and make random draws consume the simulation's one RNG stream. It is useful
+/// for reproducible normal play, but it is not permission to run Spellforge in
+/// deterministic modes: Lua heap/callback state is still absent from Engine
+/// snapshots, so the outer session rejects replay, rollback verification, and
+/// multiplayer before startup.
 ///
 /// What we cannot fix from Rust today (and accept the risk for):
 ///
@@ -256,11 +257,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
         }
     }
 
-    // Reroute `math.random` through the engine's `sim_rng`. Every
-    // peer must use the same Engine-owned `fastrand::Rng`, so identical
-    // script calls produce identical rolls.
-    // PARITY TODO: Lua Initialize currently runs outside the tick's installed
-    // RNG scope; thread an explicit Engine RNG context through every event.
+    // Reroute `math.random` through the engine's `sim_rng`. The host must call
+    // every Lua event through an explicit Engine RNG scope so this advances
+    // the authoritative stream rather than a second generator.
     // Three calling conventions match stock Lua:
     //
     //   math.random()    -> float in [0, 1)
@@ -270,7 +269,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
     let rng = lua.create_function(
         |_, args: mlua::Variadic<i32>| -> mlua::Result<mlua::Value> {
             match args.len() {
-                0 => Ok(mlua::Value::Number(robin_engine::sim_rng::f32() as f64)),
+                0 => Ok(mlua::Value::Number(robin_engine::sim_rng::f32(
+                    robin_engine::sim_rng::RngSite::LuaMathRandom,
+                ) as f64)),
                 1 => {
                     let n = args[0];
                     if n < 1 {
@@ -279,7 +280,11 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                         )));
                     }
                     Ok(mlua::Value::Integer(
-                        robin_engine::sim_rng::i32(1..=n).into(),
+                        robin_engine::sim_rng::i32(
+                            robin_engine::sim_rng::RngSite::LuaMathRandom,
+                            1..=n,
+                        )
+                        .into(),
                     ))
                 }
                 2 => {
@@ -290,7 +295,11 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
                         )));
                     }
                     Ok(mlua::Value::Integer(
-                        robin_engine::sim_rng::i32(a..=b).into(),
+                        robin_engine::sim_rng::i32(
+                            robin_engine::sim_rng::RngSite::LuaMathRandom,
+                            a..=b,
+                        )
+                        .into(),
                     ))
                 }
                 n => Err(mlua::Error::RuntimeError(format!(
@@ -301,10 +310,9 @@ fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
     )?;
     math.set("random", rng)?;
 
-    // `math.randomseed(x)` becomes a no-op. The engine seeds
-    // `sim_rng` once at mission start via `EngineArgs::rng_seed`;
-    // letting Lua reseed it would desync rollback (the replay
-    // never sees the reseed call).
+    // `math.randomseed(x)` becomes a no-op. The engine seeds `sim_rng` once at
+    // mission start via `EngineArgs::rng_seed`; the script cannot replace the
+    // Engine-owned stream with an untracked generator.
     let noop_seed = lua.create_function(|_, _: mlua::Variadic<mlua::Value>| Ok(()))?;
     math.set("randomseed", noop_seed)?;
 

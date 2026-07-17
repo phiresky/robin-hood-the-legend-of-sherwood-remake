@@ -480,7 +480,8 @@ pub fn receive_sword_damage(
                 attacker.elevation,
                 defender.elevation,
             );
-            let roll: u16 = crate::sim_rng::u16(1..=99);
+            let roll: u16 =
+                crate::sim_rng::u16(crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > protection {
                 let cutting = get_strike_cutting_effect(
                     attacker_profile,
@@ -503,7 +504,8 @@ pub fn receive_sword_damage(
 
             // --- Stunning damage ---
             let bludgeon_prot = def_profile.bludgeon_protection;
-            let roll: u16 = crate::sim_rng::u16(1..=99);
+            let roll: u16 =
+                crate::sim_rng::u16(crate::sim_rng::RngSite::SwordDamageProtection, 1..=99);
             if roll > bludgeon_prot {
                 let stunning = attacker_profile.thrusts[*strike as usize].stunning;
                 if stunning > 0 {
@@ -1294,12 +1296,15 @@ pub fn propose_good_sword_strike(
     // special strike. `(rand() % 100) >= max(50, fighting_ability)`.
     let threshold = ctx.fighting_ability.max(50) as u32;
     let mut only_parade = false;
-    if crate::sim_rng::u32(0..100) >= threshold {
+    if crate::sim_rng::u32(crate::sim_rng::RngSite::SwordStrikeSelection, 0..100) >= threshold {
         if also_parade {
             // NPCs always get parade fallback. PCs need a second
             // fighting_ability roll — higher skill means they're more likely
             // to retry a strike next time rather than fall back to parry.
-            if ctx.is_npc || crate::sim_rng::u32(0..100) >= ctx.fighting_ability as u32 {
+            if ctx.is_npc
+                || crate::sim_rng::u32(crate::sim_rng::RngSite::SwordStrikeSelection, 0..100)
+                    >= ctx.fighting_ability as u32
+            {
                 only_parade = true;
             } else {
                 return None;

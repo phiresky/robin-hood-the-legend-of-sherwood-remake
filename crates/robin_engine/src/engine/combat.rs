@@ -759,7 +759,10 @@ impl EngineInner {
             // not invent an unconditional-damage fallback.
             match piercing_protection {
                 Some(protection) => {
-                    let roll = crate::sim_rng::u32(0..101);
+                    let roll = crate::sim_rng::u32(
+                        crate::sim_rng::RngSite::ArrowPiercingProtection,
+                        0..101,
+                    );
                     roll > protection as u32
                 }
                 None => {
@@ -2254,7 +2257,10 @@ impl EngineInner {
                 s.soldier.soldier_profile_index,
             ) {
                 Some(protection) => {
-                    let roll = crate::sim_rng::u32(0..100);
+                    let roll = crate::sim_rng::u32(
+                        crate::sim_rng::RngSite::StonePiercingProtection,
+                        0..100,
+                    );
                     roll < protection as u32
                 }
                 None => panic!(

@@ -82,28 +82,6 @@ impl SimulationRng {
     }
 }
 
-// TODO(parity): move the remaining pre-simulation bonus-frame draws in
-// `engine/level_loading.rs` into an explicit engine RNG scope. They already
-// advance this same capability, but retaining deref coercion is necessary
-// while level ingestion draws before the normal initialization scope.
-impl std::ops::Deref for SimulationRng {
-    type Target = fastrand::Rng;
-
-    fn deref(&self) -> &Self::Target {
-        self.state
-            .as_ref()
-            .expect("direct simulation RNG access while stream is active")
-    }
-}
-
-impl std::ops::DerefMut for SimulationRng {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.state
-            .as_mut()
-            .expect("direct simulation RNG access while stream is active")
-    }
-}
-
 mod simulation_rng_serde {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

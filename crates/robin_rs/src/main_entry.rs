@@ -262,12 +262,11 @@ pub struct CliArgs {
     #[serde(skip)]
     pub global_options: ApplicationContext,
 
-    /// Internal handoff: when the main menu's custom-mission picker
-    /// chooses a Spellforge mod, this carries the bits the session
-    /// needs to construct a `LuaSession` after the engine + level
-    /// have loaded. `None` for vanilla missions and every non-mod
-    /// launch — the engine's `.scb` path runs as before. Not a real
-    /// CLI flag; not serialised.
+    /// Internal handoff from the custom-mission picker. Spellforge-tagged
+    /// launches carry the bits needed to construct a required `LuaSession`;
+    /// Vanilla-tagged custom missions carry the same launch metadata but
+    /// intentionally produce no Lua state. `None` for every non-mod launch.
+    /// Not a real CLI flag; not serialised.
     #[clap(skip)]
     #[serde(skip)]
     pub pending_lua_mission: Option<PendingLuaMission>,
@@ -289,15 +288,16 @@ pub struct CliArgs {
 }
 
 /// Subset of [`crate::main_menu::custom_missions::CustomMissionLaunch`]
-/// needed to construct a [`crate::lua_session::LuaSession`] inside
-/// `run_mission` once the engine is alive. Kept as a flat clonable
-/// struct so it can ride along on `CliArgs` (which is `Clone`).
+/// needed to decide containment and, for Spellforge, construct a
+/// [`crate::lua_session::LuaSession`] inside `run_mission`. Kept as a flat
+/// clonable struct so it can ride along on `CliArgs` (which is `Clone`).
 #[derive(Debug, Clone)]
 pub struct PendingLuaMission {
     pub slug: String,
     pub rhm_basename: String,
     pub version_zip: std::path::PathBuf,
     pub mods_root: std::path::PathBuf,
+    pub requires_spellforge: bool,
 }
 
 impl Default for CliArgs {
@@ -2215,7 +2215,20 @@ pub async fn run_rust_game(
                     rhm_basename: launch.rhm_basename.clone(),
                     version_zip: launch.version_zip.clone(),
                     mods_root: mods_root.clone(),
+                    requires_spellforge: launch.requires_spellforge,
                 });
+                if launch.requires_spellforge && session_args.rollback_check {
+                    // The checker is a default diagnostic, not a mode selected
+                    // by the custom-mission picker. Spellforge cannot
+                    // participate because its Lua state is not snapshotted;
+                    // make that opt-out explicit and visible while preserving
+                    // ordinary single-player custom-mission launch.
+                    tracing::warn!(
+                        mission = %launch.rhm_basename,
+                        "Spellforge: disabling the default rollback checker for this normal single-player launch; explicit deterministic modes reject Spellforge"
+                    );
+                    session_args.rollback_check = false;
+                }
                 let SessionResult::QuitToMenu =
                     run_session(window, &mut campaign, &profiles, &session_args, None).await?;
                 adopt_legacy_stores_into_context(&application_context)?;

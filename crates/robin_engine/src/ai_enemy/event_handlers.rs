@@ -1111,7 +1111,8 @@ impl EnemyAi {
                     Substate::WonderingSoldierLookingOfficerWhoFinishedBrawl,
                 );
                 // LaunchTimer(300 + (rand() % 32)).
-                let extra = crate::sim_rng::u32(0..32);
+                let extra =
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::SoldierBrawlCooldown, 0..32);
                 self.base.launch_timer(300 + extra, ctx.frame);
             }
 
@@ -2026,8 +2027,10 @@ impl EnemyAi {
                 self.set_state(AiState::Wondering, Substate::WonderingWatching);
                 self.base.seek_position = noise.origin;
                 self.base.face_position(noise.origin);
-                self.base
-                    .launch_timer(70 + crate::sim_rng::u32(0..60), ctx.frame);
+                self.base.launch_timer(
+                    70 + crate::sim_rng::u32(crate::sim_rng::RngSite::SoldierNoiseCooldown, 0..60),
+                    ctx.frame,
+                );
             }
 
             _ => {}
