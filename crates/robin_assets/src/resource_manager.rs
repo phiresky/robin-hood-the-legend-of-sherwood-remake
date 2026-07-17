@@ -19,7 +19,8 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::picture::{Picture, read_bytes, read_tag, read_u16, read_u32, seek_to};
+use crate::binary_reader::Reader;
+use crate::picture::Picture;
 use robin_engine::coordinates::CursorHotspot;
 use robin_engine::sbfile::SbFile;
 
@@ -94,24 +95,49 @@ fn merge_resource_manager(dst: &mut ResourceManager, src: &ResourceManager) {
 }
 
 // ---------------------------------------------------------------------------
-// Free reader functions — parse resource payloads from an open stream
+// Free reader functions — parse resource payloads from a checked byte reader
 // ---------------------------------------------------------------------------
+
+fn read_picture(reader: &mut Reader<'_>, context: &str) -> Result<Picture> {
+    // Original provenance: `original-code/sblibng/SBPictureSixteen.cpp`,
+    // `SBPictureSixteen::LoadFromStream`/`SerializeHeader`, reads the 12-byte
+    // header and then exactly `ulPackedSize` payload bytes.
+    let start = reader.position();
+    let header: [u8; 12] = reader
+        .take(12, format!("{context} Sixteen header"))?
+        .try_into()
+        .expect("the checked reader returned exactly 12 bytes");
+    let packed_size = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize;
+    reader.take(packed_size, format!("{context} Sixteen payload"))?;
+    let length = reader.position() - start;
+    let bytes = reader.range(start, length, format!("{context} Sixteen frame"))?;
+    Picture::load_sixteen_from_bytes(bytes).with_context(|| format!("{context} Sixteen frame"))
+}
 
 /// Read a single-picture resource (`PIC `).
 /// Returns `(flags, pictures)`.
-fn read_single_picture(file: &mut SbFile) -> Result<(u32, Vec<Option<Picture>>)> {
-    let flags = read_u32(file)?;
-    let pic = Picture::load_sixteen_from_stream(file)?;
+fn read_single_picture(
+    reader: &mut Reader<'_>,
+    context: &str,
+) -> Result<(u32, Vec<Option<Picture>>)> {
+    let flags = reader.u32(format!("{context} flags"))?;
+    let pic = read_picture(reader, &format!("{context} picture 0"))?;
     Ok((flags, vec![Some(pic)]))
 }
 
 /// Read a picture-collection resource (`PICC`).
-fn read_picture_collection(file: &mut SbFile) -> Result<(u32, Vec<Option<Picture>>)> {
-    let flags = read_u32(file)?;
-    let count = read_u32(file)? as usize;
+fn read_picture_collection(
+    reader: &mut Reader<'_>,
+    context: &str,
+) -> Result<(u32, Vec<Option<Picture>>)> {
+    let flags = reader.u32(format!("{context} flags"))?;
+    let count = reader.count_u32(format!("{context} picture count"), 12)?;
     let mut pics = Vec::with_capacity(count);
-    for _ in 0..count {
-        pics.push(Some(Picture::load_sixteen_from_stream(file)?));
+    for picture_index in 0..count {
+        pics.push(Some(read_picture(
+            reader,
+            &format!("{context} picture {picture_index}"),
+        )?));
     }
     Ok((flags, pics))
 }
@@ -119,13 +145,20 @@ fn read_picture_collection(file: &mut SbFile) -> Result<(u32, Vec<Option<Picture
 /// Read a "flagged" picture resource (BTTN, TOGL, NPTF, SLID, RDO).
 /// `count` is the fixed number of sub-pictures for this widget type.
 /// A bitmask controls which sub-pictures are actually present in the stream.
-fn read_flagged_pictures(file: &mut SbFile, count: usize) -> Result<(u32, Vec<Option<Picture>>)> {
-    let flags = read_u32(file)?;
-    let bitmask = read_u32(file)?;
+fn read_flagged_pictures(
+    reader: &mut Reader<'_>,
+    count: usize,
+    context: &str,
+) -> Result<(u32, Vec<Option<Picture>>)> {
+    let flags = reader.u32(format!("{context} flags"))?;
+    let bitmask = reader.u32(format!("{context} picture bitmask"))?;
     let mut pics = Vec::with_capacity(count);
     for i in 0..count {
         if bitmask & (1 << i) != 0 {
-            pics.push(Some(Picture::load_sixteen_from_stream(file)?));
+            pics.push(Some(read_picture(
+                reader,
+                &format!("{context} picture {i}"),
+            )?));
         } else {
             pics.push(None);
         }
@@ -134,17 +167,23 @@ fn read_flagged_pictures(file: &mut SbFile, count: usize) -> Result<(u32, Vec<Op
 }
 
 /// Read a cursor resource (`CUR `).
-fn read_cursor(file: &mut SbFile) -> Result<(u32, MouseEntry, Vec<Option<Picture>>)> {
-    let flags = read_u32(file)?;
-    let mouse_flags = read_u16(file)?;
-    let x = read_u16(file)?;
-    let y = read_u16(file)?;
-    let frame_length = read_u16(file)?;
-    let count = read_u32(file)? as usize;
+fn read_cursor(
+    reader: &mut Reader<'_>,
+    context: &str,
+) -> Result<(u32, MouseEntry, Vec<Option<Picture>>)> {
+    let flags = reader.u32(format!("{context} flags"))?;
+    let mouse_flags = reader.u16(format!("{context} mouse flags"))?;
+    let x = reader.u16(format!("{context} hotspot x"))?;
+    let y = reader.u16(format!("{context} hotspot y"))?;
+    let frame_length = reader.u16(format!("{context} frame length"))?;
+    let count = reader.count_u32(format!("{context} picture count"), 12)?;
 
     let mut pics = Vec::with_capacity(count);
-    for _ in 0..count {
-        pics.push(Some(Picture::load_sixteen_from_stream(file)?));
+    for picture_index in 0..count {
+        pics.push(Some(read_picture(
+            reader,
+            &format!("{context} picture {picture_index}"),
+        )?));
     }
 
     let entry = MouseEntry {
@@ -157,37 +196,64 @@ fn read_cursor(file: &mut SbFile) -> Result<(u32, MouseEntry, Vec<Option<Picture
 
 /// Read a string-table resource (`TEXT`).
 /// Strings are UCS-2 (u16 per char) on disk; we convert to UTF-8.
-fn read_string_table(file: &mut SbFile) -> Result<Vec<String>> {
-    let _flags = read_u32(file)?;
-    let count = read_u16(file)? as usize;
+fn read_string_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>> {
+    let _flags = reader.u32(format!("{context} flags"))?;
+    let count = reader.u16(format!("{context} string count"))? as usize;
+    reader.validate_count(
+        count,
+        2,
+        format!("{context} string count"),
+        reader.position() - 2,
+    )?;
     let mut strings = Vec::with_capacity(count);
 
-    for _ in 0..count {
-        let char_count = read_u16(file)? as usize;
+    // Original provenance: `original-code/sblibng/SBResourceManager.cpp`,
+    // `SBResourceManager::LoadStringTableResource`, stores each TEXT entry as
+    // a UWORD count followed by that many UWORD code units.
+    for string_index in 0..count {
+        let char_count = reader.u16(format!("{context} string {string_index} length"))? as usize;
+        reader.validate_count(
+            char_count,
+            2,
+            format!("{context} string {string_index} UTF-16 data"),
+            reader.position() - 2,
+        )?;
         let mut chars = Vec::with_capacity(char_count);
-        for _ in 0..char_count {
-            chars.push(read_u16(file)?);
+        for char_index in 0..char_count {
+            chars.push(reader.u16(format!(
+                "{context} string {string_index} code unit {char_index}"
+            ))?);
         }
-        strings.push(String::from_utf16(&chars).unwrap_or_default());
+        strings.push(
+            String::from_utf16(&chars)
+                .with_context(|| format!("{context} string {string_index}: invalid UTF-16"))?,
+        );
     }
     Ok(strings)
 }
 
 /// Read a wave-table resource (`WAVE`).
 /// Entries are narrow (ASCII) path strings on disk.
-fn read_wave_table(file: &mut SbFile) -> Result<Vec<String>> {
-    let _flags = read_u32(file)?;
-    let count = read_u16(file)? as usize;
+fn read_wave_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>> {
+    let _flags = reader.u32(format!("{context} flags"))?;
+    let count = reader.u16(format!("{context} wave count"))? as usize;
+    reader.validate_count(
+        count,
+        2,
+        format!("{context} wave count"),
+        reader.position() - 2,
+    )?;
     let mut waves = Vec::with_capacity(count);
 
-    for _ in 0..count {
-        let str_size = read_u16(file)? as usize;
-        // Wave-path strings are capped at 4096 bytes: read 4096, skip the rest.
-        let read_size = str_size.min(4096);
-        let buf = read_bytes(file, read_size)?;
+    for wave_index in 0..count {
+        let str_size = reader.u16(format!("{context} wave {wave_index} length"))? as usize;
+        let encoded = reader.take(str_size, format!("{context} wave {wave_index} path"))?;
+        // Original provenance: `SBResourceManager::LoadWaveTableResource`
+        // in the same Original file caps the materialized path at 4096 bytes
+        // while still advancing past the full declared range.
+        let buf = &encoded[..str_size.min(4096)];
         if str_size > 4096 {
             tracing::warn!("read_wave_table: string size {str_size} > 4096, truncating");
-            file.skip((str_size - 4096) as i64, 1);
         }
         let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
         waves.push(String::from_utf8_lossy(&buf[..end]).to_string());
@@ -264,11 +330,16 @@ impl ResourceManager {
 
     /// Open a `.res` file and load all resources into memory.
     pub fn attach_resource_file(&mut self, path: &str) -> Result<()> {
-        let mut file =
-            SbFile::open(path, 0).map_err(|e| anyhow!("open resource file '{path}': error {e}"))?;
+        let bytes = SbFile::read_all(path)
+            .map_err(|e| anyhow!("read resource file '{path}': error {e}"))?;
+        self.attach_resource_bytes(&bytes, path)
+    }
+
+    fn attach_resource_bytes(&mut self, bytes: &[u8], path: &str) -> Result<()> {
+        let mut reader = Reader::new(bytes);
 
         // Validate magic
-        let magic = read_tag(&mut file)?;
+        let magic = reader.take_array::<4>("resource file magic")?;
         if &magic != b"SRES" {
             bail!(
                 "not a resource file (bad magic {:?})",
@@ -276,29 +347,32 @@ impl ResourceManager {
             );
         }
 
-        // Version
-        file.serialize_version()
-            .map_err(|e| anyhow!("read version: error {e}"))?;
-        let version = file.get_version();
+        let version = reader.u32("resource file version")?;
 
         match version {
-            RES_VERSION_100 => self.load_file_resource_v100(&mut file, path),
+            RES_VERSION_100 => self.load_file_resource_v100(&mut reader, path),
             _ => bail!("unsupported resource file version: 0x{version:04X}"),
         }
     }
 
-    fn load_file_resource_v100(&mut self, file: &mut SbFile, file_path: &str) -> Result<()> {
-        let num_resources = read_u32(file)?;
+    fn load_file_resource_v100(&mut self, reader: &mut Reader<'_>, file_path: &str) -> Result<()> {
+        let num_resources = reader.count_u32("resource file entry count", 8)?;
 
-        for _ in 0..num_resources {
-            let type_tag = read_tag(file)?;
-            let id = read_u32(file)? as ResourceId;
+        for resource_index in 0..num_resources {
+            let type_tag = reader.take_array::<4>(format!("resource {resource_index} type"))?;
+            let id = reader.u32(format!("resource {resource_index} id"))? as ResourceId;
+            let context = format!(
+                "resource {id} ({})",
+                std::str::from_utf8(&type_tag).unwrap_or("non-ASCII type")
+            );
 
-            // Initialize reference count
+            // Record the payload start used to recover dismissed resources.
+            let offset = u64::try_from(reader.position())
+                .with_context(|| format!("{context}: payload offset does not fit u64"))?;
+            self.load_resource_data(reader, id, &type_tag)
+                .with_context(|| context.clone())?;
+
             self.references.insert(id, 0);
-
-            // Record file entry before reading payload (offset = current pos)
-            let offset = file.tell();
             self.file_entries.insert(
                 id,
                 ResourceFileEntry {
@@ -307,8 +381,6 @@ impl ResourceManager {
                     resource_type: type_tag,
                 },
             );
-
-            self.load_resource_data(file, id, &type_tag)?;
         }
         Ok(())
     }
@@ -317,50 +389,54 @@ impl ResourceManager {
     /// the results in the appropriate map(s).
     fn load_resource_data(
         &mut self,
-        file: &mut SbFile,
+        reader: &mut Reader<'_>,
         id: ResourceId,
         type_tag: &[u8; 4],
     ) -> Result<()> {
+        let context = format!(
+            "resource {id} ({})",
+            std::str::from_utf8(type_tag).unwrap_or("non-ASCII type")
+        );
         match type_tag {
             b"PIC " => {
-                let (_, pics) = read_single_picture(file)?;
+                let (_, pics) = read_single_picture(reader, &context)?;
                 self.pictures.insert(id, pics);
             }
             b"PICC" => {
-                let (_, pics) = read_picture_collection(file)?;
+                let (_, pics) = read_picture_collection(reader, &context)?;
                 self.pictures.insert(id, pics);
             }
             b"BTTN" => {
-                let (_, pics) = read_flagged_pictures(file, 4)?;
+                let (_, pics) = read_flagged_pictures(reader, 4, &context)?;
                 self.pictures.insert(id, pics);
             }
             b"TOGL" => {
-                let (_, pics) = read_flagged_pictures(file, 5)?;
+                let (_, pics) = read_flagged_pictures(reader, 5, &context)?;
                 self.pictures.insert(id, pics);
             }
             b"NPTF" => {
-                let (_, pics) = read_flagged_pictures(file, 6)?;
+                let (_, pics) = read_flagged_pictures(reader, 6, &context)?;
                 self.pictures.insert(id, pics);
             }
             b"CUR " => {
-                let (_, mouse, pics) = read_cursor(file)?;
+                let (_, mouse, pics) = read_cursor(reader, &context)?;
                 self.pictures.insert(id, pics);
                 self.mouse_entries.insert(id, mouse);
             }
             b"TEXT" => {
-                let strs = read_string_table(file)?;
+                let strs = read_string_table(reader, &context)?;
                 self.strings.insert(id, strs);
             }
             b"WAVE" => {
-                let w = read_wave_table(file)?;
+                let w = read_wave_table(reader, &context)?;
                 self.waves.insert(id, w);
             }
             b"SLID" => {
-                let (_, pics) = read_flagged_pictures(file, 6)?;
+                let (_, pics) = read_flagged_pictures(reader, 6, &context)?;
                 self.pictures.insert(id, pics);
             }
             b"RDO " => {
-                let (_, pics) = read_flagged_pictures(file, 7)?;
+                let (_, pics) = read_flagged_pictures(reader, 7, &context)?;
                 self.pictures.insert(id, pics);
             }
             _ => bail!(
@@ -405,10 +481,13 @@ impl ResourceManager {
             .ok_or_else(|| anyhow!("resource {id}: no file entry for recovery"))?
             .clone();
 
-        let mut file = SbFile::open(&entry.file_path, 0)
-            .map_err(|e| anyhow!("recovery open '{}': error {e}", entry.file_path))?;
-        seek_to(&mut file, entry.file_offset)?;
-        self.load_resource_data(&mut file, id, &entry.resource_type)
+        let bytes = SbFile::read_all(&entry.file_path)
+            .map_err(|e| anyhow!("recovery read '{}': error {e}", entry.file_path))?;
+        let offset = usize::try_from(entry.file_offset)
+            .context("resource recovery offset does not fit usize")?;
+        let mut reader = Reader::new(&bytes);
+        reader.seek(offset, format!("resource {id} recovery payload offset"))?;
+        self.load_resource_data(&mut reader, id, &entry.resource_type)
     }
 
     /// Ensure a picture resource is loaded (recover if dismissed).
@@ -899,6 +978,84 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resource_file(resource_type: &[u8; 4], id: u32, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"SRES");
+        bytes.extend_from_slice(&RES_VERSION_100.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(resource_type);
+        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    #[test]
+    fn invalid_utf16_is_a_contextual_error_not_an_empty_string() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0u32.to_le_bytes()); // flags
+        payload.extend_from_slice(&1u16.to_le_bytes()); // string count
+        payload.extend_from_slice(&1u16.to_le_bytes()); // code-unit count
+        payload.extend_from_slice(&0xD800u16.to_le_bytes()); // unpaired surrogate
+        let bytes = resource_file(b"TEXT", 42, &payload);
+
+        let error = ResourceManager::new()
+            .attach_resource_bytes(&bytes, "malformed.res")
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("resource 42 (TEXT)"));
+        assert!(message.contains("string 0: invalid UTF-16"));
+    }
+
+    #[test]
+    fn truncated_utf16_range_is_rejected_before_allocating_code_units() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0u32.to_le_bytes());
+        payload.extend_from_slice(&1u16.to_le_bytes());
+        payload.extend_from_slice(&3u16.to_le_bytes());
+        payload.extend_from_slice(&(b'A' as u16).to_le_bytes());
+        let bytes = resource_file(b"TEXT", 7, &payload);
+
+        let error = ResourceManager::new()
+            .attach_resource_bytes(&bytes, "truncated.res")
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("resource 7 (TEXT) string 0 UTF-16 data"));
+        assert!(message.contains("only 2 remain"));
+    }
+
+    #[test]
+    fn picture_payload_range_must_fit_the_resource_file() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0u32.to_le_bytes()); // resource flags
+        payload.extend_from_slice(&1u16.to_le_bytes()); // width
+        payload.extend_from_slice(&1u16.to_le_bytes()); // height
+        payload.extend_from_slice(&0u32.to_le_bytes()); // uncompressed
+        payload.extend_from_slice(&4u32.to_le_bytes()); // declared payload size
+        payload.extend_from_slice(&[0xAA, 0xBB]); // only half is present
+        let bytes = resource_file(b"PIC ", 99, &payload);
+
+        let error = ResourceManager::new()
+            .attach_resource_bytes(&bytes, "bad-picture.res")
+            .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("resource 99 (PIC ) picture 0 Sixteen payload"));
+        assert!(message.contains("wanted 4 bytes, only 2 remain"));
+    }
+
+    #[test]
+    fn impossible_resource_count_is_rejected_before_iteration() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"SRES");
+        bytes.extend_from_slice(&RES_VERSION_100.to_le_bytes());
+        bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        let error = ResourceManager::new()
+            .attach_resource_bytes(&bytes, "bad-count.res")
+            .unwrap_err();
+        assert!(error.to_string().contains("resource file entry count"));
+        assert!(error.to_string().contains("count 4294967295"));
+    }
 
     #[test]
     fn new_manager_is_empty() {
