@@ -154,7 +154,7 @@ Priority reflects likely gameplay impact, not implementation effort.
 
 | ID | Priority | Status | Finding and evidence |
 | --- | --- | --- | --- |
-| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. `1a1901c7c` moves straight/assault strike advancement, synchronous damage, and completion to the attacker's slot, so an earlier lethal strike interrupts a later chained attacker before it can hit. Movement/animation, NPC detection/Think, and non-straight melee remain batched. The next exact oracles are live SEEK-target tolerance and an officer's FRIEND detection observing an earlier/later soldier's synchronous EVENT_VIEW state change; sweeps, pushes, riders, and smalltalk need separate evidence. Full parity still requires a per-entity Hourglass API (`RHengine.cpp:3715-3724,7909-7944`; `RHelementactor.cpp:534-709,7314-7380`; `RHelementactornpc.cpp:1371-1675,3495-3614`). |
+| PA-013 | High | incomplete | `09ec7c5fe` restores a live-size creation-ordered pass for bow release/projectiles, PC auto-heal, purses/coins, wasps, nets, fallback-timed melee completion, and abilities. `4c9b5715a` restores the mixed pre/post target position observed by EYES_FOLLOW. `1a1901c7c` moves straight/assault strike advancement, synchronous damage, and completion to the attacker's slot, so an earlier lethal strike interrupts a later chained attacker before it can hit. `b36b4e14b` makes SEEK tolerance sample target position, sector, and hotspot at the seeker's slot, observing earlier movers after their step and later movers before it. Animation/ActionChange, NPC detection/Think, and non-straight melee remain batched. The next exact oracle is an officer's FRIEND detection observing an earlier/later soldier's synchronous EVENT_VIEW state change; sweeps, pushes, riders, and smalltalk need separate evidence. Full parity still requires a per-entity Hourglass API (`RHengine.cpp:3715-3724,7909-7944`; `RHelementactor.cpp:534-709,7314-7380`; `RHelementactornpc.cpp:1371-1675,3495-3614`). |
 
 ## Tick Provenance
 
@@ -169,7 +169,7 @@ need their own review.
 | Reinforcement countdown | `RHEngine::PerformHourglass`; `RHElementActorPC::IsReinforcementTime` | verify bypassing the messenger has no observers |
 | Sequence cleanup and path processing | `RHEngine::PerformHourglass`; `RHEngine::ProcessPathRequests` | frame pacing verified by PA-014 |
 | Entity refresh and sequence dispatch | virtual `RHElement::Hourglass`; `RHSequenceManager::Hourglass` | PA-013 |
-| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW order fixed, live SEEK-target tolerance is the next mixed pre/post oracle, broader dispatch remains batched |
+| Movement, animation, ActionChange, scroll Hourglass | actor/object virtual Hourglass and Execute methods | PA-013; EYES_FOLLOW and live SEEK-target mixed pre/post observations are fixed; animation callbacks and broader dispatch remain batched |
 | NPC view, detection, timers, speech, patrol | `RHElementActorNPC::Hourglass` and AI subclasses | phase order verified by PA-016; followed-target order fixed; FRIEND detection versus synchronous EVENT_VIEW is the next per-NPC oracle |
 | Projectiles, straight melee, and abilities | per-type virtual Hourglass/Execute methods | live creation order, spawn-frame inclusion, and straight/assault strike causality verified by PA-013 regressions; non-straight melee remains batched |
 | Titbits, deselection, anonymous timers | tail of `RHEngine::PerformHourglass` | structurally verified; titbit display-order approximation is visual |
@@ -188,7 +188,7 @@ source-to-source pass is complete.
 | Item interaction / pickup | verified for explicit Take | Keep the no-proximity-pickup regression. Audit other interaction shortcuts. |
 | Enemy detection and state machine | in progress, high risk | PA-025 fixed; retain synchronous officer acceptance/refusal and exact-detection regressions, then continue state-by-state comparison. |
 | Melee and damage | in progress, high risk | Retain the chained straight-strike creation-order regression; review sweeps, pushes, riders, smalltalk, and every remaining simplification against actor-human combat code. |
-| Movement, paths, doors, lifts | in progress, high risk | Retain PA-014/PA-022/PA-030 regressions and audit remaining lift/door timing. |
+| Movement, paths, doors, lifts | in progress, high risk | Retain PA-014/PA-022/PA-030 and creation-ordered SEEK regressions; audit remaining lift/door and animation-callback timing. |
 | Script natives and callbacks | in progress, high risk | Retain PA-021/PA-023/PA-024/PA-028 regressions and audit remaining natives. |
 | Sequence manager and messages | in progress, high risk | PA-032 fixed; retain WAIT launch-return, condolence, and SendMessage ordering tests. |
 | Projectiles and abilities | queued | Per-type Hourglass and spawn-frame comparison. |
