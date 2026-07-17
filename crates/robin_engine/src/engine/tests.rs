@@ -171,10 +171,10 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
             HourglassPhase::NpcOrders,
             HourglassPhase::Paths,
             HourglassPhase::Entities,
-            HourglassPhase::Sequences,
             HourglassPhase::EntitySystems,
             HourglassPhase::Npcs,
             HourglassPhase::GameplaySystems,
+            HourglassPhase::Sequences,
             HourglassPhase::DeferredEffectsEnd,
         ]
     );
@@ -202,6 +202,158 @@ fn hourglass_phase_trace_records_only_phases_reached_before_mission_exit() {
             HourglassPhase::MissionAndMessages,
         ]
     );
+}
+
+#[test]
+fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
+    use crate::element::{Command, Posture};
+    use crate::order::OrderType;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let soldier_id = engine.add_entity(make_test_soldier(Posture::Upright));
+    bind_test_action_point(
+        &mut engine,
+        soldier_id,
+        OrderType::TransitionWaitingUprightSitting,
+        crate::coordinates::SpriteLocalPoint::ZERO,
+        crate::coordinates::SpriteAnchor::ZERO,
+    );
+
+    // Bypass EngineInner's synchronous launch wrapper to model an element
+    // already waiting in RHSequenceManager's FIFO at frame start.
+    let mut element = SequenceElement::new(1, Command::SitDown, Some(soldier_id));
+    element.posture_after_transition = Posture::Upright;
+    let sequence_id = engine.sequence_manager.launch_element(element);
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let element = engine
+        .sequence_manager
+        .get_element(sequence_id, 0)
+        .expect("pending element should have dispatched");
+    assert_eq!(element.state, SequenceState::InProgress);
+    let order_id = element
+        .current_order()
+        .expect("SitDown should translate to an animation")
+        .order_id
+        .get();
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .expect("soldier present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        u32::MAX,
+        "an order dispatched by RHSequenceManager after the entity loop must not animate in that same frame"
+    );
+
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+    assert_eq!(
+        engine
+            .get_entity(soldier_id)
+            .expect("soldier present")
+            .element_data()
+            .sprite
+            .last_processed_order_id,
+        order_id,
+        "the dispatched animation must start on the following entity frame"
+    );
+}
+
+fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
+    use crate::bow_shot::{SpawnArrowParams, spawn_arrow};
+    use crate::coordinates::{WorldPoint3D, WorldVec3D};
+    use crate::element::Posture;
+    use crate::entity_id::PcId;
+
+    let mut engine = EngineInner::new();
+
+    let mut shooter = make_test_soldier(Posture::Upright);
+    shooter
+        .element_data_mut()
+        .set_position_map(MapPoint { x: 0.0, y: 0.0 });
+    let Entity::Soldier(shooter_soldier) = &mut shooter else {
+        unreachable!();
+    };
+    shooter_soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    shooter_soldier.npc.life_points = 100;
+    let shooter_id = engine.add_entity(shooter);
+
+    let victim_id = EntityId::Pc(PcId(if pc_before_arrow { 1 } else { 2 }));
+    let make_arrow = || {
+        spawn_arrow(SpawnArrowParams {
+            shooter: shooter_id,
+            bow_point: WorldPoint3D {
+                x: 0.0,
+                y: 0.0,
+                z: 25.0,
+            },
+            trajectory_origin: MapPoint { x: 0.0, y: 0.0 },
+            target: victim_id,
+            target_pos: MapPoint { x: 50.0, y: 0.0 },
+            trajectory: vec![crate::element::TrajectoryPoint {
+                position: WorldPoint3D {
+                    x: 50.0,
+                    y: 0.0,
+                    z: 25.0,
+                },
+                time: 2,
+            }],
+            damage: 10,
+            layer: 0,
+            lands_in_hole: false,
+            initial_velocity: WorldVec3D {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        })
+    };
+    let mut victim = make_test_pc(Posture::Upright);
+    victim
+        .element_data_mut()
+        .set_position_map(MapPoint { x: 50.0, y: 0.0 });
+    let Entity::Pc(victim_pc) = &mut victim else {
+        unreachable!();
+    };
+    victim_pc.pc.life_points = 74;
+    victim_pc.pc.immortal = true;
+
+    if pc_before_arrow {
+        assert_eq!(engine.add_entity(victim), victim_id);
+        engine.add_entity(make_arrow());
+    } else {
+        engine.add_entity(make_arrow());
+        assert_eq!(engine.add_entity(victim), victim_id);
+    }
+
+    let mut display = HostDisplayState::default();
+    let mut assets = LevelAssets::new();
+    let mut dev = DevState::default();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.perform_hourglass(&mut display, &assets, &mut dev);
+
+    let Some(Entity::Pc(victim)) = engine.get_entity(victim_id) else {
+        panic!("victim PC missing after projectile frame");
+    };
+    victim.pc.life_points
+}
+
+#[test]
+fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
+    // RHElementActorPC::Hourglass snaps 74 HP to 75. The projectile then
+    // subtracts 10 when the PC's creation order is earlier: 74 -> 75 -> 65.
+    assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(true), 65);
+
+    // Reversing only the element-array order reverses the observable state:
+    // projectile damage 74 -> 64, then the PC hourglass snaps 64 -> 75.
+    assert_eq!(immortal_pc_hit_by_creation_ordered_arrow(false), 75);
 }
 
 #[test]

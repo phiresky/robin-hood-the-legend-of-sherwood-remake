@@ -2902,6 +2902,20 @@ pub fn tick_arrow(
     tick_arrows_matching(entities, sight_obstacles, Some(arrow_id), true, &[])
 }
 
+/// Advance one projectile already present in the engine element array.
+///
+/// Unlike [`tick_arrow`], this does not treat the projectile's spawn-time
+/// priming step as its current-frame advancement. It is used by the engine's
+/// creation-ordered entity pass so projectile and PC hourglasses can retain
+/// their relative element-array order.
+pub fn tick_existing_projectile(
+    entities: &mut Entities,
+    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
+    projectile_id: EntityId,
+) -> Vec<ArrowTickResult> {
+    tick_arrows_matching(entities, sight_obstacles, Some(projectile_id), false, &[])
+}
+
 fn tick_arrows_matching(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
