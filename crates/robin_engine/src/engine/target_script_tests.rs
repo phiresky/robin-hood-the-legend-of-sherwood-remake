@@ -231,8 +231,7 @@ fn host_global(engine: &EngineInner, id: i32) -> i32 {
     engine
         .mission_script
         .as_ref()
-        .and_then(|s| s.game_host())
-        .and_then(|h| h.globals.get(&id).copied())
+        .and_then(|script| script.state.globals.get(&id).copied())
         .unwrap_or(0)
 }
 

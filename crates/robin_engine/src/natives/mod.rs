@@ -50,18 +50,22 @@
 //!   - 264: ForbidNPCRemark — suppress NPC remark categories
 
 mod commands;
+mod context;
 mod defs;
 mod signatures;
+mod state;
 #[cfg(test)]
 mod tests;
 
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
+pub use context::NativeContext;
 pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
     NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
     NativeSignature, native_definition_by_index, native_definition_by_name,
     native_signature_by_index, native_signature_by_name,
 };
+pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
@@ -149,15 +153,17 @@ pub struct ScriptZonePolygon {
 /// trio and logs all other calls as unimplemented stubs.
 #[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
 pub struct GameHost {
-    /// Cross-script global variables (InitGlobal/SetGlobal/GetGlobal).
-    pub globals: BTreeMap<i32, i32>,
+    /// Owned only by the legacy unit-test adapter. Production dispatch always
+    /// borrows `MissionScript::state` through `NativeContext`.
+    #[cfg(test)]
+    #[serde(skip)]
+    #[state_hash(skip)]
+    test_script_state: ScriptState,
     /// Campaign-level custom values (GetCustomCampaignValue/SetCustomCampaignValue).
     pub campaign_values: BTreeMap<i32, i32>,
     /// Per-NPC custom values keyed by (actor_handle, id).
     #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub npc_values: BTreeMap<(i32, i32), i32>,
-    /// Incrementing sequence ID for the Then() sequence manager call.
-    pub sequence_id: i32,
     /// Set by `ForceCheckVictory` native — tells the engine to run
     /// `CheckVictoryCondition` on the next frame instead of waiting
     /// for the 3-second interval.
@@ -235,17 +241,6 @@ pub struct GameHost {
     /// Sector number for each static script location handle, parallel to
     /// `location_positions`.
     pub location_sectors: Vec<u16>,
-    /// Dynamically computed locations created by GetActorLocation /
-    /// ComputeLocationBetween. Payload index = `script_location_count + index`.
-    pub computed_locations: Vec<(f32, f32)>,
-    /// Parallel to `computed_locations`: the (layer, sector) each computed
-    /// location was stamped with.  `GetActorLocation` carries the actor's
-    /// current (layer, sector) onto the allocated point, and
-    /// `ComputeLocationBetween` inherits pA's (layer, sector); both are
-    /// needed so downstream `SetActorLocation(actor, loc)` can refresh
-    /// the target's obstacle/sector via `GetProjectionArea`.
-    /// `None` means the computed point has no associated sector metadata.
-    pub computed_location_layers: Vec<Option<(u16, u16)>>,
     /// Production sector registrations: (type, location_handle, speed).
     /// Populated by RegisterAsProductionSector; consumed by the engine.
     pub production_registrations: Vec<(i32, i32, i32)>,
@@ -253,10 +248,6 @@ pub struct GameHost {
     /// Populated by AddProductionPoint; consumed by the engine.
     pub production_points: Vec<(i32, i32)>,
 
-    // ── Sequence recording ──────────────────────────────────────
-    /// The sequence currently being recorded via Start/Record*/Then/Thanx.
-    /// `None` when not inside a Start..Thanx block.
-    pub recording: Option<RecordingSession>,
     /// Sequences completed by Thanx() that the engine should launch.
     /// Drained by the engine after each script call.
     pub completed_sequences: Vec<Sequence>,
@@ -449,10 +440,10 @@ pub struct SectorKindInfo {
 impl GameHost {
     pub fn new() -> Self {
         Self {
-            globals: BTreeMap::new(),
+            #[cfg(test)]
+            test_script_state: ScriptState::default(),
             campaign_values: BTreeMap::new(),
             npc_values: BTreeMap::new(),
-            sequence_id: 0,
             force_check: false,
             verbose: false,
             entities: Vec::new(),
@@ -476,11 +467,8 @@ impl GameHost {
             location_positions: Vec::new(),
             location_layers: Vec::new(),
             location_sectors: Vec::new(),
-            computed_locations: Vec::new(),
-            computed_location_layers: Vec::new(),
             production_registrations: Vec::new(),
             production_points: Vec::new(),
-            recording: None,
             completed_sequences: Vec::new(),
             doors: Vec::new(),
             patches: Vec::new(),
@@ -701,18 +689,24 @@ impl GameHost {
     pub fn take_completed_sequences(&mut self) -> Vec<Sequence> {
         std::mem::take(&mut self.completed_sequences)
     }
+}
 
+impl NativeContext<'_> {
     // ── Recording helpers ───────────────────────────────────────
 
     /// Get the current recording command level, or 1 if not recording.
     fn recording_level(&self) -> u16 {
-        self.recording.as_ref().map_or(1, |r| r.command_level)
+        self.script_state
+            .sequence_recorder
+            .recording
+            .as_ref()
+            .map_or(1, |r| r.command_level)
     }
 
     /// Convert a script actor handle to the live typed entity ID.
     /// 0 (null handle) or stale handles map to `None`.
     fn actor_id(&self, handle: i32) -> Option<EntityId> {
-        let idx = Self::actor_handle_index(handle)?;
+        let idx = GameHost::actor_handle_index(handle)?;
         let entity = self.entities.get(idx)?.as_ref()?;
         Some(EntityId::new(idx as u32, entity.entity_id_kind()))
     }
@@ -720,7 +714,7 @@ impl GameHost {
     /// Add a sequence element to the current recording session.
     /// Returns 1 on success, 0 if not currently recording.
     fn record_element(&mut self, element: SequenceElement) -> i32 {
-        if let Some(rec) = &mut self.recording {
+        if let Some(rec) = &mut self.script_state.sequence_recorder.recording {
             rec.add_element(element);
             1
         } else {
@@ -742,7 +736,7 @@ impl GameHost {
     /// emission keeps the caller-provided starting level so the helper
     /// composes cleanly with the surrounding recording flow.
     fn record_seq_step(&mut self, elem: SequenceElement, is_first: bool) {
-        if !is_first && let Some(rec) = self.recording.as_mut() {
+        if !is_first && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
             rec.advance_level();
         }
         self.record_element(elem);
@@ -831,7 +825,7 @@ impl GameHost {
             "AppendMoveToSequence assert: STRAIGHT flag must be clear"
         );
 
-        if self.recording.is_none() {
+        if self.script_state.sequence_recorder.recording.is_none() {
             return false;
         }
 
@@ -1057,6 +1051,8 @@ impl GameHost {
         // 50-frame wait on the first gate of a building-source
         // emission.
         let first_gate_size = self
+            .script_state
+            .sequence_recorder
             .recording
             .as_ref()
             .map(|r| r.current_size())
@@ -1085,6 +1081,8 @@ impl GameHost {
 
             if old_is_building {
                 let cur_size = self
+                    .script_state
+                    .sequence_recorder
                     .recording
                     .as_ref()
                     .map(|r| r.current_size())
@@ -1382,7 +1380,7 @@ impl GameHost {
             sector: dest_sector,
         };
 
-        let rec = self.recording.as_mut()?;
+        let rec = self.script_state.sequence_recorder.recording.as_mut()?;
         match rec.moving_actors.get(&actor_handle).copied() {
             Some(prev) => {
                 rec.moving_actors.insert(actor_handle, new_target);
@@ -1591,7 +1589,7 @@ pub(crate) fn compute_border_point_bbox(
     ((bx, by), (ox, oy))
 }
 
-impl GameHost {
+impl NativeContext<'_> {
     /// Convert a script seek style int for the *Message variants.
     /// style==0 → WALKING, else → RUNNING (reversed from RecordSeekActor).
     fn seek_message_style(style: i32) -> OrderType {
@@ -1639,12 +1637,13 @@ impl GameHost {
         // the blink latch; handle it here so the blazon bar picks it
         // up on the next frame).
         let mut tactical_overflow: Option<u32> = None;
+        let profile_manager = self.profile_manager.clone();
         if let Some(campaign) = self.campaign.as_mut() {
             campaign.add_value(crate::campaign::CampaignValue::Blazon, quantity);
 
             if let Some(idx) = campaign.current_mission_idx {
                 let mission_type = campaign.missions[idx]
-                    .profile(&self.profile_manager)
+                    .profile(&profile_manager)
                     .mission_type;
                 let current_blazons = campaign.get_value(crate::campaign::CampaignValue::Blazon);
                 match mission_type {
@@ -1652,7 +1651,7 @@ impl GameHost {
                         // ATTACK missions win as soon as the collected
                         // total meets `number_of_blazons_to_win`.
                         let to_win = campaign.missions[idx]
-                            .profile(&self.profile_manager)
+                            .profile(&profile_manager)
                             .number_of_blazons_to_win;
                         if to_win as i32 <= current_blazons {
                             self.commands.push(EngineCommand::Win { show_window: true });
@@ -1664,7 +1663,7 @@ impl GameHost {
                         // `win - to_be_collected` is clamped and the
                         // excess is flashed on the bar.
                         if let Some(bm_idx) = campaign.blazon_mission_idx {
-                            let bp = campaign.missions[bm_idx].profile(&self.profile_manager);
+                            let bp = campaign.missions[bm_idx].profile(&profile_manager);
                             let collectable = bp
                                 .number_of_blazons_to_win
                                 .saturating_sub(bp.number_of_blazons_to_be_collected)
@@ -2528,7 +2527,9 @@ impl GameHost {
             }
         })
     }
+}
 
+impl NativeContext<'_> {
     /// True iff `handle` refers to a script *point* (as opposed to a
     /// sector).  Used to reject non-point locations in `GetDistance`,
     /// `ComputeLocationBetween`, camera natives, etc.  Static script
@@ -2537,7 +2538,7 @@ impl GameHost {
     /// dynamically-computed locations (`GetActorLocation`,
     /// `ComputeLocationBetween`) are always points.
     fn is_script_point(&self, handle: i32) -> bool {
-        let Some(idx) = Self::location_index(handle) else {
+        let Some(idx) = GameHost::location_index(handle) else {
             return false;
         };
         if idx < self.script_point_count {
@@ -2546,19 +2547,22 @@ impl GameHost {
         // Computed locations live past `script_location_count` and are
         // always points.
         idx >= self.script_location_count
-            && (idx - self.script_location_count) < self.computed_locations.len()
+            && (idx - self.script_location_count) < self.script_state.computed_locations.len()
     }
 
     /// Resolve a location handle to its (x, y) position.
     /// Handles 1..=script_location_count are static locations from level data.
     /// Handles beyond that are dynamically computed by script natives.
     fn resolve_location_pos(&self, handle: i32) -> Option<(f32, f32)> {
-        let idx = Self::location_index(handle)?;
+        let idx = GameHost::location_index(handle)?;
         if idx < self.script_location_count {
             self.location_positions.get(idx).copied()
         } else {
             let computed_idx = idx - self.script_location_count;
-            self.computed_locations.get(computed_idx).copied()
+            self.script_state
+                .computed_locations
+                .get(computed_idx)
+                .map(|location| location.position)
         }
     }
 
@@ -2572,7 +2576,7 @@ impl GameHost {
     /// These reads back the `RecordEnterGame` layer/sector pickup and
     /// the `SetActorLocation` sector refresh.
     fn resolve_location_layer_sector(&self, handle: i32) -> Option<(u16, u16)> {
-        let idx = Self::location_index(handle)?;
+        let idx = GameHost::location_index(handle)?;
         if idx < self.script_location_count {
             return Some((
                 *self.location_layers.get(idx)?,
@@ -2580,7 +2584,10 @@ impl GameHost {
             ));
         }
         let computed_idx = idx - self.script_location_count;
-        self.computed_location_layers.get(computed_idx).copied()?
+        self.script_state
+            .computed_locations
+            .get(computed_idx)?
+            .layer_sector
     }
 
     /// Create a new dynamic location at (x, y) and return its script handle.
@@ -2592,10 +2599,14 @@ impl GameHost {
         y: f32,
         layer_sector: Option<(u16, u16)>,
     ) -> i32 {
-        self.computed_locations.push((x, y));
-        self.computed_location_layers.push(layer_sector);
-        Self::location_handle_from_index(
-            self.script_location_count + self.computed_locations.len() - 1,
+        self.script_state
+            .computed_locations
+            .push(ComputedScriptLocation {
+                position: (x, y),
+                layer_sector,
+            });
+        GameHost::location_handle_from_index(
+            self.script_location_count + self.script_state.computed_locations.len() - 1,
         )
     }
 
@@ -2610,7 +2621,7 @@ impl GameHost {
             return 0;
         }
         if idx >= 0 && (idx as usize) < count {
-            return Self::make_script_handle(tag, idx as usize);
+            return GameHost::make_script_handle(tag, idx as usize);
         }
         tracing::error!("Script Error: invalid {kind} ID {idx} (max={count})");
         0
@@ -2778,7 +2789,7 @@ impl GameHost {
     }
 }
 
-impl GameHost {
+impl NativeContext<'_> {
     fn call_immediate(&mut self, index: u32, stack: &mut NativeStack) -> i32 {
         use NativeFn::*;
 
@@ -2794,7 +2805,7 @@ impl GameHost {
                 InitGlobal => {
                     let value = stack.pop_i32();
                     let id = stack.pop_i32();
-                    self.globals.insert(id, value);
+                    self.script_state.globals.insert(id, value);
                     0
                 }
                 SetGlobal => {
@@ -2804,7 +2815,7 @@ impl GameHost {
                     // first; SetGlobal on an un-init'd id warns and
                     // no-ops.
                     if let std::collections::btree_map::Entry::Occupied(mut e) =
-                        self.globals.entry(id)
+                        self.script_state.globals.entry(id)
                     {
                         e.insert(value);
                     } else {
@@ -2815,7 +2826,7 @@ impl GameHost {
                 GetGlobal => {
                     let id = stack.pop_i32();
                     // Returns -1 with a warning on an un-init'd id.
-                    match self.globals.get(&id) {
+                    match self.script_state.globals.get(&id) {
                         Some(v) => *v,
                         None => {
                             tracing::warn!("Script Error: Non-valid ID for script global {id}");
@@ -2829,14 +2840,15 @@ impl GameHost {
                     // If a recording is already active, warn and
                     // return 0 *without mutating state*; otherwise
                     // allocate, set sequence_level = 1, return 1.
-                    if self.recording.is_some() {
+                    if self.script_state.sequence_recorder.recording.is_some() {
                         tracing::error!(
                             "Script error in Start: cannot start a new record sequence while another is still being recorded"
                         );
                         0
                     } else {
-                        self.recording = Some(RecordingSession::new());
-                        self.sequence_id = 1;
+                        self.script_state.sequence_recorder.recording =
+                            Some(RecordingSession::new());
+                        self.script_state.sequence_recorder.sequence_id = 1;
                         1
                     }
                 }
@@ -2844,7 +2856,7 @@ impl GameHost {
                     // Errors out on "no active recording" (false) and
                     // on "empty recording" (false).  Happy path
                     // launches the sequence and returns true.
-                    if let Some(rec) = self.recording.take() {
+                    if let Some(rec) = self.script_state.sequence_recorder.recording.take() {
                         match rec.finalize() {
                             Some(seq) => {
                                 self.completed_sequences.push(seq);
@@ -2867,9 +2879,9 @@ impl GameHost {
                     // < 1), warn and return 0 *without mutating
                     // state*; else advance the level and return the
                     // current sequence level.
-                    if let Some(rec) = &mut self.recording {
+                    if let Some(rec) = &mut self.script_state.sequence_recorder.recording {
                         let level = rec.advance_level();
-                        self.sequence_id = level as i32;
+                        self.script_state.sequence_recorder.sequence_id = level as i32;
                         level as i32
                     } else {
                         tracing::error!(
@@ -3886,6 +3898,8 @@ impl GameHost {
                         self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
                     let action = Self::movement_style(style);
                     let pre_record_size = self
+                        .script_state
+                        .sequence_recorder
                         .recording
                         .as_ref()
                         .map(|r| r.current_size())
@@ -3911,7 +3925,7 @@ impl GameHost {
                     // NONINTERRUPTABLE walks bump every just-added
                     // element to Script priority.
                     if matches!(style, 2 | 3)
-                        && let Some(rec) = self.recording.as_mut()
+                        && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut()
                     {
                         rec.bump_priority_from(
                             pre_record_size,
@@ -3951,6 +3965,8 @@ impl GameHost {
                         self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
                     let action = Self::movement_style(style);
                     let pre_record_size = self
+                        .script_state
+                        .sequence_recorder
                         .recording
                         .as_ref()
                         .map(|r| r.current_size())
@@ -3976,7 +3992,7 @@ impl GameHost {
                     // just-added element to Preference priority (one
                     // rung weaker than RecordMove's Script).
                     if matches!(style, 2 | 3)
-                        && let Some(rec) = self.recording.as_mut()
+                        && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut()
                     {
                         rec.bump_priority_from(
                             pre_record_size,
@@ -4050,6 +4066,8 @@ impl GameHost {
                     );
                     let action = Self::movement_style(style);
                     let pre_record_size = self
+                        .script_state
+                        .sequence_recorder
                         .recording
                         .as_ref()
                         .map(|r| r.current_size())
@@ -4076,7 +4094,7 @@ impl GameHost {
                     // Apply the same NONINTERRUPTABLE bump the inner
                     // RecordMove would apply.
                     if matches!(style, 2 | 3)
-                        && let Some(rec) = self.recording.as_mut()
+                        && let Some(rec) = self.script_state.sequence_recorder.recording.as_mut()
                     {
                         rec.bump_priority_from(
                             pre_record_size,
@@ -4137,6 +4155,8 @@ impl GameHost {
                     // calls for the same actor only update the
                     // bookkeeping target.
                     let already_moving = self
+                        .script_state
+                        .sequence_recorder
                         .recording
                         .as_ref()
                         .is_some_and(|r| r.moving_actors.contains_key(&actor));
@@ -4190,7 +4210,7 @@ impl GameHost {
 
                     // Always refresh the cached destination on both
                     // the insert and update paths.
-                    if let Some(rec) = self.recording.as_mut() {
+                    if let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
                         let (layer, sector) = dest_layer_sector.unwrap_or((0, 0));
                         rec.moving_actors.insert(
                             actor,
@@ -4308,7 +4328,7 @@ impl GameHost {
                     // Insert the two moves at adjacent sequence
                     // levels so they execute sequentially rather
                     // than concurrently.
-                    if let Some(rec) = self.recording.as_mut() {
+                    if let Some(rec) = self.script_state.sequence_recorder.recording.as_mut() {
                         rec.advance_level();
                     }
 
@@ -8452,7 +8472,7 @@ impl GameHost {
     }
 }
 
-impl HostFunctions for GameHost {
+impl HostFunctions for NativeContext<'_> {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
         if index == NativeFn::PrototypeFilterEvent as u32 {
             // The VM must yield before the outer script can observe a return
@@ -8475,5 +8495,36 @@ impl HostFunctions for GameHost {
         }
 
         NativeCallOutcome::Return(self.call_immediate(index, stack))
+    }
+}
+
+#[cfg(test)]
+impl HostFunctions for GameHost {
+    fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        // Keep old low-level native fixtures concise without restoring script
+        // state to the production GameHost shape.
+        let mut state = std::mem::take(&mut self.test_script_state);
+        let result = NativeContext::new(self, &mut state).call(index, stack);
+        self.test_script_state = state;
+        result
+    }
+}
+
+#[cfg(test)]
+impl GameHost {
+    fn door_index_for_goal_sector(
+        &self,
+        goal_sector: u16,
+        goal: (f32, f32),
+    ) -> Option<crate::gate::DoorIndex> {
+        self.doors.iter().enumerate().find_map(|(idx, door)| {
+            let matches_endpoint = door.sector_out == goal_sector || door.sector_in == goal_sector;
+            let matches_click_sector = door.click_polygon_contains(goal.0, goal.1);
+            (matches_endpoint || matches_click_sector).then_some(crate::gate::DoorIndex(idx as u32))
+        })
+    }
+
+    fn compute_border_point(&self, inside: (f32, f32), direction: i16) -> ((f32, f32), (f32, f32)) {
+        compute_border_point_bbox(self.map_bbox, inside, direction)
     }
 }

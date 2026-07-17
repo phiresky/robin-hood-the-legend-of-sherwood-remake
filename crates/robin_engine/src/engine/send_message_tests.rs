@@ -243,7 +243,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
             .mission_script
             .as_ref()
             .expect("script installed")
-            .game_host
+            .state
             .globals
             .get(&900),
         Some(&72),

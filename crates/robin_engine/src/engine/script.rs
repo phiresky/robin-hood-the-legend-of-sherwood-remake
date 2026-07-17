@@ -1052,6 +1052,7 @@ impl EngineInner {
             // ── Phase 2: Global StartUp::Initialize(seed) ──
             let startup_result = MissionScript::with_game_host_attached(
                 &mut script.game_host,
+                &mut script.state,
                 &mut script.instance,
                 |instance, host| {
                     instance.push_param(seed);
@@ -1442,6 +1443,7 @@ impl EngineInner {
 
             MissionScript::with_game_host_attached(
                 &mut script.game_host,
+                &mut script.state,
                 &mut zone_inst,
                 |zone_inst, host| {
                     if zone_inst.has_function(&script.manager, "Initialize") {
@@ -2019,6 +2021,7 @@ impl EngineInner {
                 {
                     let result = MissionScript::with_game_host_attached(
                         &mut script.game_host,
+                        &mut script.state,
                         &mut script.instance,
                         |instance, host| {
                             instance.push_param(msg);
@@ -3302,6 +3305,111 @@ mod script_context_tests {
     }
 
     #[test]
+    fn mission_script_v2_snapshot_round_trips_state_and_reattaches_program() {
+        let mut script = empty_mission_script();
+        script.state.globals.insert(7, 91);
+        script
+            .state
+            .computed_locations
+            .push(crate::natives::ComputedScriptLocation {
+                position: (12.5, -8.0),
+                layer_sector: Some((2, 44)),
+            });
+        script.state.sequence_recorder.sequence_id = 3;
+        script.state.sequence_recorder.recording = Some(crate::sequence::RecordingSession::new());
+
+        let hash_before = robin_util::state_hash::compute(&script);
+        let program = script.manager.program.clone();
+        let json = serde_json::to_string(&script).expect("serialize v2 MissionScript");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("parse snapshot JSON");
+        assert_eq!(value["snapshot_version"], 2);
+        assert!(value["game_host"].get("globals").is_none());
+        assert!(value["game_host"].get("computed_locations").is_none());
+        assert!(value["game_host"].get("recording").is_none());
+
+        let mut decoded: MissionScript =
+            serde_json::from_str(&json).expect("deserialize v2 MissionScript");
+        decoded.attach_program(program);
+        assert_eq!(decoded.state.globals.get(&7), Some(&91));
+        assert_eq!(decoded.state.computed_locations.len(), 1);
+        assert!(decoded.state.sequence_recorder.recording.is_some());
+        assert_eq!(robin_util::state_hash::compute(&decoded), hash_before);
+    }
+
+    #[test]
+    fn legacy_game_host_script_state_normalizes_once() {
+        let mut script = empty_mission_script();
+        script.state.globals.insert(4, 55);
+        script
+            .state
+            .computed_locations
+            .push(crate::natives::ComputedScriptLocation {
+                position: (1.25, 9.5),
+                layer_sector: Some((3, 12)),
+            });
+        script.state.sequence_recorder.sequence_id = 2;
+
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        let root = snapshot.as_object_mut().expect("MissionScript JSON object");
+        root.remove("snapshot_version");
+        let state = root.remove("state").expect("current ScriptState field");
+        let state = state.as_object().expect("ScriptState object");
+        let computed = state["computed_locations"]
+            .as_array()
+            .expect("computed location array");
+        let positions = computed
+            .iter()
+            .map(|location| location["position"].clone())
+            .collect();
+        let layers = computed
+            .iter()
+            .map(|location| location["layer_sector"].clone())
+            .collect();
+        let recorder = state["sequence_recorder"]
+            .as_object()
+            .expect("sequence recorder object");
+        let host = root["game_host"].as_object_mut().expect("GameHost object");
+        host.insert("globals".into(), state["globals"].clone());
+        host.insert(
+            "computed_locations".into(),
+            serde_json::Value::Array(positions),
+        );
+        host.insert(
+            "computed_location_layers".into(),
+            serde_json::Value::Array(layers),
+        );
+        host.insert("recording".into(), recorder["recording"].clone());
+        host.insert("sequence_id".into(), recorder["sequence_id"].clone());
+
+        let decoded: MissionScript =
+            serde_json::from_value(snapshot).expect("normalize legacy MissionScript");
+        assert_eq!(decoded.state.globals.get(&4), Some(&55));
+        assert_eq!(decoded.state.computed_locations[0].position, (1.25, 9.5));
+        assert_eq!(
+            decoded.state.computed_locations[0].layer_sector,
+            Some((3, 12))
+        );
+        assert_eq!(decoded.state.sequence_recorder.sequence_id, 2);
+    }
+
+    #[test]
+    fn contradictory_new_and_legacy_script_state_is_rejected() {
+        let script = empty_mission_script();
+        let mut snapshot = serde_json::to_value(&script).expect("serialize current snapshot");
+        let root = snapshot.as_object_mut().expect("MissionScript JSON object");
+        let host = root["game_host"].as_object_mut().expect("GameHost object");
+        host.insert("globals".into(), serde_json::json!({"9": 1}));
+        host.insert("computed_locations".into(), serde_json::json!([]));
+        host.insert("computed_location_layers".into(), serde_json::json!([]));
+        host.insert("recording".into(), serde_json::Value::Null);
+        host.insert("sequence_id".into(), serde_json::json!(0));
+
+        let error = serde_json::from_value::<MissionScript>(snapshot)
+            .expect_err("contradictory ScriptState must fail");
+        assert!(error.to_string().contains("contradictory"), "{error}");
+    }
+
+    #[test]
     fn external_this_actor_success_restores_callback_and_parked_state() {
         let mut engine = EngineInner::new();
         let mut script = empty_mission_script();
@@ -3594,15 +3702,13 @@ impl EngineInner {
                 &mut self.mission_stat,
                 this_actor,
             );
-            let game_host = context.game_host_mut();
             let mut stack = NativeStack::default();
             for &a in args {
                 stack.push_i32(a);
             }
 
-            match <crate::natives::GameHost as crate::interp::HostFunctions>::call(
-                game_host, index, &mut stack,
-            ) {
+            let mut native_context = context.native_context_mut();
+            match crate::interp::HostFunctions::call(&mut native_context, index, &mut stack) {
                 crate::interp::NativeCallOutcome::Return(value) => value,
                 crate::interp::NativeCallOutcome::PendingNestedCall(call) => {
                     return Err(format!(

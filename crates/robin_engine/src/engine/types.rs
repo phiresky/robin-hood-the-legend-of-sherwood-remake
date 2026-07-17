@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::coordinates::{MapPoint, MapSize, MapVec, ScreenPoint};
-use crate::natives::GameHost;
+use crate::natives::{GameHost, NativeContext, ScriptState};
 use crate::script_manager::{ScriptInstance, ScriptManager};
 
 use super::{
@@ -1003,12 +1003,16 @@ pub struct PendingJumpGate {
 ///
 /// One global engine-script instance plus one per-actor instance, each
 /// with its own persistent heap.
-#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Clone, robin_state_hash_derive::StateHash)]
 pub struct MissionScript {
     /// Mission base filename used to reattach immutable bytecode from
     /// [`LevelAssets`] after snapshot deserialization.
     pub script_name: String,
     pub manager: ScriptManager,
+    /// Persistent state belonging to the script subsystem. This is separate
+    /// from `game_host`, which is only the transitional adapter for canonical
+    /// engine state that has not yet moved to borrowed native capabilities.
+    pub state: ScriptState,
     /// Concrete script-native state. VMs borrow this through their
     /// transient trait-object host field only while a script call is
     /// executing, so snapshots keep the real state instead of losing it
@@ -1052,7 +1056,6 @@ pub struct MissionScript {
     /// waypoint (dispatched from `execute_waypoint_script`). Each
     /// waypoint is its own VM instance so the heap persists across
     /// traversals.
-    #[serde(with = "serde_json_any_key::any_key_map_sized")]
     pub waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
 
     /// Has the script's `PostInitialize` entry point run yet?  The host's
@@ -1065,9 +1068,191 @@ pub struct MissionScript {
     /// legacy paired swap API.  This is a transient ownership token, not
     /// simulation state: snapshots are only valid between script calls, when
     /// the campaign is back on `EngineInner` and this is `None`.
-    #[serde(skip)]
     #[state_hash(skip)]
     campaign_lease: Option<CampaignIdentity>,
+}
+
+const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 2;
+
+#[derive(Serialize)]
+struct MissionScriptSnapshotRef<'a> {
+    snapshot_version: u8,
+    script_name: &'a str,
+    manager: &'a ScriptManager,
+    state: &'a ScriptState,
+    game_host: &'a GameHost,
+    instance: &'a ScriptInstance,
+    actor_instances: &'a BTreeMap<i32, ScriptInstance>,
+    zone_instances: &'a BTreeMap<usize, ScriptInstance>,
+    target_instances: &'a BTreeMap<i32, ScriptInstance>,
+    scroll_instances: &'a BTreeMap<i32, ScriptInstance>,
+    #[serde(with = "serde_json_any_key::any_key_map_sized")]
+    waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
+    post_initialized: bool,
+}
+
+impl Serialize for MissionScript {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        MissionScriptSnapshotRef {
+            snapshot_version: MISSION_SCRIPT_SNAPSHOT_VERSION,
+            script_name: &self.script_name,
+            manager: &self.manager,
+            state: &self.state,
+            game_host: &self.game_host,
+            instance: &self.instance,
+            actor_instances: &self.actor_instances,
+            zone_instances: &self.zone_instances,
+            target_instances: &self.target_instances,
+            scroll_instances: &self.scroll_instances,
+            waypoint_instances: self.waypoint_instances.clone(),
+            post_initialized: self.post_initialized,
+        }
+        .serialize(serializer)
+    }
+}
+
+#[derive(Deserialize)]
+struct MissionScriptSnapshot {
+    snapshot_version: Option<u8>,
+    script_name: String,
+    manager: ScriptManager,
+    state: Option<ScriptState>,
+    game_host: CompatibleGameHost,
+    instance: ScriptInstance,
+    actor_instances: BTreeMap<i32, ScriptInstance>,
+    zone_instances: BTreeMap<usize, ScriptInstance>,
+    target_instances: BTreeMap<i32, ScriptInstance>,
+    scroll_instances: BTreeMap<i32, ScriptInstance>,
+    #[serde(with = "serde_json_any_key::any_key_map")]
+    waypoint_instances: BTreeMap<(crate::ai::PathId, u8), ScriptInstance>,
+    post_initialized: bool,
+}
+
+/// One-shot compatibility shape for snapshots written before ScriptState had
+/// its own owner. Optional legacy members preserve the distinction between a
+/// genuinely empty value and a missing field; normalization below validates
+/// every combination instead of defaulting through contradictions.
+#[derive(Deserialize)]
+struct CompatibleGameHost {
+    #[serde(flatten)]
+    current: GameHost,
+    globals: Option<BTreeMap<i32, i32>>,
+    computed_locations: Option<Vec<(f32, f32)>>,
+    computed_location_layers: Option<Vec<Option<(u16, u16)>>>,
+    recording: Option<crate::sequence::RecordingSession>,
+    sequence_id: Option<i32>,
+}
+
+impl CompatibleGameHost {
+    fn legacy_state<E: serde::de::Error>(&self) -> Result<Option<ScriptState>, E> {
+        let fields_present = [
+            self.globals.is_some(),
+            self.computed_locations.is_some(),
+            self.computed_location_layers.is_some(),
+            self.sequence_id.is_some(),
+        ];
+        if !fields_present.iter().any(|present| *present) && self.recording.is_none() {
+            return Ok(None);
+        }
+        if !fields_present.iter().all(|present| *present) {
+            return Err(E::custom(
+                "legacy MissionScript GameHost has an incomplete ScriptState field set",
+            ));
+        }
+
+        let positions = self.computed_locations.as_ref().expect("validated above");
+        let layers = self
+            .computed_location_layers
+            .as_ref()
+            .expect("validated above");
+        if positions.len() != layers.len() {
+            return Err(E::custom(format!(
+                "legacy computed-location arrays disagree in length: {} positions, {} layer entries",
+                positions.len(),
+                layers.len()
+            )));
+        }
+
+        Ok(Some(ScriptState {
+            globals: self.globals.clone().expect("validated above"),
+            computed_locations: positions
+                .iter()
+                .copied()
+                .zip(layers.iter().copied())
+                .map(
+                    |(position, layer_sector)| crate::natives::ComputedScriptLocation {
+                        position,
+                        layer_sector,
+                    },
+                )
+                .collect(),
+            sequence_recorder: crate::natives::SequenceRecorderState {
+                recording: self.recording.clone(),
+                sequence_id: self.sequence_id.expect("validated above"),
+            },
+        }))
+    }
+}
+
+impl<'de> Deserialize<'de> for MissionScript {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let snapshot = MissionScriptSnapshot::deserialize(deserializer)?;
+        let legacy_state = snapshot.game_host.legacy_state::<D::Error>()?;
+        let state = match snapshot.snapshot_version {
+            None => {
+                if snapshot.state.is_some() {
+                    return Err(serde::de::Error::custom(
+                        "unversioned MissionScript snapshot unexpectedly contains new ScriptState",
+                    ));
+                }
+                legacy_state.ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "unversioned MissionScript snapshot is missing legacy ScriptState fields",
+                    )
+                })?
+            }
+            Some(MISSION_SCRIPT_SNAPSHOT_VERSION) => {
+                let state = snapshot.state.ok_or_else(|| {
+                    serde::de::Error::custom("v2 MissionScript snapshot is missing ScriptState")
+                })?;
+                if let Some(legacy) = legacy_state
+                    && serde_json::to_value(&legacy).map_err(serde::de::Error::custom)?
+                        != serde_json::to_value(&state).map_err(serde::de::Error::custom)?
+                {
+                    return Err(serde::de::Error::custom(
+                        "MissionScript snapshot contains contradictory new and legacy ScriptState",
+                    ));
+                }
+                state
+            }
+            Some(other) => {
+                return Err(serde::de::Error::custom(format!(
+                    "unsupported MissionScript snapshot version {other}"
+                )));
+            }
+        };
+
+        Ok(Self {
+            script_name: snapshot.script_name,
+            manager: snapshot.manager,
+            state,
+            game_host: snapshot.game_host.current,
+            instance: snapshot.instance,
+            actor_instances: snapshot.actor_instances,
+            zone_instances: snapshot.zone_instances,
+            target_instances: snapshot.target_instances,
+            scroll_instances: snapshot.scroll_instances,
+            waypoint_instances: snapshot.waypoint_instances,
+            post_initialized: snapshot.post_initialized,
+            campaign_lease: None,
+        })
+    }
 }
 
 /// Allocation identity of the campaign singleton while it crosses the
@@ -1210,6 +1395,7 @@ impl MissionScript {
         Ok(Self {
             script_name,
             manager,
+            state: ScriptState::default(),
             game_host: GameHost::new(),
             instance,
             actor_instances: BTreeMap::new(),
@@ -1231,10 +1417,12 @@ impl MissionScript {
 
     pub(crate) fn with_game_host_attached<R>(
         game_host: &mut GameHost,
+        state: &mut ScriptState,
         inst: &mut ScriptInstance,
-        f: impl FnOnce(&mut ScriptInstance, &mut GameHost) -> R,
+        f: impl FnOnce(&mut ScriptInstance, &mut NativeContext<'_>) -> R,
     ) -> R {
-        f(inst, game_host)
+        let mut context = NativeContext::new(game_host, state);
+        f(inst, &mut context)
     }
 
     /// Bind a script class to an entity handle, creating a persistent
@@ -1285,29 +1473,40 @@ impl MissionScript {
         let mut inst = self.manager.create_instance_idx(class_idx);
 
         self.game_host.script_this = handle;
-        Self::with_game_host_attached(&mut self.game_host, &mut inst, |inst, host| {
-            if inst.has_function(&self.manager, "Initialize") {
-                match inst.call_function_limited_with_host(
-                    &mut self.manager,
-                    "Initialize",
-                    10_000,
-                    host,
-                ) {
-                    Ok(ret) => {
-                        tracing::debug!("{:?} Init {class_name} (handle {handle}) → {ret}", kind)
-                    }
-                    Err(crate::script_manager::ScriptError::Vm(
-                        crate::interp::StopReason::StepLimit,
-                    )) => tracing::debug!(
-                        "{:?} Init {class_name} (handle {handle}) hit step limit",
-                        kind
-                    ),
-                    Err(e) => {
-                        tracing::warn!("{:?} Init {class_name} (handle {handle}) failed: {e}", kind)
+        Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            &mut inst,
+            |inst, host| {
+                if inst.has_function(&self.manager, "Initialize") {
+                    match inst.call_function_limited_with_host(
+                        &mut self.manager,
+                        "Initialize",
+                        10_000,
+                        host,
+                    ) {
+                        Ok(ret) => {
+                            tracing::debug!(
+                                "{:?} Init {class_name} (handle {handle}) → {ret}",
+                                kind
+                            )
+                        }
+                        Err(crate::script_manager::ScriptError::Vm(
+                            crate::interp::StopReason::StepLimit,
+                        )) => tracing::debug!(
+                            "{:?} Init {class_name} (handle {handle}) hit step limit",
+                            kind
+                        ),
+                        Err(e) => {
+                            tracing::warn!(
+                                "{:?} Init {class_name} (handle {handle}) failed: {e}",
+                                kind
+                            )
+                        }
                     }
                 }
-            }
-        });
+            },
+        );
         self.game_host.script_this = 0;
 
         match kind {
@@ -1433,11 +1632,12 @@ impl MissionScript {
                     .actor_instances
                     .get_mut(&handle)
                     .expect("actor instance vanished mid-run");
+                let mut context = NativeContext::new(&mut self.game_host, &mut self.state);
                 actor_inst.resume_run_with_host(
                     &mut self.manager,
                     10_000_000,
                     outer_fn_name,
-                    &mut self.game_host,
+                    &mut context,
                 )
             };
             match stop {
@@ -1552,13 +1752,17 @@ impl MissionScript {
             return Ok(0);
         }
 
-        let result =
-            Self::with_game_host_attached(&mut self.game_host, zone_inst, |zone_inst, host| {
+        let result = Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            zone_inst,
+            |zone_inst, host| {
                 for &p in params {
                     zone_inst.push_param(p);
                 }
                 zone_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            });
+            },
+        );
 
         match result {
             Ok(v) => Ok(v),
@@ -1593,13 +1797,17 @@ impl MissionScript {
             return Ok(0);
         }
         self.game_host.script_this = target_handle;
-        let result =
-            Self::with_game_host_attached(&mut self.game_host, target_inst, |target_inst, host| {
+        let result = Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            target_inst,
+            |target_inst, host| {
                 for &p in params {
                     target_inst.push_param(p);
                 }
                 target_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            });
+            },
+        );
         self.game_host.script_this = 0;
         match result {
             Ok(v) => Ok(v),
@@ -1639,13 +1847,17 @@ impl MissionScript {
         }
         self.game_host.script_this = scroll_handle;
         self.game_host.current_scroll = scroll_handle;
-        let result =
-            Self::with_game_host_attached(&mut self.game_host, scroll_inst, |scroll_inst, host| {
+        let result = Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            scroll_inst,
+            |scroll_inst, host| {
                 for &p in params {
                     scroll_inst.push_param(p);
                 }
                 scroll_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            });
+            },
+        );
         self.game_host.script_this = 0;
         self.game_host.current_scroll = 0;
         match result {
@@ -1686,36 +1898,41 @@ impl MissionScript {
 
         // Waypoints aren't entities so no `script_this` is installed;
         // Initialize doesn't push an actor either (only ReachPoint does).
-        Self::with_game_host_attached(&mut self.game_host, &mut inst, |inst, host| {
-            if inst.has_function(&self.manager, "Initialize") {
-                match inst.call_function_limited_with_host(
-                    &mut self.manager,
-                    "Initialize",
-                    10_000,
-                    host,
-                ) {
-                    Ok(ret) => tracing::debug!(
-                        "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) → {ret}"
-                    ),
-                    Err(crate::script_manager::ScriptError::Vm(
-                        crate::interp::StopReason::StepLimit,
-                    )) => tracing::debug!(
-                        "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) hit step limit"
-                    ),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
-                        );
-                        // A bound waypoint class failing its own
-                        // `Initialize` is a logic bug.
-                        debug_assert!(
-                            false,
-                            "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
-                        );
+        Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            &mut inst,
+            |inst, host| {
+                if inst.has_function(&self.manager, "Initialize") {
+                    match inst.call_function_limited_with_host(
+                        &mut self.manager,
+                        "Initialize",
+                        10_000,
+                        host,
+                    ) {
+                        Ok(ret) => tracing::debug!(
+                            "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) → {ret}"
+                        ),
+                        Err(crate::script_manager::ScriptError::Vm(
+                            crate::interp::StopReason::StepLimit,
+                        )) => tracing::debug!(
+                            "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) hit step limit"
+                        ),
+                        Err(e) => {
+                            tracing::warn!(
+                                "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
+                            );
+                            // A bound waypoint class failing its own
+                            // `Initialize` is a logic bug.
+                            debug_assert!(
+                                false,
+                                "Waypoint Init {class_name} (path {path_idx}, wp {wp_idx}) failed: {e}"
+                            );
+                        }
                     }
                 }
-            }
-        });
+            },
+        );
         self.waypoint_instances.insert((path_idx, wp_idx), inst);
         true
     }
@@ -1745,13 +1962,17 @@ impl MissionScript {
         if !wp_inst.has_function(&self.manager, fn_name) {
             return Ok(0);
         }
-        let result =
-            Self::with_game_host_attached(&mut self.game_host, wp_inst, |wp_inst, host| {
+        let result = Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            wp_inst,
+            |wp_inst, host| {
                 for &p in params {
                     wp_inst.push_param(p);
                 }
                 wp_inst.call_function_with_host(&mut self.manager, fn_name, host)
-            });
+            },
+        );
         match result {
             Ok(v) => Ok(v),
             Err(crate::script_manager::ScriptError::Vm(crate::interp::StopReason::StepLimit)) => {
@@ -1815,6 +2036,7 @@ impl MissionScript {
     ) -> ScriptContext<'a> {
         ScriptContext::new(
             &mut self.game_host,
+            &mut self.state,
             entities,
             ai_global,
             fast_grid,
@@ -1826,37 +2048,52 @@ impl MissionScript {
 
     /// Call the script's `Hourglass` function (once per game-second).
     pub(crate) fn hourglass(&mut self, game_seconds: u32) -> Result<i32, String> {
-        Self::with_game_host_attached(&mut self.game_host, &mut self.instance, |instance, host| {
-            instance.push_param(game_seconds as i32);
-            instance
-                .call_function_with_host(&mut self.manager, "Hourglass", host)
-                .map_err(|e| format!("Script Hourglass failed: {e}"))
-        })
+        Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            &mut self.instance,
+            |instance, host| {
+                instance.push_param(game_seconds as i32);
+                instance
+                    .call_function_with_host(&mut self.manager, "Hourglass", host)
+                    .map_err(|e| format!("Script Hourglass failed: {e}"))
+            },
+        )
     }
 
     /// Call the script's `CheckVictoryCondition` function.
     ///
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat.
     pub(crate) fn check_victory_condition(&mut self, game_seconds: u32) -> Result<i32, String> {
-        Self::with_game_host_attached(&mut self.game_host, &mut self.instance, |instance, host| {
-            instance.push_param(game_seconds as i32);
-            instance
-                .call_function_with_host(&mut self.manager, "CheckVictoryCondition", host)
-                .map_err(|e| format!("Script CheckVictoryCondition failed: {e}"))
-        })
+        Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            &mut self.instance,
+            |instance, host| {
+                instance.push_param(game_seconds as i32);
+                instance
+                    .call_function_with_host(&mut self.manager, "CheckVictoryCondition", host)
+                    .map_err(|e| format!("Script CheckVictoryCondition failed: {e}"))
+            },
+        )
     }
 
     /// Call the script's `Finalize` function.
     ///
     /// `abandoned` is true if the player quit, false if won/lost normally.
     pub(crate) fn finalize(&mut self, abandoned: bool) -> Result<(), String> {
-        Self::with_game_host_attached(&mut self.game_host, &mut self.instance, |instance, host| {
-            instance.push_param(if abandoned { 1 } else { 0 });
-            instance
-                .call_function_with_host(&mut self.manager, "Finalize", host)
-                .map(|_| ())
-                .map_err(|e| format!("Script Finalize failed: {e}"))
-        })
+        Self::with_game_host_attached(
+            &mut self.game_host,
+            &mut self.state,
+            &mut self.instance,
+            |instance, host| {
+                instance.push_param(if abandoned { 1 } else { 0 });
+                instance
+                    .call_function_with_host(&mut self.manager, "Finalize", host)
+                    .map(|_| ())
+                    .map_err(|e| format!("Script Finalize failed: {e}"))
+            },
+        )
     }
 
     /// Call the script's `PostInitialize` function, if it exists.
@@ -1864,6 +2101,7 @@ impl MissionScript {
         if self.instance.has_function(&self.manager, "PostInitialize") {
             Self::with_game_host_attached(
                 &mut self.game_host,
+                &mut self.state,
                 &mut self.instance,
                 |instance, host| {
                     instance
@@ -1909,6 +2147,7 @@ impl MissionScript {
 #[must_use = "dropping the script context restores the borrowed engine state"]
 pub(crate) struct ScriptContext<'a> {
     game_host: &'a mut GameHost,
+    script_state: &'a mut ScriptState,
     entities: &'a mut crate::entities::Entities,
     ai_global: &'a mut crate::ai::AiGlobalState,
     fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
@@ -1921,6 +2160,7 @@ pub(crate) struct ScriptContext<'a> {
 impl<'a> ScriptContext<'a> {
     fn new(
         game_host: &'a mut GameHost,
+        script_state: &'a mut ScriptState,
         entities: &'a mut crate::entities::Entities,
         ai_global: &'a mut crate::ai::AiGlobalState,
         fast_grid: &'a mut crate::fast_find_grid::FastFindGrid,
@@ -1939,6 +2179,7 @@ impl<'a> ScriptContext<'a> {
 
         Self {
             game_host,
+            script_state,
             entities,
             ai_global,
             fast_grid,
@@ -1949,8 +2190,13 @@ impl<'a> ScriptContext<'a> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn game_host_mut(&mut self) -> &mut GameHost {
         self.game_host
+    }
+
+    pub(crate) fn native_context_mut(&mut self) -> NativeContext<'_> {
+        NativeContext::new(self.game_host, self.script_state)
     }
 }
 
@@ -1991,8 +2237,10 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut script_state = ScriptState::default();
         let mut context = ScriptContext::new(
             host,
+            &mut script_state,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,
@@ -2101,8 +2349,10 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
+        let mut script_state = ScriptState::default();
         let mut context = ScriptContext::new(
             &mut host,
+            &mut script_state,
             &mut entities,
             &mut ai_global,
             &mut fast_grid,
