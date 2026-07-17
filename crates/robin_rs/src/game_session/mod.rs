@@ -429,6 +429,20 @@ pub(crate) async fn run_mission_headless(
             );
         }
 
+        // Headless has no renderer or audio backend, but it still crosses
+        // the same logical end-of-first-refresh boundary before committing
+        // frame zero.  Keep PostInitialize out of the simulation tick so
+        // replay and interactive play share the original frame ordering.
+        let mut display = std::mem::take(&mut host.engine_display);
+        let _ = crate::sim_timeline::run_post_initialize_stage(
+            &mut host,
+            &mut display,
+            &assets,
+            &mut manager.engine,
+            &mut dev,
+        );
+        host.engine_display = display;
+
         if !manual_pause {
             if let Some(checker) = runtime.rollback_checker.as_mut() {
                 checker.end_frame(&mut host, frame_cmds.clone(), &manager.engine);
@@ -927,9 +941,10 @@ pub(crate) async fn run_mission(
 
     // ── Spellforge Lua: post-level-load events ──
     //
-    // The engine just finished its `.scb` Initialize / PostInitialize
-    // path inside `load_level_and_sprite_bank`. If a custom mission
-    // shipped a `.lua` companion, fire the matching Lua events now —
+    // The engine just finished its `.scb` Initialize path inside
+    // `load_level_and_sprite_bank`; `.scb` PostInitialize remains armed
+    // for the first post-refresh host boundary. If a custom mission
+    // shipped a `.lua` companion, fire its loading events now —
     // the Lua side defines its own globals (entity name tables, AI
     // patrol assignments, etc.) on top of whatever the `.scb` did.
     //
@@ -3151,6 +3166,13 @@ pub(crate) async fn run_mission(
                 false,
                 false,
             );
+            crate::sim_timeline::run_post_initialize_stage(
+                &mut host,
+                &mut display,
+                &assets,
+                &mut manager.engine,
+                &mut dev,
+            );
             host.engine_display = display;
             runtime.rewind_buffer.end_frame(step_frame_cmds);
             manager.sim_frame += 1;
@@ -4034,6 +4056,32 @@ pub(crate) async fn run_mission(
             if game.message_delay == 0 {
                 game.message_text.clear();
             }
+        }
+
+        // Original RHgame.cpp ordering is Refresh (including Draw/Flip),
+        // then RHSound::Hourglass, then the one-shot engine
+        // PostInitialize call.  Rust's sound/render consumers are split in
+        // the opposite host order above, so dispatch only after both have
+        // completed.  Script mutations and emitted sound/UI effects first
+        // become observable on the next frame, matching the original.
+        let mut display = std::mem::take(&mut host.engine_display);
+        let post_initialized = crate::sim_timeline::run_post_initialize_stage(
+            &mut host,
+            &mut display,
+            &assets,
+            &mut manager.engine,
+            &mut dev,
+        );
+        host.engine_display = display;
+        if post_initialized
+            && let Some(net) = host.net.as_ref()
+            && host.local_seat == engine_player_command::PlayerId::HOST
+        {
+            // The initial authoritative snapshot is published once before
+            // presentation bookkeeping. Replace it with the completed
+            // post-refresh state so joiners start from the same frame-one
+            // boundary as live and rollback replay.
+            net.set_initial_snapshot(manager.sim_frame, &manager.engine);
         }
 
         // ── Frame timing (25 fps) ──
