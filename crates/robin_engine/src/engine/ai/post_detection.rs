@@ -143,7 +143,7 @@ impl EngineInner {
     /// `Think(EVENT_TIMER)`. Soldiers that enter swordfight receive the
     /// original post-dispatch combat-stance and civilian-panic effects.
     pub(crate) fn tick_ai_normal_timers(&mut self, assets: &LevelAssets) {
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
 
@@ -468,7 +468,7 @@ impl EngineInner {
     /// script-locked. This is the final unlocked phase of
     /// `RHElementActorNPC::Hourglass`, after both timer kinds.
     pub(crate) fn tick_ai_queued_stimuli(&mut self, assets: &LevelAssets) {
-        if self.freeze_all || self.ai_global.freeze {
+        if self.actors_frozen() || self.ai_global.freeze {
             return;
         }
 

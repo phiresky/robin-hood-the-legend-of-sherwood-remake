@@ -58,7 +58,7 @@ impl EngineInner {
     ///   off the purse's `child_coins` list (the empty pouch stays alive
     ///   forever as decoration).
     pub(super) fn tick_purses_and_coins(&mut self, assets: &crate::engine::LevelAssets) {
-        if self.freeze_all {
+        if self.actors_frozen() {
             return;
         }
 
