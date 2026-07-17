@@ -197,8 +197,9 @@ pub fn wasm_boot(datadir_bin: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
     let dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("datadir decode: {e:#}")))?;
     let dd = std::sync::Arc::new(dd);
-    let _ = assets_shipping_datadir::install_global(dd.clone());
-    let _ = robin_util::asset_fs::install_bundle(std::sync::Arc::new(dd.raw.clone()));
+    assets_shipping_datadir::install_global(dd.clone()).map_err(|e| {
+        wasm_bindgen::JsValue::from_str(&format!("install shipping datadir: {e:#}"))
+    })?;
     robin_rs::http_server::start_global(0)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("rpc init: {e}")))?;
 
@@ -215,8 +216,9 @@ pub fn wasm_boot(datadir_bin: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
 /// kept outside `datadir.bin` while Rust keeps a synchronous read API.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn wasm_preload_asset(path: &str, bytes: &[u8]) {
-    robin_util::asset_fs::install_preloaded_asset(path, bytes.to_vec());
+pub fn wasm_preload_asset(path: &str, bytes: &[u8]) -> Result<(), wasm_bindgen::JsValue> {
+    robin_util::asset_fs::install_preloaded_asset(path, bytes.to_vec())
+        .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("preload asset {path}: {e}")))
 }
 
 #[cfg(target_arch = "wasm32")]

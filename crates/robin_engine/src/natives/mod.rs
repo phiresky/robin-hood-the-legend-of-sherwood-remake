@@ -23,7 +23,7 @@
 //!   - 95/96: GetActorLocation/SetActorLocation — entity position ↔ location handle
 //!   - 97/98: IsInside/IsInsideBuilding — zone/building containment checks
 //!   - 103: StopActor — cancels pending sequence elements for the actor
-//!   - 104: Sees — vision check via stimulus queue
+//!   - 104: Sees — synchronous NPC-to-human visibility check
 //!   - 105: EnableViewCone — debug view cone toggle
 //!   - 108: PrototypeFilterEvent — prototype FilterAIEvent dispatch via nested-VM yield/resume
 //!   - 111: God — null handle (sentinel actor)
@@ -56,10 +56,11 @@ mod signatures;
 mod tests;
 
 pub use commands::{DeferredCommand, EngineCommand, ObjectiveChange, SoundCommand};
-pub use defs::{NativeFn, native_name};
+pub use defs::{NativeFn, ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
 pub use signatures::{
-    NATIVE_SIGNATURES, NativeParamSig, NativeSignature, native_signature_by_index,
-    native_signature_by_name,
+    NATIVE_REGISTRY, NATIVE_SIGNATURES, NativeDefinition, NativeNamespace, NativeParamSig,
+    NativeSignature, native_definition_by_index, native_definition_by_name,
+    native_signature_by_index, native_signature_by_name,
 };
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
@@ -171,6 +172,13 @@ pub struct GameHost {
     pub entities: Vec<Option<Entity>>,
     /// Global AI state, swapped in from EngineInner before script execution.
     pub ai_global: AiGlobalState,
+    /// Current mission ambiance, refreshed before each script call so
+    /// synchronous visibility natives use the same light-adjusted radius as
+    /// the engine AI pass.
+    pub ambiance: crate::engine::Ambiance,
+    /// Whether the current mission is a forest level. `Sees` needs this for
+    /// RHElementActorNPC::ComputeVisibility's Royalist 180-degree branch.
+    pub is_forest_level: bool,
     /// FastFindGrid state, swapped in from EngineInner before script execution.
     /// Script-native visibility must use the same `FastFindGrid::is_reachable`
     /// path as engine AI, not a separate obstacle scan.
@@ -459,6 +467,8 @@ impl GameHost {
             verbose: false,
             entities: Vec::new(),
             ai_global: AiGlobalState::default(),
+            ambiance: crate::engine::Ambiance::default(),
+            is_forest_level: false,
             fast_grid: crate::fast_find_grid::FastFindGrid::default(),
             campaign: None,
             profile_manager: StaticArc::new(crate::profiles::ProfileManager::new()),
@@ -1972,24 +1982,17 @@ impl GameHost {
                         {
                             return 0;
                         }
-                        // Ammo lives on the campaign character's PcStatus.
-                        // A live PC without a campaign slot has no source
-                        // for ammo, so warn rather than silently returning 0.
-                        match self
-                            .campaign
+                        // Campaign status is authoritative when present.  A
+                        // live PC still owns actor-local ammo so this native
+                        // works outside campaign mode, as the original
+                        // RHElementActorPC::GetAmmoAmount does.
+                        self.campaign
                             .as_ref()
                             .and_then(|c| c.get_character_by_profile(e.pc.profile_index))
                             .and_then(|idx| self.campaign.as_ref()?.characters.get(idx))
-                        {
-                            Some(desc) => desc.status.get_ammo(Action::Bow) as i32,
-                            None => {
-                                tracing::warn!(
-                                    profile = ?e.pc.profile_index,
-                                    "GetPersistentProperty 'arrows': PC has bow action but no campaign character backing it"
-                                );
-                                0
-                            }
-                        }
+                            .map(|desc| desc.status.get_ammo(Action::Bow))
+                            .or_else(|| e.pc.ammo.get(Action::Bow))
+                            .expect("Bow has a live PC ammo counter") as i32
                     }
                     Entity::Soldier(e) => {
                         if self.soldier_has_bow_profile(e.soldier.soldier_profile_index) {
@@ -2058,7 +2061,9 @@ impl GameHost {
                     .as_ref()
                     .and_then(|c| c.get_character_by_profile(pc.profile_index))
                     .and_then(|idx| self.campaign.as_ref()?.characters.get(idx))
-                    .map_or(0, |desc| desc.status.get_ammo(action) as i32)
+                    .map(|desc| desc.status.get_ammo(action))
+                    .or_else(|| pc.ammo.get(action))
+                    .expect("persistent PC ammo property has a live counter") as i32
             }
             _ => {
                 tracing::warn!("Script Error: GetPersistentProperty invalid property {prop}");
@@ -2185,9 +2190,9 @@ impl GameHost {
             _ => {}
         }
 
-        // For ammo properties (0, 4–11), validate entity type and
-        // update campaign.  Ammo lives in the campaign PcStatus, not on
-        // the live entity.
+        // For ammo properties (0, 4–11), validate the live actor first.
+        // The original calls RHElementActorPC::SetAmmoAmount directly;
+        // campaign persistence is an additional mirror, not a prerequisite.
         let action = match prop {
             0 => Some(Action::Bow),
             4 => Some(Action::Purse),
@@ -2300,87 +2305,88 @@ impl GameHost {
                 return false;
             }
 
-            // Look up campaign character by profile index and update
-            // ammo:
-            //   1. silently drop the write when amount > the maximal
-            //      ammo amount for this action on this profile.
-            //   2. otherwise store + toggle the action's enable/disable
-            //      bit on the live PC entity based on whether the new
-            //      amount is 0.
-            if let Some(campaign) = self.campaign.as_mut()
-                && let Some(char_idx) = campaign.get_character_by_profile(profile_index)
-            {
-                // Maximal ammo reads from the profile and applies
-                // difficulty scaling.
-                let difficulty = crate::player_profile::PlayerProfileManager::global()
-                    .as_ref()
-                    .and_then(|mgr| mgr.get_active())
-                    .map(|p| p.difficulty)
-                    .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
-                let max = self
-                    .profile_manager
-                    .get_character(profile_index)
-                    .map(|p| crate::inventory::max_ammo_for_action(p, action, difficulty))
-                    .unwrap_or(0);
-                let amount_u16 = amount as u16;
-                if max == 0 || amount_u16 > max {
-                    tracing::debug!(
-                        actor,
-                        ?action,
-                        amount,
-                        max,
-                        "SetPersistentProperty: silently rejecting over-cap ammo write"
-                    );
-                    return false;
-                }
-                if let Some(desc) = campaign.characters.get_mut(char_idx) {
-                    desc.status.set_ammo(action, amount_u16);
-                }
-                // Toggle the live PC entity's profile action slot so
-                // the HUD reflects the new ammo. C++ resolves through
-                // GetActionIndex(action); the action enum value is not
-                // the portrait slot.
-                let action_slot = self
-                    .profile_manager
-                    .get_character(profile_index)
-                    .and_then(|p| crate::inventory::find_action_slot(p, action));
-                if let Some(action_slot) = action_slot
-                    && let Some(Entity::Pc(pc)) = self.get_entity_mut(actor)
-                    && action_slot < pc.pc.disabled_actions.len()
-                {
-                    if amount_u16 == 0 {
-                        pc.pc.disabled_actions[action_slot] = true;
-                        if pc.pc.current_action == action {
-                            pc.pc.current_action = Action::NoAction;
-                        }
-                        if pc.pc.saved_action == action {
-                            pc.pc.saved_action = Action::NoAction;
-                        }
-                    } else {
-                        pc.pc.disabled_actions[action_slot] = false;
-                    }
-                }
-                return true;
+            // Maximal ammo reads from the profile and applies difficulty
+            // scaling before either live or campaign state is changed.
+            let difficulty = crate::player_profile::PlayerProfileManager::global()
+                .as_ref()
+                .and_then(|mgr| mgr.get_active())
+                .map(|p| p.difficulty)
+                .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
+            let Some(profile) = self.profile_manager.get_character(profile_index) else {
+                tracing::warn!(
+                    ?profile_index,
+                    "Script Error: SetPersistentProperty PC actor has no character profile"
+                );
+                return false;
+            };
+            let max = crate::inventory::max_ammo_for_action(profile, action, difficulty);
+            let action_slot = crate::inventory::find_action_slot(profile, action);
+            let amount_u16 = amount as u16;
+            if max == 0 || amount_u16 > max {
+                tracing::debug!(
+                    actor,
+                    ?action,
+                    amount,
+                    max,
+                    "SetPersistentProperty: silently rejecting over-cap ammo write"
+                );
+                return false;
             }
-            // No campaign character resolves for this profile.  Ammo
-            // storage is unified onto the campaign character (every
-            // reader — `combat::*`, `tick::*`, the HUD — goes through
-            // `pc_desc.status.get_ammo`), so there's no per-entity
-            // fallback storage.  In normal play this is unobservable:
-            // `Campaign::default()` materialises a `PcDescription` for
-            // every character profile, so `get_character_by_profile`
-            // never misses while a campaign is in scope.  The
-            // remaining gap is the `self.campaign.is_none()` case
-            // (single-mission play outside a campaign), which today
-            // silently drops the write.  Adding per-entity ammo
-            // storage to cover that path would require duplicating
-            // PcStatus on `ActorPc` and threading a new dispatch
-            // through every reader — outside the scope of this audit
-            // fix.
-            tracing::debug!(
-                "SetPersistentProperty: no campaign character for profile {profile_index} (PC outside campaign; live-actor write not modelled — see RHScript-14.md)"
-            );
-            return false;
+
+            if let Some(campaign) = self.campaign.as_mut() {
+                if let Some(char_idx) = campaign.get_character_by_profile(profile_index) {
+                    let Some(desc) = campaign.characters.get_mut(char_idx) else {
+                        tracing::warn!(
+                            char_idx,
+                            ?profile_index,
+                            "SetPersistentProperty: campaign character index is missing"
+                        );
+                        return false;
+                    };
+                    desc.status.set_ammo(action, amount_u16);
+                } else {
+                    // A campaign slot is not required by the original live
+                    // actor call, but a campaign that omits the actor's
+                    // backing description is useful provenance when saves
+                    // are inspected.
+                    tracing::warn!(
+                        ?profile_index,
+                        "SetPersistentProperty: PC has no campaign character; updating live actor only"
+                    );
+                }
+            }
+
+            let Some(Entity::Pc(pc)) = self.get_entity_mut(actor) else {
+                tracing::warn!(
+                    "Script Error: SetPersistentProperty required PC actor {actor} disappeared"
+                );
+                return false;
+            };
+            pc.pc
+                .ammo
+                .set(action, amount_u16)
+                .expect("persistent PC ammo property has a live counter");
+
+            // Toggle the live PC entity's profile action slot so the HUD
+            // reflects the new ammo. C++ resolves through
+            // GetActionIndex(action); the action enum value is not the
+            // portrait slot.
+            if let Some(action_slot) = action_slot
+                && action_slot < pc.pc.disabled_actions.len()
+            {
+                if amount_u16 == 0 {
+                    pc.pc.disabled_actions[action_slot] = true;
+                    if pc.pc.current_action == action {
+                        pc.pc.current_action = Action::NoAction;
+                    }
+                    if pc.pc.saved_action == action {
+                        pc.pc.saved_action = Action::NoAction;
+                    }
+                } else {
+                    pc.pc.disabled_actions[action_slot] = false;
+                }
+            }
+            return true;
         }
 
         tracing::warn!("Script Error: SetPersistentProperty invalid property {prop}");
@@ -5016,7 +5022,12 @@ impl HostFunctions for GameHost {
                 }
 
                 // --- entity type checks ---
+                // Original: original-code/RHScript.cpp, RHScript::ThisActor
+                // returns the callback's pScriptThis verbatim.
                 ThisActor => self.script_this,
+                // Original: original-code/RHScript.cpp,
+                // RHScript::GetNumberOfActorsInEngine returns
+                // marrayElementsScript.Size().
                 GetNumberOfActorsInEngine => self.entities.len() as i32,
                 IsActorAnimation => {
                     let handle = stack.pop_i32();
@@ -5924,12 +5935,6 @@ impl HostFunctions for GameHost {
                     // call gives the right answer regardless of tick
                     // phase.
                     //
-                    // Effective view radius simplification: scripts run
-                    // this synchronous check from the GameHost snapshot,
-                    // which has the LevelGrid but not the mission
-                    // ambiance. The AI tick remains authoritative for
-                    // night/fog-modulated detection accumulation; script
-                    // `Sees` keeps the raw view radius.
                     let target_h = stack.pop_i32();
                     let npc_h = stack.pop_i32();
 
@@ -5968,7 +5973,6 @@ impl HostFunctions for GameHost {
                     // not script or simulation state.
                     let npc_dir = npc_entity.element_data().direction();
                     let npc_layer = npc_entity.element_data().layer();
-                    let npc_blipped = npc_entity.element_data().blipped;
                     let Some(npc_data) = npc_entity.npc_data() else {
                         tracing::warn!(
                             "Script Error: NPC {npc_h} has no NpcData (view parameters missing)."
@@ -5981,28 +5985,25 @@ impl HostFunctions for GameHost {
                     let view_direction = npc_data.view_direction;
                     let viewer_eye_3d = npc_entity
                         .compute_eyes_point(None)
-                        .unwrap_or(npc_entity.element_data().position());
+                        .expect("Sees validated an NPC observer, which must have an eye point");
+                    let viewer_eye = crate::coordinates::MapPoint::from_world_xyz(
+                        viewer_eye_3d.x,
+                        viewer_eye_3d.y,
+                        npc_entity.element_data().position().z,
+                    );
 
                     let viewer_building = self.actor_building.get(&npc_h).copied();
                     let viewer_building_sector = viewer_building
                         .and_then(|h| crate::position_interface::SectorHandle::new(h as u16));
                     let viewer_in_building = viewer_building.is_some();
 
-                    // Blipped NPCs standing outside a building can't
-                    // see PCs.  Same-building branch is handled by
-                    // the in-building short-circuit inside
-                    // `compute_visibility`.
-                    if npc_blipped && !viewer_in_building {
-                        return 0;
-                    }
-
                     // Target side.
                     let tgt_layer = target_entity.element_data().layer();
                     let tgt_posture = target_entity.element_data().posture;
                     let tgt_action_state = target_entity
                         .actor_data()
-                        .map(|a| a.action_state)
-                        .unwrap_or(ActionState::Waiting);
+                        .expect("Sees validated a human target, which must have actor data")
+                        .action_state;
                     let tgt_active = target_entity.element_data().active;
                     let target_building = self.actor_building.get(&target_h).copied();
                     let tgt_building_sector = target_building
@@ -6010,19 +6011,25 @@ impl HostFunctions for GameHost {
                     let tgt_in_building = target_building.is_some();
                     let tgt_unconscious = target_entity
                         .human_data()
-                        .map(|h| h.unconscious)
-                        .unwrap_or(false);
+                        .expect("Sees validated a human target, which must have human data")
+                        .unconscious;
                     let tgt_passing_door = target_entity
                         .actor_data()
-                        .map(|a| a.active_door_pass.is_some())
-                        .unwrap_or(false);
+                        .expect("Sees validated a human target, which must have actor data")
+                        .active_door_pass
+                        .is_some();
                     let tgt_is_pc = matches!(target_entity, Entity::Pc(_));
-                    // Target side of the visibility query: full 3D
-                    // detection point (includes the LeaningOut
-                    // direction × 40 XY shift and lying +2 Z).
+                    // Use the same target-point helper as the authoritative
+                    // AI detection pass. The 3D point supplies only the
+                    // posture-adjusted Z used by the close-range test.
                     let tgt_detection_3d = target_entity
                         .compute_detection_point()
-                        .unwrap_or(target_entity.element_data().position());
+                        .expect("Sees validated a human target, which must have a detection point");
+                    let target_point = crate::stealth::detection_point_xy(
+                        target_entity.element_data().position_map(),
+                        tgt_posture,
+                        target_entity.element_data().direction(),
+                    );
 
                     // Different layer ⇒ no LOS; the sight raycast
                     // wouldn't cross floors.  Same layer guard the
@@ -6032,21 +6039,48 @@ impl HostFunctions for GameHost {
                         return 0;
                     }
 
-                    // Forest-level Royalist 180° special case.  We
-                    // don't know the level type from GameHost;
-                    // default to false (the merry-men path is for
-                    // friendly AI, and friend-side scripts that
-                    // need 180° detection don't go through `Sees`).
-                    let forest_180_degree_view = false;
-
                     let view_forward = (view_direction[0], view_direction[1]);
                     let golden_eye_mode = self.ai_global.golden_eye_mode;
                     let target_in_same_building =
                         viewer_in_building && tgt_building_sector == viewer_building_sector;
 
                     let sight_obstacles = script_sight_obstacles();
+                    let sight_obstacle_list = sight_obstacles.list();
+                    let target_obstacle = target_entity
+                        .element_data()
+                        .obstacle_index()
+                        .map(|handle| {
+                            sight_obstacle_list
+                                .get(usize::from(handle))
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "Sees target {target_h} references missing sight obstacle {}",
+                                        usize::from(handle)
+                                    )
+                                })
+                        });
+                    let is_night_or_fog = matches!(
+                        self.ambiance,
+                        crate::engine::Ambiance::Night | crate::engine::Ambiance::Fog
+                    );
+                    let effective_view_radius = crate::ai_vision::compute_view_radius(
+                        viewer_eye,
+                        viewer_eye_3d.z,
+                        view_radius,
+                        view_forward,
+                        real_half_aperture,
+                        is_night_or_fog,
+                        &self.fast_grid.level,
+                        sight_obstacle_list,
+                        target_obstacle,
+                    );
+                    let forest_180_degree_view =
+                        self.is_forest_level && npc_entity.camp() == Camp::Royalists;
+                    if forest_180_degree_view && !npc_entity.is_active() {
+                        return 0;
+                    }
                     let q = crate::ai_vision::VisibilityQuery {
-                        viewer: crate::coordinates::MapPoint::new(viewer_eye_3d.x, viewer_eye_3d.y),
+                        viewer: viewer_eye,
                         viewer_direction: npc_dir,
                         view_forward,
                         view_radius,
@@ -6056,21 +6090,15 @@ impl HostFunctions for GameHost {
                         target_in_same_building,
                         forest_180_degree_view,
                         golden_eye_mode,
-                        // See the note above: script `Sees` intentionally
-                        // keeps the raw view radius because GameHost does
-                        // not carry mission ambiance.
-                        effective_view_radius: view_radius as f32,
+                        effective_view_radius,
                         target_is_active_and_outside_building: tgt_active && !tgt_in_building,
-                        target: crate::coordinates::MapPoint::new(
-                            tgt_detection_3d.x,
-                            tgt_detection_3d.y,
-                        ),
+                        target: target_point,
                         target_posture: tgt_posture,
                         target_action_state: tgt_action_state,
                         target_is_pc: tgt_is_pc,
                         viewer_eye_z: viewer_eye_3d.z,
                         target_eye_z: tgt_detection_3d.z,
-                        sight_obstacles: sight_obstacles.list(),
+                        sight_obstacles: sight_obstacle_list,
                         fast_grid: &self.fast_grid,
                         layer: npc_layer,
                         target_unconscious: tgt_unconscious,
@@ -8171,26 +8199,14 @@ impl HostFunctions for GameHost {
                     let bow_exp = stack.pop_i32();
                     let sword_exp = stack.pop_i32();
                     let actor = stack.pop_i32();
-                    // The original wrote both the persistent
-                    // PcDescription's PcStatus and the in-mission
-                    // PC's PcStatus (two separate storage sites).
-                    //
-                    // SIMPLIFICATION: we fold these.  The entity
-                    // doesn't carry a duplicate status; every
-                    // in-mission skill read goes through the
-                    // campaign's character description via
-                    // `profile_index` (see
-                    // `engine::combat::award_bow_kill_xp`,
-                    // `engine::melee::award_sword_kill_xp`).  So
-                    // updating the campaign description alone
-                    // already propagates the new caps to the live
-                    // entity, but the original "set live caps
-                    // without touching the persistent description"
-                    // semantic (caps reset on next mission load) is
-                    // lost the other way: values written here
-                    // persist into subsequent missions.  All known
-                    // callers set caps once at mission start, so no
-                    // observable divergence today.
+                    // The original has one backing status here, not separate live and
+                    // persistent copies. `RHElementActorPC` is constructed with
+                    // `&pDescription->PCStatus` (`RHelementactorpc.cpp`), and
+                    // `RHElementActorHuman::SetCapacity` writes through that pointer
+                    // (`RHelementactorhuman.cpp`). `RHCampaign::Serialize` then writes
+                    // the same PC descriptions. Rust likewise keeps the PC status on
+                    // the campaign description, so this actor-scoped call must update
+                    // that serialized backing state.
                     //
                     // Validate the actor is a PC handle to surface
                     // script bugs that pass NPCs.

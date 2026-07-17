@@ -46,6 +46,22 @@ Tests and lints:
     cargo clippy --all-targets -- -D warnings
     cargo fmt
 
+### Testing with original game data
+
+Tests that inspect shipped mission scripts are explicitly ignored because the
+repository does not contain proprietary game data. They never silently pass
+when data is unavailable. Point `ROBINHOOD_DATA_DIR` at an extracted data root
+containing `Data/`, then select the tests for that distribution:
+
+    ROBINHOOD_DATA_DIR=datadirs/demo_leicester_ecoste \
+        cargo test -p robin_assets demo_script -- --ignored
+
+    ROBINHOOD_DATA_DIR=datadirs/fullgame_gog \
+        cargo test -p robin_assets fullgame_scripts -- --ignored
+
+Running an ignored data-backed test without the variable, or against a data
+root that lacks its required fixture, fails with an explicit diagnostic.
+
 ### WebAssembly (browser)
 
 The game builds for `wasm32-unknown-unknown` and uses `wasm-bindgen`

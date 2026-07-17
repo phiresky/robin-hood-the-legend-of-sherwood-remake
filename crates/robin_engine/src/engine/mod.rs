@@ -43,6 +43,7 @@ mod seat;
 mod sector_motion;
 mod selection;
 mod sequence_validity;
+mod simulation_gate;
 mod soldier_helpers;
 mod special_motion;
 pub mod target_interaction;
@@ -83,6 +84,7 @@ use crate::pathfinder::PathFinder;
 use crate::profiles::MissionType;
 use crate::sequence::SequenceManager;
 use crate::short_briefings::ShortBriefings;
+use simulation_gate::SimulationGateState;
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -142,8 +144,16 @@ const ZOOM_LEVEL_COUNT: usize = 3;
 /// reattachment. If you find yourself fighting serde for a field, that's a
 /// signal it doesn't belong on `EngineInner` — extract it to a host wrapper
 /// instead.
-#[derive(Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+#[derive(Clone, robin_state_hash_derive::StateHash)]
 pub struct EngineInner {
+    /// Per-session gameplay configuration attached by `Game` before a
+    /// tick. This is runtime configuration rather than mutable sim state:
+    /// rollback clones preserve it, while deserialized saves must have it
+    /// reattached before gameplay resumes. `Option` is intentional so a
+    /// missing attachment fails loudly instead of inventing Medium difficulty.
+    #[state_hash(skip)]
+    sim_config: std::cell::Cell<Option<SimConfig>>,
+
     // ── Mission ──────────────────────────────────────────────────
     /// Win/loss tracking and mission metadata. [Serialized]
     pub(crate) mission: MissionState,
@@ -161,20 +171,9 @@ pub struct EngineInner {
     /// See [`crate::sound::SoundSimState`]. [Serialized]
     pub(crate) sound_sim: crate::sound::SoundSimState,
 
-    // ── EngineInner locks ─────────────────────────────────────────────
-    /// Whether the engine is locked (during sequences, etc). [Serialized]
-    pub(crate) lock_engine: bool,
-    /// Freeze all actors (script command). [Serialized]
-    pub(crate) freeze_all: bool,
-    /// Presentation frames still to show while the simulation is frozen.
-    /// `FadeToBlack` calls `Flip()` `2*speed` times without calling
-    /// `PerformHourglass`; this count is deliberately independent of
-    /// `frame_counter` so the universal clock and every sim timer remain
-    /// fixed while the host presents the fade ramp. The command's trigger
-    /// tick presents the first frame, so this stores the remaining
-    /// `2*speed - 1` frames. [Serialized]
-    #[serde(default)]
-    pub(crate) fade_freeze_frames_remaining: u32,
+    // ── Simulation suspension gates ─────────────────────────────
+    /// Lock, actor-freeze, and blocking-fade state. [Serialized]
+    pub(crate) simulation_gates: SimulationGateState,
 
     // ── Sequence / animation ─────────────────────────────────────
     /// Sequence playback speed multiplier. [Serialized]
@@ -256,7 +255,6 @@ pub struct EngineInner {
     /// free helpers (AI, combat, bow scatter, …) can draw from it without
     /// every call site threading `&mut fastrand::Rng`. Serialized via a
     /// single `u64` seed — see [`crate::sim_rng::serde_rng`].
-    #[serde(with = "crate::sim_rng::serde_rng")]
     pub(crate) rng: fastrand::Rng,
 
     // ── Pending side effects ─────────────────────────────────────
@@ -302,15 +300,19 @@ pub struct EngineInner {
     /// replay stay deterministic.  [Sim state]
     pub(crate) pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
 
-    /// Retry queue for Move / Seek elements whose initial pathfind
-    /// failed.  Entries stay here for up to 100 frames while the engine
-    /// retries pathfinding each tick; after that window expires the
-    /// owning element transitions to `Impossible` (and PCs hear
+    /// A*-requiring movement elements waiting for the legacy once-per-frame
+    /// path-request processing point.  Direct moves bypass this queue.
+    #[serde(default)]
+    pub(crate) pending_path_requests: crate::engine::movement::PendingPathRequestQueue,
+
+    /// Timeout queue for Move / Seek elements whose path request failed.
+    /// Entries stay here for 100 frames without retrying; after that window
+    /// the owning element transitions to `Impossible` (and PCs hear
     /// `HERO_UNABLE_TO_DO_SOMETHING`).
     ///
     /// See [`movement::FailedPathRequest`] for field-level docs.
     /// Drained each tick by
-    /// [`EngineInner::retry_failed_path_requests`].  [Sim state]
+    /// [`EngineInner::process_failed_path_timeouts`].  [Sim state]
     pub(crate) failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
 
     // ── AI ────────────────────────────────────────────────────────
@@ -428,16 +430,258 @@ pub struct EngineInner {
     // patch_entity_handles, scroll_entity_ids, all_soldier_entity_ids}`.)
 }
 
+// Keep the pre-extraction snapshot schema byte-for-byte stable. Serde's
+// `flatten` preserves JSON field names but cannot be encoded by bincode, which
+// is used for multiplayer snapshots. A remote representation preserves both
+// formats while the owned Rust layout can continue to decompose.
+//
+// TODO(engine-state): replace this implicit schema with an explicitly
+// versioned snapshot type once save migration is allowed. Until then, keeping
+// this representation exhaustive is intentional: adding an EngineInner field
+// makes the conversion below fail to compile until its snapshot behavior is
+// decided.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(remote = "EngineInner")]
+struct EngineInnerSerde {
+    mission: MissionState,
+    frame_counter: u32,
+    sound_sim: crate::sound::SoundSimState,
+    #[serde(getter = "EngineInner::serde_lock_engine")]
+    lock_engine: bool,
+    #[serde(getter = "EngineInner::serde_freeze_all")]
+    freeze_all: bool,
+    #[serde(default, getter = "EngineInner::serde_fade_freeze_frames_remaining")]
+    fade_freeze_frames_remaining: u32,
+    speed: f32,
+    speed_int: u16,
+    weather: WeatherState,
+    shield: ShieldState,
+    script_globals: Vec<i32>,
+    cheat_used_flags: u32,
+    standard_view_polygon_radius: u16,
+    next_order_id: u32,
+    chorus_timer: u16,
+    force_check: bool,
+    messenger: Messenger,
+    fast_grid: FastFindGrid,
+    pathfinder: PathFinder,
+    short_briefings: ShortBriefings,
+    mission_stat: MissionStat,
+    ground_mark: GroundMark,
+    entities: Entities,
+    pc_ids: Vec<EntityId>,
+    titbit_manager: crate::titbit::TitbitManager,
+    seats: Vec<SeatState>,
+    cutscene_camera: CameraState,
+    #[serde(with = "crate::sim_rng::serde_rng")]
+    rng: fastrand::Rng,
+    pending_side_effects: SideEffects,
+    user_locked: bool,
+    qa_recording_for: Vec<crate::element::EntityId>,
+    qa_recording_slot: u8,
+    action_before_recording_macro: crate::profiles::Action,
+    fast_forward: bool,
+    pending_move_requests: Vec<(EntityId, crate::order::AiOrderIntent)>,
+    failed_path_requests: Vec<crate::engine::movement::FailedPathRequest>,
+    ai_global: AiGlobalState,
+    macro_store: crate::macro_store::MacroStore,
+    dead_pc: Option<EntityId>,
+    timer_elements: Vec<TimerEntry>,
+    sequence_manager: SequenceManager,
+    pending_reinforcements: Vec<Option<EntityId>>,
+    pending_scroll_amulets: Vec<PendingScrollAmulet>,
+    pending_hero_speeches: Vec<(EntityId, u16)>,
+    pending_hades_kills: Vec<EntityId>,
+    pending_concussion_side_effects: Vec<(EntityId, crate::combat::ConcussionOutcome)>,
+    mission_script: Option<MissionScript>,
+    script_zone_data: Vec<crate::sector::ScriptSectorData>,
+    dynamic_sight_obstacles: Vec<crate::sight_obstacle::SightObstacle>,
+    static_sight_obstacle_active: Vec<bool>,
+    campaign: Option<crate::campaign::Campaign>,
+}
+
+impl serde::Serialize for EngineInner {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        EngineInnerSerde::serialize(self, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EngineInner {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        EngineInnerSerde::deserialize(deserializer).map(Into::into)
+    }
+}
+
+impl From<EngineInnerSerde> for EngineInner {
+    fn from(state: EngineInnerSerde) -> Self {
+        let EngineInnerSerde {
+            mission,
+            frame_counter,
+            sound_sim,
+            lock_engine,
+            freeze_all,
+            fade_freeze_frames_remaining,
+            speed,
+            speed_int,
+            weather,
+            shield,
+            script_globals,
+            cheat_used_flags,
+            standard_view_polygon_radius,
+            next_order_id,
+            chorus_timer,
+            force_check,
+            messenger,
+            fast_grid,
+            pathfinder,
+            short_briefings,
+            mission_stat,
+            ground_mark,
+            entities,
+            pc_ids,
+            titbit_manager,
+            seats,
+            cutscene_camera,
+            rng,
+            pending_side_effects,
+            user_locked,
+            qa_recording_for,
+            qa_recording_slot,
+            action_before_recording_macro,
+            fast_forward,
+            pending_move_requests,
+            failed_path_requests,
+            ai_global,
+            macro_store,
+            dead_pc,
+            timer_elements,
+            sequence_manager,
+            pending_reinforcements,
+            pending_scroll_amulets,
+            pending_hero_speeches,
+            pending_hades_kills,
+            pending_concussion_side_effects,
+            mission_script,
+            script_zone_data,
+            dynamic_sight_obstacles,
+            static_sight_obstacle_active,
+            campaign,
+        } = state;
+
+        Self {
+            sim_config: std::cell::Cell::new(None),
+            mission,
+            frame_counter,
+            sound_sim,
+            simulation_gates: SimulationGateState {
+                lock_engine,
+                freeze_all,
+                fade_freeze_frames_remaining,
+            },
+            speed,
+            speed_int,
+            weather,
+            shield,
+            script_globals,
+            cheat_used_flags,
+            standard_view_polygon_radius,
+            next_order_id,
+            chorus_timer,
+            force_check,
+            messenger,
+            fast_grid,
+            pathfinder,
+            short_briefings,
+            mission_stat,
+            ground_mark,
+            entities,
+            pc_ids,
+            titbit_manager,
+            seats,
+            cutscene_camera,
+            rng,
+            pending_side_effects,
+            user_locked,
+            qa_recording_for,
+            qa_recording_slot,
+            action_before_recording_macro,
+            fast_forward,
+            pending_move_requests,
+            failed_path_requests,
+            ai_global,
+            macro_store,
+            dead_pc,
+            timer_elements,
+            sequence_manager,
+            pending_reinforcements,
+            pending_scroll_amulets,
+            pending_hero_speeches,
+            pending_hades_kills,
+            pending_concussion_side_effects,
+            mission_script,
+            script_zone_data,
+            dynamic_sight_obstacles,
+            static_sight_obstacle_active,
+            campaign,
+        }
+    }
+}
+
+impl std::ops::Deref for EngineInner {
+    type Target = SimulationGateState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.simulation_gates
+    }
+}
+
+// TODO(engine-state): migrate the existing tick/script/AI field accesses to
+// narrow EngineInner gate accessors, then remove this source-compatibility
+// bridge. Keeping it for this slice avoids touching those prohibited modules
+// or changing their evaluation order.
+impl std::ops::DerefMut for EngineInner {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.simulation_gates
+    }
+}
+
 /// Sample duration in sim frames (40 ms each), keyed by sound-source
 /// sample id.  Populated host-side from the decoded WAV length in the
 /// sound cache; consulted by [`EngineInner`] when an `Activate` /
 /// `ResumeAll` dispatches to schedule a deterministic finish.
 pub type SourceDurations = std::sync::Arc<std::collections::BTreeMap<u32, u32>>;
 
-/// Fallback duration when the host hasn't (or can't) populate a
-/// sample-length entry for a given source id — approximately 3 s at
-/// 25 fps.
-pub const SOURCE_DEFAULT_FRAMES: u32 = 75;
+/// Return the decoded duration for an exclamation, or the original
+/// missing-sample completion value. `RHSound::GetSampleLengthMs` returns
+/// zero when `GetCacheEntryForSettings` cannot resolve/load the sample;
+/// the following sound hourglass then completes that pending sound
+/// immediately. Rust schedules that zero-length completion for the next
+/// simulation boundary so it remains rollback deterministic.
+pub(super) fn exclamation_duration_frames(
+    durations: &ExclamationDurations,
+    group: crate::sound::ExclamationGroup,
+    profile_id: u32,
+    exclamation_id: u16,
+) -> u32 {
+    durations
+        .get(&(group, profile_id, exclamation_id))
+        .copied()
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                ?group,
+                profile_id,
+                exclamation_id,
+                "exclamation sample missing from duration table; scheduling zero-length completion"
+            );
+            0
+        })
+}
 
 /// A queued persistent background decal update for an FX entity whose
 /// patch just transitioned. `restore_only = true` removes the decal
@@ -474,6 +718,18 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
 }
 
 impl EngineInner {
+    fn serde_lock_engine(&self) -> bool {
+        self.lock_engine
+    }
+
+    fn serde_freeze_all(&self) -> bool {
+        self.freeze_all
+    }
+
+    fn serde_fade_freeze_frames_remaining(&self) -> u32 {
+        self.fade_freeze_frames_remaining
+    }
+
     pub(crate) fn pc_description_index_for_pc_data(
         &self,
         pc_data: &crate::element::PcData,
@@ -549,6 +805,7 @@ impl EngineInner {
         // add deterministic seats via `ConnectSeat`.
         //
         Self {
+            sim_config: std::cell::Cell::new(None),
             cutscene_camera: CameraState {
                 level_size: crate::coordinates::MapSize::ZERO,
                 zoom_factor: 1.0,
@@ -562,9 +819,7 @@ impl EngineInner {
 
             sound_sim: crate::sound::SoundSimState::default(),
 
-            lock_engine: false,
-            freeze_all: false,
-            fade_freeze_frames_remaining: 0,
+            simulation_gates: SimulationGateState::default(),
 
             speed: 1.0,
             speed_int: 0,
@@ -603,6 +858,7 @@ impl EngineInner {
             action_before_recording_macro: crate::profiles::Action::NoAction,
             fast_forward: false,
             pending_move_requests: Vec::new(),
+            pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
 
             entities: Entities::new(),
@@ -850,11 +1106,12 @@ impl EngineInner {
                 self.add_campaign_value_to(campaign, crate::campaign::CampaignValue::Score, 1000);
             }
 
-            let difficulty = crate::player_profile::PlayerProfileManager::global()
-                .as_ref()
-                .and_then(|mgr| mgr.get_active())
-                .map(|p| p.difficulty)
-                .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
+            // Original provenance: `original-code/RHengine.cpp:16381-16398`
+            // reads the active profile difficulty to scale post-mission
+            // warcrime recruitment. The Rust engine receives that value in
+            // `SimConfig` before the tick, so two simultaneous game contexts
+            // cannot observe one another's active profile.
+            let difficulty = self.required_sim_config().difficulty;
 
             let recruited =
                 campaign.recruit_post_mission_peasants(living, dead, difficulty, profiles);
@@ -868,6 +1125,19 @@ impl EngineInner {
             // Explicitly zero on the lost path.
             self.mission_stat.new_peasant_count = 0;
         }
+    }
+
+    /// Attach immutable configuration for the game context driving this
+    /// engine. Takes `&self` so the facade's read-only `Deref` can perform the
+    /// runtime attachment without exposing general mutable engine internals.
+    pub fn attach_sim_config(&self, config: SimConfig) {
+        self.sim_config.set(Some(config));
+    }
+
+    fn required_sim_config(&self) -> SimConfig {
+        self.sim_config.get().expect(
+            "engine gameplay requires SimConfig; Game must attach its application context before ticking",
+        )
     }
 
     /// Compute score bonus for living enemy soldiers that are tied or
@@ -1197,7 +1467,7 @@ impl EngineInner {
     /// Resolve a legacy raw entity-table index to the typed ID variant for
     /// the entity currently stored in that slot.
     pub fn entity_id_for_index(&self, index: u32) -> Option<EntityId> {
-        self.entities.id_at_index(index)
+        self.entities.id_at_legacy_slot(index)
     }
 
     /// Resolve a script actor handle to the typed ID variant for the entity
@@ -2274,6 +2544,7 @@ impl EngineInner {
     /// transition.
     fn stop_owner_active_mechanics(&mut self, owner: EntityId) {
         self.pathfinder.cancel_requests_for(owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         // `MaybeCancelPathRequest` fires from both
         // `SetState(Interrupted)` *and* `SetState(Postponed)`, and
         // drops stale retry entries for the actor.  Mirror that here so
@@ -2338,6 +2609,7 @@ impl EngineInner {
         // `element_impossible` / hero-speech on a sequence that no
         // longer cares.
         self.failed_path_requests.retain(|r| r.owner != owner);
+        self.pending_path_requests.retain_not_owned_by(owner);
         self.sequence_manager
             .stop_owner(owner, stop_priority, &resolver);
     }
@@ -3098,7 +3370,16 @@ impl EngineInner {
             && self
                 .sequence_manager
                 .get_element(seq_id, elem_idx)
-                .is_some_and(|elem| elem.command == crate::element::Command::Seek)
+                .is_some_and(|elem| {
+                    matches!(
+                        elem.command,
+                        crate::element::Command::Seek | crate::element::Command::MoveOk
+                    ) && matches!(
+                        &elem.data,
+                        crate::sequence::SequenceElementData::Movement { flags, .. }
+                            if flags.contains(crate::sequence::MoveFlags::SEEK)
+                    )
+                })
             && self
                 .get_entity(owner_id)
                 .and_then(|e| e.actor_data())
@@ -3258,6 +3539,7 @@ impl EngineInner {
         // owner is gone.
         self.failed_path_requests.retain(|r| r.owner != id);
         self.pending_move_requests.retain(|(eid, _)| *eid != id);
+        self.pending_path_requests.retain_not_owned_by(id);
     }
 
     /// Number of live entities.
@@ -3505,16 +3787,10 @@ impl EngineInner {
         }
     }
 
-    /// Run the mission script's `PostInitialize` hook on the first
-    /// tick after level load, then no-op on every subsequent call.
-    /// Idempotent — driven by a sim-side `post_initialized` flag on
-    /// [`MissionScript`], so the host never has to coordinate with the
-    /// engine on whether the hook has already fired.
-    ///
-    /// Called from the top of [`EngineInner::perform_hourglass_inner`]
-    /// so the one-shot script-side state mutations stay inside the
-    /// hashed tick window — rollback replay runs them exactly once per
-    /// level load too.
+    /// Run the mission script's `PostInitialize` hook once, then no-op.
+    /// The serialized flag keeps both live play and rollback replay
+    /// idempotent; [`EngineInner::perform_post_initialize`] owns the
+    /// original post-refresh host boundary.
     pub(crate) fn run_post_initialize_if_needed(&mut self, assets: &LevelAssets) {
         let Some(script) = self.mission_script.as_mut() else {
             return;
@@ -3710,6 +3986,7 @@ impl EngineInner {
         self.chorus_timer = 0;
         self.fast_forward = false;
         self.pending_move_requests.clear();
+        self.pending_path_requests.clear();
         self.failed_path_requests.clear();
 
         // Force a full redraw on the next frame — the background cache

@@ -921,6 +921,61 @@ impl HumanData {
     }
 }
 
+/// Ammo counters owned by a live PC entity.
+///
+/// The original `RHElementActorPC` always has an `RHPCStatus` pointer, and
+/// `SetPersistentProperty` mutates that live status directly.  Campaign mode
+/// also persists the same values in [`crate::campaign::PcDescription`], but a
+/// script call must not depend on a campaign object being installed.
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub struct PcAmmoData {
+    pub ales: u16,
+    pub arrows: u16,
+    pub apples: u16,
+    pub rations: u16,
+    pub stones: u16,
+    pub wasp_nests: u16,
+    pub nets: u16,
+    pub plants: u16,
+    pub purses: u16,
+}
+
+impl PcAmmoData {
+    pub fn get(&self, action: Action) -> Option<u16> {
+        match action {
+            Action::Ale => Some(self.ales),
+            Action::Apple => Some(self.apples),
+            Action::Bow => Some(self.arrows),
+            Action::Eat | Action::Guzzle => Some(self.rations),
+            Action::Net => Some(self.nets),
+            Action::Stone => Some(self.stones),
+            Action::Heal => Some(self.plants),
+            Action::Purse => Some(self.purses),
+            Action::WaspNest => Some(self.wasp_nests),
+            _ => None,
+        }
+    }
+
+    pub fn set(&mut self, action: Action, quantity: u16) -> Option<()> {
+        let counter = match action {
+            Action::Ale => &mut self.ales,
+            Action::Apple => &mut self.apples,
+            Action::Bow => &mut self.arrows,
+            Action::Eat | Action::Guzzle => &mut self.rations,
+            Action::Net => &mut self.nets,
+            Action::Stone => &mut self.stones,
+            Action::Heal => &mut self.plants,
+            Action::Purse => &mut self.purses,
+            Action::WaspNest => &mut self.wasp_nests,
+            _ => return None,
+        };
+        *counter = quantity;
+        Some(())
+    }
+}
+
 /// PC-level data.
 #[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PcData {
@@ -946,6 +1001,10 @@ pub struct PcData {
     pub saved_action: Action,
     pub disabled_actions: Vec<bool>,
     pub disabled_actions_temp: Vec<bool>,
+    /// Live ammo state used by actor-local script behavior.  In campaign
+    /// mode mutations are mirrored to the campaign character status.
+    #[serde(default)]
+    pub ammo: PcAmmoData,
 
     // Quick actions
     pub quick_action_types: Vec<QuickAction>,
@@ -1060,6 +1119,7 @@ impl Default for PcData {
             saved_action: Action::default(),
             disabled_actions: Vec::new(),
             disabled_actions_temp: Vec::new(),
+            ammo: PcAmmoData::default(),
             quick_action_types: Vec::new(),
             quick_action_sequences: vec![None, None, None],
             titbits: Vec::new(),
@@ -2054,6 +2114,24 @@ macro_rules! dispatch_element {
     };
 }
 
+macro_rules! entity_variant_accessors {
+    ($as_ref:ident, $as_mut:ident, $variant:ident, $entity:ty) => {
+        pub fn $as_ref(&self) -> Option<&$entity> {
+            match self {
+                Self::$variant(entity) => Some(entity),
+                _ => None,
+            }
+        }
+
+        pub fn $as_mut(&mut self) -> Option<&mut $entity> {
+            match self {
+                Self::$variant(entity) => Some(entity),
+                _ => None,
+            }
+        }
+    };
+}
+
 impl Entity {
     pub fn entity_id_kind(&self) -> EntityIdKind {
         match self {
@@ -2068,6 +2146,21 @@ impl Entity {
             Self::Net(_) => EntityIdKind::Net,
         }
     }
+
+    entity_variant_accessors!(as_pc, as_pc_mut, Pc, ActorPc);
+    entity_variant_accessors!(as_soldier, as_soldier_mut, Soldier, ActorSoldier);
+    entity_variant_accessors!(as_civilian, as_civilian_mut, Civilian, ActorCivilian);
+    entity_variant_accessors!(as_fx, as_fx_mut, Fx, ElementFx);
+    entity_variant_accessors!(as_target, as_target_mut, Target, ElementTarget);
+    entity_variant_accessors!(as_bonus, as_bonus_mut, Bonus, ElementBonus);
+    entity_variant_accessors!(as_scroll, as_scroll_mut, Scroll, ElementScroll);
+    entity_variant_accessors!(
+        as_projectile,
+        as_projectile_mut,
+        Projectile,
+        ElementProjectile
+    );
+    entity_variant_accessors!(as_net, as_net_mut, Net, ElementNet);
 
     // — Element data access —
 

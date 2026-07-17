@@ -212,7 +212,9 @@ impl crate::engine::EngineInner {
             };
             if !matches!(
                 elem.command,
-                crate::element::Command::Move | crate::element::Command::Seek
+                crate::element::Command::Move
+                    | crate::element::Command::MoveOk
+                    | crate::element::Command::Seek
             ) {
                 continue;
             }

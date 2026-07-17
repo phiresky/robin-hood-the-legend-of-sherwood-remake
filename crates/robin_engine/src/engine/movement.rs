@@ -300,6 +300,108 @@ pub(crate) struct FailedPathRequest {
     pub(crate) first_fail_frame: u32,
 }
 
+/// Snapshot of one legacy `RHpathRequest` waiting for A*.
+///
+/// Direct / straight moves never enter this queue. Requests that do need A*
+/// snapshot their dispatch inputs here, then [`EngineInner`] resolves at most
+/// one request at the original `RHEngine::ProcessPathRequests` point per frame.
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub(crate) struct PendingPathRequest {
+    pub(crate) owner: EntityId,
+    pub(crate) seq_id: crate::sequence::SequenceId,
+    pub(crate) elem_idx: usize,
+    pub(crate) source: MapPoint,
+    pub(crate) dest: MapPoint,
+    pub(crate) layer: u16,
+    pub(crate) sector: u16,
+    pub(crate) half_diagonal_idx: u16,
+    pub(crate) use_first_point: bool,
+    pub(crate) move_action: OrderType,
+    pub(crate) speed: crate::pathfinder::PathFinderSpeed,
+    pub(crate) is_pass_door: bool,
+    pub(crate) elem_flags: crate::sequence::MoveFlags,
+    pub(crate) sword_movement_context: bool,
+    pub(crate) is_fast: bool,
+}
+
+#[derive(
+    Debug, Clone, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+struct ProcessedPathRequest {
+    request: PendingPathRequest,
+    waypoints: Option<Vec<MapPoint>>,
+}
+
+/// Legacy path-request ordering plus the pathfinder's in-flight result.
+///
+/// `RHPathFinder::AddPathRequest` leaves queues of length zero or one alone.
+/// From length two onward it stably sorts by speed, except that the in-flight
+/// entry cannot be displaced. The original WAITING branch starts work but
+/// returns no result; a later READY call delivers it and starts the next
+/// request. `in_flight` preserves that one-call latency.
+#[derive(
+    Debug, Clone, Default, serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash,
+)]
+pub(crate) struct PendingPathRequestQueue {
+    waiting: Vec<PendingPathRequest>,
+    in_flight: Option<ProcessedPathRequest>,
+}
+
+impl PendingPathRequestQueue {
+    fn enqueue(&mut self, request: PendingPathRequest) {
+        let total = self.waiting.len() + usize::from(self.in_flight.is_some());
+        if total < 2 {
+            self.waiting.push(request);
+            return;
+        }
+
+        // With no in-flight request, waiting[0] is the original list's
+        // special first entry and is compared only after index 1. Once a
+        // request is in flight, every waiting entry is priority-sortable.
+        let first_sortable = usize::from(self.in_flight.is_none());
+        let speed = request.speed as u8;
+        if let Some(index) = (first_sortable..self.waiting.len())
+            .rev()
+            .find(|&index| self.waiting[index].speed as u8 <= speed)
+        {
+            self.waiting.insert(index + 1, request);
+        } else {
+            self.waiting.insert(0, request);
+        }
+    }
+
+    fn take_completed(&mut self) -> Option<ProcessedPathRequest> {
+        self.in_flight.take()
+    }
+
+    fn pop_to_start(&mut self) -> Option<PendingPathRequest> {
+        (!self.waiting.is_empty()).then(|| self.waiting.remove(0))
+    }
+
+    fn set_in_flight(&mut self, request: PendingPathRequest, waypoints: Option<Vec<MapPoint>>) {
+        debug_assert!(self.in_flight.is_none());
+        self.in_flight = Some(ProcessedPathRequest { request, waypoints });
+    }
+
+    pub(super) fn retain_not_owned_by(&mut self, owner: EntityId) {
+        self.waiting.retain(|request| request.owner != owner);
+        if self
+            .in_flight
+            .as_ref()
+            .is_some_and(|processed| processed.request.owner == owner)
+        {
+            self.in_flight = None;
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.waiting.clear();
+        self.in_flight = None;
+    }
+}
+
 /// Outcome of [`EngineInner::try_dispatch_move_path`], the unified
 /// pathfind-and-populate pipeline invoked from the hourglass Move
 /// dispatch.
@@ -309,9 +411,11 @@ pub(crate) enum MovePathOutcome {
     /// state set, element transitioned to `InProgress`.  Caller has
     /// nothing left to do.
     Success,
-    /// Pathfinder returned `None`.  The element has *not* been touched
-    /// — caller enqueues it into `failed_path_requests` for the
-    /// 100-frame timeout window.
+    /// The move requires A* and has entered the legacy one-completion-per-
+    /// frame request queue.
+    Pending,
+    /// Dispatch could not submit the move (for example, source extraction
+    /// failed). The caller applies the existing failure handling.
     Failed,
     /// The entity slot is empty or the element vanished mid-dispatch.
     /// Caller should mark the element `Impossible`.
@@ -3369,9 +3473,15 @@ impl EngineInner {
             crate::element::Posture,
             crate::element::ActionState,
         )> = Vec::new();
+        // PC movement actions actually dispatched this frame.  The original
+        // RHElementActorPC performs action-specific side effects from inside
+        // the matching Execute arm, so posture alone is not a substitute for
+        // this per-frame execution record.
+        let mut executed_pc_movement_actions: Vec<(EntityId, OrderType)> = Vec::new();
 
         for (actor_id, entity) in self.entities.actors_mut() {
             let entity_id = actor_id.into();
+            let is_pc = entity.is_pc();
             // Check swordfight status before mutable borrows — needed at
             // movement completion to preserve WaitingSword (idle state
             // is derived from the action state machine, not hardcoded
@@ -3968,6 +4078,9 @@ impl EngineInner {
                 motion_method,
                 dest_already_at_pos,
             );
+            if is_pc {
+                executed_pc_movement_actions.push((entity_id, order_action));
+            }
             if let Some((posture, action_state)) =
                 movement_execute_state_effect(order_action, motion_state)
             {
@@ -5004,6 +5117,12 @@ impl EngineInner {
             self.sequence_manager.element_impossible(seq_id, elem_idx);
         }
 
+        // RHElementActorPC::Execute calls CanCarryOnShoulders only from the
+        // WALKING_CARRYING_ON_SHOULDERS action arm, after PerformMotion.  Run
+        // the equivalent check from the captured action dispatches rather
+        // than from the carrier's persistent posture.
+        self.tick_shouldered_carry_ceiling(assets, &executed_pc_movement_actions);
+
         // Collect entity IDs for EventReachPoint dispatch.  Two paths
         // fire the same event: the condolation drain (triggered by
         // `element_terminated` above) and
@@ -5855,28 +5974,19 @@ impl EngineInner {
         }
     }
 
-    /// Attempt to pathfind for a Move / Seek sequence element and, on
-    /// success, populate its order queue, splice in startup / end
-    /// transitions, set the actor's `ActionState`, and mark the element
-    /// `InProgress`.
+    /// Prepare a Move / Seek sequence element for dispatch.
     ///
-    /// Invoked once per element launch from the hourglass Move
-    /// dispatch; on failure the caller pushes a
-    /// [`FailedPathRequest`] for the 100-frame timeout and leaves the
-    /// element `InProgress` with an empty order queue.  The pathfind
-    /// is **not** re-attempted during that window — failed requests
-    /// are never re-dispatched.
+    /// Direct moves populate their orders immediately. A*-requiring moves
+    /// snapshot a [`PendingPathRequest`], transition to `MoveWaiting`, and
+    /// complete later through [`EngineInner::process_next_path_request`].
     pub(crate) fn try_dispatch_move_path(
         &mut self,
-        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         dest: MapPoint,
         mut move_action: OrderType,
     ) -> MovePathOutcome {
-        use crate::engine::tick::apply_drunken_path_deviation;
-
         // Swap walking/running into the sword variant when the actor
         // is already in a sword action state — but only under two
         // gates:
@@ -6281,46 +6391,149 @@ impl EngineInner {
             use_first_point = true;
         }
 
-        // Run pathfinder — unless the straight-line pre-check above
-        // said a direct order suffices, in which case we skip A* and
-        // build a two-point "path" that the downstream emission loop
-        // turns into a single walking order to `dest`.
-        let mut waypoints = if straight_ok {
-            vec![source, dest]
-        } else {
-            let path = self.pathfinder.find_path(
-                assets.pathfinder_graph.as_ref(),
-                &self.fast_grid,
-                entity_layer,
-                entity_sector,
-                pf_idx,
-                source,
-                dest,
-                use_first_point,
-            );
-            match path {
-                Some(w) => w,
-                None => {
-                    tracing::warn!(
-                        actor = ?owner,
-                        ?seq_id,
-                        elem_idx,
-                        src_x = source.x,
-                        src_y = source.y,
-                        dst_x = dest.x,
-                        dst_y = dest.y,
-                        layer = entity_layer,
-                        sector = entity_sector,
-                        is_pass_door,
-                        actor_passing_door,
-                        source_is_lift_rail,
-                        ?move_flags,
-                        "try_dispatch_move_path: pathfind FAILED",
-                    );
-                    return MovePathOutcome::Failed;
+        let request = PendingPathRequest {
+            owner,
+            seq_id,
+            elem_idx,
+            source,
+            dest,
+            layer: entity_layer,
+            sector: entity_sector,
+            half_diagonal_idx: pf_idx,
+            use_first_point,
+            move_action,
+            speed: if owner_is_pc {
+                crate::pathfinder::PathFinderSpeed::Fast
+            } else {
+                crate::pathfinder::PathFinderSpeed::Medium
+            },
+            is_pass_door,
+            elem_flags,
+            sword_movement_context,
+            is_fast,
+        };
+
+        // `RHElementActor::InstructOwner` completes direct / straight moves
+        // immediately, but converts only A*-requiring moves to MOVE_WAITING
+        // and queues an `RHpathRequest`.
+        if !straight_ok {
+            if let Some(elem) = self.sequence_manager.get_element_mut(seq_id, elem_idx) {
+                elem.command = crate::element::Command::MoveWaiting;
+                elem.push_order(crate::order::Order::new(
+                    OrderType::Freezing,
+                    source.x,
+                    source.y,
+                    crate::order::alloc_order_id(&mut self.next_order_id),
+                ));
+            }
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+            self.pending_path_requests.enqueue(request);
+            return MovePathOutcome::Pending;
+        }
+
+        self.finish_move_path(request, vec![source, dest])
+    }
+
+    /// Run the original once-per-frame path-request scheduling point.
+    ///
+    /// READY delivers at most one result computed by an earlier call, then
+    /// starts at most one successor. WAITING starts one request and returns no
+    /// result. This preserves both the per-frame cap and the original
+    /// one-call latency despite Rust's synchronous A* implementation.
+    pub(super) fn process_next_path_request(&mut self, assets: &LevelAssets) {
+        if let Some(processed) = self.pending_path_requests.take_completed() {
+            let request = processed.request;
+            let still_live = self
+                .sequence_manager
+                .get_element(request.seq_id, request.elem_idx)
+                .is_some_and(|elem| {
+                    elem.owner == Some(request.owner)
+                        && elem.state == crate::sequence::SequenceState::InProgress
+                        && elem.command == crate::element::Command::MoveWaiting
+                });
+            if still_live {
+                match processed.waypoints {
+                    Some(waypoints) => {
+                        if let Some(elem) = self
+                            .sequence_manager
+                            .get_element_mut(request.seq_id, request.elem_idx)
+                        {
+                            elem.command = crate::element::Command::MoveOk;
+                        }
+                        let _ = self.finish_move_path(request, waypoints);
+                    }
+                    None => {
+                        tracing::warn!(
+                            actor = ?request.owner,
+                            seq_id = ?request.seq_id,
+                            elem_idx = request.elem_idx,
+                            src_x = request.source.x,
+                            src_y = request.source.y,
+                            dst_x = request.dest.x,
+                            dst_y = request.dest.y,
+                            layer = request.layer,
+                            sector = request.sector,
+                            "process_next_path_request: pathfind FAILED",
+                        );
+                        self.failed_path_requests.push(FailedPathRequest {
+                            owner: request.owner,
+                            seq_id: request.seq_id,
+                            elem_idx: request.elem_idx,
+                            first_fail_frame: self.frame_counter,
+                        });
+                    }
                 }
             }
-        };
+        }
+
+        if let Some(request) = self.pending_path_requests.pop_to_start() {
+            let still_live = self
+                .sequence_manager
+                .get_element(request.seq_id, request.elem_idx)
+                .is_some_and(|elem| {
+                    elem.owner == Some(request.owner)
+                        && elem.state == crate::sequence::SequenceState::InProgress
+                        && elem.command == crate::element::Command::MoveWaiting
+                });
+            if !still_live {
+                return;
+            }
+            let waypoints = self.pathfinder.find_path(
+                assets.pathfinder_graph.as_ref(),
+                &self.fast_grid,
+                request.layer,
+                request.sector,
+                request.half_diagonal_idx,
+                request.source,
+                request.dest,
+                request.use_first_point,
+            );
+            self.pending_path_requests.set_in_flight(request, waypoints);
+        }
+    }
+
+    fn finish_move_path(
+        &mut self,
+        request: PendingPathRequest,
+        mut waypoints: Vec<MapPoint>,
+    ) -> MovePathOutcome {
+        let PendingPathRequest {
+            owner,
+            seq_id,
+            elem_idx,
+            source,
+            dest: _,
+            layer: entity_layer,
+            sector: _,
+            half_diagonal_idx: _,
+            use_first_point,
+            move_action,
+            speed: _,
+            is_pass_door,
+            elem_flags,
+            sword_movement_context,
+            is_fast,
+        } = request;
 
         // Drunken-soldier path deviation.  Only applies to upright
         // walking/running animations and not to PassDoor commands.
@@ -6343,7 +6556,7 @@ impl EngineInner {
                     .map(|e| e.position_iface())
                     .map(|pi| (pi.get_half_diagonal(), *pi.get_move_box()))
                     .unwrap_or_default();
-                waypoints = apply_drunken_path_deviation(
+                waypoints = crate::engine::tick::apply_drunken_path_deviation(
                     waypoints,
                     source,
                     blood_alcohol,
@@ -6563,10 +6776,7 @@ impl EngineInner {
                 .map(|e| {
                     e.owner == Some(req.owner)
                         && matches!(e.state, crate::sequence::SequenceState::InProgress)
-                        && matches!(
-                            e.command,
-                            crate::element::Command::Move | crate::element::Command::Seek
-                        )
+                        && e.command == crate::element::Command::MoveWaiting
                 })
                 .unwrap_or(false);
             if !still_live {
@@ -6592,6 +6802,12 @@ impl EngineInner {
                 );
             }
 
+            if let Some(elem) = self
+                .sequence_manager
+                .get_element_mut(req.seq_id, req.elem_idx)
+            {
+                elem.command = crate::element::Command::MoveOk;
+            }
             self.sequence_manager
                 .element_impossible(req.seq_id, req.elem_idx);
             tracing::debug!(
@@ -6603,6 +6819,93 @@ impl EngineInner {
             );
         }
         self.failed_path_requests = still_waiting;
+    }
+}
+
+#[cfg(test)]
+mod path_request_timing_tests {
+    use super::*;
+    use crate::entity_id::{PcId, SoldierId};
+
+    fn request(owner: EntityId, speed: crate::pathfinder::PathFinderSpeed) -> PendingPathRequest {
+        PendingPathRequest {
+            owner,
+            seq_id: crate::sequence::SequenceId(1),
+            elem_idx: 0,
+            source: MapPoint::new(10.0, 10.0),
+            dest: MapPoint::new(20.0, 20.0),
+            layer: 0,
+            sector: 0,
+            half_diagonal_idx: 0,
+            use_first_point: false,
+            move_action: OrderType::WalkingUpright,
+            speed,
+            is_pass_door: false,
+            elem_flags: crate::sequence::MoveFlags::empty(),
+            sword_movement_context: false,
+            is_fast: false,
+        }
+    }
+
+    fn advance_fake_frame(queue: &mut PendingPathRequestQueue) -> Option<EntityId> {
+        let completed = queue
+            .take_completed()
+            .map(|processed| processed.request.owner);
+        if let Some(request) = queue.pop_to_start() {
+            queue.set_in_flight(request, Some(Vec::new()));
+        }
+        completed
+    }
+
+    #[test]
+    fn original_two_request_special_case_keeps_first_request_first() {
+        let npc = EntityId::Soldier(SoldierId(1));
+        let pc = EntityId::Pc(PcId(2));
+        let mut queue = PendingPathRequestQueue::default();
+
+        // AddPathRequest appends unconditionally while fewer than two entries
+        // exist, so this later FAST PC does not overtake the first MEDIUM NPC.
+        queue.enqueue(request(npc, crate::pathfinder::PathFinderSpeed::Medium));
+        queue.enqueue(request(pc, crate::pathfinder::PathFinderSpeed::Fast));
+
+        assert_eq!(
+            advance_fake_frame(&mut queue),
+            None,
+            "frame 1 only starts NPC"
+        );
+        assert_eq!(advance_fake_frame(&mut queue), Some(npc), "frame 2");
+        assert_eq!(advance_fake_frame(&mut queue), Some(pc), "frame 3");
+        assert_eq!(advance_fake_frame(&mut queue), None, "frame 4 is empty");
+    }
+
+    #[test]
+    fn resolves_one_per_frame_in_original_priority_and_in_flight_order() {
+        let npc_1 = EntityId::Soldier(SoldierId(1));
+        let npc_2 = EntityId::Soldier(SoldierId(2));
+        let pc_1 = EntityId::Pc(PcId(3));
+        let pc_2 = EntityId::Pc(PcId(4));
+        let mut queue = PendingPathRequestQueue::default();
+
+        queue.enqueue(request(npc_1, crate::pathfinder::PathFinderSpeed::Medium));
+        queue.enqueue(request(npc_2, crate::pathfinder::PathFinderSpeed::Medium));
+        queue.enqueue(request(pc_1, crate::pathfinder::PathFinderSpeed::Fast));
+
+        let mut completed_by_frame = Vec::new();
+        assert_eq!(advance_fake_frame(&mut queue), None, "frame 1 starts pc_1");
+        completed_by_frame.push((2, advance_fake_frame(&mut queue).unwrap()));
+
+        // Frame 2 returns pc_1 and starts npc_1. A new FAST request can
+        // overtake queued npc_2, but cannot displace in-flight npc_1.
+        queue.enqueue(request(pc_2, crate::pathfinder::PathFinderSpeed::Fast));
+        completed_by_frame.push((3, advance_fake_frame(&mut queue).unwrap()));
+        completed_by_frame.push((4, advance_fake_frame(&mut queue).unwrap()));
+        completed_by_frame.push((5, advance_fake_frame(&mut queue).unwrap()));
+
+        assert_eq!(
+            completed_by_frame,
+            vec![(2, pc_1), (3, npc_1), (4, pc_2), (5, npc_2)]
+        );
+        assert_eq!(advance_fake_frame(&mut queue), None, "frame 6 is empty");
     }
 }
 

@@ -771,6 +771,301 @@ fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>)
     })
 }
 
+fn persistent_property_test_host(with_campaign: bool) -> (GameHost, i32) {
+    use crate::profiles::{Action, CharacterProfile, CharacterProfileIdx};
+
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(CharacterProfile {
+        actions: [Action::Bow, Action::Stone, Action::Apple],
+        action_max_ammo: [12, 6, 6],
+        ..Default::default()
+    });
+    let mut host = GameHost::new();
+    host.profile_manager = robin_util::static_arc::StaticArc::new(profiles);
+
+    let mut pc = native_test_pc(vec![true; 3], vec![false; 3]);
+    let pc_data = pc.pc_data_mut().expect("test entity must be a PC");
+    pc_data.profile_index = CharacterProfileIdx(0);
+    pc_data.current_action = Action::Bow;
+    pc_data.saved_action = Action::Bow;
+    host.entities = vec![Some(pc)];
+
+    if with_campaign {
+        let mut status = crate::pc_status::PcStatus::default();
+        status.set_ammo(Action::Bow, 2);
+        status.set_ammo(Action::Stone, 5);
+        host.campaign = Some(crate::campaign::Campaign {
+            characters: vec![crate::campaign::PcDescription {
+                character_profile_idx: Some(CharacterProfileIdx(0)),
+                status,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+    }
+
+    (host, GameHost::actor_handle_from_index(0))
+}
+
+fn call_set_persistent_property(host: &mut GameHost, actor: i32, prop: i32, amount: i32) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(prop);
+    stack.push_i32(amount);
+    <GameHost as HostFunctions>::call(host, NativeFn::SetPersistentProperty as u32, &mut stack)
+}
+
+fn call_get_persistent_property(host: &mut GameHost, actor: i32, prop: i32) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(prop);
+    <GameHost as HostFunctions>::call(host, NativeFn::GetPersistentProperty as u32, &mut stack)
+}
+
+#[test]
+fn set_persistent_property_updates_live_pc_ammo_without_campaign() {
+    use crate::element::PcAmmoData;
+    use crate::profiles::Action;
+
+    let (mut host, actor) = persistent_property_test_host(false);
+
+    assert_eq!(call_set_persistent_property(&mut host, actor, 0, 7), 1);
+    assert_eq!(call_set_persistent_property(&mut host, actor, 5, 4), 1);
+
+    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    assert_eq!(
+        pc.ammo,
+        PcAmmoData {
+            arrows: 7,
+            stones: 4,
+            ..Default::default()
+        }
+    );
+    assert_eq!(pc.disabled_actions, [false, false, true]);
+    assert_eq!(pc.current_action, Action::Bow);
+    assert_eq!(pc.saved_action, Action::Bow);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 0), 7);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 5), 4);
+}
+
+#[test]
+fn set_persistent_property_updates_live_and_campaign_pc_ammo() {
+    use crate::element::PcAmmoData;
+    use crate::profiles::Action;
+
+    let (mut host, actor) = persistent_property_test_host(true);
+    {
+        let pc = host.entities[0].as_mut().unwrap().pc_data_mut().unwrap();
+        pc.ammo.arrows = 2;
+        pc.ammo.stones = 5;
+        pc.current_action = Action::Stone;
+        pc.saved_action = Action::Stone;
+    }
+
+    assert_eq!(call_set_persistent_property(&mut host, actor, 0, 6), 1);
+    assert_eq!(call_set_persistent_property(&mut host, actor, 5, 0), 1);
+
+    let pc = host.entities[0].as_ref().unwrap().pc_data().unwrap();
+    assert_eq!(
+        pc.ammo,
+        PcAmmoData {
+            arrows: 6,
+            ..Default::default()
+        }
+    );
+    assert_eq!(pc.disabled_actions, [false, true, true]);
+    assert_eq!(pc.current_action, Action::NoAction);
+    assert_eq!(pc.saved_action, Action::NoAction);
+
+    let campaign = host.campaign.as_ref().unwrap();
+    let status = &campaign.characters[0].status;
+    assert_eq!(status.get_ammo(Action::Bow), 6);
+    assert_eq!(status.get_ammo(Action::Stone), 0);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 0), 6);
+    assert_eq!(call_get_persistent_property(&mut host, actor, 5), 0);
+}
+
+fn native_sees(host: &mut GameHost, npc_index: usize, target_index: usize) -> i32 {
+    let mut stack = NativeStack::default();
+    stack.push_i32(GameHost::actor_handle_from_index(npc_index));
+    stack.push_i32(GameHost::actor_handle_from_index(target_index));
+    <GameHost as HostFunctions>::call(host, NativeFn::Sees as u32, &mut stack)
+}
+
+fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> GameHost {
+    let mut npc = native_test_soldier();
+    npc.element_data_mut()
+        .set_position_map(crate::coordinates::MapPoint::ZERO);
+    npc.element_data_mut().set_direction_instantly(4);
+    npc.element_data_mut().posture = Posture::Upright;
+    let npc_data = npc.npc_data_mut().expect("test soldier has NPC data");
+    npc_data.view_radius = 400;
+    npc_data.eye_status = crate::element::EyeStatus::LookForward;
+    npc_data.view_direction = [1.0, 0.0];
+    npc_data.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+    let Entity::Soldier(soldier) = &mut npc else {
+        unreachable!("native_test_soldier must return a soldier")
+    };
+    soldier.soldier.cached_camp = camp;
+
+    let mut pc = native_test_pc(Vec::new(), Vec::new());
+    pc.element_data_mut().set_position_map(target);
+    pc.element_data_mut().posture = Posture::Upright;
+
+    let mut host = GameHost::new();
+    host.entities = vec![Some(npc), Some(pc)];
+    host
+}
+
+#[test]
+fn sees_uses_forest_royalist_180_degree_rule() {
+    // A target due south is outside an east-facing 0.5-radian cone but
+    // inside the flat forward 180-degree half-plane (dot product == 0).
+    let mut host = native_sees_host(
+        crate::coordinates::MapPoint::new(0.0, 100.0),
+        Camp::Royalists,
+    );
+
+    assert_eq!(native_sees(&mut host, 0, 1), 0);
+
+    host.is_forest_level = true;
+    assert_eq!(native_sees(&mut host, 0, 1), 1);
+
+    let Entity::Soldier(soldier) = host.entities[0].as_mut().unwrap() else {
+        unreachable!("observer must remain a soldier")
+    };
+    soldier.soldier.cached_camp = Camp::Lacklandists;
+    assert_eq!(native_sees(&mut host, 0, 1), 0);
+}
+
+#[test]
+fn sees_uses_ambiance_adjusted_view_radius() {
+    // With a 500-unit raw radius, a target 450 units ahead is visible in
+    // day ambiance. At night the nearby light sector drives the original
+    // ComputeViewRadius blend to the 400-unit day shadow-polygon radius,
+    // making that same target invisible. This exercises native Sees all the
+    // way through the shared compute_view_radius + compute_visibility path.
+    let mut host = native_sees_host(
+        crate::coordinates::MapPoint::new(450.0, 0.0),
+        Camp::Lacklandists,
+    );
+    host.entities[0]
+        .as_mut()
+        .unwrap()
+        .npc_data_mut()
+        .unwrap()
+        .view_radius = 500;
+
+    let level = std::sync::Arc::make_mut(&mut host.fast_grid.level);
+    level.sectors.push(crate::fast_find_grid::GridSector {
+        points: vec![
+            crate::coordinates::MapPoint::new(240.0, -10.0),
+            crate::coordinates::MapPoint::new(260.0, -10.0),
+            crate::coordinates::MapPoint::new(260.0, 10.0),
+            crate::coordinates::MapPoint::new(240.0, 10.0),
+        ],
+        bounding_box: crate::coordinates::MapBBox::new(),
+        sector_type: crate::sector::SectorType::SHADOW,
+        layer: 0,
+        sector_number: crate::sector::SectorNumber::new(1),
+        door_index: None,
+        lift_type: None,
+        lift_direction: 0,
+        force_crouched: false,
+        building_index: None,
+        low_exit_point: None,
+        high_exit_point: None,
+        lowest_door_index: None,
+        jump_line_indices: Vec::new(),
+        gate_indices: Vec::new(),
+        underlying_sector: None,
+    });
+    level.shadow_data.insert(
+        0,
+        crate::sector::ShadowData {
+            barycentre_2d: crate::coordinates::MapPoint::new(250.0, 0.0),
+            barycentre_3d_x: 250.0,
+            barycentre_3d_y: 0.0,
+            barycentre_3d_z: 45.0,
+            radius: 10.0,
+        },
+    );
+
+    assert_eq!(host.ambiance, crate::engine::Ambiance::Day);
+    assert_eq!(native_sees(&mut host, 0, 1), 1);
+
+    host.ambiance = crate::engine::Ambiance::Night;
+    assert_eq!(native_sees(&mut host, 0, 1), 0);
+}
+
+fn set_experiences_test_host() -> (GameHost, i32) {
+    let actor = GameHost::actor_handle_from_index(0);
+    let profile_idx = crate::profiles::CharacterProfileIdx(0);
+    let mut status = crate::pc_status::PcStatus::default();
+    status.human_status.hand_to_hand = crate::pc_status::Skill {
+        experience: 37,
+        capacity: 11,
+    };
+    status.human_status.bow = crate::pc_status::Skill {
+        experience: 83,
+        capacity: 22,
+    };
+
+    let mut campaign = crate::campaign::Campaign::default();
+    campaign.characters.push(crate::campaign::PcDescription {
+        character_profile_idx: Some(profile_idx),
+        instanced: true,
+        status,
+    });
+
+    let mut host = GameHost::new();
+    host.entities = vec![Some(native_test_pc(Vec::new(), Vec::new()))];
+    host.pc_profile_map.insert(actor, profile_idx);
+    host.campaign = Some(campaign);
+    (host, actor)
+}
+
+fn call_set_experiences(host: &mut GameHost, actor: i32, sword: i32, bow: i32) {
+    let mut stack = NativeStack::default();
+    stack.push_i32(actor);
+    stack.push_i32(sword);
+    stack.push_i32(bow);
+    assert_eq!(
+        <GameHost as HostFunctions>::call(host, NativeFn::SetExperiences as u32, &mut stack),
+        0
+    );
+}
+
+#[test]
+fn set_experiences_updates_exact_backing_status_for_live_pc() {
+    let (mut host, actor) = set_experiences_test_host();
+
+    call_set_experiences(&mut host, actor, 64, 29);
+
+    let status = &host.campaign.as_ref().unwrap().characters[0].status;
+    assert_eq!(status.human_status.hand_to_hand.capacity, 64);
+    assert_eq!(status.human_status.hand_to_hand.experience, 37);
+    assert_eq!(status.human_status.bow.capacity, 29);
+    assert_eq!(status.human_status.bow.experience, 83);
+}
+
+#[test]
+fn set_experiences_capacities_persist_with_campaign_description() {
+    let (mut host, actor) = set_experiences_test_host();
+    call_set_experiences(&mut host, actor, 73, 41);
+
+    let encoded = serde_json::to_string(host.campaign.as_ref().unwrap())
+        .expect("serialize campaign after SetExperiences");
+    let restored: crate::campaign::Campaign =
+        serde_json::from_str(&encoded).expect("restore serialized campaign");
+
+    let status = &restored.characters[0].status;
+    assert_eq!(status.human_status.hand_to_hand.capacity, 73);
+    assert_eq!(status.human_status.hand_to_hand.experience, 37);
+    assert_eq!(status.human_status.bow.capacity, 41);
+    assert_eq!(status.human_status.bow.experience, 83);
+}
+
 #[test]
 fn set_action_available_validates_but_does_not_mutate_disabled_actions() {
     let mut host = GameHost::new();

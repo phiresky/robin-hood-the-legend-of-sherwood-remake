@@ -16,6 +16,7 @@ use std::io::Read;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::binary_reader::Reader;
 use robin_engine::sbfile::SbFile;
 
 // ---------------------------------------------------------------------------
@@ -177,13 +178,6 @@ fn compress_sixteen_bzip(data: &[u8]) -> Result<Vec<u8>> {
 #[cfg(target_arch = "wasm32")]
 fn compress_sixteen_bzip(_data: &[u8]) -> Result<Vec<u8>> {
     anyhow::bail!("bzip2 encoding is not available in wasm builds")
-}
-
-pub(crate) fn read_tag(file: &mut SbFile) -> Result<[u8; 4]> {
-    let mut tag = [0u8; 4];
-    file.serialize_bytes(&mut tag)
-        .map_err(|e| anyhow!("read_tag: error {e}"))?;
-    Ok(tag)
 }
 
 /// Check whether a buffer starts with a JPEG XL magic signature
@@ -388,17 +382,13 @@ impl Picture {
     /// the shipping `dd.raw` path without needing an `SbFile` cursor type.
     pub fn load_sixteen_from_bytes(bytes: &[u8]) -> Result<Self> {
         use std::io::Read;
-        if bytes.len() < 12 {
-            bail!("Sixteen blob shorter than header (12 bytes)");
-        }
-        let x_size = u16::from_le_bytes([bytes[0], bytes[1]]);
-        let y_size = u16::from_le_bytes([bytes[2], bytes[3]]);
-        let packing_raw = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let packed_size = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let mut reader = Reader::new(bytes);
+        let x_size = reader.u16("Sixteen frame width")?;
+        let y_size = reader.u16("Sixteen frame height")?;
+        let packing_raw = reader.u32("Sixteen frame packing")?;
+        let packed_size = reader.u32("Sixteen frame packed size")? as usize;
         let packing = SixteenPacking::from_u32(packing_raw)?;
-        let payload = bytes
-            .get(12..12 + packed_size)
-            .ok_or_else(|| anyhow!("Sixteen payload truncated"))?;
+        let payload = reader.take(packed_size, "Sixteen frame payload")?;
         let expected = x_size as usize * y_size as usize * 2;
         let data = match packing {
             SixteenPacking::None => payload.to_vec(),

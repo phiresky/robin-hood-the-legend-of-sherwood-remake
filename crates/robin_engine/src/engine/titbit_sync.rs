@@ -250,7 +250,7 @@ impl EngineInner {
                 }
                 continue; // Particle effects (smoke, dust) with no supplier
             }
-            let Some(entity_id) = self.entities.id_at_index(t.element_supplier.0) else {
+            let Some(entity_id) = self.entities.id_at_legacy_slot(t.element_supplier.0) else {
                 continue;
             };
             let Some(entity) = self.entities.get(entity_id) else {

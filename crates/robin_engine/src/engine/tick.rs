@@ -9,6 +9,61 @@ use crate::game_operation::GameCode;
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::MissionType;
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NpcHourglassPhase {
+    SoldierPrelude,
+    Patrol,
+    BaseHuman,
+    Broadcasts,
+    View,
+    Detection,
+    Ambush,
+    Busy,
+    Ladder,
+    LockGate,
+    SixteenthFrame,
+    NormalTimer,
+    MacroTimer,
+    QueuedStimuli,
+}
+
+#[cfg(test)]
+thread_local! {
+    static NPC_HOURGLASS_PHASE_TRACE: std::cell::RefCell<Option<Vec<NpcHourglassPhase>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
+    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(phase);
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn observe_npc_hourglass_phase(_phase: ()) {}
+
+#[cfg(test)]
+pub(super) fn capture_npc_hourglass_phases<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<NpcHourglassPhase>) {
+    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
+        assert!(trace.borrow().is_none(), "phase capture is not re-entrant");
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let phases = NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("phase capture must remain active")
+    });
+    (result, phases)
+}
+
 // ─── Per-tick timing instrumentation ─────────────────────────────────
 //
 // Records the wall-clock duration of every `perform_hourglass` call
@@ -24,6 +79,25 @@ thread_local! {
 
 /// Number of `perform_hourglass` calls between log lines.
 const HOURGLASS_LOG_INTERVAL: u32 = 100;
+
+/// Move exclamations whose decoded-duration deadline has arrived into
+/// the callback queue consumed by `process_npc_speech` later this tick.
+pub(super) fn drain_matured_exclamations(
+    sound_sim: &mut crate::sound::SoundSimState,
+    cur_frame: u32,
+) {
+    let mut still_playing = Vec::new();
+    let mut finished = Vec::new();
+    for p in sound_sim.playing_exclamations.drain(..) {
+        if p.finish_frame <= cur_frame {
+            finished.push((p.actor_id, p.exclamation_id));
+        } else {
+            still_playing.push(p);
+        }
+    }
+    sound_sim.playing_exclamations = still_playing;
+    sound_sim.finished_exclamations = finished;
+}
 
 #[derive(Default)]
 struct HourglassStats {
@@ -240,6 +314,44 @@ impl EngineInner {
         fx
     }
 
+    /// Run the one-shot mission-script `PostInitialize` stage.
+    ///
+    /// The original `RHGame::GameLoop` calls this after the first
+    /// `Refresh(true, true)` and `RHSound::Hourglass`, not from inside
+    /// `RHEngine::PerformHourglass`.  The host therefore invokes this
+    /// explicit stage after its first refresh/sound boundary.  Rollback
+    /// replay invokes the same stage after replaying frame zero so the
+    /// resulting pre-frame-one simulation state remains deterministic.
+    pub fn perform_post_initialize(
+        &mut self,
+        display: &mut HostDisplayState,
+        assets: &LevelAssets,
+    ) -> Option<super::SideEffects> {
+        let needs_post_initialize = self
+            .mission_script
+            .as_ref()
+            .is_some_and(|script| !script.post_initialized);
+        if !needs_post_initialize {
+            return None;
+        }
+
+        // PostInitialize can call randomising natives.  It used to run
+        // under perform_hourglass's RNG installation, so preserve that
+        // deterministic stream while moving only the scheduling boundary.
+        #[allow(clippy::disallowed_methods)]
+        let placeholder = fastrand::Rng::with_seed(0);
+        crate::sim_rng::install(std::mem::replace(&mut self.rng, placeholder));
+
+        self.run_post_initialize_if_needed(assets);
+        self.drain_pending_immediate_actions_sync(display, assets);
+
+        self.rng = crate::sim_rng::uninstall();
+
+        let mut fx = std::mem::take(&mut self.pending_side_effects);
+        fx.code = GameCode::LevelInProgress;
+        Some(fx)
+    }
+
     /// Whether any PC is currently guarded.
     pub fn is_pc_guarded(&self) -> bool {
         for &pc_id in &self.pc_ids {
@@ -335,17 +447,7 @@ impl EngineInner {
         // emit time using the host-supplied `exclamation_durations`
         // table.
         let cur_frame = self.frame_counter;
-        let mut still_playing = Vec::new();
-        let mut finished = Vec::new();
-        for p in self.sound_sim.playing_exclamations.drain(..) {
-            if p.finish_frame <= cur_frame {
-                finished.push((p.actor_id, p.exclamation_id));
-            } else {
-                still_playing.push(p);
-            }
-        }
-        self.sound_sim.playing_exclamations = still_playing;
-        self.sound_sim.finished_exclamations = finished;
+        drain_matured_exclamations(&mut self.sound_sim, cur_frame);
 
         // Drain matured sound-source finishes.  Replaces the
         // `stop_sound_source` logic the Rust host used to run on
@@ -661,8 +763,15 @@ impl EngineInner {
         // respective consumers (UI layer, tests, etc.) to observe.
         // We only consume the ones that actually affect engine state.
         {
-            let messages = self.messenger.drain();
-            for msg in messages {
+            // `RHMessenger::ForwardMessage` is synchronous and recursive:
+            // a message emitted while handling another message completes
+            // before the outer call resumes.  Keep host/UI-only messages for
+            // their downstream consumer, but prepend newly emitted messages
+            // to the remaining engine work so their observable state changes
+            // happen depth-first in this frame.
+            let mut messages: std::collections::VecDeque<_> = self.messenger.drain().into();
+            let mut downstream = std::collections::VecDeque::new();
+            while let Some(msg) = messages.pop_front() {
                 match msg.msg_type {
                     MessageType::Simple(SimpleMessage::LockAlt) => {
                         self.seats[0].is_lock_alt = true;
@@ -1016,8 +1125,17 @@ impl EngineInner {
                     // Other messages are consumed by downstream systems
                     // (UI layer, mission flow). Re-enqueue so those
                     // consumers can still observe them.
-                    _ => self.messenger.send(msg),
+                    _ => downstream.push_back(msg),
                 }
+
+                // Preserve the send order of recursive calls while placing
+                // them ahead of pre-existing sibling messages.
+                for nested in self.messenger.drain().into_iter().rev() {
+                    messages.push_front(nested);
+                }
+            }
+            for msg in downstream {
+                self.messenger.send(msg);
             }
         }
 
@@ -1070,11 +1188,13 @@ impl EngineInner {
         // sprite animation completes (detected in tick_entity_animations).
         self.process_animation_orders();
 
-        // Pathfinding is synchronous now — Move sequence elements
-        // call `find_path` directly when their `InstructOwner` action
-        // dispatches (see the Move dispatch in this file).  The
-        // legacy async `ProcessPathRequests` drain had no remaining
-        // producers post-refactor and was deleted.
+        // ── Process one completed path request ───────────────────
+        // Original `RHEngine::ProcessPathRequests` is called exactly once
+        // here, before element / sequence hourglasses, and its pathfinder
+        // callee returns at most one READY request.  Rust's A* is
+        // synchronous, but retaining this one-request slot preserves the
+        // observable per-frame completion order.
+        self.process_next_path_request(assets);
 
         // Snapshot pre-hourglass swordfight state so we can detect a
         // swordfight→non-swordfight transition across this tick and
@@ -1085,7 +1205,37 @@ impl EngineInner {
         // doesn't bleed into the next click-release action.
         let was_swordfighting = self.is_selected_pc_swordfighting();
 
+        // RHElementActorSoldier::Hourglass performs its subclass prelude
+        // before delegating to RHElementActorNPC::Hourglass: apple smell,
+        // primary-target tracking, and the reaction-time EnemyNear test.
+        // In particular, keep the target snap introduced by 24c43efde ahead
+        // of RefreshView without moving it into the base NPC phases.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::SoldierPrelude);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_apple_smell();
+        self.tick_soldier_track_primary_target();
+        if !self.freeze_all && !self.ai_global.freeze {
+            let scratch = self.build_sim_scratch(assets);
+            self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
+        }
+
+        // First base-NPC phase in RHElementActorNPC::Hourglass. Patrol
+        // history observes the actor before RHElementActorHuman::Hourglass
+        // executes its movement/order work.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Patrol);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_patrol_coordination(assets);
+
         // ── Element hourglass (per-element update) ───────────────
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::BaseHuman);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_concussion_healing(assets);
         let mut to_remove = Vec::new();
         for (id, entity) in self.entities.occupied_mut() {
             if !entity.hourglass() {
@@ -1434,8 +1584,9 @@ impl EngineInner {
             // the same code path is reused by the failed-path retry
             // pass.
 
-            match self.try_dispatch_move_path(assets, owner, seq_id, elem_idx, dest, move_action) {
+            match self.try_dispatch_move_path(owner, seq_id, elem_idx, dest, move_action) {
                 MovePathOutcome::Success => {}
+                MovePathOutcome::Pending => {}
                 MovePathOutcome::ActorGone => {
                     self.sequence_manager.element_impossible(seq_id, elem_idx);
                 }
@@ -5291,6 +5442,10 @@ impl EngineInner {
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterCombatInjury),
             );
         }
+        // RHElementActorHuman::Hourglass performs its staggered tiredness
+        // recovery after the base actor/order work and before returning to
+        // RHElementActorNPC::Hourglass.
+        self.tick_tiredness(assets);
 
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
@@ -5332,11 +5487,10 @@ impl EngineInner {
         // NPCs whose `inform_my_friends` flag was set by
         // `set_concussion_of_the_brain` broadcast DETECTABLE_BODY to
         // every ally during Hourglass.
-        // Original: RHElementActorSoldier::Hourglass re-snaps these combat
-        // substates toward mpPrimaryTarget before delegating to
-        // RHElementActorNPC::Hourglass and its RefreshDetection pass.
-        self.tick_soldier_track_primary_target();
-
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Broadcasts);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_inform_my_friends();
 
         // ── Deferred resurrection-broadcast + eye-status apply ──
@@ -5346,12 +5500,35 @@ impl EngineInner {
         // own `eye_status` back to `LookForward`.
         self.tick_ai_pending_resurrection_and_eyes();
 
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::View);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.refresh_npc_views();
+
+        // RefreshDetection, including its synchronous Think side effects.
+        // Timer polling and the old lock-queue drain are separate tail
+        // phases below, exactly as in RHElementActorNPC::Hourglass.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Detection);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_enemy_ai(assets);
+
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Ambush);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_refresh_ambush_points(assets);
 
         // ── Per-tick AILOCK_BUSY edge detector ─────────────────
         // Lock or unlock AILOCK_BUSY based on the live
         // `is_very_very_busy` predicate (posture or active PassDoor /
         // Fall element).  Runs after the view refresh.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Busy);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_npc_busy_edge_detect();
 
         // ── Stuck-on-ladder emergency counter ──────────────────
@@ -5359,7 +5536,13 @@ impl EngineInner {
         // ladders idling in CMD_WAIT/CMD_MOVE_WAITING; after 25
         // frames force a ReturnToDuty so the actor can self-recover.
         // Runs after the BUSY edge detector.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::Ladder);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_npc_stuck_on_ladder(assets);
+
+        self.tick_civilian_random_speech(assets);
 
         // ── Locked-frame timer bumps ───────────────────────────
         // When any lock is held the entire Hourglass tail
@@ -5370,29 +5553,44 @@ impl EngineInner {
         // window and acts as the "skip the fire" gate for the
         // downstream macro-timer / EVENT_TIMER fire checks (which
         // compare against the live `frame_counter`).
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::LockGate);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_npc_locked_frame_timer_bumps();
+
+        // The unlocked tail is ordered exactly like the original callee:
+        // The16thFrame, normal EVENT_TIMER, macro timer, then stimuli held
+        // by a prior AI/script lock.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::SixteenthFrame);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_periodic_ai(assets);
+
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::NormalTimer);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_ai_normal_timers(assets);
 
         // ── Macro-timer hourglass ──────────────────────────────
         // Poll the macro-specific timer each frame and, when it
         // rings, call `execute_next_macro_command` directly —
         // bypassing the stimulus queue so CMD_WAIT / CMD_BEND
-        // resume cleanly.  Runs before `tick_enemy_ai` so any
-        // resulting movement-order / substate change is visible
-        // to the detection pass.
+        // resume cleanly. Any resulting movement-order / substate change
+        // is visible to the queued-stimulus drain in the same frame.
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::MacroTimer);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
         self.tick_ai_macro_timers(assets);
 
-        // ── Per-frame enemy AI tick ─────────────────────────────
-        // Vision → alert → pursue.  Stand-in for the full
-        // detection / `Think(stimulus)` pipeline until the state
-        // machine is ported.  Without this, enemies stand around
-        // doing nothing.
-        self.tick_enemy_ai(assets);
-
-        // ── Per-frame ambush-point peek scan ────────────────────
-        // Drive the Far/Near/Checked ambush-point transitions and
-        // dispatch the CheckAmbushPoint left/right substate change
-        // when the NPC enters LOS for the first time.
-        self.tick_refresh_ambush_points(assets);
+        #[cfg(test)]
+        observe_npc_hourglass_phase(NpcHourglassPhase::QueuedStimuli);
+        #[cfg(not(test))]
+        observe_npc_hourglass_phase(());
+        self.tick_ai_queued_stimuli(assets);
 
         // ── Post-AI script state-change notifications ───────────
         // Notify per-actor scripts of AI state transitions via
@@ -5410,15 +5608,6 @@ impl EngineInner {
         // entries every frame regardless of `speech_display` so the
         // Vec does not grow unbounded when the overlay is off.
         self.tick_screen_remarks();
-
-        // ── Periodic AI tasks (every 16 frames, staggered) ────
-        // Stuck recovery, stalled timer restart, etc.
-        self.tick_periodic_ai(assets);
-
-        // ── Per-frame patrol coordination ──────────────────────
-        // Chiefs record position history, compute formation positions
-        // for their minions, and dispatch CALL_PATROL_COORDINATE.
-        self.tick_patrol_coordination(assets);
 
         // ── Per-frame bow-shot tick ─────────────────────────────
         // Drive the `SHOOTING_WITH_BOW` animation for every actor
@@ -5471,9 +5660,6 @@ impl EngineInner {
         // tick concussion healing.
         self.tick_melee_combat(assets);
 
-        // Per-frame soldier counter decrements (apple-smell).
-        self.tick_apple_smell();
-
         // Per-frame PC life-point auto-heal (immortal bump +
         // Easy-mode slow regen).  Runs after the
         // melee/concussion/tiredness pass.
@@ -5494,11 +5680,6 @@ impl EngineInner {
         // next tick starts fresh.  Read by the postpone-race guard in
         // `EngineInner::engine_postpone`.
         self.propagate_done_to_current_orders();
-
-        // ── Shouldered-carry ceiling check ─────────────────────
-        // If a PC carrying another PC on their shoulders walks
-        // under a low ceiling, force the shouldered PC off.
-        self.tick_shouldered_carry_ceiling(assets);
 
         // ── Carried entity position sync ───────────────────────
         // Keep bodies carried by Little John positioned on the carrier
@@ -5541,7 +5722,7 @@ impl EngineInner {
             // as a stand-in (we don't compute display order yet).
             self.titbit_manager.prepare_refresh(|handle| {
                 self.entities
-                    .id_at_index(handle.0)
+                    .id_at_legacy_slot(handle.0)
                     .and_then(|entity_id| self.entities.get(entity_id))
                     .map(|e| e.element_data().position_map().y)
             });
@@ -5631,18 +5812,10 @@ impl EngineInner {
         // sequence actually completed.
         self.drain_pending_self_stimuli(assets);
 
-        // ── One-shot mission-script `PostInitialize` ──────────────
-        // Fires once on the first tick after level load.  Lives
-        // sim-side, after the rest of the tick's logic, so rollback
-        // replay runs it deterministically and any side effects
-        // PostInit pushes land in this frame's `SideEffects`
-        // bundle rather than leaking a frame late.
-        self.run_post_initialize_if_needed(assets);
-
         // ── End-of-tick immediate-action drain ──────────────────────
         // Catch any `register_element_to_go` calls that happened
         // in post-action passes (condolation fan-out, self-stimulus
-        // drains, PostInitialize, etc.) without piggybacking on the
+        // drains, etc.) without piggybacking on the
         // hourglass action-loop drain.  Close the immediate-side-
         // effect window before returning control to the host
         // renderer so post-tick state reads see the immediate side
@@ -7986,7 +8159,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
         use crate::ai::Substate;
         use crate::order::OrderType;
 
-        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+        let Some(entity_id) = self.entities.id_at_legacy_slot(element.0) else {
             return false;
         };
         let Some(entity) = self.entities.get(entity_id) else {
@@ -8012,7 +8185,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
     }
 
     fn is_unconscious_and_alive(&self, element: crate::titbit::ElementHandle) -> bool {
-        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+        let Some(entity_id) = self.entities.id_at_legacy_slot(element.0) else {
             return false;
         };
         let Some(entity) = self.entities.get(entity_id) else {
@@ -8035,7 +8208,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
 
     fn is_hidden_posture(&self, element: crate::titbit::ElementHandle) -> bool {
         use crate::element::Posture;
-        let Some(entity_id) = self.entities.id_at_index(element.0) else {
+        let Some(entity_id) = self.entities.id_at_legacy_slot(element.0) else {
             return false;
         };
         let Some(entity) = self.entities.get(entity_id) else {

@@ -1,17 +1,19 @@
 //! Multiplayer transport — WebSocket-based server / client.
 //!
-//! The wire-format types ([`NetMsg`], [`NetEvent`], [`NetOutbound`],
-//! [`NetChannels`]) and protocol constants live in
+//! The wire-format types ([`NetMsg`], [`NetEvent`], [`NetOutbound`])
+//! and protocol constants live in
 //! [`robin_engine::multiplayer`] so [`robin_engine::engine_manager::EngineManager`]
-//! can own a `NetChannels` directly and route mutations through the
-//! rollback-safe path.  This module owns only the platform-specific
-//! transport submodules ([`native`] / [`wasm`]).
+//! can route mutations through the rollback-safe path. This module wraps
+//! the engine channel bundle in [`NetChannels`] so the channels and their
+//! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
+use robin_engine::multiplayer::NetChannels as EngineNetChannels;
 pub use robin_engine::multiplayer::{
-    DEFAULT_PORT, FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION,
-    NetChannels, NetEvent, NetMsg, NetOutbound, STATE_HASH_INTERVAL, decode_msg, encode_msg,
-    new_frame_cursor,
+    DEFAULT_PORT, FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION, NetEvent,
+    NetMsg, NetOutbound, STATE_HASH_INTERVAL, decode_msg, encode_msg, new_frame_cursor,
 };
+use std::ops::Deref;
+use std::sync::mpsc::{Receiver, Sender};
 
 pub mod lobby;
 
@@ -25,7 +27,113 @@ pub use native::{ClientHandle, ServerHandle, connect_client, start_server};
 mod wasm;
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{ClientHandle, ServerHandle, connect_client, start_server};
+pub use wasm::{ClientHandle, connect_client};
+
+/// Owns every worker and platform resource for one multiplayer transport.
+///
+/// Dropping the runtime cancels its workers, closes sockets/listeners, and
+/// joins native threads. The browser implementation removes its callbacks,
+/// cancels its outgoing timer, and closes the WebSocket.
+///
+/// Original provenance: `original-code/sblibng/SBNetwork.cpp`,
+/// `SBNetwork::~SBNetwork()` closes an active session and releases the
+/// DirectPlay object. This runtime preserves that resource-owning RAII
+/// behavior for the port's WebSocket transport.
+pub enum MultiplayerRuntime {
+    #[cfg(not(target_arch = "wasm32"))]
+    Server(ServerHandle),
+    Client(ClientHandle),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<ServerHandle> for MultiplayerRuntime {
+    fn from(handle: ServerHandle) -> Self {
+        Self::Server(handle)
+    }
+}
+
+impl From<ClientHandle> for MultiplayerRuntime {
+    fn from(handle: ClientHandle) -> Self {
+        Self::Client(handle)
+    }
+}
+
+impl MultiplayerRuntime {
+    /// Stop the transport now. Calling this more than once is harmless.
+    pub fn shutdown(&mut self) {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Server(handle) => handle.shutdown(),
+            Self::Client(handle) => handle.shutdown(),
+        }
+    }
+}
+
+impl Drop for MultiplayerRuntime {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// Game-loop channels coupled to the runtime that services them.
+///
+/// Field order is intentional: the engine channel senders are dropped before
+/// the runtime, then runtime shutdown joins workers after their channel ends
+/// have closed.
+pub struct NetChannels {
+    channels: EngineNetChannels,
+    runtime: Option<MultiplayerRuntime>,
+}
+
+impl NetChannels {
+    /// Build an unattached channel bundle. The caller must attach the runtime
+    /// returned by [`start_server`] or [`connect_client`] before publishing the
+    /// bundle to the game loop.
+    pub fn new() -> (
+        Self,
+        Sender<NetEvent>,
+        Receiver<NetOutbound>,
+        FrameCursor,
+        InitialSnapshot,
+    ) {
+        let (channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) =
+            EngineNetChannels::new();
+        (
+            Self {
+                channels,
+                runtime: None,
+            },
+            incoming_tx,
+            outgoing_rx,
+            frame_cursor,
+            initial_snapshot,
+        )
+    }
+
+    /// Couple the channel bundle to its transport owner.
+    pub fn attach_runtime(&mut self, runtime: impl Into<MultiplayerRuntime>) {
+        assert!(
+            self.runtime.is_none(),
+            "multiplayer channels already have an attached runtime"
+        );
+        self.runtime = Some(runtime.into());
+    }
+
+    /// Explicitly stop and detach the transport. Drop performs the same work.
+    pub fn shutdown(&mut self) {
+        if let Some(mut runtime) = self.runtime.take() {
+            runtime.shutdown();
+        }
+    }
+}
+
+impl Deref for NetChannels {
+    type Target = EngineNetChannels;
+
+    fn deref(&self) -> &Self::Target {
+        &self.channels
+    }
+}
 
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,21 +144,82 @@ mod tests {
     use std::sync::mpsc::channel;
     use std::time::Duration;
 
+    fn make_server_handle() -> (NetChannels, ServerHandle, std::net::SocketAddr) {
+        let (channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) =
+            NetChannels::new();
+        let handle = start_server(
+            "127.0.0.1:0",
+            "host".into(),
+            42,
+            incoming_tx,
+            outgoing_rx,
+            frame_cursor,
+            initial_snapshot,
+            1,
+        )
+        .expect("start server on an ephemeral port");
+        let local_addr = handle.local_addr();
+        (channels, handle, local_addr)
+    }
+
+    fn start_owned_server() -> (NetChannels, std::net::SocketAddr) {
+        let (mut channels, handle, local_addr) = make_server_handle();
+        channels.attach_runtime(handle);
+        (channels, local_addr)
+    }
+
+    #[test]
+    fn dropping_owned_runtime_releases_listener() {
+        let (channels, local_addr) = start_owned_server();
+
+        drop(channels);
+
+        let rebound = std::net::TcpListener::bind(local_addr)
+            .expect("runtime drop must stop and join the listener before returning");
+        drop(rebound);
+    }
+
+    #[test]
+    fn dropping_runtime_joins_idle_peer_worker() {
+        let (mut channels, handle, local_addr) = make_server_handle();
+        let idle_peer = std::net::TcpStream::connect(local_addr).expect("connect idle peer");
+        let accept_deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while handle.peer_worker_count() == 0 {
+            assert!(
+                std::time::Instant::now() < accept_deadline,
+                "server did not start the idle peer worker"
+            );
+            std::thread::yield_now();
+        }
+        channels.attach_runtime(handle);
+        let (done_tx, done_rx) = channel();
+
+        let shutdown_thread = std::thread::spawn(move || {
+            drop(channels);
+            done_tx.send(()).expect("report completed shutdown");
+        });
+
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("runtime shutdown must cancel and join an idle handshake worker");
+        shutdown_thread
+            .join()
+            .expect("runtime shutdown test worker must not panic");
+        drop(idle_peer);
+        let rebound = std::net::TcpListener::bind(local_addr)
+            .expect("joined runtime must release its listener");
+        drop(rebound);
+    }
+
     #[test]
     fn server_client_input_roundtrip() {
-        // Start a server on an ephemeral port.
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        let addr = format!("127.0.0.1:{port}");
-
         // Server side.
         let (server_in_tx, server_in_rx) = channel::<NetEvent>();
         let (_server_out_tx, server_out_rx) = channel::<NetOutbound>();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let _server = start_server(
-            &addr,
+            "127.0.0.1:0",
             "host".into(),
             42,
             server_in_tx,
@@ -60,9 +229,7 @@ mod tests {
             2,
         )
         .expect("start_server");
-
-        // Brief sleep so the listener is accepting before we dial.
-        std::thread::sleep(Duration::from_millis(50));
+        let addr = _server.local_addr().to_string();
 
         // Client side.
         let (client_in_tx, client_in_rx) = channel::<NetEvent>();

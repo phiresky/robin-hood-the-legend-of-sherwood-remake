@@ -6,6 +6,7 @@
 //! management** and **transition logic** for those flows.
 
 use crate::Host;
+use crate::host::ApplicationContext;
 use robin_engine::engine as engine_api;
 #[cfg(test)]
 use robin_engine::mission_stat as engine_mission_stat;
@@ -113,10 +114,10 @@ pub struct Game {
     pub frame_times: [u32; NUMBER_OF_SAMPLES],
     pub last_tick: u32,
 
-    /// Application-wide startup options.  Only the directory fields are
-    /// consulted today; the rest is here so `evaluate_arg` has somewhere
-    /// to land.
-    pub global_options: engine_api::GlobalOptions,
+    /// Explicit application context. `Deref<GlobalOptions>` preserves the
+    /// existing directory/launcher option reads, while `sim_config()` is the
+    /// only gameplay configuration attached to the deterministic engine.
+    pub global_options: ApplicationContext,
 }
 
 impl Default for Game {
@@ -139,7 +140,7 @@ impl Default for Game {
             stature_focus: StatureFocusLatch::default(),
             frame_times: [0; NUMBER_OF_SAMPLES],
             last_tick: 0,
-            global_options: engine_api::GlobalOptions::default(),
+            global_options: ApplicationContext::default(),
         }
     }
 }
@@ -512,6 +513,9 @@ impl Game {
         console_displayed: bool,
         dummy_pause: bool,
     ) -> Option<GameCode> {
+        host.bind_application_context(&self.global_options);
+        engine.attach_sim_config(self.global_options.sim_config());
+
         let mission_transitioning = !self.operation.is(GameCode::LevelInProgress);
 
         if !self.should_run_hourglass(console_displayed, mission_transitioning, dummy_pause) {
@@ -629,6 +633,7 @@ impl Game {
         campaign: &mut Campaign,
         callbacks: &mut dyn GameCallbacks,
     ) -> Option<GameCode> {
+        engine.attach_sim_config(self.global_options.sim_config());
         // The engine owns the mission-scoped campaign internally; for
         // tests that keep the campaign separate, swap it in for the
         // duration of the quit-mission sync so stats land in the
