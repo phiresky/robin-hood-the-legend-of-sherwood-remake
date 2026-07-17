@@ -85,7 +85,9 @@ pub enum RestorePolicy {
 ///
 /// `HostDisplayState` and `DevState` are intentionally excluded: they
 /// are host/display or developer overlay state. Replay uses scratch
-/// instances while reconstructing deterministic engine state.
+/// instances while reconstructing deterministic engine state. The two
+/// gameplay-affecting zoom gates are restored into that scratch display
+/// from the engine-owned camera transition state before every replay tick.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SimSnapshot {
     pub frame: u32,
@@ -367,11 +369,16 @@ pub fn replay_one_frame_profiled(
     scratch_dev: &mut DevState,
     cmds: &[PlayerInput],
 ) -> ReplayFrameTiming {
+    sync_gameplay_zoom_gate(&snapshot.engine, display);
     let apply_start = Instant::now();
     snapshot
         .engine
         .apply_commands(display, &mut scratch_host.input, assets, cmds);
     let apply_us = apply_start.elapsed().as_micros();
+    // A replayed zoom command updates the serialised camera transition.
+    // Mirror its gate before ticking just as the original zoom-message
+    // handlers and PerformHourglass both read mbackgroundTransform.
+    sync_gameplay_zoom_gate(&snapshot.engine, display);
     let tick_start = Instant::now();
     run_engine_tick_core(
         scratch_host,
@@ -390,6 +397,23 @@ pub fn replay_one_frame_profiled(
     let tick_us = tick_start.elapsed().as_micros();
     snapshot.frame += 1;
     ReplayFrameTiming { apply_us, tick_us }
+}
+
+/// Restore the only host-display fields that gate authoritative gameplay.
+///
+/// The original UI caller forwards zoom messages at `RHgame.cpp:2070-2071`;
+/// the engine callees set these direction flags at
+/// `RHengine.cpp:12162-12229`, and `PerformHourglass` reads the same flags
+/// before gameplay advances at `RHengine.cpp:3446-3633`.
+/// `RHEngine::Serialize` also includes the containing transform at
+/// `RHengine.cpp:2408-2504`. Rust keeps the canonical transition in the
+/// serialised engine camera while host presentation uses separate scratch,
+/// so rollback must explicitly bridge just these two booleans.
+fn sync_gameplay_zoom_gate(engine: &Engine, display: &mut HostDisplayState) {
+    let zoom_to_up = engine.is_zoom_up_in_progress(display);
+    let zoom_to_down = engine.is_zoom_down_in_progress(display);
+    display.background_transform.zoom_to_up = zoom_to_up;
+    display.background_transform.zoom_to_down = zoom_to_down;
 }
 
 /// Run one deterministic engine tick and drain engine-local side effects.
