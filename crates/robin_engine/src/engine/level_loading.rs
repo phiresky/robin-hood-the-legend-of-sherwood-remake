@@ -672,7 +672,7 @@ impl EngineInner {
             // Register script zone sectors on the fast-find grid so we can
             // do point-in-polygon occupant checks during gameplay.
             std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).clear();
-            self.world.script_zones.clear();
+            self.script_domains.zones.scripts.clear();
             for sec in &so.sectors {
                 // Nudge every polygon vertex by `Y += 0.000348367f` to
                 // avoid integer-aligned vertices confusing point-in-polygon
@@ -745,8 +745,8 @@ impl EngineInner {
                     sec.layer,
                 );
                 std::sync::Arc::make_mut(&mut assets.script_zone_grid_indices).push(grid_idx);
-                let zone_idx = self.world.script_zones.len();
-                self.world.script_zones.push(script_data);
+                let zone_idx = self.script_domains.zones.scripts.len();
+                self.script_domains.zones.scripts.push(script_data);
 
                 // Each polygon edge becomes a `LINE_SCRIPT | LINE_CROSS`
                 // line carrying a back-pointer to the owning script zone
@@ -5596,7 +5596,7 @@ impl EngineInner {
             Vec<crate::sector_production::Occupant>,
         > = std::collections::HashMap::new();
 
-        for (zone_idx, zone) in self.world.script_zones.iter().enumerate() {
+        for (zone_idx, zone) in self.script_domains.zones.scripts.iter().enumerate() {
             let prod_type = zone.production_sector_type;
             if prod_type == crate::sector_production::Type::Unknown
                 || prod_type == crate::sector_production::Type::Relic
@@ -5738,7 +5738,7 @@ impl EngineInner {
         let points_count = assets
             .script_location_positions
             .len()
-            .saturating_sub(self.world.script_zones.len());
+            .saturating_sub(self.script_domains.zones.scripts.len());
 
         struct SectorPlan {
             prod_type: PT,
@@ -5757,7 +5757,7 @@ impl EngineInner {
         // Build a zone-type → (layer, sector) map for attaching sectors.
         let mut zone_location: std::collections::HashMap<PT, (u16, u16)> =
             std::collections::HashMap::new();
-        for (zone_idx, zone) in self.world.script_zones.iter().enumerate() {
+        for (zone_idx, zone) in self.script_domains.zones.scripts.iter().enumerate() {
             let pt = zone.production_sector_type;
             if pt == PT::Unknown {
                 continue;

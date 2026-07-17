@@ -42,6 +42,21 @@ fn run_native(index: u32, args: &[i32]) -> StopReason {
     vm.run(&prog)
 }
 
+fn seed_zone(host: &mut GameHost, zone_idx: usize, handles: &[i32]) {
+    host.engine_domains
+        .zones
+        .scripts
+        .resize_with(zone_idx + 1, crate::sector::ScriptSectorData::new);
+    host.engine_domains.zones.scripts[zone_idx].occupant_indices = handles
+        .iter()
+        .map(|handle| {
+            crate::entity_id::EntityId::Civilian(crate::entity_id::CivilianId(
+                GameHost::actor_handle_index(*handle).expect("actor handle") as u32,
+            ))
+        })
+        .collect();
+}
+
 fn call_host_native(host: &mut GameHost, native: NativeFn, stack: &mut NativeStack) -> i32 {
     <GameHost as HostFunctions>::call(host, native as u32, stack)
         .expect_return("non-nested native test")
@@ -520,9 +535,10 @@ fn is_inside_zone() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let loc = GameHost::location_handle_from_index(1);
-    host.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host,
+        1,
+        &[
             GameHost::actor_handle_from_index(2),
             actor,
             GameHost::actor_handle_from_index(6),
@@ -538,9 +554,10 @@ fn is_inside_zone_not_present() {
     let mut host = GameHost::new();
     let actor = GameHost::actor_handle_from_index(4);
     let loc = GameHost::location_handle_from_index(1);
-    host.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host,
+        1,
+        &[
             GameHost::actor_handle_from_index(2),
             GameHost::actor_handle_from_index(6),
         ],
@@ -563,9 +580,10 @@ fn actors_in_sector() {
         ..Default::default()
     };
     let loc = GameHost::location_handle_from_index(1);
-    host.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host,
+        0,
+        &[
             GameHost::actor_handle_from_index(2),
             GameHost::actor_handle_from_index(4),
             GameHost::actor_handle_from_index(6),
@@ -587,9 +605,10 @@ fn actors_in_sector() {
         script_location_count: 2,
         ..Default::default()
     };
-    host2.zone_occupants.insert(
-        loc,
-        vec![
+    seed_zone(
+        &mut host2,
+        0,
+        &[
             GameHost::actor_handle_from_index(2),
             GameHost::actor_handle_from_index(4),
             GameHost::actor_handle_from_index(6),
@@ -649,9 +668,15 @@ fn are_all_pcs_inside() {
         Some(native_test_pc(Vec::new(), Vec::new())),
         Some(native_test_pc(Vec::new(), Vec::new())),
     ];
-    host.zone_occupants
-        .insert(5, (0..3).map(GameHost::actor_handle_from_index).collect());
-    let prog = call_native_return(230, &[5]);
+    let loc = GameHost::location_handle_from_index(0);
+    seed_zone(
+        &mut host,
+        0,
+        &(0..3)
+            .map(GameHost::actor_handle_from_index)
+            .collect::<Vec<_>>(),
+    );
+    let prog = call_native_return(230, &[loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
 }
@@ -665,8 +690,9 @@ fn are_all_pcs_inside_not_all() {
         Some(native_test_pc(Vec::new(), Vec::new())),
     ];
     let handles: Vec<_> = (0..3).map(GameHost::actor_handle_from_index).collect();
-    host.zone_occupants.insert(5, vec![handles[0], handles[2]]); // PC 2 missing
-    let prog = call_native_return(230, &[5]);
+    let loc = GameHost::location_handle_from_index(0);
+    seed_zone(&mut host, 0, &[handles[0], handles[2]]); // PC 2 missing
+    let prog = call_native_return(230, &[loc]);
     let mut vm = Vm::new().with_host(Box::new(host));
     assert_eq!(vm.run(&prog), StopReason::ReturnedValue(0));
 }

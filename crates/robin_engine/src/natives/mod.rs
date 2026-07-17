@@ -201,8 +201,6 @@ pub struct GameHost {
     pub arrow_reserves: Vec<bool>,
     /// Actor handle → building handle (which building they're in).
     pub actor_building: BTreeMap<i32, i32>,
-    /// Script zone occupants. Key = location handle, value = actor handles.
-    pub zone_occupants: BTreeMap<i32, Vec<i32>>,
     /// Deferred game-logic commands for the engine to process after script.
     pub deferred_commands: Vec<DeferredCommand>,
 
@@ -280,7 +278,6 @@ impl GameHost {
             building_occupants: Vec::new(),
             arrow_reserves: Vec::new(),
             actor_building: BTreeMap::new(),
-            zone_occupants: BTreeMap::new(),
             deferred_commands: Vec::new(),
             pending_objective_changes: Vec::new(),
             building_active: Vec::new(),
@@ -525,6 +522,23 @@ impl GameHost {
 }
 
 impl NativeContext<'_> {
+    fn zone_index(&self, loc: i32) -> Option<usize> {
+        GameHost::location_index(loc)?.checked_sub(self.bindings.script_point_count)
+    }
+
+    fn zone_occupant_handles(&self, loc: i32) -> Option<Vec<i32>> {
+        let zone = self
+            .zone_index(loc)
+            .and_then(|idx| self.engine_domains.zones.scripts.get(idx))?;
+        Some(
+            zone.occupant_indices
+                .iter()
+                .copied()
+                .map(GameHost::actor_handle)
+                .collect(),
+        )
+    }
+
     fn frame_counter(&self) -> u32 {
         self.queries.frame_counter()
     }
@@ -5529,7 +5543,7 @@ impl NativeContext<'_> {
                     // Geometric polygon point-in-test recomputed
                     // every call so results stay correct immediately
                     // after teleport natives ("works also after
-                    // teleports").  The cached `zone_occupants` map
+                    // teleports"). The authoritative occupant list
                     // is only refreshed on explicit
                     // Add/CleanFromScriptZone natives or on the
                     // next-frame tick, so we recompute here when we
@@ -5555,7 +5569,7 @@ impl NativeContext<'_> {
                         }
                         // Ray-casting point-in-polygon, identical to
                         // `GridSector::contains_point` (the production
-                        // path used by `tick_zone_occupants`).
+                        // path used by the per-frame zone scan).
                         if zone.points.len() < 3 {
                             return 0;
                         }
@@ -5581,8 +5595,7 @@ impl NativeContext<'_> {
                         // pre-load test fixtures that never installed
                         // polygons).
                         i32::from(
-                            self.zone_occupants
-                                .get(&loc)
+                            self.zone_occupant_handles(loc)
                                 .is_some_and(|occ| occ.contains(&actor)),
                         )
                     }
@@ -7408,9 +7421,14 @@ impl NativeContext<'_> {
                     if loc_h == 0 {
                         return 0;
                     }
-                    if let Some(occupants) = self.zone_occupants.get_mut(&loc_h) {
-                        if let Some(pos) = occupants.iter().position(|&a| a == actor_h) {
-                            occupants.remove(pos);
+                    let actor_id = self.actor_id(actor_h);
+                    let zone_idx = self.zone_index(loc_h);
+                    if let (Some(actor_id), Some(zone)) = (
+                        actor_id,
+                        zone_idx.and_then(|idx| self.engine_domains.zones.scripts.get_mut(idx)),
+                    ) {
+                        if zone.is_inside(actor_id) {
+                            zone.leave(actor_id);
                             1
                         } else {
                             tracing::warn!(
@@ -7433,7 +7451,16 @@ impl NativeContext<'_> {
                     if loc_h == 0 {
                         return 0;
                     }
-                    self.zone_occupants.entry(loc_h).or_default().push(actor_h);
+                    let Some(actor_id) = self.actor_id(actor_h) else {
+                        return 0;
+                    };
+                    let Some(zone_idx) = self.zone_index(loc_h) else {
+                        return 0;
+                    };
+                    let Some(zone) = self.engine_domains.zones.scripts.get_mut(zone_idx) else {
+                        return 0;
+                    };
+                    zone.enter(actor_id);
                     1
                 }
                 SetCorpseExistsInBuilding => {
@@ -7507,8 +7534,7 @@ impl NativeContext<'_> {
                         return 0;
                     }
                     let all_inside = self.pc_handles().iter().all(|&pc| {
-                        self.zone_occupants
-                            .get(&loc_h)
+                        self.zone_occupant_handles(loc_h)
                             .is_some_and(|occ| occ.contains(&pc))
                     });
                     i32::from(all_inside)
@@ -7522,7 +7548,7 @@ impl NativeContext<'_> {
                         return 0;
                     }
                     let has_living_enemy =
-                        self.zone_occupants.get(&loc_h).is_some_and(|occupants| {
+                        self.zone_occupant_handles(loc_h).is_some_and(|occupants| {
                             occupants
                                 .iter()
                                 .any(|&handle| match self.get_entity(handle) {
@@ -7555,8 +7581,7 @@ impl NativeContext<'_> {
                         if is_dead {
                             true
                         } else {
-                            self.zone_occupants
-                                .get(&loc_h)
+                            self.zone_occupant_handles(loc_h)
                                 .is_some_and(|occ| occ.contains(&pc))
                         }
                     });
@@ -7983,8 +8008,7 @@ impl NativeContext<'_> {
                         );
                         return 0;
                     }
-                    self.zone_occupants
-                        .get(&loc)
+                    self.zone_occupant_handles(loc)
                         .map_or(0, |occ| occ.len() as i32)
                 }
                 GetActorInSector => {
@@ -7999,7 +8023,7 @@ impl NativeContext<'_> {
                         tracing::warn!("Script Error: GetActorInSector on non-sector handle {loc}");
                         return 0;
                     }
-                    match self.zone_occupants.get(&loc) {
+                    match self.zone_occupant_handles(loc) {
                         Some(occ) => {
                             if idx >= 0 && (idx as usize) < occ.len() {
                                 occ[idx as usize]

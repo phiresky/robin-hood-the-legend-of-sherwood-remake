@@ -1304,7 +1304,7 @@ impl EngineInner {
         };
 
         let mut init_count = 0u32;
-        for (zone_idx, zone_data) in self.world.script_zones.iter().enumerate() {
+        for (zone_idx, zone_data) in self.script_domains.zones.scripts.iter().enumerate() {
             let class_name = match &zone_data.script_class_name {
                 Some(name) => name.clone(),
                 None => continue,
@@ -1410,8 +1410,9 @@ impl EngineInner {
                 // into apex sectors — once converted, the SECTOR_SCRIPT
                 // flag is dropped so the engine stops scanning them.
                 if self
-                    .world
-                    .script_zones
+                    .script_domains
+                    .zones
+                    .scripts
                     .get(zone_idx)
                     .is_some_and(|z| z.transformed_to_apex)
                 {
@@ -1459,8 +1460,8 @@ impl EngineInner {
         entries: &[(usize, crate::entity_id::EntityId, i32)],
     ) {
         for &(zone_idx, entity_idx, _) in entries {
-            self.world.script_zones[zone_idx].enter(entity_idx);
-            let pt = self.world.script_zones[zone_idx].production_sector_type;
+            self.script_domains.zones.scripts[zone_idx].enter(entity_idx);
+            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
             }
@@ -1473,7 +1474,7 @@ impl EngineInner {
     /// path, where occupant lists must be wiped before re-scanning
     /// against teleported positions.
     pub(crate) fn empty_all_script_sectors(&mut self) {
-        for zone in &mut self.world.script_zones {
+        for zone in &mut self.script_domains.zones.scripts {
             zone.remove_all_occupants();
         }
     }
@@ -1580,11 +1581,11 @@ impl EngineInner {
 
             for (zone_idx, &grid_idx) in assets.script_zone_grid_indices.iter().enumerate() {
                 // Skip apex-converted zones — see scan_zone_occupant_entries note.
-                if self.world.script_zones[zone_idx].transformed_to_apex {
+                if self.script_domains.zones.scripts[zone_idx].transformed_to_apex {
                     continue;
                 }
                 let gs = &self.world.fast_grid.level.sectors[grid_idx as usize];
-                let was_inside = self.world.script_zones[zone_idx].is_inside(eidx);
+                let was_inside = self.script_domains.zones.scripts[zone_idx].is_inside(eidx);
                 let is_inside = active && gs.layer == layer && gs.contains_point(pos);
 
                 if is_inside && !was_inside {
@@ -1610,7 +1611,7 @@ impl EngineInner {
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
                 continue;
             };
-            if self.world.script_zones[zone_idx].is_inside(carried_id) {
+            if self.script_domains.zones.scripts[zone_idx].is_inside(carried_id) {
                 continue;
             }
             if enter_events
@@ -1631,7 +1632,7 @@ impl EngineInner {
             let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried) else {
                 continue;
             };
-            if !self.world.script_zones[zone_idx].is_inside(carried_id) {
+            if !self.script_domains.zones.scripts[zone_idx].is_inside(carried_id) {
                 continue;
             }
             if exit_events
@@ -1650,15 +1651,15 @@ impl EngineInner {
 
         // Phase 2: Update occupant lists and apply production work icons.
         for &(zone_idx, entity_idx, _) in &enter_events {
-            self.world.script_zones[zone_idx].enter(entity_idx);
-            let pt = self.world.script_zones[zone_idx].production_sector_type;
+            self.script_domains.zones.scripts[zone_idx].enter(entity_idx);
+            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, true);
             }
         }
         for &(zone_idx, entity_idx, _) in &exit_events {
-            self.world.script_zones[zone_idx].leave(entity_idx);
-            let pt = self.world.script_zones[zone_idx].production_sector_type;
+            self.script_domains.zones.scripts[zone_idx].leave(entity_idx);
+            let pt = self.script_domains.zones.scripts[zone_idx].production_sector_type;
             if pt != crate::sector_production::Type::Unknown {
                 self.apply_production_work_icon(entity_idx, pt, false);
             }
@@ -1714,7 +1715,7 @@ impl EngineInner {
         let points_count = assets
             .script_location_positions
             .len()
-            .saturating_sub(self.world.script_zones.len());
+            .saturating_sub(self.script_domains.zones.scripts.len());
 
         let Some(ref mut script) = self.mission_script else {
             return;
@@ -1747,11 +1748,11 @@ impl EngineInner {
                 continue;
             }
             let zone_idx = loc_idx - points_count;
-            if zone_idx >= self.world.script_zones.len() {
+            if zone_idx >= self.script_domains.zones.scripts.len() {
                 tracing::warn!("RegisterAsProductionSector: zone {zone_idx} out of range");
                 continue;
             }
-            self.world.script_zones[zone_idx].production_sector_type = prod_type_enum;
+            self.script_domains.zones.scripts[zone_idx].production_sector_type = prod_type_enum;
 
             // Attach to the campaign's SectorProduction so its `speed` is set.
             if let Some(campaign) = self.mission_domain.campaign.as_mut()
@@ -2569,7 +2570,7 @@ impl EngineInner {
                     let points_count = assets
                         .script_location_positions
                         .len()
-                        .saturating_sub(self.world.script_zones.len());
+                        .saturating_sub(self.script_domains.zones.scripts.len());
                     let Some(loc_idx) = crate::natives::GameHost::location_index(location_handle)
                     else {
                         tracing::warn!(
@@ -2584,7 +2585,7 @@ impl EngineInner {
                         continue;
                     } else {
                         let zone_idx = loc_idx - points_count;
-                        if let Some(zone) = self.world.script_zones.get_mut(zone_idx) {
+                        if let Some(zone) = self.script_domains.zones.scripts.get_mut(zone_idx) {
                             if zone.script_associated {
                                 tracing::warn!(
                                     "DefineFlatTrajectoryZone(loc={location_handle}): \

@@ -2,6 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct ZoneState {
+    pub(crate) scripts: Vec<crate::sector::ScriptSectorData>,
+}
+
 /// Deterministic scroll state shared by engine systems and script natives.
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScrollState {
@@ -18,4 +23,5 @@ pub(crate) struct ScrollState {
 #[derive(Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub(crate) struct ScriptDomains {
     pub(crate) scrolls: ScrollState,
+    pub(crate) zones: ZoneState,
 }

@@ -311,7 +311,9 @@ impl Engine {
                 inner.dispatch_startup_message(assets, 1001, 0, 0);
             });
         }
-        inner.world.validate_level_attachments(assets);
+        inner
+            .world
+            .validate_level_attachments(assets, inner.script_domains.zones.scripts.len());
         Ok(Self { inner })
     }
 
@@ -823,6 +825,17 @@ impl Engine {
     }
 
     fn validate_snapshot_compatibility(&self, saved: &Engine) -> Result<(), SnapshotRestoreError> {
+        if saved.inner.script_domains.zones.scripts.len()
+            != self.inner.script_domains.zones.scripts.len()
+        {
+            return Err(SnapshotRestoreError::WorldInvariantViolation {
+                detail: format!(
+                    "snapshot script-zone runtime length {} does not match loaded world length {}",
+                    saved.inner.script_domains.zones.scripts.len(),
+                    self.inner.script_domains.zones.scripts.len(),
+                ),
+            });
+        }
         let level = &self.inner.world.fast_grid.level;
         let lengths = [
             (
@@ -1028,8 +1041,9 @@ mod tests {
         };
         let mut malformed_inner = EngineInner::new();
         malformed_inner
-            .world
-            .script_zones
+            .script_domains
+            .zones
+            .scripts
             .push(crate::sector::ScriptSectorData::new());
         let malformed = Engine {
             inner: malformed_inner,
@@ -1045,6 +1059,6 @@ mod tests {
                         .to_owned(),
             }
         );
-        assert!(live.inner.world.script_zones.is_empty());
+        assert!(live.inner.script_domains.zones.scripts.is_empty());
     }
 }

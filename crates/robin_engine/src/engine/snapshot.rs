@@ -74,7 +74,8 @@ struct FlatEngineSnapshot {
     pending_concussion_side_effects:
         Vec<(crate::element::EntityId, crate::combat::ConcussionOutcome)>,
     mission_script: Option<super::MissionScript>,
-    script_zone_data: Vec<crate::sector::ScriptSectorData>,
+    #[serde(default)]
+    script_zone_data: Option<Vec<crate::sector::ScriptSectorData>>,
     dynamic_sight_obstacles: Vec<crate::sight_obstacle::SightObstacle>,
     static_sight_obstacle_active: Vec<bool>,
     campaign: Option<crate::campaign::Campaign>,
@@ -150,7 +151,10 @@ impl Serialize for EngineInner {
             &self.orders.pending_concussion_side_effects,
         )?;
         snapshot.serialize_field("mission_script", &self.mission_script)?;
-        snapshot.serialize_field("script_zone_data", &self.world.script_zones)?;
+        snapshot.serialize_field(
+            "script_zone_data",
+            &Option::<&Vec<crate::sector::ScriptSectorData>>::None,
+        )?;
         snapshot.serialize_field(
             "dynamic_sight_obstacles",
             &self.world.dynamic_sight_obstacles,
@@ -175,7 +179,7 @@ impl<'de> Deserialize<'de> for EngineInner {
         let legacy_script_domains = mission_script
             .as_mut()
             .and_then(super::MissionScript::take_legacy_script_domains);
-        let script_domains = match (snapshot.script_domains, legacy_script_domains) {
+        let mut script_domains = match (snapshot.script_domains, legacy_script_domains) {
             (Some(_), Some(_)) => {
                 return Err(serde::de::Error::custom(
                     "Engine snapshot contains contradictory new and legacy script domains",
@@ -184,6 +188,14 @@ impl<'de> Deserialize<'de> for EngineInner {
             (Some(domains), None) | (None, Some(domains)) => domains,
             (None, None) => super::state::ScriptDomains::default(),
         };
+        if let Some(legacy_zones) = snapshot.script_zone_data {
+            if !script_domains.zones.scripts.is_empty() {
+                return Err(serde::de::Error::custom(
+                    "Engine snapshot contains contradictory new and legacy script zones",
+                ));
+            }
+            script_domains.zones.scripts = legacy_zones;
+        }
         Ok(Self {
             sim_config: snapshot.sim_config,
             mission_domain: MissionDomain {
@@ -215,7 +227,6 @@ impl<'de> Deserialize<'de> for EngineInner {
                 pathfinder: snapshot.pathfinder,
                 weather: snapshot.weather,
                 shield: snapshot.shield,
-                script_zones: snapshot.script_zone_data,
                 dynamic_sight_obstacles: snapshot.dynamic_sight_obstacles,
                 static_sight_obstacle_active: snapshot.static_sight_obstacle_active,
             },

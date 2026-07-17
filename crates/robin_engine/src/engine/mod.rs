@@ -396,7 +396,8 @@ impl EngineInner {
     }
 
     pub(crate) fn attach_level_assets(&mut self, assets: &LevelAssets) {
-        self.world.attach_level_assets(assets);
+        self.world
+            .attach_level_assets(assets, self.script_domains.zones.scripts.len());
         if let Some(script) = self.mission_script.as_mut() {
             if !script.script_name.is_empty() {
                 let program = assets
