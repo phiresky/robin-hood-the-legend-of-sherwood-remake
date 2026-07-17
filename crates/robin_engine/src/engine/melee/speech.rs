@@ -121,11 +121,11 @@ impl EngineInner {
         // host-side channel and the sim-side scheduled finish.
         if is_unconscious {
             if group != ExclamationGroup::Pc {
-                self.pending_side_effects
-                    .sounds
-                    .push(super::SoundCommand::StopExclamation {
+                self.feedback.pending_side_effects.sounds.push(
+                    super::SoundCommand::StopExclamation {
                         actor_id: entity_id,
-                    });
+                    },
+                );
                 if let Some(entity) = self.entities.get_mut(entity_id)
                     && let Some(npc) = entity.npc_data_mut()
                     && let Some(base) = npc.ai_brain.base_mut()
@@ -136,7 +136,8 @@ impl EngineInner {
                     base.current_remark_flags = 0;
                     base.speech_in_flight = false;
                 }
-                self.sound_sim
+                self.feedback
+                    .sound_sim
                     .playing_exclamations
                     .retain(|p| p.actor_id != entity_id.index());
             }
@@ -190,15 +191,18 @@ impl EngineInner {
             REMARK_WOUNDED
         };
 
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::StopExclamation {
                 actor_id: entity_id,
             });
-        self.sound_sim
+        self.feedback
+            .sound_sim
             .playing_exclamations
             .retain(|p| p.actor_id != entity_id.index());
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Exclamation {
                 group,
@@ -210,12 +214,13 @@ impl EngineInner {
             });
         let duration =
             exclamation_duration_frames(&assets.exclamation_durations, group, profile_id, remark);
-        self.sound_sim
+        self.feedback
+            .sound_sim
             .playing_exclamations
             .push(crate::sound::PlayingExclamation {
                 actor_id: entity_id.index(),
                 exclamation_id: remark as u32,
-                finish_frame: self.frame_counter + duration,
+                finish_frame: self.control.frame_counter + duration,
             });
 
         // Broadcast the AAARGH so nearby NPCs notice the cry.
@@ -308,7 +313,7 @@ impl EngineInner {
         }
 
         // CanHeroSay check: chorus timer + forbidden expression list
-        if self.chorus_timer > 0 && (priority & SPEECH_ALWAYS) == 0 {
+        if self.control.chorus_timer > 0 && (priority & SPEECH_ALWAYS) == 0 {
             return;
         }
 
@@ -346,7 +351,8 @@ impl EngineInner {
         }
 
         // Queue the expression (drained after tick)
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Exclamation {
                 group: ExclamationGroup::Pc,
@@ -362,12 +368,13 @@ impl EngineInner {
             profile_id,
             expression,
         );
-        self.sound_sim
+        self.feedback
+            .sound_sim
             .playing_exclamations
             .push(crate::sound::PlayingExclamation {
                 actor_id: pc_id.index(),
                 exclamation_id: expression as u32,
-                finish_frame: self.frame_counter + duration,
+                finish_frame: self.control.frame_counter + duration,
             });
 
         // Add to forbidden list + set anti-chorus timer
@@ -378,7 +385,7 @@ impl EngineInner {
         if let Some(Entity::Pc(pc)) = self.entities.get_mut(pc_id) {
             pc.pc.forbidden_expressions.push((expression, forbid_timer));
         }
-        self.chorus_timer = DEFAULT_ANTI_CHORUS_TIMER;
+        self.control.chorus_timer = DEFAULT_ANTI_CHORUS_TIMER;
     }
 
     /// Per-frame refresh of all PCs' forbidden expression list counters.
@@ -531,7 +538,7 @@ impl EngineInner {
     ///
     /// `if !is_swordfighting && !is_moving { tiredness -= endurance/10 }`.
     pub(crate) fn tick_tiredness(&mut self, assets: &LevelAssets) {
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         for (id, entity) in self.entities.humans_mut() {
             let idx = id.index();
             // Spread the work — only every 64 frames per entity

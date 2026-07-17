@@ -316,7 +316,7 @@ impl EngineInner {
     ///
     /// An empty selection returns `true` (vacuously).
     pub fn all_selected_pcs_can_climb(&self, assets: &LevelAssets) -> bool {
-        self.seats[0].selection.iter().all(|&pc_id| {
+        self.players.seats[0].selection.iter().all(|&pc_id| {
             self.selected_pc_has_contextual_action(
                 assets,
                 Some(pc_id),
@@ -381,7 +381,7 @@ impl EngineInner {
         } else {
             matches!(focus, Focus::Sword | Focus::Interact | Focus::View)
         };
-        if !multi_select_allowed && self.seats[0].selection.len() > 1 {
+        if !multi_select_allowed && self.players.seats[0].selection.len() > 1 {
             return false;
         }
 
@@ -434,7 +434,7 @@ impl EngineInner {
                 }
                 Focus::Shield | Focus::ShieldPortrait => {
                     entity.is_active()
-                        && !self.seats[0].selection.contains(&entity_id)
+                        && !self.players.seats[0].selection.contains(&entity_id)
                         && !entity.is_dead()
                 }
                 // Heal-active PC must be alive, below max HP, not in
@@ -664,7 +664,7 @@ impl EngineInner {
             if entity.element_data().layer() == u16::MAX {
                 return false;
             }
-            if self.seats[0].selection.len() > 1 {
+            if self.players.seats[0].selection.len() > 1 {
                 return false;
             }
             return self.selected_pc_has_action(
@@ -720,7 +720,7 @@ impl EngineInner {
                 .map(|a| a.action_state)
                 .is_some_and(|s| s == crate::element::ActionState::MovingFast);
         // Whether the currently-selected PC is Robin (used for VIP looting).
-        let selected_pc_is_robin = self.seats[0]
+        let selected_pc_is_robin = self.players.seats[0]
             .selection
             .first()
             .and_then(|&id| self.get_entity(id))
@@ -995,10 +995,12 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        if self.seats[0].selection.is_empty() && !matches!(focus, crate::element::Focus::Select) {
+        if self.players.seats[0].selection.is_empty()
+            && !matches!(focus, crate::element::Focus::Select)
+        {
             return None;
         }
-        let selected_pc = self.seats[0].selection.first().copied();
+        let selected_pc = self.players.seats[0].selection.first().copied();
         for &eid in draw_order.iter().rev() {
             if let Some(e) = self.get_entity(eid)
                 && self.is_entity_focusable(assets, eid, e, mouse_map, focus, selected_pc)
@@ -1016,7 +1018,7 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        let selected_pc = self.seats[0].selection.first().copied();
+        let selected_pc = self.players.seats[0].selection.first().copied();
         for nid in self
             .entities
             .npc_ids()
@@ -1040,7 +1042,7 @@ impl EngineInner {
         mouse_map: MapPoint,
         focus: crate::element::Focus,
     ) -> Option<EntityId> {
-        let selected_pc = self.seats[0].selection.first().copied();
+        let selected_pc = self.players.seats[0].selection.first().copied();
         for &pid in self.pc_ids.iter().rev() {
             if let Some(e) = self.get_entity(pid)
                 && self.is_entity_focusable(assets, pid, e, mouse_map, focus, selected_pc)
@@ -1057,7 +1059,7 @@ impl EngineInner {
     /// wall/ladder lift. Many projectile/bow actions are blocked in
     /// these sectors.
     pub fn is_selected_pc_in_restricted_sector(&self) -> bool {
-        let pc_id = match self.seats[0].selection.first() {
+        let pc_id = match self.players.seats[0].selection.first() {
             Some(&id) => id,
             None => return false,
         };
@@ -1093,7 +1095,7 @@ impl EngineInner {
     /// projectile actions (purse, net, ale).  Returns false if the sector
     /// is a door or a wall/ladder lift.
     pub fn is_mouse_sector_valid_for_ground_target(&self, mouse_map: MapPoint) -> bool {
-        let reference = self.seats[0]
+        let reference = self.players.seats[0]
             .selection
             .first()
             .and_then(|&id| self.get_entity(id))
@@ -2428,7 +2430,7 @@ impl EngineInner {
         if has_special_auth {
             // Check if any selected PC has special authorisation
             // in the direction they'd be passing through.
-            for &pc_id in &self.seats[0].selection {
+            for &pc_id in &self.players.seats[0].selection {
                 if let Some(entity) = self.get_entity(pc_id) {
                     let pc_sector = entity.element_data().sector();
                     let auth_bit = entity.actor_auth_info().pc_auth_bit;
@@ -2454,7 +2456,7 @@ impl EngineInner {
             // multi-selections including a lockpicker the cursor is
             // the plain door cursor, not the lockpick cursor.
             let has_lockpick_pc = matches!(
-                self.seats[0].selection.as_slice(),
+                self.players.seats[0].selection.as_slice(),
                 [pc_id] if self.get_entity(*pc_id)
                     .map(|e| e.actor_auth_info().has_lockpick)
                     .unwrap_or(false)
@@ -2508,7 +2510,7 @@ impl EngineInner {
         if self.is_recording_macro() {
             return;
         }
-        if self.seats[0].selection.is_empty() {
+        if self.players.seats[0].selection.is_empty() {
             return;
         }
 
@@ -2629,7 +2631,7 @@ impl EngineInner {
             y: bow_ground_y(target_3d),
         };
 
-        let ids = self.seats[0].selection.clone();
+        let ids = self.players.seats[0].selection.clone();
         let mut raise_lower: Vec<(EntityId, Command)> = Vec::new();
 
         for pc_id in ids {
@@ -2722,7 +2724,7 @@ impl EngineInner {
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15_iso;
 
-        let ids = self.seats[0].selection.clone();
+        let ids = self.players.seats[0].selection.clone();
         for pc_id in ids {
             // Skip when a throw animation is the front order of the
             // actor's current sequence element.
@@ -2768,7 +2770,7 @@ impl EngineInner {
         use crate::order::OrderType;
         use crate::position_interface::vector_to_sector_0_to_15;
 
-        let ids = self.seats[0].selection.clone();
+        let ids = self.players.seats[0].selection.clone();
         for pc_id in ids {
             let Some(entity) = self.entities.get_mut(pc_id) else {
                 continue;
@@ -2817,7 +2819,7 @@ impl EngineInner {
         use crate::element::{ActionState, Posture};
         use crate::position_interface::vector_to_sector_0_to_15;
 
-        let ids = self.seats[0].selection.clone();
+        let ids = self.players.seats[0].selection.clone();
         for pc_id in ids {
             let Some(entity) = self.entities.get_mut(pc_id) else {
                 continue;

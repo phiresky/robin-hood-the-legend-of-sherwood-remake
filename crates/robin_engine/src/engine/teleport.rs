@@ -33,7 +33,7 @@ impl EngineInner {
         layer: u16,
         sector: Option<crate::position_interface::SectorHandle>,
     ) {
-        let selected = self.seats[0].selection.clone();
+        let selected = self.players.seats[0].selection.clone();
         if selected.is_empty() {
             return;
         }

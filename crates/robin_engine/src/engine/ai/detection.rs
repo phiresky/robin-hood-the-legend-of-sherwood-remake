@@ -204,7 +204,7 @@ impl EngineInner {
         assets: &LevelAssets,
         scratch: &SimScratch,
     ) {
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         for npc_id in npc_ids {
@@ -468,7 +468,7 @@ impl EngineInner {
             // order to stagger NPC detection across 16 frames.
             // EntityId (monotonic slot index, never reused) stands in
             // for that creation counter directly.
-            let modified_frame = self.frame_counter.wrapping_add(entity_id.index());
+            let modified_frame = self.control.frame_counter.wrapping_add(entity_id.index());
             let sees_blip_gate = is_npc && modified_frame.is_multiple_of(DETECTION_FREQUENCY_BLIP);
 
             // Listen path only fires on the frame a listening PC's
@@ -731,7 +731,7 @@ impl EngineInner {
         const HEARING_FACTOR: f32 = 1.0;
         const DETECTION_FREQUENCY_SOUNDS: u32 = 3;
 
-        let universal_frame = self.frame_counter;
+        let universal_frame = self.control.frame_counter;
         // Read NPC state. The state gate is sampled once before the enemy-list
         // loop, as in the original outer
         // `if (mCurrentState != STATE_ATTACKING)`.
@@ -781,8 +781,9 @@ impl EngineInner {
         // Computed here because `NpcData` has no access to the
         // `SoundSourceManager`.  Done before the entity re-borrow
         // so we don't hold `&mut self.entities` while reading
-        // `&self.sound_sim`.
+        // `&self.feedback.sound_sim`.
         let cover_volume = self
+            .feedback
             .sound_sim
             .sources
             .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
@@ -980,7 +981,7 @@ impl EngineInner {
             };
             let mut ctx = build_ai_context_from_entity(
                 entity,
-                self.frame_counter,
+                self.control.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
@@ -1028,7 +1029,7 @@ impl EngineInner {
         // pass, after the outer NPC borrow ends.
         let mut out_of_view_dispatches: Vec<(EntityId, u32)> = Vec::new();
 
-        let universal_frame = self.frame_counter;
+        let universal_frame = self.control.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
         // Forest-level flag — selects between forest and city
         // detection-speed parameters when scaling a PC's visual
@@ -2624,7 +2625,7 @@ impl EngineInner {
         assets: &LevelAssets,
         world: &AiWorldView,
     ) {
-        let universal_frame = self.frame_counter;
+        let universal_frame = self.control.frame_counter;
         let golden_eye = self.ai_global.golden_eye_mode;
         let is_forest_level = self.weather.is_forest_level;
 

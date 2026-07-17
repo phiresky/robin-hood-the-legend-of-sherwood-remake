@@ -2590,7 +2590,7 @@ impl EngineInner {
             } else {
                 super::SoundCommand::SetMusicMode(mode)
             };
-            self.pending_side_effects.sounds.push(cmd);
+            self.feedback.pending_side_effects.sounds.push(cmd);
         }
 
         tracing::debug!(
@@ -2713,7 +2713,7 @@ impl EngineInner {
         entities: &[EntityId],
     ) {
         let scratch = self.build_sim_scratch(assets);
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
 
         for &entity_id in entities {
             // Build ctx in a read-only scope so we can then call
@@ -2765,7 +2765,7 @@ impl EngineInner {
         entities: &[EntityId],
     ) {
         let scratch = self.build_sim_scratch(assets);
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
 
         for &entity_id in entities {
             let ctx = {
@@ -3384,7 +3384,7 @@ impl EngineInner {
         use crate::ai::{Remark, RemarkTargetFlags, SpeechFlags};
         use crate::sound::ExclamationGroup;
 
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
 
         // ── Phase 0: evict expired forbidden remarks ────────────
         self.ai_global
@@ -3686,12 +3686,13 @@ impl EngineInner {
             // speaking and `SPEECH_EMERGENCY` is set, call
             // `stop_exclamation(self)` and then continue.
             if flags.contains(SpeechFlags::EMERGENCY) {
-                self.pending_side_effects
-                    .sounds
-                    .push(super::SoundCommand::StopExclamation {
+                self.feedback.pending_side_effects.sounds.push(
+                    super::SoundCommand::StopExclamation {
                         actor_id: snap.entity_id,
-                    });
-                self.sound_sim
+                    },
+                );
+                self.feedback
+                    .sound_sim
                     .playing_exclamations
                     .retain(|p| p.actor_id != snap.entity_id.index());
             }
@@ -3699,7 +3700,8 @@ impl EngineInner {
             // Queue the exclamation — drained by `flush_sound_queue` after
             // the tick body has finished so a rollback replay does not
             // stack-play duplicate audio.
-            self.pending_side_effects
+            self.feedback
+                .pending_side_effects
                 .sounds
                 .push(super::SoundCommand::Exclamation {
                     group,
@@ -3719,12 +3721,13 @@ impl EngineInner {
                 snap.speech_id,
                 excl_id,
             );
-            self.sound_sim
+            self.feedback
+                .sound_sim
                 .playing_exclamations
                 .push(crate::sound::PlayingExclamation {
                     actor_id: snap.entity_id.index(),
                     exclamation_id: excl_id as u32,
-                    finish_frame: self.frame_counter + duration,
+                    finish_frame: self.control.frame_counter + duration,
                 });
             tracing::trace!(
                 npc = snap.entity_id.index(),
@@ -3804,7 +3807,7 @@ impl EngineInner {
         // ── Phase 3: drain finished exclamations ────────────────
         // `sound_is_finished` callback: clear current_remark and fire
         // the MYTALK event (`inform_ai_on_finished_remark`).
-        for &(actor_handle, _excl_id) in &self.sound_sim.finished_exclamations {
+        for &(actor_handle, _excl_id) in &self.feedback.sound_sim.finished_exclamations {
             if let Some(actor_id) = self.entities.id_at_legacy_slot(actor_handle)
                 && let Some(entity) = self.entities.get_mut(actor_id)
             {
@@ -4670,7 +4673,7 @@ impl EngineInner {
                         };
                         build_ai_context_from_entity(
                             entity,
-                            self.frame_counter,
+                            self.control.frame_counter,
                             None,
                             self.weather.is_forest_level,
                             self.weather.ambiance,
@@ -5084,7 +5087,7 @@ impl EngineInner {
             };
             build_ai_context_from_entity(
                 entity,
-                self.frame_counter,
+                self.control.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
@@ -5210,7 +5213,7 @@ impl EngineInner {
                         sector: None,
                         level: 0,
                     };
-                    ai.launch_timer(100, self.frame_counter);
+                    ai.launch_timer(100, self.control.frame_counter);
                 }
             }
         }
@@ -5355,7 +5358,7 @@ impl EngineInner {
             };
             build_ai_context_from_entity(
                 entity,
-                self.frame_counter,
+                self.control.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
@@ -5511,7 +5514,7 @@ impl EngineInner {
                 };
                 build_ai_context_from_entity(
                     entity,
-                    self.frame_counter,
+                    self.control.frame_counter,
                     None,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
@@ -5610,7 +5613,7 @@ impl EngineInner {
             let building_sector = self.entity_building_sector(entity_sector);
             build_ai_context_from_entity(
                 entity,
-                self.frame_counter,
+                self.control.frame_counter,
                 building_sector,
                 self.weather.is_forest_level,
                 self.weather.ambiance,
@@ -6021,7 +6024,7 @@ impl EngineInner {
         }
         let scratch = self.build_sim_scratch(assets);
 
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         // ── Phase 0: Drain pending CMD_PATROL_DIRECTION broadcasts ──
@@ -6442,7 +6445,7 @@ impl EngineInner {
         }
 
         // ── Phase 6: Dispatch CALL_PATROL_COORDINATE to minions ──
-        let patrol_frame = self.frame_counter;
+        let patrol_frame = self.control.frame_counter;
         for cmd in patrol_cmds {
             let minion_id = cmd.minion;
             let ctx = {
@@ -6533,20 +6536,23 @@ impl EngineInner {
         // `RHEngine::AddNoiseToDisplay` copies the full `RHnoise`, so
         // the displayed and per-NPC subjective copies both preserve
         // the attributable `element_id`.
-        self.pending_side_effects.displayed_noises.push(Noise {
-            origin: noise_pos,
-            noise_type,
-            volume,
-            elevation,
-            element_id,
-        });
+        self.feedback
+            .pending_side_effects
+            .displayed_noises
+            .push(Noise {
+                origin: noise_pos,
+                noise_type,
+                volume,
+                elevation,
+                element_id,
+            });
 
         // `hearing_factor` is a class-level static, default 1.0, with
         // no setter wired in shipped gameplay.  Apply the same
         // constant to every listener.
         const HEARING_FACTOR: f32 = 1.0;
 
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         let npc_ids: Vec<_> = self.entities.npc_ids().collect();
 
         // `get_hear_volume` shifts the origin Y by elevation and
@@ -6558,9 +6564,9 @@ impl EngineInner {
 
         for npc_id in npc_ids {
             // First pass: gather everything we need from the entity that
-            // is independent of `self.sound_sim`.  Drop the borrow
+            // is independent of `self.feedback.sound_sim`.  Drop the borrow
             // before computing `cover_volume` so the
-            // `&self.sound_sim` access below is non-overlapping.
+            // `&self.feedback.sound_sim` access below is non-overlapping.
             let (npc_pos, npc_elev) = {
                 let Some(entity) = self.entities.get_mut(npc_id) else {
                     continue;
@@ -6608,6 +6614,7 @@ impl EngineInner {
             // Fold the max covering volume from active sound sources
             // at the NPC's position into the deafness write-back.
             let cover_volume = self
+                .feedback
                 .sound_sim
                 .sources
                 .max_noise_covering_volume_for_3d(npc_pos.x, npc_pos.y, npc_elev);
@@ -6686,7 +6693,7 @@ impl EngineInner {
             return;
         }
 
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
 
         for action in all_actions {
             match action {
@@ -7213,7 +7220,7 @@ impl EngineInner {
                 });
                 build_ai_context_from_entity(
                     entity,
-                    self.frame_counter,
+                    self.control.frame_counter,
                     officer_building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
@@ -7251,7 +7258,7 @@ impl EngineInner {
                     .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
                 build_ai_context_from_entity(
                     entity,
-                    self.frame_counter,
+                    self.control.frame_counter,
                     charly_building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
@@ -7332,7 +7339,7 @@ impl EngineInner {
             }
 
             let scratch = self.build_sim_scratch(assets);
-            let frame = self.frame_counter;
+            let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let Some(entity) = self.entities.get(npc_id) else {
@@ -7466,7 +7473,7 @@ impl EngineInner {
         // Scripts may have spawned / deactivated entities, so refresh
         // the entity-views map before rebuilding per-NPC AiContexts.
         let scratch = self.build_sim_scratch(assets);
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let ambiance = self.weather.ambiance;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
@@ -7517,7 +7524,7 @@ impl EngineInner {
         }
         let scratch = self.build_sim_scratch(assets);
 
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
 
         for npc_id in self.entities.npc_ids().collect::<Vec<_>>() {
             // Exact original phase:
@@ -7619,7 +7626,7 @@ impl EngineInner {
     /// Civilian `RandomSpeech(ubFramePhase)` call from NPC Hourglass.
     /// It sits before the lock gate and only acts at exact phase zero.
     pub(super) fn tick_civilian_random_speech(&mut self, assets: &LevelAssets) {
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
         let due: Vec<_> = self
             .entities
             .npc_ids()
@@ -7673,7 +7680,7 @@ impl EngineInner {
         }
         let scratch = self.build_sim_scratch(assets);
 
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         let is_forest_level = self.weather.is_forest_level;
         let ambiance = self.weather.ambiance;
         let standard_view_polygon_radius = self.standard_view_polygon_radius;
@@ -7747,7 +7754,7 @@ impl EngineInner {
         }
         let scratch = self.build_sim_scratch(assets);
 
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
 
         // Snapshot the list of NPC ids we'll iterate.  `npc_ids`
         // already holds both soldiers and civilians
@@ -7928,7 +7935,7 @@ impl EngineInner {
             // the AI subclass to mirror the virtual call.  Build the
             // ctx + tick data the way `tick_periodic_ai` does.
             let tick_data = self.build_npc_tick_data(npc_id, &scratch, assets);
-            let frame = self.frame_counter;
+            let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let Some(entity) = self.entities.get_mut(npc_id) else {
                 continue;

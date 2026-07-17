@@ -355,7 +355,8 @@ impl EngineInner {
                     .get_entity(victim_id)
                     .map(|e| weapon_material_from_profile(e, &assets.profile_manager))
                     .unwrap_or(crate::profiles::WeaponMaterial::SteelAndWood);
-                self.pending_side_effects
+                self.feedback
+                    .pending_side_effects
                     .sounds
                     .push(super::SoundCommand::StrikeFx {
                         strike_kind: parry_kind,
@@ -383,7 +384,8 @@ impl EngineInner {
                 }
                 return;
             } else {
-                self.pending_side_effects
+                self.feedback
+                    .pending_side_effects
                     .sounds
                     .push(super::SoundCommand::ImpactFx {
                         impact_kind,
@@ -1877,7 +1879,7 @@ impl EngineInner {
             .get(victim_id)
             .and_then(|e| e.human_data())
             .is_some_and(|h| h.unconscious);
-        self.titbit_manager.remove_unconscious_stars_if(
+        self.feedback.titbit_manager.remove_unconscious_stars_if(
             crate::titbit::ElementHandle(victim_id.index()),
             still_unconscious,
         );

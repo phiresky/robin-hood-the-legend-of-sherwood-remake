@@ -28,27 +28,27 @@ fn engine_compatibility_fixture() -> EngineInner {
     engine.mission.quit_interrupted = true;
     engine.mission.map_name = "compatibility-map".into();
     engine.mission.victory_defeat_id = 0x1020_3040;
-    engine.frame_counter = 0x1122_3344;
+    engine.control.frame_counter = 0x1122_3344;
     engine.set_engine_locked(true);
     engine.set_actors_frozen(true);
     engine.set_fade_freeze_frames_remaining(7);
-    engine.speed = 1.75;
-    engine.speed_int = 9;
+    engine.control.speed = 1.75;
+    engine.control.speed_int = 9;
     engine.shield.is_protected = true;
     engine.script_globals = vec![-7, 0, 42, i32::MAX];
     engine.cheat_used_flags = 0xA5A5_5A5A;
     engine.standard_view_polygon_radius = 321;
     engine.next_order_id = 0x5566_7788;
-    engine.chorus_timer = 23;
+    engine.control.chorus_timer = 23;
     engine.force_check = true;
     engine.mission_stat.collected_money = 1234;
     engine.mission_stat.added_score = 5678;
-    engine.cutscene_camera.view_position = MapPoint::new(101.5, 202.25);
+    engine.feedback.cutscene_camera.view_position = MapPoint::new(101.5, 202.25);
     engine.restore_rng_from_seed(0xCAFE_BABE_1020_3040);
-    engine.pending_side_effects.invalidate_background = true;
-    engine.user_locked = true;
-    engine.qa_recording_slot = 2;
-    engine.fast_forward = true;
+    engine.feedback.pending_side_effects.invalidate_background = true;
+    engine.players.user_locked = true;
+    engine.players.qa_recording_slot = 2;
+    engine.control.fast_forward = true;
     engine.pending_reinforcements.push(None);
     engine.static_sight_obstacle_active = vec![true, false, true];
 
@@ -143,9 +143,9 @@ fn engine_top_level_snapshot_schema_and_bytes_are_stable() {
 fn engine_creation() {
     let mut display = HostDisplayState::default();
     let engine = EngineInner::new();
-    assert_eq!(engine.cutscene_camera.zoom_factor, 1.0);
-    assert_eq!(engine.frame_counter, 0);
-    assert!(!engine.fast_forward);
+    assert_eq!(engine.feedback.cutscene_camera.zoom_factor, 1.0);
+    assert_eq!(engine.control.frame_counter, 0);
+    assert!(!engine.control.fast_forward);
     assert!(!engine.engine_locked());
     assert!(!engine.mission.mission_won);
     assert_eq!(display.display_op, DisplayOpCode::Redraw);
@@ -280,8 +280,8 @@ fn scrolling_table_generation() {
 fn zoom_state_machine() {
     let display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
-    engine.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
 
     assert!(engine.is_zoom_possible(&display));
     assert!(engine.is_zoom_up_possible());
@@ -293,7 +293,7 @@ fn zoom_state_machine() {
     assert!(engine.is_zooming(&display));
     assert!(!engine.is_zoom_possible(&display));
     assert_eq!(
-        engine.cutscene_camera.display.display_op,
+        engine.feedback.cutscene_camera.display.display_op,
         DisplayOpCode::InitZoom
     );
 }
@@ -322,7 +322,7 @@ fn hourglass_returns_in_progress() {
         .perform_hourglass(&mut display, &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelInProgress);
-    assert_eq!(engine.frame_counter, 1);
+    assert_eq!(engine.control.frame_counter, 1);
 }
 
 #[test]
@@ -396,7 +396,7 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
 
     assert_eq!(result, GameCode::LevelInProgress);
     assert_eq!(
-        engine.frame_counter, 1,
+        engine.control.frame_counter, 1,
         "the lock gate follows clock advance"
     );
     assert_eq!(
@@ -424,7 +424,7 @@ fn blocking_fade_frame_runs_before_rng_clock_and_phase_dispatch() {
     let phases = end_hourglass_phase_capture();
 
     assert_eq!(result, GameCode::LevelInProgress);
-    assert_eq!(engine.frame_counter, 0);
+    assert_eq!(engine.control.frame_counter, 0);
     assert_eq!(engine.rng_seed(), rng_seed);
     assert!(phases.is_empty());
     assert_eq!(engine.fade_freeze_frames_remaining(), 0);
@@ -1071,7 +1071,7 @@ fn hourglass_advances_mission_length_from_sim_seconds() {
         assert_eq!(result, GameCode::LevelInProgress);
     }
 
-    assert_eq!(engine.frame_counter, 25);
+    assert_eq!(engine.control.frame_counter, 25);
     assert_eq!(
         engine
             .campaign
@@ -1088,13 +1088,14 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.frame_counter = 25;
+    engine.control.frame_counter = 25;
 
     let mut campaign = Campaign::new();
     campaign.set_value(CampaignValue::MissionLength, 7);
     engine.campaign = Some(campaign);
 
     engine
+        .feedback
         .sound_sim
         .sources
         .sources_push_some(crate::sound_source::SoundSource {
@@ -1110,6 +1111,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
     );
 
     let fade = engine
+        .feedback
         .pending_side_effects
         .fade_to_black
         .take()
@@ -1126,7 +1128,7 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
         assert_eq!(side_effects.code, GameCode::LevelInProgress);
         assert!(!side_effects.skip_render);
         assert_eq!(engine.fade_freeze_frames_remaining(), expected_remaining);
-        assert_eq!(engine.frame_counter, 25);
+        assert_eq!(engine.control.frame_counter, 25);
         assert_eq!(
             engine
                 .campaign
@@ -1135,14 +1137,14 @@ fn fade_to_black_presents_without_advancing_simulation_timers() {
                 .get_value(CampaignValue::MissionLength),
             7
         );
-        assert_eq!(engine.sound_sim.sources.get(0).unwrap().timer, 9);
+        assert_eq!(engine.feedback.sound_sim.sources.get(0).unwrap().timer, 9);
     }
 
     // The next call is the first real simulation tick after the blocking
     // fade and resumes every clock from exactly its pre-fade value.
     engine.perform_hourglass(&mut display, &assets, &mut dev);
-    assert_eq!(engine.frame_counter, 26);
-    assert_eq!(engine.sound_sim.sources.get(0).unwrap().timer, 8);
+    assert_eq!(engine.control.frame_counter, 26);
+    assert_eq!(engine.feedback.sound_sim.sources.get(0).unwrap().timer, 8);
 }
 
 #[test]
@@ -1267,28 +1269,28 @@ fn hourglass_locked_skips_logic() {
     engine.set_engine_locked(true);
     // Even with a chorus timer, lock should prevent it from being decremented
     // (actually, chorus timer IS decremented before the lock check)
-    engine.chorus_timer = 5;
+    engine.control.chorus_timer = 5;
     let result = engine
         .perform_hourglass(&mut display, &assets, &mut dev)
         .code;
     assert_eq!(result, GameCode::LevelInProgress);
     // Chorus timer still decremented (it's before the lock check)
-    assert_eq!(engine.chorus_timer, 4);
+    assert_eq!(engine.control.chorus_timer, 4);
     // But frame counter is still incremented
-    assert_eq!(engine.frame_counter, 1);
+    assert_eq!(engine.control.frame_counter, 1);
 }
 
 #[test]
 fn fast_forward() {
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(100.0, 200.0);
+    engine.feedback.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(100.0, 200.0);
     engine.set_fast_forward();
     assert!(engine.is_fast_forward());
     // Camera should have jumped to slide target
-    assert_eq!(engine.cutscene_camera.view_position.x, 100.0);
-    assert_eq!(engine.cutscene_camera.view_position.y, 200.0);
+    assert_eq!(engine.feedback.cutscene_camera.view_position.x, 100.0);
+    assert_eq!(engine.feedback.cutscene_camera.view_position.y, 200.0);
     // Slide should be deactivated
-    assert!(!engine.cutscene_camera.is_sliding());
+    assert!(!engine.feedback.cutscene_camera.is_sliding());
 }
 
 /// Rollback determinism: clone the engine mid-run, advance the clone and
@@ -1330,9 +1332,9 @@ fn rollback_clone_stays_in_sync() {
         replay.perform_hourglass(&mut display, &assets, &mut dev);
     }
 
-    assert_eq!(original.frame_counter, replay.frame_counter);
+    assert_eq!(original.control.frame_counter, replay.control.frame_counter);
     assert_eq!(original.rng_seed(), replay.rng_seed());
-    assert_eq!(original.chorus_timer, replay.chorus_timer);
+    assert_eq!(original.control.chorus_timer, replay.control.chorus_timer);
     assert_eq!(original.mission.mission_won, replay.mission.mission_won);
     assert_eq!(original.script_globals, replay.script_globals);
 
@@ -1344,7 +1346,10 @@ fn rollback_clone_stays_in_sync() {
     for _ in 0..50 {
         second_replay.perform_hourglass(&mut display, &assets, &mut dev);
     }
-    assert_eq!(second_replay.frame_counter, original.frame_counter);
+    assert_eq!(
+        second_replay.control.frame_counter,
+        original.control.frame_counter
+    );
     assert_eq!(second_replay.rng_seed(), original.rng_seed());
 }
 
@@ -1396,7 +1401,10 @@ fn post_initialize_waits_for_post_refresh_stage() {
     let mut dev = DevState::default();
 
     engine.perform_hourglass(&mut display, &assets, &mut dev);
-    assert_eq!(engine.frame_counter, 1, "the first simulation frame ran");
+    assert_eq!(
+        engine.control.frame_counter, 1,
+        "the first simulation frame ran"
+    );
     assert!(
         !engine.mission_script.as_ref().unwrap().post_initialized,
         "PostInitialize must not run before the first host refresh and sound hourglass"
@@ -1411,7 +1419,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
         "an empty PostInitialize must reclaim the unchanged simulation RNG stream"
     );
     assert_eq!(
-        engine.frame_counter, 1,
+        engine.control.frame_counter, 1,
         "the post-refresh stage must not advance simulation time"
     );
     assert!(
@@ -1421,7 +1429,7 @@ fn post_initialize_waits_for_post_refresh_stage() {
 
     let second_post_initialize_effects = engine.perform_post_initialize(&mut display, &assets);
     assert!(second_post_initialize_effects.is_none());
-    assert_eq!(engine.frame_counter, 1);
+    assert_eq!(engine.control.frame_counter, 1);
     assert!(engine.mission_script.as_ref().unwrap().post_initialized);
 }
 
@@ -1457,9 +1465,15 @@ fn serde_roundtrip_stays_in_sync() {
         clone_ref.perform_hourglass(&mut display, &assets, &mut dev);
     }
 
-    assert_eq!(rehydrated.frame_counter, clone_ref.frame_counter);
+    assert_eq!(
+        rehydrated.control.frame_counter,
+        clone_ref.control.frame_counter
+    );
     assert_eq!(rehydrated.rng_seed(), clone_ref.rng_seed());
-    assert_eq!(rehydrated.chorus_timer, clone_ref.chorus_timer);
+    assert_eq!(
+        rehydrated.control.chorus_timer,
+        clone_ref.control.chorus_timer
+    );
     assert_eq!(
         rehydrated.mission.mission_won,
         clone_ref.mission.mission_won
@@ -1470,13 +1484,14 @@ fn serde_roundtrip_stays_in_sync() {
 #[test]
 fn camera_display_scratch_is_not_serialized_or_hashed() {
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.old_view_position = crate::coordinates::MapPoint::new(11.0, 22.0);
-    engine.cutscene_camera.old_zoom_factor = 0.5;
-    engine.cutscene_camera.zoom_init_done = true;
-    engine.cutscene_camera.mechanized_zoom = true;
-    engine.cutscene_camera.displacement = MapVec::new(3.0, 4.0);
-    engine.cutscene_camera.displacement_counter = 7;
-    engine.cutscene_camera.pending_zoom_mouse_screen =
+    engine.feedback.cutscene_camera.old_view_position =
+        crate::coordinates::MapPoint::new(11.0, 22.0);
+    engine.feedback.cutscene_camera.old_zoom_factor = 0.5;
+    engine.feedback.cutscene_camera.zoom_init_done = true;
+    engine.feedback.cutscene_camera.mechanized_zoom = true;
+    engine.feedback.cutscene_camera.displacement = MapVec::new(3.0, 4.0);
+    engine.feedback.cutscene_camera.displacement_counter = 7;
+    engine.feedback.cutscene_camera.pending_zoom_mouse_screen =
         Some(crate::coordinates::ScreenPoint::new(123.0, 456.0));
 
     let baseline_hash = crate::replay::state_hash(&engine);
@@ -1489,26 +1504,30 @@ fn camera_display_scratch_is_not_serialized_or_hashed() {
     assert!(!json.contains("pending_zoom_mouse_screen"));
 
     let mut changed = engine.clone();
-    changed.cutscene_camera.old_view_position = crate::coordinates::MapPoint::new(99.0, 100.0);
-    changed.cutscene_camera.old_zoom_factor = 2.0;
-    changed.cutscene_camera.zoom_init_done = false;
-    changed.cutscene_camera.mechanized_zoom = false;
-    changed.cutscene_camera.displacement = MapVec::new(-30.0, -40.0);
-    changed.cutscene_camera.displacement_counter = 0;
-    changed.cutscene_camera.pending_zoom_mouse_screen = None;
+    changed.feedback.cutscene_camera.old_view_position =
+        crate::coordinates::MapPoint::new(99.0, 100.0);
+    changed.feedback.cutscene_camera.old_zoom_factor = 2.0;
+    changed.feedback.cutscene_camera.zoom_init_done = false;
+    changed.feedback.cutscene_camera.mechanized_zoom = false;
+    changed.feedback.cutscene_camera.displacement = MapVec::new(-30.0, -40.0);
+    changed.feedback.cutscene_camera.displacement_counter = 0;
+    changed.feedback.cutscene_camera.pending_zoom_mouse_screen = None;
     assert_eq!(baseline_hash, crate::replay::state_hash(&changed));
 
     let restored: EngineInner = serde_json::from_str(&json).expect("deserialize engine");
     assert_eq!(
-        restored.cutscene_camera.old_view_position,
+        restored.feedback.cutscene_camera.old_view_position,
         crate::coordinates::MapPoint::new(0.0, 0.0)
     );
-    assert_eq!(restored.cutscene_camera.old_zoom_factor, 1.0);
-    assert!(!restored.cutscene_camera.zoom_init_done);
-    assert!(!restored.cutscene_camera.mechanized_zoom);
-    assert_eq!(restored.cutscene_camera.displacement, MapVec::ZERO);
-    assert_eq!(restored.cutscene_camera.displacement_counter, 0);
-    assert_eq!(restored.cutscene_camera.pending_zoom_mouse_screen, None);
+    assert_eq!(restored.feedback.cutscene_camera.old_zoom_factor, 1.0);
+    assert!(!restored.feedback.cutscene_camera.zoom_init_done);
+    assert!(!restored.feedback.cutscene_camera.mechanized_zoom);
+    assert_eq!(restored.feedback.cutscene_camera.displacement, MapVec::ZERO);
+    assert_eq!(restored.feedback.cutscene_camera.displacement_counter, 0);
+    assert_eq!(
+        restored.feedback.cutscene_camera.pending_zoom_mouse_screen,
+        None
+    );
 }
 
 #[test]
@@ -1517,8 +1536,8 @@ fn host_display_scroll_does_not_mutate_script_camera() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
     display.display_op = DisplayOpCode::Scroll;
     display.background_transform.scrolling_vector = MapVec::new(25.0, 0.0);
@@ -1526,7 +1545,7 @@ fn host_display_scroll_does_not_mutate_script_camera() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(
-        engine.cutscene_camera.view_position,
+        engine.feedback.cutscene_camera.view_position,
         crate::coordinates::MapPoint::new(100.0, 200.0)
     );
 }
@@ -1537,11 +1556,12 @@ fn camera_display_scroll_mutates_script_camera() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 200.0);
 
-    engine.cutscene_camera.display.display_op = DisplayOpCode::Scroll;
+    engine.feedback.cutscene_camera.display.display_op = DisplayOpCode::Scroll;
     engine
+        .feedback
         .cutscene_camera
         .display
         .background_transform
@@ -1550,7 +1570,7 @@ fn camera_display_scroll_mutates_script_camera() {
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
     assert_eq!(
-        engine.cutscene_camera.view_position,
+        engine.feedback.cutscene_camera.view_position,
         crate::coordinates::MapPoint::new(125.0, 200.0)
     );
 }
@@ -1708,7 +1728,10 @@ fn sprite_serialization_surface_matches_v2_contract() {
         rehydrated.perform_hourglass(&mut display, &assets, &mut dev);
         clone.perform_hourglass(&mut display, &assets, &mut dev);
     }
-    assert_eq!(rehydrated.frame_counter, clone.frame_counter);
+    assert_eq!(
+        rehydrated.control.frame_counter,
+        clone.control.frame_counter
+    );
     assert_eq!(rehydrated.rng_seed(), clone.rng_seed());
 }
 
@@ -1858,8 +1881,8 @@ fn global_options_default() {
 fn draw_fast_forward_skips() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.fast_forward = true;
-    engine.frame_counter = 1; // Not a multiple of 32
+    engine.control.fast_forward = true;
+    engine.control.frame_counter = 1; // Not a multiple of 32
     let result = engine.tick_display_state(&mut display);
     assert_eq!(result, 1); // Should skip
 }
@@ -1868,8 +1891,8 @@ fn draw_fast_forward_skips() {
 fn draw_fast_forward_every_32nd() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.fast_forward = true;
-    engine.frame_counter = 32; // Multiple of 32
+    engine.control.fast_forward = true;
+    engine.control.frame_counter = 32; // Multiple of 32
     let result = engine.tick_display_state(&mut display);
     assert_eq!(result, 0); // Should render
 }
@@ -1884,7 +1907,7 @@ fn ambiance_night_colors() {
 #[test]
 fn center_on_point() {
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
     engine.center_on_point(0, crate::coordinates::MapPoint::new(1000.0, 800.0));
     // View should be offset by half the full screen on both axes
     // (raw screen vector divided by 2*zoom; the bottom-panel exclusion
@@ -1892,8 +1915,8 @@ fn center_on_point() {
     // floored before assignment.
     let expected_x = (1000.0f32 - 512.0f32).floor(); // 1024/2
     let expected_y = (800.0f32 - 384.0f32).floor(); // 768/2
-    assert!((engine.cutscene_camera.view_position.x - expected_x).abs() < 0.01);
-    assert!((engine.cutscene_camera.view_position.y - expected_y).abs() < 0.01);
+    assert!((engine.feedback.cutscene_camera.view_position.x - expected_x).abs() < 0.01);
+    assert!((engine.feedback.cutscene_camera.view_position.y - expected_y).abs() < 0.01);
 }
 
 #[test]
@@ -1913,10 +1936,15 @@ fn mission_state_transitions() {
 
     // A silent win (show_window=false) queues the start/quit-mission
     // widget swap as a side-effect for the host to drain.
-    engine.pending_side_effects = Default::default();
+    engine.feedback.pending_side_effects = Default::default();
     engine.win(false);
     assert!(!engine.mission.mission_won_first_time);
-    assert!(engine.pending_side_effects.pending_silent_win_widget_swap);
+    assert!(
+        engine
+            .feedback
+            .pending_side_effects
+            .pending_silent_win_widget_swap
+    );
 }
 
 #[test]
@@ -1958,24 +1986,26 @@ fn post_load_fixups_aborts_midzoom() {
     // `EngineInner::post_load_fixups` so `Engine::restore` can't
     // leave the engine mid-zoom.
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     engine
+        .feedback
         .cutscene_camera
         .display
         .background_transform
         .zoom_to_up = true;
-    engine.cutscene_camera.zoom_init_done = true;
+    engine.feedback.cutscene_camera.zoom_init_done = true;
 
     engine.post_load_fixups(&mut display);
 
     assert!(
         !engine
+            .feedback
             .cutscene_camera
             .display
             .background_transform
             .zoom_to_up
     );
-    assert!(!engine.cutscene_camera.zoom_init_done);
+    assert!(!engine.feedback.cutscene_camera.zoom_init_done);
     let msg = engine.messenger.poll().expect("expected zoom end message");
     assert_eq!(msg.msg_type, MessageType::Simple(SimpleMessage::ZoomUpEnd));
 }
@@ -2031,8 +2061,8 @@ fn ground_mark_hourglass_advances_and_retires_on_screen_marks() {
         vec![(8, 8); crate::markers::NUMBER_OF_GROUND_FRAMES as usize],
         vec![(0, 0); crate::markers::NUMBER_OF_GROUND_FRAMES as usize],
     );
-    engine.ground_mark.add_mark(100.0, 100.0, 0);
-    assert_eq!(engine.ground_mark.len(), 1);
+    engine.feedback.ground_mark.add_mark(100.0, 100.0, 0);
+    assert_eq!(engine.feedback.ground_mark.len(), 1);
 
     // Plenty of ticks to burn through all NUMBER_OF_GROUND_FRAMES advances
     // (half of them gated off by odd frame counters) and retire the mark.
@@ -2040,7 +2070,7 @@ fn ground_mark_hourglass_advances_and_retires_on_screen_marks() {
         engine.perform_hourglass(&mut display, &assets, &mut dev);
     }
     assert!(
-        engine.ground_mark.is_empty(),
+        engine.feedback.ground_mark.is_empty(),
         "mark should have animated through to retirement"
     );
 }
@@ -2060,13 +2090,16 @@ fn ground_mark_hourglass_freezes_off_screen_marks() {
         vec![(0, 0); crate::markers::NUMBER_OF_GROUND_FRAMES as usize],
     );
     // Mark at (100_000, 100_000) is well outside the 800×600 viewport.
-    engine.ground_mark.add_mark(100_000.0, 100_000.0, 0);
+    engine
+        .feedback
+        .ground_mark
+        .add_mark(100_000.0, 100_000.0, 0);
 
     for _ in 0..(2 * crate::markers::NUMBER_OF_GROUND_FRAMES as usize + 4) {
         engine.perform_hourglass(&mut display, &assets, &mut dev);
     }
-    assert_eq!(engine.ground_mark.len(), 1);
-    assert_eq!(engine.ground_mark.marks[0].current_frame, 0);
+    assert_eq!(engine.feedback.ground_mark.len(), 1);
+    assert_eq!(engine.feedback.ground_mark.marks[0].current_frame, 0);
 }
 
 #[test]
@@ -2098,14 +2131,14 @@ fn mission_stat_resets_on_new_mission() {
 fn resize_snaps_zoom() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(500.0, 400.0); // Small level
-    engine.cutscene_camera.zoom_factor = 0.5;
+    engine.feedback.cutscene_camera.level_size = MapSize::new(500.0, 400.0); // Small level
+    engine.feedback.cutscene_camera.zoom_factor = 0.5;
     display.background_transform.current_zoom_level = 0;
 
     engine.resize(&mut display, 1024.0, 768.0);
 
     // Should have snapped to 1.0 since 0.5x can't fit
-    assert_eq!(engine.cutscene_camera.zoom_factor, 1.0);
+    assert_eq!(engine.feedback.cutscene_camera.zoom_factor, 1.0);
     assert_eq!(display.background_transform.current_zoom_level, 1);
 }
 
@@ -2116,7 +2149,7 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
-    engine.frame_counter = 100; // past frame 0 → jingle gate open
+    engine.control.frame_counter = 100; // past frame 0 → jingle gate open
 
     engine.add_campaign_value(CampaignValue::Ransom, 250);
 
@@ -2130,6 +2163,7 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
     );
     assert_eq!(engine.mission_stat.collected_money, 250);
     let jingle_count = engine
+        .feedback
         .pending_side_effects
         .sounds
         .iter()
@@ -2142,7 +2176,7 @@ fn add_campaign_value_ransom_credits_mission_stat_and_emits_jingle() {
 fn add_campaign_value_score_credits_mission_stat() {
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
-    engine.frame_counter = 100;
+    engine.control.frame_counter = 100;
 
     engine.add_campaign_value(CampaignValue::Score, 750);
 
@@ -2156,14 +2190,14 @@ fn add_campaign_value_score_credits_mission_stat() {
     );
     assert_eq!(engine.mission_stat.added_score, 750);
     // Score is silent.
-    assert!(engine.pending_side_effects.sounds.is_empty());
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
 #[test]
 fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
-    engine.frame_counter = 100;
+    engine.control.frame_counter = 100;
     engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 500;
     engine.mission_stat.collected_money = 200;
 
@@ -2181,7 +2215,7 @@ fn add_campaign_value_negative_ransom_skips_jingle_but_credits_money() {
     // `add_campaign_value` credits the mission-stat counter
     // unconditionally (wrapping_add_signed); only the jingle is gated.
     assert_eq!(engine.mission_stat.collected_money, 100);
-    assert!(engine.pending_side_effects.sounds.is_empty());
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
 #[test]
@@ -2190,12 +2224,12 @@ fn add_campaign_value_skips_jingle_at_frame_zero() {
     // (initial ransom = 100) doesn't sound a coin chime.
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
-    engine.frame_counter = 0;
+    engine.control.frame_counter = 0;
 
     engine.add_campaign_value(CampaignValue::Ransom, 100);
 
     assert_eq!(engine.mission_stat.collected_money, 100);
-    assert!(engine.pending_side_effects.sounds.is_empty());
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
 #[test]
@@ -2203,16 +2237,17 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
     use crate::sound::Jingle;
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
-    engine.frame_counter = 50;
+    engine.control.frame_counter = 50;
     engine.campaign.as_mut().unwrap().values[CampaignValue::Ransom] = 200;
 
     // Lower → no jingle (only growth fires the gate).
     engine.set_campaign_value(CampaignValue::Ransom, 100);
-    assert!(engine.pending_side_effects.sounds.is_empty());
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 
     // Higher → jingle.
     engine.set_campaign_value(CampaignValue::Ransom, 500);
     let jingle_count = engine
+        .feedback
         .pending_side_effects
         .sounds
         .iter()
@@ -2227,7 +2262,7 @@ fn set_campaign_value_ransom_emits_jingle_only_when_growing() {
 fn add_campaign_value_amulets_has_no_side_effects() {
     let mut engine = EngineInner::new();
     engine.campaign = Some(Campaign::default());
-    engine.frame_counter = 100;
+    engine.control.frame_counter = 100;
 
     engine.add_campaign_value(CampaignValue::Amulets, 3);
 
@@ -2241,7 +2276,7 @@ fn add_campaign_value_amulets_has_no_side_effects() {
     );
     assert_eq!(engine.mission_stat.collected_money, 0);
     assert_eq!(engine.mission_stat.added_score, 0);
-    assert!(engine.pending_side_effects.sounds.is_empty());
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
 }
 
 #[test]
@@ -2291,8 +2326,8 @@ fn is_sherwood_mission_no_mission() {
 fn perform_check_scroll_clamps_right() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(1500.0, 0.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(1500.0, 0.0);
     display.background_transform.scrolling_vector = MapVec::new(400.0, 0.0);
 
     let valid = engine.perform_check_scroll(&mut display);
@@ -2306,8 +2341,8 @@ fn perform_check_scroll_clamps_right() {
 fn perform_check_scroll_clamps_left() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(10.0, 0.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(2000.0, 1500.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(10.0, 0.0);
     display.background_transform.scrolling_vector = MapVec::new(-50.0, 0.0);
 
     let valid = engine.perform_check_scroll(&mut display);
@@ -2319,8 +2354,8 @@ fn perform_check_scroll_clamps_left() {
 fn perform_check_scroll_valid() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 500.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 500.0);
     display.background_transform.scrolling_vector = MapVec::new(10.0, 10.0);
 
     let valid = engine.perform_check_scroll(&mut display);
@@ -2374,7 +2409,7 @@ fn win_respects_show_window_true() {
 fn zoom_change_state_updates_level() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     assert_eq!(display.background_transform.current_zoom_level, 1);
 
     // Zoom up: level should increment to 2
@@ -2384,7 +2419,7 @@ fn zoom_change_state_updates_level() {
 
     // Reset for next test
     display.background_transform.zoom_to_up = false;
-    engine.cutscene_camera.zoom_init_done = false;
+    engine.feedback.cutscene_camera.zoom_init_done = false;
     display.display_op = DisplayOpCode::Nothing;
 
     // Zoom down: level should decrement to 1
@@ -2397,7 +2432,7 @@ fn zoom_change_state_updates_level() {
 fn zoom_deferred_when_scrolling() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     // Simulate active scrolling
     display.background_transform.current_x_scrolling_level = 5;
 
@@ -2519,7 +2554,7 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
             .push(attacker_id);
     }
 
-    engine.frame_counter = 15;
+    engine.control.frame_counter = 15;
     crate::sim_rng::with_seed(1, || {
         engine.tick_smalltalk(&assets, &[]);
     });
@@ -2892,11 +2927,11 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
 fn camera_slide_approaches_target() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 100.0);
-    engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
-    engine.cutscene_camera.camera_wanted = crate::coordinates::MapPoint::new(500.0, 300.0);
-    engine.speed = 1.0;
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+    engine.feedback.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.feedback.cutscene_camera.camera_wanted = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.control.speed = 1.0;
 
     engine.perform_director_work(&mut display);
 
@@ -2911,29 +2946,29 @@ fn camera_slide_approaches_target() {
 fn camera_slide_cancels_at_target() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
-    engine.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 300.0);
-    engine.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
+    engine.feedback.cutscene_camera.view_position = crate::coordinates::MapPoint::new(500.0, 300.0);
+    engine.feedback.cutscene_camera.camera_slide = crate::coordinates::MapPoint::new(500.0, 300.0);
 
     engine.perform_director_work(&mut display);
 
     // Should have cancelled the slide
-    assert!(!engine.cutscene_camera.is_sliding());
+    assert!(!engine.feedback.cutscene_camera.is_sliding());
 }
 
 #[test]
 fn resize_aborts_zoom() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     display.display_op = DisplayOpCode::InZoom;
     display.background_transform.zoom_to_up = true;
-    engine.cutscene_camera.zoom_init_done = true;
+    engine.feedback.cutscene_camera.zoom_init_done = true;
 
     engine.resize(&mut display, 1024.0, 768.0);
 
     assert!(!display.background_transform.zoom_to_up);
-    assert!(!engine.cutscene_camera.zoom_init_done);
+    assert!(!engine.feedback.cutscene_camera.zoom_init_done);
 }
 
 #[test]
@@ -2942,7 +2977,7 @@ fn dead_pc_triggers_failure() {
     let mut dev = DevState::default();
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
 
     // Add a PC entity
     let mut pc_elem = crate::element::ElementData {
@@ -3000,11 +3035,11 @@ fn non_playable_pc_does_not_prevent_default_loss() {
 fn zoom_step_completes_after_8_steps() {
     let mut display = HostDisplayState::default();
     let mut engine = EngineInner::new();
-    engine.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+    engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     display.background_transform.zoom_to_up = true;
     display.background_transform.zoom_count = 0;
     display.background_transform.number_of_zoom_steps = 8;
-    engine.cutscene_camera.zoom_init_done = true;
+    engine.feedback.cutscene_camera.zoom_init_done = true;
     // Apply the post-draw reset to `NoBackgroundMove` so
     // `set_operation(InZoom)` can propagate (`set_operation` is
     // monotonic).
@@ -3020,7 +3055,7 @@ fn zoom_step_completes_after_8_steps() {
     engine.perform_zoom_step(&mut display);
     assert_eq!(display.display_op, DisplayOpCode::NoBackgroundMove);
     assert!(!display.background_transform.zoom_to_up);
-    assert!(!engine.cutscene_camera.zoom_init_done);
+    assert!(!engine.feedback.cutscene_camera.zoom_init_done);
 }
 
 // ── Scroll hourglass / IsTaken dispatch ──────────────────────
@@ -3124,7 +3159,7 @@ fn build_mytalk_timing_test(duration_frames: Option<u32>) -> (EngineInner, Entit
     use crate::sound::ExclamationGroup;
 
     let mut engine = EngineInner::new();
-    engine.frame_counter = 100;
+    engine.control.frame_counter = 100;
 
     let mut soldier_entity = make_test_soldier(crate::element::Posture::Upright);
     let Entity::Soldier(soldier) = &mut soldier_entity else {
@@ -3172,13 +3207,16 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test(Some(3));
     engine.process_npc_speech(&assets);
 
-    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
-    assert_eq!(engine.sound_sim.playing_exclamations[0].finish_frame, 103);
+    assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(
+        engine.feedback.sound_sim.playing_exclamations[0].finish_frame,
+        103
+    );
     assert!(mytalk_ai(&engine, soldier_id).speech_in_flight);
 
     for frame in [101, 102] {
-        engine.frame_counter = frame;
-        super::tick::drain_matured_exclamations(&mut engine.sound_sim, frame);
+        engine.control.frame_counter = frame;
+        super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, frame);
         engine.process_npc_speech(&assets);
         let ai = mytalk_ai(&engine, soldier_id);
         assert!(ai.speech_in_flight);
@@ -3186,8 +3224,8 @@ fn mytalk_completion_obeys_exact_asset_duration_frame() {
         assert!(ai.pending_self_stimuli.is_empty());
     }
 
-    engine.frame_counter = 103;
-    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 103);
+    engine.control.frame_counter = 103;
+    super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 103);
     engine.process_npc_speech(&assets);
     let ai = mytalk_ai(&engine, soldier_id);
     assert!(!ai.speech_in_flight);
@@ -3202,21 +3240,21 @@ fn missing_exclamation_duration_completes_mytalk_at_next_boundary() {
     let (mut engine, soldier_id, assets) = build_mytalk_timing_test(None);
     engine.process_npc_speech(&assets);
 
-    assert_eq!(engine.sound_sim.playing_exclamations.len(), 1);
+    assert_eq!(engine.feedback.sound_sim.playing_exclamations.len(), 1);
     assert_eq!(
-        engine.sound_sim.playing_exclamations[0].finish_frame, 100,
+        engine.feedback.sound_sim.playing_exclamations[0].finish_frame, 100,
         "missing metadata must not fabricate a 75-frame speech"
     );
     let ai = mytalk_ai(&engine, soldier_id);
     assert!(ai.speech_in_flight);
     assert_eq!(ai.current_remark, Remark::Arrow);
 
-    engine.frame_counter = 101;
-    super::tick::drain_matured_exclamations(&mut engine.sound_sim, 101);
+    engine.control.frame_counter = 101;
+    super::tick::drain_matured_exclamations(&mut engine.feedback.sound_sim, 101);
     engine.process_npc_speech(&assets);
 
     let ai = mytalk_ai(&engine, soldier_id);
-    assert_eq!(engine.frame_counter, 101);
+    assert_eq!(engine.control.frame_counter, 101);
     assert!(!ai.speech_in_flight);
     assert_eq!(ai.current_remark, Remark::TheSoundOfSilence);
     assert_eq!(ai.pending_mytalk_flags, 0);
@@ -3255,7 +3293,7 @@ fn make_test_pc(posture: crate::element::Posture) -> Entity {
 fn selection_mark_skips_hidden_and_building_pcs() {
     let mut engine = EngineInner::new();
     let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    engine.seats[0].selection.push(pc_id);
+    engine.players.seats[0].selection.push(pc_id);
 
     assert!(engine.pc_draws_selection_mark(pc_id));
     assert!(engine.any_selected_pc_drawing_selection_mark());
@@ -3402,7 +3440,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     use crate::element::EyeStatus;
 
     let mut engine = EngineInner::new();
-    engine.frame_counter = 100;
+    engine.control.frame_counter = 100;
     engine.weather.ambiance = crate::engine::types::Ambiance::Night;
     let charly_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let officer_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
@@ -3457,7 +3495,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             .expect("test Charly exists for context");
         crate::engine::ai::build_ai_context_from_entity(
             entity,
-            engine.frame_counter,
+            engine.control.frame_counter,
             None,
             engine.weather.is_forest_level,
             engine.weather.ambiance,
@@ -3547,7 +3585,7 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     let mut engine = EngineInner::new();
     let first = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let second = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
-    engine.seats[0].selection = vec![first];
+    engine.players.seats[0].selection = vec![first];
 
     // RHMessenger::ForwardMessage handles these calls synchronously.  In
     // particular, SelectCharacter's recursive UpdateRecordingMacro must
@@ -3566,9 +3604,9 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.perform_hourglass(&mut display, &assets, &mut dev);
 
-    assert_eq!(engine.seats[0].selection, vec![second]);
+    assert_eq!(engine.players.seats[0].selection, vec![second]);
     assert_eq!(
-        engine.qa_recording_for,
+        engine.players.qa_recording_for,
         vec![second],
         "SelectCharacter -> UpdateRecordingMacro must complete in the originating frame"
     );
@@ -4071,7 +4109,7 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
         fx: Default::default(),
         target: Default::default(),
     }));
-    engine.frame_counter = 2;
+    engine.control.frame_counter = 2;
 
     let soldier_id = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
     let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
@@ -4228,7 +4266,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         use crate::element::{Camp, Entity, Posture};
 
         let mut engine = EngineInner::new();
-        engine.frame_counter = 73;
+        engine.control.frame_counter = 73;
 
         let mut observer = make_test_ai_soldier(Camp::Lacklandists);
         observer.element_data_mut().active = true;
@@ -4287,7 +4325,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
             panic!("follow observer changed entity kind");
         };
         Observation {
-            frame: engine.frame_counter,
+            frame: engine.control.frame_counter,
             observer_slot: observer_id.index(),
             target_slot: target_id.index(),
             target_before_movement,
@@ -5902,7 +5940,7 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
 
     // Add a QA titbit and wire its id into the PC's macro slot.
     let pc_handle = ElementHandle(pc.index());
-    let titbit_id = engine.titbit_manager.add_titbit(
+    let titbit_id = engine.feedback.titbit_manager.add_titbit(
         WorldPoint3D {
             x: 0.0,
             y: 0.0,
@@ -5920,15 +5958,20 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
         Some(0),
     );
     assert_ne!(titbit_id, INVALID_ID);
-    engine.macro_store.get_or_insert(pc).set_slot_titbit(
-        slot as usize,
-        crate::titbit::TitbitId::new(titbit_id).unwrap(),
-    );
+    engine
+        .players
+        .macro_store
+        .get_or_insert(pc)
+        .set_slot_titbit(
+            slot as usize,
+            crate::titbit::TitbitId::new(titbit_id).unwrap(),
+        );
 
     // Populated slot → drops the titbit and reports success.
     assert!(engine.remove_quick_action_titbits_for(pc, slot));
     assert!(
         !engine
+            .feedback
             .titbit_manager
             .titbits()
             .iter()
@@ -5958,7 +6001,7 @@ fn seed_macro_slot(
     use crate::titbit::{ElementHandle, INVALID_ID, QuickAction, TitbitKind};
 
     let pc_handle = ElementHandle(pc.index());
-    let titbit_id = engine.titbit_manager.add_titbit(
+    let titbit_id = engine.feedback.titbit_manager.add_titbit(
         WorldPoint3D {
             x: 0.0,
             y: 0.0,
@@ -5976,7 +6019,7 @@ fn seed_macro_slot(
         Some(0),
     );
 
-    let state = engine.macro_store.get_or_insert(pc);
+    let state = engine.players.macro_store.get_or_insert(pc);
     state.begin_recording(slot);
     for (x, y) in steps {
         let pos = crate::coordinates::MapPoint::new(x, y);
@@ -6027,13 +6070,13 @@ fn abort_quick_action_clears_slot_and_titbit() {
 
     seed_macro_slot(&mut engine, pc, 2, vec![(1.0, 2.0), (3.0, 4.0)]);
     assert!(engine.has_quick_action(pc, 2));
-    let titbit_count_before = engine.titbit_manager.titbits().len();
+    let titbit_count_before = engine.feedback.titbit_manager.titbits().len();
     assert_eq!(titbit_count_before, 1);
 
     // Aborting returns true and fully clears state.
     assert!(engine.abort_quick_action(pc, 2));
     assert!(!engine.has_quick_action(pc, 2));
-    assert!(engine.titbit_manager.titbits().is_empty());
+    assert!(engine.feedback.titbit_manager.titbits().is_empty());
 
     // A second abort is a no-op.
     assert!(!engine.abort_quick_action(pc, 2));
@@ -6118,7 +6161,7 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
     let assets = crate::engine::LevelAssets::new();
 
     // Sanity: titbit manager holds all three macro titbits.
-    assert_eq!(engine.titbit_manager.titbits().len(), 3);
+    assert_eq!(engine.feedback.titbit_manager.titbits().len(), 3);
 
     // All-PC StartMacro on slot 0: both PCs launch → slot 0 emptied for
     // both, then tetris shifts slot 1 → slot 0.
@@ -6138,7 +6181,7 @@ fn start_macro_plays_back_move_steps_and_tetris_collapses() {
 
     // The launched macros' titbits are gone; only pc_a's (was-slot-1)
     // titbit remains.
-    assert_eq!(engine.titbit_manager.titbits().len(), 1);
+    assert_eq!(engine.feedback.titbit_manager.titbits().len(), 1);
 }
 
 /// `StartMacro` on an empty slot is a no-op: no dispatch, no tetris.

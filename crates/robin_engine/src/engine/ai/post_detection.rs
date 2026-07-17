@@ -179,7 +179,7 @@ impl EngineInner {
         }
 
         let scratch = self.build_sim_scratch(assets);
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
         let mut panic_calls: Vec<EntityId> = Vec::new();
 
         // EVENT_TIMER dispatch. For every NPC whose timer has
@@ -458,7 +458,7 @@ impl EngineInner {
                 };
                 let mut ctx = build_ai_context_from_entity(
                     entity,
-                    self.frame_counter,
+                    self.control.frame_counter,
                     building_sector,
                     self.weather.is_forest_level,
                     self.weather.ambiance,
@@ -545,7 +545,7 @@ impl EngineInner {
                         self.entity_building_sector(entity.element_data().sector());
                     let mut ctx = build_ai_context_from_entity(
                         entity,
-                        self.frame_counter,
+                        self.control.frame_counter,
                         building_sector,
                         self.weather.is_forest_level,
                         self.weather.ambiance,

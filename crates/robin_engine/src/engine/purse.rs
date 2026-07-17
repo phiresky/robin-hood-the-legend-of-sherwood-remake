@@ -273,7 +273,8 @@ impl EngineInner {
         // `impact_pos` (uncorrected 2D position captured before
         // `find_authorized_position` shifts it) instead of the
         // corrected `source_pos`.
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: coin_fx_for_material(material),
@@ -282,7 +283,8 @@ impl EngineInner {
             });
 
         // Bonus impact FX (the purse hitting the ground itself).
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: FX_PURSE_IMPACT,

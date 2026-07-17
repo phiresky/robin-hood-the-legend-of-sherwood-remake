@@ -53,6 +53,7 @@ impl EngineInner {
     pub(super) fn add_unconscious_star(&mut self, entity_id: EntityId) {
         let handle = ElementHandle(entity_id.index());
         if self
+            .feedback
             .titbit_manager
             .titbit_exists(TitbitKind::UnconsciousStar, handle)
         {
@@ -77,7 +78,7 @@ impl EngineInner {
         };
         let sprite_row = 1 + (sprite_row / 50).min(4);
         let layer = entity.element_data().layer();
-        let titbit_id = self.titbit_manager.add_titbit(
+        let titbit_id = self.feedback.titbit_manager.add_titbit(
             pos,
             layer,
             TitbitKind::UnconsciousStar,
@@ -92,6 +93,7 @@ impl EngineInner {
         );
         if titbit_id != INVALID_ID
             && let Some(titbit) = self
+                .feedback
                 .titbit_manager
                 .titbits_mut()
                 .iter_mut()
@@ -127,7 +129,7 @@ impl EngineInner {
             z: 2.0,
         };
         let layer = elem.layer();
-        self.titbit_manager.add_titbit(
+        self.feedback.titbit_manager.add_titbit(
             pos,
             layer,
             TitbitKind::Counter,
@@ -154,6 +156,7 @@ impl EngineInner {
     pub(super) fn add_weak_stunned(&mut self, entity_id: EntityId) {
         let handle = ElementHandle(entity_id.index());
         if self
+            .feedback
             .titbit_manager
             .titbit_exists(TitbitKind::WeakStunned, handle)
         {
@@ -171,7 +174,7 @@ impl EngineInner {
             z: epos.z,
         };
         let layer = entity.element_data().layer();
-        self.titbit_manager.add_titbit(
+        self.feedback.titbit_manager.add_titbit(
             pos,
             layer,
             TitbitKind::WeakStunned,
@@ -240,7 +243,7 @@ impl EngineInner {
     /// creation position when entities move, and many kinds render with
     /// sprite_row=0 (star texture) because the row was never set.
     fn refresh_titbit_positions(&mut self) {
-        for t in self.titbit_manager.titbits_mut().iter_mut() {
+        for t in self.feedback.titbit_manager.titbits_mut().iter_mut() {
             if !t.element_supplier.is_valid() {
                 // "Teleport stars" — UnconsciousStar without a supplier
                 // uses its creation position and picks star count from
@@ -397,7 +400,7 @@ impl EngineInner {
             show: bool,
         }
 
-        let frame = self.frame_counter;
+        let frame = self.control.frame_counter;
         let mut npc_states: Vec<EmoticonState> = Vec::new();
 
         // Pre-compute NPC IDs to avoid conflicts with point_building_sector.
@@ -623,13 +626,15 @@ impl EngineInner {
         for state in &npc_states {
             let handle = ElementHandle(state.entity_id.index());
             let has_titbit = self
+                .feedback
                 .titbit_manager
                 .titbit_exists(TitbitKind::Emoticon, handle);
 
             if state.emoticon == EmoticonType::None || !state.show {
                 // No emoticon → remove any existing titbit.
                 if has_titbit {
-                    self.titbit_manager
+                    self.feedback
+                        .titbit_manager
                         .remove_titbit(TitbitKind::Emoticon, handle);
                 }
             } else {
@@ -637,7 +642,7 @@ impl EngineInner {
 
                 if !has_titbit {
                     // Add new emoticon titbit.
-                    self.titbit_manager.add_titbit(
+                    self.feedback.titbit_manager.add_titbit(
                         state.position,
                         state.layer,
                         TitbitKind::Emoticon,
@@ -658,7 +663,7 @@ impl EngineInner {
                 // question mark, `phase` holds the size (0-15) used
                 // to pick the animation section at render time.
                 // Position is updated by refresh_titbit_positions() below.
-                for t in self.titbit_manager.titbits_mut().iter_mut() {
+                for t in self.feedback.titbit_manager.titbits_mut().iter_mut() {
                     if t.kind == TitbitKind::Emoticon && t.element_supplier == handle {
                         if t.sprite_row != target_row {
                             t.sprite_row = target_row;
@@ -760,11 +765,12 @@ impl EngineInner {
         for state in &states {
             let handle = ElementHandle(state.id.index());
             let has_titbit = self
+                .feedback
                 .titbit_manager
                 .titbit_exists(TitbitKind::Hidden, handle);
 
             if state.is_hidden && !has_titbit {
-                self.titbit_manager.add_titbit(
+                self.feedback.titbit_manager.add_titbit(
                     state.position,
                     state.layer,
                     TitbitKind::Hidden,
@@ -814,11 +820,12 @@ impl EngineInner {
         for state in &states {
             let handle = ElementHandle(state.id.index());
             let has_titbit = self
+                .feedback
                 .titbit_manager
                 .titbit_exists(TitbitKind::AppleSmell, handle);
 
             if state.is_smelling && !has_titbit {
-                self.titbit_manager.add_titbit(
+                self.feedback.titbit_manager.add_titbit(
                     state.position,
                     state.layer,
                     TitbitKind::AppleSmell,
@@ -832,7 +839,8 @@ impl EngineInner {
                     Some(state.layer),
                 );
             } else if !state.is_smelling && has_titbit {
-                self.titbit_manager
+                self.feedback
+                    .titbit_manager
                     .remove_titbit(TitbitKind::AppleSmell, handle);
             }
         }
@@ -909,7 +917,10 @@ impl EngineInner {
 
         for state in &states {
             let handle = ElementHandle(state.id.index());
-            let has_titbit = self.titbit_manager.titbit_exists(TitbitKind::Speak, handle);
+            let has_titbit = self
+                .feedback
+                .titbit_manager
+                .titbit_exists(TitbitKind::Speak, handle);
 
             // The scroll-attachment path pulses the SPEAK titbit
             // (remove + re-add) whenever the attached scroll pointer
@@ -917,12 +928,14 @@ impl EngineInner {
             // titbit, so strip it first and let the add-branch below
             // re-install it with a fresh titbit index.
             if state.force_refresh && state.has_scroll && has_titbit {
-                self.titbit_manager.remove_titbit(TitbitKind::Speak, handle);
+                self.feedback
+                    .titbit_manager
+                    .remove_titbit(TitbitKind::Speak, handle);
             }
             let has_titbit = has_titbit && !(state.force_refresh && state.has_scroll);
 
             if state.has_scroll && !has_titbit {
-                self.titbit_manager.add_titbit(
+                self.feedback.titbit_manager.add_titbit(
                     state.position,
                     state.layer,
                     TitbitKind::Speak,
@@ -936,7 +949,9 @@ impl EngineInner {
                     Some(state.layer),
                 );
             } else if !state.has_scroll && has_titbit {
-                self.titbit_manager.remove_titbit(TitbitKind::Speak, handle);
+                self.feedback
+                    .titbit_manager
+                    .remove_titbit(TitbitKind::Speak, handle);
             }
         }
     }
@@ -987,11 +1002,12 @@ impl EngineInner {
         for state in &states {
             let handle = ElementHandle(state.id.index());
             let has_titbit = self
+                .feedback
                 .titbit_manager
                 .titbit_exists(TitbitKind::DangerPoint, handle);
 
             if state.is_protecting && !has_titbit {
-                self.titbit_manager.add_titbit(
+                self.feedback.titbit_manager.add_titbit(
                     state.position,
                     state.layer,
                     TitbitKind::DangerPoint,
@@ -1005,7 +1021,8 @@ impl EngineInner {
                     Some(state.layer),
                 );
             } else if !state.is_protecting && has_titbit {
-                self.titbit_manager
+                self.feedback
+                    .titbit_manager
                     .remove_titbit(TitbitKind::DangerPoint, handle);
             }
         }
@@ -1048,11 +1065,12 @@ impl EngineInner {
         for state in &states {
             let handle = ElementHandle(state.id.index());
             let has_titbit = self
+                .feedback
                 .titbit_manager
                 .titbit_exists(TitbitKind::WorkIcon, handle);
 
             if state.work != WorkIcon::None && !has_titbit {
-                self.titbit_manager.add_titbit(
+                self.feedback.titbit_manager.add_titbit(
                     state.position,
                     state.layer,
                     TitbitKind::WorkIcon,
@@ -1066,7 +1084,8 @@ impl EngineInner {
                     Some(state.layer),
                 );
             } else if state.work == WorkIcon::None && has_titbit {
-                self.titbit_manager
+                self.feedback
+                    .titbit_manager
                     .remove_titbit(TitbitKind::WorkIcon, handle);
             }
         }

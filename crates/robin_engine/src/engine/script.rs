@@ -29,8 +29,8 @@ impl EngineInner {
         // distinguishable from valid indices so `GetSoundSourceScript`
         // can reject destroyed-but-preserved-index without conflating
         // them with live ones.
-        let sound_source_alive: Vec<bool> = (0..self.sound_sim.sources.num_sources())
-            .map(|i| self.sound_sim.sources.get(i).is_some())
+        let sound_source_alive: Vec<bool> = (0..self.feedback.sound_sim.sources.num_sources())
+            .map(|i| self.feedback.sound_sim.sources.get(i).is_some())
             .collect();
 
         for (id, fx) in self.entities.fxs() {
@@ -81,7 +81,7 @@ impl EngineInner {
         }
 
         // Selected PCs
-        let selected_pc_handles: Vec<i32> = self.seats[0]
+        let selected_pc_handles: Vec<i32> = self.players.seats[0]
             .selection
             .iter()
             .map(|&id| crate::natives::GameHost::actor_handle(id))
@@ -196,7 +196,7 @@ impl EngineInner {
         game_host.script_building_count = assets.script_building_count;
         game_host.script_hiking_path_count = assets.script_hiking_path_count;
         game_host.hiking_paths = assets.hiking_paths.clone().into();
-        game_host.sound_source_count = self.sound_sim.sources.num_sources();
+        game_host.sound_source_count = self.feedback.sound_sim.sources.num_sources();
         // Map bounding box, needed by RecordEnterGame / RecordLeaveGame
         // to compute map-edge spawn/exit points.
         game_host.map_bbox = self.fast_grid.level.map_bbox;
@@ -285,30 +285,32 @@ impl EngineInner {
                         // active set on `sound_sim` so `ResumeAll` can
                         // restore it.
                         let mut stashed: Vec<u32> = Vec::new();
-                        for i in 0..self.sound_sim.sources.num_sources() {
-                            if let Some(src) = self.sound_sim.sources.get_mut(i)
+                        for i in 0..self.feedback.sound_sim.sources.num_sources() {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(i)
                                 && src.active
                             {
                                 stashed.push(i as u32);
                                 src.active = false;
                             }
                         }
-                        self.sound_sim.suspended_active_sources = stashed;
-                        self.sound_sim.playing_sources.clear();
+                        self.feedback.sound_sim.suspended_active_sources = stashed;
+                        self.feedback.sound_sim.playing_sources.clear();
                     }
                     crate::natives::SoundCommand::ResumeAll => {
                         // Restore `active` on every source that was
                         // active at the last suspend — preserves the
                         // active flag across suspend/resume.
-                        let stashed = std::mem::take(&mut self.sound_sim.suspended_active_sources);
+                        let stashed =
+                            std::mem::take(&mut self.feedback.sound_sim.suspended_active_sources);
                         for idx in stashed {
-                            if let Some(src) = self.sound_sim.sources.get_mut(idx as usize) {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx as usize)
+                            {
                                 src.active = true;
                             }
                         }
-                        let pos = self.cutscene_camera.view_position;
-                        let zoom = self.cutscene_camera.zoom_factor;
-                        self.pending_side_effects.sounds.push(
+                        let pos = self.feedback.cutscene_camera.view_position;
+                        let zoom = self.feedback.cutscene_camera.zoom_factor;
+                        self.feedback.pending_side_effects.sounds.push(
                             super::SoundCommand::ResumeAllSources {
                                 position: pos,
                                 zoom,
@@ -321,9 +323,9 @@ impl EngineInner {
                         // transition the host used to drive from
                         // `stop_sound_source`.
                         schedule_source_finishes_for_all_active(
-                            &mut self.sound_sim,
+                            &mut self.feedback.sound_sim,
                             &assets.source_durations,
-                            self.frame_counter,
+                            self.control.frame_counter,
                         );
                     }
                     crate::natives::SoundCommand::Activate(h) => {
@@ -335,21 +337,23 @@ impl EngineInner {
                             // Re-activation cancels any previously
                             // scheduled finish so we don't prematurely
                             // kill a freshly-restarted source.
-                            self.sound_sim
+                            self.feedback
+                                .sound_sim
                                 .playing_sources
                                 .retain(|p| p.source_index as usize != idx);
-                            if let Some(src) = self.sound_sim.sources.get_mut(idx) {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
                                 src.active = true;
                                 schedule_source_finish(
                                     &src.source_kind,
                                     src.id,
                                     idx,
-                                    self.frame_counter,
+                                    self.control.frame_counter,
                                     &assets.source_durations,
-                                    &mut self.sound_sim.playing_sources,
+                                    &mut self.feedback.sound_sim.playing_sources,
                                 );
                             }
-                            self.pending_side_effects
+                            self.feedback
+                                .pending_side_effects
                                 .sounds
                                 .push(super::SoundCommand::ActivateSource(idx));
                         }
@@ -362,21 +366,23 @@ impl EngineInner {
                         // source, but clearing it keeps the queue small
                         // and unambiguous across rollback snapshots.
                         if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
-                            if let Some(src) = self.sound_sim.sources.get_mut(idx) {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
                                 src.active = false;
                             }
-                            self.sound_sim
+                            self.feedback
+                                .sound_sim
                                 .playing_sources
                                 .retain(|p| p.source_index as usize != idx);
                         }
                     }
                     crate::natives::SoundCommand::Destroy(h) => {
                         if let Some(idx) = crate::natives::GameHost::sound_source_index(h) {
-                            if let Some(src) = self.sound_sim.sources.get_mut(idx) {
+                            if let Some(src) = self.feedback.sound_sim.sources.get_mut(idx) {
                                 src.active = false;
                             }
-                            self.sound_sim.sources.delete(idx);
-                            self.sound_sim
+                            self.feedback.sound_sim.sources.delete(idx);
+                            self.feedback
+                                .sound_sim
                                 .playing_sources
                                 .retain(|p| p.source_index as usize != idx);
                         }
@@ -386,7 +392,7 @@ impl EngineInner {
 
             // ── Background invalidation ──
             if game_host.background_invalidated {
-                self.pending_side_effects.invalidate_background = true;
+                self.feedback.pending_side_effects.invalidate_background = true;
                 game_host.background_invalidated = false;
             }
 
@@ -431,7 +437,7 @@ impl EngineInner {
                                 // — script already owns the sound flow.
                                 self.select_pc(assets, 0, id, true, false);
                             } else {
-                                self.seats[0].selection.retain(|&x| x != id);
+                                self.players.seats[0].selection.retain(|&x| x != id);
                             }
                         }
                     }
@@ -491,7 +497,7 @@ impl EngineInner {
                         {
                             let still_unconscious =
                                 entity.human_data().is_some_and(|h| h.unconscious);
-                            self.titbit_manager.remove_unconscious_stars_if(
+                            self.feedback.titbit_manager.remove_unconscious_stars_if(
                                 crate::titbit::ElementHandle(id.index()),
                                 still_unconscious,
                             );
@@ -562,7 +568,7 @@ impl EngineInner {
                         if let Some(pc_id) = self.entity_id_for_actor_handle(actor) {
                             for slot in 0..crate::macro_store::NUMBER_OF_QA_MEMORY as u8 {
                                 self.remove_quick_action_titbits_for(pc_id, slot);
-                                if let Some(state) = self.macro_store.get_mut(pc_id) {
+                                if let Some(state) = self.players.macro_store.get_mut(pc_id) {
                                     state.clear_slot(slot as usize);
                                 }
                             }
@@ -675,7 +681,7 @@ impl EngineInner {
                             continue;
                         };
                         let handle = crate::titbit::ElementHandle(id.index());
-                        self.titbit_manager.add_titbit(
+                        self.feedback.titbit_manager.add_titbit(
                             crate::coordinates::WorldPoint3D::default(),
                             0,
                             crate::titbit::TitbitKind::Hidden,
@@ -953,7 +959,7 @@ impl EngineInner {
 
         if let Some(ref mut script) = self.mission_script {
             if let Some(game_host) = script.game_host_mut() {
-                game_host.frame_counter = self.frame_counter;
+                game_host.frame_counter = self.control.frame_counter;
             }
             script.swap_engine_state(
                 &mut self.entities,
@@ -1124,7 +1130,7 @@ impl EngineInner {
     pub(crate) fn finalize_mission_script(&mut self, abandoned: bool) {
         if let Some(ref mut script) = self.mission_script {
             if let Some(game_host) = script.game_host_mut() {
-                game_host.frame_counter = self.frame_counter;
+                game_host.frame_counter = self.control.frame_counter;
             }
             script.swap_engine_state(
                 &mut self.entities,
@@ -2465,10 +2471,10 @@ impl EngineInner {
                     // resize/zoom can re-derive the slide target later,
                     // and the centered+clamped result in `camera_slide`.
                     if let Some(pos) = Self::resolve_location_position(assets, location_handle) {
-                        self.cutscene_camera.camera_wanted = pos;
-                        self.cutscene_camera.camera_slide =
+                        self.feedback.cutscene_camera.camera_wanted = pos;
+                        self.feedback.cutscene_camera.camera_slide =
                             self.check_location_is_valid_for_camera(pos);
-                        self.speed = speed;
+                        self.control.speed = speed;
                     } else {
                         tracing::warn!(
                             "ScrollCameraTo: could not resolve location handle {location_handle}"
@@ -2479,9 +2485,9 @@ impl EngineInner {
                     // Snap the view to the script point and invalidate
                     // background validity so the next frame redraws.
                     if let Some(pos) = Self::resolve_location_position(assets, location_handle) {
-                        self.cutscene_camera.view_position =
+                        self.feedback.cutscene_camera.view_position =
                             self.check_location_is_valid_for_camera(pos);
-                        self.pending_side_effects.invalidate_background = true;
+                        self.feedback.pending_side_effects.invalidate_background = true;
                     } else {
                         tracing::warn!(
                             "JumpCameraTo: could not resolve location handle {location_handle}"
@@ -2494,25 +2500,29 @@ impl EngineInner {
                     // zoom-update loop notices `desired != current`.
                     // Guard the flag so a no-op `SetZoomLevel` at the
                     // current zoom doesn't prematurely flip it.
-                    self.cutscene_camera.desired_zoom_factor = zoom;
-                    if zoom != self.cutscene_camera.zoom_factor {
-                        self.cutscene_camera.mechanized_zoom = true;
+                    self.feedback.cutscene_camera.desired_zoom_factor = zoom;
+                    if zoom != self.feedback.cutscene_camera.zoom_factor {
+                        self.feedback.cutscene_camera.mechanized_zoom = true;
                     }
                 }
                 EngineCommand::StartDialog { dialog_id } => {
                     tracing::debug!("StartDialog({dialog_id}): queued for game session");
-                    self.pending_side_effects.pending_dialogues.push(dialog_id);
+                    self.feedback
+                        .pending_side_effects
+                        .pending_dialogues
+                        .push(dialog_id);
                     self.messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
                 }
                 EngineCommand::DisplayMap { show } => {
-                    self.pending_side_effects
+                    self.feedback
+                        .pending_side_effects
                         .pending_minimap_display_maps
                         .push((show, false));
                 }
                 EngineCommand::DisplayConsole => {
                     tracing::debug!("DisplayConsole: queued for UI system");
-                    self.pending_side_effects.pending_show_console = true;
+                    self.feedback.pending_side_effects.pending_show_console = true;
                     self.messenger.send(Message::new(MessageType::Simple(
                         SimpleMessage::DisplayConsole,
                     )));
@@ -2691,13 +2701,16 @@ impl EngineInner {
                 }
                 EngineCommand::DisplayPopupText { text_id } => {
                     tracing::debug!("DisplayPopupText({text_id}): queued for UI system");
-                    self.pending_side_effects.pending_popup_texts.push(text_id);
+                    self.feedback
+                        .pending_side_effects
+                        .pending_popup_texts
+                        .push(text_id);
                     self.messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
                 }
                 EngineCommand::DisplaySherwoodReport => {
                     tracing::debug!("DisplaySherwoodReport: queued for UI system");
-                    self.pending_side_effects.pending_sherwood_report = true;
+                    self.feedback.pending_side_effects.pending_sherwood_report = true;
                     self.messenger
                         .send(Message::new(MessageType::Simple(SimpleMessage::ResetInput)));
                 }
@@ -2723,7 +2736,7 @@ impl EngineInner {
                     //     countdown beats generic VM yield/resume infra.
                     let s = speed.max(0) as u32;
                     let total_frames = s.saturating_mul(2);
-                    self.pending_side_effects.fade_to_black = Some(if s == 0 {
+                    self.feedback.pending_side_effects.fade_to_black = Some(if s == 0 {
                         None
                     } else {
                         Some(crate::engine::types::FadeToBlack {
@@ -2739,14 +2752,15 @@ impl EngineInner {
                     // (`game_render.rs:814` et al.) already reads
                     // `host.input.draw_hidden` to switch entities into
                     // the masked/outline draw mode.
-                    self.pending_side_effects.set_draw_hidden = Some(show);
+                    self.feedback.pending_side_effects.set_draw_hidden = Some(show);
                 }
                 EngineCommand::SetViewRadius { radius } => {
                     self.standard_view_polygon_radius = radius as u16;
                     self.propagate_view_radius();
                 }
                 EngineCommand::PlayJingle(jingle) => {
-                    self.pending_side_effects
+                    self.feedback
+                        .pending_side_effects
                         .sounds
                         .push(super::SoundCommand::Jingle(jingle));
                 }
@@ -2951,7 +2965,10 @@ impl EngineInner {
                     // frame.
                     if let Some(eid) = self.entity_id_for_actor_handle(actor_handle) {
                         if matches!(self.get_entity(eid), Some(crate::element::Entity::Pc(_))) {
-                            self.pending_side_effects.pending_mark_pc_ids.push(eid);
+                            self.feedback
+                                .pending_side_effects
+                                .pending_mark_pc_ids
+                                .push(eid);
                         } else {
                             tracing::warn!(
                                 "MarkPc: handle {actor_handle} does not resolve to a PC"
@@ -3011,14 +3028,15 @@ impl EngineInner {
                         );
                         let mission_team: Vec<crate::profiles::CharacterProfileIdx> =
                             campaign.mission_team_profile_indices();
-                        let selected: Vec<crate::profiles::CharacterProfileIdx> = self.seats[0]
-                            .selection
-                            .iter()
-                            .filter_map(|&id| match self.get_entity(id)? {
-                                crate::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
-                                _ => None,
-                            })
-                            .collect();
+                        let selected: Vec<crate::profiles::CharacterProfileIdx> =
+                            self.players.seats[0]
+                                .selection
+                                .iter()
+                                .filter_map(|&id| match self.get_entity(id)? {
+                                    crate::element::Entity::Pc(pc) => Some(pc.pc.profile_index),
+                                    _ => None,
+                                })
+                                .collect();
                         let req = campaign.next_mission_idx.and_then(|idx| {
                             crate::widget_state::requirements::build_requirements_state(
                                 campaign,
