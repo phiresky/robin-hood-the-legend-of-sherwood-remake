@@ -116,7 +116,7 @@ impl EngineInner {
             }
         }
 
-        self.tick_melee_strikes(assets);
+        self.tick_nonstraight_melee_strikes(assets);
         self.tick_sweep_strikes(assets);
         self.tick_parry_counters();
         self.tick_push_flights(assets);
@@ -629,8 +629,283 @@ impl EngineInner {
         true
     }
 
-    /// Advance sequence-driven melee strikes (ActiveMelee timers).
+    /// Advance one straight/assault sequence-driven strike at its actor's
+    /// creation-order slot.
+    ///
+    /// Original `RHElementActor::Hourglass` executes the current order inline,
+    /// so a straight strike's synchronously-dispatched damage can interrupt a
+    /// later-created actor before that actor gets its own Hourglass call.  The
+    /// remaining sweep/push strike machinery stays in the batched driver until
+    /// it has its own ordering oracle.
+    pub(crate) fn tick_straight_melee_for(&mut self, assets: &LevelAssets, attacker_id: EntityId) {
+        if self.actors_frozen() {
+            return;
+        }
+
+        let Some((profile_idx, strike, target_id, strike_kind)) =
+            self.get_entity(attacker_id).and_then(|entity| {
+                let melee = entity.actor_data()?.active_melee;
+                if !melee.is_active() {
+                    return None;
+                }
+                let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
+                let strike_kind = profile_idx
+                    .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+                    .map(|profile| profile.thrusts[melee.strike as usize].kind)
+                    .unwrap_or(WeaponThrustKind::Straight);
+                Some((
+                    profile_idx,
+                    melee.strike,
+                    melee
+                        .target
+                        .expect("an active melee strike must retain its target"),
+                    strike_kind,
+                ))
+            })
+        else {
+            return;
+        };
+        if !matches!(
+            strike_kind,
+            WeaponThrustKind::Straight | WeaponThrustKind::Assault
+        ) {
+            return;
+        }
+
+        let direction = direction_to(&self.entities, attacker_id, target_id);
+        if let Some(entity) = self.get_entity_mut(attacker_id) {
+            entity.element_data_mut().set_direction_instantly(direction);
+        }
+
+        let mut hit = false;
+        let mut completion = None;
+        {
+            let Some(entity) = self.get_entity_mut(attacker_id) else {
+                return;
+            };
+            let direction = entity.element_data().direction() as u16;
+            let actor = entity
+                .actor_data()
+                .expect("straight melee attacker must retain actor data");
+            let order_id = actor.active_melee.order_id;
+            if let Some(order_id) = order_id {
+                let anim = strike_to_animation(strike);
+                let motion = entity.element_data_mut().sprite.perform_action(
+                    Some(order_id),
+                    anim,
+                    direction,
+                    crate::sprite::FrameProgression::Default,
+                    false,
+                );
+                tracing::trace!(
+                    "tick_straight_melee_for: entity={} order_id={} strike={:?} anim={:?} dir={} motion={:?}",
+                    attacker_id.index(),
+                    order_id,
+                    strike,
+                    anim,
+                    direction,
+                    motion
+                );
+                if !matches!(motion, crate::sprite::MotionState::Error) {
+                    entity
+                        .actor_data_mut()
+                        .expect("straight melee attacker must retain actor data")
+                        .active_melee
+                        .sprite_driving_hit = true;
+                }
+                if matches!(motion, crate::sprite::MotionState::Done) {
+                    let melee = &mut entity
+                        .actor_data_mut()
+                        .expect("straight melee attacker must retain actor data")
+                        .active_melee;
+                    if !melee.hit_applied {
+                        melee.frames_remaining = crate::movement::MELEE_STRIKE_DURATION
+                            - crate::movement::MELEE_HIT_FRAME;
+                    }
+                }
+                if matches!(
+                    motion,
+                    crate::sprite::MotionState::Terminated | crate::sprite::MotionState::Aborted
+                ) {
+                    let melee = &mut entity
+                        .actor_data_mut()
+                        .expect("straight melee attacker must retain actor data")
+                        .active_melee;
+                    if !melee.hit_applied {
+                        melee.frames_remaining = crate::movement::MELEE_STRIKE_DURATION
+                            - crate::movement::MELEE_HIT_FRAME;
+                    } else {
+                        melee.frames_remaining = 0;
+                    }
+                }
+            }
+
+            let actor = entity
+                .actor_data_mut()
+                .expect("straight melee attacker must retain actor data");
+            let melee = actor.active_melee;
+            if !melee.sprite_driving_hit {
+                actor.active_melee.frames_remaining = melee.frames_remaining.saturating_sub(1);
+            }
+            if melee.is_hit_frame() && !melee.hit_applied {
+                actor.active_melee.hit_applied = true;
+                hit = true;
+            }
+            if actor.active_melee.frames_remaining == 0 {
+                actor.active_melee.clear();
+                completion = Some((melee.sequence_id, melee.element_index));
+            }
+        }
+
+        if hit {
+            self.resolve_straight_melee_hit(assets, attacker_id, target_id, strike, profile_idx);
+        }
+        if let Some((sequence_id, element_index)) = completion {
+            self.complete_melee_strike(
+                assets,
+                attacker_id,
+                sequence_id,
+                element_index,
+                strike,
+                profile_idx,
+            );
+        }
+    }
+
+    fn resolve_straight_melee_hit(
+        &mut self,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        victim_id: EntityId,
+        strike: SwordStrike,
+        profile_idx: Option<u32>,
+    ) {
+        let distance = entity_distance(&self.entities, attacker_id, victim_id);
+        let in_range = profile_idx
+            .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+            .map(|profile| combat::is_strike_in_range(profile, strike, distance))
+            .unwrap_or(distance <= 50.0);
+        let obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.dynamic_sight_obstacles,
+            static_active: &self.static_sight_obstacle_active,
+        };
+
+        if in_range
+            && is_possible_sword_strike_victim_id(
+                &self.entities,
+                attacker_id,
+                victim_id,
+                &assets.profile_manager,
+                &self.fast_grid,
+                obstacles,
+            )
+        {
+            let direction = direction_to(&self.entities, attacker_id, victim_id);
+            if let Some(entity) = self.get_entity_mut(attacker_id) {
+                entity.element_data_mut().set_direction_instantly(direction);
+            }
+            if let Some(profile_idx) = profile_idx {
+                self.launch_sword_damage_now(assets, victim_id, attacker_id, strike, profile_idx);
+            }
+            self.enter_swordfight(assets, victim_id, attacker_id, true);
+        } else {
+            tracing::debug!(
+                attacker = ?attacker_id,
+                victim = ?victim_id,
+                distance,
+                "Sword strike missed — out of range"
+            );
+        }
+    }
+
+    fn complete_melee_strike(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        sequence_id: Option<crate::sequence::SequenceId>,
+        element_index: usize,
+        strike: SwordStrike,
+        profile_idx: Option<u32>,
+    ) {
+        let pending_swordfights = if let Some(entity) = self.entities.get_mut(actor_id)
+            && let Some(actor) = entity.actor_data_mut()
+        {
+            actor.sweep_state = None;
+            std::mem::take(&mut actor.pending_push_swordfight)
+        } else {
+            Vec::new()
+        };
+        for victim_id in pending_swordfights {
+            self.enter_swordfight(assets, victim_id, actor_id, true);
+        }
+
+        match profile_idx.and_then(|idx| assets.profile_manager.get_hth_weapon(idx)) {
+            Some(profile) => {
+                let energy = combat::strike_energy_cost(profile, strike);
+                if let Some(entity) = self.get_entity_mut(actor_id)
+                    && let Some(human) = entity.human_data_mut()
+                {
+                    human.tiredness = human.tiredness.saturating_add(energy);
+                }
+            }
+            None => tracing::warn!(
+                ?actor_id,
+                ?strike,
+                ?profile_idx,
+                "completed sword strike has no attacker weapon profile; tiredness unchanged"
+            ),
+        }
+
+        if let Some(sequence_id) = sequence_id {
+            let stale = self
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .is_some_and(|element| {
+                    use crate::sequence::SequenceState;
+                    matches!(
+                        element.state,
+                        SequenceState::Interrupted
+                            | SequenceState::Impossible
+                            | SequenceState::Terminated
+                            | SequenceState::Done
+                    )
+                });
+            if stale {
+                tracing::debug!(
+                    ?sequence_id,
+                    elem_idx = element_index,
+                    actor = ?actor_id,
+                    "tick_melee_strikes: skipping stale completed strike callback"
+                );
+            } else {
+                self.sequence_manager
+                    .element_terminated(sequence_id, element_index);
+            }
+        }
+    }
+
+    /// Advance every sequence-driven melee strike.
+    ///
+    /// Kept as the complete low-level driver for focused tests.
+    /// The real Hourglass orchestration runs straight/assault strikes in its
+    /// creation-ordered entity pass and calls [`Self::tick_nonstraight_melee_strikes`]
+    /// afterward for the remaining strike kinds.
+    #[cfg(test)]
     pub(super) fn tick_melee_strikes(&mut self, assets: &LevelAssets) {
+        let actor_ids: Vec<EntityId> = self
+            .entities
+            .actors()
+            .map(|(actor_id, _)| actor_id.into())
+            .collect();
+        for actor_id in actor_ids {
+            self.tick_straight_melee_for(assets, actor_id);
+        }
+        self.tick_nonstraight_melee_strikes(assets);
+    }
+
+    /// Advance batched non-straight sequence-driven melee strikes.
+    fn tick_nonstraight_melee_strikes(&mut self, assets: &LevelAssets) {
         // Collect strike results to avoid borrow conflicts
         struct StrikeHit {
             attacker_id: EntityId,
@@ -649,50 +924,27 @@ impl EngineInner {
         let mut hits: Vec<StrikeHit> = Vec::new();
         let mut completed: Vec<CompletedStrike> = Vec::new();
 
-        // Pre-pass: face-track straight strikes toward their targets.
-        // Done in a separate pass because the main iter_mut loop
-        // can't access two entities simultaneously.
-        let mut pending_directions = Vec::new();
-        for (entity_id, entity) in self.entities.actors() {
-            let (strike, target_id) = {
-                let actor = match entity.actor_data() {
-                    Some(a) => a,
-                    None => continue,
-                };
-                if !actor.active_melee.is_active() {
-                    continue;
-                }
-                let s = actor.active_melee.strike;
-                let t = actor.active_melee.target;
-                (s, t)
-            };
-            let is_straight = {
-                let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
-                profile_idx
-                    .and_then(|pi| assets.profile_manager.get_hth_weapon(pi))
-                    .map(|p| {
-                        matches!(
-                            p.thrusts[strike as usize].kind,
-                            WeaponThrustKind::Straight | WeaponThrustKind::Assault
-                        )
-                    })
-                    .unwrap_or(true)
-            };
-            if is_straight && let Some(tid) = target_id {
-                let dir = direction_to(&self.entities, entity_id, tid);
-                pending_directions.push((entity_id, dir));
-            }
-        }
-        for (entity_id, dir) in pending_directions {
-            if let Some(e) = self.get_entity_mut(entity_id) {
-                e.element_data_mut().set_direction_instantly(dir);
-            }
-        }
-
         // Phase 1: advance timers and collect hits
         for (entity_id, entity) in self.entities.actors_mut() {
             // Read weapon profile ID before taking mutable actor borrow
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
+            let Some(active_melee) = entity
+                .actor_data()
+                .map(|actor| actor.active_melee)
+                .filter(|melee| melee.is_active())
+            else {
+                continue;
+            };
+            let strike_kind = profile_idx
+                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
+                .map(|profile| profile.thrusts[active_melee.strike as usize].kind)
+                .unwrap_or(WeaponThrustKind::Straight);
+            if matches!(
+                strike_kind,
+                WeaponThrustKind::Straight | WeaponThrustKind::Assault
+            ) {
+                continue;
+            }
 
             // Drive the strike animation through the sprite (like bow_shot).
             // This makes the character visually swing the sword.
@@ -956,120 +1208,26 @@ impl EngineInner {
                     actor.pending_push_swordfight = all_victims;
                 }
             } else {
-                // Single-target straight strike: distance check only
-                let distance = entity_distance(&self.entities, hit.attacker_id, hit.victim_id);
-                let in_range = hit
-                    .attacker_profile_idx
-                    .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-                    .map(|profile| combat::is_strike_in_range(profile, hit.strike, distance))
-                    .unwrap_or(distance <= 50.0);
-                let obstacles = crate::sight_obstacle::ObstacleList {
-                    static_obstacles: assets.static_sight_obstacles.as_slice(),
-                    dynamic_obstacles: &self.dynamic_sight_obstacles,
-                    static_active: &self.static_sight_obstacle_active,
-                };
-
-                if in_range
-                    && is_possible_sword_strike_victim_id(
-                        &self.entities,
-                        hit.attacker_id,
-                        hit.victim_id,
-                        &assets.profile_manager,
-                        &self.fast_grid,
-                        obstacles,
-                    )
-                {
-                    let dir = direction_to(&self.entities, hit.attacker_id, hit.victim_id);
-                    if let Some(entity) = self.entities.get_mut(hit.attacker_id) {
-                        entity.element_data_mut().set_direction_instantly(dir);
-                    }
-                    if let Some(profile_idx) = hit.attacker_profile_idx {
-                        self.launch_sword_damage_now(
-                            assets,
-                            hit.victim_id,
-                            hit.attacker_id,
-                            hit.strike,
-                            profile_idx,
-                        );
-                    }
-                    self.enter_swordfight(assets, hit.victim_id, hit.attacker_id, true);
-                } else {
-                    tracing::debug!(
-                        attacker = ?hit.attacker_id,
-                        victim = ?hit.victim_id,
-                        distance,
-                        "Sword strike missed — out of range"
-                    );
-                }
+                self.resolve_straight_melee_hit(
+                    assets,
+                    hit.attacker_id,
+                    hit.victim_id,
+                    hit.strike,
+                    hit.attacker_profile_idx,
+                );
             }
         }
 
         // Phase 3: notify sequence manager for completed strikes and clear sweep state
         for completed_strike in completed {
-            let actor_id = completed_strike.actor_id;
-            // Drain any deferred push-strike swordfight entries — fire
-            // EnterSwordfight per victim at MOTION_TERMINATED, after
-            // the damage sequences have already resolved (possibly
-            // killing / knocking out victims who then get filtered by
-            // `enter_swordfight`).
-            let pending_sf = if let Some(entity) = self.entities.get_mut(actor_id)
-                && let Some(actor) = entity.actor_data_mut()
-            {
-                actor.sweep_state = None;
-                std::mem::take(&mut actor.pending_push_swordfight)
-            } else {
-                Vec::new()
-            };
-            for victim_id in pending_sf {
-                self.enter_swordfight(assets, victim_id, actor_id, true);
-            }
-            match completed_strike
-                .profile_idx
-                .and_then(|idx| assets.profile_manager.get_hth_weapon(idx))
-            {
-                Some(profile) => {
-                    let energy = combat::strike_energy_cost(profile, completed_strike.strike);
-                    if let Some(entity) = self.entities.get_mut(actor_id)
-                        && let Some(human) = entity.human_data_mut()
-                    {
-                        human.tiredness = human.tiredness.saturating_add(energy);
-                    }
-                }
-                None => {
-                    tracing::warn!(
-                        ?actor_id,
-                        ?completed_strike.strike,
-                        ?completed_strike.profile_idx,
-                        "completed sword strike has no attacker weapon profile; tiredness unchanged"
-                    );
-                }
-            }
-            if let Some(sid) = completed_strike.sequence_id {
-                if let Some(elem) = self
-                    .sequence_manager
-                    .get_element(sid, completed_strike.element_index)
-                {
-                    use crate::sequence::SequenceState;
-                    if matches!(
-                        elem.state,
-                        SequenceState::Interrupted
-                            | SequenceState::Impossible
-                            | SequenceState::Terminated
-                            | SequenceState::Done
-                    ) {
-                        tracing::debug!(
-                            ?sid,
-                            elem_idx = completed_strike.element_index,
-                            state = ?elem.state,
-                            actor = ?actor_id,
-                            "tick_melee_strikes: skipping stale completed strike callback"
-                        );
-                        continue;
-                    }
-                }
-                self.sequence_manager
-                    .element_terminated(sid, completed_strike.element_index);
-            }
+            self.complete_melee_strike(
+                assets,
+                completed_strike.actor_id,
+                completed_strike.sequence_id,
+                completed_strike.element_index,
+                completed_strike.strike,
+                completed_strike.profile_idx,
+            );
         }
     }
 

@@ -5869,6 +5869,7 @@ impl EngineInner {
                     // that active order, but dispatching each narrow driver
                     // keeps stale-state cleanup behavior intact.
                     self.tick_bow_shot_for(assets, entity_id);
+                    self.tick_straight_melee_for(assets, entity_id);
                     self.tick_melee_completion_for(assets, entity_id);
                     self.tick_ability_for(display, assets, entity_id);
                     if matches!(entity_id, EntityId::Pc(_)) {

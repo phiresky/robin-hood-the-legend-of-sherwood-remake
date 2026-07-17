@@ -737,6 +737,112 @@ fn melee_completion_precedes_a_later_ability_dispatch() {
     );
 }
 
+fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::Posture;
+    use crate::movement::{ActiveMelee, MELEE_HIT_FRAME, MELEE_STRIKE_DURATION};
+    use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
+    use crate::weapons::SwordStrike;
+
+    fn position(entity: &mut Entity, x: f32) {
+        entity.element_data_mut().active = true;
+        entity
+            .element_data_mut()
+            .set_position(WorldPoint3D { x, y: 0.0, z: 0.0 });
+        entity
+            .element_data_mut()
+            .set_position_map(MapPoint { x, y: 0.0 });
+    }
+
+    let mut engine = EngineInner::new();
+    let mut interrupter = make_test_pc(Posture::Upright);
+    position(&mut interrupter, 0.0);
+    let mut chained_attacker = make_test_soldier(Posture::Upright);
+    position(&mut chained_attacker, 20.0);
+    let Entity::Soldier(soldier) = &mut chained_attacker else {
+        unreachable!();
+    };
+    soldier.npc.life_points = 1;
+    soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+    let mut final_target = make_test_pc(Posture::Upright);
+    position(&mut final_target, 40.0);
+    let Entity::Pc(pc) = &mut final_target else {
+        unreachable!();
+    };
+    pc.pc.life_points = 50;
+
+    let (interrupter_id, chained_attacker_id) = if interrupter_first {
+        (
+            engine.add_entity(interrupter),
+            engine.add_entity(chained_attacker),
+        )
+    } else {
+        let chained_attacker_id = engine.add_entity(chained_attacker);
+        let interrupter_id = engine.add_entity(interrupter);
+        (interrupter_id, chained_attacker_id)
+    };
+    let final_target_id = engine.add_entity(final_target);
+
+    for (attacker, target) in [
+        (interrupter_id, chained_attacker_id),
+        (chained_attacker_id, final_target_id),
+    ] {
+        let mut active = ActiveMelee::new(target, SwordStrike::A, None, 0);
+        active.frames_remaining = MELEE_STRIKE_DURATION - MELEE_HIT_FRAME;
+        engine
+            .get_entity_mut(attacker)
+            .expect("strike attacker present")
+            .actor_data_mut()
+            .expect("strike attacker has actor data")
+            .active_melee = active;
+    }
+
+    let mut profiles = ProfileManager::new();
+    let mut weapon = HtHWeaponProfile::default();
+    weapon.thrusts[SwordStrike::A as usize].minimal_distance = 0;
+    weapon.thrusts[SwordStrike::A as usize].maximal_distance = 100;
+    weapon.thrusts[SwordStrike::A as usize].cutting = 100;
+    profiles.hth_weapons.push(weapon);
+    profiles.characters.push(CharacterProfile {
+        hth_weapon_id: 1,
+        ..CharacterProfile::default()
+    });
+    profiles.soldiers.push(SoldierProfile {
+        hth_weapon_id: 1,
+        ..SoldierProfile::default()
+    });
+    let assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+    let mut display = HostDisplayState::default();
+
+    crate::sim_rng::with_seed(0xA_B_C, || {
+        engine.hourglass_phase_gameplay_systems(&mut display, &assets);
+    });
+
+    let Entity::Pc(target) = engine
+        .get_entity(final_target_id)
+        .expect("final chained-strike target present")
+    else {
+        panic!("final chained-strike target must be a PC");
+    };
+    target.pc.life_points
+}
+
+#[test]
+fn straight_strike_damage_interrupts_only_later_creation_slots() {
+    assert_eq!(
+        chained_straight_strike_target_life(true),
+        50,
+        "an earlier attacker's synchronous damage must stop the later actor before its strike"
+    );
+    assert!(
+        chained_straight_strike_target_life(false) < 50,
+        "a chained attacker that already ran this frame must hit before the later interruption"
+    );
+}
+
 #[test]
 fn entity_slot_order_is_append_only_and_survives_save_round_trip() {
     let mut engine = EngineInner::new();
