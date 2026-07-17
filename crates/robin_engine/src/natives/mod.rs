@@ -1972,24 +1972,17 @@ impl GameHost {
                         {
                             return 0;
                         }
-                        // Ammo lives on the campaign character's PcStatus.
-                        // A live PC without a campaign slot has no source
-                        // for ammo, so warn rather than silently returning 0.
-                        match self
-                            .campaign
+                        // Campaign status is authoritative when present.  A
+                        // live PC still owns actor-local ammo so this native
+                        // works outside campaign mode, as the original
+                        // RHElementActorPC::GetAmmoAmount does.
+                        self.campaign
                             .as_ref()
                             .and_then(|c| c.get_character_by_profile(e.pc.profile_index))
                             .and_then(|idx| self.campaign.as_ref()?.characters.get(idx))
-                        {
-                            Some(desc) => desc.status.get_ammo(Action::Bow) as i32,
-                            None => {
-                                tracing::warn!(
-                                    profile = ?e.pc.profile_index,
-                                    "GetPersistentProperty 'arrows': PC has bow action but no campaign character backing it"
-                                );
-                                0
-                            }
-                        }
+                            .map(|desc| desc.status.get_ammo(Action::Bow))
+                            .or_else(|| e.pc.ammo.get(Action::Bow))
+                            .expect("Bow has a live PC ammo counter") as i32
                     }
                     Entity::Soldier(e) => {
                         if self.soldier_has_bow_profile(e.soldier.soldier_profile_index) {
@@ -2058,7 +2051,9 @@ impl GameHost {
                     .as_ref()
                     .and_then(|c| c.get_character_by_profile(pc.profile_index))
                     .and_then(|idx| self.campaign.as_ref()?.characters.get(idx))
-                    .map_or(0, |desc| desc.status.get_ammo(action) as i32)
+                    .map(|desc| desc.status.get_ammo(action))
+                    .or_else(|| pc.ammo.get(action))
+                    .expect("persistent PC ammo property has a live counter") as i32
             }
             _ => {
                 tracing::warn!("Script Error: GetPersistentProperty invalid property {prop}");
@@ -2185,9 +2180,9 @@ impl GameHost {
             _ => {}
         }
 
-        // For ammo properties (0, 4–11), validate entity type and
-        // update campaign.  Ammo lives in the campaign PcStatus, not on
-        // the live entity.
+        // For ammo properties (0, 4–11), validate the live actor first.
+        // The original calls RHElementActorPC::SetAmmoAmount directly;
+        // campaign persistence is an additional mirror, not a prerequisite.
         let action = match prop {
             0 => Some(Action::Bow),
             4 => Some(Action::Purse),
@@ -2300,87 +2295,88 @@ impl GameHost {
                 return false;
             }
 
-            // Look up campaign character by profile index and update
-            // ammo:
-            //   1. silently drop the write when amount > the maximal
-            //      ammo amount for this action on this profile.
-            //   2. otherwise store + toggle the action's enable/disable
-            //      bit on the live PC entity based on whether the new
-            //      amount is 0.
-            if let Some(campaign) = self.campaign.as_mut()
-                && let Some(char_idx) = campaign.get_character_by_profile(profile_index)
-            {
-                // Maximal ammo reads from the profile and applies
-                // difficulty scaling.
-                let difficulty = crate::player_profile::PlayerProfileManager::global()
-                    .as_ref()
-                    .and_then(|mgr| mgr.get_active())
-                    .map(|p| p.difficulty)
-                    .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
-                let max = self
-                    .profile_manager
-                    .get_character(profile_index)
-                    .map(|p| crate::inventory::max_ammo_for_action(p, action, difficulty))
-                    .unwrap_or(0);
-                let amount_u16 = amount as u16;
-                if max == 0 || amount_u16 > max {
-                    tracing::debug!(
-                        actor,
-                        ?action,
-                        amount,
-                        max,
-                        "SetPersistentProperty: silently rejecting over-cap ammo write"
-                    );
-                    return false;
-                }
-                if let Some(desc) = campaign.characters.get_mut(char_idx) {
-                    desc.status.set_ammo(action, amount_u16);
-                }
-                // Toggle the live PC entity's profile action slot so
-                // the HUD reflects the new ammo. C++ resolves through
-                // GetActionIndex(action); the action enum value is not
-                // the portrait slot.
-                let action_slot = self
-                    .profile_manager
-                    .get_character(profile_index)
-                    .and_then(|p| crate::inventory::find_action_slot(p, action));
-                if let Some(action_slot) = action_slot
-                    && let Some(Entity::Pc(pc)) = self.get_entity_mut(actor)
-                    && action_slot < pc.pc.disabled_actions.len()
-                {
-                    if amount_u16 == 0 {
-                        pc.pc.disabled_actions[action_slot] = true;
-                        if pc.pc.current_action == action {
-                            pc.pc.current_action = Action::NoAction;
-                        }
-                        if pc.pc.saved_action == action {
-                            pc.pc.saved_action = Action::NoAction;
-                        }
-                    } else {
-                        pc.pc.disabled_actions[action_slot] = false;
-                    }
-                }
-                return true;
+            // Maximal ammo reads from the profile and applies difficulty
+            // scaling before either live or campaign state is changed.
+            let difficulty = crate::player_profile::PlayerProfileManager::global()
+                .as_ref()
+                .and_then(|mgr| mgr.get_active())
+                .map(|p| p.difficulty)
+                .unwrap_or(crate::player_profile::DifficultyLevel::Medium);
+            let Some(profile) = self.profile_manager.get_character(profile_index) else {
+                tracing::warn!(
+                    ?profile_index,
+                    "Script Error: SetPersistentProperty PC actor has no character profile"
+                );
+                return false;
+            };
+            let max = crate::inventory::max_ammo_for_action(profile, action, difficulty);
+            let action_slot = crate::inventory::find_action_slot(profile, action);
+            let amount_u16 = amount as u16;
+            if max == 0 || amount_u16 > max {
+                tracing::debug!(
+                    actor,
+                    ?action,
+                    amount,
+                    max,
+                    "SetPersistentProperty: silently rejecting over-cap ammo write"
+                );
+                return false;
             }
-            // No campaign character resolves for this profile.  Ammo
-            // storage is unified onto the campaign character (every
-            // reader — `combat::*`, `tick::*`, the HUD — goes through
-            // `pc_desc.status.get_ammo`), so there's no per-entity
-            // fallback storage.  In normal play this is unobservable:
-            // `Campaign::default()` materialises a `PcDescription` for
-            // every character profile, so `get_character_by_profile`
-            // never misses while a campaign is in scope.  The
-            // remaining gap is the `self.campaign.is_none()` case
-            // (single-mission play outside a campaign), which today
-            // silently drops the write.  Adding per-entity ammo
-            // storage to cover that path would require duplicating
-            // PcStatus on `ActorPc` and threading a new dispatch
-            // through every reader — outside the scope of this audit
-            // fix.
-            tracing::debug!(
-                "SetPersistentProperty: no campaign character for profile {profile_index} (PC outside campaign; live-actor write not modelled — see RHScript-14.md)"
-            );
-            return false;
+
+            if let Some(campaign) = self.campaign.as_mut() {
+                if let Some(char_idx) = campaign.get_character_by_profile(profile_index) {
+                    let Some(desc) = campaign.characters.get_mut(char_idx) else {
+                        tracing::warn!(
+                            char_idx,
+                            ?profile_index,
+                            "SetPersistentProperty: campaign character index is missing"
+                        );
+                        return false;
+                    };
+                    desc.status.set_ammo(action, amount_u16);
+                } else {
+                    // A campaign slot is not required by the original live
+                    // actor call, but a campaign that omits the actor's
+                    // backing description is useful provenance when saves
+                    // are inspected.
+                    tracing::warn!(
+                        ?profile_index,
+                        "SetPersistentProperty: PC has no campaign character; updating live actor only"
+                    );
+                }
+            }
+
+            let Some(Entity::Pc(pc)) = self.get_entity_mut(actor) else {
+                tracing::warn!(
+                    "Script Error: SetPersistentProperty required PC actor {actor} disappeared"
+                );
+                return false;
+            };
+            pc.pc
+                .ammo
+                .set(action, amount_u16)
+                .expect("persistent PC ammo property has a live counter");
+
+            // Toggle the live PC entity's profile action slot so the HUD
+            // reflects the new ammo. C++ resolves through
+            // GetActionIndex(action); the action enum value is not the
+            // portrait slot.
+            if let Some(action_slot) = action_slot
+                && action_slot < pc.pc.disabled_actions.len()
+            {
+                if amount_u16 == 0 {
+                    pc.pc.disabled_actions[action_slot] = true;
+                    if pc.pc.current_action == action {
+                        pc.pc.current_action = Action::NoAction;
+                    }
+                    if pc.pc.saved_action == action {
+                        pc.pc.saved_action = Action::NoAction;
+                    }
+                } else {
+                    pc.pc.disabled_actions[action_slot] = false;
+                }
+            }
+            return true;
         }
 
         tracing::warn!("Script Error: SetPersistentProperty invalid property {prop}");
