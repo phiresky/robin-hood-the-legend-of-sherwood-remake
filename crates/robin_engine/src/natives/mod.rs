@@ -71,7 +71,7 @@ pub use state::{ComputedScriptLocation, ScriptState, SequenceRecorderState};
 
 // BTreeMap (not BTreeMap) so iteration order is deterministic across
 // clients/processes — required for rollback multiplayer determinism.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::ai::{AiGlobalState, AiState, AlertLevel, EmoticonType, GotoFlags};
 use crate::coordinates::MapBBox;
@@ -191,17 +191,6 @@ pub struct GameHost {
 
     /// Currently executing scroll entity handle (for ThisScroll). 0 = none.
     pub current_scroll: i32,
-    /// Scroll status per entity handle.
-    pub scroll_status: BTreeMap<i32, i32>,
-    /// NPC handle → attached scroll handle (0 or absent = detached).
-    pub scroll_attachments: BTreeMap<i32, i32>,
-    /// NPCs whose attached scroll changed value since the last titbit
-    /// sync — drained by `sync_speak_titbits` to force a SPEAK titbit
-    /// remove+add pulse. `AttachScroll` strips the previous SPEAK titbit
-    /// and installs a fresh one whenever the attached scroll pointer
-    /// differs (matters for any titbit-index-bound consumer).
-    pub scroll_attachment_dirty: BTreeSet<i32>,
-
     /// Building occupants. Index = building index. Value = actor handles.
     pub building_occupants: Vec<Vec<i32>>,
     /// Parallel to `building_occupants` (same indexing): whether each
@@ -288,9 +277,6 @@ impl GameHost {
             sound_commands: Vec::new(),
             background_invalidated: false,
             current_scroll: 0,
-            scroll_status: BTreeMap::new(),
-            scroll_attachments: BTreeMap::new(),
-            scroll_attachment_dirty: BTreeSet::new(),
             building_occupants: Vec::new(),
             arrow_reserves: Vec::new(),
             actor_building: BTreeMap::new(),
@@ -7689,7 +7675,12 @@ impl NativeContext<'_> {
                             );
                             return 0;
                         }
-                        self.scroll_status.get(&scroll_h).copied().unwrap_or(0)
+                        self.engine_domains
+                            .scrolls
+                            .status
+                            .get(&scroll_h)
+                            .copied()
+                            .unwrap_or(0)
                     }
                 }
                 SetScrollStatus => {
@@ -7748,8 +7739,14 @@ impl NativeContext<'_> {
                     }
                     if scroll_h == 0 {
                         // Branch 2: detach.
-                        if self.scroll_attachments.remove(&npc_h).is_some() {
-                            self.scroll_attachment_dirty.insert(npc_h);
+                        if self
+                            .engine_domains
+                            .scrolls
+                            .attachments
+                            .remove(&npc_h)
+                            .is_some()
+                        {
+                            self.engine_domains.scrolls.attachment_dirty.insert(npc_h);
                         }
                     } else {
                         // Branch 3: log if not an object/scroll, but match the
@@ -7765,9 +7762,13 @@ impl NativeContext<'_> {
                         }
                         // Branch 4: replace-or-insert; mark dirty when the value
                         // changes so the SPEAK titbit gets re-installed.
-                        let prev = self.scroll_attachments.insert(npc_h, scroll_h);
+                        let prev = self
+                            .engine_domains
+                            .scrolls
+                            .attachments
+                            .insert(npc_h, scroll_h);
                         if prev != Some(scroll_h) {
-                            self.scroll_attachment_dirty.insert(npc_h);
+                            self.engine_domains.scrolls.attachment_dirty.insert(npc_h);
                         }
                     }
                     0

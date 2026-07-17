@@ -3463,12 +3463,14 @@ mod script_context_tests {
         campaign: &mut Option<crate::campaign::Campaign>,
         mission_stat: &mut crate::mission_stat::MissionStat,
     ) -> Result<(), &'static str> {
+        let mut script_domains = crate::engine::state::ScriptDomains::default();
         let mut context = script.script_context(
             entities,
             ai_global,
             fast_grid,
             campaign,
             mission_stat,
+            &mut script_domains,
             crate::natives::NativeQueryViews::default(),
             Some(99),
         );

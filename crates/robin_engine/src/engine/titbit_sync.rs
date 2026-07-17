@@ -850,9 +850,8 @@ impl EngineInner {
 
     /// Sync Speak titbits for NPCs with an attached scroll.
     ///
-    /// We sync from the GameHost's `scroll_attachments` map (populated
-    /// by the scroll-attachment script native) rather than hooking the
-    /// setter.
+    /// We sync from the engine-owned scroll domain populated by the
+    /// scroll-attachment script native.
     fn sync_speak_titbits(&mut self) {
         // Collect (npc_id, has_scroll, force_refresh) from the game host.
         // The map uses actor script handles.
@@ -868,22 +867,23 @@ impl EngineInner {
             force_refresh: bool,
         }
 
-        // Read + drain scroll attachments from the mission script host.
+        // Read + drain scroll attachments from the engine-owned domain.
         let (attached, dirty): (
             std::collections::HashSet<i32>,
             std::collections::HashSet<i32>,
-        ) = self
-            .mission_script
-            .as_mut()
-            .and_then(|s| s.game_host_mut())
-            .map(|h| {
-                let attached = h.scroll_attachments.keys().copied().collect();
-                let dirty = std::mem::take(&mut h.scroll_attachment_dirty)
-                    .into_iter()
-                    .collect();
-                (attached, dirty)
-            })
-            .unwrap_or_default();
+        ) = {
+            let attached = self
+                .script_domains
+                .scrolls
+                .attachments
+                .keys()
+                .copied()
+                .collect();
+            let dirty = std::mem::take(&mut self.script_domains.scrolls.attachment_dirty)
+                .into_iter()
+                .collect();
+            (attached, dirty)
+        };
 
         let mut states: Vec<SpeakState> = Vec::new();
         for (npc_id, entity) in self.world.entities.npcs() {

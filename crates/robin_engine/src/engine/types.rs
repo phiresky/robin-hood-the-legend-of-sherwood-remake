@@ -1082,6 +1082,10 @@ pub struct MissionScript {
     /// the campaign is back on `EngineInner` and this is `None`.
     #[state_hash(skip)]
     campaign_lease: Option<CampaignIdentity>,
+    /// Domains recovered from a pre-Wave-6 GameHost snapshot. Consumed once
+    /// by the outer Engine snapshot deserializer.
+    #[state_hash(skip)]
+    legacy_script_domains_present: bool,
 }
 
 const MISSION_SCRIPT_SNAPSHOT_VERSION: u8 = 3;
@@ -1158,6 +1162,9 @@ struct CompatibleGameHost {
     computed_location_layers: Option<Vec<Option<(u16, u16)>>>,
     recording: Option<crate::sequence::RecordingSession>,
     sequence_id: Option<i32>,
+    scroll_status: Option<BTreeMap<i32, i32>>,
+    scroll_attachments: Option<BTreeMap<i32, i32>>,
+    scroll_attachment_dirty: Option<std::collections::BTreeSet<i32>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1173,6 +1180,30 @@ struct LegacyNpcValues(
 );
 
 impl CompatibleGameHost {
+    fn legacy_scrolls<E: serde::de::Error>(&self) -> Result<Option<super::state::ScrollState>, E> {
+        let present = [
+            self.scroll_status.is_some(),
+            self.scroll_attachments.is_some(),
+            self.scroll_attachment_dirty.is_some(),
+        ];
+        if !present.iter().any(|value| *value) {
+            return Ok(None);
+        }
+        if !present.iter().all(|value| *value) {
+            return Err(E::custom(
+                "legacy GameHost has an incomplete scroll-domain field set",
+            ));
+        }
+        Ok(Some(super::state::ScrollState {
+            status: self.scroll_status.clone().expect("validated above"),
+            attachments: self.scroll_attachments.clone().expect("validated above"),
+            attachment_dirty: self
+                .scroll_attachment_dirty
+                .clone()
+                .expect("validated above"),
+        }))
+    }
+
     fn legacy_state<E: serde::de::Error>(&self) -> Result<Option<ScriptState>, E> {
         let fields_present = [
             self.globals.is_some(),
@@ -1264,6 +1295,12 @@ impl<'de> Deserialize<'de> for MissionScript {
             }
         };
 
+        let legacy_scrolls = snapshot.game_host.legacy_scrolls::<D::Error>()?;
+        let mut game_host = snapshot.game_host.current;
+        if let Some(scrolls) = legacy_scrolls.clone() {
+            game_host.engine_domains.scrolls = scrolls;
+        }
+
         Ok(Self {
             script_name: snapshot.script_name,
             manager: snapshot.manager,
@@ -1278,7 +1315,7 @@ impl<'de> Deserialize<'de> for MissionScript {
                 (!campaign.is_empty() || !npc.is_empty())
                     .then_some(LegacyScriptCustomValues { campaign, npc })
             },
-            game_host: snapshot.game_host.current,
+            game_host,
             instance: snapshot.instance,
             actor_instances: snapshot.actor_instances,
             zone_instances: snapshot.zone_instances,
@@ -1287,6 +1324,7 @@ impl<'de> Deserialize<'de> for MissionScript {
             waypoint_instances: snapshot.waypoint_instances,
             post_initialized: snapshot.post_initialized,
             campaign_lease: None,
+            legacy_script_domains_present: legacy_scrolls.is_some(),
         })
     }
 }
@@ -1410,6 +1448,13 @@ impl std::fmt::Debug for MissionScript {
 }
 
 impl MissionScript {
+    pub(crate) fn take_legacy_script_domains(&mut self) -> Option<super::state::ScriptDomains> {
+        if !std::mem::take(&mut self.legacy_script_domains_present) {
+            return None;
+        }
+        Some(std::mem::take(&mut self.game_host.engine_domains))
+    }
+
     /// Build a [`MissionScript`] from an already-parsed `.scb` payload.
     pub fn from_scb(scb: crate::scb::ScbFile) -> Result<Self, String> {
         Self::from_manager(String::new(), ScriptManager::new(scb))
@@ -1443,6 +1488,7 @@ impl MissionScript {
             waypoint_instances: BTreeMap::new(),
             post_initialized: false,
             campaign_lease: None,
+            legacy_script_domains_present: false,
         })
     }
 
@@ -2376,7 +2422,7 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
-        let mut script_domains = super::state::ScriptDomains::default();
+        let mut script_domains = crate::engine::state::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
@@ -2493,7 +2539,7 @@ mod campaign_ownership_tests {
         let mut ai_global = crate::ai::AiGlobalState::default();
         let mut fast_grid = crate::fast_find_grid::FastFindGrid::default();
         let mut mission_stat = crate::mission_stat::MissionStat::default();
-        let mut script_domains = super::state::ScriptDomains::default();
+        let mut script_domains = crate::engine::state::ScriptDomains::default();
         let mut script_state = ScriptState::default();
         let bindings = crate::natives::AttachedScriptBindings::default();
         let mut context = ScriptContext::new(
