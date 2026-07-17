@@ -713,6 +713,12 @@ pub struct RenderContext<'a> {
     pub display_info_elapsed_secs: u32,
 }
 
+impl RenderContext<'_> {
+    pub(super) fn present(&mut self) {
+        self.renderer.present();
+    }
+}
+
 /// Render one frame: draws the background, then walks every GPU overlay
 /// (selection circles, ground marks, view cone, doors, entities, status
 /// bars, HUD, minimap, Sherwood/zoom buttons, tooltips, pause overlay,
