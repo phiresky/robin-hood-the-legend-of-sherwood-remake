@@ -80,9 +80,15 @@ A list of which additional features we have added, which ones we might still wan
   and sandbox a Lua companion, register native shims, and call its
   `Initialize` / `PostInitialize` hooks. This is a post-original extension, not
   Original-game scripting parity. Timer, victory, finalize, and per-entity
-  dispatch are not wired at this revision, and Lua state is not saveable or
-  rollback-safe; see `PARITY_AUDIT.md` before enabling it in deterministic
-  modes.
+  dispatch are not wired at this revision. Required Lua construction and
+  startup-event failures abort mission startup with context; they are never
+  replaced by an SCB-only continuation. Lua state is not saveable or
+  rollback-safe, so replay playback, rollback/determinism verification, and
+  multiplayer host/client launches reject Spellforge before authoritative
+  simulation starts. The custom-mission picker explicitly omits the default
+  rollback diagnostic for ordinary single-player Spellforge play. This
+  containment is intentional until a versioned Spellforge contract and Lua
+  snapshot policy exist.
 
 ## Todo
 

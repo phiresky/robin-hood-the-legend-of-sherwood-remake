@@ -13,27 +13,21 @@
 //!    already call into the engine.
 //! 4. Execute the script body (top-level statements run once).
 //!
-//! Engine event dispatch is then driven through [`LuaSession::run_event`]:
-//! the session's frame loop calls it at the same points Robin's
-//! `.scb` VM gets its own `Initialize` / `Timer` / `CheckVictoryCondition`
-//! / `Finalize` invocations.
+//! Engine event dispatch is then driven through [`LuaSession::run_event`].
+//! At this revision only the two startup events are connected; the remaining
+//! Spellforge event surface still has no host call path.
 //!
 //! ## What is and is not wired up
 //!
-//! Wired for parity with Spellforge missions on rhmods.com:
+//! Wired for partial compatibility with Spellforge missions on rhmods.com:
 //! - `Initialize(seed)` — fired once after the engine has finished
 //!   level load, before the first frame ticks.
 //! - `PostInitialize()` — fired immediately after `Initialize`.
-//! - `Timer(seconds)` — fired once per game-second.
-//! - `CheckVictoryCondition(seconds)` — fired every three game-seconds.
-//! - `Finalize(unk)` — fired on mission end.
 //!
-//! Per-actor / per-target / per-scroll / per-zone / per-waypoint event
-//! routing (`ActionChange`, `FilterAiEvent`, `ProcessMessage`, the
-//! `Target.ActivatedBy*` family, etc.) is *not* yet wired through this
-//! session. Mission scripts whose flow depends on those events will run
-//! their global `Initialize` path but miss the per-entity dispatch —
-//! follow-up commits add the engine hooks.
+//! `Timer`, victory checks, finalization, and per-actor / per-target /
+//! per-scroll / per-zone / per-waypoint routing are *not* yet wired through
+//! this session. Mission scripts whose flow depends on those events will run
+//! their global startup path but miss the later dispatch.
 
 use robin_engine::natives::GameHost;
 use std::fs;
@@ -43,6 +37,7 @@ use std::path::{Path, PathBuf};
 use robin_lua::{MissionLuaError, MissionLuaState, register_natives};
 use tempfile::TempDir;
 
+use crate::main_entry::CliArgs;
 use crate::main_menu::custom_missions::CustomMissionLaunch;
 
 /// One mission's worth of Lua state, attached to a launched custom
@@ -101,11 +96,103 @@ pub enum LuaSessionError {
     },
 }
 
+/// Authoritative modes whose snapshots omit the host-owned Lua interpreter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsupportedSpellforgeMode {
+    ReplayPlayback,
+    RollbackVerification,
+    MultiplayerHost,
+    MultiplayerClient,
+}
+
+impl std::fmt::Display for UnsupportedSpellforgeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ReplayPlayback => "replay playback",
+            Self::RollbackVerification => "rollback/determinism verification",
+            Self::MultiplayerHost => "multiplayer host networking",
+            Self::MultiplayerClient => "multiplayer client networking",
+        })
+    }
+}
+
+/// Contextual failures at the boundary between mission setup and Spellforge.
+#[derive(Debug, thiserror::Error)]
+pub enum SpellforgeSessionError {
+    #[error(
+        "Spellforge mission `{mission}` cannot start in {mode}: Lua state is host-owned and absent from authoritative snapshots"
+    )]
+    UnsupportedMode {
+        mission: String,
+        mode: UnsupportedSpellforgeMode,
+    },
+    #[error("required Spellforge startup failed for mission `{mission}`: {source}")]
+    Startup {
+        mission: String,
+        #[source]
+        source: LuaSessionError,
+    },
+    #[error("required Spellforge session was not created for mission `{mission}`")]
+    RequiredSessionMissing { mission: String },
+    #[error(
+        "required Spellforge event `{event}` for mission `{mission}` has no mission-script GameHost"
+    )]
+    MissingGameHost {
+        mission: String,
+        event: &'static str,
+    },
+    #[error("required Spellforge event `{event}` failed for mission `{mission}`: {source}")]
+    RequiredEvent {
+        mission: String,
+        event: &'static str,
+        #[source]
+        source: LuaSessionError,
+    },
+}
+
+/// Reject a pending Spellforge launch before any deterministic or networked
+/// authoritative simulation is constructed.
+///
+/// `pending_replay` covers the script-RPC slot consumed later by replay setup;
+/// normal CLI and wasm replay launches are represented directly on `args`.
+pub fn validate_launch_mode(
+    args: &CliArgs,
+    pending_replay: bool,
+) -> Result<(), SpellforgeSessionError> {
+    let Some(pending) = args
+        .pending_lua_mission
+        .as_ref()
+        .filter(|pending| pending.requires_spellforge)
+    else {
+        return Ok(());
+    };
+
+    let mode = if pending_replay || args.replay.is_some() || args.replay_data.is_some() {
+        Some(UnsupportedSpellforgeMode::ReplayPlayback)
+    } else if args.server.is_some() {
+        Some(UnsupportedSpellforgeMode::MultiplayerHost)
+    } else if args.connect.is_some() {
+        Some(UnsupportedSpellforgeMode::MultiplayerClient)
+    } else if args.rollback_check {
+        Some(UnsupportedSpellforgeMode::RollbackVerification)
+    } else {
+        None
+    };
+
+    match mode {
+        Some(mode) => Err(SpellforgeSessionError::UnsupportedMode {
+            mission: pending.rhm_basename.clone(),
+            mode,
+        }),
+        None => Ok(()),
+    }
+}
+
 impl LuaSession {
-    /// Build a Lua session for the chosen mission, or return `None`
-    /// (with a log line) if the mission is Vanilla / has no `.lua`
-    /// companion / extraction fails. Vanilla missions get no Lua —
-    /// the engine's `.scb` path handles them as before.
+    /// Build a Lua session for the chosen mission, or return `None` only when
+    /// the launch is Vanilla. A Spellforge launch with no companion or any
+    /// extraction/loading failure returns a typed error; callers must not
+    /// continue with only the engine's `.scb` path.
     pub fn start(
         launch: &CustomMissionLaunch,
         mods_root: &Path,
@@ -161,6 +248,26 @@ impl LuaSession {
             state,
             mission_basename,
         }))
+    }
+
+    /// Build the session required by a launch and retain mission context on
+    /// every failure. A Spellforge-tagged launch returning `None` is an
+    /// invariant violation rather than permission to continue without Lua.
+    pub fn start_for_launch(
+        launch: &CustomMissionLaunch,
+        mods_root: &Path,
+    ) -> Result<Option<Self>, SpellforgeSessionError> {
+        let session =
+            Self::start(launch, mods_root).map_err(|source| SpellforgeSessionError::Startup {
+                mission: launch.rhm_basename.clone(),
+                source,
+            })?;
+        if launch.requires_spellforge && session.is_none() {
+            return Err(SpellforgeSessionError::RequiredSessionMissing {
+                mission: launch.rhm_basename.clone(),
+            });
+        }
+        Ok(session)
     }
 
     /// Mission basename (e.g. `"H06_Lin_VL"`) — used in log lines.
@@ -240,6 +347,36 @@ impl LuaSession {
                 actual: value.type_name().to_owned(),
             }),
         }
+    }
+
+    /// Dispatch the required Spellforge startup pair in order. The caller
+    /// supplies the engine's live script host while its authoritative RNG
+    /// scope is installed. Failure stops startup immediately and is returned
+    /// with both mission and event context.
+    pub fn run_required_startup_events(
+        &self,
+        host: Option<&mut GameHost>,
+        initialization_seed: i32,
+    ) -> Result<(), SpellforgeSessionError> {
+        let Some(host) = host else {
+            return Err(SpellforgeSessionError::MissingGameHost {
+                mission: self.mission_basename.clone(),
+                event: "Initialize",
+            });
+        };
+        for (event, args) in [
+            ("Initialize", std::slice::from_ref(&initialization_seed)),
+            ("PostInitialize", &[][..]),
+        ] {
+            self.run_event(host, event, args).map_err(|source| {
+                SpellforgeSessionError::RequiredEvent {
+                    mission: self.mission_basename.clone(),
+                    event,
+                    source,
+                }
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -376,6 +513,7 @@ fn find_shared_lib_zip(mods_root: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::main_entry::PendingLuaMission;
 
     fn session_with_script(source: &str) -> LuaSession {
         let tempdir = tempfile::tempdir().expect("tempdir");
@@ -388,6 +526,89 @@ mod tests {
             state,
             mission_basename: "test_mission".to_owned(),
         }
+    }
+
+    fn spellforge_args() -> CliArgs {
+        let mut args = CliArgs {
+            rollback_check: false,
+            ..CliArgs::default()
+        };
+        args.pending_lua_mission = Some(PendingLuaMission {
+            slug: "test-mod".to_owned(),
+            rhm_basename: "test_mission".to_owned(),
+            version_zip: PathBuf::from("unused.zip"),
+            mods_root: PathBuf::from("unused-mods"),
+            requires_spellforge: true,
+        });
+        args
+    }
+
+    fn assert_rejected_mode(args: &CliArgs, expected: UnsupportedSpellforgeMode) {
+        assert!(matches!(
+            validate_launch_mode(args, false),
+            Err(SpellforgeSessionError::UnsupportedMode { mission, mode })
+                if mission == "test_mission" && mode == expected
+        ));
+    }
+
+    #[test]
+    fn deterministic_modes_reject_spellforge_before_startup() {
+        let mut replay = spellforge_args();
+        replay.replay = Some("unused.rhrec.jsonl".to_owned());
+        assert_rejected_mode(&replay, UnsupportedSpellforgeMode::ReplayPlayback);
+
+        let mut rollback = spellforge_args();
+        rollback.rollback_check = true;
+        assert_rejected_mode(&rollback, UnsupportedSpellforgeMode::RollbackVerification);
+
+        let mut host = spellforge_args();
+        host.server = Some(":7878".to_owned());
+        assert_rejected_mode(&host, UnsupportedSpellforgeMode::MultiplayerHost);
+
+        let mut client = spellforge_args();
+        client.connect = Some("localhost:7878".to_owned());
+        assert_rejected_mode(&client, UnsupportedSpellforgeMode::MultiplayerClient);
+
+        assert!(matches!(
+            validate_launch_mode(&spellforge_args(), true),
+            Err(SpellforgeSessionError::UnsupportedMode {
+                mode: UnsupportedSpellforgeMode::ReplayPlayback,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn normal_single_player_and_vanilla_launches_remain_allowed() {
+        let spellforge = spellforge_args();
+        validate_launch_mode(&spellforge, false).unwrap();
+
+        let mut vanilla = spellforge;
+        vanilla
+            .pending_lua_mission
+            .as_mut()
+            .unwrap()
+            .requires_spellforge = false;
+        vanilla.rollback_check = true;
+        vanilla.replay = Some("unused.rhrec.jsonl".to_owned());
+        validate_launch_mode(&vanilla, false).unwrap();
+    }
+
+    #[test]
+    fn required_spellforge_construction_error_keeps_mission_context() {
+        let launch = CustomMissionLaunch {
+            slug: "test-mod".to_owned(),
+            mod_title: "Test Mod".to_owned(),
+            version_zip: PathBuf::from("definitely-missing-spellforge.zip"),
+            rhm_basename: "test_mission".to_owned(),
+            map_filename: String::new(),
+            requires_spellforge: true,
+        };
+        assert!(matches!(
+            LuaSession::start_for_launch(&launch, Path::new("unused-mods")),
+            Err(SpellforgeSessionError::Startup { mission, source: LuaSessionError::OpenZip(_, _) })
+                if mission == "test_mission"
+        ));
     }
 
     #[test]
@@ -442,5 +663,76 @@ mod tests {
         let err = session.run_event(&mut host, "Fails", &[]).unwrap_err();
         assert!(matches!(err, LuaSessionError::Event { .. }));
         assert!(err.to_string().contains("deliberate failure"));
+    }
+
+    #[test]
+    fn required_startup_event_error_aborts_the_startup_pair() {
+        let session = session_with_script(
+            r#"
+            post_initialized = false
+            function Initialize()
+                error("deliberate startup failure")
+            end
+            function PostInitialize()
+                post_initialized = true
+            end
+            "#,
+        );
+        let mut host = GameHost::new();
+
+        let err = robin_engine::sim_rng::with_seed(7, || {
+            session
+                .run_required_startup_events(Some(&mut host), 123)
+                .unwrap_err()
+        });
+        assert!(matches!(
+            err,
+            SpellforgeSessionError::RequiredEvent {
+                event: "Initialize",
+                source: LuaSessionError::Event { .. },
+                ..
+            }
+        ));
+        let post_initialized: bool = session
+            .state
+            .lua()
+            .globals()
+            .get("post_initialized")
+            .unwrap();
+        assert!(
+            !post_initialized,
+            "PostInitialize must not run after Initialize fails"
+        );
+    }
+
+    #[test]
+    fn required_startup_rejects_a_missing_game_host() {
+        let session = session_with_script("function Initialize() end");
+        assert!(matches!(
+            session.run_required_startup_events(None, 0),
+            Err(SpellforgeSessionError::MissingGameHost {
+                event: "Initialize",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn startup_random_draw_uses_the_installed_authoritative_scope() {
+        let session = session_with_script(
+            r#"
+            function Initialize()
+                startup_roll = math.random(1, 1000000)
+            end
+            "#,
+        );
+        let mut host = GameHost::new();
+        robin_engine::sim_rng::with_seed(0x5eed, || {
+            session
+                .run_required_startup_events(Some(&mut host), 0)
+                .unwrap();
+        });
+        let startup_roll: i64 = session.state.lua().globals().get("startup_roll").unwrap();
+        assert!((1..=1_000_000).contains(&startup_roll));
     }
 }

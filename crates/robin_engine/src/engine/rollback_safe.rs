@@ -475,6 +475,21 @@ impl Engine {
         self.inner.mission_script_game_host_mut()
     }
 
+    /// Run a host-side mission-script extension against the live `GameHost`
+    /// while the Engine-owned simulation RNG is installed.
+    ///
+    /// Spellforge startup is outside the normal engine tick but its native
+    /// shims can still draw from `sim_rng`; using this boundary advances the
+    /// one authoritative stream instead of panicking for lack of a scope or
+    /// inventing a second RNG. The closure must not retain the host reference.
+    pub fn with_mission_script_game_host_and_rng<R>(
+        &mut self,
+        f: impl FnOnce(Option<&mut crate::natives::GameHost>) -> R,
+    ) -> R {
+        self.inner
+            .with_sim_rng(|inner| f(inner.mission_script_game_host_mut()))
+    }
+
     pub fn take_campaign(&mut self) -> Option<Campaign> {
         self.inner.take_campaign()
     }
