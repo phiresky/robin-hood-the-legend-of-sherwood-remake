@@ -1216,7 +1216,7 @@ impl EngineInner {
                     self.append_posture_recovery(*pc_id, &mut seq);
                     self.launch_sequence(seq);
                     if show_marker && !is_door_click {
-                        self.ground_mark.add_mark(
+                        self.feedback.ground_mark.add_mark(
                             effective_click.x,
                             effective_click.y,
                             effective_layer,
@@ -1365,7 +1365,8 @@ impl EngineInner {
                 self.append_posture_recovery(*pc_id, &mut seq);
                 self.launch_sequence(seq);
                 if show_marker && !is_door_click {
-                    self.ground_mark
+                    self.feedback
+                        .ground_mark
                         .add_mark(snapped.x, snapped.y, pc_effective_layer);
                 }
                 continue;
@@ -1523,7 +1524,8 @@ impl EngineInner {
                         true,
                     );
                     if show_marker && !is_door_click {
-                        self.ground_mark
+                        self.feedback
+                            .ground_mark
                             .add_mark(dest.x, dest.y, pc_effective_layer);
                     }
                 }
@@ -1552,8 +1554,11 @@ impl EngineInner {
                     };
                     self.issue_move_order(*pc_id, snapped, run);
                     if show_marker && !is_door_click {
-                        self.ground_mark
-                            .add_mark(snapped.x, snapped.y, pc_effective_layer);
+                        self.feedback.ground_mark.add_mark(
+                            snapped.x,
+                            snapped.y,
+                            pc_effective_layer,
+                        );
                     }
                 }
             }
@@ -2691,8 +2696,8 @@ impl EngineInner {
         // the engine drain owns the `>= GetLevelSize()` half because
         // `level_size` lives on the shared cutscene camera, not on
         // `AiContext`.
-        let level_w = self.cutscene_camera.level_size.x;
-        let level_h = self.cutscene_camera.level_size.y;
+        let level_w = self.feedback.cutscene_camera.level_size.x;
+        let level_h = self.feedback.cutscene_camera.level_size.y;
         if level_w > 0.0 && intent.target_x >= level_w
             || level_h > 0.0 && intent.target_y >= level_h
         {
@@ -5123,7 +5128,7 @@ impl EngineInner {
         // branch.  Emits a water particle at the actor's 3D position
         // with no element supplier.
         for (_eid, position, layer) in water_splash_emits {
-            self.titbit_manager.add_titbit(
+            self.feedback.titbit_manager.add_titbit(
                 position,
                 layer,
                 crate::titbit::TitbitKind::Water,
@@ -6503,7 +6508,7 @@ impl EngineInner {
                             owner: request.owner,
                             seq_id: request.seq_id,
                             elem_idx: request.elem_idx,
-                            first_fail_frame: self.frame_counter,
+                            first_fail_frame: self.control.frame_counter,
                         });
                     }
                 }
@@ -6789,7 +6794,7 @@ impl EngineInner {
     /// Entries whose owning element is no longer live (cancelled,
     /// cascaded to terminal state, index reused) are silently dropped.
     pub(super) fn process_failed_path_timeouts(&mut self, assets: &LevelAssets) {
-        let now = self.frame_counter;
+        let now = self.control.frame_counter;
         let mut still_waiting = Vec::new();
         for req in std::mem::take(&mut self.failed_path_requests) {
             // Element cancelled / finished / reused — drop silently.

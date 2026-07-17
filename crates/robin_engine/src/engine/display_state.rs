@@ -42,9 +42,14 @@ impl EngineInner {
         &mut self,
         f: impl FnOnce(&mut Self, &mut HostDisplayState) -> R,
     ) -> R {
-        let mut display = self.cutscene_camera.display.to_host_display_state();
+        let mut display = self
+            .feedback
+            .cutscene_camera
+            .display
+            .to_host_display_state();
         let result = f(self, &mut display);
-        self.cutscene_camera
+        self.feedback
+            .cutscene_camera
             .display
             .update_from_host_display_state(&display);
         result
@@ -82,7 +87,7 @@ impl EngineInner {
         // Skip rendering in fast-forward mode (draw every 32nd frame).
         // This is a frame-level gate, not per-seat — applies to every
         // active seat's pipeline uniformly.
-        if self.fast_forward && (self.frame_counter & 31) != 0 {
+        if self.control.fast_forward && (self.control.frame_counter & 31) != 0 {
             return 1;
         }
 
@@ -90,9 +95,9 @@ impl EngineInner {
         // Local player scroll/zoom is host-side viewport state.  The
         // remaining engine pipeline advances shared script/director camera
         // transitions and must evolve identically on every machine.
-        let seat_count = self.seats.len();
+        let seat_count = self.players.seats.len();
         for seat_idx in 0..seat_count {
-            if !self.seats[seat_idx].is_active(seat_idx) {
+            if !self.players.seats[seat_idx].is_active(seat_idx) {
                 continue;
             }
             self.tick_display_state_for_seat(display, seat_idx);
@@ -129,8 +134,10 @@ impl EngineInner {
                 // `render_entities_gpu` + `render_selection_outlines_gpu`),
                 // so nothing to do here beyond snapshotting the camera.
                 // A cache-surface workflow is a future perf optimisation.
-                self.cutscene_camera.old_view_position = self.cutscene_camera.view_position;
-                self.cutscene_camera.old_zoom_factor = self.cutscene_camera.zoom_factor;
+                self.feedback.cutscene_camera.old_view_position =
+                    self.feedback.cutscene_camera.view_position;
+                self.feedback.cutscene_camera.old_zoom_factor =
+                    self.feedback.cutscene_camera.zoom_factor;
             }
             DisplayOpCode::Scroll => {
                 self.perform_check_scroll(display);
@@ -138,14 +145,16 @@ impl EngineInner {
                 self.set_view_position_for_seat(
                     seat,
                     MapPoint::new(
-                        self.cutscene_camera.view_position.x + scroll.x,
-                        self.cutscene_camera.view_position.y + scroll.y,
+                        self.feedback.cutscene_camera.view_position.x + scroll.x,
+                        self.feedback.cutscene_camera.view_position.y + scroll.y,
                     ),
                 );
                 // The full background is redrawn each frame externally;
                 // no incremental cache scroll needed here.
-                self.cutscene_camera.old_view_position = self.cutscene_camera.view_position;
-                self.cutscene_camera.old_zoom_factor = self.cutscene_camera.zoom_factor;
+                self.feedback.cutscene_camera.old_view_position =
+                    self.feedback.cutscene_camera.view_position;
+                self.feedback.cutscene_camera.old_zoom_factor =
+                    self.feedback.cutscene_camera.zoom_factor;
                 // Mouse position is updated by game_session after draw().
             }
             DisplayOpCode::InitZoom => {
@@ -162,11 +171,11 @@ impl EngineInner {
                 // current interpolated zoom each frame.
                 let screen = Self::director_camera_view_size();
                 let screen_vec = ScreenVec::new(screen.x, screen.y - PANNEL_HEIGHT);
-                let level_size = self.cutscene_camera.level_size;
+                let level_size = self.feedback.cutscene_camera.level_size;
 
                 // Source state = whatever the camera is at right now.
-                let view_from = self.cutscene_camera.view_position;
-                let zoom_from = self.cutscene_camera.zoom_factor;
+                let view_from = self.feedback.cutscene_camera.view_position;
+                let zoom_from = self.feedback.cutscene_camera.zoom_factor;
 
                 // Non-mechanized zooms re-center on the mouse: compute
                 // `mouse_bias = (screen_center - mouse_screen) / zoom`
@@ -174,10 +183,14 @@ impl EngineInner {
                 // the mouse stays anchored. Host sets
                 // `cutscene_camera.pending_zoom_mouse_screen` at
                 // ZoomingUp/Down dispatch time; we consume-and-clear here.
-                let mouse_bias = if self.cutscene_camera.mechanized_zoom {
+                let mouse_bias = if self.feedback.cutscene_camera.mechanized_zoom {
                     MapVec::ZERO
                 } else {
-                    let mouse_screen = self.cutscene_camera.pending_zoom_mouse_screen.take();
+                    let mouse_screen = self
+                        .feedback
+                        .cutscene_camera
+                        .pending_zoom_mouse_screen
+                        .take();
                     mouse_screen
                         .map(|m| {
                             MapVec::new(
@@ -267,7 +280,7 @@ impl EngineInner {
                 // will advance it one step toward the target.
                 display.background_transform.zoom_count = 0;
                 display.background_transform.number_of_zoom_steps = 8;
-                self.cutscene_camera.zoom_init_done = true;
+                self.feedback.cutscene_camera.zoom_init_done = true;
 
                 // Fall through into the first zoom step.
                 self.perform_zoom_step(display);
@@ -331,7 +344,7 @@ impl EngineInner {
     pub(crate) fn select_follow_element(&mut self, seat: usize, entity_id: Option<EntityId>) {
         match entity_id {
             None => {
-                self.seats[seat].locker_active = false;
+                self.players.seats[seat].locker_active = false;
             }
             Some(id) => {
                 let Some(entity) = self.get_entity(id) else {
@@ -347,7 +360,7 @@ impl EngineInner {
                 // Snapshot target position before borrowing self mutably.
                 let pos = entity.element_data().position_map();
                 let target_pt = pos;
-                self.seats[seat].follow_element = Some(id);
+                self.players.seats[seat].follow_element = Some(id);
 
                 // Compute `position_screen = (target - view) * zoom`. The
                 // off-screen gate is an inside-box check in *map* space,
@@ -356,8 +369,8 @@ impl EngineInner {
                 let compute_screen = |view: MapPoint, zoom: f32| -> ScreenPoint {
                     ScreenPoint::new((target_pt.x - view.x) * zoom, (target_pt.y - view.y) * zoom)
                 };
-                let view = self.cutscene_camera.view_position;
-                let zoom = self.cutscene_camera.zoom_factor;
+                let view = self.feedback.cutscene_camera.view_position;
+                let zoom = self.feedback.cutscene_camera.zoom_factor;
                 let box_tl = view;
                 let screen = Self::director_camera_view_size();
                 let box_br = MapPoint::new(
@@ -371,16 +384,16 @@ impl EngineInner {
                 let anchor = if !inside {
                     self.center_on_point(seat, target_pt);
                     compute_screen(
-                        self.cutscene_camera.view_position,
-                        self.cutscene_camera.zoom_factor,
+                        self.feedback.cutscene_camera.view_position,
+                        self.feedback.cutscene_camera.zoom_factor,
                     )
                 } else {
                     compute_screen(view, zoom)
                 };
 
-                self.cutscene_camera.position_saved = anchor;
-                self.seats[seat].locker_active = true;
-                self.cutscene_camera.displacement_counter = 0;
+                self.feedback.cutscene_camera.position_saved = anchor;
+                self.players.seats[seat].locker_active = true;
+                self.feedback.cutscene_camera.displacement_counter = 0;
             }
         }
     }
@@ -390,7 +403,7 @@ impl EngineInner {
     /// Cursor, click, and titbit paths branch on this to record a macro
     /// step instead of immediately dispatching an action.
     pub fn is_recording_macro(&self) -> bool {
-        !self.qa_recording_for.is_empty()
+        !self.players.qa_recording_for.is_empty()
     }
 
     /// Build the `ViewParameters` for the currently-selected view element
@@ -598,9 +611,9 @@ impl EngineInner {
             target: "ai_log",
             "--- AI log for NPC {:?} (frame {}) ---",
             id,
-            self.frame_counter,
+            self.control.frame_counter,
         );
-        ai.display_log(self.frame_counter);
+        ai.display_log(self.control.frame_counter);
     }
 
     // ─── Display order sorting ──────────────────────────────────

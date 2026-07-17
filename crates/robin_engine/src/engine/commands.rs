@@ -118,7 +118,7 @@ impl EngineInner {
     /// Apply a single player command issued by `seat`.
     ///
     /// `seat` is the index returned by [`Self::ensure_seat`].
-    /// Selection-mutating handlers index `self.seats[seat]` so
+    /// Selection-mutating handlers index `self.players.seats[seat]` so
     /// different players don't clobber each other's selections.
     pub fn apply_command_for_seat(
         &mut self,
@@ -203,7 +203,7 @@ impl EngineInner {
             } => {
                 // Macro recording: if `actor` is in the recording set
                 // and a slot is armed, append this interaction as a step.
-                if self.qa_recording_for.contains(actor)
+                if self.players.qa_recording_for.contains(actor)
                     && let Some((pos, tgt_layer, tgt_is_pc, tgt_is_object, tgt_target_filter)) =
                         self.get_entity(*target).map(|e| {
                             let target_filter = match e {
@@ -267,13 +267,13 @@ impl EngineInner {
                     };
                     // Drop any titbit still sitting in this QA slot before
                     // we allocate a new one.
-                    let slot = self.qa_recording_slot;
+                    let slot = self.players.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
                     // Register a QuickAction titbit on the target so
                     // the renderer can look it up by id.
                     let tgt_handle = crate::titbit::ElementHandle(target.index());
                     let pc_handle = crate::titbit::ElementHandle(actor.index());
-                    let titbit_id = self.titbit_manager.add_titbit(
+                    let titbit_id = self.feedback.titbit_manager.add_titbit(
                         crate::coordinates::WorldPoint3D {
                             x: pos.x,
                             y: pos.y,
@@ -294,7 +294,8 @@ impl EngineInner {
                     // overwrite when the titbit manager returned a real
                     // id, to avoid clobbering with INVALID.
                     if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
-                        self.macro_store
+                        self.players
+                            .macro_store
                             .get_or_insert(*actor)
                             .set_slot_titbit(slot as usize, tb);
                     }
@@ -312,7 +313,7 @@ impl EngineInner {
                 target_field,
                 titbit_layer,
             } => {
-                if self.qa_recording_for.contains(actor) {
+                if self.players.qa_recording_for.contains(actor) {
                     let action = self
                         .get_entity(*actor)
                         .and_then(|e| e.pc_data().map(|pc| pc.current_action))
@@ -325,7 +326,7 @@ impl EngineInner {
                     let quick = crate::macro_store::action_to_qa_frame(action)
                         .unwrap_or(crate::titbit::QuickAction::Walk as u16);
                     // Drop any titbit still sitting in this QA slot.
-                    let slot = self.qa_recording_slot;
+                    let slot = self.players.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
                     let pc_handle = crate::titbit::ElementHandle(actor.index());
                     // The titbit position and per-action layer (Net=0,
@@ -336,7 +337,7 @@ impl EngineInner {
                         y: target_pos.y,
                         z: target_pos.z,
                     };
-                    let titbit_id = self.titbit_manager.add_titbit(
+                    let titbit_id = self.feedback.titbit_manager.add_titbit(
                         titbit_pos,
                         *titbit_layer,
                         crate::titbit::TitbitKind::QuickAction,
@@ -351,7 +352,8 @@ impl EngineInner {
                     );
                     // Write the new titbit id into the slot.  Skip INVALID.
                     if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
-                        self.macro_store
+                        self.players
+                            .macro_store
                             .get_or_insert(*actor)
                             .set_slot_titbit(slot as usize, tb);
                     }
@@ -383,21 +385,21 @@ impl EngineInner {
                 target,
                 running,
             } => {
-                if self.qa_recording_for.contains(actor) {
+                if self.players.qa_recording_for.contains(actor) {
                     let Some(pos) = self
                         .get_entity(*target)
                         .map(|e| e.element_data().position_map())
                     else {
                         return;
                     };
-                    let slot = self.qa_recording_slot;
+                    let slot = self.players.qa_recording_slot;
                     self.remove_quick_action_titbits_for(*actor, slot);
                     let pc_handle = crate::titbit::ElementHandle(actor.index());
                     let target_layer = self
                         .get_entity(*target)
                         .map(|e| e.element_data().layer())
                         .unwrap_or(0);
-                    let titbit_id = self.titbit_manager.add_titbit(
+                    let titbit_id = self.feedback.titbit_manager.add_titbit(
                         crate::coordinates::WorldPoint3D {
                             x: pos.x,
                             y: pos.y,
@@ -415,7 +417,8 @@ impl EngineInner {
                         Some(target_layer),
                     );
                     if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
-                        self.macro_store
+                        self.players
+                            .macro_store
                             .get_or_insert(*actor)
                             .set_slot_titbit(slot as usize, tb);
                     }
@@ -473,7 +476,7 @@ impl EngineInner {
                 );
             }
             UnselectAllActions => {
-                for pc_id in self.seats[seat].selection.clone() {
+                for pc_id in self.players.seats[seat].selection.clone() {
                     self.unselect_action(pc_id);
                 }
             }
@@ -621,7 +624,7 @@ impl EngineInner {
                 self.apply_change_qa_memory(seat, *slot);
             }
             SetLockAlt(on) => {
-                self.seats[seat].is_lock_alt = *on;
+                self.players.seats[seat].is_lock_alt = *on;
             }
             KeyControl => {
                 self.save_action_for_selected_pcs(seat);
@@ -632,7 +635,7 @@ impl EngineInner {
                 // NoAction path, skipping the rubber-band /
                 // `ignore_next_drag` side-effects (those belong to the
                 // action-pick flow, not a modifier key).
-                for id in self.seats[seat].selection.clone() {
+                for id in self.players.seats[seat].selection.clone() {
                     let cur = self
                         .get_entity(id)
                         .and_then(|e| e.pc_data())
@@ -647,14 +650,16 @@ impl EngineInner {
                         pc.current_action = crate::profiles::Action::NoAction;
                     }
                 }
-                self.pending_side_effects.invalidate_trajectory_preview = true;
+                self.feedback
+                    .pending_side_effects
+                    .invalidate_trajectory_preview = true;
             }
             #[cfg(not(target_os = "macos"))]
             KeyReleaseControl => {
                 // Restore each selected PC's saved action.  Stored
                 // per-PC on `PcData::saved_action`, so different
                 // selections regain different actions.
-                let ids = self.seats[seat].selection.clone();
+                let ids = self.players.seats[seat].selection.clone();
                 for id in ids {
                     let (saved, cur) = match self.get_entity(id).and_then(|e| e.pc_data()) {
                         Some(pc) => (pc.saved_action, pc.current_action),
@@ -669,7 +674,9 @@ impl EngineInner {
                         pc.current_action = saved;
                     }
                 }
-                self.pending_side_effects.invalidate_trajectory_preview = true;
+                self.feedback
+                    .pending_side_effects
+                    .invalidate_trajectory_preview = true;
             }
             #[cfg(target_os = "macos")]
             KeyReleaseControl => {
@@ -829,7 +836,7 @@ impl EngineInner {
                             display.minimap.manage_click();
                         } else {
                             let usable = crate::minimap::usable_area(&display.minimap.map_box);
-                            let level_size = self.cutscene_camera.level_size;
+                            let level_size = self.feedback.cutscene_camera.level_size;
                             let world_pt = display.minimap.map_to_real(*click_pt, level_size);
                             if usable.contains_point(*click_pt)
                                 && let Some(world_pt) = world_pt
@@ -903,9 +910,9 @@ impl EngineInner {
                 nickname,
             } => {
                 let idx = self.ensure_seat(*target);
-                let was_connected = self.seats[idx].connected;
-                self.seats[idx].connected = true;
-                self.seats[idx].nickname = nickname.clone();
+                let was_connected = self.players.seats[idx].connected;
+                self.players.seats[idx].connected = true;
+                self.players.seats[idx].nickname = nickname.clone();
                 if was_connected {
                     tracing::info!(
                         player_id = ?target,
@@ -922,7 +929,7 @@ impl EngineInner {
             }
             DisconnectSeat { player_id: target } => {
                 let idx = target.0 as usize;
-                if let Some(s) = self.seats.get_mut(idx) {
+                if let Some(s) = self.players.seats.get_mut(idx) {
                     if s.connected {
                         tracing::info!(
                             player_id = ?target,
@@ -946,7 +953,7 @@ impl EngineInner {
         // flag here so any minimap command (drag, resize-revalidate)
         // emits a single side effect for the host to persist.
         if let Some(top_left) = display.minimap.take_pending_position() {
-            self.pending_side_effects.pending_minimap_position = Some(top_left);
+            self.feedback.pending_side_effects.pending_minimap_position = Some(top_left);
         }
     }
 
@@ -957,13 +964,13 @@ impl EngineInner {
     /// Only the `Action` + target `position` is stored per step — the
     /// per-slot titbit id is set separately at the `AddTitbit` site.
     fn record_macro_step_for(&mut self, seat: usize, cmd: &PlayerCommand) {
-        if self.qa_recording_for.is_empty() {
+        if self.players.qa_recording_for.is_empty() {
             return;
         }
         // When multiple PCs are armed for recording, each one receives
         // its own macro step.  Snapshot the set up-front so we can
         // re-borrow `self` inside the per-PC loop.
-        let recording_pcs = self.qa_recording_for.clone();
+        let recording_pcs = self.players.qa_recording_for.clone();
         for recording_pc in recording_pcs {
             self.record_macro_step_for_pc(seat, cmd, recording_pc);
         }
@@ -1196,7 +1203,7 @@ impl EngineInner {
                 // selection members continue to fall through to the
                 // live apply path in `apply_crouch_down` /
                 // `apply_stand_up`.
-                if !self.seats[seat].selection.contains(&recording_pc) {
+                if !self.players.seats[seat].selection.contains(&recording_pc) {
                     return;
                 }
                 let Some(pos) = entity_pos(self, recording_pc) else {
@@ -1220,7 +1227,7 @@ impl EngineInner {
             _ => return,
         };
 
-        self.macro_store.append(
+        self.players.macro_store.append(
             actor,
             QuickActionStep {
                 action,
@@ -1231,7 +1238,7 @@ impl EngineInner {
 
         // Register a QuickAction titbit once per macro slot and feed
         // the id into the slot.
-        let Some(pc_state) = self.macro_store.get(recording_pc) else {
+        let Some(pc_state) = self.players.macro_store.get(recording_pc) else {
             return;
         };
         let Some(slot_idx) = pc_state.recording_slot() else {
@@ -1254,7 +1261,7 @@ impl EngineInner {
             z: 0.0,
         };
         let manager = ElementHandle(recording_pc.index());
-        let titbit_id = self.titbit_manager.add_titbit(
+        let titbit_id = self.feedback.titbit_manager.add_titbit(
             pos3d,
             layer,
             TitbitKind::QuickAction,
@@ -1268,7 +1275,7 @@ impl EngineInner {
             Some(layer),
         );
         if let Some(tb) = crate::titbit::TitbitId::new(titbit_id)
-            && let Some(pc_state) = self.macro_store.get_mut(recording_pc)
+            && let Some(pc_state) = self.players.macro_store.get_mut(recording_pc)
         {
             pc_state.set_slot_titbit(slot_idx as usize, tb);
         }
@@ -1332,7 +1339,8 @@ impl EngineInner {
         } else {
             crate::sound::Jingle::QuickActionFailed
         };
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Jingle(jingle));
 
@@ -1371,6 +1379,7 @@ impl EngineInner {
         // `stop_recording_macro` was called in `apply_start_macro` so
         // `qa_recording_for` is None and no appends will happen).
         let steps: Vec<crate::macro_store::QuickActionStep> = self
+            .players
             .macro_store
             .get(pc)
             .map(|s| {
@@ -1575,7 +1584,7 @@ impl EngineInner {
 
         // Drop the slot's titbit and clear the slot.
         self.remove_quick_action_titbits_for(pc, slot);
-        if let Some(state) = self.macro_store.get_mut(pc) {
+        if let Some(state) = self.players.macro_store.get_mut(pc) {
             state.clear_slot(slot as usize);
         }
     }
@@ -1595,7 +1604,7 @@ impl EngineInner {
     /// Returns `true` to allow replay, `false` to fizzle.
     fn check_quick_action_validity(&self, pc: EntityId, slot: u8) -> bool {
         use crate::macro_store::QaReplayCommand;
-        let Some(state) = self.macro_store.get(pc) else {
+        let Some(state) = self.players.macro_store.get(pc) else {
             return false;
         };
         let Some(slot_data) = state.slot(slot as usize) else {
@@ -1648,16 +1657,19 @@ impl EngineInner {
         }
         let targets: Vec<EntityId> = match pc {
             Some(id) => vec![id],
-            None => self.seats[seat].selection.clone(),
+            None => self.players.seats[seat].selection.clone(),
         };
         if targets.is_empty() {
             return;
         }
         for id in &targets {
-            self.macro_store.get_or_insert(*id).begin_recording(slot);
+            self.players
+                .macro_store
+                .get_or_insert(*id)
+                .begin_recording(slot);
         }
-        self.qa_recording_slot = slot;
-        self.qa_recording_for = targets;
+        self.players.qa_recording_slot = slot;
+        self.players.qa_recording_for = targets;
     }
 
     /// Swap the active recording slot on the selected PCs.  Ends
@@ -1670,22 +1682,25 @@ impl EngineInner {
         }
         // End recording on every PC that was armed (the currently-
         // armed set, not the current selection — those can differ).
-        let old = std::mem::take(&mut self.qa_recording_for);
+        let old = std::mem::take(&mut self.players.qa_recording_for);
         for id in &old {
-            if let Some(state) = self.macro_store.get_mut(*id) {
+            if let Some(state) = self.players.macro_store.get_mut(*id) {
                 state.stop_recording();
             }
         }
         // Re-arm on whoever is currently selected.
-        let targets: Vec<EntityId> = self.seats[seat].selection.clone();
+        let targets: Vec<EntityId> = self.players.seats[seat].selection.clone();
         if targets.is_empty() {
             return;
         }
         for id in &targets {
-            self.macro_store.get_or_insert(*id).begin_recording(slot);
+            self.players
+                .macro_store
+                .get_or_insert(*id)
+                .begin_recording(slot);
         }
-        self.qa_recording_slot = slot;
-        self.qa_recording_for = targets;
+        self.players.qa_recording_slot = slot;
+        self.players.qa_recording_for = targets;
     }
 
     /// Drop macro slot `slot` without replaying.
@@ -1840,6 +1855,7 @@ impl EngineInner {
                 | Command::Take
         );
         let is_recording_macro = self
+            .players
             .macro_store
             .get(actor)
             .map(|s| s.is_recording())
@@ -2388,7 +2404,7 @@ impl EngineInner {
         // `apply_command` at the top of dispatch); short-circuit here
         // so we don't double up with a live launch, then stop the
         // recording.
-        if self.qa_recording_for.contains(&pc_id) {
+        if self.players.qa_recording_for.contains(&pc_id) {
             self.stop_recording_macro();
             return;
         }
@@ -3021,8 +3037,8 @@ impl EngineInner {
         // double up.  After the loop, stop the recording if a
         // recording PC was in the selection.
         let mut recorded_here = false;
-        for &pc_id in &self.seats[seat].selection.clone() {
-            if self.qa_recording_for.contains(&pc_id) {
+        for &pc_id in &self.players.seats[seat].selection.clone() {
+            if self.players.qa_recording_for.contains(&pc_id) {
                 recorded_here = true;
                 continue;
             }
@@ -3035,8 +3051,8 @@ impl EngineInner {
 
     fn apply_stand_up(&mut self, seat: usize) {
         let mut recorded_here = false;
-        for &pc_id in &self.seats[seat].selection.clone() {
-            if self.qa_recording_for.contains(&pc_id) {
+        for &pc_id in &self.players.seats[seat].selection.clone() {
+            if self.players.qa_recording_for.contains(&pc_id) {
                 recorded_here = true;
                 continue;
             }
@@ -3980,7 +3996,11 @@ mod tests {
 
         assert_eq!(engine.sequence_manager.sequence_count(), 0);
         assert!(!engine.is_recording_macro());
-        let state = engine.macro_store.get(pc_id).expect("pc macro state");
+        let state = engine
+            .players
+            .macro_store
+            .get(pc_id)
+            .expect("pc macro state");
         let slot = state.slot(0).expect("slot 0");
         assert_eq!(slot.steps.len(), 1);
         assert_eq!(
@@ -3998,7 +4018,7 @@ mod tests {
         let mut display = HostDisplayState::default();
         let mut input = InputState::default();
 
-        let state = engine.macro_store.get_or_insert(pc_id);
+        let state = engine.players.macro_store.get_or_insert(pc_id);
         state.begin_recording(0);
         state.append_if_recording(QuickActionStep {
             action: Action::Search,
@@ -4519,7 +4539,7 @@ mod tests {
                 nickname: "bob".into(),
             })],
         );
-        engine.seats[2].selection = vec![
+        engine.players.seats[2].selection = vec![
             EntityId::Pc(crate::entity_id::PcId(7)),
             EntityId::Pc(crate::entity_id::PcId(8)),
         ];
@@ -4585,8 +4605,8 @@ mod tests {
                 PlayerInput::new(PlayerId(2), PlayerCommand::SetLockAlt(true)),
             ],
         );
-        assert!(!engine.seats[0].is_lock_alt, "host seat untouched");
-        assert!(engine.seats[2].is_lock_alt, "peer 2 alt-lock on");
+        assert!(!engine.players.seats[0].is_lock_alt, "host seat untouched");
+        assert!(engine.players.seats[2].is_lock_alt, "peer 2 alt-lock on");
 
         // Host toggles its own alt-lock — peer 2 stays on.
         engine.apply_commands(
@@ -4595,8 +4615,8 @@ mod tests {
             &assets,
             &[PlayerInput::host(PlayerCommand::SetLockAlt(true))],
         );
-        assert!(engine.seats[0].is_lock_alt);
-        assert!(engine.seats[2].is_lock_alt);
+        assert!(engine.players.seats[0].is_lock_alt);
+        assert!(engine.players.seats[2].is_lock_alt);
     }
 
     #[test]

@@ -129,7 +129,8 @@ impl EngineInner {
             _ => None,
         };
         if let Some(pos) = buzz_pos {
-            self.pending_side_effects
+            self.feedback
+                .pending_side_effects
                 .sounds
                 .push(super::SoundCommand::Fx {
                     fx_id: FX_WASP_BUZZ,
@@ -805,10 +806,9 @@ mod tests {
             make_nest_at(&mut engine);
             let assets = empty_assets();
 
-            engine.pending_side_effects.sounds.clear();
+            engine.feedback.pending_side_effects.sounds.clear();
             engine.tick_wasp_nests(&assets);
-            let buzzes = engine
-                .pending_side_effects
+            let buzzes = engine.feedback.pending_side_effects
                 .sounds
                 .iter()
                 .filter(|s| matches!(s, super::super::SoundCommand::Fx { fx_id, .. } if fx_id == &FX_WASP_BUZZ))
@@ -850,10 +850,9 @@ mod tests {
             };
             assert_eq!(nest.projectile.wasp.flying_wasp_count, 0);
 
-            engine.pending_side_effects.sounds.clear();
+            engine.feedback.pending_side_effects.sounds.clear();
             engine.tick_wasp_nests(&assets);
-            let buzzes = engine
-                .pending_side_effects
+            let buzzes = engine.feedback.pending_side_effects
                 .sounds
                 .iter()
                 .filter(|s| matches!(s, super::super::SoundCommand::Fx { fx_id, .. } if fx_id == &FX_WASP_BUZZ))

@@ -49,6 +49,7 @@ mod simulation_gate;
 mod snapshot;
 mod soldier_helpers;
 mod special_motion;
+mod state;
 pub mod target_interaction;
 #[cfg(test)]
 mod target_script_tests;
@@ -88,6 +89,7 @@ use crate::profiles::MissionType;
 use crate::sequence::SequenceManager;
 use crate::short_briefings::ShortBriefings;
 use simulation_gate::SimulationGateState;
+use state::{FeedbackRuntime, PlayerRuntime, SimulationControl};
 
 // ─── Constants ───────────────────────────────────────────────────────
 
@@ -160,28 +162,8 @@ pub struct EngineInner {
     /// Win/loss tracking and mission metadata. [Serialized]
     pub(crate) mission: MissionState,
 
-    // ── Frame counter ────────────────────────────────────────────
-    /// Monotonically increasing frame counter. [Serialized]
-    pub(crate) frame_counter: u32,
-
-    // ── Selection ring animation ─────────────────────────────────
-    // ── Sound sim state ──────────────────────────────────────────
-    /// Sim-state portion of the sound system (source list + finished
-    /// exclamation queue). Lives on the engine — not `Host` —
-    /// because rollback snapshots must reproduce the script VM's
-    /// `sound_source_count` against the live source vec.
-    /// See [`crate::sound::SoundSimState`]. [Serialized]
-    pub(crate) sound_sim: crate::sound::SoundSimState,
-
-    // ── Simulation suspension gates ─────────────────────────────
-    /// Lock, actor-freeze, and blocking-fade state. [Serialized]
-    pub(crate) simulation_gates: SimulationGateState,
-
-    // ── Sequence / animation ─────────────────────────────────────
-    /// Sequence playback speed multiplier. [Serialized]
-    pub(crate) speed: f32,
-    /// Speed as integer for UI. [Serialized]
-    pub(crate) speed_int: u16,
+    /// Deterministic time, RNG, and global suspension/rate controls.
+    pub(crate) control: SimulationControl,
 
     // ── Weather ──────────────────────────────────────────────────
     /// Weather and environmental state. [Serialized — affects AI]
@@ -212,9 +194,6 @@ pub struct EngineInner {
     /// determinism — now sits inside the engine snapshot.
     pub(crate) next_order_id: u32,
 
-    // ── Anti-chorus timer ────────────────────────────────────────
-    pub(crate) chorus_timer: u16,
-
     // ── Force victory check ──────────────────────────────────────
     pub(crate) force_check: bool,
 
@@ -234,60 +213,16 @@ pub struct EngineInner {
     /// recruitment lives inside [`EngineInner::apply_quit_mission_updates`];
     /// script natives update counters through existing engine methods.
     pub(crate) mission_stat: MissionStat,
-    /// Destination markers drawn on the ground. [Serialized]
-    pub(crate) ground_mark: GroundMark,
-
     // ── Entity storage ────────────────────────────────────────────
     /// All entities indexed by EntityId.
     pub(crate) entities: Entities,
     /// Indices of player characters.
     pub(crate) pc_ids: Vec<EntityId>,
-    /// Floating indicator manager (titbits: stars, emoticons, smoke, splashes, etc.).
-    pub(crate) titbit_manager: crate::titbit::TitbitManager,
-    /// Per-seat sim-tracked state (selection, hotgroups). Indexed by
-    /// [`crate::player_command::PlayerId`]. Allocated lazily by
-    /// `ConnectSeat` — empty on a fresh engine.  See [`SeatState`].
-    pub(crate) seats: Vec<SeatState>,
-    /// Shared script/director camera. Local player viewport state is
-    /// host-owned so the deterministic engine is identical for every seat.
-    pub(crate) cutscene_camera: CameraState,
-    // ── Simulation RNG ───────────────────────────────────────────
-    /// The one deterministic RNG capability for every gameplay random roll.
-    /// It owns the stream at snapshot boundaries and lends it to
-    /// [`crate::sim_rng`] only for an explicit simulation scope.
-    pub(crate) rng: SimulationRng,
+    /// Deterministic per-player selection, input-mode, and macro state.
+    pub(crate) players: PlayerRuntime,
 
-    // ── Pending side effects ─────────────────────────────────────
-    /// Outputs produced by the current tick (sounds, overlay show/hide,
-    /// background invalidation, …). Populated by sim code during the
-    /// tick; drained by `perform_hourglass` and handed to
-    /// [`Host::apply_side_effects`] after the sim has finished. This is
-    /// normally default at snapshot boundaries; serializing it keeps any
-    /// accidental mid-tick leakage visible instead of silently dropping it.
-    pub(crate) pending_side_effects: SideEffects,
-
-    // ── Sim-owned input/mode state (moved off Host for determinism) ──
-    /// "User locked" flag.
-    pub(crate) user_locked: bool,
-    /// QA macro recording state — the full set of PCs whose portraits
-    /// are currently recording into the active slot.  Marking begins by
-    /// flagging every currently-selected PC as recording simultaneously;
-    /// each PC accumulates its own steps in `macro_store` but they all
-    /// share the same slot (`qa_recording_slot`).  Empty means no
-    /// recording is active.
-    pub(crate) qa_recording_for: Vec<crate::element::EntityId>,
-    /// Which QA slot (0–2) is being recorded into.
-    pub(crate) qa_recording_slot: u8,
-    /// Action that was armed when macro recording began.  Captured in the
-    /// `MSG_START_RECORDING_MACRO` arm and consumed by the
-    /// `MSG_STOP_RECORDING_MACRO` post-process, which re-fires
-    /// `MSG_SELECT_ACTION` with the saved action.  Cleared to `NoAction`
-    /// on every character-selection change so changing selection
-    /// mid-recording drops the restore target.
-    pub(crate) action_before_recording_macro: crate::profiles::Action,
-    /// Fast-forward mode. Script/user-driven; affects sim camera behaviour
-    /// so it must participate in the deterministic snapshot.
-    pub(crate) fast_forward: bool,
+    /// Deterministic sound, marker, director-camera, and tick-output state.
+    pub(crate) feedback: FeedbackRuntime,
 
     /// Pending AI-initiated Move intents, drained once per tick by
     /// `drain_pending_move_requests`.  Deduped per actor: a later call
@@ -317,13 +252,6 @@ pub struct EngineInner {
     // ── AI ────────────────────────────────────────────────────────
     /// Global / shared AI state (alert levels, seek points, etc.). [Serialized]
     pub(crate) ai_global: AiGlobalState,
-
-    // ── Quick-action macros ──────────────────────────────────────
-    /// Per-PC stored quick-action macros (0..=2 slots per PC).  [Serialized]
-    /// Host renderers read the stored slots through
-    /// [`EngineInner::macro_store`]; icon animation state lives in
-    /// [`HostDisplayState`].
-    pub(crate) macro_store: crate::macro_store::MacroStore,
 
     /// PC whose death should trigger immediate mission failure.
     pub(crate) dead_pc: Option<EntityId>,
@@ -541,33 +469,32 @@ pub(crate) fn entity_id_for_occupied_slot(index: u32, entity: &Entity) -> Entity
 
 impl EngineInner {
     pub(crate) fn engine_locked(&self) -> bool {
-        self.simulation_gates.engine_locked()
+        self.control.engine_locked()
     }
 
     pub(crate) fn set_engine_locked(&mut self, locked: bool) {
-        self.simulation_gates.set_engine_locked(locked);
+        self.control.set_engine_locked(locked);
     }
 
     pub(crate) fn actors_frozen(&self) -> bool {
-        self.simulation_gates.actors_frozen()
+        self.control.actors_frozen()
     }
 
     pub(crate) fn set_actors_frozen(&mut self, frozen: bool) {
-        self.simulation_gates.set_actors_frozen(frozen);
+        self.control.set_actors_frozen(frozen);
     }
 
     #[cfg(test)]
     pub(crate) fn fade_freeze_frames_remaining(&self) -> u32 {
-        self.simulation_gates.fade_freeze_frames_remaining()
+        self.control.fade_freeze_frames_remaining()
     }
 
     pub(crate) fn set_fade_freeze_frames_remaining(&mut self, frames: u32) {
-        self.simulation_gates
-            .set_fade_freeze_frames_remaining(frames);
+        self.control.set_fade_freeze_frames_remaining(frames);
     }
 
     pub(crate) fn consume_fade_freeze_frame(&mut self) -> bool {
-        self.simulation_gates.consume_fade_freeze_frame()
+        self.control.consume_fade_freeze_frame()
     }
 
     pub(crate) fn pc_description_index_for_pc_data(
@@ -646,23 +573,12 @@ impl EngineInner {
         //
         Self {
             sim_config: std::cell::Cell::new(None),
-            cutscene_camera: CameraState {
-                level_size: crate::coordinates::MapSize::ZERO,
-                zoom_factor: 1.0,
-                desired_zoom_factor: 1.0,
-                camera_slide: crate::coordinates::MapPoint::new(-1.0, -1.0),
-                ..Default::default()
-            },
             mission: MissionState::default(),
-
-            frame_counter: 0,
-
-            sound_sim: crate::sound::SoundSimState::default(),
-
-            simulation_gates: SimulationGateState::default(),
-
-            speed: 1.0,
-            speed_int: 0,
+            // Original: the `__TEST` path in
+            // `original-code/launcher.cpp:762-766` calls `srand(0)`.
+            // `Engine::new` replaces this bare-engine test seed with the
+            // replay/match seed before level setup draws.
+            control: SimulationControl::new(0),
 
             weather: WeatherState::new(),
 
@@ -675,7 +591,6 @@ impl EngineInner {
             standard_view_polygon_radius: 0,
             next_order_id: 1,
 
-            chorus_timer: 0,
             force_check: false,
 
             messenger: Messenger::new(),
@@ -683,30 +598,15 @@ impl EngineInner {
             pathfinder: PathFinder::default(),
             short_briefings: ShortBriefings::default(),
             mission_stat: MissionStat::default(),
-            ground_mark: GroundMark::default(),
-
-            // Original: the `__TEST` path in
-            // `original-code/launcher.cpp:762-766` calls `srand(0)`.
-            // `Engine::new` replaces this bare-engine test seed with the
-            // replay/match seed before level setup draws. This is a real
-            // owned stream, never the temporary replacement used before.
-            rng: SimulationRng::with_seed(0),
-            pending_side_effects: SideEffects::default(),
-            user_locked: false,
-            qa_recording_for: Vec::new(),
-            qa_recording_slot: 0,
-            action_before_recording_macro: crate::profiles::Action::NoAction,
-            fast_forward: false,
             pending_move_requests: Vec::new(),
             pending_path_requests: Default::default(),
             failed_path_requests: Vec::new(),
 
             entities: Entities::new(),
             pc_ids: Vec::new(),
-            titbit_manager: crate::titbit::TitbitManager::new(),
-            seats: vec![SeatState::default()],
+            players: PlayerRuntime::new(),
+            feedback: FeedbackRuntime::new(),
             ai_global: AiGlobalState::default(),
-            macro_store: crate::macro_store::MacroStore::new(),
 
             dead_pc: None,
             timer_elements: Vec::new(),
@@ -742,9 +642,9 @@ impl EngineInner {
     /// subsystem directly. A panic is fatal to the simulation and may leave
     /// the thread-local installed, matching `perform_hourglass` semantics.
     pub(crate) fn with_sim_rng<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.rng.enter_scope();
+        self.control.enter_rng_scope();
         let result = f(self);
-        self.rng.leave_scope();
+        self.control.leave_rng_scope();
         result
     }
 
@@ -873,7 +773,7 @@ impl EngineInner {
     /// onto [`CameraState::sequence_element`]; the previous element is
     /// transitioned to `Terminated` and the slot nulled.
     pub(super) fn terminate_prev_camera_sequence_element(&mut self) {
-        if let Some(r) = self.cutscene_camera.sequence_element.take() {
+        if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
             self.sequence_manager
                 .element_terminated(r.sequence_id, r.element_index);
         }
@@ -904,7 +804,9 @@ impl EngineInner {
         self.mission.mission_won = true;
 
         if !show_window {
-            self.pending_side_effects.pending_silent_win_widget_swap = true;
+            self.feedback
+                .pending_side_effects
+                .pending_silent_win_widget_swap = true;
         }
     }
 
@@ -1105,27 +1007,28 @@ impl EngineInner {
     // ─── Fast forward ────────────────────────────────────────────
 
     pub fn is_fast_forward(&self) -> bool {
-        self.fast_forward
+        self.control.fast_forward
     }
 
     pub(crate) fn set_fast_forward(&mut self) {
-        self.fast_forward = true;
-        if self.cutscene_camera.is_sliding() {
-            self.cutscene_camera.view_position = self.cutscene_camera.camera_slide;
+        self.control.fast_forward = true;
+        if self.feedback.cutscene_camera.is_sliding() {
+            self.feedback.cutscene_camera.view_position =
+                self.feedback.cutscene_camera.camera_slide;
         }
-        self.cutscene_camera.stop_slide();
+        self.feedback.cutscene_camera.stop_slide();
     }
 
     /// Effective alt state (physical Alt held OR the lock toggle is on).
     pub fn is_alt_effective(&self, input: &InputState) -> bool {
-        input.is_alt || self.seats[0].is_lock_alt
+        input.is_alt || self.players.seats[0].is_lock_alt
     }
 
     /// The persistent alt-lock flag on its own, ignoring the transient
     /// physical-alt state.  The sight HUD button reads this to draw
     /// itself as latched.
     pub fn is_lock_alt(&self) -> bool {
-        self.seats[0].is_lock_alt
+        self.players.seats[0].is_lock_alt
     }
 
     // ─── State changes ───────────────────────────────────────────
@@ -1140,11 +1043,11 @@ impl EngineInner {
     ) -> bool {
         match request {
             EngineStateRequest::LockerOn => {
-                self.seats[seat].locker_active = true;
+                self.players.seats[seat].locker_active = true;
                 true
             }
             EngineStateRequest::LockerOff => {
-                self.seats[seat].locker_active = false;
+                self.players.seats[seat].locker_active = false;
                 true
             }
             EngineStateRequest::ZoomingUp => {
@@ -1161,7 +1064,7 @@ impl EngineInner {
                     // separately via the `desired_zoom_factor` dispatch
                     // (`perform_director_work`) / `SetZoomLevel` script
                     // native, which execute before `ChangeState` fires.
-                    self.cutscene_camera.mechanized_zoom = false;
+                    self.feedback.cutscene_camera.mechanized_zoom = false;
                     // Can only initiate zoom when not scrolling
                     if display.background_transform.current_x_scrolling_level == 0
                         && display.background_transform.current_y_scrolling_level == 0
@@ -1190,7 +1093,7 @@ impl EngineInner {
                     display.background_transform.required_zoom_down = false;
                     // See ZoomingUp for the rationale on resetting
                     // `mechanized_zoom` from the message value.
-                    self.cutscene_camera.mechanized_zoom = false;
+                    self.feedback.cutscene_camera.mechanized_zoom = false;
                     if display.background_transform.current_x_scrolling_level == 0
                         && display.background_transform.current_y_scrolling_level == 0
                         && display.display_op != DisplayOpCode::InitZoom
@@ -2679,13 +2582,14 @@ impl EngineInner {
     /// [`Self::seat_selection`] with their own
     /// [`crate::player_command::PlayerId`].
     pub fn selected_pc_ids(&self) -> &[EntityId] {
-        &self.seats[0].selection
+        &self.players.seats[0].selection
     }
 
     /// Selection for a specific seat, or `&[]` if the seat hasn't
     /// joined yet.  Multi-seat read path.
     pub fn seat_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {
-        self.seats
+        self.players
+            .seats
             .get(player_id.0 as usize)
             .map(|s| s.selection.as_slice())
             .unwrap_or(&[])
@@ -2696,7 +2600,7 @@ impl EngineInner {
     /// `ConnectSeat` (or, for non-host seats, before its first
     /// command of any kind).
     pub fn seat(&self, player_id: crate::player_command::PlayerId) -> Option<&SeatState> {
-        self.seats.get(player_id.0 as usize)
+        self.players.seats.get(player_id.0 as usize)
     }
 
     /// All currently-existing seats (connected or disconnected) in
@@ -2704,7 +2608,7 @@ impl EngineInner {
     /// the portrait "controlled by" overlay; transport uses it to
     /// drive seat-list UI.
     pub fn seats(&self) -> &[SeatState] {
-        &self.seats
+        &self.players.seats
     }
 
     /// Iterate over `(PlayerId, &SeatState)` pairs for every seat
@@ -2715,7 +2619,7 @@ impl EngineInner {
     pub fn active_seats(
         &self,
     ) -> impl Iterator<Item = (crate::player_command::PlayerId, &SeatState)> {
-        self.seats.iter().enumerate().filter_map(|(i, s)| {
+        self.players.seats.iter().enumerate().filter_map(|(i, s)| {
             if s.is_active(i) {
                 Some((crate::player_command::PlayerId(i as u8), s))
             } else {
@@ -2724,7 +2628,7 @@ impl EngineInner {
         })
     }
 
-    /// Ensure a seat exists for `player_id`, growing `self.seats` with
+    /// Ensure a seat exists for `player_id`, growing `self.players.seats` with
     /// default [`SeatState`]s as needed, and return its index.
     ///
     /// New seats start empty (no selection, no hotgroups) — they only
@@ -2735,8 +2639,8 @@ impl EngineInner {
     /// were left, on autopilot).
     pub fn ensure_seat(&mut self, player_id: crate::player_command::PlayerId) -> usize {
         let idx = player_id.0 as usize;
-        if idx >= self.seats.len() {
-            self.seats.resize_with(idx + 1, SeatState::default);
+        if idx >= self.players.seats.len() {
+            self.players.seats.resize_with(idx + 1, SeatState::default);
         }
         idx
     }
@@ -2750,7 +2654,7 @@ impl EngineInner {
     /// frame counter advance originally lived inside `DrawAt`, so
     /// non-drawing periods naturally paused the animation.
     pub fn any_selected_pc_drawing_selection_mark(&self) -> bool {
-        for &pc_id in &self.seats[0].selection {
+        for &pc_id in &self.players.seats[0].selection {
             if self.pc_draws_selection_mark(pc_id) {
                 return true;
             }
@@ -2822,14 +2726,14 @@ impl EngineInner {
 
     /// Quick-select group `idx` (0 = group 1, 8 = group 9).
     pub fn quick_select_group(&self, idx: usize) -> &[EntityId] {
-        &self.seats[0].quick_select_groups[idx]
+        &self.players.seats[0].quick_select_groups[idx]
     }
 
     /// Floating indicator manager (titbits: stars, emoticons, smoke, splashes).
     /// The host reads it every frame to drive the titbit renderer; scripts
     /// and input handlers add new titbits through [`EngineInner::titbit_manager_mut`].
     pub fn titbit_manager(&self) -> &crate::titbit::TitbitManager {
-        &self.titbit_manager
+        &self.feedback.titbit_manager
     }
 
     /// Install the titbit renderer's per-row frame counts.  Called at
@@ -2838,7 +2742,7 @@ impl EngineInner {
     /// Safe to call mid-tick: `titbit_manager.row_frame_counts` is
     /// level renderer metadata and not part of the rollback hash.
     pub(crate) fn set_titbit_row_frame_counts(&mut self, counts: Vec<u16>) {
-        self.titbit_manager.set_row_frame_counts(counts);
+        self.feedback.titbit_manager.set_row_frame_counts(counts);
     }
 
     /// Current dotted-chain animation phase, advanced by the engine
@@ -2847,7 +2751,7 @@ impl EngineInner {
     /// `perform_hourglass` re-advances it via
     /// `TitbitManager::prepare_refresh`.
     pub fn titbit_dotted_start(&self) -> f32 {
-        self.titbit_manager.dotted_start()
+        self.feedback.titbit_manager.dotted_start()
     }
 
     /// Global AI state (alert levels, seek points, …). Read-only.
@@ -2858,7 +2762,7 @@ impl EngineInner {
     /// Read-only access to the per-PC quick-action macro store.  Host
     /// renderers use this to iterate slots for the portrait strip.
     pub fn macro_store(&self) -> &crate::macro_store::MacroStore {
-        &self.macro_store
+        &self.players.macro_store
     }
 
     /// Remove all titbits owned by `pc` at QA slot `slot`.  Resolves
@@ -2867,19 +2771,21 @@ impl EngineInner {
     /// least one titbit was removed (also `false` when the slot is
     /// empty).
     pub fn remove_quick_action_titbits_for(&mut self, pc: EntityId, slot: u8) -> bool {
-        let Some(state) = self.macro_store.get(pc) else {
+        let Some(state) = self.players.macro_store.get(pc) else {
             return false;
         };
         let Some(titbit_id) = state.get_slot_titbit(slot as usize) else {
             return false;
         };
-        self.titbit_manager
+        self.feedback
+            .titbit_manager
             .remove_quick_action_titbits_by_id(titbit_id)
     }
 
     /// Does `pc` have a recorded macro in `slot`?
     pub fn has_quick_action(&self, pc: EntityId, slot: u8) -> bool {
-        self.macro_store
+        self.players
+            .macro_store
             .get(pc)
             .map(|s| s.has_macro(slot as usize))
             .unwrap_or(false)
@@ -2896,7 +2802,7 @@ impl EngineInner {
             return false;
         }
         self.remove_quick_action_titbits_for(pc, slot);
-        if let Some(state) = self.macro_store.get_mut(pc) {
+        if let Some(state) = self.players.macro_store.get_mut(pc) {
             state.clear_slot(slot as usize);
         }
         true
@@ -2908,11 +2814,11 @@ impl EngineInner {
     pub(crate) fn do_tetris_macro(&mut self, display: &mut HostDisplayState, slot: u8) {
         let pcs = self.pc_ids.clone();
         for pc in pcs {
-            if let Some(state) = self.macro_store.get_mut(pc) {
+            if let Some(state) = self.players.macro_store.get_mut(pc) {
                 state.do_tetris(slot as usize);
             }
         }
-        display.rearm_macro_tetris(&self.pc_ids, &self.macro_store, slot as usize);
+        display.rearm_macro_tetris(&self.pc_ids, &self.players.macro_store, slot as usize);
     }
 
     /// Enable or disable the `--goldeneye` cheat (NPCs can't see the player).
@@ -2974,7 +2880,7 @@ impl EngineInner {
 
     /// Destination markers drawn on the ground.
     pub fn ground_mark(&self) -> &GroundMark {
-        &self.ground_mark
+        &self.feedback.ground_mark
     }
 
     /// Populate ground-mark sprite data at resource-load time (host-side
@@ -2987,7 +2893,8 @@ impl EngineInner {
         frame_sizes: Vec<(u16, u16)>,
         per_frame_offsets: Vec<(i16, i16)>,
     ) {
-        self.ground_mark
+        self.feedback
+            .ground_mark
             .set_sprite_data(half_w, half_h, frame_sizes, per_frame_offsets);
     }
 
@@ -3030,12 +2937,12 @@ impl EngineInner {
 
     /// Whether the camera is locked to follow an entity.
     pub fn locker_active(&self) -> bool {
-        self.seats[0].locker_active
+        self.players.seats[0].locker_active
     }
 
     /// Whether the player has the engine "user-locked" (alt-lock UI).
     pub fn user_locked(&self) -> bool {
-        self.user_locked
+        self.players.user_locked
     }
 
     /// Enqueue a `SimpleMessage` onto the engine's messenger.
@@ -3053,13 +2960,13 @@ impl EngineInner {
 
     /// Whether `pc` is part of the currently-armed recording set.
     pub fn is_qa_recording_for(&self, pc: EntityId) -> bool {
-        self.qa_recording_for.contains(&pc)
+        self.players.qa_recording_for.contains(&pc)
     }
 
     /// Stop the in-progress quick-action macro recording (host-side
     /// portrait-click handler).  Idempotent.
     pub(crate) fn stop_recording_macro(&mut self) {
-        self.qa_recording_for.clear();
+        self.players.qa_recording_for.clear();
     }
 
     /// Re-target the in-flight macro recording after the selection has
@@ -3086,29 +2993,32 @@ impl EngineInner {
             crate::messenger::PcMessage::UpdateRecordingMacro,
             None,
         ));
-        self.action_before_recording_macro = crate::profiles::Action::NoAction;
+        self.players.action_before_recording_macro = crate::profiles::Action::NoAction;
     }
 
     pub(crate) fn update_recording_after_selection_change(&mut self) {
-        if self.qa_recording_for.is_empty() {
+        if self.players.qa_recording_for.is_empty() {
             return;
         }
-        let slot = self.qa_recording_slot;
-        let selected: Vec<EntityId> = self.seats[0].selection.clone();
-        let current = self.qa_recording_for.clone();
+        let slot = self.players.qa_recording_slot;
+        let selected: Vec<EntityId> = self.players.seats[0].selection.clone();
+        let current = self.players.qa_recording_for.clone();
         for pc_id in &current {
             if !selected.contains(pc_id)
-                && let Some(state) = self.macro_store.get_mut(*pc_id)
+                && let Some(state) = self.players.macro_store.get_mut(*pc_id)
             {
                 state.stop_recording();
             }
         }
         for pc_id in &selected {
             if !current.contains(pc_id) {
-                self.macro_store.get_or_insert(*pc_id).begin_recording(slot);
+                self.players
+                    .macro_store
+                    .get_or_insert(*pc_id)
+                    .begin_recording(slot);
             }
         }
-        self.qa_recording_for = selected;
+        self.players.qa_recording_for = selected;
     }
 
     /// Request the PC-info hover overlay to show (`Some(pc_id)`) or hide
@@ -3132,7 +3042,7 @@ impl EngineInner {
         if !self.is_sherwood(&assets.profile_manager) {
             return;
         }
-        self.pending_side_effects.overlay = Some(match focus {
+        self.feedback.pending_side_effects.overlay = Some(match focus {
             Some(pc_id) => OverlayChange::Show { pc_id },
             None => OverlayChange::Hide,
         });
@@ -3394,7 +3304,7 @@ impl EngineInner {
         self.entities.remove(id);
         // Remove from index lists
         self.pc_ids.retain(|&i| i != id);
-        self.seats[0].selection.retain(|&i| i != id);
+        self.players.seats[0].selection.retain(|&i| i != id);
         // Any pending path request for this actor is cancelled when
         // the element tears down.  Entity removal implies all its
         // elements die, so drop the retry-queue entries eagerly
@@ -3441,7 +3351,7 @@ impl EngineInner {
         // `MSG_UNSELECT_CHARACTER`: clears selection, hides portrait
         // highlight, etc.  The selection list is authoritative, so
         // removing the id here mirrors the message's observable effect.
-        self.seats[0].selection.retain(|&id| id != pc_id);
+        self.players.seats[0].selection.retain(|&id| id != pc_id);
 
         // `SetPlayable(false)` — survives into the handful of frames
         // between clearing selection and wiping the slot.  After
@@ -3565,14 +3475,14 @@ impl EngineInner {
 
     /// Monotonically increasing frame counter (one per processed tick).
     pub fn frame_counter(&self) -> u32 {
-        self.frame_counter
+        self.control.frame_counter
     }
 
     /// Sim-state portion of the sound system (source list + finished
     /// exclamation queue).  Host sound pipeline reads this when
     /// flushing sources.
     pub fn sound_sim(&self) -> &crate::sound::SoundSimState {
-        &self.sound_sim
+        &self.feedback.sound_sim
     }
 
     /// Read-only access to the sample-length lookup used for
@@ -3703,8 +3613,8 @@ impl EngineInner {
         self.campaign.as_mut().unwrap().values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_stat,
-            &mut self.pending_side_effects,
-            self.frame_counter,
+            &mut self.feedback.pending_side_effects,
+            self.control.frame_counter,
             name,
             amount,
         );
@@ -3721,8 +3631,8 @@ impl EngineInner {
         let old = self.campaign.as_ref().unwrap().values[name];
         self.campaign.as_mut().unwrap().values[name] = value;
         Self::apply_value_set_side_effects(
-            &mut self.pending_side_effects,
-            self.frame_counter,
+            &mut self.feedback.pending_side_effects,
+            self.control.frame_counter,
             name,
             old,
             value,
@@ -3741,8 +3651,8 @@ impl EngineInner {
         campaign.values[name] += amount;
         Self::apply_value_add_side_effects(
             &mut self.mission_stat,
-            &mut self.pending_side_effects,
-            self.frame_counter,
+            &mut self.feedback.pending_side_effects,
+            self.control.frame_counter,
             name,
             amount,
         );
@@ -3857,8 +3767,8 @@ impl EngineInner {
 
         // Per-frame / per-tick scratch flags.
         self.force_check = false;
-        self.chorus_timer = 0;
-        self.fast_forward = false;
+        self.control.chorus_timer = 0;
+        self.control.fast_forward = false;
         self.pending_move_requests.clear();
         self.pending_path_requests.clear();
         self.failed_path_requests.clear();
@@ -3879,20 +3789,20 @@ impl EngineInner {
                 crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::ZoomUpEnd),
                 (zoom_up << 16) | zoom_down,
             ));
-            let bg = &mut self.cutscene_camera.display.background_transform;
+            let bg = &mut self.feedback.cutscene_camera.display.background_transform;
             bg.zoom_to_up = false;
             bg.zoom_to_down = false;
             bg.required_zoom_up = false;
             bg.required_zoom_down = false;
-            self.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
-            self.cutscene_camera.zoom_init_done = false;
+            self.feedback.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
+            self.feedback.cutscene_camera.zoom_init_done = false;
         }
 
         // Drop any mid-tick side-effect scratch (sounds, UI requests,
         // …) that was being built before the quick-load.  Normally
         // drained by `perform_hourglass`; this covers the partial-tick
         // case where the load pre-empted the drain.
-        self.pending_side_effects = SideEffects::default();
+        self.feedback.pending_side_effects = SideEffects::default();
 
         // Anonymous sequence-timer entries are tied to `SequenceManager`
         // state that was just replaced; the reloaded manager rebuilds
@@ -3909,7 +3819,7 @@ impl EngineInner {
         // the cached selection (e.g. a mid-recording quick-save where
         // the messenger had a pending unselect).  Drop any selected id
         // whose PC has had its portrait hidden or been made unplayable.
-        self.seats[0]
+        self.players.seats[0]
             .selection
             .retain(|&id| match self.entities.get(id) {
                 Some(crate::element::Entity::Pc(pc)) => {
@@ -3930,7 +3840,7 @@ impl EngineInner {
             crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
         ));
         let action = self.get_selected_action();
-        let pc_id = self.seats[0].selection.first().copied();
+        let pc_id = self.players.seats[0].selection.first().copied();
         self.messenger
             .send(crate::messenger::Message::pc_with_value(
                 crate::messenger::PcMessage::SelectAction,
@@ -3958,7 +3868,7 @@ impl EngineInner {
     /// Test helper: seed `frame_counter` (save-round-trip tests).
     #[doc(hidden)]
     pub fn test_set_frame_counter(&mut self, frame: u32) {
-        self.frame_counter = frame;
+        self.control.frame_counter = frame;
     }
 
     /// Test helper: seed miscellaneous scalar engine fields used by
@@ -3974,8 +3884,8 @@ impl EngineInner {
         script_globals: Vec<i32>,
     ) {
         self.cheat_used_flags = cheat_used_flags;
-        self.speed = speed;
-        self.speed_int = speed_int;
+        self.control.speed = speed;
+        self.control.speed_int = speed_int;
         self.set_engine_locked(lock_engine);
         self.set_actors_frozen(freeze_all);
         self.script_globals = script_globals;
@@ -3990,7 +3900,7 @@ impl EngineInner {
     /// Current RNG seed.  Used by the replay recorder to stamp the
     /// deterministic seed into the `.rhrec.jsonl` header.  Read-only.
     pub fn rng_seed(&self) -> u64 {
-        self.rng.seed()
+        self.control.rng.seed()
     }
 
     /// Which of the 10 known playable characters a PC entity represents.
@@ -4022,7 +3932,7 @@ impl EngineInner {
     /// loading a replay or a save — replay/load is a mission-lifecycle
     /// boundary, outside the per-tick input pipeline.
     pub fn restore_rng_from_seed(&mut self, seed: u64) {
-        self.rng.reseed(seed);
+        self.control.rng.reseed(seed);
     }
 }
 

@@ -1120,7 +1120,7 @@ impl EngineInner {
             for raw in &loaded.proto.sound_sources {
                 if (raw.ambience_filter & ambiance_mask) == 0 {
                     // Source not in this ambiance — push None to preserve indices
-                    self.sound_sim.sources.sources_push_none();
+                    self.feedback.sound_sim.sources.sources_push_none();
                     continue;
                 }
 
@@ -1188,13 +1188,13 @@ impl EngineInner {
                 };
 
                 required_ids.insert(source.id);
-                self.sound_sim.sources.sources_push_some(source);
+                self.feedback.sound_sim.sources.sources_push_some(source);
             }
 
             tracing::info!(
                 "Loaded {} sound sources ({} active, {} required samples)",
                 loaded.proto.sound_sources.len(),
-                self.sound_sim.sources.iter_active().count(),
+                self.feedback.sound_sim.sources.iter_active().count(),
                 required_ids.len(),
             );
 
@@ -3742,8 +3742,8 @@ impl EngineInner {
         motion_data: &crate::level_data::RawMotionData,
         lifts: &[crate::level_data::RawLift],
     ) {
-        let level_w = self.cutscene_camera.level_size.x as u16;
-        let level_h = self.cutscene_camera.level_size.y as u16;
+        let level_w = self.feedback.cutscene_camera.level_size.x as u16;
+        let level_h = self.feedback.cutscene_camera.level_size.y as u16;
 
         // Size the grid from map dimensions.
         let grid_w = level_w / 64;

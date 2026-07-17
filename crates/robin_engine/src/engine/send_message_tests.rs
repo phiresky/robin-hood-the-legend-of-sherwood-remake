@@ -182,11 +182,11 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
             arg1: 55,
             arg2: -7,
         });
-    let frame_before = engine.frame_counter;
+    let frame_before = engine.control.frame_counter;
     engine.sync_game_host_post_script(&assets);
 
     assert_eq!(
-        engine.frame_counter, frame_before,
+        engine.control.frame_counter, frame_before,
         "SendMessage is zero-frame"
     );
     assert_eq!(
@@ -215,7 +215,7 @@ fn script_send_message_sequence_does_not_preempt_current_actor_element() {
 fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
     let (mut engine, _receiver, handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let frame_before = engine.frame_counter;
+    let frame_before = engine.control.frame_counter;
 
     let host = &mut engine
         .mission_script
@@ -237,7 +237,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
 
     engine.sync_game_host_post_script(&assets);
 
-    assert_eq!(engine.frame_counter, frame_before);
+    assert_eq!(engine.control.frame_counter, frame_before);
     assert_eq!(
         engine
             .mission_script

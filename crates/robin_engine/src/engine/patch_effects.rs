@@ -90,7 +90,7 @@ impl EngineInner {
                         }
                     }
 
-                    self.pending_side_effects.invalidate_background = true;
+                    self.feedback.pending_side_effects.invalidate_background = true;
                     if let Some(ref mut script) = self.mission_script
                         && let Some(game_host) = script.game_host_mut()
                     {
@@ -118,7 +118,7 @@ impl EngineInner {
                     {
                         self.queue_restore_fx_bg(entity_id);
                     }
-                    self.pending_side_effects.invalidate_background = true;
+                    self.feedback.pending_side_effects.invalidate_background = true;
                     if let Some(ref mut script) = self.mission_script
                         && let Some(game_host) = script.game_host_mut()
                     {
@@ -418,7 +418,7 @@ impl EngineInner {
                             dest_x = dest.x,
                             dest_y = dest.y,
                             action = ?action,
-                            frame = self.frame_counter,
+                            frame = self.control.frame_counter,
                             "Patch-triggered move retranslation failed; queuing failed_path timeout"
                         );
                         // Re-translate failed — slide into MOVE_WAITING.
@@ -427,7 +427,7 @@ impl EngineInner {
                                 owner: id,
                                 seq_id,
                                 elem_idx,
-                                first_fail_frame: self.frame_counter,
+                                first_fail_frame: self.control.frame_counter,
                             },
                         );
                     }
@@ -531,7 +531,8 @@ impl EngineInner {
     /// returns its `SideEffects` (see `robin_rs::blit_to_map`).
     pub(crate) fn queue_blit_fx_to_map(&mut self, entity_id: crate::element::EntityId) {
         let decal = self.snapshot_patch_transition_decal(entity_id);
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .bg_blits
             .push(super::PendingBgBlit {
                 entity_id,
@@ -543,7 +544,8 @@ impl EngineInner {
     /// Queue a persistent background decal removal for this FX entity.
     /// Consumed later by the host-side drain.
     pub(crate) fn queue_restore_fx_bg(&mut self, entity_id: crate::element::EntityId) {
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .bg_blits
             .push(super::PendingBgBlit {
                 entity_id,

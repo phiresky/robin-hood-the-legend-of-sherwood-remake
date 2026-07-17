@@ -542,7 +542,7 @@ impl EngineInner {
                         .expect("opponent existence checked above");
                     crate::engine::ai::build_ai_context_from_entity(
                         entity,
-                        self.frame_counter,
+                        self.control.frame_counter,
                         None,
                         self.weather.is_forest_level,
                         self.weather.ambiance,
@@ -1452,7 +1452,8 @@ impl EngineInner {
         // Play the PC-in-coma jingle once at the coma-transition
         // site (the dominant trigger in the reference is the portrait
         // burn invoked by the messenger when the PC enters coma).
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Jingle(crate::sound::Jingle::PcInComa));
         // Wipe the PC's quick-action macro slots so a later coma

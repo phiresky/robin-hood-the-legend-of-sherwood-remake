@@ -3713,7 +3713,8 @@ impl EngineInner {
         }
 
         for (fx_id, position, material) in triggers {
-            self.pending_side_effects
+            self.feedback
+                .pending_side_effects
                 .sounds
                 .push(super::SoundCommand::Fx {
                     fx_id,

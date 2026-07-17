@@ -773,7 +773,7 @@ impl Engine {
         // This lives outside the sim snapshot and is populated by the
         // loaded level assets, so keep it from the already-loaded
         // engine we're restoring into.
-        inner.cutscene_camera.level_size = prev.cutscene_camera.level_size;
+        inner.feedback.cutscene_camera.level_size = prev.feedback.cutscene_camera.level_size;
         // `source_durations` lives on `LevelAssets` now; the host
         // reinstates it alongside the rest of the level assets.
 
@@ -873,7 +873,8 @@ mod tests {
     fn restore_preserves_host_level_fields() {
         let mut source_inner = EngineInner::new();
 
-        source_inner.cutscene_camera.level_size = crate::coordinates::MapSize::new(1234.0, 5678.0);
+        source_inner.feedback.cutscene_camera.level_size =
+            crate::coordinates::MapSize::new(1234.0, 5678.0);
 
         let source = Engine {
             inner: source_inner,
@@ -890,7 +891,7 @@ mod tests {
         restored.restore(&mut display, decoded);
 
         assert_eq!(
-            restored.inner.cutscene_camera.level_size,
+            restored.inner.feedback.cutscene_camera.level_size,
             crate::coordinates::MapSize::new(1234.0, 5678.0)
         );
     }
@@ -898,7 +899,8 @@ mod tests {
     #[test]
     fn try_restore_rejects_mismatched_runtime_lengths_without_mutating_live_engine() {
         let mut live_inner = EngineInner::new();
-        live_inner.cutscene_camera.level_size = crate::coordinates::MapSize::new(1234.0, 5678.0);
+        live_inner.feedback.cutscene_camera.level_size =
+            crate::coordinates::MapSize::new(1234.0, 5678.0);
         let mut live = Engine { inner: live_inner };
 
         let mut malformed_inner = EngineInner::new();
@@ -918,7 +920,7 @@ mod tests {
             }
         );
         assert_eq!(
-            live.inner.cutscene_camera.level_size,
+            live.inner.feedback.cutscene_camera.level_size,
             crate::coordinates::MapSize::new(1234.0, 5678.0),
             "validation must happen before replacing the live engine"
         );

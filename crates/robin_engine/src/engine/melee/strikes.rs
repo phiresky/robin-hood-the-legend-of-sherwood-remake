@@ -92,7 +92,7 @@ impl EngineInner {
         }
 
         // Periodic combat state dump (every 64 frames)
-        if self.frame_counter.is_multiple_of(64) {
+        if self.control.frame_counter.is_multiple_of(64) {
             for (entity_id, entity) in self.entities.humans() {
                 let Some(human) = entity.human_data() else {
                     continue;
@@ -2243,7 +2243,7 @@ impl EngineInner {
     /// Simplified version of the engine-level combat loop where the AI
     /// launches individual `SwordstrikeThrust*` sequence elements.
     pub(super) fn tick_enemy_sword_attacks(&mut self, assets: &LevelAssets) {
-        let current_frame = self.frame_counter;
+        let current_frame = self.control.frame_counter;
 
         // Per-tick reconciliation for `EnemyAi::pending_special_strike`.
         // Single chokepoint: if a soldier is flagged

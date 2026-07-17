@@ -784,7 +784,7 @@ impl EngineInner {
                 // Needs a selected PC and at least one amulet, then
                 // launches hp=10000 / concussion=0 damage on the first
                 // selected PC.
-                let selected = self.seats[0].selection.first().copied();
+                let selected = self.players.seats[0].selection.first().copied();
                 let amulets = self
                     .campaign
                     .as_ref()
@@ -816,7 +816,7 @@ impl EngineInner {
                 // no-selection error or — per selected PC — launches a
                 // hp=10000 / concussion=0 damage sequence and prints
                 // `"<profile name> has been recalled by San Petrus."`.
-                let selected = self.seats[0].selection.clone();
+                let selected = self.players.seats[0].selection.clone();
                 if selected.is_empty() {
                     return ConsoleResponse::Ok(
                         "San Petrus\nYou must select at least one PC.".to_string(),
@@ -1108,10 +1108,10 @@ impl EngineInner {
         banner: &str,
         err_if_empty: &str,
     ) -> ConsoleResponse {
-        if self.seats[0].selection.is_empty() {
+        if self.players.seats[0].selection.is_empty() {
             return ConsoleResponse::Ok(format!("{banner}\n{err_if_empty}"));
         }
-        let selected: Vec<EntityId> = self.seats[0].selection.clone();
+        let selected: Vec<EntityId> = self.players.seats[0].selection.clone();
         let profile_indices: Vec<(EntityId, crate::profiles::CharacterProfileIdx)> = selected
             .iter()
             .filter_map(|&id| {

@@ -1,0 +1,44 @@
+use serde::{Deserialize, Serialize};
+
+use crate::{element::EntityId, engine::SeatState, macro_store::MacroStore, profiles::Action};
+
+/// Deterministic per-player selection, input-mode, and quick-action state.
+#[derive(Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
+pub(crate) struct PlayerRuntime {
+    pub(crate) seats: Vec<SeatState>,
+    pub(crate) macro_store: MacroStore,
+    pub(crate) user_locked: bool,
+    pub(crate) qa_recording_for: Vec<EntityId>,
+    pub(crate) qa_recording_slot: u8,
+    pub(crate) action_before_recording_macro: Action,
+}
+
+impl PlayerRuntime {
+    pub(crate) fn new() -> Self {
+        Self {
+            seats: vec![SeatState::default()],
+            macro_store: MacroStore::new(),
+            user_locked: false,
+            qa_recording_for: Vec::new(),
+            qa_recording_slot: 0,
+            action_before_recording_macro: Action::NoAction,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_players_has_canonical_seat_zero_and_no_recording() {
+        let players = PlayerRuntime::new();
+
+        assert_eq!(players.seats.len(), 1);
+        assert!(players.seats[0].selection.is_empty());
+        assert!(!players.user_locked);
+        assert!(players.qa_recording_for.is_empty());
+        assert_eq!(players.qa_recording_slot, 0);
+        assert_eq!(players.action_before_recording_macro, Action::NoAction);
+    }
+}

@@ -12,7 +12,7 @@ impl EngineInner {
     /// Called by level loading after the `.map` picture is decoded so
     /// scroll/zoom clamps against the true map extents.
     pub(crate) fn set_level_size(&mut self, width: f32, height: f32) {
-        self.cutscene_camera.level_size = MapSize::new(width, height);
+        self.feedback.cutscene_camera.level_size = MapSize::new(width, height);
     }
 
     pub(super) fn director_camera_view_size() -> ScreenSize {
@@ -46,19 +46,19 @@ impl EngineInner {
         // ── Locker follow-cam ────────────────────────────────────
         // If following an NPC with locker, cancel if it dies or is
         // knocked unconscious.
-        if let Some(follow_id) = self.seats[0].follow_element
-            && self.seats[0].locker_active
+        if let Some(follow_id) = self.players.seats[0].follow_element
+            && self.players.seats[0].locker_active
         {
             let should_cancel = self.get_entity(follow_id).is_none_or(|e| {
                 e.is_npc() && (e.is_dead() || e.human_data().is_some_and(|h| h.unconscious))
             });
             if should_cancel {
-                self.seats[0].follow_element = None;
-                self.seats[0].locker_active = false;
+                self.players.seats[0].follow_element = None;
+                self.players.seats[0].locker_active = false;
             }
         }
-        if let Some(follow_id) = self.seats[0].follow_element
-            && self.seats[0].locker_active
+        if let Some(follow_id) = self.players.seats[0].follow_element
+            && self.players.seats[0].locker_active
         {
             // Each frame we compute the displacement that would
             // re-anchor the followed actor at the saved screen
@@ -81,11 +81,11 @@ impl EngineInner {
                 (pos, inc, inc_ok, avg)
             };
 
-            let view = self.cutscene_camera.view_position;
-            let zoom = self.cutscene_camera.zoom_factor;
-            let saved = self.cutscene_camera.position_saved;
+            let view = self.feedback.cutscene_camera.view_position;
+            let zoom = self.feedback.cutscene_camera.zoom_factor;
+            let saved = self.feedback.cutscene_camera.position_saved;
 
-            if self.cutscene_camera.displacement_counter == 0 {
+            if self.feedback.cutscene_camera.displacement_counter == 0 {
                 // `displacement = (pos - view) * zoom - saved`
                 let mut displacement = MapVec::new(
                     (pos_map.x - view.x) * zoom - saved.x,
@@ -104,7 +104,7 @@ impl EngineInner {
                     let scale = 1.0 / (2.0 * RH_CAMERA_COUNTER as f32);
                     displacement.x *= scale;
                     displacement.y *= scale;
-                    self.cutscene_camera.displacement_counter = RH_CAMERA_COUNTER;
+                    self.feedback.cutscene_camera.displacement_counter = RH_CAMERA_COUNTER;
                 } else {
                     // If the character's own motion already reduces
                     // the gap on an axis, zero the camera's
@@ -117,7 +117,7 @@ impl EngineInner {
                     }
 
                     if displacement.x.abs() >= 1.0 || displacement.y.abs() >= 1.0 {
-                        self.cutscene_camera.displacement_counter = RH_CAMERA_COUNTER;
+                        self.feedback.cutscene_camera.displacement_counter = RH_CAMERA_COUNTER;
 
                         if displacement.x.abs() > 1.0 {
                             displacement.x = average_speed * displacement.x / displacement.x.abs();
@@ -130,16 +130,16 @@ impl EngineInner {
 
                 displacement.x = displacement.x.floor();
                 displacement.y = displacement.y.floor();
-                self.cutscene_camera.displacement = displacement;
+                self.feedback.cutscene_camera.displacement = displacement;
             }
 
-            if self.cutscene_camera.displacement_counter > 0 {
+            if self.feedback.cutscene_camera.displacement_counter > 0 {
                 // Apply displacement, but snap any axis where the
                 // character is already at the saved anchor.
                 let point_pos =
                     ScreenPoint::new((pos_map.x - view.x) * zoom, (pos_map.y - view.y) * zoom);
-                self.cutscene_camera.displacement_counter -= 1;
-                let mut scroll = self.cutscene_camera.displacement;
+                self.feedback.cutscene_camera.displacement_counter -= 1;
+                let mut scroll = self.feedback.cutscene_camera.displacement;
                 if saved.x.floor() == point_pos.x.floor() {
                     scroll.x = 0.0;
                 }
@@ -162,42 +162,50 @@ impl EngineInner {
         }
         // ── Desired zoom factor dispatch ─────────────────────────
         // If a script requested a specific zoom factor, dispatch zoom messages.
-        if self.cutscene_camera.desired_zoom_factor > 0.0
-            && (self.cutscene_camera.desired_zoom_factor - self.cutscene_camera.zoom_factor).abs()
+        if self.feedback.cutscene_camera.desired_zoom_factor > 0.0
+            && (self.feedback.cutscene_camera.desired_zoom_factor
+                - self.feedback.cutscene_camera.zoom_factor)
+                .abs()
                 < f32::EPSILON
         {
-            self.cutscene_camera.desired_zoom_factor = -1.0;
+            self.feedback.cutscene_camera.desired_zoom_factor = -1.0;
             // Zoom reached target, release the latched ZoomLevel
             // sequence element.
-            if let Some(r) = self.cutscene_camera.sequence_element.take() {
+            if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
                 self.sequence_manager
                     .element_terminated(r.sequence_id, r.element_index);
             }
         }
 
-        if self.cutscene_camera.desired_zoom_factor > 0.0
-            && (self.cutscene_camera.desired_zoom_factor - self.cutscene_camera.zoom_factor).abs()
+        if self.feedback.cutscene_camera.desired_zoom_factor > 0.0
+            && (self.feedback.cutscene_camera.desired_zoom_factor
+                - self.feedback.cutscene_camera.zoom_factor)
+                .abs()
                 > f32::EPSILON
-            && !self.cutscene_camera.zoom_init_done
+            && !self.feedback.cutscene_camera.zoom_init_done
         {
-            if self.cutscene_camera.desired_zoom_factor > self.cutscene_camera.zoom_factor {
+            if self.feedback.cutscene_camera.desired_zoom_factor
+                > self.feedback.cutscene_camera.zoom_factor
+            {
                 if self.is_zoom_up_possible() {
-                    self.cutscene_camera.mechanized_zoom = true;
+                    self.feedback.cutscene_camera.mechanized_zoom = true;
                     self.messenger.send(Message::with_value(
                         MessageType::Simple(SimpleMessage::ZoomUp),
                         1,
                     ));
                 } else {
-                    self.cutscene_camera.desired_zoom_factor = self.cutscene_camera.zoom_factor;
+                    self.feedback.cutscene_camera.desired_zoom_factor =
+                        self.feedback.cutscene_camera.zoom_factor;
                 }
             } else if self.is_zoom_down_possible() {
-                self.cutscene_camera.mechanized_zoom = true;
+                self.feedback.cutscene_camera.mechanized_zoom = true;
                 self.messenger.send(Message::with_value(
                     MessageType::Simple(SimpleMessage::ZoomDown),
                     1,
                 ));
             } else {
-                self.cutscene_camera.desired_zoom_factor = self.cutscene_camera.zoom_factor;
+                self.feedback.cutscene_camera.desired_zoom_factor =
+                    self.feedback.cutscene_camera.zoom_factor;
             }
         }
 
@@ -214,20 +222,24 @@ impl EngineInner {
         }
 
         // ── Camera slide animation ───────────────────────────────
-        if self.cutscene_camera.is_sliding() {
-            if self.cutscene_camera.camera_slide != self.cutscene_camera.view_position {
+        if self.feedback.cutscene_camera.is_sliding() {
+            if self.feedback.cutscene_camera.camera_slide
+                != self.feedback.cutscene_camera.view_position
+            {
                 let approach = MapVec::new(
-                    self.cutscene_camera.camera_slide.x - self.cutscene_camera.view_position.x,
-                    self.cutscene_camera.camera_slide.y - self.cutscene_camera.view_position.y,
+                    self.feedback.cutscene_camera.camera_slide.x
+                        - self.feedback.cutscene_camera.view_position.x,
+                    self.feedback.cutscene_camera.camera_slide.y
+                        - self.feedback.cutscene_camera.view_position.y,
                 );
                 let approach_sq = approach.x * approach.x + approach.y * approach.y;
                 let approach_len = approach_sq.sqrt();
 
                 // Compute scroll vector along approach direction
-                let slide_speed = if self.cutscene_camera.fixed_camera_speed == 0 {
-                    self.speed
+                let slide_speed = if self.feedback.cutscene_camera.fixed_camera_speed == 0 {
+                    self.control.speed
                 } else {
-                    self.cutscene_camera.fixed_camera_speed as f32
+                    self.feedback.cutscene_camera.fixed_camera_speed as f32
                 };
                 let mut scroll = if approach_len > 0.0 {
                     MapVec::new(
@@ -255,25 +267,25 @@ impl EngineInner {
 
                 if !valid {
                     // Can't scroll further — cancel slide
-                    self.cutscene_camera.stop_slide();
-                    self.speed = 1.0;
-                    self.pending_side_effects.invalidate_background = true;
+                    self.feedback.cutscene_camera.stop_slide();
+                    self.control.speed = 1.0;
+                    self.feedback.pending_side_effects.invalidate_background = true;
                     display.background_transform.scrolling_vector = MapVec::ZERO;
                     // Slide clipped at level edge, release the latched
                     // CameraGoto element.
-                    if let Some(r) = self.cutscene_camera.sequence_element.take() {
+                    if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
                         self.sequence_manager
                             .element_terminated(r.sequence_id, r.element_index);
                     }
                 } else {
                     // Accelerate slide speed
-                    if self.speed == 1.0 {
-                        self.speed_int = 0;
+                    if self.control.speed == 1.0 {
+                        self.control.speed_int = 0;
                     } else {
-                        self.speed_int = (self.speed_int + 1).min(31);
+                        self.control.speed_int = (self.control.speed_int + 1).min(31);
                     }
-                    self.speed =
-                        display.background_transform.y_scrolling_values[self.speed_int as usize];
+                    self.control.speed = display.background_transform.y_scrolling_values
+                        [self.control.speed_int as usize];
 
                     if display.background_transform.scrolling_vector.x != 0.0
                         || display.background_transform.scrolling_vector.y != 0.0
@@ -283,13 +295,13 @@ impl EngineInner {
                 }
             } else {
                 // Already at target
-                self.cutscene_camera.stop_slide();
-                self.speed = 1.0;
-                self.pending_side_effects.invalidate_background = true;
+                self.feedback.cutscene_camera.stop_slide();
+                self.control.speed = 1.0;
+                self.feedback.pending_side_effects.invalidate_background = true;
                 display.background_transform.scrolling_vector = MapVec::ZERO;
                 // Slide reached target, release the latched
                 // CameraGoto element.
-                if let Some(r) = self.cutscene_camera.sequence_element.take() {
+                if let Some(r) = self.feedback.cutscene_camera.sequence_element.take() {
                     self.sequence_manager
                         .element_terminated(r.sequence_id, r.element_index);
                 }
@@ -301,7 +313,7 @@ impl EngineInner {
     /// Matches the scroll deceleration logic at the top of Draw().
     pub(super) fn decelerate_scrolling(&mut self, display: &mut HostDisplayState) {
         let already = display.frame_scrolled;
-        let zoom = self.cutscene_camera.zoom_factor;
+        let zoom = self.feedback.cutscene_camera.zoom_factor;
         let mut scroll_requested = false;
         let bg = &mut display.background_transform;
 
@@ -341,14 +353,14 @@ impl EngineInner {
     pub(super) fn perform_check_scroll(&mut self, display: &mut HostDisplayState) -> bool {
         let mut valid = true;
 
-        let view_x = self.cutscene_camera.view_position.x;
-        let view_y = self.cutscene_camera.view_position.y;
+        let view_x = self.feedback.cutscene_camera.view_position.x;
+        let view_y = self.feedback.cutscene_camera.view_position.y;
         let screen = Self::director_camera_view_size();
         let screen_x = screen.x;
         let screen_y = screen.y;
-        let level_x = self.cutscene_camera.level_size.x;
-        let level_y = self.cutscene_camera.level_size.y;
-        let zoom = self.cutscene_camera.zoom_factor;
+        let level_x = self.feedback.cutscene_camera.level_size.x;
+        let level_y = self.feedback.cutscene_camera.level_size.y;
+        let zoom = self.feedback.cutscene_camera.zoom_factor;
 
         let bg = &mut display.background_transform;
 
@@ -391,17 +403,19 @@ impl EngineInner {
     /// bottom UI panel).
     pub(super) fn update_sound_listener_position(&mut self) {
         let listen_point = MapPoint::new(
-            self.cutscene_camera.view_position.x
-                + Self::director_camera_view_size().x * 0.5 / self.cutscene_camera.zoom_factor,
-            self.cutscene_camera.view_position.y
+            self.feedback.cutscene_camera.view_position.x
+                + Self::director_camera_view_size().x * 0.5
+                    / self.feedback.cutscene_camera.zoom_factor,
+            self.feedback.cutscene_camera.view_position.y
                 + (Self::director_camera_view_size().y - PANNEL_HEIGHT) * 0.5
-                    / self.cutscene_camera.zoom_factor,
+                    / self.feedback.cutscene_camera.zoom_factor,
         );
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::SetListenPoint {
                 position: listen_point,
-                zoom: self.cutscene_camera.zoom_factor,
+                zoom: self.feedback.cutscene_camera.zoom_factor,
             });
     }
 
@@ -409,8 +423,8 @@ impl EngineInner {
 
     /// Set the shared script/director camera view position (with clamping).
     pub(crate) fn set_view_position_for_seat(&mut self, _seat: usize, pos: MapPoint) {
-        self.cutscene_camera.view_position = pos;
-        self.cutscene_camera.clip_view();
+        self.feedback.cutscene_camera.view_position = pos;
+        self.feedback.cutscene_camera.clip_view();
     }
 
     /// Given a raw script point in map coordinates, compute the camera
@@ -434,8 +448,8 @@ impl EngineInner {
     /// stored raw `camera_wanted` script point.
     pub(crate) fn check_location_is_valid_for_camera(&mut self, point: MapPoint) -> MapPoint {
         let screen = Self::director_camera_view_size();
-        let half_w = screen.x / (2.0 * self.cutscene_camera.zoom_factor);
-        let half_h = screen.y / (2.0 * self.cutscene_camera.zoom_factor);
+        let half_w = screen.x / (2.0 * self.feedback.cutscene_camera.zoom_factor);
+        let half_h = screen.y / (2.0 * self.feedback.cutscene_camera.zoom_factor);
 
         // Truncate toward zero (not floor).
         let mut x = ((point.x - half_w) as i32) as f32;
@@ -453,25 +467,25 @@ impl EngineInner {
             clipped_v = true;
         }
 
-        let view_w = screen.x / self.cutscene_camera.zoom_factor;
-        if x + view_w > self.cutscene_camera.level_size.x {
+        let view_w = screen.x / self.feedback.cutscene_camera.zoom_factor;
+        if x + view_w > self.feedback.cutscene_camera.level_size.x {
             if clipped_h {
-                self.cutscene_camera.zoom_factor = 1.0;
+                self.feedback.cutscene_camera.zoom_factor = 1.0;
                 return MapPoint::ZERO;
             }
-            x = self.cutscene_camera.level_size.x - view_w;
+            x = self.feedback.cutscene_camera.level_size.x - view_w;
         }
 
-        let view_h = (screen.y - PANNEL_HEIGHT) / self.cutscene_camera.zoom_factor;
-        if y + view_h > self.cutscene_camera.level_size.y {
+        let view_h = (screen.y - PANNEL_HEIGHT) / self.feedback.cutscene_camera.zoom_factor;
+        if y + view_h > self.feedback.cutscene_camera.level_size.y {
             if clipped_v {
-                self.cutscene_camera.zoom_factor = 1.0;
+                self.feedback.cutscene_camera.zoom_factor = 1.0;
                 return MapPoint::ZERO;
             }
-            y = self.cutscene_camera.level_size.y - view_h;
+            y = self.feedback.cutscene_camera.level_size.y - view_h;
         }
 
-        if self.cutscene_camera.zoom_factor == 0.5 {
+        if self.feedback.cutscene_camera.zoom_factor == 0.5 {
             if (x as i32) & 1 != 0 {
                 x -= 1.0;
             }
@@ -499,16 +513,16 @@ impl EngineInner {
     /// them.
     pub(crate) fn center_on_point(&mut self, seat: usize, point: MapPoint) {
         let half_screen = MapVec::new(
-            Self::director_camera_view_size().x / (2.0 * self.cutscene_camera.zoom_factor),
-            Self::director_camera_view_size().y / (2.0 * self.cutscene_camera.zoom_factor),
+            Self::director_camera_view_size().x / (2.0 * self.feedback.cutscene_camera.zoom_factor),
+            Self::director_camera_view_size().y / (2.0 * self.feedback.cutscene_camera.zoom_factor),
         );
         let target = MapPoint::new(
             (point.x - half_screen.x).floor(),
             (point.y - half_screen.y).floor(),
         );
         self.set_view_position_for_seat(seat, target);
-        self.pending_side_effects.invalidate_background = true;
-        self.pending_side_effects.cancel_multi_selection = true;
+        self.feedback.pending_side_effects.invalidate_background = true;
+        self.feedback.pending_side_effects.cancel_multi_selection = true;
     }
 
     // ─── Zoom ────────────────────────────────────────────────────
@@ -523,14 +537,18 @@ impl EngineInner {
 
     /// Per-seat variant of [`Self::is_zoom_possible`].
     pub fn is_zoom_possible_for_seat(&self, display: &HostDisplayState, _seat: usize) -> bool {
-        !self.cutscene_camera.zoom_init_done
+        !self.feedback.cutscene_camera.zoom_init_done
             && display.display_op != DisplayOpCode::InZoom
             && !display.background_transform.zoom_to_up
             && !display.background_transform.zoom_to_down
     }
 
     fn is_camera_zoom_possible_for_seat(&self, seat: usize) -> bool {
-        let display = self.cutscene_camera.display.to_host_display_state();
+        let display = self
+            .feedback
+            .cutscene_camera
+            .display
+            .to_host_display_state();
         self.is_zoom_possible_for_seat(&display, seat)
     }
 
@@ -544,13 +562,18 @@ impl EngineInner {
     /// by HUD code to pin the zoom+ widget to selected for the duration
     /// of the transition.
     pub fn is_zoom_up_in_progress(&self, _display: &HostDisplayState) -> bool {
-        self.cutscene_camera.display.background_transform.zoom_to_up
+        self.feedback
+            .cutscene_camera
+            .display
+            .background_transform
+            .zoom_to_up
     }
 
     /// Companion to [`Self::is_zoom_up_in_progress`] for zoom-out
     /// transitions.
     pub fn is_zoom_down_in_progress(&self, _display: &HostDisplayState) -> bool {
-        self.cutscene_camera
+        self.feedback
+            .cutscene_camera
             .display
             .background_transform
             .zoom_to_down
@@ -563,7 +586,7 @@ impl EngineInner {
 
     /// Per-seat variant of [`Self::is_zoom_up_possible`].
     pub fn is_zoom_up_possible_for_seat(&self, _seat: usize) -> bool {
-        self.cutscene_camera.zoom_factor < 2.0
+        self.feedback.cutscene_camera.zoom_factor < 2.0
     }
 
     /// Whether zooming out (0.5x) is possible for the host seat.
@@ -573,13 +596,13 @@ impl EngineInner {
 
     /// Per-seat variant of [`Self::is_zoom_down_possible`].
     pub fn is_zoom_down_possible_for_seat(&self, _seat: usize) -> bool {
-        if self.cutscene_camera.zoom_factor <= 0.5 {
+        if self.feedback.cutscene_camera.zoom_factor <= 0.5 {
             return false;
         }
-        let factor = 2.0 / self.cutscene_camera.zoom_factor;
+        let factor = 2.0 / self.feedback.cutscene_camera.zoom_factor;
         let screen = Self::director_camera_view_size();
-        screen.x * factor <= self.cutscene_camera.level_size.x
-            && (screen.y - PANNEL_HEIGHT) * factor <= self.cutscene_camera.level_size.y
+        screen.x * factor <= self.feedback.cutscene_camera.level_size.x
+            && (screen.y - PANNEL_HEIGHT) * factor <= self.feedback.cutscene_camera.level_size.y
     }
 
     /// Execute one step of the zoom animation and finalize when complete.
@@ -593,12 +616,12 @@ impl EngineInner {
             let zoom_up = self.is_zoom_up_possible_for_seat(0) as u32;
             let zoom_down = self.is_zoom_down_possible_for_seat(0) as u32;
 
-            self.cutscene_camera.zoom_factor = display.background_transform.zoom_to;
+            self.feedback.cutscene_camera.zoom_factor = display.background_transform.zoom_to;
             let target = display.background_transform.view_to;
             self.set_view_position_for_seat(0, target);
 
             display.display_op = DisplayOpCode::NoBackgroundMove;
-            self.cutscene_camera.zoom_init_done = false;
+            self.feedback.cutscene_camera.zoom_init_done = false;
 
             if display.background_transform.zoom_to_up {
                 self.messenger.send(Message::with_value(
@@ -612,11 +635,13 @@ impl EngineInner {
                     (zoom_up << 16) | zoom_down,
                 ));
                 display.background_transform.zoom_to_down = false;
-                self.pending_side_effects.invalidate_background = true;
+                self.feedback.pending_side_effects.invalidate_background = true;
             }
 
-            self.cutscene_camera.old_view_position = self.cutscene_camera.view_position;
-            self.cutscene_camera.old_zoom_factor = self.cutscene_camera.zoom_factor;
+            self.feedback.cutscene_camera.old_view_position =
+                self.feedback.cutscene_camera.view_position;
+            self.feedback.cutscene_camera.old_zoom_factor =
+                self.feedback.cutscene_camera.zoom_factor;
         } else {
             // Interpolate zoom / view between the endpoints captured in
             // `InitZoom`.  The Rust renderer re-composes live each
@@ -632,7 +657,7 @@ impl EngineInner {
             // Linear interpolation in zoom-factor space is uniform in
             // apparent size per step; indistinguishable from a stretch-
             // blit ramp at 8 frames.
-            self.cutscene_camera.zoom_factor = zoom_from + (zoom_to - zoom_from) * t;
+            self.feedback.cutscene_camera.zoom_factor = zoom_from + (zoom_to - zoom_from) * t;
             let interp = MapPoint::new(
                 view_from.x + (view_to.x - view_from.x) * t,
                 view_from.y + (view_to.y - view_from.y) * t,
@@ -664,36 +689,39 @@ impl EngineInner {
         // originally-requested raw script point — possible only because
         // `camera_wanted` is stored as the raw point (not the clipped
         // top-left).
-        if self.cutscene_camera.is_sliding() {
-            let wanted = self.cutscene_camera.camera_wanted;
-            self.cutscene_camera.camera_slide = self.check_location_is_valid_for_camera(wanted);
+        if self.feedback.cutscene_camera.is_sliding() {
+            let wanted = self.feedback.cutscene_camera.camera_wanted;
+            self.feedback.cutscene_camera.camera_slide =
+                self.check_location_is_valid_for_camera(wanted);
         }
 
         // Abort any in-progress zoom
         if display.display_op == DisplayOpCode::InZoom {
-            self.cutscene_camera.zoom_init_done = false;
+            self.feedback.cutscene_camera.zoom_init_done = false;
             // Finalize the zoom abruptly.
             if display.background_transform.zoom_to_up {
                 display.background_transform.zoom_to_up = false;
             } else {
                 display.background_transform.zoom_to_down = false;
             }
-            self.cutscene_camera.old_view_position = self.cutscene_camera.view_position;
-            self.cutscene_camera.old_zoom_factor = self.cutscene_camera.zoom_factor;
+            self.feedback.cutscene_camera.old_view_position =
+                self.feedback.cutscene_camera.view_position;
+            self.feedback.cutscene_camera.old_zoom_factor =
+                self.feedback.cutscene_camera.zoom_factor;
         }
 
-        self.pending_side_effects.invalidate_background = true;
+        self.feedback.pending_side_effects.invalidate_background = true;
 
         // If at 0.5x zoom and can't zoom down anymore, snap to 1x
-        if self.cutscene_camera.zoom_factor == 0.5 && !self.is_zoom_down_possible() {
-            self.cutscene_camera.zoom_factor = 1.0;
+        if self.feedback.cutscene_camera.zoom_factor == 0.5 && !self.is_zoom_down_possible() {
+            self.feedback.cutscene_camera.zoom_factor = 1.0;
             display.background_transform.current_zoom_level += 1;
         }
 
         // Re-center and clamp camera
         let center = MapPoint::new(
-            self.cutscene_camera.view_position.x + new_width * 0.5,
-            self.cutscene_camera.view_position.y + new_height * 0.5,
+            self.feedback.cutscene_camera.view_position.x + new_width * 0.5,
+            self.feedback.cutscene_camera.view_position.y + new_height * 0.5,
         );
         self.center_on_point(0, center);
     }

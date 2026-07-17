@@ -1797,7 +1797,8 @@ impl EngineInner {
                         crate::ai::AiState::Attacking,
                         crate::ai::Substate::AttackingSwordfightParade,
                     );
-                    ai.base.launch_timer(strike_frames, self.frame_counter);
+                    ai.base
+                        .launch_timer(strike_frames, self.control.frame_counter);
                 }
 
                 tracing::debug!(

@@ -1540,7 +1540,7 @@ impl EngineInner {
         if value == 0 {
             return;
         }
-        self.titbit_manager.add_titbit(
+        self.feedback.titbit_manager.add_titbit(
             pos,
             layer,
             crate::titbit::TitbitKind::Counter,
@@ -1922,7 +1922,8 @@ impl EngineInner {
                     && let Some(entity) = self.get_entity(holder)
                 {
                     let p = entity.element_data().position_map();
-                    self.pending_side_effects
+                    self.feedback
+                        .pending_side_effects
                         .sounds
                         .push(super::SoundCommand::Fx {
                             fx_id,
@@ -1975,7 +1976,8 @@ impl EngineInner {
                     "FX target activated by projectile"
                 );
                 if let Some(fx_id) = result.impact_fx {
-                    self.pending_side_effects
+                    self.feedback
+                        .pending_side_effects
                         .sounds
                         .push(super::SoundCommand::Fx {
                             fx_id,
@@ -2159,7 +2161,8 @@ impl EngineInner {
             // plays only on shield deflection (handled above), so
             // non-shield arrow impacts stay silent.
             if let Some(fx_id) = result.impact_fx {
-                self.pending_side_effects
+                self.feedback
+                    .pending_side_effects
                     .sounds
                     .push(super::SoundCommand::Fx {
                         fx_id,
@@ -2409,7 +2412,7 @@ impl EngineInner {
 
         let tick_easy = crate::player_profile::DifficultyLevel::current()
             == crate::player_profile::DifficultyLevel::Easy
-            && self.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
+            && self.control.frame_counter.is_multiple_of(TIME_AUTO_HEAL);
 
         let (lp, immortal, swordfighting, in_coma) = {
             let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
@@ -2586,7 +2589,7 @@ impl EngineInner {
 
         // Plouf titbit at the landing position.
         use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
-        self.titbit_manager.add_titbit(
+        self.feedback.titbit_manager.add_titbit(
             crate::coordinates::WorldPoint3D {
                 x: position.x,
                 y: position.y,
@@ -2605,7 +2608,8 @@ impl EngineInner {
         );
 
         // Plouf impact sound (FX 470).
-        self.pending_side_effects
+        self.feedback
+            .pending_side_effects
             .sounds
             .push(super::SoundCommand::Fx {
                 fx_id: 470,

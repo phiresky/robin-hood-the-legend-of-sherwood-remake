@@ -143,17 +143,17 @@ impl EngineInner {
             return;
         }
         if !multi_select {
-            self.seats[seat].selection.clear();
+            self.players.seats[seat].selection.clear();
         }
-        if !self.seats[seat].selection.contains(&id) {
+        if !self.players.seats[seat].selection.contains(&id) {
             let is_robin = matches!(
                 self.get_entity(id),
                 Some(Entity::Pc(pc)) if pc.pc.robin,
             );
             if is_robin {
-                self.seats[seat].selection.insert(0, id);
+                self.players.seats[seat].selection.insert(0, id);
             } else {
-                self.seats[seat].selection.push(id);
+                self.players.seats[seat].selection.push(id);
             }
         }
         // Sherwood-only: clear the `interface_hidden` flag on the selected PC
@@ -176,8 +176,8 @@ impl EngineInner {
     /// has no consumer here — the PC's stored `current_action` survives
     /// selection changes directly — so it is elided.
     fn apply_post_select_action_fanout(&mut self, seat: usize) {
-        if self.seats[seat].selection.len() > 1 {
-            let ids = self.seats[seat].selection.clone();
+        if self.players.seats[seat].selection.len() > 1 {
+            let ids = self.players.seats[seat].selection.clone();
             for id in ids {
                 self.unselect_action(id);
             }
@@ -186,17 +186,21 @@ impl EngineInner {
 
     /// Toggle a PC in/out of the current selection (Ctrl+click).
     pub(crate) fn toggle_pc_selection(&mut self, assets: &LevelAssets, seat: usize, id: EntityId) {
-        if let Some(pos) = self.seats[seat].selection.iter().position(|&x| x == id) {
-            self.seats[seat].selection.remove(pos);
+        if let Some(pos) = self.players.seats[seat]
+            .selection
+            .iter()
+            .position(|&x| x == id)
+        {
+            self.players.seats[seat].selection.remove(pos);
         } else if self.is_pc_selectable(assets, id) {
-            self.seats[seat].selection.push(id);
+            self.players.seats[seat].selection.push(id);
         }
     }
 
     /// Select all playable PCs. Robin is placed at the head of the list;
     /// everyone else preserves `pc_ids` order.
     pub(crate) fn select_all_pcs(&mut self, assets: &LevelAssets, seat: usize) {
-        self.seats[seat].selection.clear();
+        self.players.seats[seat].selection.clear();
         let pc_ids: Vec<EntityId> = self.pc_ids.clone();
         for &pc_id in &pc_ids {
             if !self.is_pc_selectable(assets, pc_id) {
@@ -207,15 +211,15 @@ impl EngineInner {
                 Some(Entity::Pc(pc)) if pc.pc.robin,
             );
             if is_robin {
-                self.seats[seat].selection.insert(0, pc_id);
+                self.players.seats[seat].selection.insert(0, pc_id);
             } else {
-                self.seats[seat].selection.push(pc_id);
+                self.players.seats[seat].selection.push(pc_id);
             }
         }
         // Sherwood: clear the per-PC `interface_hidden` flag on every
         // selectable PC so each PC's HQ interface re-shows.
         if self.is_sherwood(&assets.profile_manager) {
-            let selected = self.seats[seat].selection.clone();
+            let selected = self.players.seats[seat].selection.clone();
             for id in selected {
                 if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
                     pc.pc.interface_hidden = false;
@@ -227,7 +231,7 @@ impl EngineInner {
 
     /// Clear the selection.
     pub(crate) fn unselect_all_pcs(&mut self, seat: usize) {
-        self.seats[seat].selection.clear();
+        self.players.seats[seat].selection.clear();
     }
 
     /// Remove a single PC from the selection.
@@ -236,7 +240,7 @@ impl EngineInner {
     /// with a non-zero value (dying / downed PCs kick themselves out of the
     /// selection), and from `PcMessage::DisableCharacter`.
     pub(crate) fn unselect_single_pc(&mut self, id: EntityId) {
-        self.seats[0].selection.retain(|&x| x != id);
+        self.players.seats[0].selection.retain(|&x| x != id);
     }
 
     /// Save the current action on each selected PC.
@@ -244,7 +248,7 @@ impl EngineInner {
     /// The ctrl key is the "move during action" modifier; saving lets
     /// ctrl-release restore the action that was active when ctrl was pressed.
     pub(crate) fn save_action_for_selected_pcs(&mut self, seat: usize) {
-        let ids = self.seats[seat].selection.clone();
+        let ids = self.players.seats[seat].selection.clone();
         for id in ids {
             if let Some(Entity::Pc(pc)) = self.get_entity_mut(id) {
                 pc.pc.saved_action = pc.pc.current_action;
@@ -262,7 +266,7 @@ impl EngineInner {
         disable: bool,
     ) {
         let targets: Vec<EntityId> = match target_pc {
-            None => self.seats[seat].selection.clone(),
+            None => self.players.seats[seat].selection.clone(),
             Some(id) => vec![id],
         };
         for id in targets {
@@ -285,13 +289,13 @@ impl EngineInner {
     /// slot. No-op if the PC has no titbit for that slot or the PC isn't
     /// known.
     pub(crate) fn set_blinking_for_slot(&mut self, pc_id: EntityId, slot: usize) {
-        let Some(state) = self.macro_store.get(pc_id) else {
+        let Some(state) = self.players.macro_store.get(pc_id) else {
             return;
         };
         let Some(titbit_id) = state.get_slot_titbit(slot) else {
             return;
         };
-        self.titbit_manager.set_blinking(titbit_id, true);
+        self.feedback.titbit_manager.set_blinking(titbit_id, true);
     }
 
     /// Auto-select the highest-priority playable PC and center the camera on
@@ -501,7 +505,7 @@ impl EngineInner {
             return true;
         };
         let team_profiles = campaign.mission_team_profile_indices();
-        for &id in &self.seats[0].selection {
+        for &id in &self.players.seats[0].selection {
             let profile_idx = match self.get_entity(id).and_then(|e| e.pc_data()) {
                 Some(pc) => pc.profile_index,
                 // No PC data for a selected id is an inconsistent
@@ -536,7 +540,7 @@ impl EngineInner {
         pc_id: EntityId,
         action: Action,
     ) {
-        if !self.seats[seat].selection.contains(&pc_id) {
+        if !self.players.seats[seat].selection.contains(&pc_id) {
             // "Not-selected" branch — only set the current action on the
             // single PC, no cleanup of the outgoing action. Don't call
             // `unselect_action` here: it would dispatch an extra
@@ -550,9 +554,9 @@ impl EngineInner {
             return;
         }
 
-        if action != Action::NoAction && self.seats[seat].selection.len() > 1 {
-            self.seats[seat].selection.clear();
-            self.seats[seat].selection.push(pc_id);
+        if action != Action::NoAction && self.players.seats[seat].selection.len() > 1 {
+            self.players.seats[seat].selection.clear();
+            self.players.seats[seat].selection.push(pc_id);
         }
 
         // Trajectory overlay cleanup on any action change from the selected
@@ -561,7 +565,9 @@ impl EngineInner {
         // doesn't linger for a frame; all four are folded into the host-side
         // preview state, which the `invalidate_trajectory_preview` side
         // effect flag wipes when consumed by `Host::apply_side_effects`.
-        self.pending_side_effects.invalidate_trajectory_preview = true;
+        self.feedback
+            .pending_side_effects
+            .invalidate_trajectory_preview = true;
 
         // Cache the recording-macro state and use it to skip the
         // unselect-action / "stop in place" / pre-action-bow side effects
@@ -571,7 +577,7 @@ impl EngineInner {
 
         // For each selected PC, call `unselect_action` if the action is
         // changing (gated on `!record_qa`), then set the new action.
-        for id in self.seats[seat].selection.clone() {
+        for id in self.players.seats[seat].selection.clone() {
             let old_action = self
                 .get_entity(id)
                 .and_then(|e| e.pc_data())
@@ -605,7 +611,7 @@ impl EngineInner {
                     | Action::Resuscitate
             );
         if should_stop_group {
-            for id in self.seats[seat].selection.clone() {
+            for id in self.players.seats[seat].selection.clone() {
                 if action == Action::Bow {
                     let state = self
                         .get_entity(id)
@@ -717,7 +723,7 @@ impl EngineInner {
         // All-selected branch.
         let mut up = false;
         let mut down = false;
-        for &pc_id in &self.seats[0].selection {
+        for &pc_id in &self.players.seats[0].selection {
             if is_climbing_or_in_building(pc_id) {
                 continue;
             }
@@ -749,7 +755,7 @@ impl EngineInner {
     /// `action != NoAction`). The macro-recording short-circuit is enforced
     /// by the sole caller `set_pc_action`.
     fn manage_input_pre_action_bow(&mut self, assets: &LevelAssets, seat: usize) {
-        let Some(&pc_id) = self.seats[seat].selection.first() else {
+        let Some(&pc_id) = self.players.seats[seat].selection.first() else {
             return;
         };
         let action_state = match self.get_entity(pc_id).and_then(|e| e.actor_data()) {
@@ -1009,7 +1015,7 @@ impl EngineInner {
         );
 
         if !shift_held {
-            self.seats[seat].selection.clear();
+            self.players.seats[seat].selection.clear();
         }
 
         let pc_ids: Vec<EntityId> = self.pc_ids.clone();
@@ -1029,9 +1035,9 @@ impl EngineInner {
                     .bounding_box_at(entity.cxx_position_sprite());
                 if (box_multi_selection.is_intersecting(&sprite_box)
                     || box_multi_selection.contains_point(map_pt))
-                    && !self.seats[seat].selection.contains(&pc_id)
+                    && !self.players.seats[seat].selection.contains(&pc_id)
                 {
-                    self.seats[seat].selection.push(pc_id);
+                    self.players.seats[seat].selection.push(pc_id);
                     newly_selected.push(pc_id);
                 }
             }
@@ -1068,7 +1074,7 @@ impl EngineInner {
 
         let pc_ids: Vec<EntityId> = self.pc_ids.clone();
         for &pc_id in &pc_ids {
-            if !self.seats[seat].selection.contains(&pc_id) {
+            if !self.players.seats[seat].selection.contains(&pc_id) {
                 continue;
             }
             let Some(entity) = self.get_entity(pc_id) else {
@@ -1087,9 +1093,12 @@ impl EngineInner {
                 .bounding_box_at(entity.cxx_position_sprite());
             if (box_multi_selection.is_intersecting(&sprite_box)
                 || box_multi_selection.contains_point(map_pt))
-                && let Some(idx) = self.seats[seat].selection.iter().position(|&x| x == pc_id)
+                && let Some(idx) = self.players.seats[seat]
+                    .selection
+                    .iter()
+                    .position(|&x| x == pc_id)
             {
-                self.seats[seat].selection.remove(idx);
+                self.players.seats[seat].selection.remove(idx);
             }
         }
 
@@ -1119,10 +1128,11 @@ impl EngineInner {
     /// Assign the current selection to a quick-select group slot (0-8).
     pub(crate) fn assign_quick_group(&mut self, seat: usize, slot: usize) {
         if slot < 9 {
-            self.seats[seat].quick_select_groups[slot] = self.seats[seat].selection.clone();
+            self.players.seats[seat].quick_select_groups[slot] =
+                self.players.seats[seat].selection.clone();
             tracing::info!(
                 "Assigned {} PCs to group {} (seat {})",
-                self.seats[seat].selection.len(),
+                self.players.seats[seat].selection.len(),
                 slot + 1,
                 seat,
             );
@@ -1145,7 +1155,7 @@ impl EngineInner {
     pub(crate) fn refresh_pc_selection_hulk(&mut self) {
         let pc_ids: Vec<EntityId> = self.pc_ids.clone();
         for pc_id in pc_ids {
-            let is_drawn_as_selected = self.seats[0].selection.contains(&pc_id);
+            let is_drawn_as_selected = self.players.seats[0].selection.contains(&pc_id);
             let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) else {
                 continue;
             };
@@ -1220,17 +1230,17 @@ impl EngineInner {
     /// Only recalls PCs that are still alive and selectable.
     pub(crate) fn recall_quick_group(&mut self, assets: &LevelAssets, seat: usize, slot: usize) {
         if slot < 9 {
-            let group = self.seats[seat].quick_select_groups[slot].clone();
-            self.seats[seat].selection.clear();
+            let group = self.players.seats[seat].quick_select_groups[slot].clone();
+            self.players.seats[seat].selection.clear();
             for &pc_id in &group {
                 if self.is_pc_selectable(assets, pc_id) {
-                    self.seats[seat].selection.push(pc_id);
+                    self.players.seats[seat].selection.push(pc_id);
                 }
             }
             tracing::info!(
                 "Recalled group {} ({} PCs, seat {})",
                 slot + 1,
-                self.seats[seat].selection.len(),
+                self.players.seats[seat].selection.len(),
                 seat,
             );
         }
