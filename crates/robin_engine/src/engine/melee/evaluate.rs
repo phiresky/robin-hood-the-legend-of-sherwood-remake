@@ -323,7 +323,9 @@ impl EngineInner {
             (dist_map_dx * scale, dist_map_dy * scale)
         } else {
             // Degenerate: pick a random direction.
-            let sector = crate::sim_rng::u16(0..16) as i16;
+            let sector =
+                crate::sim_rng::u16(crate::sim_rng::RngSite::MeleeDegenerateDirection, 0..16)
+                    as i16;
             let (dx_s, dy_s) = crate::element::direction_vector_16(sector);
             (dx_s * geo_movement, dy_s * geo_movement)
         };
@@ -658,7 +660,10 @@ impl EngineInner {
 
             // PC-only 1-in-3 principal reshuffle when we have ≥ 2
             // opponents.  NPCs delegate this to their AI.
-            if snap.is_pc && snap.num_opponents >= 2 && crate::sim_rng::u32(0..3) == 0 {
+            if snap.is_pc
+                && snap.num_opponents >= 2
+                && crate::sim_rng::u32(crate::sim_rng::RngSite::MeleePrincipalReshuffle, 0..3) == 0
+            {
                 self.choose_principal_opponent(snap.entity_id);
                 // Principal may have changed; the rest of this
                 // iteration operates on the snapshot's old principal
@@ -680,7 +685,8 @@ impl EngineInner {
                 // maintenance.
                 self.update_swordfight_distance(assets, snap.entity_id);
                 continue;
-            } else if crate::sim_rng::u32(0..100) >= 10 {
+            } else if crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeNonMutualGate, 0..100) >= 10
+            {
                 continue;
             }
 
@@ -999,7 +1005,7 @@ impl EngineInner {
         }
 
         // `(rand() % 100) * uwOpponentsAbility <= 100 * uwFriendsAbility`
-        let roll = crate::sim_rng::u32(0..100) as u64;
+        let roll = crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeStepBack, 0..100) as u64;
         if roll * opponents_ability as u64 <= 100u64 * friends_ability as u64 {
             return None;
         }

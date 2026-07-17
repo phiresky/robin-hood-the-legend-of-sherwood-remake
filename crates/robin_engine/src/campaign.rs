@@ -220,13 +220,6 @@ fn default_production_sectors() -> Vec<crate::sector_production::SectorProductio
     .collect()
 }
 
-/// Mission-selection RNG roll. Pulls from the deterministic sim RNG so
-/// rollback / replay sees the same picks (the previous `static AtomicU32`
-/// LCG was process-wide and broke determinism).
-fn rand_usize() -> usize {
-    crate::sim_rng::u32(0..=u32::MAX) as usize
-}
-
 /// Calculate post-mission peasant recruitment count from the "warcrime" ratio.
 ///
 /// The ratio measures how many enemy soldiers the player left alive (mercy).
@@ -540,7 +533,10 @@ impl Campaign {
         } else {
             return None;
         };
-        let pick = crate::sim_rng::usize(0..pool.len());
+        let pick = crate::sim_rng::usize(
+            crate::sim_rng::RngSite::CampaignReinforcementPeasant,
+            0..pool.len(),
+        );
         Some(pool[pick])
     }
 
@@ -798,8 +794,13 @@ impl Campaign {
         profiles: &ProfileManager,
     ) -> usize {
         // 50% chance to bring back a reservist if any exist
-        if !self.reservist_indices.is_empty() && crate::sim_rng::bool() {
-            let reservist_pos = crate::sim_rng::usize(..self.reservist_indices.len());
+        if !self.reservist_indices.is_empty()
+            && crate::sim_rng::bool(crate::sim_rng::RngSite::CampaignReservistReturn)
+        {
+            let reservist_pos = crate::sim_rng::usize(
+                crate::sim_rng::RngSite::CampaignReservistReturn,
+                ..self.reservist_indices.len(),
+            );
             let char_idx = self.reservist_indices[reservist_pos];
             self.move_to_gang(char_idx, profiles);
             self.reservists_are_back = true;
@@ -818,7 +819,10 @@ impl Campaign {
 
         let chosen = match peasant_type {
             Some(t) if (t as usize) < candidates.len() => t as usize,
-            _ => crate::sim_rng::usize(..candidates.len()),
+            _ => crate::sim_rng::usize(
+                crate::sim_rng::RngSite::CampaignNewPeasantType,
+                ..candidates.len(),
+            ),
         };
 
         let profile_idx = candidates[chosen];
@@ -1913,7 +1917,10 @@ impl Campaign {
         }
 
         if fallback.len() > 1 {
-            let pick = fallback[rand_usize() % fallback.len()];
+            let pick = fallback[crate::sim_rng::usize(
+                crate::sim_rng::RngSite::CampaignForcedMission,
+                0..fallback.len(),
+            )];
             if pending {
                 self.pending_accessible_mission_indices = vec![pick];
             } else {
@@ -2054,7 +2061,8 @@ impl Campaign {
             if !m.requires_blazons(profiles) || m.age != 0 {
                 return true;
             }
-            let chance = rand_usize() % 101;
+            let chance =
+                crate::sim_rng::usize(crate::sim_rng::RngSite::CampaignAccessChance, 0..101);
             if p.access_probability < chance as u16 {
                 self.missions[idx].age = 0;
                 false
@@ -2080,7 +2088,8 @@ impl Campaign {
             if m.requires_blazons(profiles) || m.age != 0 {
                 return true;
             }
-            let chance = rand_usize() % 101;
+            let chance =
+                crate::sim_rng::usize(crate::sim_rng::RngSite::CampaignAccessChance, 0..101);
             if p.access_probability < chance as u16 {
                 self.missions[idx].age = 0;
                 false

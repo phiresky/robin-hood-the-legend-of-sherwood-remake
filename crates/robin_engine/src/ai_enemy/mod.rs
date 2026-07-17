@@ -1062,7 +1062,7 @@ impl EnemyAi {
             self.base
                 .say_with_flags(Remark::SpecialAction, crate::ai::SpeechFlags::ALWAYS);
         } else if self.base.current_remark == Remark::TheSoundOfSilence
-            && crate::sim_rng::u32(0..3) == 0
+            && crate::sim_rng::u32(crate::sim_rng::RngSite::SpecialActionRemark, 0..3) == 0
         {
             self.base.say(Remark::SpecialAction);
         }
@@ -2072,7 +2072,7 @@ impl EnemyAi {
             self.set_state(AiState::Default, Substate::DefaultOnPostLookingSidewards);
             self.base.stop_all();
 
-            let dir = match crate::sim_rng::u32(0..4) {
+            let dir = match crate::sim_rng::u32(crate::sim_rng::RngSite::DefaultPostLook, 0..4) {
                 0 => LookDirection::Left,
                 1 => LookDirection::Right,
                 2 => LookDirection::LeftRight,

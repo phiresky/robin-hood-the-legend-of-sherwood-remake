@@ -482,7 +482,7 @@ impl EngineInner {
         }
         for (id, expr) in start_eventual {
             // 50% chance.
-            if crate::sim_rng::bool() {
+            if crate::sim_rng::bool(crate::sim_rng::RngSite::HeroSpeech) {
                 self.hero_speaking(assets, id, expr);
             }
         }

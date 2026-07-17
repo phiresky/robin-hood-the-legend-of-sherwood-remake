@@ -147,7 +147,9 @@ impl EnemyAi {
 
             // If not too near, optionally scatter for forest.
             if sq_distance > 100.0 * 100.0 && is_forest {
-                sq_distance += crate::sim_rng::u32(0..10000) as f32;
+                sq_distance +=
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::ArcherForestTarget, 0..10000)
+                        as f32;
             }
 
             // Penalise targets already being shot at.

@@ -496,7 +496,9 @@ impl EngineInner {
                 && self.selected_pc_ids().contains(&atk_id);
             if !attacker_is_selected_pc {
                 let provoke_chance = (0.2 * attacker_ctx.fighting_ability as f32) as u32;
-                if crate::sim_rng::u32(0..100) < provoke_chance {
+                if crate::sim_rng::u32(crate::sim_rng::RngSite::MeleeProvoke, 0..100)
+                    < provoke_chance
+                {
                     // Launch PROVOKE on the attacker
                     self.launch_provoke(atk_id);
                 }

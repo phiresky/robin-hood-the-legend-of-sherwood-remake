@@ -61,7 +61,10 @@ A list of which additional features we have added, which ones we might still wan
   cannot be read; playback never substitutes a multiplayer or default RNG
   seed. Gameplay randomness uses one serialized Engine-owned `fastrand` stream
   instead of Original's process-global C RNG; parity is reviewed at ranges and
-  call-site order rather than bit-identical rolls.
+  call-site order rather than bit-identical rolls. The reviewed inventory and
+  host-only exceptions live in `RNG_AUDIT.md`; typed serialized-stream labels
+  and a separately typed seed-derived authoritative peasant-name generator,
+  plus a structural source test, reject unreviewed gameplay RNG additions.
 
 - **Basic multiplayer**. Native host/client networking, wasm WebSocket clients,
   seat IDs, input delay, rollback for late inputs, mission seed sync,

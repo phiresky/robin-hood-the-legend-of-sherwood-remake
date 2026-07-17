@@ -270,7 +270,9 @@ impl EnemyAi {
 
         // Decision based on odds and courage.
         let courage = self.get_courage();
-        if odds < (50 - courage as i16 / 2) && crate::sim_rng::u16(0..100) > courage {
+        if odds < (50 - courage as i16 / 2)
+            && crate::sim_rng::u16(crate::sim_rng::RngSite::BattleCourage, 0..100) > courage
+        {
             Decision::PredecisionDefensive
         } else {
             Decision::PredecisionOffensive
@@ -817,7 +819,7 @@ impl EnemyAi {
                     );
                     self.base.primary_target = target;
                     if ctx.self_action_state.is_sword() {
-                        if crate::sim_rng::u32(0..4) == 0 {
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattleProvoke, 0..4) == 0 {
                             self.base
                                 .pending_launch_commands
                                 .push(crate::element::Command::Provoke);
@@ -949,7 +951,9 @@ impl EnemyAi {
                     // position, NOT seek_position.
                     if !self.is_merry_man_forest(ctx) || !self.merry_man_forest_cassos(ctx, global)
                     {
-                        if crate::sim_rng::u32(0..2) == 0 {
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattlePanicRemark, 0..2)
+                            == 0
+                        {
                             self.base.say(Remark::Cassos);
                         } else {
                             self.base.say(Remark::Panic);
@@ -997,7 +1001,9 @@ impl EnemyAi {
                         continue;
                     } else {
                         // Random Cassos/Panic remark.
-                        if crate::sim_rng::u32(0..2) == 0 {
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattlePanicRemark, 0..2)
+                            == 0
+                        {
                             self.base.say(Remark::Cassos);
                         } else {
                             self.base.say(Remark::Panic);
@@ -1041,7 +1047,9 @@ impl EnemyAi {
                         continue;
                     } else {
                         // Random Cassos/Panic remark.
-                        if crate::sim_rng::u32(0..2) == 0 {
+                        if crate::sim_rng::u32(crate::sim_rng::RngSite::BattlePanicRemark, 0..2)
+                            == 0
+                        {
                             self.base.say(Remark::Cassos);
                         } else {
                             self.base.say(Remark::Panic);

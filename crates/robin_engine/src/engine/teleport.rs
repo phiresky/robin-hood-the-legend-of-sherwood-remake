@@ -92,8 +92,7 @@ impl EngineInner {
         }
     }
 
-    /// Jitter an element's map position by ±5 units on both axes and
-    /// randomise its facing to one of 16 directions.
+    /// Apply a pre-rolled Sherwood placement jitter and facing.
     ///
     /// The position jitter is only committed when the candidate bbox is
     /// collision-free (`is_position_authorized`) AND a straight-line
@@ -104,13 +103,7 @@ impl EngineInner {
     /// Wired in at `engine::level_loading::spawn_sherwood_pcs` — every
     /// returning PC with a Sherwood beam-me index gets a randomised
     /// position around the spawn anchor.
-    pub(crate) fn randomize_position(&mut self, eid: EntityId) {
-        const RANDOM_SHERWOOD_POSITION: f32 = 5.0;
-
-        // Snapshot what we need before the mutable borrow.  `sim_rng`
-        // must fire in a fixed sequence (two axis jitters, then the
-        // direction) so replay stays deterministic — do all draws up
-        // front rather than inside the authorization branch.
+    pub(super) fn apply_randomized_position(&mut self, eid: EntityId, roll: SherwoodPlacementRoll) {
         let (current_pos, layer, move_box) = {
             let Some(e) = self.get_entity(eid) else {
                 tracing::warn!(?eid, "randomize_position: missing entity");
@@ -123,13 +116,9 @@ impl EngineInner {
             (pos, layer, move_box)
         };
 
-        let dx = (crate::sim_rng::f32() * 2.0 - 1.0) * RANDOM_SHERWOOD_POSITION;
-        let dy = (crate::sim_rng::f32() * 2.0 - 1.0) * RANDOM_SHERWOOD_POSITION;
-        let new_direction = crate::sim_rng::u32(0..16) as i16;
-
         let new_pos = crate::coordinates::MapPoint {
-            x: current_pos.x + dx,
-            y: current_pos.y + dy,
+            x: current_pos.x + roll.dx,
+            y: current_pos.y + roll.dy,
         };
         let bbox_at_new = move_box.translated(new_pos);
 
@@ -147,6 +136,32 @@ impl EngineInner {
         }
         entity
             .element_data_mut()
-            .set_direction_instantly(new_direction);
+            .set_direction_instantly(roll.direction);
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct SherwoodPlacementRoll {
+    dx: f32,
+    dy: f32,
+    direction: i16,
+}
+
+/// Draw the returning-PC placement before the beam-me shuffle, matching
+/// `RHCampaign::CreateMissionCharacters`' call order.
+pub(super) fn roll_sherwood_placement() -> SherwoodPlacementRoll {
+    const RANDOM_SHERWOOD_POSITION: f32 = 5.0;
+    let axis = || {
+        (crate::sim_rng::c_rand_unit_inclusive(
+            crate::sim_rng::RngSite::SherwoodReturningPcPlacement,
+        ) * 2.0
+            - 1.0)
+            * RANDOM_SHERWOOD_POSITION
+    };
+    SherwoodPlacementRoll {
+        dx: axis(),
+        dy: axis(),
+        direction: crate::sim_rng::u32(crate::sim_rng::RngSite::SherwoodReturningPcPlacement, 0..16)
+            as i16,
     }
 }

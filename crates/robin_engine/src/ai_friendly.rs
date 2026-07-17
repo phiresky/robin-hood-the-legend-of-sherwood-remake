@@ -1857,9 +1857,10 @@ impl FriendlyAi {
             if self.beggar_dont_talk_counter > 0 {
                 self.beggar_dont_talk_counter -= 1;
             } else if self.base.current_remark == Remark::TheSoundOfSilence
-                && crate::sim_rng::u32(0..3) == 0
+                && crate::sim_rng::u32(crate::sim_rng::RngSite::CivilianBeggarSpeechGate, 0..3) == 0
             {
-                match crate::sim_rng::u32(0..5) {
+                match crate::sim_rng::u32(crate::sim_rng::RngSite::CivilianBeggarSpeechChoice, 0..5)
+                {
                     0..=2 => self.base.say(Remark::CivBeggarBegging),
                     3 => self.base.say(Remark::CivUnderNet),
                     4 => self.base.say(Remark::CivCries),
@@ -2035,8 +2036,11 @@ impl FriendlyAi {
             // its `WaitingUpright` branch, so we overwrite with the
             // longer look timer here — the second `launch_timer`
             // call wins.
-            let timer_value =
-                AB_MIN_DEFAULT_LOOK_TIME + crate::sim_rng::i32(0..AB_DELTA_DEFAULT_LOOK_TIME);
+            let timer_value = AB_MIN_DEFAULT_LOOK_TIME
+                + crate::sim_rng::i32(
+                    crate::sim_rng::RngSite::CivilianFirstLookTimer,
+                    0..AB_DELTA_DEFAULT_LOOK_TIME,
+                );
             self.base.launch_timer(timer_value as u32, ctx.frame);
             self.set_state(AiState::Default, Substate::DefaultOnPost);
             self.base.substate_at_last_timer_launch = self.base.current_substate;
@@ -2073,7 +2077,8 @@ impl FriendlyAi {
         let dx = ctx.position.x - antagonist.position.x;
         let dy = ctx.position.y - antagonist.position.y;
         let base_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as i32;
-        let jitter = crate::sim_rng::u32(0..5) as i32;
+        let jitter =
+            crate::sim_rng::u32(crate::sim_rng::RngSite::CivilianPanicDirection, 0..5) as i32;
         let seed_dir = (base_dir + jitter + 14).rem_euclid(16);
 
         // Relative direction sequence:

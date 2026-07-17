@@ -196,7 +196,8 @@ impl EngineInner {
                 self.wasp_change_direction(assets, wasp_id);
                 // Reset timeout — `DIRECTION_CHANGE_TIMEOUT` plus a
                 // 0..3 jitter.
-                let jitter = crate::sim_rng::u32(0..3) as u16;
+                let jitter =
+                    crate::sim_rng::u32(crate::sim_rng::RngSite::WaspDirectionTimer, 0..3) as u16;
                 if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                     p.projectile.wasp.timeout = DIRECTION_CHANGE_TIMEOUT + jitter;
                 }
@@ -281,7 +282,11 @@ impl EngineInner {
                     // i.e. the actual sting delay is 1..=STINGING_MAX_TIMEOUT,
                     // not the intended STINGING_MIN..=STINGING_MAX range.
                     // Preserved verbatim for parity.
-                    let delay = crate::sim_rng::u32(0..STINGING_MAX_TIMEOUT as u32) as u16 + 1;
+                    let delay = crate::sim_rng::u32(
+                        crate::sim_rng::RngSite::WaspStingTimer,
+                        0..STINGING_MAX_TIMEOUT as u32,
+                    ) as u16
+                        + 1;
                     if let Some(Entity::Projectile(p)) = self.entities.get_mut(wasp_id) {
                         p.projectile.wasp.stinging = true;
                         p.projectile.wasp.timeout = delay;
@@ -480,9 +485,12 @@ impl EngineInner {
         let mut tries = CHANGE_DIRECTION_TRIES;
         loop {
             // Random 3D movement vector with each component in -6..=4.
-            let rx = (crate::sim_rng::u32(0..11) as i32 - 6) as f32;
-            let ry = (crate::sim_rng::u32(0..11) as i32 - 6) as f32;
-            let rz = (crate::sim_rng::u32(0..11) as i32 - 6) as f32;
+            let rx = (crate::sim_rng::u32(crate::sim_rng::RngSite::WaspMovement, 0..11) as i32 - 6)
+                as f32;
+            let ry = (crate::sim_rng::u32(crate::sim_rng::RngSite::WaspMovement, 0..11) as i32 - 6)
+                as f32;
+            let rz = (crate::sim_rng::u32(crate::sim_rng::RngSite::WaspMovement, 0..11) as i32 - 6)
+                as f32;
             let mut mv = WorldVec3D {
                 x: rx,
                 y: ry,

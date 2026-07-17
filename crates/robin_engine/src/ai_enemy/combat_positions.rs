@@ -1619,7 +1619,9 @@ impl EnemyAi {
 
         if enemies_in_front {
             // Try to advance with the whole phalanx
-            if !self.phalanx_is_protecting_archers(tick) && (crate::sim_rng::u32(0..3) == 0) {
+            if !self.phalanx_is_protecting_archers(tick)
+                && (crate::sim_rng::u32(crate::sim_rng::RngSite::PhalanxAdvance, 0..3) == 0)
+            {
                 let half = phalanx_size / 2;
 
                 // Compute forward vector
@@ -2363,8 +2365,10 @@ impl EnemyAi {
 
         // Drunk soldiers freeze.
         if self.base.blood_alcohol > 0
-            && (crate::sim_rng::u16(0..100) <= self.base.blood_alcohol as u16
-                || crate::sim_rng::u16(0..100) <= self.base.blood_alcohol as u16)
+            && (crate::sim_rng::u16(crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
+                <= self.base.blood_alcohol as u16
+                || crate::sim_rng::u16(crate::sim_rng::RngSite::DrunkCombatFreeze, 0..100)
+                    <= self.base.blood_alcohol as u16)
         {
             return;
         }
@@ -2407,7 +2411,7 @@ impl EnemyAi {
         // fights and combat-trainer mode).
         let do_reposition = !self.combat_trainer
             && (number_of_friends != 1 || number_of_swordfighting_enemies != 1)
-            && crate::sim_rng::u32(0..3) == 0;
+            && crate::sim_rng::u32(crate::sim_rng::RngSite::CombatReposition, 0..3) == 0;
 
         if do_reposition {
             let new_combat_position = self.propose_good_combat_position(ctx, tick, grid);
@@ -2873,7 +2877,7 @@ impl EnemyAi {
         }
 
         // Distance is OK — maybe a step sideways?
-        if !b_move && crate::sim_rng::bool() {
+        if !b_move && crate::sim_rng::bool(crate::sim_rng::RngSite::CombatObserveSideStep) {
             let prefer_left = self.propose_step_direction_while_observing_combat(ctx, tick);
 
             for i in 0..2u8 {

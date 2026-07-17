@@ -795,7 +795,12 @@ fn pick_building_exit_gate(
     if candidates.is_empty() {
         None
     } else {
-        Some(candidates[crate::sim_rng::usize(..candidates.len())])
+        Some(
+            candidates[crate::sim_rng::usize(
+                crate::sim_rng::RngSite::BuildingExitGate,
+                ..candidates.len(),
+            )],
+        )
     }
 }
 
@@ -2977,12 +2982,13 @@ impl SeekPoint {
     /// initialises `last_calculated_interest = 100` — see `from_direction`
     /// above.
     pub fn from_position(pos: Position) -> Self {
-        let directions = match crate::sim_rng::u8(0..4) {
-            0 => vec![0, 3, 7, 11],
-            1 => vec![2, 5, 10, 14],
-            2 => vec![2, 7, 13],
-            _ => vec![4, 10, 15],
-        };
+        let directions =
+            match crate::sim_rng::u8(crate::sim_rng::RngSite::SeekPointDirectionPattern, 0..4) {
+                0 => vec![0, 3, 7, 11],
+                1 => vec![2, 5, 10, 14],
+                2 => vec![2, 7, 13],
+                _ => vec![4, 10, 15],
+            };
         Self {
             position: pos,
             directions,
@@ -4212,7 +4218,8 @@ impl AiGlobalState {
         if candidates.is_empty() {
             return false;
         }
-        let pick = crate::sim_rng::usize(0..candidates.len());
+        let pick =
+            crate::sim_rng::usize(crate::sim_rng::RngSite::NearSeekPoint, 0..candidates.len());
         *pos = self.seek_points[candidates[pick]].position;
         true
     }
@@ -5519,7 +5526,8 @@ impl AiController {
                 }
                 // Half-open `[min, max)` matches the original
                 // `rand() % (max-min)` shape.
-                min_val + crate::sim_rng::i16(0..range)
+                min_val
+                    + crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueRectangle, 0..range)
             }
             ProbabilityDistribution::GaussHighVariance => {
                 // `range*0.333` truncated (three samples) and
@@ -5528,9 +5536,18 @@ impl AiController {
                 let half = ((range as f32) * 0.5) as i16;
                 let mut val: i32 = 0;
                 if third > 0 {
-                    val = crate::sim_rng::i16(0..third) as i32
-                        + crate::sim_rng::i16(0..third) as i32
-                        + crate::sim_rng::i16(0..third) as i32;
+                    val = crate::sim_rng::i16(
+                        crate::sim_rng::RngSite::AiRandomValueGaussHigh,
+                        0..third,
+                    ) as i32
+                        + crate::sim_rng::i16(
+                            crate::sim_rng::RngSite::AiRandomValueGaussHigh,
+                            0..third,
+                        ) as i32
+                        + crate::sim_rng::i16(
+                            crate::sim_rng::RngSite::AiRandomValueGaussHigh,
+                            0..third,
+                        ) as i32;
                 }
                 val += gauss_curve_top as i32 - half as i32;
                 (val.clamp(min_val as i32, max_val as i32)) as i16
@@ -5542,9 +5559,12 @@ impl AiController {
                 let quarter = ((range as f32) * 0.25) as i16;
                 let mut val: i32 = 0;
                 if sixth > 0 {
-                    val = crate::sim_rng::i16(0..sixth) as i32
-                        + crate::sim_rng::i16(0..sixth) as i32
-                        + crate::sim_rng::i16(0..sixth) as i32;
+                    val = crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueGauss, 0..sixth)
+                        as i32
+                        + crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueGauss, 0..sixth)
+                            as i32
+                        + crate::sim_rng::i16(crate::sim_rng::RngSite::AiRandomValueGauss, 0..sixth)
+                            as i32;
                 }
                 val += gauss_curve_top as i32 - quarter as i32;
                 (val.clamp(min_val as i32, max_val as i32)) as i16
@@ -5847,7 +5867,7 @@ impl AiController {
             self.next_macro_rand_forecasted = false;
             self.next_macro_rand
         } else {
-            (crate::sim_rng::u32(0..100) as u8) + 1
+            (crate::sim_rng::u32(crate::sim_rng::RngSite::MacroRand, 0..100) as u8) + 1
         }
     }
 
@@ -5856,7 +5876,8 @@ impl AiController {
     /// upcoming roll (section-selection coherence).
     pub fn forecast_macro_rand(&mut self) -> u8 {
         if !self.next_macro_rand_forecasted {
-            self.next_macro_rand = (crate::sim_rng::u32(0..100) as u8) + 1;
+            self.next_macro_rand =
+                (crate::sim_rng::u32(crate::sim_rng::RngSite::MacroRand, 0..100) as u8) + 1;
             self.next_macro_rand_forecasted = true;
         }
         self.next_macro_rand
@@ -6991,11 +7012,13 @@ impl AiController {
         let looks_for_div = self.number_of_looks.max(1) as u16;
         self.delta_sorrow_level = 1000 / looks_for_div;
         self.current_substate = Substate::DefaultLookingSidewardsForCharly;
-        self.pending_look_sidewards = Some(if crate::sim_rng::u32(0..2) != 0 {
-            LookDirection::LeftRight
-        } else {
-            LookDirection::RightLeft
-        });
+        self.pending_look_sidewards = Some(
+            if crate::sim_rng::u32(crate::sim_rng::RngSite::CheckForLookDirection, 0..2) != 0 {
+                LookDirection::LeftRight
+            } else {
+                LookDirection::RightLeft
+            },
+        );
     }
 
     // -- Stop all --
@@ -8357,7 +8380,8 @@ impl AiController {
                         sector: None,
                         level: 0,
                     });
-                    let hiding_time = 300 + crate::sim_rng::u32(..200); // AI_MIN + delta
+                    let hiding_time =
+                        300 + crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, ..200); // AI_MIN + delta
                     self.launch_timer(hiding_time, ctx.frame);
                 }
             }
@@ -8387,7 +8411,10 @@ impl AiController {
                         });
                     } else {
                         // Look in a random direction.
-                        self.face_direction(crate::sim_rng::u32(0..16) as u16, ctx);
+                        self.face_direction(
+                            crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..16) as u16,
+                            ctx,
+                        );
                     }
                     self.clear_emoticon();
                     self.set_alert_status(AlertLevel::Yellow);
@@ -8396,6 +8423,7 @@ impl AiController {
                     // explicitly.
                     let hiding_time = crate::parameters_ai::AI_MIN_PANIC_HIDING_TIME as u32
                         + crate::sim_rng::u32(
+                            crate::sim_rng::RngSite::AiPanic,
                             0..crate::parameters_ai::AI_DELTA_PANIC_HIDING_TIME as u32,
                         );
                     self.launch_timer(hiding_time, ctx.frame);
@@ -8409,7 +8437,7 @@ impl AiController {
 
                     let sector_index = if !self.directed_panic {
                         // Undirected panic — any direction.
-                        (crate::sim_rng::u32(0..16) & 15) as u8
+                        (crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..16) & 15) as u8
                     } else {
                         // Directed panic — run away from panic center.
                         let dx = ctx.position.x - self.panic_center_x;
@@ -8419,7 +8447,9 @@ impl AiController {
                         if self.first_try {
                             // ±2 sector jitter around the base.
                             let jitter =
-                                (crate::sim_rng::u32(0..5) as i32 - 2).rem_euclid(16) as u8;
+                                (crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..5) as i32
+                                    - 2)
+                                .rem_euclid(16) as u8;
                             base.wrapping_add(jitter) & 15
                         } else {
                             // Previous attempt failed — rotate 90° to
@@ -8431,7 +8461,9 @@ impl AiController {
                             // bit.
                             let side = if self.me & 1 != 0 { 4 } else { 12 };
                             let jitter =
-                                (crate::sim_rng::u32(0..7) as i32 - 3).rem_euclid(16) as u8;
+                                (crate::sim_rng::u32(crate::sim_rng::RngSite::AiPanic, 0..7) as i32
+                                    - 3)
+                                .rem_euclid(16) as u8;
                             base.wrapping_add(side).wrapping_add(jitter) & 15
                         }
                     };
@@ -8439,6 +8471,7 @@ impl AiController {
                     let (vx, vy) = crate::element::direction_vector_16(sector_index as i16);
                     let segment = (crate::parameters_ai::AI_MIN_PANIC_RUN_SEGMENT_DISTANCE as u32
                         + crate::sim_rng::u32(
+                            crate::sim_rng::RngSite::AiPanic,
                             0..crate::parameters_ai::AI_DELTA_PANIC_RUN_SEGMENT_DISTANCE as u32,
                         )) as f32;
                     let dest = Position {
