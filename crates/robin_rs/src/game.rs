@@ -1177,7 +1177,7 @@ mod tests {
         // them or the player would be paid twice.
         let mut game = Game::default();
         game.operation.set(GameCode::LevelSucceeded);
-        let (mut engine, _assets) = fresh_engine();
+        let (mut engine, assets) = fresh_engine();
         engine.test_set_mission_stat(engine_mission_stat::MissionStat {
             collected_money: 300,
             added_score: 500,
@@ -1187,14 +1187,16 @@ mod tests {
         let mut campaign = Campaign::default();
         let mut cb = StubCallbacks::default();
 
-        let assets = engine_api::LevelAssets::new();
         game.finalize_mission(&mut engine, &assets, &mut campaign, &mut cb);
 
         assert_eq!(
             campaign.get_value(CampaignValue::Ransom),
             crate::campaign::INITIAL_RANSOM
         );
-        assert_eq!(campaign.get_value(CampaignValue::Score), 0);
+        // A successful non-ambush mission earns the normal 1,000-point
+        // completion bonus. The synthetic `added_score` above must not be
+        // added again (which would make this 1,500).
+        assert_eq!(campaign.get_value(CampaignValue::Score), 1000);
     }
 
     #[test]
