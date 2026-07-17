@@ -2548,7 +2548,7 @@ impl EnemyAi {
             .register_log_line(LogLineType::Event, stimulus_type as u16);
 
         // Pre-think: check locks, queue if busy, etc.
-        if !self.start_think(stimulus, ctx) {
+        if !self.start_think(stimulus, ctx, global.freeze) {
             self.end_think(global, ctx, tick, grid);
             return true;
         }
@@ -2667,7 +2667,12 @@ impl EnemyAi {
     // StartThink — pre-think checks
     // -----------------------------------------------------------------------
 
-    fn start_think(&mut self, stimulus: &Stimulus, ctx: &AiContext) -> bool {
+    fn start_think(
+        &mut self,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+        static_ai_frozen: bool,
+    ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
         // Reset per-think flags
@@ -2691,8 +2696,10 @@ impl EnemyAi {
         // `Engine::filter_stimulus`.  The freeze and script-lock
         // checks below run after that.
 
-        // Check freeze
-        if self.base.locks_flag_field.contains(AiLockFlags::FREEZE) {
+        // Original static `RHArtificialIntelligence::mbFreeze` is distinct
+        // from both engine FreezeAll and the per-NPC AILOCK_FREEZE bit. The
+        // NPC still scans detection, but StartThink discards each event.
+        if static_ai_frozen {
             self.base.register_log_line(LogLineType::EventRefused, 1);
             return false;
         }
@@ -2713,9 +2720,10 @@ impl EnemyAi {
             return false;
         }
 
-        // Check AI lock flags (BUSY, BEGGAR — but not FREEZE, already checked)
-        let non_freeze = self.base.locks_flag_field - AiLockFlags::FREEZE;
-        if !non_freeze.is_empty() {
+        // Every non-script AILOCK flag retains stimuli. Original's separate
+        // static `mbFreeze` discard gate is not the per-NPC AILOCK_FREEZE bit;
+        // engine-wide Rust freeze is handled before NPC Hourglass work.
+        if !self.base.locks_flag_field.is_empty() {
             self.base.stimulus_queue.push(*stimulus);
             self.base.register_log_line(LogLineType::EventRefused, 3);
             return false;
@@ -4221,7 +4229,7 @@ mod tests {
         let mut ai = EnemyAi::new(1);
         let ctx = AiContext::default();
         let stimulus = Stimulus::new(StimulusType::EventTimer);
-        assert!(ai.start_think(&stimulus, &ctx));
+        assert!(ai.start_think(&stimulus, &ctx, false));
         assert_eq!(ai.base.think_recursion_depth, 1);
     }
 
@@ -4248,17 +4256,50 @@ mod tests {
         ai.base.remember_events = true;
         let ctx = AiContext::default();
         let stimulus = Stimulus::new(StimulusType::EventView);
-        assert!(!ai.start_think(&stimulus, &ctx));
+        assert!(!ai.start_think(&stimulus, &ctx, false));
         assert_eq!(ai.base.stimulus_queue.len(), 1);
     }
 
     #[test]
-    fn start_think_blocks_frozen() {
+    fn start_think_retains_ailock_freeze() {
         let mut ai = EnemyAi::new(1);
         ai.base.locks_flag_field = AiLockFlags::FREEZE;
         let ctx = AiContext::default();
         let stimulus = Stimulus::new(StimulusType::EventTimer);
-        assert!(!ai.start_think(&stimulus, &ctx));
+        assert!(!ai.start_think(&stimulus, &ctx, false));
+        assert_eq!(ai.base.stimulus_queue.len(), 1);
+        assert_eq!(
+            ai.base.stimulus_queue[0].stimulus_type,
+            StimulusType::EventTimer
+        );
+    }
+
+    #[test]
+    fn start_think_discards_static_ai_freeze() {
+        let mut ai = EnemyAi::new(1);
+        let ctx = AiContext::default();
+        let stimulus = Stimulus::new(StimulusType::EventTimer);
+        assert!(!ai.start_think(&stimulus, &ctx, true));
+        assert!(ai.base.stimulus_queue.is_empty());
+    }
+
+    #[test]
+    fn periodic_timer_restart_obeys_static_ai_freeze() {
+        let mut ai = EnemyAi::new(1);
+        ai.base.current_substate = Substate::AttackingObserve;
+        let ctx = AiContext::default();
+        let tick = AiPerTickData::stub();
+        let mut global = AiGlobalState {
+            freeze: true,
+            ..AiGlobalState::default()
+        };
+
+        ai.the_16th_frame(0, &ctx, &global, &tick, None, false, false);
+        assert!(!ai.base.timer_is_running);
+
+        global.freeze = false;
+        ai.the_16th_frame(0, &ctx, &global, &tick, None, false, false);
+        assert!(ai.base.timer_is_running);
     }
 
     #[test]
@@ -4266,7 +4307,7 @@ mod tests {
         let mut ai = EnemyAi::new(1);
         let ctx = AiContext::default();
         let stimulus = Stimulus::new(StimulusType::EventLoseConsciousness);
-        assert!(!ai.start_think(&stimulus, &ctx));
+        assert!(!ai.start_think(&stimulus, &ctx, false));
         assert_eq!(ai.base.current_state, AiState::Sleeping);
         assert_eq!(ai.base.current_substate, Substate::SleepingUnconscious);
     }
@@ -4279,7 +4320,7 @@ mod tests {
             ..AiContext::default()
         };
         let stimulus = Stimulus::new(StimulusType::EventView);
-        assert!(!ai.start_think(&stimulus, &ctx));
+        assert!(!ai.start_think(&stimulus, &ctx, false));
     }
 
     #[test]
@@ -4291,7 +4332,7 @@ mod tests {
             ..AiContext::default()
         };
         let stimulus = Stimulus::new(StimulusType::EventFitAgain);
-        assert!(!ai.start_think(&stimulus, &ctx));
+        assert!(!ai.start_think(&stimulus, &ctx, false));
     }
 
     #[test]

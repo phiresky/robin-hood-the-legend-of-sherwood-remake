@@ -1213,7 +1213,12 @@ impl EnemyAi {
                                 | Substate::AttackingOverviewLookRight
                                 | Substate::AttackingTooProudToAttackOverview => {
                                     // Just track the extra enemy.
-                                    self.list_them.push(enemy);
+                                    // Original mlistThem is SBListUnique: the
+                                    // preceding VIEW may already have rebuilt
+                                    // this target into the final visible set.
+                                    if !self.list_them.contains(&enemy) {
+                                        self.list_them.push(enemy);
+                                    }
                                 }
 
                                 Substate::AttackingArcherWaitOnArcheryPath
@@ -1758,6 +1763,7 @@ impl EnemyAi {
             return;
         }
 
+        self.base.pending_mark_alerted = true;
         self.base.frame_when_enemy_detected = ctx.frame;
         // Only meaningful for archers, who use the flag to switch to
         // bow-down posture.

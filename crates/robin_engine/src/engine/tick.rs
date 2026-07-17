@@ -1393,7 +1393,7 @@ impl EngineInner {
         observe_npc_hourglass_phase(());
         self.tick_apple_smell();
         self.tick_soldier_track_primary_target();
-        if !self.actors_frozen() && !self.ai.global.freeze {
+        if !self.actors_frozen() {
             let scratch = self.build_sim_scratch(assets);
             self.tick_attacking_reactiontime_enemy_near(assets, &scratch);
         }

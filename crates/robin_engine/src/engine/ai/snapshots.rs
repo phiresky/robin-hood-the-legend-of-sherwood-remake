@@ -261,16 +261,6 @@ pub(super) struct SoldierSnapshot {
     pub(super) obstacle_idx: Option<crate::position_interface::ObstacleHandle>,
 }
 
-/// One detection-commit edge produced by the per-NPC detection-refresh
-/// pass — drained by the post-detection alert / pursuit phases.
-#[derive(Clone, Copy)]
-pub(super) struct Detection {
-    pub(super) enemy: EntityId,
-    pub(super) target: EntityId,
-    pub(super) target_pos: MapPoint,
-    pub(super) newly_alerted: bool,
-}
-
 /// Per-tick read-only snapshot of a human-typed detection target —
 /// shared across the `DetectableType::Body / Friend / MissedFriend /
 /// Beggar` per-type passes since all four feed `compute_visibility`

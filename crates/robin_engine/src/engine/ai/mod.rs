@@ -867,18 +867,16 @@ impl EngineInner {
     /// from the live entity store without re-running the detection
     /// loop: same-camp soldier snapshots for alert coordination,
     /// primary target metadata (position, posture, animation,
-    /// carrier), `primary_target_is_pc`, friend-swap candidates for
+    /// carrier, destination forecast, table-swordfight jump line),
+    /// `primary_target_is_pc`, friend-swap candidates for
     /// `ReconsiderEnemyApproach`, the avenger-on-the-roof wait
     /// position, and a single-target seed for
     /// `enemy_sq_distances` / `min_sq_enemy_distance` so
     /// `battle_decisions` doesn't see an empty list when a valid
-    /// `primary_target` exists.  Fields that truly require the full
-    /// detection scan (`nearby_fighters`, `us_battle_points`,
-    /// `primary_target_multiplicity`,
-    /// `unconscious_enemies`, `nearby_sleeping_enemies`,
-    /// `primary_target_jump_line`, ...) remain empty — the same
-    /// fidelity as the pre-existing timer-dispatch hand-roll at line
-    /// 5927, now shared.
+    /// `primary_target` exists. Fields that truly require the full detection
+    /// scan (`unconscious_enemies`, `nearby_sleeping_enemies`, final visible
+    /// enemy distances/latches, ...) remain empty; RefreshDetection overlays
+    /// those scan products when it uses this builder for a queued stimulus.
     ///
     /// Returns a stub for non-enemy-soldier entities (civilians, PCs,
     /// beggar/animal NPCs); their AI paths don't consult the combat
@@ -936,6 +934,26 @@ impl EngineInner {
         let mut tick = AiPerTickData::stub();
         tick.profile_manager = Some(assets.profile_manager.clone());
         tick.camp_soldiers = self.build_camp_soldier_tick_infos(npc_id, my_camp, scratch);
+        if let Some(enemy_ai) = soldier.npc.ai_brain.enemy()
+            && enemy_ai.missed_pc != 0
+            && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
+            && let Some(missed_entity) = self.world.entities.get(missed_id)
+            && let Some(input) = extract_forecast_input(missed_entity)
+        {
+            let doors = self
+                .mission_script
+                .as_ref()
+                .and_then(|script| script.game_host())
+                .map(|host| host.doors.as_slice())
+                .unwrap_or(&[]);
+            tick.missed_pc_forecast = Some(crate::ai::forecast_destination_for_ia(
+                &input,
+                doors,
+                &self.world.fast_grid.level.sectors,
+                &self.world.fast_grid.level.sector_number_map,
+            ));
+            tick.missed_pc_is_pc = matches!(missed_entity, Entity::Pc(_));
+        }
         // `fill_list_with_all_near_fighters` walks the global fighter
         // registry on every call.  Populate `nearby_fighters` here so
         // off-detection dispatch sites (timer events, reach-point
@@ -993,6 +1011,35 @@ impl EngineInner {
         // primary_target_is_pc: look up the target's entity variant.
         tick.primary_target_is_pc =
             matches!(self.world.entities.get(target_id), Some(Entity::Pc(_)));
+        if let Some(target_entity) = self.world.entities.get(target_id)
+            && let Some(input) = extract_forecast_input(target_entity)
+        {
+            let doors = self
+                .mission_script
+                .as_ref()
+                .and_then(|script| script.game_host())
+                .map(|host| host.doors.as_slice())
+                .unwrap_or(&[]);
+            tick.primary_target_forecast = Some(crate::ai::forecast_destination_for_ia(
+                &input,
+                doors,
+                &self.world.fast_grid.level.sectors,
+                &self.world.fast_grid.level.sector_number_map,
+            ));
+        }
+        tick.primary_target_jump_line = crate::engine::melee::is_table_swordfight_needed(
+            &self.world.entities,
+            &self.world.fast_grid,
+            &assets.profile_manager,
+            npc_id,
+            target_id,
+        );
+        // TODO(parity): populate primary_target_in_lift and
+        // primary_target_lift_entry from live lift-sector geometry. No engine
+        // producer currently exposes the original ReconsiderEnemyApproach
+        // lift snapshot, so target rebinding deliberately clears both fields.
+        tick.primary_target_in_lift = false;
+        tick.primary_target_lift_entry = None;
 
         if let Some(enemy_ai) = soldier.npc.ai_brain.enemy() {
             let my_company = enemy_ai.company_number;
@@ -2813,61 +2860,6 @@ impl EngineInner {
         }
     }
 
-    /// Per-frame enemy-AI perception tick.
-    ///
-    /// The `refresh_detection` loop, specialised to `DETECTABLE_ENEMY`
-    /// for Lacklandist soldiers hunting PCs.  See
-    /// `ai_vision::compute_visibility` for the perception primitive.
-    ///
-    /// High-level flow:
-    ///
-    ///  1. Build a snapshot of all alive / playable PCs.
-    ///  2. For each alive non-locked hostile soldier:
-    ///     a. Compute the per-NPC `uwModifiedFrameCounter` phase.
-    ///     b. If the `DETECTION_FREQUENCY_ENEMY_PC` gate is open,
-    ///     call `compute_visibility` against each PC and multiply
-    ///     by `DETECTION_FREQUENCY_ENEMY_PC`.
-    ///     c. Turn the visibility into `sharpness = BASE_VIEW_SPEED
-    ///        * visibility`.
-    ///     d. Accumulate sharpness into the NPC's
-    ///        `detection_suspects[ENEMY]`, respecting the
-    ///        "only add new sightings" edge trigger.
-    ///     e. Commit a detection when either `suspects >= 1000` OR
-    ///        `instant_detection(type) && sum > 0`.
-    ///     f. If nothing is visible this frame, decay suspects on a
-    ///        `UNSUSPECT_FREQUENCY` cadence.
-    ///  3. On commit: flip the NPC's `AiState` to `Attacking`, store
-    ///     the target on `ai_controller.primary_target`, mark the
-    ///     NPC `alerted`, and dispatch a pursuit path.
-    ///
-    /// # What is deferred
-    ///
-    /// These pieces are either stubbed or skipped because they need
-    /// subsystems that aren't ported yet; each is noted inline at the
-    /// point it would slot back in.
-    ///
-    ///  * Full stimulus → `think(STIMULUS_SEE_ENEMY)` dispatch.  The
-    ///    reference emits stimuli into the state machine and lets `think()`
-    ///    handle reaction time, officer escalation, pre-detection
-    ///    animations, etc.  We set `current_state = Attacking`
-    ///    directly because the `EnemyAi` wrapper isn't attached to
-    ///    the entity yet (only the base `AiController` is).
-    ///  * `SIGHTOBSTACLE_OPAQUE` LOS — see
-    ///    `ai_vision::los_clear` (uses motion lines as a proxy until
-    ///    `SightObstacle` is wired into `FastFindGrid`).
-    ///  * View-parameter eye-state check, `IsBuilding()` sector-side
-    ///    checks, and the forest merry-men 180° special case — see
-    ///    the notes inside `compute_visibility`.
-    ///  * `SelectPrimaryTarget` priority scoring — we take the first
-    ///    visible PC with the highest sharpness this frame.
-    ///  * The `Attacking` substate machine for pursuit — we ask the
-    ///    pathfinder to chase the live PC position every
-    ///    `PURSUIT_REPATH_INTERVAL` frames.
-    ///  * Lost-sight → `Seeking` fallback.  Once alerted, the NPC
-    ///    stays alerted (`npc.alerted = true`) until the entity is
-    ///    removed; ideally we'd transition back to Default after
-    ///    losing the trail.
-    ///
     /// Map a PC's currently-executing animation (`OrderType`) to the
     /// noise volume they produce, via a per-animation switch in
     /// `refresh_produced_noise`.
@@ -3998,25 +3990,15 @@ impl EngineInner {
     }
 
     pub(super) fn tick_enemy_ai(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai.global.freeze {
+        if self.actors_frozen() {
             return;
         }
-        let scratch = self.build_sim_scratch(assets);
         self.ai.global.same_frame_target_claims.clear();
 
-        // Rebuild the per-tick handle → entity view map *before* the
-        // detection pass starts firing stimuli into NPC Think() calls.
-        // Every `AiContext` built in this method and its callees
-        // picks up the refreshed map via
-        // `scratch.ai_entity_views.clone()`.
         // ── 1. Build one immutable per-tick AI world view. ────────
         // Snapshot construction does not dispatch behavior. The phase calls
         // below remain in the original soldier/NPC Hourglass order.
         let world = self.tick_enemy_ai_build_world_view(assets);
-
-        if world.pcs.is_empty() {
-            return;
-        }
 
         // ── 2a. Blip detection (reveal shadows). ────────────────
         self.tick_enemy_ai_blip_detection(assets, &world);
@@ -4026,28 +4008,13 @@ impl EngineInner {
         // volatile target rebuild, non-Enemy detectable buckets, and the
         // resulting FIFO Think dispatches all finish for one NPC before the
         // next creation slot starts.
-        let (transitions, out_of_view_dispatches) =
-            self.tick_enemy_ai_refresh_detection(assets, &world);
-
-        // ── 3b. Royalist detection — reveal blipped enemies. ────
-        self.tick_enemy_ai_royalist_detection(assets, &world);
-
-        // ── 4. Log + pursue + alert nearby allies ───────────────
-        self.tick_enemy_ai_alert_allies(&transitions);
-
-        // ── 4b. Lost-sight EVENT_OUTOFVIEW dispatch. ───────────────
-        self.tick_enemy_ai_dispatch_out_of_view(out_of_view_dispatches, &world.pcs);
-
-        // Commit detection-local presentation state. Normal timer polling is
-        // deliberately not part of this pass; NPC::Hourglass polls it only
-        // after ambush, busy/ladder, lock gating, and The16thFrame.
-        self.tick_enemy_ai_commit_detection_transitions(transitions);
+        self.tick_enemy_ai_refresh_detection(assets, &world);
 
         // ── 6c. Process pending AI swordfight requests. ─────────
         self.tick_enemy_ai_drain_swordfight_requests(assets);
 
         // ── 6d. Drain pending stimuli ────────────────────────────
-        self.tick_enemy_ai_drain_pending_stimuli(assets, &scratch);
+        self.tick_enemy_ai_drain_pending_stimuli(assets);
         self.ai.global.same_frame_target_claims.clear();
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
@@ -5143,103 +5110,6 @@ impl EngineInner {
         }
     }
 
-    /// Alert nearby allied soldiers to look at a position.
-    ///
-    /// Iterates every soldier in the same camp as `source`, and for
-    /// each one in `STATE_DEFAULT` / `STATE_WONDERING` /
-    /// `SEEKING_JUST_WATCHING` within `radius` of the source, fires
-    /// the `CALL_LOOKTHERE → call_look_there_standard_procedure`
-    /// transition:
-    ///
-    ///   * `StopAll()` — clear active path
-    ///   * `SetState(STATE_WONDERING, SUBSTATE_WONDERING_WATCHING)`
-    ///   * `seek_position = where`
-    ///   * `face(seek_position)` — turn to look at the alert
-    ///   * `LaunchTimer(100)`
-    ///
-    /// `radius` is `VIEW_LOOK_THERE_RADIUS = 100` for vision-based
-    /// alerts and 200 for noise-based ones.
-    pub(crate) fn hey_folks_look_there(&mut self, source: EntityId, pos: MapPoint, radius: f32) {
-        let (source_camp, source_pos) = {
-            let Some(Entity::Soldier(src)) = self.world.entities.get(source) else {
-                return;
-            };
-            (src.soldier.cached_camp, src.element.position_map())
-        };
-
-        let radius_sq = radius * radius;
-        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            if npc_id == source {
-                continue;
-            }
-            // Check eligibility (immut borrow).
-            let eligible = {
-                let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
-                    continue;
-                };
-                if s.soldier.cached_camp != source_camp {
-                    continue;
-                }
-                if s.npc.life_points <= 0 || s.human.unconscious {
-                    continue;
-                }
-                // Filter: STATE_DEFAULT / STATE_WONDERING /
-                // SUBSTATE_SEEKING_JUST_WATCHING.
-                let state_ok = matches!(
-                    s.npc.ai_state(),
-                    crate::ai::AiState::Default | crate::ai::AiState::Wondering
-                ) || matches!(
-                    s.npc.ai_substate(),
-                    crate::ai::Substate::SeekingJustWatching
-                        | crate::ai::Substate::SeekingJustWatchingSidewards
-                );
-                if !state_ok {
-                    continue;
-                }
-                // Range check (square distance to avoid sqrt).
-                let p = s.element.position_map();
-                let dx = source_pos.x - p.x;
-                let dy = source_pos.y - p.y;
-                dx * dx + dy * dy < radius_sq
-            };
-            if !eligible {
-                continue;
-            }
-
-            // Apply the CallLookThereStandardProcedure transition.
-            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
-                // Face toward the seek position via
-                // `vector_to_sector_0_to_15_iso`.
-                let p = s.element.position_map();
-                let dx = pos.x - p.x;
-                let dy = pos.y - p.y;
-                s.element.set_direction_instantly(
-                    crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
-                );
-
-                // `stop_all()` — decouple the actor from its Move
-                // element; priority arbitration with the next launched
-                // sequence tears down the orphaned Move.
-                s.actor.active_movement.clear();
-                s.actor.action_state = crate::element::ActionState::Waiting;
-
-                // SetState(WONDERING, WONDERING_WATCHING)
-                if let Some(ai) = s.npc.ai_brain.base_mut() {
-                    ai.set_ai_state(crate::ai::AiState::Wondering);
-                    ai.current_substate = crate::ai::Substate::WonderingWatching;
-                    ai.seek_position = crate::ai::Position {
-                        x: pos.x,
-                        y: pos.y,
-                        sector: None,
-                        level: 0,
-                    };
-                    ai.launch_timer(100, self.control.frame_counter);
-                }
-            }
-        }
-    }
-
     /// Make nearby civilians panic.
     ///
     /// Iterates every civilian within `view_radius` of `source`,
@@ -6046,7 +5916,7 @@ impl EngineInner {
     pub(super) fn tick_patrol_coordination(&mut self, assets: &LevelAssets) {
         use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
 
-        if self.actors_frozen() || self.ai.global.freeze {
+        if self.actors_frozen() {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7181,6 +7051,33 @@ impl EngineInner {
     ) -> bool {
         let handled = self.dispatch_filtered_stimulus(assets, npc_id, stimulus, ctx, tick_data);
 
+        // EventViewStandardProcedure explicitly marks an accepted VIEW after
+        // all StartThink and handler guards. Mirror that one-shot onto the
+        // engine-owned NPC record before draining its other synchronous
+        // effects. Locked, frozen, script-filtered, and handler-rejected VIEWs
+        // never set the flag.
+        let mark_alerted = self
+            .world
+            .entities
+            .get_mut(npc_id)
+            .and_then(Entity::ai_controller_mut)
+            .is_some_and(|ai| std::mem::take(&mut ai.pending_mark_alerted));
+        if mark_alerted {
+            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!(
+                    "accepted EVENT_VIEW recipient {} disappeared after its synchronous Think",
+                    npc_id.index()
+                )
+            });
+            let npc = entity.npc_data_mut().unwrap_or_else(|| {
+                panic!(
+                    "accepted EVENT_VIEW recipient {} lost its NPC data after synchronous Think",
+                    npc_id.index()
+                )
+            });
+            npc.alerted = true;
+        }
+
         // The original Charly handler directly calls the officer's Think and
         // branches on its bool before returning. Drain this result-bearing
         // cross-NPC call here, inside the originating dispatch, rather than
@@ -7198,6 +7095,12 @@ impl EngineInner {
             // Drain the per-NPC pending-flags pass (launches sequences,
             // commands, turn orders, attentive-mode transitions, etc.).
             self.drain_pending_for_npc(npc_id, assets);
+
+            // EventViewStandardProcedure calls HeyFolksLookThere directly in
+            // the original. Deliver only that synchronous cross-NPC family at
+            // this Think boundary; phalanx and other coordination actions keep
+            // their existing batch until their own ordering is audited.
+            self.process_synchronous_look_there_for(npc_id, assets);
 
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
@@ -7229,6 +7132,138 @@ impl EngineInner {
         }
 
         handled
+    }
+
+    fn process_synchronous_look_there_for(
+        &mut self,
+        source_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
+        let actions = self
+            .world
+            .entities
+            .get_mut(source_id)
+            .and_then(Entity::ai_controller_mut)
+            .map(crate::ai::AiController::take_pending_look_there_actions)
+            .unwrap_or_default();
+
+        for action in actions {
+            let crate::ai::CrossNpcAction::SendStimulus {
+                target,
+                stimulus_type: crate::ai::StimulusType::CallLookThere,
+                info,
+                fallback_to_sender: None,
+                to_whole_patrol,
+            } = action
+            else {
+                unreachable!("look-there drain returned a different cross-NPC action")
+            };
+            let target_id = self.entity_id_for_index(target).unwrap_or_else(|| {
+                panic!(
+                    "synchronous CALL_LOOKTHERE from NPC {} references missing target {}",
+                    source_id.index(),
+                    target
+                )
+            });
+            assert!(
+                matches!(self.world.entities.get(target_id), Some(Entity::Soldier(_))),
+                "synchronous CALL_LOOKTHERE target {} is not a soldier",
+                target
+            );
+
+            let scratch = self.build_sim_scratch(assets);
+            let building_sector = self
+                .world
+                .entities
+                .get(target_id)
+                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
+                .unwrap_or_else(|| panic!("CALL_LOOKTHERE target {} disappeared", target));
+            let ctx = {
+                let entity = self
+                    .world
+                    .entities
+                    .get(target_id)
+                    .unwrap_or_else(|| panic!("CALL_LOOKTHERE target {} disappeared", target));
+                build_ai_context_from_entity(
+                    entity,
+                    self.control.frame_counter,
+                    building_sector,
+                    self.world.weather.is_forest_level,
+                    self.world.weather.ambiance,
+                    self.ai.standard_view_polygon_radius,
+                    &scratch.ai_entity_views,
+                    &scratch.ai_sight_obstacles,
+                    &self.world.fast_grid,
+                    &assets.hiking_paths,
+                    &self.ai.global.all_soldier_handles,
+                )
+            };
+            let tick_data = self.build_npc_tick_data(target_id, &scratch, assets);
+            let mut stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::CallLookThere);
+            stimulus.info = info;
+            stimulus.to_whole_patrol = to_whole_patrol;
+            self.dispatch_think_with_drain(target_id, &stimulus, &ctx, &tick_data, assets);
+            self.refresh_npc_view_after_synchronous_look_there(target_id);
+        }
+    }
+
+    /// The port's broad `refresh_npc_views` pass has already visited a later
+    /// creation slot when an earlier NPC synchronously sends CALL_LOOKTHERE.
+    /// Replay the receiver's original per-slot RefreshView now so its new
+    /// focus/face state feeds the still-upcoming RefreshDetection call.
+    fn refresh_npc_view_after_synchronous_look_there(&mut self, npc_id: EntityId) {
+        let ctx = {
+            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
+                panic!("CALL_LOOKTHERE receiver {} disappeared", npc_id.index())
+            });
+            let npc = entity.npc_data().unwrap_or_else(|| {
+                panic!("CALL_LOOKTHERE receiver {} lost NPC data", npc_id.index())
+            });
+            let element = entity.element_data();
+            let follow_target_position = npc.follow_target.map(|target_id| {
+                self.world
+                    .entities
+                    .get(target_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "CALL_LOOKTHERE receiver {} follows missing target {}",
+                            npc_id.index(),
+                            target_id.index()
+                        )
+                    })
+                    .element_data()
+                    .position_map()
+            });
+            crate::ai_vision::RefreshViewContext {
+                body_direction: element.direction(),
+                posture: element.posture,
+                animation: self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(npc_id)
+                    .map(|(_, _, order)| order.order_type),
+                is_unconscious: entity.human_data().is_some_and(|human| human.unconscious),
+                is_tied: element.posture == crate::element::Posture::Tied,
+                is_dead: entity.is_dead(),
+                is_active_and_outside_building: element.active
+                    && !self.entity_data_inside_building(element),
+                is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
+                blood_alcohol: entity
+                    .enemy_ai()
+                    .map(|enemy| enemy.base.blood_alcohol)
+                    .unwrap_or(0),
+                own_position: element.position_map(),
+                follow_target_position,
+            }
+        };
+        let entity =
+            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+                panic!("CALL_LOOKTHERE receiver {} disappeared", npc_id.index())
+            });
+        let npc = entity
+            .npc_data_mut()
+            .unwrap_or_else(|| panic!("CALL_LOOKTHERE receiver {} lost NPC data", npc_id.index()));
+        crate::ai_vision::refresh_view(npc, &ctx);
     }
 
     fn process_synchronous_officer_reports_for(
@@ -7575,7 +7610,7 @@ impl EngineInner {
     // the same frame.
 
     pub(super) fn tick_periodic_ai(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai.global.freeze {
+        if self.actors_frozen() {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
@@ -7730,7 +7765,7 @@ impl EngineInner {
     // `check_ambush_point`.
 
     pub(super) fn tick_refresh_ambush_points(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai.global.freeze {
+        if self.actors_frozen() {
             return;
         }
         if self.ai.global.ambush_points.is_empty() {
@@ -7807,7 +7842,7 @@ impl EngineInner {
     // the common macro opcodes too (REVERSE_PATH, WAIT, GOTO_POINT,
     // FACE_TO, ...).
     pub(super) fn tick_ai_macro_timers(&mut self, assets: &LevelAssets) {
-        if self.actors_frozen() || self.ai.global.freeze {
+        if self.actors_frozen() {
             return;
         }
         let scratch = self.build_sim_scratch(assets);
