@@ -24,6 +24,55 @@ fn true_sweep_still_rotating(sweep: &crate::movement::SweepState) -> bool {
     ) && !sweep_rotation_complete(sweep)
 }
 
+fn is_falling_flight_order(order_type: crate::order::OrderType) -> bool {
+    use crate::order::OrderType;
+
+    matches!(
+        order_type,
+        OrderType::FallingHitUpright
+            | OrderType::FallingHitWithBow
+            | OrderType::FallingHitWithSword
+            | OrderType::FallingHitCrouched
+            | OrderType::FallingHitHarderUpright
+            | OrderType::FallingHitHarderWithBow
+            | OrderType::FallingHitHarderWithSword
+            | OrderType::FallingHitHarderCrouched
+            | OrderType::FallingPushedUpright
+            | OrderType::FallingPushedWithBow
+            | OrderType::FallingPushedWithSword
+            | OrderType::FallingPushedCrouched
+    )
+}
+
+/// Apply the state boundary owned by `ExecuteFallingPushed` when its flight
+/// terminates before the animation driver has observed the same terminal
+/// motion event.
+///
+/// Falling-hit flights use `(Flying, Moving)`, while pushed flights use
+/// `(Flying, WaitingSword)`, so the pair identifies the pushed execute path
+/// without adding a second serialized flight-kind flag. If the animation
+/// driver already applied its wrapper-specific landing state, this is a
+/// no-op and does not overwrite that wrapper result.
+fn finish_falling_pushed_if_in_flight(entity: &mut Entity) -> bool {
+    let is_falling_pushed = entity.element_data().posture == Posture::Flying
+        && entity
+            .actor_data()
+            .is_some_and(|actor| actor.action_state == ActionState::WaitingSword);
+    if !is_falling_pushed {
+        return false;
+    }
+
+    entity.set_posture(if entity.is_dead() {
+        Posture::DeadBack
+    } else {
+        Posture::Lying
+    });
+    if let Some(actor) = entity.actor_data_mut() {
+        actor.action_state = ActionState::WaitingSword;
+    }
+    true
+}
+
 impl EngineInner {
     // ─── Per-frame melee tick ───────────────────────────────────────
 
@@ -1332,6 +1381,7 @@ impl EngineInner {
         // Apply the goal obstacle / layer / sector at flight
         // termination.
         let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
+        let mut refresh_script_sectors = false;
 
         for (entity_id, entity) in self.entities.actors_mut() {
             // Read flight state without holding a mutable borrow.
@@ -1341,6 +1391,19 @@ impl EngineInner {
                 Some(f) => f,
                 None => continue,
             };
+
+            // `ReadyForTakeOff` is initialized by ExecuteFallingPushed /
+            // ExecuteFallingHit, not by Translate*Damage. Rust stores the
+            // computed flight eagerly, so hold it until the queued falling
+            // order reports Start and has changed posture to Flying.
+            let waiting_for_fall_start = self
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .is_some_and(|(_, _, order)| is_falling_flight_order(order.order_type))
+                && entity.element_data().posture != Posture::Flying;
+            if waiting_for_fall_start {
+                continue;
+            }
 
             // Capture the domino-sweep request *before* clearing the
             // flight on the final frame.  An exact zero increment
@@ -1367,7 +1430,12 @@ impl EngineInner {
             if flight.frames_remaining <= 1 {
                 // Final frame — snap to goal position / layer /
                 // sector on landing.
-                if tracks_z {
+                let is_falling_pushed = flight.antagonist.is_some()
+                    && entity.element_data().posture == Posture::Flying
+                    && entity
+                        .actor_data()
+                        .is_some_and(|actor| actor.action_state == ActionState::WaitingSword);
+                if tracks_z || is_falling_pushed {
                     entity
                         .position_iface_mut()
                         .set_position(crate::coordinates::WorldPoint3D {
@@ -1385,6 +1453,12 @@ impl EngineInner {
                             x: flight.goal_x,
                             y: flight.goal_y,
                         });
+                }
+                if flight.antagonist.is_some() {
+                    refresh_script_sectors = true;
+                }
+                if is_falling_pushed {
+                    finish_falling_pushed_if_in_flight(entity);
                 }
                 entity.actor_data_mut().unwrap().active_flight = None;
             } else {
@@ -1425,6 +1499,13 @@ impl EngineInner {
         // up-front for sloped goals.
         for (flyer_id, obstacle) in landings {
             self.set_obstacle_and_material(assets, flyer_id, obstacle);
+        }
+
+        // The original calls UpdateScriptSectorsAfterFlight on the terminal
+        // motion event, before ApplyDominoEffect. The general zone pass ran
+        // earlier in the frame, so explicitly reconcile combat landings now.
+        if refresh_script_sectors {
+            self.tick_zone_occupants(assets);
         }
 
         for (flyer_id, hitter_id, inc_x, inc_y) in domino_sweeps {
@@ -2695,5 +2776,91 @@ impl EngineInner {
                 crate::ai::Stimulus::new(crate::ai::StimulusType::EventFitAgain),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinates::{MapPoint, WorldPoint3D};
+    use crate::element::{
+        ActorData, ActorSoldier, ElementData, ElementKind, HumanData, NpcData, SoldierData,
+    };
+    use crate::position_interface::SectorHandle;
+
+    fn falling_pushed_soldier(dead: bool) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Flying,
+            ..ElementData::default()
+        };
+        element.set_position(WorldPoint3D {
+            x: 10.0,
+            y: 20.0,
+            z: 0.0,
+        });
+        element.set_position_map(MapPoint::new(10.0, 20.0));
+        element.set_layer(1);
+        element.set_sector(SectorHandle::new(2));
+
+        let mut actor = ActorData::default();
+        actor.action_state = ActionState::WaitingSword;
+        actor.active_flight = Some(crate::element::ActiveFlight {
+            increment_x: 5.0,
+            goal_x: 15.0,
+            goal_y: 20.0,
+            frames_remaining: 1,
+            antagonist: Some(EntityId::new(99, crate::entity_id::EntityIdKind::Pc)),
+            goal_layer: 3,
+            goal_sector: SectorHandle::new(4),
+            ..Default::default()
+        });
+
+        Entity::Soldier(ActorSoldier {
+            element,
+            actor,
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points: if dead { 0 } else { 50 },
+                ..NpcData::default()
+            },
+            soldier: SoldierData::default(),
+        })
+    }
+
+    #[test]
+    fn fatal_push_flight_terminates_dead_back_waiting_sword_and_updates_sector() {
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(falling_pushed_soldier(true));
+
+        engine.tick_push_flights(&LevelAssets::default());
+
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(victim.element_data().posture, Posture::DeadBack);
+        assert_eq!(
+            victim.actor_data().unwrap().action_state,
+            ActionState::WaitingSword
+        );
+        assert_eq!(victim.element_data().layer(), 3);
+        assert_eq!(victim.element_data().sector(), SectorHandle::new(4));
+        assert!(victim.actor_data().unwrap().active_flight.is_none());
+    }
+
+    #[test]
+    fn knockout_push_flight_terminates_lying_waiting_sword() {
+        let mut entity = falling_pushed_soldier(false);
+        entity.human_data_mut().unwrap().unconscious = true;
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(entity);
+
+        engine.tick_push_flights(&LevelAssets::default());
+
+        let victim = engine.get_entity(victim_id).unwrap();
+        assert_eq!(victim.element_data().posture, Posture::Lying);
+        assert_eq!(
+            victim.actor_data().unwrap().action_state,
+            ActionState::WaitingSword
+        );
     }
 }

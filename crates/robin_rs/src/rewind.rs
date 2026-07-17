@@ -321,6 +321,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rewind_during_active_zoom_matches_uninterrupted_gameplay_gate() {
+        use crate::campaign::Campaign;
+        use crate::engine::{EngineStateRequest, InputState};
+        use crate::messenger::SimpleMessage;
+        use crate::player_command::PlayerCommand;
+        use crate::sim_timeline::{run_engine_tick_core, run_post_initialize_stage};
+
+        let mut assets = LevelAssets::new();
+        let mut engine = Engine::new_for_test_with_level_size(
+            1024.0,
+            768.0,
+            Campaign::default(),
+            &mut assets,
+            4096.0,
+            4096.0,
+        )
+        .expect("fixture engine");
+        let mut display = HostDisplayState::default();
+        let mut input = InputState::default();
+        engine.apply_command(
+            &mut display,
+            &mut input,
+            &assets,
+            &PlayerCommand::ChangeState(EngineStateRequest::ZoomingUp),
+        );
+        assert!(engine.is_zoom_up_in_progress(&display));
+
+        // LockAlt is handled after the zoom gate in PerformHourglass. It
+        // therefore remains pending throughout these active transition
+        // frames, making an incorrectly defaulted replay display observable.
+        engine.send_simple_message(SimpleMessage::LockAlt);
+
+        let mut rewind = RewindBuffer::new();
+        let mut host = crate::Host::default();
+        let mut dev = DevState::default();
+        for frame in 0..3 {
+            rewind.begin_frame(frame, &engine, &assets);
+
+            let zoom_to_up = engine.is_zoom_up_in_progress(&display);
+            let zoom_to_down = engine.is_zoom_down_in_progress(&display);
+            display.background_transform.zoom_to_up = zoom_to_up;
+            display.background_transform.zoom_to_down = zoom_to_down;
+            run_engine_tick_core(&mut host, &mut display, &assets, &mut engine, &mut dev);
+            run_post_initialize_stage(&mut host, &mut display, &assets, &mut engine, &mut dev);
+
+            rewind.end_frame(Vec::new());
+        }
+
+        assert!(engine.is_zoom_up_in_progress(&display));
+        assert!(!engine.is_lock_alt());
+
+        let rewound = rewind
+            .rewind_to(&assets, 3)
+            .expect("frame 3 is reconstructable from the frame-0 checkpoint");
+        assert_eq!(
+            crate::replay::state_hash(&rewound),
+            crate::replay::state_hash(&engine)
+        );
+        assert!(!rewound.is_lock_alt());
+    }
+
+    #[test]
     fn splice_late_input_appends_to_correct_frame() {
         use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 

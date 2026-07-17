@@ -11,8 +11,8 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
 use super::util::{
-    calculate_opponent_nearest_to_rene, check_straight_movement, det2, detects_position_180_raw,
-    dot2, evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
+    calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
+    evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
     is_any_swordfight_substate, is_observing_combat_substate, is_walking_running_charging_substate,
     iso_norm, iso_normalize, max_norm, pos_diff, sector_to_vector, square_norm, vec_to_sector,
     vec_to_sector_ar,
@@ -21,6 +21,125 @@ use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
     UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
 };
+
+fn phalanx_member_detects_360(
+    member: &PhalanxMemberThemList,
+    target: &PhalanxEnemySnapshot,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> bool {
+    if member.in_building || !target.active || target.in_building {
+        return false;
+    }
+
+    let viewer_eye_z = member.elevation
+        + crate::stealth::eye_z_for_posture(crate::element::Posture::Upright, member.is_rider);
+    let target_xy = crate::stealth::detection_point_xy(
+        crate::coordinates::MapPoint::new(target.position.x, target.position.y),
+        target.posture,
+        target.direction as i16,
+    );
+    let target_z =
+        target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
+    let dx = target_xy.x - member.position.x;
+    let dy = (target_xy.y - member.position.y) * INVERSE_ASPECT_RATIO;
+    let dz = target_z - viewer_eye_z;
+    if dx * dx + dy * dy + dz * dz > member.sq_view_radius {
+        return false;
+    }
+
+    crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [member.position.x, member.position.y, viewer_eye_z],
+        [target_xy.x, target_xy.y, target_z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    )
+}
+
+fn phalanx_member_detects_180(
+    member: &PhalanxMemberThemList,
+    target: &PhalanxEnemySnapshot,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> bool {
+    if member.in_building || !target.active {
+        return false;
+    }
+
+    let viewer_xy = crate::stealth::eye_point_xy(
+        crate::coordinates::MapPoint::new(member.position.x, member.position.y),
+        member.posture,
+        member.direction as i16,
+        false,
+    );
+    let viewer_z =
+        member.elevation + crate::stealth::eye_z_for_posture(member.posture, member.is_rider);
+    let target_xy = crate::stealth::detection_point_xy(
+        crate::coordinates::MapPoint::new(target.position.x, target.position.y),
+        target.posture,
+        target.direction as i16,
+    );
+    let target_z =
+        target.elevation + crate::stealth::detection_z_for_posture(target.posture, target.is_rider);
+    let dx = target_xy.x - viewer_xy.x;
+    let dy = (target_xy.y - viewer_xy.y) * INVERSE_ASPECT_RATIO;
+    let sq_distance = dx * dx + dy * dy;
+    if sq_distance > member.sq_view_radius {
+        return false;
+    }
+
+    let direction = crate::shadow_polygon::sector_to_direction(member.direction as i16);
+    let forward_x = direction[0];
+    let forward_y = direction[1] * INVERSE_ASPECT_RATIO;
+    if sq_distance < 50.0 * 50.0 {
+        let forward_length = dx * forward_x + dy * forward_y;
+        let projected_x = forward_x * forward_length;
+        let projected_y = forward_y * forward_length;
+        let perpendicular_sq =
+            (dx - projected_x) * (dx - projected_x) + (dy - projected_y) * (dy - projected_y);
+        if perpendicular_sq >= forward_length {
+            return true;
+        }
+    }
+    if dx * forward_x + dy * forward_y < 0.0 {
+        return false;
+    }
+
+    crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer_xy.x, viewer_xy.y, viewer_z],
+        [target_xy.x, target_xy.y, target_z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    )
+}
+
+fn append_phalanx_member_enemies(
+    merged: &mut Vec<HumanHandle>,
+    member: &PhalanxMemberThemList,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) {
+    for target in &member.current_them_list {
+        if !target.able_to_fight
+            || target.friend
+            || !phalanx_member_detects_360(member, target, obstacles)
+        {
+            continue;
+        }
+        if !merged.contains(&target.handle) {
+            merged.push(target.handle);
+        }
+    }
+
+    for target in &member.detectable_enemies {
+        if target.dead
+            || target.unconscious
+            || !phalanx_member_detects_180(member, target, obstacles)
+        {
+            continue;
+        }
+        if !merged.contains(&target.handle) {
+            merged.push(target.handle);
+        }
+    }
+}
 
 impl EnemyAi {
     // -----------------------------------------------------------------------
@@ -1299,133 +1418,14 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
-        // (1) Clean up self's them list — keep predicate is
-        // `is_able_to_fight && is_detecting_360_degrees(enemy) &&
-        // !is_friend(enemy)`. Snapshot the keep set up-front so we can
-        // borrow `self` immutably for the 360° detection check without
-        // conflicting with the `list_them.retain` mutable borrow.
-        let kept_self: Vec<HumanHandle> = self
-            .list_them
-            .iter()
-            .copied()
-            .filter(|&h| {
-                if h == 0 {
-                    return false;
-                }
-                let Some(f) = tick.nearby_fighters.iter().find(|f| f.handle == h) else {
-                    return false;
-                };
-                if !f.is_able_to_fight || f.is_friendly {
-                    return false;
-                }
-                self.is_detecting_360_degrees(h, ctx)
-            })
-            .collect();
-        self.list_them = kept_self;
-
-        // (2) Add all enemies that pass these predicates from self's
-        // perspective: `is_detecting_180_degrees(enemy) && !is_dead &&
-        // !is_unconscious`. Iterating `nearby_fighters` filtered to
-        // hostile entries replaces the reference's enemy-list walk —
-        // both pull from the detectable enemy list, which
-        // `nearby_fighters` already mirrors via `list_them`.
-        let candidates: Vec<HumanHandle> = tick
-            .nearby_fighters
-            .iter()
-            .filter(|f| {
-                !f.is_friendly
-                    && f.handle != 0
-                    && f.handle != self.base.me
-                    && !f.is_dead
-                    && !f.is_unconscious
-                    && f.is_able_to_fight
-            })
-            .map(|f| f.handle)
-            .collect();
-        for handle in candidates {
-            if !self.is_detecting_180_degrees(handle, ctx) {
-                continue;
-            }
-            if !self.list_them.contains(&handle) {
-                self.list_them.push(handle);
-            }
-        }
-
-        // (3) Recursion stand-in: union each right-chain member's
-        // contribution into our merged list. The reference recurses
-        // through `right_combat_neighbour.PhalanxReinitializeThemList`,
-        // so each mid-line member runs steps 1+2 from *their* stance and
-        // pushes into the shared `list_them_all_phalanx`. Rust pulls
-        // each member's `list_them` snapshot via
-        // `tick.phalanx_member_them_lists` (populated by
-        // `EngineInner::build_phalanx_member_them_lists`) and replays
-        // the per-member step-1/step-2 filters here.
-        //
-        // Step-1 keep-filter from neighbour's POV uses
-        // `nearby_fighters` for the camp/alive bits (camp is identical
-        // across phalanx members) and a per-neighbour 360° distance gate
-        // approximated with the leftmost's `sq_standard_view_radius` —
-        // each soldier's view radius isn't plumbed through the snapshot,
-        // and phalanx members are by construction same-class soldiers
-        // whose radii are functionally identical.
-        // Step-2 visible-enemy scan from neighbour's POV reuses
-        // [`detects_position_180_raw`] with the neighbour's position and
-        // direction so an enemy on the right flank — visible only to
-        // mid-line members — still enters the shared list.
-        let sq_view_radius = ctx.sq_standard_view_radius;
-        let merged_candidates: Vec<HumanHandle> = tick
-            .nearby_fighters
-            .iter()
-            .filter(|f| {
-                !f.is_friendly
-                    && f.handle != 0
-                    && f.handle != self.base.me
-                    && !f.is_dead
-                    && !f.is_unconscious
-                    && f.is_able_to_fight
-            })
-            .map(|f| f.handle)
-            .collect();
+        // (1..3) Replay the original recursion over the up-front member
+        // snapshots. Each member cleans its persistent list with its own
+        // current 360° radius+LOS, then scans its live detectable-enemy
+        // list with its own current 180° radius+LOS.
+        self.list_them.clear();
+        let obstacles = ctx.obstacle_list();
         for member in &tick.phalanx_member_them_lists {
-            // Step-1 contribution: surviving entries of the neighbour's
-            // own `mlistThem`.  We can only confirm
-            // `IsAbleToFight && !IsFriend` from the leftmost's
-            // `nearby_fighters`; enemies outside its swordfight radius
-            // don't appear there, so we conservatively trust the
-            // neighbour's persistent list for those (the neighbour's own
-            // tick is the authority on its detection state).
-            for &h in &member.current_them_list {
-                if h == 0 || self.list_them.contains(&h) {
-                    continue;
-                }
-                if let Some(f) = tick.nearby_fighters.iter().find(|f| f.handle == h)
-                    && (!f.is_able_to_fight || f.is_friendly)
-                {
-                    continue;
-                }
-                self.list_them.push(h);
-            }
-            // Step-2 contribution: enemies the neighbour currently
-            // detects in their 180° cone, alive and conscious.  We've
-            // already filtered `merged_candidates` to alive+conscious
-            // hostile fighters; the only remaining gate is the
-            // neighbour-relative 180° check.
-            for &h in &merged_candidates {
-                if self.list_them.contains(&h) {
-                    continue;
-                }
-                let Some(target) = self.find_fighter(h, tick) else {
-                    continue;
-                };
-                if detects_position_180_raw(
-                    member.position,
-                    member.direction,
-                    target.position,
-                    sq_view_radius,
-                ) {
-                    self.list_them.push(h);
-                }
-            }
+            append_phalanx_member_enemies(&mut self.list_them, member, obstacles);
         }
 
         // (4) Find nearest enemy to phalanx center and make it primary
@@ -3126,5 +3126,130 @@ impl EnemyAi {
             });
 
         best
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::Posture;
+    use crate::sight_obstacle::{ObstacleList, ObstaclePoint, SightObstacle};
+
+    fn position(x: f32, y: f32) -> Position {
+        Position {
+            x,
+            y,
+            sector: None,
+            level: 0,
+        }
+    }
+
+    fn enemy(handle: HumanHandle, x: f32) -> PhalanxEnemySnapshot {
+        PhalanxEnemySnapshot {
+            handle,
+            position: position(x, 0.0),
+            direction: 4,
+            posture: Posture::Upright,
+            elevation: 0.0,
+            is_rider: false,
+            active: true,
+            able_to_fight: true,
+            dead: false,
+            unconscious: false,
+            friend: false,
+            in_building: false,
+        }
+    }
+
+    fn member(
+        handle: HumanHandle,
+        radius: f32,
+        current_them_list: Vec<PhalanxEnemySnapshot>,
+        detectable_enemies: Vec<PhalanxEnemySnapshot>,
+    ) -> PhalanxMemberThemList {
+        PhalanxMemberThemList {
+            handle,
+            current_them_list,
+            detectable_enemies,
+            position: position(0.0, 0.0),
+            direction: 4,
+            posture: Posture::Upright,
+            elevation: 0.0,
+            is_rider: false,
+            in_building: false,
+            sq_view_radius: radius * radius,
+        }
+    }
+
+    fn opaque_wall() -> SightObstacle {
+        let mut wall = SightObstacle::new_default(0);
+        wall.obstacle_points = vec![
+            ObstaclePoint {
+                x: 95.0,
+                y: -10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 105.0,
+                y: -10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 105.0,
+                y: 10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+            ObstaclePoint {
+                x: 95.0,
+                y: 10.0,
+                z_top: 80.0,
+                z_bottom: 0.0,
+            },
+        ];
+        wall.top_plane_points = [
+            [95.0, -10.0, 80.0],
+            [105.0, -10.0, 80.0],
+            [95.0, 10.0, 80.0],
+        ];
+        wall.bottom_plane_points = [[95.0, -10.0, 0.0], [105.0, -10.0, 0.0], [95.0, 10.0, 0.0]];
+        wall.rebuild_geometry();
+        wall
+    }
+
+    #[test]
+    fn phalanx_uses_each_members_heterogeneous_view_radius() {
+        let target = enemy(9, 150.0);
+        let leftmost = member(1, 300.0, Vec::new(), Vec::new());
+        let right = member(2, 100.0, vec![target], Vec::new());
+        let mut merged = Vec::new();
+
+        append_phalanx_member_enemies(&mut merged, &leftmost, ObstacleList::empty());
+        append_phalanx_member_enemies(&mut merged, &right, ObstacleList::empty());
+
+        assert!(merged.is_empty());
+    }
+
+    #[test]
+    fn phalanx_rejects_occluded_persistent_and_detectable_entries() {
+        let target = enemy(9, 200.0);
+        let member = member(2, 300.0, vec![target.clone()], vec![target]);
+
+        let mut clear_merged = Vec::new();
+        append_phalanx_member_enemies(&mut clear_merged, &member, ObstacleList::empty());
+        assert_eq!(clear_merged, vec![9]);
+
+        let obstacles = vec![opaque_wall()];
+        let active = vec![true];
+        let blocked = ObstacleList {
+            static_obstacles: &obstacles,
+            dynamic_obstacles: &[],
+            static_active: &active,
+        };
+        let mut blocked_merged = Vec::new();
+        append_phalanx_member_enemies(&mut blocked_merged, &member, blocked);
+        assert!(blocked_merged.is_empty());
     }
 }
