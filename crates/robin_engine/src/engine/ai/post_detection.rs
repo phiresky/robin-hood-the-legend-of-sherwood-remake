@@ -395,7 +395,7 @@ impl EngineInner {
     /// Replays deferred stimuli for one NPC; carries the per-NPC tracing
     /// span so the `dispatch_think_with_drain` events emit with `npc=<id>`.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    fn tick_enemy_ai_drain_pending_stimuli_for_npc(
+    pub(super) fn tick_enemy_ai_drain_pending_stimuli_for_npc(
         &mut self,
         npc_id: EntityId,
         assets: &LevelAssets,

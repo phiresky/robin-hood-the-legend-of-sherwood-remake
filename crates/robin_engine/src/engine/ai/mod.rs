@@ -4008,20 +4008,15 @@ impl EngineInner {
         // visual loop below.
         self.tick_enemy_ai_acoustic_detection(&world);
 
-        // ── 3. Per-enemy RefreshDetection loop. ──────────────────
+        // ── 3. Creation-ordered per-NPC RefreshDetection loop. ───
+        // Enemy detection, volatile target rebuild, non-Enemy detectable
+        // buckets, and the resulting FIFO Think dispatches all finish for one
+        // NPC before the next creation slot starts.
         let (transitions, out_of_view_dispatches) =
-            self.tick_enemy_ai_refresh_detection(assets, &scratch, &world);
+            self.tick_enemy_ai_refresh_detection(assets, &world);
 
         // ── 3b. Royalist detection — reveal blipped enemies. ────
         self.tick_enemy_ai_royalist_detection(assets, &world);
-
-        // ── 3c. Per-NPC non-Enemy detection. ────────────────────
-        // The per-`type` outer loop arms of `refresh_detection` for
-        // the five non-Enemy buckets — Body / Object / Friend /
-        // MissedFriend / Beggar.  Builds a per-tick target map first
-        // so each NPC's pass can dereference target metadata without
-        // re-borrowing `self.entities`.
-        self.tick_enemy_ai_refresh_per_type_detection(assets, &world);
 
         // ── 4. Log + pursue + alert nearby allies ───────────────
         self.tick_enemy_ai_alert_allies(&transitions);

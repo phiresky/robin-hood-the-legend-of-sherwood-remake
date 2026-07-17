@@ -894,21 +894,24 @@ impl EngineInner {
     ///
     /// For every Lacklandist NPC: lazy-populate detectables, run the
     /// per-target visibility pass, accumulate suspect sharpness, fire
-    /// EVENT_HEAR / EVENT_SEES_SHADOW and EVENT_VIEW. EVENT_VIEW is dispatched
-    /// with tick data derived from the same immutable world view immediately
-    /// after the NPC borrow ends. Original:
+    /// EVENT_HEAR / EVENT_SEES_SHADOW and EVENT_VIEW, then run the remaining
+    /// detectable buckets and flush their FIFO stimuli for that same NPC
+    /// before advancing to the next creation slot. EVENT_VIEW is queued after
+    /// the Enemy scan and dispatched with a live boundary context only after
+    /// every detectable bucket has released the NPC borrow.
+    /// Volatile NPC target metadata is rebuilt at each creation slot so a
+    /// later NPC observes state changes made by an earlier NPC's Think.
+    /// Original:
     /// `RHelementactornpc.cpp::RefreshDetection` queues detection stimuli while
     /// scanning lists, then calls `Think` before returning from that NPC's
     /// Hourglass. Returns the rising/falling edges for later phases.
-    // TODO(parity): Migrate EVENT_HEAR, EVENT_SEES_SHADOW, and the non-enemy
-    // detectable lists onto typed world-view inputs too. The Original flushes
-    // all of `listOfStimuliToSend` at the end of this same RefreshDetection;
-    // Rust still drains those remaining stimulus kinds in the later dispatch
-    // phase.
+    // TODO(parity): Acoustic detection is still globally precomputed before
+    // this loop, Royalist detection remains a later global phase, and every
+    // stimulus in one NPC's FIFO currently shares the same boundary scratch
+    // rather than rebuilding context after each preceding Think mutation.
     pub(super) fn tick_enemy_ai_refresh_detection(
         &mut self,
         assets: &LevelAssets,
-        scratch: &SimScratch,
         world: &AiWorldView,
     ) -> (Vec<Detection>, Vec<(EntityId, u32)>) {
         let mut transitions: Vec<Detection> = Vec::new();
@@ -937,31 +940,53 @@ impl EngineInner {
                 &mut transitions,
                 &mut out_of_view_dispatches,
             );
-            if let Some((stimulus, tick_data)) = think_input {
-                let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-                let entity = self.entities.get(npc_id).unwrap_or_else(|| {
+            // Enemy HandlePredetection may already have queued
+            // EVENT_SEES_SHADOW. Append the committed ENEMY stimulus now,
+            // before scanning later detectable types, preserving the relative
+            // SHADOW → VIEW → BODY → OBJECT → FRIEND → MISSED_FRIEND → BEGGAR
+            // order behind any earlier stimulus already in the NPC FIFO.
+            if let Some((stimulus, _tick_data)) = think_input {
+                let entity = self.entities.get_mut(npc_id).unwrap_or_else(|| {
                     panic!(
-                        "detected NPC {} disappeared before its same-phase Think dispatch",
+                        "detected NPC {} disappeared before its same-phase stimulus queue",
                         npc_id.index()
                     )
                 });
-                let building_sector = self.entity_building_sector(entity.element_data().sector());
-                let mut ctx = build_ai_context_from_entity(
-                    entity,
-                    universal_frame,
-                    building_sector,
-                    self.weather.is_forest_level,
-                    self.weather.ambiance,
-                    self.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.fast_grid,
-                    &assets.hiking_paths,
-                    &self.ai_global.all_soldier_handles,
-                );
-                ctx.in_uninterruptible_command = in_uninterruptible_command;
-                self.dispatch_think_with_drain(npc_id, &stimulus, &ctx, &tick_data, assets);
+                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
+                    panic!(
+                        "detected NPC {} lost its AI controller before stimulus queue",
+                        npc_id.index()
+                    )
+                });
+                ai.pending_stimuli.push(stimulus);
             }
+            // Original NPC::Hourglass completes this NPC's entire
+            // RefreshDetection scan before flushing its FIFO stimulus list.
+            // Rebuild only the volatile human/object target metadata here;
+            // `world.pcs` remains the once-per-frame snapshot because its
+            // construction also updates produced-noise state. No Think has
+            // run for this NPC yet, so all its buckets observe the same
+            // pre-Think state.
+            let (human_targets, object_targets) = self.tick_enemy_ai_build_human_object_targets();
+            self.tick_enemy_ai_refresh_per_type_for_npc(
+                npc_id,
+                assets,
+                &human_targets,
+                &object_targets,
+                universal_frame,
+                golden_eye,
+            );
+
+            // Refresh live entity/context views at this NPC's FIFO-flush
+            // boundary. Earlier NPC Think calls may have changed AI state,
+            // focus, sequences, or other metadata consumed by this slot.
+            let live_scratch = self.build_sim_scratch(assets);
+
+            // TODO(parity): rebuild context views between successive queued
+            // stimuli when an earlier Think can mutate data consumed by the
+            // next one. Acoustic and Royalist detection are still coordinated
+            // by their existing global phases rather than this per-NPC loop.
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(npc_id, assets, &live_scratch);
         }
 
         (transitions, out_of_view_dispatches)
@@ -2354,11 +2379,11 @@ impl EngineInner {
                                 sector: None,
                                 level: 0,
                             };
-                            // Dispatch after releasing the soldier borrow,
-                            // using the tick input built from this exact world
-                            // view. This preserves the original end-of-
-                            // RefreshDetection Think phase and avoids the
-                            // later live-rebuild/stub path.
+                            // Retain until the soldier borrow is released.
+                            // The outer per-NPC coordinator appends it after
+                            // any predetection shadow stimulus, scans the
+                            // remaining detectable buckets, then flushes the
+                            // complete FIFO against a live boundary view.
                             think_stimulus = Some(stimulus);
                         }
 
@@ -2915,27 +2940,7 @@ impl EngineInner {
     //    `maximal_detection_suspect`.  Inline `CleanUpDetectables`
     //    drops entries whose target is no longer
     //    `IsTrueOrFalseBeggar()`.
-    pub(super) fn tick_enemy_ai_refresh_per_type_detection(
-        &mut self,
-        assets: &LevelAssets,
-        world: &AiWorldView,
-    ) {
-        let universal_frame = self.frame_counter;
-        let golden_eye = self.ai_global.golden_eye_mode;
-        let npc_ids: Vec<_> = self.entities.npc_ids().collect();
-        for npc_id in npc_ids {
-            self.tick_enemy_ai_refresh_per_type_for_npc(
-                npc_id,
-                assets,
-                &world.human_targets,
-                &world.object_targets,
-                universal_frame,
-                golden_eye,
-            );
-        }
-    }
-
-    /// Per-NPC body-of-`tick_enemy_ai_refresh_per_type_detection`.
+    /// Per-NPC body of the non-Enemy portion of `RefreshDetection`.
     /// One full iteration of the per-type loop body for
     /// `type ∈ {Body, Object, Friend, MissedFriend, Beggar}`.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
@@ -3119,6 +3124,42 @@ impl EngineInner {
             },
         );
 
+        // ── OBJECT pass ─────────────────────────────────────
+        // Original detectable enum order is Enemy, Body, Object,
+        // Friend, MissedFriend, Beggar. Keep stimulus queue order aligned
+        // with that scan order before the per-NPC FIFO Think drain.
+        Self::run_object_detectable_pass(
+            soldier,
+            npc_id,
+            ai_vision::DETECTION_FREQUENCY_OBJECT,
+            // InstantDetection for OBJECT (Lacklandists) is
+            // `!matches!(state, Sleeping|Default)` — Wondering IS
+            // instant for Objects.
+            !matches!(current_state, AiState::Sleeping | AiState::Default),
+            object_targets,
+            ViewContext {
+                eye,
+                eye_z,
+                dir,
+                layer,
+                view_forward,
+                view_radius,
+                real_half_aperture,
+                viewer_in_building,
+                viewer_building_sector,
+                effective_view_radius_ground,
+                per_target_view_radius: &per_target_view_radius,
+                eye_status,
+                view_speed,
+                refresh_always,
+                modified_frame,
+                universal_frame,
+                golden_eye,
+                sight_obstacles: &sight_obstacles,
+                fast_grid: &self.fast_grid,
+            },
+        );
+
         // ── FRIEND pass ─────────────────────────────────────
         Self::run_human_detectable_pass(
             soldier,
@@ -3235,46 +3276,6 @@ impl EngineInner {
             human_targets,
             // Per-target pre-filter: skip dead / unconscious targets.
             |t| !t.unconscious,
-            ViewContext {
-                eye,
-                eye_z,
-                dir,
-                layer,
-                view_forward,
-                view_radius,
-                real_half_aperture,
-                viewer_in_building,
-                viewer_building_sector,
-                effective_view_radius_ground,
-                per_target_view_radius: &per_target_view_radius,
-                eye_status,
-                view_speed,
-                refresh_always,
-                modified_frame,
-                universal_frame,
-                golden_eye,
-                sight_obstacles: &sight_obstacles,
-                fast_grid: &self.fast_grid,
-            },
-        );
-
-        // ── OBJECT pass ─────────────────────────────────────
-        //
-        // Stays inline (rather than going through
-        // `run_human_detectable_pass`) because the visibility query
-        // is `compute_object_visibility` not `compute_visibility`.
-        // No shadow events — HandlePredetection's `IsPC()` gate
-        // rejects every non-PC target, so the OBJECT arm in its
-        // position-fetch switch is dead code.
-        Self::run_object_detectable_pass(
-            soldier,
-            npc_id,
-            ai_vision::DETECTION_FREQUENCY_OBJECT,
-            // InstantDetection for OBJECT (Lacklandists) is
-            // `!matches!(state, Sleeping|Default)` — Wondering IS
-            // instant for Objects.
-            !matches!(current_state, AiState::Sleeping | AiState::Default),
-            object_targets,
             ViewContext {
                 eye,
                 eye_z,

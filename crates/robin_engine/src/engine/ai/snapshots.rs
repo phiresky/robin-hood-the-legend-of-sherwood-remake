@@ -330,13 +330,12 @@ pub(super) struct ObjectTarget {
     pub(super) active: bool,
 }
 
-/// Immutable start-of-tick entity and combat view consumed by AI phases.
+/// Immutable start-of-tick PC and combat view consumed by AI phases.
 ///
 /// The original engine exposes stable live pointers throughout one actor's
-/// `RHElementActorNPC::RefreshDetection` call. Rust cannot keep those borrows
-/// while mutating an NPC, so this owns the equivalent values once and every
-/// detection/think consumer borrows this same view. Runtime phase execution
-/// remains ordered by `EngineInner::tick_enemy_ai`.
+/// `RHElementActorNPC::RefreshDetection` call. PC data is captured once because
+/// building it also updates produced-noise state. Volatile NPC human/object
+/// target data is intentionally rebuilt at each NPC creation slot.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct AiWorldView {
     pub(super) pcs: Vec<PcSnapshot>,
@@ -345,8 +344,6 @@ pub(super) struct AiWorldView {
     pub(super) npc_jump_lines: std::collections::HashMap<EntityId, Option<u32>>,
     pub(super) soldiers: Vec<SoldierSnapshot>,
     pub(super) ko_money_fight_soldiers: Vec<(EntityId, Camp)>,
-    pub(super) human_targets: std::collections::HashMap<EntityId, HumanTarget>,
-    pub(super) object_targets: std::collections::HashMap<EntityId, ObjectTarget>,
 }
 
 impl EngineInner {
@@ -365,7 +362,6 @@ impl EngineInner {
         let npc_jump_lines = self.tick_enemy_ai_build_jump_lines(assets);
         let soldiers = self.tick_enemy_ai_build_soldier_snapshots(assets);
         let ko_money_fight_soldiers = self.tick_enemy_ai_build_ko_money_fight_soldiers();
-        let (human_targets, object_targets) = self.tick_enemy_ai_build_human_object_targets();
         AiWorldView {
             pcs,
             pc_forecasts,
@@ -373,8 +369,6 @@ impl EngineInner {
             npc_jump_lines,
             soldiers,
             ko_money_fight_soldiers,
-            human_targets,
-            object_targets,
         }
     }
 

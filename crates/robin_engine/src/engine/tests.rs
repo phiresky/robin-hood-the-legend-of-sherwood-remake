@@ -3722,6 +3722,159 @@ fn npc_hourglass_observes_exact_original_phase_order() {
 }
 
 #[test]
+fn npc_detection_observes_friend_state_at_creation_order_boundary() {
+    use crate::ai::{AiState, Substate};
+    use crate::element::{Camp, Detectable, DetectableType, ElementData, ElementKind, Entity};
+    use crate::profiles::ProfileRank;
+
+    fn observe(attacker_before_officer: bool) -> (AiState, AiState, Substate) {
+        let mut engine = EngineInner::new();
+        // Keep the relevant NPCs in slots 1/2 in both arrangements so the
+        // swapped oracle is not confounded by a slot-zero special case.
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..ElementData::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let attacker = make_test_ai_soldier(Camp::Lacklandists);
+        let officer = make_test_ai_soldier(Camp::Lacklandists);
+        let (attacker_id, officer_id) = if attacker_before_officer {
+            (engine.add_entity(attacker), engine.add_entity(officer))
+        } else {
+            let officer_id = engine.add_entity(officer);
+            let attacker_id = engine.add_entity(attacker);
+            (attacker_id, officer_id)
+        };
+        let pc_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+
+        for (id, x) in [(officer_id, 0.0), (attacker_id, 120.0)] {
+            let Entity::Soldier(soldier) = engine
+                .get_entity_mut(id)
+                .expect("creation-order detection soldier exists")
+            else {
+                panic!("creation-order detection entity changed kind")
+            };
+            soldier.element.active = true;
+            soldier
+                .element
+                .set_position(crate::coordinates::WorldPoint3D { x, y: 0.0, z: 0.0 });
+            soldier.element.set_position_map(MapPoint::new(x, 0.0));
+            soldier.element.set_direction_instantly(4);
+            soldier.npc.life_points = 100;
+            soldier.npc.view_direction = [1.0, 0.0];
+            soldier.npc.view_radius = 135;
+            soldier.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+            soldier.npc.eye_status = crate::element::EyeStatus::Stare;
+            let ai = soldier
+                .npc
+                .ai_brain
+                .enemy_mut()
+                .expect("creation-order detection soldier has enemy AI");
+            ai.base.me = id.index();
+            ai.soldier_profile_rank = if id == officer_id {
+                ProfileRank::Officer
+            } else {
+                ProfileRank::Soldier
+            };
+        }
+
+        let Entity::Pc(pc) = engine
+            .get_entity_mut(pc_id)
+            .expect("creation-order detection PC exists")
+        else {
+            panic!("creation-order detection target changed kind")
+        };
+        pc.element.active = true;
+        pc.element.set_position(crate::coordinates::WorldPoint3D {
+            x: 175.0,
+            y: 0.0,
+            z: 0.0,
+        });
+        pc.element.set_position_map(MapPoint::new(175.0, 0.0));
+        pc.pc.life_points = 100;
+
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+            .characters
+            .get_mut(0)
+            .expect("fixture installs the PC character profile");
+        profile.detection_speed_in_city = 100;
+        profile.detection_speed_in_forest = 100;
+
+        // Isolate the exact A-EVENT_VIEW → B-FRIEND edge after fixture
+        // initialization has installed profiles and AI runtime defaults.
+        let Entity::Soldier(attacker) = engine
+            .get_entity_mut(attacker_id)
+            .expect("attacker exists before detection")
+        else {
+            panic!("attacker changed kind")
+        };
+        attacker.npc.detectable_lists[DetectableType::Enemy as usize].clear();
+        attacker.npc.detectable_lists[DetectableType::Friend as usize].clear();
+        attacker.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
+        attacker.npc.detectable_lists[DetectableType::Enemy as usize].push(Detectable {
+            element: Some(pc_id),
+            detectable_type: DetectableType::Enemy,
+            // This oracle starts after the ordinary predetection shadow edge.
+            shadow_seen_last_frame: true,
+            ..Detectable::default()
+        });
+
+        let Entity::Soldier(officer) = engine
+            .get_entity_mut(officer_id)
+            .expect("officer exists before detection")
+        else {
+            panic!("officer changed kind")
+        };
+        officer.npc.detectable_lists[DetectableType::Friend as usize].clear();
+        officer.npc.detectable_lists[DetectableType::Friend as usize].push(Detectable {
+            element: Some(attacker_id),
+            detectable_type: DetectableType::Friend,
+            ..Detectable::default()
+        });
+
+        crate::sim_rng::with_seed(0xA013, || engine.tick_enemy_ai(&assets));
+
+        let attacker_ai = engine
+            .get_entity(attacker_id)
+            .and_then(Entity::enemy_ai)
+            .expect("attacker remains an enemy AI");
+        let officer_ai = engine
+            .get_entity(officer_id)
+            .and_then(Entity::enemy_ai)
+            .expect("officer remains an enemy AI");
+        (
+            attacker_ai.base.current_state,
+            officer_ai.base.current_state,
+            officer_ai.base.current_substate,
+        )
+    }
+
+    let attacker_first = observe(true);
+    assert_eq!(attacker_first.0, AiState::Attacking);
+    assert_eq!(
+        attacker_first.1,
+        AiState::Default,
+        "later officer must see that the earlier EVENT_VIEW made its friend unable to help"
+    );
+    assert_ne!(attacker_first.2, Substate::SeekingOfficerCallSoldier);
+    assert_eq!(
+        observe(false),
+        (
+            AiState::Attacking,
+            AiState::Seeking,
+            Substate::SeekingOfficerCallSoldier,
+        ),
+        "earlier officer must see the still-helpful soldier before that soldier handles EVENT_VIEW"
+    );
+}
+
+#[test]
 fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     #[derive(Debug, PartialEq)]
     struct Observation {
