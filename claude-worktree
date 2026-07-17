@@ -27,6 +27,7 @@ if [ ! -d "original-code" ]; then
 fi
 
 git worktree add "$dir" -b "$branch" "$base"
+git -C "$dir" submodule update --init --recursive
 git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
 mkdir -p "$dir/.codex"
 cat > "$dir/.codex/config.toml" <<EOF

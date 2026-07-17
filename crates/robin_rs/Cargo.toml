@@ -87,7 +87,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 
 # Native-only: tiny blocking HTTP server for the script-RPC endpoint.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-librashader = { path = "../../third_party/librashader/librashader", default-features = false, features = ["presets", "runtime-wgpu", "stable"] }
+librashader = { git = "https://github.com/SnowflakePowered/librashader.git", rev = "87e8a97b50516d997defeaa168173dcd185d4022", default-features = false, features = ["presets", "runtime-wgpu", "stable"] }
 tiny_http = "0.12"
 # Multiplayer transport.  The host/server side still uses blocking
 # tungstenite in spawned OS threads; native clients use

@@ -2180,6 +2180,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 [[package]]
 name = "librashader"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "librashader-cache",
  "librashader-common",
@@ -2196,6 +2197,7 @@ dependencies = [
 [[package]]
 name = "librashader-cache"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "bincode",
  "blake3",
@@ -2212,6 +2214,7 @@ dependencies = [
 [[package]]
 name = "librashader-common"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "bitflags 2.11.1",
  "halfbrown",
@@ -2225,6 +2228,7 @@ dependencies = [
 [[package]]
 name = "librashader-pack"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "image",
  "librashader-common",
@@ -2236,6 +2240,7 @@ dependencies = [
 [[package]]
 name = "librashader-preprocess"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "encoding_rs",
  "librashader-common",
@@ -2247,6 +2252,7 @@ dependencies = [
 [[package]]
 name = "librashader-presets"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "librashader-common",
  "librashader-preprocess",
@@ -2263,6 +2269,7 @@ dependencies = [
 [[package]]
 name = "librashader-reflect"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
@@ -2283,6 +2290,7 @@ dependencies = [
 [[package]]
 name = "librashader-runtime"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "arc-swap",
  "array-concat",
@@ -2300,6 +2308,7 @@ dependencies = [
 [[package]]
 name = "librashader-runtime-wgpu"
 version = "0.12.0"
+source = "git+https://github.com/SnowflakePowered/librashader.git?rev=87e8a97b50516d997defeaa168173dcd185d4022#87e8a97b50516d997defeaa168173dcd185d4022"
 dependencies = [
  "array-concat",
  "bytemuck",

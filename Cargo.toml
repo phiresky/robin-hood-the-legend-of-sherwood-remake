@@ -10,10 +10,6 @@ members = [
     "crates/robin_assets",
     "crates/robin_state_hash_derive",
 ]
-exclude = [
-    "third_party/librashader",
-]
-
 [workspace.dependencies]
 windows = "0.62"
 windows-core = "0.62"
